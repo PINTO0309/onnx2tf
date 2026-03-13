@@ -679,8 +679,23 @@ def build_slice_op(node: Any, ctx: Any) -> None:
             f"Slice starts/axes/steps length mismatch. op={node.name} "
             f"starts_len={len(starts)} axes_len={len(axes)} steps_len={len(steps)}"
         )
+    normalization_rank = int(max(rank, len(input_signature)))
+    if (
+        normalization_rank <= int(axes[0])
+        and dynamic_start_input_name == ""
+        and dynamic_end_input_name == ""
+        and len(starts) == 1
+        and len(ends) == 1
+        and len(axes) == 1
+        and len(steps) == 1
+        and int(steps[0]) == -1
+        and int(starts[0]) == -1
+        and int(ends[0]) <= -int(np.iinfo(np.int32).max)
+        and int(axes[0]) >= 0
+    ):
+        normalization_rank = int(axes[0]) + 1
     normalized_axes = [
-        _normalize_axis(axis_raw, rank, op_name=node.name)
+        _normalize_axis(axis_raw, normalization_rank, op_name=node.name)
         for axis_raw in axes
     ]
 
@@ -696,41 +711,32 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         )
 
     if dynamic_start_input_name != "" or (
-        dynamic_end_input_name != "" and len(normalized_axes) == 1
+        dynamic_end_input_name != "" and len(normalized_axes) >= 1
     ):
-        if not (
-            len(normalized_axes) == 1
-            and len(steps) == 1
-            and int(steps[0]) > 0
-            and (
-                dynamic_start_input_name != ""
-                or (len(starts) == 1 and int(starts[0]) >= 0)
-            )
-        ):
-            raise NotImplementedError(
-                "Slice with dynamic starts/ends currently supports only "
-                "single-axis positive-step slicing in flatbuffer_direct. "
-                f"op={node.name} starts={starts} ends={ends} axes={axes} steps={steps}"
-            )
-
-        axis = int(normalized_axes[0])
-        step = int(steps[0])
         int32_max = int(np.iinfo(np.int32).max)
 
-        def _prepare_dynamic_len1_i32(dynamic_name: str, suffix: str) -> str:
+        def _prepare_dynamic_vector_i32(
+            *,
+            dynamic_name: str,
+            expected_len: int,
+            suffix: str,
+        ) -> str:
             dynamic_shape = [int(v) for v in ctx.get_tensor_shape(dynamic_name)]
-            if len(dynamic_shape) != 1 or (int(dynamic_shape[0]) > 0 and int(dynamic_shape[0]) != 1):
+            if len(dynamic_shape) != 1 or (
+                int(dynamic_shape[0]) > 0 and int(dynamic_shape[0]) != int(expected_len)
+            ):
                 raise NotImplementedError(
-                    "Slice dynamic starts/ends must be rank-1 length-1 "
-                    f"for builtin lowering. op={node.name} tensor={dynamic_name} shape={dynamic_shape}"
+                    "Slice dynamic starts/ends must be rank-1 with length matching axes "
+                    f"for builtin lowering. op={node.name} tensor={dynamic_name} "
+                    f"shape={dynamic_shape} expected_len={expected_len}"
                 )
             dynamic_dtype = str(ctx.get_tensor_dtype(dynamic_name)).upper()
             out_name = dynamic_name
             if dynamic_dtype != "INT32":
                 out_name = ctx.add_intermediate_tensor(
-                    f"{output_name}_stridedslice_{suffix}_i32",
+                    f"{output_name}_stridedslice_{suffix}_vector_i32",
                     dtype="INT32",
-                    shape=[1],
+                    shape=[int(expected_len)],
                 )
                 ctx.add_operator(
                     OperatorIR(
@@ -745,26 +751,67 @@ def build_slice_op(node: Any, ctx: Any) -> None:
                 )
             return out_name
 
-        def _compose_rank_vector_with_dynamic_axis(
+        def _gather_dynamic_vector_element(
             *,
-            dynamic_len1_name: str,
-            axis_index: int,
+            dynamic_vector_name: str,
+            element_index: int,
+            suffix: str,
+        ) -> str:
+            element_index_name = ctx.add_const_tensor(
+                f"{output_name}_stridedslice_{suffix}_{element_index}_index",
+                np.asarray([int(element_index)], dtype=np.int32),
+            )
+            element_name = ctx.add_intermediate_tensor(
+                f"{output_name}_stridedslice_{suffix}_{element_index}",
+                dtype="INT32",
+                shape=[1],
+            )
+            element_tensor = ctx.model_ir.tensors.get(element_name, None)
+            if element_tensor is not None:
+                element_tensor.shape_signature = [1]
+                element_tensor.shape = [1]
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="GATHER",
+                    inputs=[dynamic_vector_name, element_index_name],
+                    outputs=[element_name],
+                    options={"axis": 0, "batchDims": 0},
+                )
+            )
+            return element_name
+
+        def _compose_rank_vector_with_dynamic_axes(
+            *,
+            dynamic_vector_name: str,
+            axes_for_values: list[int],
             fill_value: int,
             suffix: str,
         ) -> str:
             parts: list[str] = []
-            if axis_index > 0:
-                prefix_name = ctx.add_const_tensor(
-                    f"{output_name}_stridedslice_{suffix}_prefix",
-                    np.asarray([int(fill_value) for _ in range(axis_index)], dtype=np.int32),
+            previous_axis = 0
+            for elem_index, axis_index in enumerate(axes_for_values):
+                if int(axis_index) > int(previous_axis):
+                    prefix_name = ctx.add_const_tensor(
+                        f"{output_name}_stridedslice_{suffix}_prefix_{elem_index}",
+                        np.asarray(
+                            [int(fill_value) for _ in range(int(axis_index) - int(previous_axis))],
+                            dtype=np.int32,
+                        ),
+                    )
+                    parts.append(prefix_name)
+                parts.append(
+                    _gather_dynamic_vector_element(
+                        dynamic_vector_name=dynamic_vector_name,
+                        element_index=int(elem_index),
+                        suffix=suffix,
+                    )
                 )
-                parts.append(prefix_name)
-            parts.append(dynamic_len1_name)
-            if axis_index + 1 < rank:
+                previous_axis = int(axis_index) + 1
+            if int(previous_axis) < int(rank):
                 suffix_name = ctx.add_const_tensor(
                     f"{output_name}_stridedslice_{suffix}_suffix",
                     np.asarray(
-                        [int(fill_value) for _ in range(rank - axis_index - 1)],
+                        [int(fill_value) for _ in range(int(rank) - int(previous_axis))],
                         dtype=np.int32,
                     ),
                 )
@@ -786,67 +833,80 @@ def build_slice_op(node: Any, ctx: Any) -> None:
             )
             return vector_name
 
+        steps_positive = all(int(step) > 0 for step in steps)
+        starts_non_negative = all(int(v) >= 0 for v in starts) if dynamic_start_input_name == "" else True
+        if not (
+            len(normalized_axes) >= 1
+            and len(steps) == len(normalized_axes)
+            and steps_positive
+            and (
+                dynamic_start_input_name != ""
+                or (len(starts) == len(normalized_axes) and starts_non_negative)
+            )
+            and (
+                dynamic_end_input_name != ""
+                or len(ends) == len(normalized_axes)
+            )
+        ):
+            raise NotImplementedError(
+                "Slice with dynamic starts/ends currently supports only "
+                "positive-step slicing with rank-1 dynamic vectors matching axes. "
+                f"op={node.name} starts={starts} ends={ends} axes={axes} steps={steps}"
+            )
+
         if dynamic_start_input_name != "":
-            begin_name = _prepare_dynamic_len1_i32(
+            begin_name = _prepare_dynamic_vector_i32(
                 dynamic_name=dynamic_start_input_name,
+                expected_len=len(normalized_axes),
                 suffix="begin",
             )
-            begin_name = _compose_rank_vector_with_dynamic_axis(
-                dynamic_len1_name=begin_name,
-                axis_index=axis,
+            begin_name = _compose_rank_vector_with_dynamic_axes(
+                dynamic_vector_name=begin_name,
+                axes_for_values=normalized_axes,
                 fill_value=0,
                 suffix="begin",
             )
         else:
             begin_vec = [0 for _ in range(rank)]
-            start_const = int(starts[0])
-            known_axis_dim = int(input_shape[axis]) if int(axis) < int(len(input_shape)) else -1
-            if start_const < 0:
-                if known_axis_dim > 0:
-                    start_const += int(known_axis_dim)
-                else:
-                    raise NotImplementedError(
-                        "Slice negative constant start with dynamic shape is not supported "
-                        f"in this dynamic starts/ends path. op={node.name} start={starts[0]}"
-                    )
-            begin_vec[axis] = int(start_const)
+            for idx, axis in enumerate(normalized_axes):
+                begin_vec[int(axis)] = int(starts[idx])
             begin_name = ctx.add_const_tensor(
                 f"{output_name}_stridedslice_begin",
                 np.asarray(begin_vec, dtype=np.int32),
             )
 
         if dynamic_end_input_name != "":
-            end_name = _prepare_dynamic_len1_i32(
+            end_name = _prepare_dynamic_vector_i32(
                 dynamic_name=dynamic_end_input_name,
+                expected_len=len(normalized_axes),
                 suffix="end",
             )
-            end_name = _compose_rank_vector_with_dynamic_axis(
-                dynamic_len1_name=end_name,
-                axis_index=axis,
+            end_name = _compose_rank_vector_with_dynamic_axes(
+                dynamic_vector_name=end_name,
+                axes_for_values=normalized_axes,
                 fill_value=int32_max,
                 suffix="end",
             )
         else:
             end_vec = [int32_max for _ in range(rank)]
-            end_const = int(ends[0])
-            known_axis_dim = int(input_shape[axis]) if int(axis) < int(len(input_shape)) else -1
-            if end_const < 0 and known_axis_dim > 0:
-                end_const += int(known_axis_dim)
-            end_vec[axis] = int(end_const)
+            for idx, axis in enumerate(normalized_axes):
+                end_vec[int(axis)] = int(ends[idx])
             end_name = ctx.add_const_tensor(
                 f"{output_name}_stridedslice_end",
                 np.asarray(end_vec, dtype=np.int32),
             )
 
         strides = [1 for _ in range(rank)]
-        strides[axis] = int(step)
+        for idx, axis in enumerate(normalized_axes):
+            strides[int(axis)] = int(steps[idx])
         strides_name = ctx.add_const_tensor(
             f"{output_name}_stridedslice_strides",
             np.asarray(strides, dtype=np.int32),
         )
+        dynamic_axis_set = {int(axis_index) for axis_index in normalized_axes}
         end_mask = 0
         for axis_idx in range(rank):
-            if int(axis_idx) != int(axis):
+            if int(axis_idx) not in dynamic_axis_set:
                 end_mask |= (1 << int(axis_idx))
         ctx.add_operator(
             OperatorIR(

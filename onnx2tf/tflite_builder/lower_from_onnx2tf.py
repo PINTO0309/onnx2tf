@@ -24,6 +24,9 @@ from onnx2tf.tflite_builder.ir import (
     QuantParamIR,
     TensorIR,
     infer_model_ir_logical_layouts,
+    is_channel_first_logical_layout,
+    is_channel_last_logical_layout,
+    normalize_logical_layout,
     normalize_onnx_shape,
     validate_model_ir_layout_annotations,
 )
@@ -57749,6 +57752,11 @@ def _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
 
     def _prefer_runtime_layout_for_rank4_data_tensor(data_tensor_name: str) -> Optional[str]:
         name = str(data_tensor_name)
+        data_tensor = model_ir.tensors.get(name, None)
+        if data_tensor is not None:
+            logical_layout = str(getattr(data_tensor, "logical_layout", "") or "").upper()
+            if logical_layout in {"NHWC", "NCHW"}:
+                return logical_layout
         lower_name = name.lower()
         if lower_name.endswith("_nhwc"):
             return "NHWC"
@@ -57871,6 +57879,243 @@ def _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
             break
 
     return {"repaired_rank4_channelwise_broadcast_constants": int(repaired)}
+
+
+def _repair_decomposed_instance_normalization_layouts(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    repaired = 0
+    consumers = _build_tensor_consumer_map(model_ir)
+
+    def _single_consumer_index(tensor_name: str) -> Optional[int]:
+        users = [int(v) for v in consumers.get(str(tensor_name), [])]
+        if len(users) != 1:
+            return None
+        return int(users[0])
+
+    def _set_shape_metadata(tensor_name: str, shape: List[int]) -> bool:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            return False
+        changed = False
+        normalized_shape = [int(v) for v in list(shape)]
+        if [int(v) for v in list(tensor.shape)] != normalized_shape:
+            tensor.shape = list(normalized_shape)
+            changed = True
+        if tensor.shape_signature is not None and len(list(tensor.shape_signature)) == len(normalized_shape):
+            if [int(v) for v in list(tensor.shape_signature)] != normalized_shape:
+                tensor.shape_signature = list(normalized_shape)
+                changed = True
+        return changed
+
+    def _reshape_channelwise_const(tensor_name: str, broadcast_shape: List[int]) -> bool:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None or tensor.data is None:
+            return False
+        data = np.asarray(tensor.data)
+        if int(data.size) <= 1:
+            return False
+        if int(np.prod(np.asarray(broadcast_shape), dtype=np.int64)) != int(data.size):
+            return False
+        reshaped = np.asarray(data.reshape(broadcast_shape), dtype=data.dtype)
+        changed = False
+        if list(data.shape) != list(reshaped.shape) or not np.array_equal(data, reshaped):
+            tensor.data = reshaped
+            changed = True
+        if [int(v) for v in list(tensor.shape)] != [int(v) for v in list(reshaped.shape)]:
+            tensor.shape = [int(v) for v in list(reshaped.shape)]
+            changed = True
+        if tensor.shape_signature is not None and len(list(tensor.shape_signature)) == int(reshaped.ndim):
+            if [int(v) for v in list(tensor.shape_signature)] != [int(v) for v in list(reshaped.shape)]:
+                tensor.shape_signature = [int(v) for v in list(reshaped.shape)]
+                changed = True
+        return changed
+
+    for mean1_idx, mean1_op in enumerate(list(model_ir.operators)):
+        if str(mean1_op.op_type) != "MEAN" or len(mean1_op.inputs) != 2 or len(mean1_op.outputs) != 1:
+            continue
+        x_name = str(mean1_op.inputs[0])
+        x_tensor = model_ir.tensors.get(x_name, None)
+        if x_tensor is None:
+            continue
+        x_shape = [int(v) for v in list(x_tensor.shape)]
+        rank = len(x_shape)
+        if rank not in {3, 4, 5}:
+            continue
+        x_layout = normalize_logical_layout(getattr(x_tensor, "logical_layout", None))
+        if is_channel_first_logical_layout(x_layout):
+            channel_axis = 1
+        elif is_channel_last_logical_layout(x_layout):
+            channel_axis = rank - 1
+        else:
+            continue
+        desired_axes = [int(axis) for axis in range(1, rank) if int(axis) != int(channel_axis)]
+        axes_name = str(mean1_op.inputs[1])
+        axes_values = _read_const_ints_from_tensor(model_ir.tensors.get(axes_name, None))
+        if axes_values is None:
+            continue
+
+        mean1_out_name = str(mean1_op.outputs[0])
+        sub_idx = None
+        for user_idx in consumers.get(x_name, []):
+            user_op = model_ir.operators[int(user_idx)]
+            if (
+                str(user_op.op_type) == "SUB"
+                and len(user_op.inputs) == 2
+                and len(user_op.outputs) == 1
+                and x_name in {str(user_op.inputs[0]), str(user_op.inputs[1])}
+                and mean1_out_name in {str(user_op.inputs[0]), str(user_op.inputs[1])}
+            ):
+                sub_idx = int(user_idx)
+                break
+        if sub_idx is None:
+            continue
+        centered_name = str(model_ir.operators[int(sub_idx)].outputs[0])
+
+        mul_square_idx = None
+        mul_norm_idx = None
+        for user_idx in consumers.get(centered_name, []):
+            user_op = model_ir.operators[int(user_idx)]
+            if str(user_op.op_type) != "MUL" or len(user_op.inputs) != 2 or len(user_op.outputs) != 1:
+                continue
+            in0 = str(user_op.inputs[0])
+            in1 = str(user_op.inputs[1])
+            if in0 == centered_name and in1 == centered_name:
+                mul_square_idx = int(user_idx)
+            elif centered_name in {in0, in1}:
+                mul_norm_idx = int(user_idx)
+        if mul_square_idx is None or mul_norm_idx is None:
+            continue
+
+        squared_name = str(model_ir.operators[int(mul_square_idx)].outputs[0])
+        mean2_idx = _single_consumer_index(squared_name)
+        if mean2_idx is None:
+            continue
+        mean2_op = model_ir.operators[int(mean2_idx)]
+        if str(mean2_op.op_type) != "MEAN" or len(mean2_op.inputs) != 2 or len(mean2_op.outputs) != 1:
+            continue
+        mean2_axes_name = str(mean2_op.inputs[1])
+        mean2_axes_values = _read_const_ints_from_tensor(model_ir.tensors.get(mean2_axes_name, None))
+        if mean2_axes_values is None:
+            continue
+
+        mean2_out_name = str(mean2_op.outputs[0])
+        add_eps_idx = _single_consumer_index(mean2_out_name)
+        if add_eps_idx is None:
+            continue
+        add_eps_out_name = str(model_ir.operators[int(add_eps_idx)].outputs[0])
+        sqrt_idx = _single_consumer_index(add_eps_out_name)
+        if sqrt_idx is None:
+            continue
+        sqrt_out_name = str(model_ir.operators[int(sqrt_idx)].outputs[0])
+        div_idx = _single_consumer_index(sqrt_out_name)
+        if div_idx is None:
+            continue
+        div_out_name = str(model_ir.operators[int(div_idx)].outputs[0])
+        mul_norm_op = model_ir.operators[int(mul_norm_idx)]
+        if div_out_name not in {str(v) for v in list(mul_norm_op.inputs)}:
+            continue
+        normalized_name = str(mul_norm_op.outputs[0])
+
+        mul_scale_idx = _single_consumer_index(normalized_name)
+        if mul_scale_idx is None:
+            continue
+        mul_scale_op = model_ir.operators[int(mul_scale_idx)]
+        if str(mul_scale_op.op_type) != "MUL" or len(mul_scale_op.inputs) != 2 or len(mul_scale_op.outputs) != 1:
+            continue
+        if normalized_name not in {str(v) for v in list(mul_scale_op.inputs)}:
+            continue
+        scale_const_name = (
+            str(mul_scale_op.inputs[0])
+            if str(mul_scale_op.inputs[1]) == normalized_name
+            else str(mul_scale_op.inputs[1])
+        )
+        scaled_name = str(mul_scale_op.outputs[0])
+        desired_reduced_shape = list(x_shape)
+        for axis in desired_axes:
+            desired_reduced_shape[int(axis)] = 1
+        desired_broadcast_shape = [1 for _ in range(rank)]
+        desired_broadcast_shape[int(channel_axis)] = int(x_shape[int(channel_axis)])
+
+        bias_const_name = None
+        bias_broadcast_shape = None
+        post_scaled_name = scaled_name
+        add_bias_idx = _single_consumer_index(scaled_name)
+        if add_bias_idx is not None:
+            add_bias_op = model_ir.operators[int(add_bias_idx)]
+            if (
+                str(add_bias_op.op_type) == "ADD"
+                and len(add_bias_op.inputs) == 2
+                and len(add_bias_op.outputs) == 1
+                and scaled_name in {str(v) for v in list(add_bias_op.inputs)}
+            ):
+                bias_const_name = (
+                    str(add_bias_op.inputs[0])
+                    if str(add_bias_op.inputs[1]) == scaled_name
+                    else str(add_bias_op.inputs[1])
+                )
+                bias_broadcast_shape = list(desired_broadcast_shape)
+            else:
+                add_bias_idx = None
+        if add_bias_idx is None:
+            post_idx = _single_consumer_index(scaled_name)
+            if post_idx is None:
+                continue
+            post_op = model_ir.operators[int(post_idx)]
+            if str(post_op.op_type) != "TRANSPOSE" or len(post_op.inputs) < 2 or len(post_op.outputs) != 1:
+                continue
+            post_perm = _read_transpose_perm(model_ir, post_op)
+            if post_perm is None or len(post_perm) != rank:
+                continue
+            post_scaled_name = str(post_op.outputs[0])
+            add_bias_idx = _single_consumer_index(post_scaled_name)
+            if add_bias_idx is None:
+                continue
+            add_bias_op = model_ir.operators[int(add_bias_idx)]
+            if (
+                str(add_bias_op.op_type) != "ADD"
+                or len(add_bias_op.inputs) != 2
+                or len(add_bias_op.outputs) != 1
+                or post_scaled_name not in {str(v) for v in list(add_bias_op.inputs)}
+            ):
+                continue
+            bias_const_name = (
+                str(add_bias_op.inputs[0])
+                if str(add_bias_op.inputs[1]) == post_scaled_name
+                else str(add_bias_op.inputs[1])
+            )
+            bias_broadcast_shape = [1 for _ in range(rank)]
+            inverse_post_perm = [0 for _ in range(rank)]
+            for new_axis, old_axis in enumerate(post_perm):
+                inverse_post_perm[int(old_axis)] = int(new_axis)
+            post_channel_axis = int(inverse_post_perm[int(channel_axis)])
+            bias_broadcast_shape[int(post_channel_axis)] = int(x_shape[int(channel_axis)])
+        if bias_const_name is None or bias_broadcast_shape is None:
+            continue
+
+        changed = False
+        if [int(v) for v in list(axes_values)] != desired_axes:
+            changed = _write_const_ints_to_tensor(model_ir.tensors.get(axes_name, None), desired_axes) or changed
+        if [int(v) for v in list(mean2_axes_values)] != desired_axes:
+            changed = _write_const_ints_to_tensor(model_ir.tensors.get(mean2_axes_name, None), desired_axes) or changed
+
+        for reduced_name in [mean1_out_name, mean2_out_name, add_eps_out_name, sqrt_out_name, div_out_name]:
+            changed = _set_shape_metadata(reduced_name, desired_reduced_shape) or changed
+        for full_name in [centered_name, squared_name, normalized_name, scaled_name]:
+            changed = _set_shape_metadata(full_name, x_shape) or changed
+        changed = _reshape_channelwise_const(scale_const_name, desired_broadcast_shape) or changed
+        changed = _reshape_channelwise_const(bias_const_name, bias_broadcast_shape) or changed
+        if post_scaled_name != scaled_name:
+            post_scaled_tensor = model_ir.tensors.get(post_scaled_name, None)
+            if post_scaled_tensor is not None:
+                post_shape = [int(v) for v in list(post_scaled_tensor.shape)]
+                if len(post_shape) == rank:
+                    changed = _set_shape_metadata(post_scaled_name, post_shape) or changed
+
+        if changed:
+            repaired += 1
+
+    return {"repaired_decomposed_instance_normalization_layouts": int(repaired)}
 
 
 def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
@@ -69116,6 +69361,7 @@ def _optimize_boundary_input_layout_transposes(model_ir: ModelIR) -> Dict[str, i
     while True:
         model_inputs = set(str(v) for v in model_ir.inputs)
         model_outputs = set(str(v) for v in model_ir.outputs)
+        consumers = _build_tensor_consumer_map(model_ir)
         changed = False
 
         for op_idx, op in enumerate(model_ir.operators):
@@ -69170,6 +69416,13 @@ def _optimize_boundary_input_layout_transposes(model_ir: ModelIR) -> Dict[str, i
             if str(input_tensor.dtype) != str(internal_tensor.dtype):
                 continue
             if input_tensor.quantization != internal_tensor.quantization:
+                continue
+            consumer_op_types = {
+                str(model_ir.operators[int(consumer_idx)].op_type)
+                for consumer_idx in consumers.get(str(output_name), [])
+                if int(consumer_idx) != int(op_idx)
+            }
+            if len(consumer_op_types & {"GATHER", "GATHER_ND", "SLICE", "STRIDED_SLICE"}) > 0:
                 continue
 
             # Redirect all internal users to model input without changing
@@ -71195,6 +71448,13 @@ def lower_onnx_to_ir(
         _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(fallback_ir)
         _topologically_sort_operators(fallback_ir)
         infer_model_ir_logical_layouts(fallback_ir)
+        fallback_broadcast_repair_stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
+            fallback_ir
+        )
+        if int(fallback_broadcast_repair_stats.get("repaired_rank4_channelwise_broadcast_constants", 0)) > 0:
+            _reconcile_static_tensor_shapes(fallback_ir)
+            _topologically_sort_operators(fallback_ir)
+            infer_model_ir_logical_layouts(fallback_ir)
         fallback_layout_problems = validate_model_ir_layout_annotations(fallback_ir)
         if len(fallback_layout_problems) > 0:
             fallback_ir.metadata["logical_layout_validation_errors"] = list(fallback_layout_problems)
@@ -71229,6 +71489,16 @@ def lower_onnx_to_ir(
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
     _topologically_sort_operators(model_ir)
     infer_model_ir_logical_layouts(model_ir)
+    final_instancenorm_repair_stats = _repair_decomposed_instance_normalization_layouts(model_ir)
+    if int(final_instancenorm_repair_stats.get("repaired_decomposed_instance_normalization_layouts", 0)) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+        _topologically_sort_operators(model_ir)
+        infer_model_ir_logical_layouts(model_ir)
+    final_broadcast_repair_stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
+    if int(final_broadcast_repair_stats.get("repaired_rank4_channelwise_broadcast_constants", 0)) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+        _topologically_sort_operators(model_ir)
+        infer_model_ir_logical_layouts(model_ir)
     layout_problems = validate_model_ir_layout_annotations(model_ir)
     if len(layout_problems) > 0:
         model_ir.metadata["logical_layout_validation_errors"] = list(layout_problems)

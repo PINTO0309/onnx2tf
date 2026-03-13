@@ -271,6 +271,56 @@ def _resolve_positive_axis_dim(
     return -1
 
 
+def _build_runtime_axis_dim_tensor(
+    *,
+    ctx: Any,
+    params_name: str,
+    axis: int,
+    input_rank: int,
+    output_name: str,
+) -> str:
+    params_shape_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gather_params_shape_i32",
+        dtype="INT32",
+        shape=[int(input_rank)],
+    )
+    params_shape_tensor = ctx.model_ir.tensors.get(params_shape_name, None)
+    if params_shape_tensor is not None:
+        params_shape_tensor.shape_signature = [int(input_rank)]
+        params_shape_tensor.shape = [int(input_rank)]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SHAPE",
+            inputs=[params_name],
+            outputs=[params_shape_name],
+            options={"outType": "INT32"},
+        )
+    )
+
+    axis_index_name = ctx.add_const_tensor(
+        f"{output_name}_gather_axis_index_i32",
+        np.asarray([int(axis)], dtype=np.int32),
+    )
+    axis_dim_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gather_axis_dim_runtime_i32",
+        dtype="INT32",
+        shape=[1],
+    )
+    axis_dim_tensor = ctx.model_ir.tensors.get(axis_dim_name, None)
+    if axis_dim_tensor is not None:
+        axis_dim_tensor.shape_signature = [1]
+        axis_dim_tensor.shape = [1]
+    ctx.add_operator(
+        OperatorIR(
+            op_type="GATHER",
+            inputs=[params_shape_name, axis_index_name],
+            outputs=[axis_dim_name],
+            options={"axis": 0, "batchDims": 0},
+        )
+    )
+    return axis_dim_name
+
+
 def build_gather_op(node: Any, ctx: Any) -> None:
     params_name = node.inputs[0].name
     indices_name = node.inputs[1].name
@@ -364,28 +414,24 @@ def build_gather_op(node: Any, ctx: Any) -> None:
                 input_signature=input_signature,
                 axis=axis,
             )
-            if axis_dim <= 0:
-                raise NotImplementedError(
-                    f"Gather negative constant indices require known positive axis dimension. "
-                    f"op={node.name} axis={axis} axis_dim={axis_dim}"
+            if axis_dim > 0:
+                wrapped_indices_i64 = np.where(
+                    indices_const_arr.astype(np.int64, copy=False) < 0,
+                    indices_const_arr.astype(np.int64, copy=False) + int(axis_dim),
+                    indices_const_arr.astype(np.int64, copy=False),
                 )
-            wrapped_indices_i64 = np.where(
-                indices_const_arr.astype(np.int64, copy=False) < 0,
-                indices_const_arr.astype(np.int64, copy=False) + int(axis_dim),
-                indices_const_arr.astype(np.int64, copy=False),
-            )
-            if bool(np.any(wrapped_indices_i64 < 0)) or bool(np.any(wrapped_indices_i64 >= int(axis_dim))):
-                raise NotImplementedError(
-                    f"Gather constant indices are out of bounds after negative-index normalization. "
-                    f"op={node.name} axis={axis} axis_dim={axis_dim}"
+                if bool(np.any(wrapped_indices_i64 < 0)) or bool(np.any(wrapped_indices_i64 >= int(axis_dim))):
+                    raise NotImplementedError(
+                        f"Gather constant indices are out of bounds after negative-index normalization. "
+                        f"op={node.name} axis={axis} axis_dim={axis_dim}"
+                    )
+                indices_const_arr = wrapped_indices_i64.astype(indices_const_arr.dtype, copy=False)
+                scalarized_indices_name = ctx.add_const_tensor(
+                    f"{output_name}_gather_indices_wrapped",
+                    indices_const_arr,
                 )
-            indices_const_arr = wrapped_indices_i64.astype(indices_const_arr.dtype, copy=False)
-            scalarized_indices_name = ctx.add_const_tensor(
-                f"{output_name}_gather_indices_wrapped",
-                indices_const_arr,
-            )
-            indices_shape = [int(v) for v in list(indices_const_arr.shape)]
-            indices_signature = [int(v) for v in list(indices_const_arr.shape)]
+                indices_shape = [int(v) for v in list(indices_const_arr.shape)]
+                indices_signature = [int(v) for v in list(indices_const_arr.shape)]
         scalarize_single_index = indices_const_arr.ndim == 0
         if not scalarize_single_index and int(indices_const_arr.size) == 1 and input_rank > 1:
             expected_rank = len(existing_output_signature)
@@ -542,170 +588,184 @@ def build_gather_op(node: Any, ctx: Any) -> None:
             gather_indices_name = gather_indices_i32_name
 
     gather_indices_const = ctx.get_constant_array(gather_indices_name)
-    if gather_indices_const is None:
+    gather_requires_negative_index_normalization = bool(gather_indices_const is None)
+    if gather_indices_const is not None:
+        gather_indices_arr = np.asarray(gather_indices_const)
+        if np.issubdtype(gather_indices_arr.dtype, np.integer) and bool(np.any(gather_indices_arr < 0)):
+            gather_requires_negative_index_normalization = True
+    if gather_requires_negative_index_normalization:
         axis_dim = _resolve_positive_axis_dim(
             input_shape=input_shape,
             input_signature=input_signature,
             axis=axis,
         )
-        if axis_dim > 0:
-            runtime_indices_shape = [int(v) for v in gather_indices_shape]
-            runtime_indices_signature = [int(v) for v in gather_indices_signature]
-            if len(runtime_indices_shape) == 0:
-                runtime_indices_shape = [1]
-            if len(runtime_indices_signature) == 0:
-                runtime_indices_signature = [1]
+        runtime_indices_shape = [int(v) for v in gather_indices_shape]
+        runtime_indices_signature = [int(v) for v in gather_indices_signature]
+        if len(runtime_indices_shape) == 0:
+            runtime_indices_shape = [1]
+        if len(runtime_indices_signature) == 0:
+            runtime_indices_signature = [1]
 
-            gather_axis_dim_name = ctx.add_const_tensor(
+        gather_axis_dim_name = (
+            ctx.add_const_tensor(
                 f"{output_name}_gather_axis_dim_i32",
                 np.asarray([int(axis_dim)], dtype=np.int32),
             )
-            gather_indices_zero_name = ctx.add_const_tensor(
-                f"{output_name}_gather_indices_zero_i32",
+            if axis_dim > 0
+            else _build_runtime_axis_dim_tensor(
+                ctx=ctx,
+                params_name=params_name,
+                axis=axis,
+                input_rank=input_rank,
+                output_name=output_name,
+            )
+        )
+        gather_indices_zero_name = ctx.add_const_tensor(
+            f"{output_name}_gather_indices_zero_i32",
+            np.asarray([0], dtype=np.int32),
+        )
+        gather_indices_is_negative_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gather_indices_is_negative",
+            dtype="BOOL",
+            shape=runtime_indices_shape,
+        )
+        gather_indices_is_negative_tensor = ctx.model_ir.tensors.get(
+            gather_indices_is_negative_name, None
+        )
+        if gather_indices_is_negative_tensor is not None:
+            gather_indices_is_negative_tensor.shape_signature = [
+                int(v) for v in runtime_indices_signature
+            ]
+            gather_indices_is_negative_tensor.shape = [
+                int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
+            ]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="LESS",
+                inputs=[gather_indices_name, gather_indices_zero_name],
+                outputs=[gather_indices_is_negative_name],
+                options={},
+            )
+        )
+
+        gather_indices_normalized_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gather_indices_normalized",
+            dtype="INT32",
+            shape=runtime_indices_shape,
+        )
+        gather_indices_normalized_tensor = ctx.model_ir.tensors.get(
+            gather_indices_normalized_name, None
+        )
+        if gather_indices_normalized_tensor is not None:
+            gather_indices_normalized_tensor.shape_signature = [
+                int(v) for v in runtime_indices_signature
+            ]
+            gather_indices_normalized_tensor.shape = [
+                int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
+            ]
+        if bool(getattr(ctx, "optimization_for_gpu_delegate", False)):
+            one_name = ctx.add_const_tensor(
+                f"{output_name}_gather_indices_one_i32",
+                np.asarray([1], dtype=np.int32),
+            )
+            zero_mask_name = ctx.add_const_tensor(
+                f"{output_name}_gather_indices_zero_mask_i32",
                 np.asarray([0], dtype=np.int32),
             )
-            gather_indices_is_negative_name = ctx.add_intermediate_tensor(
-                f"{output_name}_gather_indices_is_negative",
-                dtype="BOOL",
+            gather_indices_negative_mask_name = ctx.add_intermediate_tensor(
+                f"{output_name}_gather_indices_negative_mask",
+                dtype="INT32",
                 shape=runtime_indices_shape,
             )
-            gather_indices_is_negative_tensor = ctx.model_ir.tensors.get(
-                gather_indices_is_negative_name, None
+            gather_indices_negative_mask_tensor = ctx.model_ir.tensors.get(
+                gather_indices_negative_mask_name, None
             )
-            if gather_indices_is_negative_tensor is not None:
-                gather_indices_is_negative_tensor.shape_signature = [
+            if gather_indices_negative_mask_tensor is not None:
+                gather_indices_negative_mask_tensor.shape_signature = [
                     int(v) for v in runtime_indices_signature
                 ]
-                gather_indices_is_negative_tensor.shape = [
+                gather_indices_negative_mask_tensor.shape = [
                     int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
                 ]
             ctx.add_operator(
                 OperatorIR(
-                    op_type="LESS",
-                    inputs=[gather_indices_name, gather_indices_zero_name],
-                    outputs=[gather_indices_is_negative_name],
+                    op_type="SELECT",
+                    inputs=[
+                        gather_indices_is_negative_name,
+                        one_name,
+                        zero_mask_name,
+                    ],
+                    outputs=[gather_indices_negative_mask_name],
                     options={},
                 )
             )
-
-            gather_indices_normalized_name = ctx.add_intermediate_tensor(
-                f"{output_name}_gather_indices_normalized",
+            gather_indices_offset_name = ctx.add_intermediate_tensor(
+                f"{output_name}_gather_indices_offset",
                 dtype="INT32",
                 shape=runtime_indices_shape,
             )
-            gather_indices_normalized_tensor = ctx.model_ir.tensors.get(
-                gather_indices_normalized_name, None
+            gather_indices_offset_tensor = ctx.model_ir.tensors.get(
+                gather_indices_offset_name, None
             )
-            if gather_indices_normalized_tensor is not None:
-                gather_indices_normalized_tensor.shape_signature = [
+            if gather_indices_offset_tensor is not None:
+                gather_indices_offset_tensor.shape_signature = [
                     int(v) for v in runtime_indices_signature
                 ]
-                gather_indices_normalized_tensor.shape = [
+                gather_indices_offset_tensor.shape = [
                     int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
                 ]
-            if bool(getattr(ctx, "optimization_for_gpu_delegate", False)):
-                one_name = ctx.add_const_tensor(
-                    f"{output_name}_gather_indices_one_i32",
-                    np.asarray([1], dtype=np.int32),
+            _add_binary_op(
+                ctx=ctx,
+                op_type="MUL",
+                lhs_name=gather_indices_negative_mask_name,
+                rhs_name=gather_axis_dim_name,
+                output_name=gather_indices_offset_name,
+            )
+            _add_binary_op(
+                ctx=ctx,
+                op_type="ADD",
+                lhs_name=gather_indices_name,
+                rhs_name=gather_indices_offset_name,
+                output_name=gather_indices_normalized_name,
+            )
+        else:
+            gather_indices_wrapped_runtime_name = ctx.add_intermediate_tensor(
+                f"{output_name}_gather_indices_wrapped_runtime",
+                dtype="INT32",
+                shape=runtime_indices_shape,
+            )
+            gather_indices_wrapped_runtime_tensor = ctx.model_ir.tensors.get(
+                gather_indices_wrapped_runtime_name, None
+            )
+            if gather_indices_wrapped_runtime_tensor is not None:
+                gather_indices_wrapped_runtime_tensor.shape_signature = [
+                    int(v) for v in runtime_indices_signature
+                ]
+                gather_indices_wrapped_runtime_tensor.shape = [
+                    int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
+                ]
+            _add_binary_op(
+                ctx=ctx,
+                op_type="ADD",
+                lhs_name=gather_indices_name,
+                rhs_name=gather_axis_dim_name,
+                output_name=gather_indices_wrapped_runtime_name,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SELECT",
+                    inputs=[
+                        gather_indices_is_negative_name,
+                        gather_indices_wrapped_runtime_name,
+                        gather_indices_name,
+                    ],
+                    outputs=[gather_indices_normalized_name],
+                    options={},
                 )
-                zero_mask_name = ctx.add_const_tensor(
-                    f"{output_name}_gather_indices_zero_mask_i32",
-                    np.asarray([0], dtype=np.int32),
-                )
-                gather_indices_negative_mask_name = ctx.add_intermediate_tensor(
-                    f"{output_name}_gather_indices_negative_mask",
-                    dtype="INT32",
-                    shape=runtime_indices_shape,
-                )
-                gather_indices_negative_mask_tensor = ctx.model_ir.tensors.get(
-                    gather_indices_negative_mask_name, None
-                )
-                if gather_indices_negative_mask_tensor is not None:
-                    gather_indices_negative_mask_tensor.shape_signature = [
-                        int(v) for v in runtime_indices_signature
-                    ]
-                    gather_indices_negative_mask_tensor.shape = [
-                        int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
-                    ]
-                ctx.add_operator(
-                    OperatorIR(
-                        op_type="SELECT",
-                        inputs=[
-                            gather_indices_is_negative_name,
-                            one_name,
-                            zero_mask_name,
-                        ],
-                        outputs=[gather_indices_negative_mask_name],
-                        options={},
-                    )
-                )
-                gather_indices_offset_name = ctx.add_intermediate_tensor(
-                    f"{output_name}_gather_indices_offset",
-                    dtype="INT32",
-                    shape=runtime_indices_shape,
-                )
-                gather_indices_offset_tensor = ctx.model_ir.tensors.get(
-                    gather_indices_offset_name, None
-                )
-                if gather_indices_offset_tensor is not None:
-                    gather_indices_offset_tensor.shape_signature = [
-                        int(v) for v in runtime_indices_signature
-                    ]
-                    gather_indices_offset_tensor.shape = [
-                        int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
-                    ]
-                _add_binary_op(
-                    ctx=ctx,
-                    op_type="MUL",
-                    lhs_name=gather_indices_negative_mask_name,
-                    rhs_name=gather_axis_dim_name,
-                    output_name=gather_indices_offset_name,
-                )
-                _add_binary_op(
-                    ctx=ctx,
-                    op_type="ADD",
-                    lhs_name=gather_indices_name,
-                    rhs_name=gather_indices_offset_name,
-                    output_name=gather_indices_normalized_name,
-                )
-            else:
-                gather_indices_wrapped_runtime_name = ctx.add_intermediate_tensor(
-                    f"{output_name}_gather_indices_wrapped_runtime",
-                    dtype="INT32",
-                    shape=runtime_indices_shape,
-                )
-                gather_indices_wrapped_runtime_tensor = ctx.model_ir.tensors.get(
-                    gather_indices_wrapped_runtime_name, None
-                )
-                if gather_indices_wrapped_runtime_tensor is not None:
-                    gather_indices_wrapped_runtime_tensor.shape_signature = [
-                        int(v) for v in runtime_indices_signature
-                    ]
-                    gather_indices_wrapped_runtime_tensor.shape = [
-                        int(v) if int(v) >= 0 else 1 for v in runtime_indices_signature
-                    ]
-                _add_binary_op(
-                    ctx=ctx,
-                    op_type="ADD",
-                    lhs_name=gather_indices_name,
-                    rhs_name=gather_axis_dim_name,
-                    output_name=gather_indices_wrapped_runtime_name,
-                )
-                ctx.add_operator(
-                    OperatorIR(
-                        op_type="SELECT",
-                        inputs=[
-                            gather_indices_is_negative_name,
-                            gather_indices_wrapped_runtime_name,
-                            gather_indices_name,
-                        ],
-                        outputs=[gather_indices_normalized_name],
-                        options={},
-                    )
-                )
-            gather_indices_name = gather_indices_normalized_name
-            gather_indices_shape = [int(v) for v in runtime_indices_shape]
-            gather_indices_signature = [int(v) for v in runtime_indices_signature]
+            )
+        gather_indices_name = gather_indices_normalized_name
+        gather_indices_shape = [int(v) for v in runtime_indices_shape]
+        gather_indices_signature = [int(v) for v in runtime_indices_signature]
 
     gather_output_name = output_name
     gather_output_signature: list[int] = []

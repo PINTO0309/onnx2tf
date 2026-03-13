@@ -1200,18 +1200,6 @@ def _validate_slice(node: Any, ctx: Any) -> None:
         attr_name="axes",
         default_if_missing=[int(v) for v in range(default_axis_len)],
     )
-    normalized_axes = _normalize_axes_for_rank(axes=axes, rank=rank, node=node)
-    if dynamic_start_name == "" and len(normalized_axes) != len(starts_values):
-        raise NodeValidationError(
-            reason_code="invalid_input_shape",
-            message=(
-                f"Slice starts/axes length mismatch. "
-                f"starts_len={len(starts_values)} axes_len={len(normalized_axes)}"
-            ),
-            node_name=node.name,
-            node_op=node.op,
-        )
-
     if len(node.inputs) >= 5 and str(node.inputs[4].name) != "":
         steps_arr = _require_const_input(node, ctx, 4, "slice steps")
         steps = [int(v) for v in np.asarray(steps_arr).reshape(-1).tolist()]
@@ -1220,18 +1208,18 @@ def _validate_slice(node: Any, ctx: Any) -> None:
         if isinstance(attr_steps, (list, tuple, np.ndarray)):
             steps = [int(v) for v in np.asarray(attr_steps).reshape(-1).tolist()]
         elif attr_steps is None:
-            steps = [1 for _ in range(len(normalized_axes))]
+            steps = [1 for _ in range(len(axes))]
         else:
             steps = [int(attr_steps)]
     else:
-        steps = [1 for _ in range(len(normalized_axes))]
+        steps = [1 for _ in range(len(axes))]
 
-    if len(steps) != len(normalized_axes):
+    if len(steps) != len(axes):
         raise NodeValidationError(
             reason_code="invalid_input_shape",
             message=(
                 f"Slice starts/steps length mismatch. "
-                f"axes_len={len(normalized_axes)} steps_len={len(steps)}"
+                f"axes_len={len(axes)} steps_len={len(steps)}"
             ),
             node_name=node.name,
             node_op=node.op,
@@ -1240,6 +1228,33 @@ def _validate_slice(node: Any, ctx: Any) -> None:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
             message=f"Slice step must not be 0. steps={steps}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    normalization_rank = int(rank)
+    if (
+        normalization_rank <= int(axes[0])
+        and dynamic_start_name == ""
+        and dynamic_end_name == ""
+        and len(starts_values) == 1
+        and len(ends_values) == 1
+        and len(axes) == 1
+        and len(steps) == 1
+        and int(steps[0]) == -1
+        and int(starts_values[0]) == -1
+        and int(ends_values[0]) <= -int(np.iinfo(np.int32).max)
+        and int(axes[0]) >= 0
+    ):
+        normalization_rank = int(axes[0]) + 1
+    normalized_axes = _normalize_axes_for_rank(axes=axes, rank=normalization_rank, node=node)
+    if dynamic_start_name == "" and len(normalized_axes) != len(starts_values):
+        raise NodeValidationError(
+            reason_code="invalid_input_shape",
+            message=(
+                f"Slice starts/axes length mismatch. "
+                f"starts_len={len(starts_values)} axes_len={len(normalized_axes)}"
+            ),
             node_name=node.name,
             node_op=node.op,
         )
@@ -1259,22 +1274,36 @@ def _validate_slice(node: Any, ctx: Any) -> None:
             node_op=node.op,
         )
 
-    if dynamic_start_name != "" or (dynamic_end_name != "" and len(normalized_axes) == 1):
-        is_single_axis_dynamic = (
-            len(normalized_axes) == 1
-            and len(steps) == 1
-            and int(steps[0]) > 0
+    if dynamic_start_name != "" or (dynamic_end_name != "" and len(normalized_axes) >= 1):
+        steps_positive = all(int(step) > 0 for step in steps)
+        starts_non_negative = (
+            all(int(v) >= 0 for v in starts_values)
+            if dynamic_start_name == ""
+            else True
+        )
+        is_supported_dynamic_slice = (
+            len(normalized_axes) >= 1
+            and len(steps) == len(normalized_axes)
+            and steps_positive
             and (
                 dynamic_start_name != ""
-                or (len(starts_values) == 1 and int(starts_values[0]) >= 0)
+                or len(starts_values) == len(normalized_axes)
+            )
+            and (
+                dynamic_start_name != ""
+                or starts_non_negative
+            )
+            and (
+                dynamic_end_name != ""
+                or len(ends_values) == len(normalized_axes)
             )
         )
-        if not is_single_axis_dynamic:
+        if not is_supported_dynamic_slice:
             raise NodeValidationError(
                 reason_code="unsupported_input_shape",
                 message=(
-                    "Slice dynamic starts/ends lowering supports single-axis slicing "
-                    "with positive step only. "
+                    "Slice dynamic starts/ends lowering supports positive-step slicing "
+                    "with rank-1 dynamic vectors matching axes. "
                     f"rank={rank} starts={starts_values} ends={ends_values} "
                     f"axes={normalized_axes} steps={steps}"
                 ),
@@ -1284,13 +1313,18 @@ def _validate_slice(node: Any, ctx: Any) -> None:
         if dynamic_start_name != "":
             dynamic_start_shape = [int(v) for v in ctx.get_tensor_shape(dynamic_start_name)]
             dynamic_start_len = int(dynamic_start_shape[0]) if len(dynamic_start_shape) == 1 else -1
-            if not (len(dynamic_start_shape) == 1 and (dynamic_start_len <= 0 or dynamic_start_len == 1)):
+            expected_len = len(normalized_axes)
+            if not (
+                len(dynamic_start_shape) == 1
+                and (dynamic_start_len <= 0 or dynamic_start_len == expected_len)
+            ):
                 raise NodeValidationError(
                     reason_code="unsupported_input_shape",
                     message=(
-                        "Slice dynamic starts must be rank-1 length-1 (or unknown length) "
+                        "Slice dynamic starts must be rank-1 with length matching axes "
+                        "(or unknown length) "
                         "for builtin lowering. "
-                        f"shape={dynamic_start_shape}"
+                        f"shape={dynamic_start_shape} expected_len={expected_len}"
                     ),
                     node_name=node.name,
                     node_op=node.op,
@@ -1298,13 +1332,18 @@ def _validate_slice(node: Any, ctx: Any) -> None:
         if dynamic_end_name != "":
             dynamic_end_shape = [int(v) for v in ctx.get_tensor_shape(dynamic_end_name)]
             dynamic_end_len = int(dynamic_end_shape[0]) if len(dynamic_end_shape) == 1 else -1
-            if not (len(dynamic_end_shape) == 1 and (dynamic_end_len <= 0 or dynamic_end_len == 1)):
+            expected_len = len(normalized_axes)
+            if not (
+                len(dynamic_end_shape) == 1
+                and (dynamic_end_len <= 0 or dynamic_end_len == expected_len)
+            ):
                 raise NodeValidationError(
                     reason_code="unsupported_input_shape",
                     message=(
-                        "Slice dynamic ends must be rank-1 length-1 (or unknown length) "
+                        "Slice dynamic ends must be rank-1 with length matching axes "
+                        "(or unknown length) "
                         "for builtin lowering. "
-                        f"shape={dynamic_end_shape}"
+                        f"shape={dynamic_end_shape} expected_len={expected_len}"
                     ),
                     node_name=node.name,
                     node_op=node.op,
@@ -1490,6 +1529,21 @@ def _validate_transpose(node: Any, ctx: Any) -> None:
 
 
 def _validate_conv(node: Any, ctx: Any) -> None:
+    def _has_unresolved_raw_shape(tensor_name: str) -> bool:
+        if not hasattr(ctx, "shape_map") or not isinstance(ctx.shape_map, dict):
+            return False
+        raw_shape = ctx.shape_map.get(str(tensor_name), None)
+        if raw_shape is None:
+            return True
+        if not isinstance(raw_shape, (list, tuple)):
+            return True
+        if len(list(raw_shape)) == 0:
+            return True
+        for dim in list(raw_shape):
+            if not isinstance(dim, (int, np.integer)) or int(dim) <= 0:
+                return True
+        return False
+
     weights = _require_const_input(node, ctx, 1, "conv weights")
     if weights.ndim not in [3, 4, 5]:
         raise NodeValidationError(
@@ -1502,10 +1556,12 @@ def _validate_conv(node: Any, ctx: Any) -> None:
     output_shape = ctx.get_tensor_shape(node.outputs[0].name)
     input_is_unknown_placeholder = _is_unknown_rank_placeholder_tensor(ctx, node.inputs[0].name)
     output_is_unknown_placeholder = _is_unknown_rank_placeholder_tensor(ctx, node.outputs[0].name)
+    input_has_unresolved_raw_shape = _has_unresolved_raw_shape(node.inputs[0].name)
+    output_has_unresolved_raw_shape = _has_unresolved_raw_shape(node.outputs[0].name)
     if int(weights.ndim) == 4:
         if (
-            (len(input_shape) != 4 and not input_is_unknown_placeholder)
-            or (len(output_shape) != 4 and not output_is_unknown_placeholder)
+            (len(input_shape) != 4 and not input_is_unknown_placeholder and not input_has_unresolved_raw_shape)
+            or (len(output_shape) != 4 and not output_is_unknown_placeholder and not output_has_unresolved_raw_shape)
         ):
             raise NodeValidationError(
                 reason_code="unsupported_tensor_rank",
@@ -1515,8 +1571,8 @@ def _validate_conv(node: Any, ctx: Any) -> None:
             )
     elif int(weights.ndim) == 3:
         if (
-            (len(input_shape) != 3 and not input_is_unknown_placeholder)
-            or (len(output_shape) != 3 and not output_is_unknown_placeholder)
+            (len(input_shape) != 3 and not input_is_unknown_placeholder and not input_has_unresolved_raw_shape)
+            or (len(output_shape) != 3 and not output_is_unknown_placeholder and not output_has_unresolved_raw_shape)
         ):
             raise NodeValidationError(
                 reason_code="unsupported_tensor_rank",
@@ -1526,8 +1582,8 @@ def _validate_conv(node: Any, ctx: Any) -> None:
             )
     else:
         if (
-            (len(input_shape) != 5 and not input_is_unknown_placeholder)
-            or (len(output_shape) != 5 and not output_is_unknown_placeholder)
+            (len(input_shape) != 5 and not input_is_unknown_placeholder and not input_has_unresolved_raw_shape)
+            or (len(output_shape) != 5 and not output_is_unknown_placeholder and not output_has_unresolved_raw_shape)
         ):
             raise NodeValidationError(
                 reason_code="unsupported_tensor_rank",
@@ -6344,18 +6400,50 @@ def _validate_group_normalization(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    channels = int(input_shape[1])
-    if channels <= 0 or any(int(v) <= 0 for v in input_shape[2:]):
+    scale_size = int(np.asarray(scale).reshape(-1).size)
+    bias_size = int(np.asarray(bias).reshape(-1).size)
+    if scale_size != bias_size:
         raise NodeValidationError(
             reason_code="unsupported_input_shape",
             message=(
-                "GroupNormalization builtin lowering requires static positive channel/spatial dims. "
-                f"input_shape={input_shape}"
+                "GroupNormalization scale/bias must have the same length for builtin lowering. "
+                f"scale_shape={list(np.asarray(scale).shape)} bias_shape={list(np.asarray(bias).shape)}"
             ),
             node_name=node.name,
             node_op=node.op,
         )
-    num_groups = int(node.attrs.get("num_groups", 1))
+
+    op_name = str(node.op)
+    preferred_channel_axes = [1, len(input_shape) - 1] if op_name == "GroupNormalization" else [len(input_shape) - 1, 1]
+    channel_axis = None
+    for axis in preferred_channel_axes:
+        if 0 <= int(axis) < len(input_shape) and int(input_shape[int(axis)]) == scale_size:
+            channel_axis = int(axis)
+            break
+    if channel_axis is None:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "GroupNormalization builtin lowering requires the scale/bias length to match either C-first or C-last. "
+                f"input_shape={input_shape} scale_shape={list(np.asarray(scale).shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    channels = int(input_shape[channel_axis])
+    spatial_dims = [int(v) for idx, v in enumerate(input_shape[1:]) if int(idx) + 1 != channel_axis]
+    if channels <= 0 or any(int(v) <= 0 for v in spatial_dims):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "GroupNormalization builtin lowering requires static positive channel/spatial dims. "
+                f"input_shape={input_shape} channel_axis={channel_axis}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    num_groups = int(node.attrs.get("num_groups", node.attrs.get("groups", 1)))
     if num_groups <= 0 or channels % num_groups != 0:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
@@ -6366,7 +6454,7 @@ def _validate_group_normalization(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    if np.asarray(scale).reshape(-1).size != channels or np.asarray(bias).reshape(-1).size != channels:
+    if scale_size != channels or bias_size != channels:
         raise NodeValidationError(
             reason_code="unsupported_input_shape",
             message=(
@@ -6381,6 +6469,14 @@ def _validate_group_normalization(node: Any, ctx: Any) -> None:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
             message=f"GroupNormalization stash_type must be 0 or 1. stash_type={stash_type}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    activation = int(node.attrs.get("activation", 0))
+    if activation not in {0, 1}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"GroupNormalization activation must be 0 or 1. activation={activation}",
             node_name=node.name,
             node_op=node.op,
         )
@@ -8467,11 +8563,40 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
             for idx, dim in enumerate(resolved_output_shape)
         ]
 
-    if any(int(v) <= 0 for v in image_shape + grid_shape + resolved_output_shape):
+    def _dims_match_when_known(*dims: int) -> bool:
+        known = [int(v) for v in dims if int(v) > 0]
+        return len(set(known)) <= 1
+
+    if rank == 4:
+        required_static_dims = [
+            int(image_shape[0]),
+            int(image_shape[1]),
+            int(image_shape[2]),
+            int(image_shape[3]),
+            int(grid_shape[0]),
+            int(grid_shape[3]),
+            int(resolved_output_shape[0]),
+            int(resolved_output_shape[1]),
+        ]
+    else:
+        required_static_dims = [
+            int(image_shape[0]),
+            int(image_shape[1]),
+            int(image_shape[2]),
+            int(image_shape[3]),
+            int(image_shape[4]),
+            int(grid_shape[0]),
+            int(grid_shape[4]),
+            int(resolved_output_shape[0]),
+            int(resolved_output_shape[1]),
+        ]
+
+    if any(int(v) <= 0 for v in required_static_dims):
         raise NodeValidationError(
             reason_code="unsupported_input_shape",
             message=(
-                "GridSample requires static positive dimensions in flatbuffer_direct. "
+                "GridSample requires static positive batch/channel/input-spatial dimensions "
+                "and a static grid last dimension in flatbuffer_direct. "
                 f"image_shape={image_shape} grid_shape={grid_shape} "
                 f"output_shape={output_shape} resolved_output_shape={resolved_output_shape}"
             ),
@@ -8484,10 +8609,10 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
         out_n, out_c, out_h, out_w = [int(v) for v in resolved_output_shape]
         grid_n, grid_h, grid_w, _ = [int(v) for v in grid_shape]
         if not (
-            n == out_n == grid_n
-            and c == out_c
-            and out_h == grid_h
-            and out_w == grid_w
+            _dims_match_when_known(n, out_n, grid_n)
+            and _dims_match_when_known(c, out_c)
+            and _dims_match_when_known(out_h, grid_h)
+            and _dims_match_when_known(out_w, grid_w)
             and h >= 1
             and w >= 1
         ):
@@ -8506,11 +8631,11 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
         out_n, out_c, out_d, out_h, out_w = [int(v) for v in resolved_output_shape]
         grid_n, grid_d, grid_h, grid_w, _ = [int(v) for v in grid_shape]
         if not (
-            n == out_n == grid_n
-            and c == out_c
-            and out_d == grid_d
-            and out_h == grid_h
-            and out_w == grid_w
+            _dims_match_when_known(n, out_n, grid_n)
+            and _dims_match_when_known(c, out_c)
+            and _dims_match_when_known(out_d, grid_d)
+            and _dims_match_when_known(out_h, grid_h)
+            and _dims_match_when_known(out_w, grid_w)
             and d >= 1
             and h >= 1
             and w >= 1
@@ -9409,6 +9534,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     "GroupNormalization": DispatchEntry(
         onnx_op="GroupNormalization",
         tflite_ops=["RESHAPE", "MEAN", "SUB", "MUL", "ADD", "SQRT", "DIV", "CAST"],
+        builder=build_group_normalization_op,
+        validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_group_normalization,
+    ),
+    "GroupNorm": DispatchEntry(
+        onnx_op="GroupNorm",
+        tflite_ops=["RESHAPE", "MEAN", "SUB", "MUL", "ADD", "SQRT", "DIV", "CAST", "LOGISTIC"],
         builder=build_group_normalization_op,
         validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_group_normalization,

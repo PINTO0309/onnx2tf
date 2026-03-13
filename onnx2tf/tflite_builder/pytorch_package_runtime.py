@@ -151,6 +151,24 @@ def _align_tensor_to_target_shape(
     perm_inv = _perm_cf_to_cl(value.ndim)
     if perm_inv is not None and _permute_shape(actual_shape, perm_inv) == target:
         return value.permute(*perm_inv).contiguous()
+    if len(actual_shape) == len(target):
+        can_narrow = True
+        has_mismatch = False
+        for dim_idx, (actual_dim, target_dim) in enumerate(zip(actual_shape, target)):
+            if int(target_dim) <= 0 or int(actual_dim) < int(target_dim):
+                can_narrow = False
+                break
+            if int(actual_dim) != int(target_dim):
+                has_mismatch = True
+                if int(dim_idx) == 0:
+                    can_narrow = False
+                    break
+        if can_narrow and has_mismatch:
+            narrowed = value
+            for dim_idx, (actual_dim, target_dim) in enumerate(zip(actual_shape, target)):
+                if int(actual_dim) > int(target_dim):
+                    narrowed = torch.narrow(narrowed, int(dim_idx), 0, int(target_dim))
+            return narrowed
     return value
 
 

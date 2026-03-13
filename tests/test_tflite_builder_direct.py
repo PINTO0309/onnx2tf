@@ -44,6 +44,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_asin_transpose_passthrough_chains,
     _optimize_erf_transpose_passthrough_chains,
     _optimize_boundary_input_transpose_channel_slice_blocks,
+    _optimize_boundary_input_layout_transposes,
     _optimize_internal_transpose_channel_slice_nhwc_propagation_chains,
     _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains,
     _optimize_transpose_channel_slice_dual_add_bridges_strict,
@@ -2340,6 +2341,23 @@ def _make_gridsample_unknown_shape_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
 
 
+def _make_gridsample_dynamic_sparse_width_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 256, 60, 80])
+    grid = helper.make_tensor_value_info("grid", TensorProto.FLOAT, [1, 1, "num_keypoints", 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 256, 1, "num_keypoints"])
+    node = helper.make_node(
+        "GridSample",
+        ["x", "grid"],
+        ["y"],
+        name="GridSampleDynamicSparseWidthNode",
+        mode="bilinear",
+        padding_mode="zeros",
+        align_corners=1,
+    )
+    graph = helper.make_graph([node], "gridsample_dynamic_sparse_width_graph", [x, grid], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
 def test_clone_model_ir_with_float32_promotes_float16_tensors_and_cast_options() -> None:
     model_ir = ModelIR(name="clone_fp16_to_fp32_test")
     model_ir.inputs = ["x"]
@@ -3695,6 +3713,30 @@ def _make_batchnorm_rank3_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_batchnorm_rank4_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4, 4])
+    scale = numpy_helper.from_array(np.ones((3,), dtype=np.float32), name="bn_rank4_scale")
+    bias = numpy_helper.from_array(np.zeros((3,), dtype=np.float32), name="bn_rank4_bias")
+    mean = numpy_helper.from_array(np.zeros((3,), dtype=np.float32), name="bn_rank4_mean")
+    var = numpy_helper.from_array(np.ones((3,), dtype=np.float32), name="bn_rank4_var")
+    bn = helper.make_node(
+        "BatchNormalization",
+        ["x", "bn_rank4_scale", "bn_rank4_bias", "bn_rank4_mean", "bn_rank4_var"],
+        ["y"],
+        name="BNRank4",
+        epsilon=1e-5,
+    )
+    graph = helper.make_graph(
+        [bn],
+        "batchnorm_rank4_graph",
+        [x],
+        [y],
+        initializer=[scale, bias, mean, var],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_min_topk_dynamic_k_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 10])
     values = helper.make_tensor_value_info("values", TensorProto.FLOAT, [1, "K"])
@@ -4101,6 +4143,155 @@ def _make_slice_dynamic_start_const_end_single_axis_model() -> onnx.ModelProto:
         [y],
         initializer=[gather_index, unsq_axes, slice_axes, two, end, steps],
     )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_slice_dynamic_start_end_multi_axis_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 8, 10])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, "H_OUT", "W_OUT"])
+    gather_index_h = numpy_helper.from_array(np.asarray(2, dtype=np.int64), name="slice_dyn_multi_gather_index_h")
+    gather_index_w = numpy_helper.from_array(np.asarray(3, dtype=np.int64), name="slice_dyn_multi_gather_index_w")
+    unsq_axes = numpy_helper.from_array(np.asarray([0], dtype=np.int64), name="slice_dyn_multi_unsq_axes")
+    slice_axes = numpy_helper.from_array(np.asarray([2, 3], dtype=np.int64), name="slice_dyn_multi_axes")
+    slice_steps = numpy_helper.from_array(np.asarray([1, 1], dtype=np.int64), name="slice_dyn_multi_steps")
+    two = numpy_helper.from_array(np.asarray([2], dtype=np.int64), name="slice_dyn_multi_two")
+    end_offsets = numpy_helper.from_array(np.asarray([4, 5], dtype=np.int64), name="slice_dyn_multi_end_offsets")
+    nodes = [
+        helper.make_node("Shape", ["x"], ["shape"], name="SliceDynMultiShape"),
+        helper.make_node(
+            "Gather",
+            ["shape", "slice_dyn_multi_gather_index_h"],
+            ["axis_dim_h"],
+            name="SliceDynMultiGatherAxis2",
+            axis=0,
+        ),
+        helper.make_node(
+            "Gather",
+            ["shape", "slice_dyn_multi_gather_index_w"],
+            ["axis_dim_w"],
+            name="SliceDynMultiGatherAxis3",
+            axis=0,
+        ),
+        helper.make_node(
+            "Unsqueeze",
+            ["axis_dim_h", "slice_dyn_multi_unsq_axes"],
+            ["axis_dim_h_vec"],
+            name="SliceDynMultiUnsqueezeAxis2",
+        ),
+        helper.make_node(
+            "Unsqueeze",
+            ["axis_dim_w", "slice_dyn_multi_unsq_axes"],
+            ["axis_dim_w_vec"],
+            name="SliceDynMultiUnsqueezeAxis3",
+        ),
+        helper.make_node(
+            "Div",
+            ["axis_dim_h_vec", "slice_dyn_multi_two"],
+            ["start_h"],
+            name="SliceDynMultiStartH",
+        ),
+        helper.make_node(
+            "Div",
+            ["axis_dim_w_vec", "slice_dyn_multi_two"],
+            ["start_w"],
+            name="SliceDynMultiStartW",
+        ),
+        helper.make_node(
+            "Concat",
+            ["start_h", "start_w"],
+            ["start"],
+            name="SliceDynMultiConcatStart",
+            axis=0,
+        ),
+        helper.make_node(
+            "Add",
+            ["start", "slice_dyn_multi_end_offsets"],
+            ["end"],
+            name="SliceDynMultiEnd",
+        ),
+        helper.make_node(
+            "Slice",
+            ["x", "start", "end", "slice_dyn_multi_axes", "slice_dyn_multi_steps"],
+            ["y"],
+            name="SliceDynMultiNode",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "slice_dynamic_start_end_multi_axis_graph",
+        [x],
+        [y],
+        initializer=[
+            gather_index_h,
+            gather_index_w,
+            unsq_axes,
+            slice_axes,
+            slice_steps,
+            two,
+            end_offsets,
+        ],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_slice_full_reverse_unknown_rank_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, None)
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, None)
+    starts = numpy_helper.from_array(np.asarray([-1], dtype=np.int64), name="slice_reverse_unknown_rank_starts")
+    ends = numpy_helper.from_array(
+        np.asarray([-9223372036854775807], dtype=np.int64),
+        name="slice_reverse_unknown_rank_ends",
+    )
+    axes = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="slice_reverse_unknown_rank_axes")
+    steps = numpy_helper.from_array(np.asarray([-1], dtype=np.int64), name="slice_reverse_unknown_rank_steps")
+    node = helper.make_node(
+        "Slice",
+        [
+            "x",
+            "slice_reverse_unknown_rank_starts",
+            "slice_reverse_unknown_rank_ends",
+            "slice_reverse_unknown_rank_axes",
+            "slice_reverse_unknown_rank_steps",
+        ],
+        ["y"],
+        name="SliceReverseUnknownRankNode",
+    )
+    graph = helper.make_graph(
+        [node],
+        "slice_reverse_unknown_rank_graph",
+        [x],
+        [y],
+        initializer=[starts, ends, axes, steps],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_conv1d_unknown_rank_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, None)
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, None)
+    w = numpy_helper.from_array(
+        np.asarray(
+            [
+                [[1.0], [0.5], [-0.25]],
+                [[-0.75], [0.25], [0.5]],
+                [[0.125], [-0.5], [1.25]],
+                [[0.0], [0.75], [-1.0]],
+            ],
+            dtype=np.float32,
+        ),
+        name="conv1d_unknown_rank_w",
+    )
+    b = numpy_helper.from_array(np.asarray([0.1, -0.2, 0.3, -0.4], dtype=np.float32), name="conv1d_unknown_rank_b")
+    node = helper.make_node(
+        "Conv",
+        ["x", "conv1d_unknown_rank_w", "conv1d_unknown_rank_b"],
+        ["y"],
+        name="Conv1DUnknownRankNode",
+        kernel_shape=[1],
+        pads=[0, 0],
+        strides=[1],
+    )
+    graph = helper.make_graph([node], "conv1d_unknown_rank_graph", [x], [y], initializer=[w, b])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -6507,6 +6698,27 @@ def _make_gather_runtime_negative_indices_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_gather_constant_negative_indices_dynamic_last_dim_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4, "W"])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3, 4])
+    indices = numpy_helper.from_array(np.array([-1], dtype=np.int64), name="indices_neg_last")
+    node = helper.make_node(
+        "Gather",
+        ["x", "indices_neg_last"],
+        ["y"],
+        name="GatherConstantNegativeIndicesDynamicLastDimNode",
+        axis=3,
+    )
+    graph = helper.make_graph(
+        [node],
+        "gather_constant_negative_indices_dynamic_last_dim_graph",
+        [x],
+        [y],
+        initializer=[indices],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_flatten_unsqueeze_placeholder_output_shapes_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", "M", 8])
     flatten_out = helper.make_tensor_value_info("flatten_out", TensorProto.FLOAT, [1])
@@ -6761,6 +6973,51 @@ def _make_conv_instance_normalization_model() -> onnx.ModelProto:
     graph = helper.make_graph(
         [conv, inst],
         "conv_instance_norm_graph",
+        [x],
+        [y],
+        initializer=[conv_w, conv_b, scale, bias],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_square_conv_instance_normalization_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 4, 4])
+    conv_w = numpy_helper.from_array(
+        np.arange(4 * 1 * 1 * 1, dtype=np.float32).reshape(4, 1, 1, 1) / 10.0,
+        name="conv_w",
+    )
+    conv_b = numpy_helper.from_array(
+        np.asarray([0.1, -0.2, 0.3, -0.4], dtype=np.float32),
+        name="conv_b",
+    )
+    scale = numpy_helper.from_array(
+        np.asarray([1.0, 0.5, 2.0, 1.5], dtype=np.float32),
+        name="inst_scale",
+    )
+    bias = numpy_helper.from_array(
+        np.asarray([0.1, -0.2, 0.3, 0.4], dtype=np.float32),
+        name="inst_bias",
+    )
+    conv = helper.make_node(
+        "Conv",
+        ["x", "conv_w", "conv_b"],
+        ["conv_out"],
+        name="ConvNode",
+        kernel_shape=[1, 1],
+        pads=[0, 0, 0, 0],
+        strides=[1, 1],
+    )
+    inst = helper.make_node(
+        "InstanceNormalization",
+        ["conv_out", "inst_scale", "inst_bias"],
+        ["y"],
+        name="SquareInstanceNormAfterConvNode",
+        epsilon=1e-5,
+    )
+    graph = helper.make_graph(
+        [conv, inst],
+        "square_conv_instance_norm_graph",
         [x],
         [y],
         initializer=[conv_w, conv_b, scale, bias],
@@ -7847,6 +8104,66 @@ def test_flatbuffer_direct_keeps_input_layout_contract_for_boundary_transpose() 
         and "x_onnx_ncx_internal" in [str(output_name) for output_name in op.outputs]
         for op in model_ir.operators
     )
+
+
+def test_flatbuffer_direct_keeps_boundary_input_layout_transpose_for_gather_nd() -> None:
+    model_ir = ModelIR(name="boundary_input_gather_nd_layout_transpose_test")
+    model_ir.inputs = ["x", "indices"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 17, 48, 64],
+        shape_signature=[1, 17, 48, 64],
+    )
+    model_ir.tensors["x_onnx_ncx_internal_perm"] = TensorIR(
+        name="x_onnx_ncx_internal_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["x_onnx_ncx_internal"] = TensorIR(
+        name="x_onnx_ncx_internal",
+        dtype="FLOAT32",
+        shape=[1, 17, 48, 64],
+        shape_signature=[1, 17, 48, 64],
+    )
+    model_ir.tensors["indices"] = TensorIR(
+        name="indices",
+        dtype="INT32",
+        shape=[6, 3],
+        shape_signature=[6, 3],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[6, 17],
+        shape_signature=[6, 17],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["x", "x_onnx_ncx_internal_perm"],
+            outputs=["x_onnx_ncx_internal"],
+        ),
+        OperatorIR(
+            op_type="GATHER_ND",
+            inputs=["x_onnx_ncx_internal", "indices"],
+            outputs=["y"],
+        ),
+    ]
+
+    stats = _optimize_boundary_input_layout_transposes(model_ir)
+    assert stats["removed_boundary_input_layout_transpose"] == 0
+    assert any(
+        str(op.op_type) == "TRANSPOSE"
+        and "x_onnx_ncx_internal" in [str(output_name) for output_name in op.outputs]
+        for op in model_ir.operators
+    )
+    gather_nd_op = next(op for op in model_ir.operators if str(op.op_type) == "GATHER_ND")
+    assert list(gather_nd_op.inputs) == ["x_onnx_ncx_internal", "indices"]
 
 
 def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_op0() -> None:
@@ -12009,6 +12326,20 @@ def test_flatbuffer_direct_global_max_pool_lowering() -> None:
     assert op_types.count("CUSTOM") == 0
 
 
+def test_flatbuffer_direct_gridsample_dynamic_sparse_width_lowering() -> None:
+    model = _make_gridsample_dynamic_sparse_width_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="gridsample_dynamic_sparse_width_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("CUSTOM") == 0
+    assert any(op_type == "GATHER" for op_type in op_types)
+
+
 def test_flatbuffer_direct_softmax_default_axis_respects_opset13() -> None:
     model = _make_softmax_default_axis_opset13_model()
     register_default_preprocess_rules()
@@ -12182,6 +12513,136 @@ def test_flatbuffer_direct_instance_normalization_lowering_with_nhwc_internal_la
     assert mean_tensor.shape == [1, 1, 1, 4]
     assert scale_tensor.shape == [1, 1, 1, 4]
     assert bias_tensor.shape == [1, 1, 1, 4]
+
+
+def test_flatbuffer_direct_square_conv_instance_normalization_keeps_nchw_axes_after_layout_inference() -> None:
+    model = _make_square_conv_instance_normalization_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="square_instance_normalization_lowering_test",
+        allow_custom_ops=False,
+    )
+    axes_tensor = model_ir.tensors["SquareInstanceNormAfterConvNode_instnorm_axes"]
+    scale_tensor = model_ir.tensors["SquareInstanceNormAfterConvNode_instnorm_scale"]
+    bias_tensor = model_ir.tensors["SquareInstanceNormAfterConvNode_instnorm_bias"]
+    mean_tensor = model_ir.tensors["SquareInstanceNormAfterConvNode_instnorm_mean"]
+    assert np.array_equal(np.asarray(axes_tensor.data), np.asarray([2, 3], dtype=np.int32))
+    assert mean_tensor.shape == [1, 4, 1, 1]
+    assert scale_tensor.shape == [1, 4, 1, 1]
+    assert bias_tensor.shape == [1, 4, 1, 1]
+
+
+def test_flatbuffer_direct_instance_normalization_prefers_nchw_axis_from_transpose_producer() -> None:
+    class _FakeBuilderCtx:
+        def __init__(self) -> None:
+            self.model_ir = ModelIR(name="instance_norm_builder_transpose_producer")
+            self.model_ir.tensors["x_nhwc"] = TensorIR(
+                name="x_nhwc",
+                dtype="FLOAT32",
+                shape=[1, 4, 4, 4],
+                shape_signature=[1, 4, 4, 4],
+                logical_layout="UNKNOWN",
+            )
+            self.model_ir.tensors["x"] = TensorIR(
+                name="x",
+                dtype="FLOAT32",
+                shape=[1, 4, 4, 4],
+                shape_signature=[1, 4, 4, 4],
+                logical_layout="UNKNOWN",
+            )
+            self.model_ir.tensors["x_perm"] = TensorIR(
+                name="x_perm",
+                dtype="INT32",
+                shape=[4],
+                shape_signature=[4],
+                data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+            )
+            self.model_ir.tensors["y"] = TensorIR(
+                name="y",
+                dtype="FLOAT32",
+                shape=[1, 4, 4, 4],
+                shape_signature=[1, 4, 4, 4],
+                logical_layout="UNKNOWN",
+            )
+            self.model_ir.tensors["inst_scale"] = TensorIR(
+                name="inst_scale",
+                dtype="FLOAT32",
+                shape=[4],
+                shape_signature=[4],
+                data=np.asarray([1.0, 0.5, 2.0, 1.5], dtype=np.float32),
+            )
+            self.model_ir.tensors["inst_bias"] = TensorIR(
+                name="inst_bias",
+                dtype="FLOAT32",
+                shape=[4],
+                shape_signature=[4],
+                data=np.asarray([0.1, -0.2, 0.3, 0.4], dtype=np.float32),
+            )
+            self.model_ir.operators.append(
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=["x_nhwc", "x_perm"],
+                    outputs=["x"],
+                    options={},
+                )
+            )
+
+        def ensure_tensor(self, name: str) -> None:
+            if name not in self.model_ir.tensors:
+                raise KeyError(name)
+
+        def get_constant_array(self, name: str):
+            tensor = self.model_ir.tensors.get(name)
+            return None if tensor is None else tensor.data
+
+        def get_tensor_shape(self, name: str):
+            return list(self.model_ir.tensors[name].shape)
+
+        def get_tensor_dtype(self, name: str):
+            return self.model_ir.tensors[name].dtype
+
+        def add_const_tensor(self, name: str, value: np.ndarray) -> str:
+            arr = np.asarray(value)
+            self.model_ir.tensors[name] = TensorIR(
+                name=name,
+                dtype="FLOAT16" if arr.dtype == np.float16 else "FLOAT32" if arr.dtype == np.float32 else "INT32",
+                shape=list(arr.shape) if arr.ndim > 0 else [],
+                shape_signature=list(arr.shape) if arr.ndim > 0 else [],
+                data=arr,
+            )
+            return name
+
+        def add_intermediate_tensor(self, name: str, dtype: str, shape: list[int]) -> str:
+            self.model_ir.tensors[name] = TensorIR(
+                name=name,
+                dtype=dtype,
+                shape=list(shape),
+                shape_signature=list(shape),
+                logical_layout="UNKNOWN",
+            )
+            return name
+
+        def add_operator(self, op: OperatorIR) -> None:
+            self.model_ir.operators.append(op)
+
+    ctx = _FakeBuilderCtx()
+    node = types.SimpleNamespace(
+        name="InstanceNormFromTransposeNode",
+        inputs=[types.SimpleNamespace(name="x"), types.SimpleNamespace(name="inst_scale"), types.SimpleNamespace(name="inst_bias")],
+        outputs=[types.SimpleNamespace(name="y")],
+        attrs={"epsilon": 1e-5},
+    )
+    build_instance_normalization_op(node, ctx)
+    axes_tensor = ctx.model_ir.tensors["InstanceNormFromTransposeNode_instnorm_axes"]
+    scale_tensor = ctx.model_ir.tensors["InstanceNormFromTransposeNode_instnorm_scale"]
+    bias_tensor = ctx.model_ir.tensors["InstanceNormFromTransposeNode_instnorm_bias"]
+    mean_tensor = ctx.model_ir.tensors["InstanceNormFromTransposeNode_instnorm_mean"]
+    assert np.array_equal(np.asarray(axes_tensor.data), np.asarray([2, 3], dtype=np.int32))
+    assert mean_tensor.shape == [1, 4, 1, 1]
+    assert scale_tensor.shape == [1, 4, 1, 1]
+    assert bias_tensor.shape == [1, 4, 1, 1]
 
 
 def test_flatbuffer_direct_pow_lowering() -> None:
@@ -12664,6 +13125,31 @@ def test_flatbuffer_direct_batch_normalization_rank3_broadcast_coeff_shape() -> 
     assert list(add_const.shape) == [1, 1536, 1]
 
 
+def test_flatbuffer_direct_batch_normalization_rank4_nhwc_broadcast_coeff_shape() -> None:
+    model = _make_batchnorm_rank4_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="batchnorm_rank4_nhwc_broadcast_shape_test",
+        allow_custom_ops=False,
+        transpose_inputs_to_nhwc=True,
+    )
+
+    mul_ops = [op for op in model_ir.operators if str(op.op_type) == "MUL"]
+    add_ops = [op for op in model_ir.operators if str(op.op_type) == "ADD"]
+    assert len(mul_ops) == 1
+    assert len(add_ops) == 1
+
+    input_tensor = model_ir.tensors["x"]
+    mul_const = model_ir.tensors[str(mul_ops[0].inputs[1])]
+    add_const = model_ir.tensors[str(add_ops[0].inputs[1])]
+    assert input_tensor.logical_layout == "NHWC"
+    assert list(input_tensor.shape) == [1, 4, 4, 3]
+    assert list(mul_const.shape) == [1, 1, 1, 3]
+    assert list(add_const.shape) == [1, 1, 1, 3]
+
+
 def test_flatbuffer_direct_convtranspose2d_output_padding_lowering() -> None:
     model = _make_convtranspose2d_output_padding_model()
     register_default_preprocess_rules()
@@ -12804,6 +13290,64 @@ def test_flatbuffer_direct_slice_dynamic_start_const_end_single_axis_lowering() 
     assert str(end_tensor.dtype).upper() == "INT32"
     assert begin_tensor.data is None
     assert end_tensor.data is not None
+
+
+def test_flatbuffer_direct_slice_dynamic_start_end_multi_axis_lowering() -> None:
+    model = _make_slice_dynamic_start_end_multi_axis_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="slice_dynamic_start_end_multi_axis_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("STRIDED_SLICE") == 1
+    assert op_types.count("CUSTOM") == 0
+
+    ss = next(op for op in model_ir.operators if str(op.op_type) == "STRIDED_SLICE")
+    begin_tensor = model_ir.tensors[str(ss.inputs[1])]
+    end_tensor = model_ir.tensors[str(ss.inputs[2])]
+    assert str(begin_tensor.dtype).upper() == "INT32"
+    assert str(end_tensor.dtype).upper() == "INT32"
+    assert begin_tensor.data is None
+    assert end_tensor.data is None
+    assert int(ss.options["endMask"]) == 0b0011
+
+
+def test_flatbuffer_direct_slice_full_reverse_unknown_rank_uses_reverse_v2() -> None:
+    model = _make_slice_full_reverse_unknown_rank_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="slice_full_reverse_unknown_rank_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert op_types.count("REVERSE_V2") == 1
+
+    reverse_op = next(op for op in model_ir.operators if str(op.op_type) == "REVERSE_V2")
+    axis_tensor = model_ir.tensors[str(reverse_op.inputs[1])]
+    assert axis_tensor.data is not None
+    np.testing.assert_array_equal(np.asarray(axis_tensor.data), np.asarray([1], dtype=np.int32))
+
+
+def test_flatbuffer_direct_conv1d_unknown_rank_materializes_builtin_conv() -> None:
+    model = _make_conv1d_unknown_rank_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="conv1d_unknown_rank_builtin_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "CONV_2D" in op_types
+    assert "EXPAND_DIMS" in op_types
+    assert "SQUEEZE" in op_types or "RESHAPE" in op_types
 
 
 def test_flatbuffer_direct_expand_dynamic_shape_uses_fill() -> None:
@@ -25432,6 +25976,50 @@ def test_flatbuffer_direct_repair_channelwise_broadcast_constants_keeps_nchw_ran
     assert list(kept.shape) == [512, 1, 1]
 
 
+def test_flatbuffer_direct_repair_channelwise_broadcast_constants_uses_logical_layout_on_ambiguous_rank4() -> None:
+    model_ir = ModelIR(name="repair_channelwise_rank4_ambiguous_logical_layout_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 16],
+        shape_signature=[1, 16, 1, 16],
+    )
+    model_ir.tensors["x"].logical_layout = "NHWC"
+    model_ir.tensors["bn_mul"] = TensorIR(
+        name="bn_mul",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 1],
+        shape_signature=[1, 16, 1, 1],
+        data=np.ones((1, 16, 1, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 16, 1, 16],
+        shape_signature=[1, 16, 1, 16],
+    )
+    model_ir.tensors["y"].logical_layout = "NHWC"
+    model_ir.operators = [
+        OperatorIR(
+            op_type="MUL",
+            inputs=["x", "bn_mul"],
+            outputs=["y"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
+    assert stats["repaired_rank4_channelwise_broadcast_constants"] == 1
+
+    repaired = model_ir.tensors["bn_mul"]
+    assert list(repaired.shape) == [1, 1, 1, 16]
+    assert repaired.data is not None
+    assert np.asarray(repaired.data).shape == (1, 1, 1, 16)
+
+
 def test_flatbuffer_direct_fold_conv_add_affine_chain_folds_fused_add_activation() -> None:
     model_ir = ModelIR(name="fold_conv_add_affine_fused_add_activation_fold_test")
     model_ir.inputs = ["x"]
@@ -28907,6 +29495,40 @@ def test_flatbuffer_direct_gather_runtime_negative_indices_are_normalized_before
     axis_dim_name = str(add_op.inputs[1])
     axis_dim_const = np.asarray(model_ir.tensors[axis_dim_name].data, dtype=np.int32).reshape(-1).tolist()
     assert axis_dim_const == [4]
+
+
+def test_flatbuffer_direct_gather_constant_negative_indices_dynamic_last_dim_uses_runtime_axis_dim() -> None:
+    model = _make_gather_constant_negative_indices_dynamic_last_dim_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="gather_constant_negative_indices_dynamic_last_dim_test",
+    )
+
+    gather_op = next(op for op in model_ir.operators if str(op.op_type) == "GATHER" and str(op.outputs[0]) == "y_gather_scalar_1d")
+    gather_indices_name = str(gather_op.inputs[1])
+    assert gather_indices_name != "indices_neg_last"
+
+    select_op = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "SELECT" and len(op.outputs) == 1 and str(op.outputs[0]) == gather_indices_name
+    )
+    wrapped_indices_name = str(select_op.inputs[1])
+    add_op = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "ADD" and len(op.outputs) == 1 and str(op.outputs[0]) == wrapped_indices_name
+    )
+    axis_dim_name = str(add_op.inputs[1])
+    axis_dim_tensor = model_ir.tensors[axis_dim_name]
+    assert axis_dim_tensor.data is None
+    axis_dim_producer = next(op for op in model_ir.operators if len(op.outputs) == 1 and str(op.outputs[0]) == axis_dim_name)
+    assert str(axis_dim_producer.op_type) == "GATHER"
+    shape_name = str(axis_dim_producer.inputs[0])
+    shape_producer = next(op for op in model_ir.operators if len(op.outputs) == 1 and str(op.outputs[0]) == shape_name)
+    assert str(shape_producer.op_type) == "SHAPE"
 
 
 def test_flatbuffer_direct_flatten_unsqueeze_placeholder_shapes_are_inferred_from_input_signature() -> None:
@@ -36037,6 +36659,51 @@ def _make_if_generic_uint64_output_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_if_const_true_shape_select_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("if_const_x", TensorProto.FLOAT, ["K", 1])
+    y = helper.make_tensor_value_info("if_const_y", TensorProto.FLOAT, ["K"])
+    cond = numpy_helper.from_array(np.asarray(True, dtype=np.bool_), name="if_const_cond")
+    squeeze_axes = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="if_const_axes")
+
+    then_graph = helper.make_graph(
+        [
+            helper.make_node(
+                "Squeeze",
+                ["if_const_x", "if_const_axes"],
+                ["if_const_then_out"],
+                name="IfConstThenSqueeze",
+            ),
+        ],
+        "if_const_then_graph",
+        [],
+        [helper.make_tensor_value_info("if_const_then_out", TensorProto.FLOAT, ["K"])],
+        initializer=[squeeze_axes],
+    )
+    else_graph = helper.make_graph(
+        [
+            helper.make_node(
+                "Identity",
+                ["if_const_x"],
+                ["if_const_else_out"],
+                name="IfConstElseIdentity",
+            ),
+        ],
+        "if_const_else_graph",
+        [],
+        [helper.make_tensor_value_info("if_const_else_out", TensorProto.FLOAT, ["K", 1])],
+    )
+    if_node = helper.make_node(
+        "If",
+        ["if_const_cond"],
+        ["if_const_y"],
+        name="IfConstTrueShapeSelect",
+        then_branch=then_graph,
+        else_branch=else_graph,
+    )
+    graph = helper.make_graph([if_node], "if_const_true_shape_select_graph", [x], [y], initializer=[cond])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_if_p1_model() -> onnx.ModelProto:
     x1 = helper.make_tensor_value_info("If_p1_input1", TensorProto.FLOAT, [1, 100])
     x2 = helper.make_tensor_value_info("If_p1_input2", TensorProto.FLOAT, [2, 100])
@@ -36609,6 +37276,19 @@ def test_flatbuffer_direct_if_generic_where_uint64_output_normalized_to_uint32()
     assert cast_to_int32 == []
 
 
+def test_flatbuffer_direct_if_const_true_selects_branch_without_generic_mux() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_if_const_true_shape_select_model(),
+        output_file_name="if_const_true_shape_select_builtin",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert all(str(op.op_type) not in {"SELECT", "SELECT_V2"} for op in model_ir.operators)
+    out_tensor = model_ir.tensors["if_const_y"]
+    assert out_tensor.shape_signature is not None
+    assert [int(v) for v in list(out_tensor.shape_signature)] == [-1]
+
+
 def test_flatbuffer_direct_if_branch_lstm_optional_input_lowers_to_builtin_ops_without_custom() -> None:
     model_ir = lower_onnx_to_ir(
         _make_if_branch_lstm_optional_input_model(),
@@ -36812,6 +37492,52 @@ def test_flatbuffer_direct_if_nms_guard_nms_max_output_not_pinned_to_one(model_f
     producer = producers.get(max_output_input, None)
     assert producer is not None
     assert str(producer[1].op_type) == "MINIMUM"
+
+
+@pytest.mark.parametrize(
+    ("model_fn", "name_suffix"),
+    [
+        (_make_if_nms_guard_direct_model, "nested_if"),
+        (_make_if_nms_guard_direct_simple_model, "simple_squeeze"),
+        (_make_if_nms_guard_direct_offset_slice_model, "offset_slice"),
+    ],
+)
+def test_flatbuffer_direct_if_nms_guard_materializes_outer_output(model_fn: Any, name_suffix: str) -> None:
+    model_ir = lower_onnx_to_ir(
+        model_fn(),
+        output_file_name=f"if_nms_guard_materialized_{name_suffix}",
+        allow_custom_ops=True,
+        custom_op_allowlist=["If"],
+    )
+    unbound_inputs = _find_unbound_nonconstant_operator_inputs(model_ir)
+    assert unbound_inputs == []
+
+    keep_producer = next(
+        (
+            op
+            for op in model_ir.operators
+            if any(str(out_name) == "keep" for out_name in op.outputs)
+        ),
+        None,
+    )
+    assert keep_producer is not None
+
+
+def test_flatbuffer_direct_if_nms_guard_uses_negative_infinity_dummy_score() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_if_nms_guard_direct_model(),
+        output_file_name="if_nms_guard_dummy_score_neg_inf",
+        allow_custom_ops=True,
+        custom_op_allowlist=["If"],
+    )
+    dummy_scores = [
+        tensor
+        for name, tensor in model_ir.tensors.items()
+        if str(name).endswith("_if_dummy_score")
+    ]
+    assert len(dummy_scores) >= 1
+    assert all(tensor.data is not None for tensor in dummy_scores)
+    assert all(np.isneginf(np.asarray(tensor.data)).all() for tensor in dummy_scores)
 
 
 def test_flatbuffer_direct_gaze_keep_shape_inputs_fuses_late_conv_relu_chain() -> None:
@@ -37151,6 +37877,26 @@ def _make_group_normalization_model() -> onnx.ModelProto:
     )
     graph = helper.make_graph([node], "group_normalization_graph", [x], [y], initializer=[scale, bias])
     model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 21)])
+    model.ir_version = 10
+    return model
+
+
+def _make_group_norm_alias_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 4, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 4, 8])
+    scale = numpy_helper.from_array(np.ones((8,), dtype=np.float32), name="scale")
+    bias = numpy_helper.from_array(np.zeros((8,), dtype=np.float32), name="bias")
+    node = helper.make_node(
+        "GroupNorm",
+        ["x", "scale", "bias"],
+        ["y"],
+        name="GroupNormAliasNode",
+        epsilon=1e-5,
+        groups=4,
+        activation=1,
+    )
+    graph = helper.make_graph([node], "group_norm_alias_graph", [x], [y], initializer=[scale, bias])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 14)])
     model.ir_version = 10
     return model
 
@@ -37567,6 +38313,46 @@ def test_flatbuffer_direct_group_normalization_builtin_conversion() -> None:
             node["onnx_op"] == "GroupNormalization" and node["dispatch_mode"] == "builtin"
             for node in report["graph_node_reports"]
         )
+
+
+def test_flatbuffer_direct_group_norm_alias_builtin_conversion() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        import torch
+
+        model = _make_group_norm_alias_model()
+        model_path = _save_model(tmpdir, "group_norm_alias_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "group_norm_alias_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == "GroupNorm" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+        sample = np.linspace(-1.0, 1.0, num=1 * 4 * 4 * 8, dtype=np.float32).reshape(1, 4, 4, 8)
+        tflite_output = _run_tflite_first_output(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs={"x": sample},
+        )
+        expected = torch.nn.functional.silu(
+            torch.nn.functional.group_norm(
+                torch.from_numpy(sample).permute(0, 3, 1, 2).contiguous(),
+                num_groups=4,
+                weight=torch.ones(8, dtype=torch.float32),
+                bias=torch.zeros(8, dtype=torch.float32),
+                eps=1e-5,
+            )
+        ).permute(0, 2, 3, 1).contiguous().numpy()
+        np.testing.assert_allclose(tflite_output, expected, rtol=1e-4, atol=1e-4)
 
 
 def test_flatbuffer_direct_max_unpool_builtin_parity() -> None:

@@ -4291,7 +4291,7 @@ def build_softmax_op(node: Any, ctx: Any) -> None:
                 op_type="SOFTMAX",
                 inputs=[input_name],
                 outputs=[output_name],
-                options={"beta": beta},
+                options={"axis": axis, "beta": beta},
             )
         )
         return
@@ -4320,7 +4320,7 @@ def build_softmax_op(node: Any, ctx: Any) -> None:
             op_type="SOFTMAX",
             inputs=[input_axis_last_name],
             outputs=[output_axis_last_name],
-            options={"beta": beta},
+            options={"axis": rank - 1, "beta": beta},
         )
     )
     make_transpose(
