@@ -1858,6 +1858,48 @@ def _build_if_nested_reducemin_add_branch_mux(node: Any, ctx: Any) -> None:
 
 
 def build_if_op(node: Any, ctx: Any) -> None:
+    cond_name = node.inputs[0].name if len(node.inputs) > 0 else ""
+    then_graph = node.attrs.get("then_branch", None)
+    else_graph = node.attrs.get("else_branch", None)
+    if cond_name != "" and then_graph is not None and else_graph is not None:
+        cond_arr = ctx.get_constant_array(cond_name)
+        if cond_arr is not None:
+            cond_flat = np.asarray(cond_arr).reshape(-1)
+            if int(cond_flat.size) > 0:
+                selected_graph = then_graph if bool(cond_flat[0]) else else_graph
+                _ensure_graph_initializers(selected_graph, ctx)
+                output_name_remap = {
+                    str(selected_graph.output[output_index].name): str(node.outputs[output_index].name)
+                    for output_index in range(min(len(selected_graph.output), len(node.outputs)))
+                }
+                _lower_graph_nodes(
+                    graph=selected_graph,
+                    ctx=ctx,
+                    output_name_remap=output_name_remap,
+                )
+                for output_index, output_obj in enumerate(node.outputs):
+                    output_name = str(output_obj.name)
+                    if output_index >= len(selected_graph.output):
+                        continue
+                    selected_graph_output_name = str(selected_graph.output[output_index].name)
+                    resolved_name = _resolve_if_branch_output_name(
+                        graph_output_name=selected_graph_output_name,
+                        remapped_name=output_name_remap.get(selected_graph_output_name, output_name),
+                        ctx=ctx,
+                    )
+                    if resolved_name == output_name:
+                        continue
+                    ctx.ensure_tensor(output_name)
+                    ctx.add_operator(
+                        OperatorIR(
+                            op_type="IDENTITY",
+                            inputs=[resolved_name],
+                            outputs=[output_name],
+                            options={},
+                        )
+                    )
+                return
+
     if is_supported_if_axis0_add_branch_pattern(node):
         _build_if_axis0_add_branch_mux(node, ctx)
         return
@@ -1920,7 +1962,10 @@ def build_if_op(node: Any, ctx: Any) -> None:
         idxs_np_dtype = _np_dtype_from_tflite_dtype(ctx.get_tensor_dtype(idxs_name))
 
         dummy_box_value = float(np.finfo(boxes_np_dtype).min) if np.issubdtype(boxes_np_dtype, np.floating) else 0.0
-        dummy_score_value = float(np.finfo(scores_np_dtype).min) if np.issubdtype(scores_np_dtype, np.floating) else 0.0
+        if np.issubdtype(scores_np_dtype, np.floating):
+            dummy_score_value = float("-inf")
+        else:
+            dummy_score_value = int(np.iinfo(scores_np_dtype).min) if np.issubdtype(scores_np_dtype, np.integer) else 0.0
         if len(nms_node.input) >= 5:
             score_threshold_name = str(nms_node.input[4])
             score_threshold = ctx.get_constant_array(score_threshold_name)
@@ -1992,7 +2037,9 @@ def build_if_op(node: Any, ctx: Any) -> None:
             graph=else_graph,
             ctx=ctx,
             input_name_remap=remap_inputs,
-            output_name_remap=None,
+            output_name_remap={
+                str(else_graph.output[0].name): str(output_name),
+            },
         )
         return
 

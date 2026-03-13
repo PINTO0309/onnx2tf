@@ -97,6 +97,57 @@ def _infer_channel_axis_from_tensor_layout(
     return 1 if rank >= 2 else 0
 
 
+def _infer_channel_axis_from_transpose_producer(
+    *,
+    ctx: Any,
+    tensor_name: str,
+    rank: int,
+) -> int | None:
+    if rank not in {3, 4, 5}:
+        return None
+    producer_op = None
+    for op in reversed(ctx.model_ir.operators):
+        if str(tensor_name) in {str(v) for v in list(op.outputs)}:
+            producer_op = op
+            break
+    if producer_op is None or str(producer_op.op_type) != "TRANSPOSE":
+        return None
+
+    perm: list[int] | None = None
+    if len(list(producer_op.inputs)) >= 2:
+        perm_tensor = ctx.model_ir.tensors.get(str(producer_op.inputs[1]), None)
+        if perm_tensor is not None and perm_tensor.data is not None:
+            try:
+                perm = [int(v) for v in np.asarray(perm_tensor.data).reshape(-1).tolist()]
+            except Exception:
+                perm = None
+    if perm is None and isinstance(getattr(producer_op, "options", None), dict):
+        raw_perm = producer_op.options.get("perm", None)
+        if raw_perm is not None:
+            try:
+                perm = [int(v) for v in list(raw_perm)]
+            except Exception:
+                perm = None
+    if perm is None or len(perm) != rank:
+        return None
+
+    if rank == 3:
+        if perm == [0, 2, 1]:
+            return 1
+        return None
+    if rank == 4:
+        if perm == [0, 3, 1, 2]:
+            return 1
+        if perm == [0, 2, 3, 1]:
+            return 3
+        return None
+    if perm == [0, 4, 1, 2, 3]:
+        return 1
+    if perm == [0, 2, 3, 4, 1]:
+        return 4
+    return None
+
+
 def _reshape_with_preserve_dynamic_shape(
     *,
     ctx: Any,
@@ -515,11 +566,15 @@ def build_batch_normalization_op(node: Any, ctx: Any) -> None:
 
     input_shape = ctx.get_tensor_shape(input_name)
     input_rank = len(input_shape)
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
     if input_rank >= 3:
-        # ONNX BatchNormalization uses channel axis=1 for rank>=3.
-        # TFLite binary broadcast aligns trailing axes, so channel coefficients
-        # must be materialized as [1, C, 1, ...] to keep channel-wise semantics.
-        coeff_shape = [1, -1] + [1] * int(input_rank - 2)
+        channel_axis = _infer_channel_axis_from_tensor_layout(
+            input_shape=[int(v) for v in list(input_shape)],
+            scale_size=int(np.asarray(scale).size),
+            logical_layout=input_tensor.logical_layout if input_tensor is not None else "UNKNOWN",
+        )
+        coeff_shape = [1] * int(input_rank)
+        coeff_shape[int(channel_axis)] = -1
         bn_mul = bn_mul.reshape(coeff_shape)
         bn_add = bn_add.reshape(coeff_shape)
     elif input_rank == 2:
@@ -788,6 +843,20 @@ def build_instance_normalization_op(node: Any, ctx: Any) -> None:
         scale_size=int(np.asarray(scale).size),
         logical_layout=input_tensor.logical_layout if input_tensor is not None else "UNKNOWN",
     )
+    if input_tensor is not None and normalize_logical_layout(input_tensor.logical_layout) == "UNKNOWN":
+        ambiguous_candidate_axes = [
+            int(axis)
+            for axis in range(1, rank)
+            if int(input_shape[axis]) > 0 and int(input_shape[axis]) == int(np.asarray(scale).size)
+        ]
+        if len(ambiguous_candidate_axes) > 1:
+            producer_channel_axis = _infer_channel_axis_from_transpose_producer(
+                ctx=ctx,
+                tensor_name=input_name,
+                rank=rank,
+            )
+            if producer_channel_axis is not None:
+                channel_axis = int(producer_channel_axis)
     reduction_axes = [int(axis) for axis in range(1, rank) if int(axis) != int(channel_axis)]
 
     x_name = input_name
