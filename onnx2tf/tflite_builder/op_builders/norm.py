@@ -191,10 +191,24 @@ def build_group_normalization_op(node: Any, ctx: Any) -> None:
         else [int(v) for v in list(input_shape)]
     )
 
-    groups = int(node.attrs.get("num_groups", 1))
+    groups = int(node.attrs.get("num_groups", node.attrs.get("groups", 1)))
     epsilon = float(node.attrs.get("epsilon", 1e-5))
     stash_type = int(node.attrs.get("stash_type", 1))
-    channels = int(input_signature[1]) if len(input_signature) > 1 and int(input_signature[1]) > 0 else int(input_shape[1])
+    activation = int(node.attrs.get("activation", 0))
+    scale_size = int(np.asarray(ctx.get_constant_array(scale_name)).reshape(-1).size)
+    preferred_channel_axes = [1, len(input_shape) - 1] if str(node.op) == "GroupNormalization" else [len(input_shape) - 1, 1]
+    channel_axis = None
+    for axis in preferred_channel_axes:
+        if 0 <= int(axis) < len(input_shape) and int(input_shape[int(axis)]) == scale_size:
+            channel_axis = int(axis)
+            break
+    if channel_axis is None:
+        channel_axis = 1
+    channels = (
+        int(input_signature[channel_axis])
+        if len(input_signature) > int(channel_axis) and int(input_signature[channel_axis]) > 0
+        else int(input_shape[channel_axis])
+    )
     group_size = int(channels // groups)
 
     compute_dtype = "FLOAT32" if int(stash_type) == 1 else str(output_dtype).upper()
@@ -217,8 +231,20 @@ def build_group_normalization_op(node: Any, ctx: Any) -> None:
             )
         )
 
-    grouped_signature = [int(input_signature[0]), int(groups), int(group_size)] + [int(v) for v in input_signature[2:]]
-    grouped_shape = [int(input_shape[0]), int(groups), int(group_size)] + [int(v) for v in input_shape[2:]]
+    if int(channel_axis) == 1:
+        grouped_signature = [int(input_signature[0]), int(groups), int(group_size)] + [int(v) for v in input_signature[2:]]
+        grouped_shape = [int(input_shape[0]), int(groups), int(group_size)] + [int(v) for v in input_shape[2:]]
+        reduce_axes = list(range(2, len(grouped_signature)))
+        reduced_signature = [int(grouped_signature[0]), int(groups)] + [1] * int(len(grouped_signature) - 2)
+        reduced_shape = [int(grouped_shape[0]), int(groups)] + [1] * int(len(grouped_shape) - 2)
+        affine_shape = [1, int(channels)] + [1] * int(len(input_shape) - 2)
+    else:
+        grouped_signature = [int(input_signature[0])] + [int(v) for v in input_signature[1:-1]] + [int(groups), int(group_size)]
+        grouped_shape = [int(input_shape[0])] + [int(v) for v in input_shape[1:-1]] + [int(groups), int(group_size)]
+        reduce_axes = list(range(1, len(grouped_signature) - 2)) + [int(len(grouped_signature) - 1)]
+        reduced_signature = [int(grouped_signature[0])] + [1] * int(len(grouped_signature) - 2) + [int(groups), 1]
+        reduced_shape = [int(grouped_shape[0])] + [1] * int(len(grouped_shape) - 2) + [int(groups), 1]
+        affine_shape = [1] + [1] * int(len(input_shape) - 2) + [int(channels)]
     grouped_name = ctx.add_intermediate_tensor(
         f"{node.name}_group_norm_grouped",
         dtype=compute_dtype,
@@ -234,13 +260,10 @@ def build_group_normalization_op(node: Any, ctx: Any) -> None:
         new_shape=grouped_signature,
     )
 
-    reduce_axes = list(range(2, len(grouped_signature)))
     reduce_axes_name = ctx.add_const_tensor(
         f"{node.name}_group_norm_reduce_axes",
         np.asarray(reduce_axes, dtype=np.int32),
     )
-    reduced_signature = [int(grouped_signature[0]), int(groups)] + [1] * int(len(grouped_signature) - 2)
-    reduced_shape = [int(grouped_shape[0]), int(groups)] + [1] * int(len(grouped_shape) - 2)
 
     mean_name = ctx.add_intermediate_tensor(
         f"{node.name}_group_norm_mean",
@@ -379,8 +402,8 @@ def build_group_normalization_op(node: Any, ctx: Any) -> None:
         new_shape=input_signature,
     )
 
-    scale = np.asarray(ctx.get_constant_array(scale_name), dtype=_float_numpy_dtype(output_dtype)).reshape([1, int(channels)] + [1] * int(len(input_shape) - 2))
-    bias = np.asarray(ctx.get_constant_array(bias_name), dtype=_float_numpy_dtype(output_dtype)).reshape([1, int(channels)] + [1] * int(len(input_shape) - 2))
+    scale = np.asarray(ctx.get_constant_array(scale_name), dtype=_float_numpy_dtype(output_dtype)).reshape(affine_shape)
+    bias = np.asarray(ctx.get_constant_array(bias_name), dtype=_float_numpy_dtype(output_dtype)).reshape(affine_shape)
     scale_const_name = ctx.add_const_tensor(
         f"{node.name}_group_norm_scale",
         scale,
@@ -428,14 +451,52 @@ def build_group_normalization_op(node: Any, ctx: Any) -> None:
             options={"fusedActivationFunction": "NONE"},
         )
     )
+    affine_output_name = output_name
+    if int(activation) == 1:
+        affine_output_name = ctx.add_intermediate_tensor(
+            f"{node.name}_group_norm_affine",
+            dtype=output_dtype,
+            shape=input_shape,
+        )
+        affine_output_tensor = ctx.model_ir.tensors.get(affine_output_name, None)
+        if affine_output_tensor is not None:
+            affine_output_tensor.shape_signature = [int(v) for v in input_signature]
+
     ctx.add_operator(
         OperatorIR(
             op_type="ADD",
             inputs=[scaled_name, bias_const_name],
-            outputs=[output_name],
+            outputs=[affine_output_name],
             options={"fusedActivationFunction": "NONE"},
         )
     )
+
+    if int(activation) == 1:
+        sigmoid_name = ctx.add_intermediate_tensor(
+            f"{node.name}_group_norm_sigmoid",
+            dtype=output_dtype,
+            shape=input_shape,
+        )
+        sigmoid_tensor = ctx.model_ir.tensors.get(sigmoid_name, None)
+        if sigmoid_tensor is not None:
+            sigmoid_tensor.shape_signature = [int(v) for v in input_signature]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="LOGISTIC",
+                inputs=[affine_output_name],
+                outputs=[sigmoid_name],
+                options={},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[affine_output_name, sigmoid_name],
+                outputs=[output_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+
     output_tensor = ctx.model_ir.tensors.get(output_name, None)
     if output_tensor is not None:
         output_tensor.shape = [int(v) for v in input_shape]

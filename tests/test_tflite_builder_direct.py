@@ -2341,6 +2341,23 @@ def _make_gridsample_unknown_shape_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
 
 
+def _make_gridsample_dynamic_sparse_width_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 256, 60, 80])
+    grid = helper.make_tensor_value_info("grid", TensorProto.FLOAT, [1, 1, "num_keypoints", 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 256, 1, "num_keypoints"])
+    node = helper.make_node(
+        "GridSample",
+        ["x", "grid"],
+        ["y"],
+        name="GridSampleDynamicSparseWidthNode",
+        mode="bilinear",
+        padding_mode="zeros",
+        align_corners=1,
+    )
+    graph = helper.make_graph([node], "gridsample_dynamic_sparse_width_graph", [x, grid], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
 def test_clone_model_ir_with_float32_promotes_float16_tensors_and_cast_options() -> None:
     model_ir = ModelIR(name="clone_fp16_to_fp32_test")
     model_ir.inputs = ["x"]
@@ -12307,6 +12324,20 @@ def test_flatbuffer_direct_global_max_pool_lowering() -> None:
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("REDUCE_MAX") == 1
     assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_gridsample_dynamic_sparse_width_lowering() -> None:
+    model = _make_gridsample_dynamic_sparse_width_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="gridsample_dynamic_sparse_width_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("CUSTOM") == 0
+    assert any(op_type == "GATHER" for op_type in op_types)
 
 
 def test_flatbuffer_direct_softmax_default_axis_respects_opset13() -> None:
@@ -37850,6 +37881,26 @@ def _make_group_normalization_model() -> onnx.ModelProto:
     return model
 
 
+def _make_group_norm_alias_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4, 4, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 4, 8])
+    scale = numpy_helper.from_array(np.ones((8,), dtype=np.float32), name="scale")
+    bias = numpy_helper.from_array(np.zeros((8,), dtype=np.float32), name="bias")
+    node = helper.make_node(
+        "GroupNorm",
+        ["x", "scale", "bias"],
+        ["y"],
+        name="GroupNormAliasNode",
+        epsilon=1e-5,
+        groups=4,
+        activation=1,
+    )
+    graph = helper.make_graph([node], "group_norm_alias_graph", [x], [y], initializer=[scale, bias])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 14)])
+    model.ir_version = 10
+    return model
+
+
 def _make_attention_model() -> onnx.ModelProto:
     q = helper.make_tensor_value_info("q", TensorProto.FLOAT, [1, 3, 4])
     k = helper.make_tensor_value_info("k", TensorProto.FLOAT, [1, 3, 4])
@@ -38262,6 +38313,46 @@ def test_flatbuffer_direct_group_normalization_builtin_conversion() -> None:
             node["onnx_op"] == "GroupNormalization" and node["dispatch_mode"] == "builtin"
             for node in report["graph_node_reports"]
         )
+
+
+def test_flatbuffer_direct_group_norm_alias_builtin_conversion() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        import torch
+
+        model = _make_group_norm_alias_model()
+        model_path = _save_model(tmpdir, "group_norm_alias_builtin", model)
+        out_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(
+            model_path,
+            out_dir,
+            backend="flatbuffer_direct",
+            report_op_coverage=True,
+        )
+        report_path = os.path.join(out_dir, "group_norm_alias_builtin_op_coverage_report.json")
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+        assert report["graph_custom_ops"] == []
+        assert any(
+            node["onnx_op"] == "GroupNorm" and node["dispatch_mode"] == "builtin"
+            for node in report["graph_node_reports"]
+        )
+
+        sample = np.linspace(-1.0, 1.0, num=1 * 4 * 4 * 8, dtype=np.float32).reshape(1, 4, 4, 8)
+        tflite_output = _run_tflite_first_output(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs={"x": sample},
+        )
+        expected = torch.nn.functional.silu(
+            torch.nn.functional.group_norm(
+                torch.from_numpy(sample).permute(0, 3, 1, 2).contiguous(),
+                num_groups=4,
+                weight=torch.ones(8, dtype=torch.float32),
+                bias=torch.zeros(8, dtype=torch.float32),
+                eps=1e-5,
+            )
+        ).permute(0, 2, 3, 1).contiguous().numpy()
+        np.testing.assert_allclose(tflite_output, expected, rtol=1e-4, atol=1e-4)
 
 
 def test_flatbuffer_direct_max_unpool_builtin_parity() -> None:

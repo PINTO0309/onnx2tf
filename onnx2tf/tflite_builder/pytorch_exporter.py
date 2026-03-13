@@ -4997,6 +4997,23 @@ def _reshape_special_layout_plan(
     return None
 
 
+def _reshape_is_plain_singleton_axis_drop(
+    input_shape: Optional[Sequence[int]],
+    output_shape: Optional[Sequence[int]],
+) -> bool:
+    if input_shape is None or output_shape is None:
+        return False
+    src = [int(v) for v in list(input_shape)]
+    dst = [int(v) for v in list(output_shape)]
+    if len(src) != len(dst) + 1:
+        return False
+    singleton_axes = [axis for axis, dim in enumerate(src) if int(dim) == 1]
+    if len(singleton_axes) != 1:
+        return False
+    axis = int(singleton_axes[0])
+    return src[:axis] + src[axis + 1:] == dst
+
+
 def _direct_slice_expr(
     *,
     x_expr: str,
@@ -5007,6 +5024,7 @@ def _direct_slice_expr(
 ) -> Optional[str]:
     if len(begin_values) != int(input_rank) or len(size_values) != int(input_rank):
         return None
+    direct_x_expr = f"{x_expr}.reshape(-1)" if int(input_rank) == 1 else x_expr
     parts: List[str] = []
     for axis, (start, length) in enumerate(zip(begin_values, size_values)):
         dim_size: Optional[int] = None
@@ -5028,7 +5046,7 @@ def _direct_slice_expr(
             start_str = "" if resolved_start == 0 else str(resolved_start)
             stop_str = "" if resolved_stop is None else str(int(resolved_stop))
             parts.append(f"{start_str}:{stop_str}")
-    return f"{x_expr}[{', '.join(parts)}]"
+    return f"{direct_x_expr}[{', '.join(parts)}]"
 
 
 def _direct_strided_slice_expr(
@@ -5047,6 +5065,7 @@ def _direct_strided_slice_expr(
         or len(stride_values) != int(input_rank)
     ):
         return None
+    direct_x_expr = f"{x_expr}.reshape(-1)" if int(input_rank) == 1 else x_expr
     parts: List[str] = []
     for axis, (start, stop, step) in enumerate(zip(begin_values, end_values, stride_values)):
         resolved_start = None if ((int(begin_mask) >> axis) & 1) else int(start)
@@ -5065,7 +5084,46 @@ def _direct_strided_slice_expr(
             parts.append(f"{start_str}:{stop_str}")
         else:
             parts.append(f"{start_str}:{stop_str}:{resolved_step}")
-    return f"{x_expr}[{', '.join(parts)}]"
+    return f"{direct_x_expr}[{', '.join(parts)}]"
+
+
+def _direct_symbolic_strided_slice_expr(
+    *,
+    x_expr: str,
+    begin_values: Sequence[int],
+    stride_values: Sequence[int],
+    begin_mask: int,
+    end_mask: int,
+    input_rank: int,
+    end_list_expr: Optional[str] = None,
+    end_scalar_expr: Optional[str] = None,
+) -> Optional[str]:
+    if len(begin_values) != int(input_rank) or len(stride_values) != int(input_rank):
+        return None
+    if end_list_expr is None and end_scalar_expr is None:
+        return None
+    direct_x_expr = f"{x_expr}.reshape(-1)" if int(input_rank) == 1 else x_expr
+    parts: List[str] = []
+    for axis, (start, step) in enumerate(zip(begin_values, stride_values)):
+        resolved_start = None if ((int(begin_mask) >> axis) & 1) else int(start)
+        if ((int(end_mask) >> axis) & 1):
+            resolved_stop_expr = None
+        elif int(input_rank) == 1 and end_scalar_expr is not None:
+            resolved_stop_expr = str(end_scalar_expr)
+        elif end_list_expr is not None:
+            resolved_stop_expr = f"({end_list_expr})[{int(axis)}]"
+        else:
+            return None
+        resolved_step = int(step)
+        if resolved_step == 0:
+            return None
+        start_str = "" if resolved_start is None or int(resolved_start) == 0 else str(int(resolved_start))
+        stop_str = "" if resolved_stop_expr is None else str(resolved_stop_expr)
+        if resolved_step == 1:
+            parts.append(f"{start_str}:{stop_str}")
+        else:
+            parts.append(f"{start_str}:{stop_str}:{resolved_step}")
+    return f"{direct_x_expr}[{', '.join(parts)}]"
 
 
 def _direct_gather_expr(
@@ -5106,6 +5164,8 @@ def _direct_gather_expr(
             f"torch.as_tensor({literal}, dtype=torch.int64, device={params_expr}.device)), "
             f"{params_expr}, {repr(normalized_indices_shape)}, axis={resolved_axis})"
         )
+    if int(input_rank) == 1 and int(resolved_axis) == 0:
+        return f"{params_expr}.reshape(-1)[{repr([int(v) for v in indices_values])}]"
     parts = [":" for _ in range(int(input_rank))]
     parts[resolved_axis] = repr([int(v) for v in indices_values])
     return f"{params_expr}[{', '.join(parts)}]"
@@ -5472,11 +5532,21 @@ def _write_native_model_file(
     def _shape_literal(values: Sequence[int]) -> str:
         return repr(tuple(int(v) for v in list(values)))
 
-    def _target_shape_literal(tensor_name: str) -> str:
+    def _target_shape_values(tensor_name: str) -> Optional[List[int]]:
         tensor = model_ir.tensors.get(str(tensor_name), None)
         if tensor is None:
+            return None
+        if tensor.shape_signature is not None:
+            signature = [int(v) for v in list(tensor.shape_signature)]
+            if len(signature) == len(list(tensor.shape)):
+                return signature
+        return [int(v) for v in list(tensor.shape)]
+
+    def _target_shape_literal(tensor_name: str) -> str:
+        target_shape = _target_shape_values(str(tensor_name))
+        if target_shape is None:
             return "None"
-        return repr([int(v) for v in list(tensor.shape)])
+        return repr([int(v) for v in list(target_shape)])
 
     def _resize_target_shape_literal(output_name: str, input_name: str) -> str:
         output_tensor = model_ir.tensors.get(str(output_name), None)
@@ -5949,14 +6019,6 @@ def _write_native_model_file(
                 and sequence_extent_matches
             ):
                 return [0, 2, 3, 1]
-        if (
-            layout == "NCHW"
-            and len(src) == 4
-            and len(dst) == 2
-            and src[0] == dst[0]
-            and int(dst[1]) == int(np.prod(src[1:], dtype=np.int64))
-        ):
-            return [0, 2, 3, 1]
         if layout == "NCDHW" and len(src) == 5 and len(dst) == 3:
             spatial = src[2] * src[3] * src[4]
             sequence_extent_matches = (
@@ -7699,6 +7761,19 @@ def _write_native_model_file(
             return None
         op_type = str(producer.op_type)
         inputs = [str(v) for v in list(producer.inputs)]
+
+        def _shape_dim_expr_from_shape_input(shape_tensor_name: str, dim_index: int) -> Optional[str]:
+            shape_producer = producer_by_output_name.get(str(shape_tensor_name), None)
+            if shape_producer is None:
+                return None
+            if str(shape_producer.op_type) != "SHAPE" or len(list(shape_producer.inputs)) < 1:
+                return None
+            source_name = str(shape_producer.inputs[0])
+            exact_input_shape = _tensor_exact_static_shape_list(source_name)
+            if exact_input_shape is not None and int(dim_index) < len(exact_input_shape):
+                return repr(int(exact_input_shape[int(dim_index)]))
+            return f"{_tensor_expr(source_name)}.shape[{int(dim_index)}]"
+
         if op_type in {"CAST", "IDENTITY", "RESHAPE", "SQUEEZE"} and len(inputs) >= 1:
             return _reconstruct_shape_scalar_expr(inputs[0], next_seen)
         if op_type == "SLICE" and len(inputs) >= 3:
@@ -7707,6 +7782,9 @@ def _write_native_model_file(
             size_values = _constant_int_list(model_ir.tensors.get(inputs[2], None))
             output_len = _shape_tensor_length(current_name)
             if base_expr is not None and begin_values is not None and len(begin_values) == 1 and size_values is not None and len(size_values) == 1 and output_len == 1:
+                shape_dim_expr = _shape_dim_expr_from_shape_input(inputs[0], int(begin_values[0]))
+                if shape_dim_expr is not None:
+                    return shape_dim_expr
                 return f"({base_expr})[{int(begin_values[0])}]"
         if op_type == "STRIDED_SLICE" and len(inputs) >= 4:
             base_expr = _reconstruct_shape_list_expr(inputs[0], next_seen)
@@ -7714,11 +7792,17 @@ def _write_native_model_file(
             stride_values = _constant_int_list(model_ir.tensors.get(inputs[3], None))
             output_len = _shape_tensor_length(current_name)
             if base_expr is not None and begin_values is not None and len(begin_values) == 1 and stride_values is not None and len(stride_values) == 1 and output_len == 1:
+                shape_dim_expr = _shape_dim_expr_from_shape_input(inputs[0], int(begin_values[0]))
+                if shape_dim_expr is not None:
+                    return shape_dim_expr
                 return f"({base_expr})[{int(begin_values[0])}]"
         if op_type == "GATHER" and len(inputs) >= 2 and int(producer.options.get("axis", 0)) == 0:
             base_expr = _reconstruct_shape_list_expr(inputs[0], next_seen)
             index_values = _constant_int_list(model_ir.tensors.get(inputs[1], None))
             if base_expr is not None and index_values is not None and len(index_values) == 1:
+                shape_dim_expr = _shape_dim_expr_from_shape_input(inputs[0], int(index_values[0]))
+                if shape_dim_expr is not None:
+                    return shape_dim_expr
                 return f"({base_expr})[{int(index_values[0])}]"
         if op_type == "EQUAL" and len(inputs) >= 2:
             lhs_expr = _reconstruct_shape_scalar_expr(inputs[0], next_seen)
@@ -7736,12 +7820,14 @@ def _write_native_model_file(
             if lhs_expr is not None and rhs_expr is not None:
                 fn_name = "max" if op_type == "MAXIMUM" else "min"
                 return f"{fn_name}({lhs_expr}, {rhs_expr})"
+        if op_type in {"ADD", "SUB", "MUL"} and len(inputs) >= 2:
+            lhs_expr = _reconstruct_shape_scalar_expr(inputs[0], next_seen)
+            rhs_expr = _reconstruct_shape_scalar_expr(inputs[1], next_seen)
+            if lhs_expr is not None and rhs_expr is not None:
+                op_symbol = "+" if op_type == "ADD" else "-" if op_type == "SUB" else "*"
+                return f"({lhs_expr} {op_symbol} {rhs_expr})"
         if op_type == "SELECT" and len(inputs) >= 3:
-            cond_expr = _reconstruct_shape_scalar_expr(inputs[0], next_seen)
-            true_expr = _reconstruct_shape_scalar_expr(inputs[1], next_seen)
-            false_expr = _reconstruct_shape_scalar_expr(inputs[2], next_seen)
-            if cond_expr is not None and true_expr is not None and false_expr is not None:
-                return f"({true_expr} if {cond_expr} else {false_expr})"
+            return None
         if op_type == "REDUCE_PROD" and len(inputs) >= 1:
             base_expr = _reconstruct_shape_list_expr(inputs[0], next_seen)
             axes_values = _constant_int_list(model_ir.tensors.get(inputs[1], None)) if len(inputs) >= 2 else None
@@ -8092,6 +8178,23 @@ def _write_native_model_file(
 
     runtime_shape_uncertain_tensors: Set[str] = set()
 
+    def _is_all_ones_shape(shape: Sequence[int]) -> bool:
+        values = [int(v) for v in list(shape)]
+        return len(values) > 0 and all(int(v) == 1 for v in values)
+
+    def _binary_runtime_shape_passthrough_operand(lhs_name: str, rhs_name: str) -> Optional[str]:
+        lhs_tensor = model_ir.tensors.get(str(lhs_name), None)
+        rhs_tensor = model_ir.tensors.get(str(rhs_name), None)
+        if lhs_tensor is None or rhs_tensor is None:
+            return None
+        lhs_shape = [int(v) for v in list(lhs_tensor.shape)]
+        rhs_shape = [int(v) for v in list(rhs_tensor.shape)]
+        if str(lhs_name) in runtime_shape_uncertain_tensors and _is_all_ones_shape(rhs_shape):
+            return "lhs"
+        if str(rhs_name) in runtime_shape_uncertain_tensors and _is_all_ones_shape(lhs_shape):
+            return "rhs"
+        return None
+
     def _binary_requires_runtime_alignment(lhs_name: str, rhs_name: str, output_name: str) -> bool:
         lhs_tensor = model_ir.tensors.get(str(lhs_name), None)
         rhs_tensor = model_ir.tensors.get(str(rhs_name), None)
@@ -8267,6 +8370,12 @@ def _write_native_model_file(
 
     def _is_channel_last_layout(logical_layout: Any) -> bool:
         return str(logical_layout).upper() in {"NWC", "NHWC", "NDHWC"}
+
+    def _tensor_dtype_name(tensor_name: str) -> Optional[str]:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            return None
+        return str(tensor.dtype).upper()
 
     def _can_emit_direct_module_call(op: OperatorIR) -> bool:
         op_type = str(op.op_type)
@@ -8668,7 +8777,51 @@ def _write_native_model_file(
                 forward_lines.append(f"{output_vars[0]} = self.{attr_name}({_tensor_expr(str(op.inputs[0]))})")
                 forward_lines.extend(_activation_lines(output_vars[0], fused))
             elif op_type == "PRELU":
-                expr = f"self.{attr_name}({_tensor_expr(str(op.inputs[0]))})"
+                prelu_input_name = str(op.inputs[0])
+                prelu_input_expr = _tensor_expr(prelu_input_name)
+                prelu_input_tensor = model_ir.tensors.get(prelu_input_name, None)
+                prelu_output_tensor = model_ir.tensors.get(outputs[0], None)
+                prelu_input_layout = (
+                    normalize_logical_layout(prelu_input_tensor.logical_layout)
+                    if prelu_input_tensor is not None
+                    else LOGICAL_LAYOUT_UNKNOWN
+                )
+                prelu_output_layout = (
+                    normalize_logical_layout(prelu_output_tensor.logical_layout)
+                    if prelu_output_tensor is not None
+                    else LOGICAL_LAYOUT_UNKNOWN
+                )
+                prelu_rank = len(list(prelu_input_tensor.shape)) if prelu_input_tensor is not None else 0
+                prelu_num_parameters = 1
+                prelu_weight_tensor = model_ir.tensors.get(str(op.inputs[1]), None) if len(op.inputs) >= 2 else None
+                if prelu_weight_tensor is not None:
+                    if isinstance(prelu_weight_tensor.data, np.ndarray):
+                        prelu_num_parameters = max(1, int(np.asarray(prelu_weight_tensor.data).size))
+                    elif len(list(prelu_weight_tensor.shape)) > 0:
+                        shape_values = [int(v) for v in list(prelu_weight_tensor.shape) if int(v) > 0]
+                        if len(shape_values) > 0:
+                            prelu_num_parameters = max(1, int(np.prod(shape_values, dtype=np.int64)))
+                expr = f"self.{attr_name}({prelu_input_expr})"
+                if (
+                    prelu_num_parameters > 1
+                    and prelu_rank in {3, 4, 5}
+                    and is_channel_last_logical_layout(prelu_input_layout)
+                ):
+                    pre_perm = logical_layout_permutation(
+                        source_layout=prelu_input_layout,
+                        target_layout=channel_first_logical_layout(prelu_rank),
+                    )
+                    post_perm = logical_layout_permutation(
+                        source_layout=channel_first_logical_layout(prelu_rank),
+                        target_layout=prelu_output_layout if is_channel_last_logical_layout(prelu_output_layout) else prelu_input_layout,
+                    )
+                    if pre_perm is not None and post_perm is not None:
+                        permuted_input_expr = (
+                            f"{prelu_input_expr}.permute({', '.join(str(int(v)) for v in pre_perm)}).contiguous()"
+                        )
+                        expr = (
+                            f"self.{attr_name}({permuted_input_expr}).permute({', '.join(str(int(v)) for v in post_perm)}).contiguous()"
+                        )
                 inferred_shape = _tensor_shape_list(str(op.inputs[0]))
                 if _should_skip_align_for_shape_preserving_unary(str(op.inputs[0]), outputs[0]):
                     forward_lines.append(f"{output_vars[0]} = {expr}")
@@ -8682,6 +8835,8 @@ def _write_native_model_file(
             fused = str(op.options.get("fusedActivationFunction", "NONE"))
             lhs_name = str(op.inputs[0])
             rhs_name = str(op.inputs[1])
+            lhs_dtype_name = _tensor_dtype_name(lhs_name)
+            rhs_dtype_name = _tensor_dtype_name(rhs_name)
             lhs_expr = _binary_operand_expr(lhs_name, rhs_name)
             rhs_scalar_literal = _scalar_literal_expr(rhs_name)
             if op_type in {"MAXIMUM", "MINIMUM"}:
@@ -8695,9 +8850,27 @@ def _write_native_model_file(
                     f"torch.as_tensor({rhs_scalar_literal}, "
                     f"dtype={lhs_expr}.dtype, device={lhs_expr}.device)"
                 )
+            is_integer_div = (
+                op_type == "DIV"
+                and lhs_dtype_name in {"INT8", "INT16", "INT32", "INT64", "UINT8"}
+                and rhs_dtype_name in {"INT8", "INT16", "INT32", "INT64", "UINT8"}
+            )
+
+            def _binary_expr(left_expr: str, right_expr: str) -> str:
+                if is_integer_div:
+                    return (
+                        f"torch.div({left_expr}, {right_expr}, "
+                        "rounding_mode='trunc')"
+                    )
+                return f"{fn_name}({left_expr}, {right_expr})"
+
             if rhs_scalar_literal is not None:
                 forward_lines.append(
-                    f"{output_vars[0]} = {_emit_maybe_aligned_expr(output_name=outputs[0], expr=f'{fn_name}({lhs_expr}, {rhs_expr})', inferred_shape=None)}"
+                    f"{output_vars[0]} = {_emit_maybe_aligned_expr(output_name=outputs[0], expr=_binary_expr(lhs_expr, rhs_expr), inferred_shape=None)}"
+                )
+            elif _binary_runtime_shape_passthrough_operand(lhs_name, rhs_name) is not None:
+                forward_lines.append(
+                    f"{output_vars[0]} = {_binary_expr(lhs_expr, rhs_expr)}"
                 )
             elif _binary_requires_runtime_alignment(lhs_name, rhs_name, outputs[0]):
                 lhs_uncertain = lhs_name in runtime_shape_uncertain_tensors
@@ -8720,11 +8893,11 @@ def _write_native_model_file(
                         f"{lhs_var}, {rhs_var} = _align_binary_inputs({lhs_expr}, {_binary_operand_expr(rhs_name, lhs_name)}, {output_target_shape})"
                     )
                 forward_lines.append(
-                    f"{output_vars[0]} = {_emit_maybe_aligned_expr(output_name=outputs[0], expr=f'{fn_name}({lhs_var}, {rhs_var})', inferred_shape=None)}"
+                    f"{output_vars[0]} = {_emit_maybe_aligned_expr(output_name=outputs[0], expr=_binary_expr(lhs_var, rhs_var), inferred_shape=None)}"
                 )
             else:
                 forward_lines.append(
-                    f"{output_vars[0]} = {_emit_maybe_aligned_expr(output_name=outputs[0], expr=f'{fn_name}({lhs_expr}, {rhs_expr})', inferred_shape=None)}"
+                    f"{output_vars[0]} = {_emit_maybe_aligned_expr(output_name=outputs[0], expr=_binary_expr(lhs_expr, rhs_expr), inferred_shape=None)}"
                 )
             forward_lines.extend(_activation_lines(output_vars[0], fused))
             continue
@@ -8946,7 +9119,11 @@ def _write_native_model_file(
             reshape_special_plan = None
             reshape_pre_perm = None
             reshape_feature_last_target = None
-            if not reshape_is_lowered_onnx_flatten:
+            reshape_plain_singleton_axis_drop = _reshape_is_plain_singleton_axis_drop(
+                reshape_input_shape,
+                reshape_output_shape,
+            )
+            if not reshape_is_lowered_onnx_flatten and not reshape_plain_singleton_axis_drop:
                 reshape_special_plan = _reshape_special_layout_plan(
                     input_shape=reshape_input_shape,
                     output_shape=reshape_output_shape,
@@ -9235,6 +9412,17 @@ def _write_native_model_file(
                 end_mask=int(options.get("endMask", 0)),
                 input_rank=len(model_ir.tensors[str(op.inputs[0])].shape),
             )
+            if direct_strided_slice_expr is None:
+                direct_strided_slice_expr = _direct_symbolic_strided_slice_expr(
+                    x_expr=_tensor_expr(str(op.inputs[0])),
+                    begin_values=_constant_int_list(model_ir.tensors.get(str(op.inputs[1]), None)) or [],
+                    stride_values=_constant_int_list(model_ir.tensors.get(str(op.inputs[3]), None)) or [],
+                    begin_mask=int(options.get("beginMask", 0)),
+                    end_mask=int(options.get("endMask", 0)),
+                    input_rank=len(model_ir.tensors[str(op.inputs[0])].shape),
+                    end_list_expr=_reconstruct_shape_list_expr(str(op.inputs[2])),
+                    end_scalar_expr=_reconstruct_shape_scalar_expr(str(op.inputs[2])),
+                )
             if direct_strided_slice_expr is not None:
                 forward_lines.append(f"{output_vars[0]} = {direct_strided_slice_expr}")
             else:
@@ -9508,10 +9696,15 @@ def _write_native_model_file(
             output_value_tensor = model_ir.tensors.get(outputs[0], None)
             output_index_tensor = model_ir.tensors.get(outputs[1], None) if len(outputs) > 1 else None
             k_literal = _int_scalar_literal_expr(str(op.inputs[1]))
+            k_reconstructed_scalar_expr = None if k_literal is not None else _reconstruct_shape_scalar_expr(str(op.inputs[1]))
             k_expr = (
-                f"int({k_literal})"
+                repr(int(k_literal))
                 if k_literal is not None else
+                (
+                    f"{k_reconstructed_scalar_expr}"
+                    if k_reconstructed_scalar_expr is not None else
                 f"int({_tensor_expr(str(op.inputs[1]))}.reshape(-1)[0].to(dtype=torch.int64).item())"
+                )
             )
             axis_expr = repr(int(op.options.get("axis", -1)))
             largest = bool(op.options.get("largest", True))
@@ -9646,25 +9839,33 @@ def _write_native_model_file(
             )
             continue
         if op_type == "PAD":
-            if _pad_literal_expr(str(op.inputs[1])) is None:
-                runtime_imports.add("_to_torch_pad_arg")
             runtime_imports.add("_align_tensor_to_target_shape")
-            pad_expr = _pad_literal_expr(str(op.inputs[1])) or f"_to_torch_pad_arg({_tensor_expr(str(op.inputs[1]))})"
             pad_input_expr = f"_align_tensor_to_target_shape({_tensor_expr(str(op.inputs[0]))}, {_target_shape_literal(str(op.inputs[0]))})"
-            forward_lines.append(
-                f"{output_vars[0]} = F.pad({pad_input_expr}, {pad_expr}, mode='constant', value=0.0)"
-            )
+            pad_literal_expr = _pad_literal_expr(str(op.inputs[1]))
+            if pad_literal_expr is not None:
+                forward_lines.append(
+                    f"{output_vars[0]} = F.pad({pad_input_expr}, {pad_literal_expr}, mode='constant', value=0.0)"
+                )
+            else:
+                runtime_imports.add("_apply_pad_nd")
+                forward_lines.append(
+                    f"{output_vars[0]} = _apply_pad_nd({pad_input_expr}, {_tensor_expr(str(op.inputs[1]))}, mode='constant', value=0.0)"
+                )
             continue
         if op_type == "PADV2":
-            if _pad_literal_expr(str(op.inputs[1])) is None:
-                runtime_imports.add("_to_torch_pad_arg")
             runtime_imports.add("_align_tensor_to_target_shape")
-            pad_expr = _pad_literal_expr(str(op.inputs[1])) or f"_to_torch_pad_arg({_tensor_expr(str(op.inputs[1]))})"
             pad_input_expr = f"_align_tensor_to_target_shape({_tensor_expr(str(op.inputs[0]))}, {_target_shape_literal(str(op.inputs[0]))})"
             value_expr = _scalar_literal_expr(str(op.inputs[2])) or f"float({_tensor_expr(str(op.inputs[2]))}.reshape(-1)[0].item())"
-            forward_lines.append(
-                f"{output_vars[0]} = F.pad({pad_input_expr}, {pad_expr}, mode='constant', value={value_expr})"
-            )
+            pad_literal_expr = _pad_literal_expr(str(op.inputs[1]))
+            if pad_literal_expr is not None:
+                forward_lines.append(
+                    f"{output_vars[0]} = F.pad({pad_input_expr}, {pad_literal_expr}, mode='constant', value={value_expr})"
+                )
+            else:
+                runtime_imports.add("_apply_pad_nd")
+                forward_lines.append(
+                    f"{output_vars[0]} = _apply_pad_nd({pad_input_expr}, {_tensor_expr(str(op.inputs[1]))}, mode='constant', value={value_expr})"
+                )
             continue
         if op_type == "MIRROR_PAD":
             static_mirror_pad_expr = _static_mirror_pad_expr(
@@ -10078,6 +10279,8 @@ def _write_native_model_file(
         "    if perm_inv is not None and _permute_shape(actual_shape, perm_inv) == target:\n"
         "        return _torch_permute(value, perm_inv)\n"
         "    if len(actual_shape) == len(target):\n"
+        "        if all(int(dim) == 1 for dim in list(target)) and any(int(actual_dim) > 1 for actual_dim in list(actual_shape)):\n"
+        "            return value\n"
         "        can_narrow = True\n"
         "        has_mismatch = False\n"
         "        for dim_idx, (actual_dim, target_dim) in enumerate(zip(actual_shape, target)):\n"
@@ -10258,6 +10461,10 @@ def _write_native_model_file(
         "        return x, y\n"
         "    broadcast_shape = _broadcast_shape(x_shape, y_shape)\n"
         "    if broadcast_shape is not None:\n"
+        "        x_is_scalar_seed = all(int(dim) == 1 for dim in list(x_shape))\n"
+        "        y_is_scalar_seed = all(int(dim) == 1 for dim in list(y_shape))\n"
+        "        if x_is_scalar_seed or y_is_scalar_seed:\n"
+        "            return x, y\n"
         "        if not has_target or broadcast_shape == target:\n"
         "            return x, y\n"
         "        if torch.jit.is_scripting():\n"
@@ -10523,6 +10730,25 @@ def _write_native_model_file(
         "    return torch_pad\n\n"
         "def _apply_pad_nd(x: torch.Tensor, paddings: torch.Tensor, *, mode: str, value: float = 0.0) -> torch.Tensor:\n"
         "    pads_tensor = paddings.to(dtype=torch.int64).reshape(-1, 2)\n"
+        "    if (not torch.jit.is_scripting()) and str(mode) == 'constant':\n"
+        "        rank = int(x.ndim)\n"
+        "        pad_rows = int(pads_tensor.shape[0])\n"
+        "        if pad_rows < rank:\n"
+        "            prefix_rows = torch.zeros([rank - pad_rows, 2], dtype=pads_tensor.dtype, device=pads_tensor.device)\n"
+        "            pads_tensor = torch.cat([prefix_rows, pads_tensor], dim=0)\n"
+        "        elif pad_rows > rank:\n"
+        "            pads_tensor = pads_tensor[(pad_rows - rank):, :]\n"
+        "        y = x\n"
+        "        for axis in range(rank):\n"
+        "            before = torch.reshape(pads_tensor[axis, 0], [1]).to(dtype=torch.int64)\n"
+        "            after = torch.reshape(pads_tensor[axis, 1], [1]).to(dtype=torch.int64)\n"
+        "            zero_shape = list(y.shape)\n"
+        "            zero_shape[axis] = 1\n"
+        "            zero_slice = torch.full(zero_shape, float(value), dtype=y.dtype, device=y.device)\n"
+        "            pad_before = torch.repeat_interleave(zero_slice, before, dim=axis)\n"
+        "            pad_after = torch.repeat_interleave(zero_slice, after, dim=axis)\n"
+        "            y = torch.cat([pad_before, y, pad_after], dim=axis)\n"
+        "        return y\n"
         "    pad_pairs = torch.jit.annotate(List[List[int]], [])\n"
         "    for row_index in range(int(pads_tensor.shape[0])):\n"
         "        pad_pairs.append([\n"
@@ -10777,23 +11003,15 @@ def _write_native_model_file(
         "    indices_i64 = indices.to(dtype=torch.int64)\n"
         "    index_depth = int(indices_i64.shape[-1])\n"
         "    flat_indices = indices_i64.reshape(-1, index_depth)\n"
-        "    prefix_shape = [int(dim) for dim in list(indices_i64.shape[:-1])]\n"
-        "    params_shape = [int(dim) for dim in list(params.shape)]\n"
-        "    row_shape = params_shape[:index_depth]\n"
-        "    slice_shape = params_shape[index_depth:]\n"
-        "    strides: List[int] = [1] * len(row_shape)\n"
-        "    running = 1\n"
-        "    for axis in range(len(row_shape) - 1, -1, -1):\n"
-        "        strides[axis] = int(running)\n"
-        "        running *= int(row_shape[axis])\n"
-        "    linear_rows = torch.zeros([flat_indices.shape[0]], dtype=torch.int64, device=params.device)\n"
-        "    for axis, stride in enumerate(strides):\n"
-        "        linear_rows = linear_rows + flat_indices[:, axis] * int(stride)\n"
-        "    slice_size = 1\n"
-        "    for dim in slice_shape:\n"
-        "        slice_size *= int(dim)\n"
-        "    params_rows = torch.reshape(params, [int(running), int(slice_size)])\n"
-        "    gathered_rows = torch.index_select(params_rows, 0, linear_rows)\n"
+        "    prefix_shape = list(indices_i64.shape[:-1])\n"
+        "    slice_shape = list(params.shape[index_depth:])\n"
+        "    if index_depth == 0:\n"
+        "        gathered_rows = params\n"
+        "    else:\n"
+        "        gather_indices = torch.jit.annotate(List[torch.Tensor], [])\n"
+        "        for axis in range(index_depth):\n"
+        "            gather_indices.append(flat_indices[:, axis])\n"
+        "        gathered_rows = params[tuple(gather_indices)]\n"
         "    output_shape = prefix_shape + slice_shape\n"
         "    if len(output_shape) == 0:\n"
         "        y = torch.reshape(gathered_rows, [])\n"
@@ -10847,24 +11065,73 @@ def _write_native_model_file(
         "def _apply_slice(x: torch.Tensor, begin: torch.Tensor, size: torch.Tensor, target_shape: Optional[Sequence[int]]) -> torch.Tensor:\n"
         "    begin_values = _shape_list(begin)\n"
         "    size_values = _shape_list(size)\n"
-        "    slices: List[slice] = []\n"
+        "    y = x\n"
         "    for axis, start in enumerate(begin_values):\n"
-        "        dim_size = int(x.shape[axis])\n"
+        "        dim_size = y.shape[axis]\n"
+        "        start_index = int(start)\n"
+        "        if start_index < 0:\n"
+        "            start_index += dim_size\n"
         "        length = int(size_values[axis])\n"
-        "        stop = None if length < 0 else min(int(start) + length, dim_size)\n"
-        "        slices.append(slice(int(start), stop))\n"
-        "    y = x[tuple(slices)]\n"
+        "        if length < 0:\n"
+        "            narrowed_length = dim_size - start_index\n"
+        "        else:\n"
+        "            narrowed_length = length\n"
+        "        y = torch.narrow(y, axis, start_index, narrowed_length)\n"
         "    return _align_tensor_to_target_shape(y, target_shape)\n\n"
         "def _apply_strided_slice(x: torch.Tensor, begin: torch.Tensor, end: torch.Tensor, strides: torch.Tensor, begin_mask: int, end_mask: int, target_shape: Optional[Sequence[int]]) -> torch.Tensor:\n"
         "    begin_values = _shape_list(begin)\n"
         "    end_values = _shape_list(end)\n"
         "    stride_values = _shape_list(strides)\n"
-        "    slices: List[slice] = []\n"
+        "    y = x\n"
         "    for axis, (start, stop, step) in enumerate(zip(begin_values, end_values, stride_values)):\n"
+        "        dim_size = y.shape[axis]\n"
+        "        has_dynamic_start = (not ((int(begin_mask) >> axis) & 1)) and isinstance(start, torch.Tensor)\n"
+        "        has_dynamic_stop = (not ((int(end_mask) >> axis) & 1)) and isinstance(stop, torch.Tensor)\n"
+        "        has_dynamic_step = isinstance(step, torch.Tensor)\n"
+        "        if (not torch.jit.is_scripting()) and (has_dynamic_start or has_dynamic_stop or has_dynamic_step):\n"
+        "            dim_size_tensor = torch.scalar_tensor(dim_size, dtype=torch.int64, device=y.device)\n"
+        "            axis_indices = torch.arange(dim_size, dtype=torch.int64, device=y.device)\n"
+        "            step_tensor = torch.reshape(torch.as_tensor(step, dtype=torch.int64, device=y.device), [])\n"
+        "            if ((int(begin_mask) >> axis) & 1):\n"
+        "                start_tensor = torch.zeros([], dtype=torch.int64, device=y.device)\n"
+        "            else:\n"
+        "                start_tensor = torch.reshape(torch.as_tensor(start, dtype=torch.int64, device=y.device), [])\n"
+        "                start_tensor = torch.where(start_tensor < 0, start_tensor + dim_size_tensor, start_tensor)\n"
+        "            if ((int(end_mask) >> axis) & 1):\n"
+        "                stop_tensor = dim_size_tensor\n"
+        "            else:\n"
+        "                stop_tensor = torch.reshape(torch.as_tensor(stop, dtype=torch.int64, device=y.device), [])\n"
+        "                stop_tensor = torch.where(stop_tensor < 0, stop_tensor + dim_size_tensor, stop_tensor)\n"
+        "            axis_mask = torch.logical_and(axis_indices >= start_tensor, axis_indices < stop_tensor)\n"
+        "            axis_mask = torch.logical_and(axis_mask, torch.eq(torch.remainder(axis_indices - start_tensor, step_tensor), 0))\n"
+        "            axis_indices = axis_indices[axis_mask]\n"
+        "            y = torch.index_select(y, axis, axis_indices)\n"
+        "            continue\n"
+        "        step_value = int(step)\n"
+        "        if step_value == 0:\n"
+        "            raise RuntimeError('STRIDED_SLICE step must be non-zero')\n"
         "        resolved_start = None if ((int(begin_mask) >> axis) & 1) else int(start)\n"
         "        resolved_stop = None if ((int(end_mask) >> axis) & 1) else int(stop)\n"
-        "        slices.append(slice(resolved_start, resolved_stop, int(step)))\n"
-        "    y = x[tuple(slices)]\n"
+        "        if step_value > 0:\n"
+        "            start_index = 0 if resolved_start is None else int(resolved_start)\n"
+        "            stop_index = dim_size if resolved_stop is None else int(resolved_stop)\n"
+        "            if start_index < 0:\n"
+        "                start_index += dim_size\n"
+        "            if stop_index < 0:\n"
+        "                stop_index += dim_size\n"
+        "        else:\n"
+        "            start_index = dim_size - 1 if resolved_start is None else int(resolved_start)\n"
+        "            stop_index = -1 if resolved_stop is None else int(resolved_stop)\n"
+        "            if start_index < 0:\n"
+        "                start_index += dim_size\n"
+        "            if resolved_stop is not None and stop_index < 0:\n"
+        "                stop_index += dim_size\n"
+        "        if step_value == 1:\n"
+        "            narrowed_length = stop_index - start_index\n"
+        "            y = torch.narrow(y, axis, start_index, narrowed_length)\n"
+        "            continue\n"
+        "        axis_indices = torch.arange(start_index, stop_index, step_value, dtype=torch.int64, device=y.device)\n"
+        "        y = torch.index_select(y, axis, axis_indices)\n"
         "    return _align_tensor_to_target_shape(y, target_shape)\n\n"
         "def _resolve_same_padding(input_size: int, kernel_size: int, stride: int, target_size: Optional[int] = None) -> Tuple[int, int]:\n"
         "    if target_size is None:\n"

@@ -69,3 +69,16 @@ def test_validate_grid_sample_rank5_rejects_bad_grid_last_dim() -> None:
     )
     with pytest.raises(NodeValidationError):
         _validate_grid_sample(node, ctx)
+
+
+def test_validate_grid_sample_rank4_accepts_dynamic_output_width() -> None:
+    node = _node(attrs={"mode": "bilinear", "padding_mode": "zeros", "align_corners": 1})
+    ctx = _Ctx(
+        shapes={
+            "x": [1, 256, 60, 80],
+            "grid": [1, 1, -1, 2],
+            "y": [1, 256, 1, -1],
+        },
+        dtypes={"x": "FLOAT32", "grid": "FLOAT32", "y": "FLOAT32"},
+    )
+    _validate_grid_sample(node, ctx)

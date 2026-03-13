@@ -6400,18 +6400,50 @@ def _validate_group_normalization(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    channels = int(input_shape[1])
-    if channels <= 0 or any(int(v) <= 0 for v in input_shape[2:]):
+    scale_size = int(np.asarray(scale).reshape(-1).size)
+    bias_size = int(np.asarray(bias).reshape(-1).size)
+    if scale_size != bias_size:
         raise NodeValidationError(
             reason_code="unsupported_input_shape",
             message=(
-                "GroupNormalization builtin lowering requires static positive channel/spatial dims. "
-                f"input_shape={input_shape}"
+                "GroupNormalization scale/bias must have the same length for builtin lowering. "
+                f"scale_shape={list(np.asarray(scale).shape)} bias_shape={list(np.asarray(bias).shape)}"
             ),
             node_name=node.name,
             node_op=node.op,
         )
-    num_groups = int(node.attrs.get("num_groups", 1))
+
+    op_name = str(node.op)
+    preferred_channel_axes = [1, len(input_shape) - 1] if op_name == "GroupNormalization" else [len(input_shape) - 1, 1]
+    channel_axis = None
+    for axis in preferred_channel_axes:
+        if 0 <= int(axis) < len(input_shape) and int(input_shape[int(axis)]) == scale_size:
+            channel_axis = int(axis)
+            break
+    if channel_axis is None:
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "GroupNormalization builtin lowering requires the scale/bias length to match either C-first or C-last. "
+                f"input_shape={input_shape} scale_shape={list(np.asarray(scale).shape)}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+
+    channels = int(input_shape[channel_axis])
+    spatial_dims = [int(v) for idx, v in enumerate(input_shape[1:]) if int(idx) + 1 != channel_axis]
+    if channels <= 0 or any(int(v) <= 0 for v in spatial_dims):
+        raise NodeValidationError(
+            reason_code="unsupported_input_shape",
+            message=(
+                "GroupNormalization builtin lowering requires static positive channel/spatial dims. "
+                f"input_shape={input_shape} channel_axis={channel_axis}"
+            ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    num_groups = int(node.attrs.get("num_groups", node.attrs.get("groups", 1)))
     if num_groups <= 0 or channels % num_groups != 0:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
@@ -6422,7 +6454,7 @@ def _validate_group_normalization(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    if np.asarray(scale).reshape(-1).size != channels or np.asarray(bias).reshape(-1).size != channels:
+    if scale_size != channels or bias_size != channels:
         raise NodeValidationError(
             reason_code="unsupported_input_shape",
             message=(
@@ -6437,6 +6469,14 @@ def _validate_group_normalization(node: Any, ctx: Any) -> None:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
             message=f"GroupNormalization stash_type must be 0 or 1. stash_type={stash_type}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    activation = int(node.attrs.get("activation", 0))
+    if activation not in {0, 1}:
+        raise NodeValidationError(
+            reason_code="unsupported_attribute_value",
+            message=f"GroupNormalization activation must be 0 or 1. activation={activation}",
             node_name=node.name,
             node_op=node.op,
         )
@@ -8523,11 +8563,40 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
             for idx, dim in enumerate(resolved_output_shape)
         ]
 
-    if any(int(v) <= 0 for v in image_shape + grid_shape + resolved_output_shape):
+    def _dims_match_when_known(*dims: int) -> bool:
+        known = [int(v) for v in dims if int(v) > 0]
+        return len(set(known)) <= 1
+
+    if rank == 4:
+        required_static_dims = [
+            int(image_shape[0]),
+            int(image_shape[1]),
+            int(image_shape[2]),
+            int(image_shape[3]),
+            int(grid_shape[0]),
+            int(grid_shape[3]),
+            int(resolved_output_shape[0]),
+            int(resolved_output_shape[1]),
+        ]
+    else:
+        required_static_dims = [
+            int(image_shape[0]),
+            int(image_shape[1]),
+            int(image_shape[2]),
+            int(image_shape[3]),
+            int(image_shape[4]),
+            int(grid_shape[0]),
+            int(grid_shape[4]),
+            int(resolved_output_shape[0]),
+            int(resolved_output_shape[1]),
+        ]
+
+    if any(int(v) <= 0 for v in required_static_dims):
         raise NodeValidationError(
             reason_code="unsupported_input_shape",
             message=(
-                "GridSample requires static positive dimensions in flatbuffer_direct. "
+                "GridSample requires static positive batch/channel/input-spatial dimensions "
+                "and a static grid last dimension in flatbuffer_direct. "
                 f"image_shape={image_shape} grid_shape={grid_shape} "
                 f"output_shape={output_shape} resolved_output_shape={resolved_output_shape}"
             ),
@@ -8540,10 +8609,10 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
         out_n, out_c, out_h, out_w = [int(v) for v in resolved_output_shape]
         grid_n, grid_h, grid_w, _ = [int(v) for v in grid_shape]
         if not (
-            n == out_n == grid_n
-            and c == out_c
-            and out_h == grid_h
-            and out_w == grid_w
+            _dims_match_when_known(n, out_n, grid_n)
+            and _dims_match_when_known(c, out_c)
+            and _dims_match_when_known(out_h, grid_h)
+            and _dims_match_when_known(out_w, grid_w)
             and h >= 1
             and w >= 1
         ):
@@ -8562,11 +8631,11 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
         out_n, out_c, out_d, out_h, out_w = [int(v) for v in resolved_output_shape]
         grid_n, grid_d, grid_h, grid_w, _ = [int(v) for v in grid_shape]
         if not (
-            n == out_n == grid_n
-            and c == out_c
-            and out_d == grid_d
-            and out_h == grid_h
-            and out_w == grid_w
+            _dims_match_when_known(n, out_n, grid_n)
+            and _dims_match_when_known(c, out_c)
+            and _dims_match_when_known(out_d, grid_d)
+            and _dims_match_when_known(out_h, grid_h)
+            and _dims_match_when_known(out_w, grid_w)
             and d >= 1
             and h >= 1
             and w >= 1
@@ -9465,6 +9534,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     "GroupNormalization": DispatchEntry(
         onnx_op="GroupNormalization",
         tflite_ops=["RESHAPE", "MEAN", "SUB", "MUL", "ADD", "SQRT", "DIV", "CAST"],
+        builder=build_group_normalization_op,
+        validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
+        extra_validator=_validate_group_normalization,
+    ),
+    "GroupNorm": DispatchEntry(
+        onnx_op="GroupNorm",
+        tflite_ops=["RESHAPE", "MEAN", "SUB", "MUL", "ADD", "SQRT", "DIV", "CAST", "LOGISTIC"],
         builder=build_group_normalization_op,
         validation=ValidationSpec(min_inputs=3, max_inputs=3, min_outputs=1, max_outputs=1),
         extra_validator=_validate_group_normalization,
