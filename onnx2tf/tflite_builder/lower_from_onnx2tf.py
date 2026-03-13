@@ -54303,13 +54303,14 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
         if len(output_shape) != rank or len(list(perm)) != rank:
             continue
         # Dynamic dimensions can be represented as placeholder static 1s in `shape`.
-        # Replacing transpose with reshape is only safe when the layout is fully
-        # static in signatures as well.
+        # Replacing transpose with reshape is only safe when the moved layout axes
+        # are still provably singleton in signatures. Rank-4 layout bridges keep
+        # batch at axis 0, so a dynamic batch dimension there remains safe.
         if (
             len(input_signature) != rank
             or len(output_signature) != rank
-            or any(int(v) < 0 for v in input_signature)
-            or any(int(v) < 0 for v in output_signature)
+            or any(int(v) < 0 for idx, v in enumerate(input_signature) if int(idx) != 0)
+            or any(int(v) < 0 for idx, v in enumerate(output_signature) if int(idx) != 0)
         ):
             continue
 

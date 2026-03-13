@@ -27680,6 +27680,68 @@ def test_flatbuffer_direct_singleton_moved_axis_transpose_rewritten_to_reshape()
     assert model_ir.operators[0].options.get("newShape") == [1, 64, 1, 97]
 
 
+def test_flatbuffer_direct_dynamic_batch_singleton_reshape_transpose_collapses_to_single_reshape() -> None:
+    model_ir = ModelIR(name="dynamic_batch_singleton_reshape_transpose_collapse_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 288],
+        shape_signature=[-1, 288],
+    )
+    model_ir.tensors["mid"] = TensorIR(
+        name="mid",
+        dtype="FLOAT32",
+        shape=[1, 288, 1, 1],
+        shape_signature=[-1, 288, 1, 1],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 288],
+        shape_signature=[-1, 1, 1, 288],
+    )
+    model_ir.tensors["shape_mid"] = TensorIR(
+        name="shape_mid",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([-1, 288, 1, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_nchw_to_nhwc"] = TensorIR(
+        name="perm_nchw_to_nhwc",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "shape_mid"],
+            outputs=["mid"],
+            options={"newShape": [-1, 288, 1, 1]},
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["mid", "perm_nchw_to_nhwc"],
+            outputs=["y"],
+        ),
+    ]
+
+    transpose_stats = _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
+    reshape_stats = _optimize_consecutive_reshape_passthrough_chains(model_ir)
+
+    assert transpose_stats["rewritten_singleton_channel_layout_transpose_to_reshape"] == 1
+    assert reshape_stats["rewritten_consecutive_reshape_passthrough_chains"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["RESHAPE"]
+    assert list(model_ir.operators[0].inputs) == ["x", "y_reshape_shape"]
+    assert model_ir.operators[0].options.get("newShape") == [1, 1, 1, 288]
+
+
 def test_flatbuffer_direct_non_singleton_order_change_transpose_not_rewritten_to_reshape() -> None:
     model_ir = ModelIR(name="non_singleton_order_change_transpose_test")
     model_ir.inputs = ["x"]
