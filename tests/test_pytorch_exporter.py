@@ -79,6 +79,27 @@ def _import_generated_package(package_path: str):
             sys.path.pop(0)
 
 
+def test_native_codegen_legacy_impl_is_not_defined_in_pytorch_exporter_module() -> None:
+    exporter_source = (
+        Path(__file__).resolve().parents[1] / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    pipeline_source = (
+        Path(__file__).resolve().parents[1]
+        / "onnx2tf"
+        / "tflite_builder"
+        / "_pytorch_exporter_native_codegen_pipeline.py"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "def _write_native_model_file_codegen_core_body_main_inner_legacy_impl("
+        not in exporter_source
+    )
+    assert (
+        "def _write_native_model_file_codegen_core_body_main_inner_legacy_impl("
+        in pipeline_source
+    )
+
+
 def _make_add_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3])
