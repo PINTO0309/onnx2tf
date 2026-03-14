@@ -2918,9 +2918,15 @@ def _constant_permute_for_broadcast_for_codegen(
         return None
     tensor_broadcast_shape = [int(v) if int(v) > 0 else 1 for v in tensor_shape]
     other_broadcast_shape = [int(v) if int(v) > 0 else 1 for v in other_shape]
+    non_singleton_axes = [idx for idx, dim in enumerate(tensor_shape) if int(dim) > 1]
     try:
         np.broadcast_shapes(tuple(tensor_broadcast_shape), tuple(other_broadcast_shape))
-        non_singleton_axes = [idx for idx, dim in enumerate(tensor_shape) if int(dim) > 1]
+        # Keep singleton-expanded constants on their original axis when they
+        # already broadcast correctly. Permuting them to exactly match the peer
+        # tensor can collapse the intended broadcast result, e.g. [1,384,1]
+        # with [1,1,384] should stay as-is and broadcast to [1,384,384].
+        if len(non_singleton_axes) == 1:
+            return None
         if (
             len(non_singleton_axes) == 1
             and int(non_singleton_axes[0]) == len(tensor_shape) - 1

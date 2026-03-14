@@ -6593,10 +6593,9 @@ def test_export_pytorch_package_generates_native_mobilebert_package_when_model_i
     assert metadata["execution_backend"] == "native"
     assert "load_generated_model_package" not in model_source
     assert "class _AffineLayerNorm(torch.nn.Module):" in model_source
-    assert "class _GeneratedEncoderLayer0Attention(torch.nn.Module):" in model_source
-    assert "class _GeneratedEncoderLayer0FFN(torch.nn.Module):" in model_source
-    assert "class _GeneratedEncoderLayer0(torch.nn.Module):" in model_source
-    assert "self.encoder_layer_0 = _GeneratedEncoderLayer0(" in model_source
+    assert "self.encoder_layer_0_attention_output_layer_norm = _AffineLayerNorm(" in model_source
+    assert "self.encoder_layer_0_ffn_layer_0_output_layer_norm = _AffineLayerNorm(" in model_source
+    assert "self.encoder_layer_0_output_layer_norm = _AffineLayerNorm(" in model_source
     assert "_layer_norm(" in model_source
     assert "FakeLayerNorm_gamma_read: torch.Tensor" not in model_source
     assert "self.linear_0 = torch.nn.Linear(" in model_source
@@ -6622,6 +6621,11 @@ def test_export_pytorch_package_generates_native_mobilebert_package_when_model_i
     for loaded_output, reloaded_output in zip(loaded_outputs, reloaded_outputs):
         assert list(loaded_output.shape) == list(reloaded_output.shape)
         assert torch.allclose(loaded_output, reloaded_output, atol=1e-5, rtol=1e-5)
+
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    assert dynamo_onnx_path is not None
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert exported_program_path is not None
 
 
 def test_export_pytorch_package_imported_tflite_with_gelu_stays_native(
@@ -8304,6 +8308,55 @@ def test_export_pytorch_package_prefers_standard_channel_last_permute_for_rank4_
     out = model(x)
     ref = x + torch.arange(16, dtype=torch.float32).reshape(1, 4, 2, 2).permute(0, 2, 3, 1)
     assert torch.allclose(out, ref, atol=1e-5, rtol=1e-5)
+
+
+def test_export_pytorch_package_keeps_single_axis_rank3_constant_broadcast_shape(tmp_path) -> None:
+    model_ir = ModelIR(name="rank3_single_axis_constant_broadcast")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 1, 8],
+        shape_signature=[1, 1, 8],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["mask"] = TensorIR(
+        name="mask",
+        dtype="FLOAT32",
+        shape=[1, 5, 1],
+        shape_signature=[1, 5, 1],
+        logical_layout="UNKNOWN",
+        data=np.arange(5, dtype=np.float32).reshape(1, 5, 1),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 5, 8],
+        shape_signature=[1, 5, 8],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.operators.append(
+        OperatorIR(op_type="MUL", inputs=["mask", "x"], outputs=["y"], options={})
+    )
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "rank3_single_axis_constant_broadcast_pkg"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text()
+    assert ".permute(" not in model_source
+    assert "torch.mul(self.const_mask, x)" in model_source
+
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(8, dtype=torch.float32).reshape(1, 1, 8)
+    out = model(x)
+    ref = torch.arange(5, dtype=torch.float32).reshape(1, 5, 1) * x
+    assert torch.allclose(out, ref, atol=1e-5, rtol=1e-5)
+
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert exported_program_path is not None
 
 
 def test_export_pytorch_package_swaps_spatial_axes_for_conv1d_bridge_input(tmp_path) -> None:
