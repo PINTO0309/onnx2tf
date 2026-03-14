@@ -6426,9 +6426,11 @@ def test_export_pytorch_package_generates_native_yolox_package_when_model_is_ava
     assert "_apply_gather_nd(" not in model_source
     assert "_apply_slice(" not in model_source
     assert "_apply_strided_slice(" not in model_source
-    assert "t798_cf = torch.cat([cv261_out, t_796, t_797], dim=1)" in model_source
-    assert "t824_cf = torch.cat([cv282_out, t_822, t_823], dim=1)" in model_source
-    assert "t850_cf = torch.cat([cv303_out, t_848, t_849], dim=1)" in model_source
+    assert "cv167_in = torch.cat([resize165_out_cf, cv132_in_cf], dim=1)" in model_source
+    assert "cv189_in = torch.cat([resize187_out_cf, cv98_in_cf], dim=1)" in model_source
+    assert "t798_cf = torch.cat([cv261_out_cf, t796_cf, t797_cf], dim=1)" in model_source
+    assert "t824_cf = torch.cat([cv282_out_cf, t822_cf, t823_cf], dim=1)" in model_source
+    assert "t850_cf = torch.cat([cv303_out_cf, t848_cf, t849_cf], dim=1)" in model_source
     assert "t_798 = _align_tensor_to_target_shape(t798_cf.permute(0, 2, 3, 1).contiguous()" not in model_source
     assert "t_824 = _align_tensor_to_target_shape(t824_cf.permute(0, 2, 3, 1).contiguous()" not in model_source
     assert "t_850 = _align_tensor_to_target_shape(t850_cf.permute(0, 2, 3, 1).contiguous()" not in model_source

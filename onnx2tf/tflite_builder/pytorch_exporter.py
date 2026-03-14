@@ -547,6 +547,10 @@ def _tensor_shape_list_for_model_ir(
     return [int(v) for v in list(tensor.shape)]
 
 
+def _tensor_name_suggests_channel_last_layout_for_codegen(tensor_name: str) -> bool:
+    return str(tensor_name).lower().endswith(("_nhwc", "_nwc", "_ndhwc"))
+
+
 def _rank4_channel_first_shape_for_tensor_for_codegen(
     *,
     model_ir: ModelIR,
@@ -560,17 +564,23 @@ def _rank4_channel_first_shape_for_tensor_for_codegen(
     if tensor_shape is None or len(tensor_shape) != 4:
         return None
     tensor = model_ir.tensors.get(str(tensor_name), None)
+    tensor_layout = (
+        normalize_logical_layout(tensor.logical_layout)
+        if tensor is not None
+        else LOGICAL_LAYOUT_UNKNOWN
+    )
     if (
         str(tensor_name) in channel_first_tensor_expr_aliases
-        and tensor is not None
-        and is_channel_last_logical_layout(
-            normalize_logical_layout(tensor.logical_layout)
+        and (
+            is_channel_last_logical_layout(tensor_layout)
+            or (
+                tensor_layout == LOGICAL_LAYOUT_UNKNOWN
+                and _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor_name))
+            )
         )
     ):
         return [int(tensor_shape[0]), int(tensor_shape[3]), int(tensor_shape[1]), int(tensor_shape[2])]
-    if tensor is not None and is_channel_last_logical_layout(
-        normalize_logical_layout(tensor.logical_layout)
-    ):
+    if is_channel_last_logical_layout(tensor_layout):
         return [int(tensor_shape[0]), int(tensor_shape[3]), int(tensor_shape[1]), int(tensor_shape[2])]
     return [int(v) for v in list(tensor_shape)]
 
@@ -592,11 +602,19 @@ def _channel_first_shape_for_tensor_for_codegen(
         return [int(v) for v in list(tensor_shape)]
     tensor = model_ir.tensors.get(str(tensor_name), None)
     perm_to_cf = _perm_cl_to_cf(rank)
+    tensor_layout = (
+        normalize_logical_layout(tensor.logical_layout)
+        if tensor is not None
+        else LOGICAL_LAYOUT_UNKNOWN
+    )
     if (
         str(tensor_name) in channel_first_tensor_expr_aliases
-        and tensor is not None
-        and is_channel_last_logical_layout(
-            normalize_logical_layout(tensor.logical_layout)
+        and (
+            is_channel_last_logical_layout(tensor_layout)
+            or (
+                tensor_layout == LOGICAL_LAYOUT_UNKNOWN
+                and _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor_name))
+            )
         )
         and perm_to_cf is not None
     ):
@@ -604,10 +622,7 @@ def _channel_first_shape_for_tensor_for_codegen(
         if permuted_shape is not None:
             return [int(v) for v in list(permuted_shape)]
     if (
-        tensor is not None
-        and is_channel_last_logical_layout(
-            normalize_logical_layout(tensor.logical_layout)
-        )
+        is_channel_last_logical_layout(tensor_layout)
         and perm_to_cf is not None
     ):
         permuted_shape = _permute_shape(tensor_shape, perm_to_cf)
