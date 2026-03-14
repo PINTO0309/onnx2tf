@@ -7149,12 +7149,56 @@ def test_export_pytorch_package_generates_native_swinir_package_when_model_is_av
     package_dir = Path(package_path)
     metadata = json.loads((package_dir / "metadata.json").read_text())
     model_source = (package_dir / "model.py").read_text()
-    assert "execution_backend" not in metadata
+    assert metadata["execution_backend"] == "native"
     assert "load_generated_model_package" not in model_source
     assert "_forward_stage_0" in model_source
     assert "_depth_to_space_x_" in model_source
     assert "_space_to_depth_x_" in model_source
     assert "F.pixel_shuffle(" not in model_source
+
+
+def test_export_pytorch_package_avoids_public_bridge_permute_pairs_for_swinir_when_model_is_available(tmp_path) -> None:
+    model_path = Path("swinir-m_64x64_12.onnx")
+    if not model_path.exists():
+        pytest.skip("swinir-m_64x64_12.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = clone_model_ir_with_float32(
+        lower_onnx_to_ir(
+            model_proto,
+            output_file_name="swinir_public_bridge_codegen_test",
+            show_progress=False,
+            transpose_inputs_to_nhwc=True,
+        )
+    )
+    prune_identity_cast_operators(model_ir, preserve_model_outputs=True)
+    optimize_redundant_transpose_operators(model_ir, preserve_model_outputs=True)
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "swinir_public_bridge_pytorch"),
+    )
+    package_dir = Path(package_path)
+    model_source = (package_dir / "model.py").read_text()
+    assert "in_public_layout_bridge = _torch_permute(in_t, [0, 2, 3, 1])" not in model_source
+    assert "cv65_in_nhwc = _align_tensor_to_target_shape(torch.sub(in_public_layout_bridge, self.const_tensor_623_nhwc)" not in model_source
+    assert "cv65_out_nhwc_cf = self.conv_block_0(cv65_in_nhwc.permute(0, 3, 1, 2).contiguous())" not in model_source
+    assert "cv41070_out_nhwc = _align_tensor_to_target_shape(cv41070_out_nhwc_cf.permute(0, 2, 3, 1).contiguous(), [1, 256, 256, 3])" not in model_source
+    assert "t_44068 = _torch_permute(t_44068_to_nhwc, [0, 3, 1, 2])" not in model_source
+
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert exported_program_path is not None
+    exported_program = torch.export.load(str(exported_program_path))
+    permute_indices = [
+        idx
+        for idx, node in enumerate(exported_program.module().graph.nodes)
+        if node.op == "call_function" and str(node.target) == "aten.permute.default"
+    ]
+    assert permute_indices
+    assert min(permute_indices) > 1000
+    tail_nodes = list(exported_program.module().graph.nodes)[-20:]
+    assert all(
+        not (node.op == "call_function" and str(node.target) == "aten.permute.default")
+        for node in tail_nodes
+    )
 
 
 def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_available(tmp_path) -> None:

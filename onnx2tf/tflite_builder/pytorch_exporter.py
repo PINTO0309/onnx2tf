@@ -9071,7 +9071,73 @@ def _write_native_model_file(
         tensor_layout = normalize_logical_layout(tensor.logical_layout)
         if is_channel_first_logical_layout(tensor_layout):
             return _tensor_expr(str(tensor_name))
-        return channel_first_tensor_expr_aliases.get(str(tensor_name), None)
+        alias_expr = channel_first_tensor_expr_aliases.get(str(tensor_name), None)
+        if alias_expr is not None:
+            return str(alias_expr)
+        producer_idx = producer_index.get(str(tensor_name), None)
+        if producer_idx is None:
+            return None
+        producer_op = model_ir.operators[int(producer_idx)]
+        if str(producer_op.op_type) != "TRANSPOSE" or len(producer_op.inputs) < 1:
+            return None
+        transpose_perm = _read_transpose_perm(model_ir, producer_op)
+        expected_cf_to_cl_perm = _perm_cf_to_cl(len(list(tensor.shape)))
+        if (
+            expected_cf_to_cl_perm is None
+            or list(transpose_perm or []) != list(expected_cf_to_cl_perm)
+        ):
+            return None
+        return _channel_first_passthrough_input_expr(str(producer_op.inputs[0]))
+
+    def _can_resolve_channel_first_expr_statically(
+        tensor_name: str,
+        seen_names: Optional[Set[str]] = None,
+    ) -> bool:
+        current_name = str(tensor_name)
+        if seen_names is None:
+            seen_names = set()
+        if current_name in seen_names:
+            return True
+        next_seen = set(seen_names)
+        next_seen.add(current_name)
+        tensor = model_ir.tensors.get(current_name, None)
+        if tensor is None:
+            return False
+        tensor_layout = normalize_logical_layout(tensor.logical_layout)
+        if is_channel_first_logical_layout(tensor_layout):
+            return True
+        if current_name in channel_first_tensor_expr_aliases:
+            return True
+        producer_idx = producer_index.get(current_name, None)
+        if producer_idx is None:
+            return False
+        producer_op = model_ir.operators[int(producer_idx)]
+        producer_type = str(producer_op.op_type)
+        if producer_type == "TRANSPOSE" and len(producer_op.inputs) >= 1:
+            transpose_perm = _read_transpose_perm(model_ir, producer_op)
+            expected_cf_to_cl_perm = _perm_cf_to_cl(len(list(tensor.shape)))
+            if (
+                expected_cf_to_cl_perm is not None
+                and list(transpose_perm or []) == list(expected_cf_to_cl_perm)
+            ):
+                return _can_resolve_channel_first_expr_statically(
+                    str(producer_op.inputs[0]),
+                    next_seen,
+                )
+        if producer_type in {
+            "CONV_2D",
+            "DEPTHWISE_CONV_2D",
+            "TRANSPOSE_CONV",
+            "CONV_3D",
+            "CONV_3D_TRANSPOSE",
+        }:
+            return True
+        if producer_type in _DIRECT_CODEGEN_UNARY_EXPRESSIONS and len(producer_op.inputs) == 1:
+            return _can_resolve_channel_first_expr_statically(
+                str(producer_op.inputs[0]),
+                next_seen,
+            )
+        return False
 
     def _can_emit_channel_first_shape_preserving_unary_op(
         op: OperatorIR,
@@ -9098,7 +9164,23 @@ def _write_native_model_file(
             or not _shape_lists_equal_relaxed(input_shape, output_shape)
         ):
             return False
-        return _channel_first_passthrough_input_expr(input_name) is not None
+        return _can_resolve_channel_first_expr_statically(input_name)
+
+    def _all_consumers_are_channel_first_binary_ops(
+        output_name: str,
+    ) -> bool:
+        consumer_indices = consumer_index.get(str(output_name), [])
+        if len(consumer_indices) == 0:
+            return False
+        for consumer_idx in consumer_indices:
+            consumer_op = model_ir.operators[int(consumer_idx)]
+            if str(consumer_op.op_type) not in _DIRECT_CODEGEN_BINARY_FUNCTIONS:
+                return False
+            if str(output_name) not in {str(name) for name in list(consumer_op.inputs)}:
+                return False
+            if not _can_emit_channel_first_binary_op(consumer_op):
+                return False
+        return True
 
     def _can_omit_materialized_channel_last_alias(output_name: str) -> bool:
         return _can_omit_materialized_channel_last_alias_recursive(str(output_name), set())
@@ -9215,11 +9297,7 @@ def _write_native_model_file(
                     input_tensor = model_ir.tensors.get(input_name, None)
                     if input_tensor is None:
                         return False
-                    input_layout = normalize_logical_layout(input_tensor.logical_layout)
-                    if not (
-                        is_channel_first_logical_layout(input_layout)
-                        or input_name in channel_first_tensor_expr_aliases
-                    ):
+                    if not _can_resolve_channel_first_expr_statically(input_name):
                         return False
                     input_shape = _tensor_shape_list(input_name)
                     if input_shape is None or len(list(input_shape)) != output_rank:
@@ -9303,10 +9381,9 @@ def _write_native_model_file(
                         )
             return None
         tensor_layout = normalize_logical_layout(tensor.logical_layout)
-        if is_channel_first_logical_layout(tensor_layout):
-            return _tensor_expr(str(tensor_name))
-        if str(tensor_name) in channel_first_tensor_expr_aliases:
-            return str(channel_first_tensor_expr_aliases[str(tensor_name)])
+        passthrough_expr = _channel_first_passthrough_input_expr(str(tensor_name))
+        if passthrough_expr is not None:
+            return str(passthrough_expr)
         other_tensor = model_ir.tensors.get(str(other_tensor_name), None)
         if other_tensor is None:
             return None
@@ -10415,7 +10492,10 @@ def _write_native_model_file(
                         channel_first_tensor_expr_aliases[str(output_name)] = raw_output_var
                         forward_lines.append(f"{raw_output_var} = {fused_module_expr}")
                         if is_channel_last_logical_layout(output_layout):
-                            if _can_omit_materialized_channel_last_alias(output_name):
+                            if (
+                                _all_consumers_are_channel_first_binary_ops(output_name)
+                                or _can_omit_materialized_channel_last_alias(output_name)
+                            ):
                                 continue
                             perm_to_output = logical_layout_permutation(
                                 source_layout=normalized_raw_output_layout,
@@ -11311,6 +11391,14 @@ def _write_native_model_file(
                         )
                         for consumer_idx in consumer_index.get(transpose_output_name, [])
                     )
+                ):
+                    channel_first_tensor_expr_aliases[transpose_output_name] = str(input_cf_expr)
+                    continue
+                if (
+                    input_cf_expr is not None
+                    and expected_cf_to_cl_perm is not None
+                    and list(transpose_perm or []) == list(expected_cf_to_cl_perm)
+                    and _all_consumers_are_channel_first_binary_ops(transpose_output_name)
                 ):
                     channel_first_tensor_expr_aliases[transpose_output_name] = str(input_cf_expr)
                     continue
@@ -14508,6 +14596,130 @@ def _write_native_model_file(
             stage_methods_source += "\n"
         return stage_methods_source, forward_stage_calls, stage_specs
 
+    def _rewrite_channel_last_binary_bridge_chains(
+        lines: Sequence[str],
+    ) -> List[str]:
+        rewritten: List[str] = []
+        line_count = len(lines)
+        index = 0
+        binary_fn_pattern = r"(?:add|sub|mul|div|maximum|minimum)"
+        public_bridge_pattern = re.compile(
+            r"^(?P<bridge>\w+)\s*=\s*_torch_permute\((?P<input>\w+), \[0, 2, 3, 1\]\)$"
+        )
+        binary_align_pattern = re.compile(
+            rf"^(?P<out>\w+)\s*=\s*_align_tensor_to_target_shape\(torch\.(?P<fn>{binary_fn_pattern})\((?P<lhs>[^,]+), (?P<rhs>[^,]+)\), (?P<shape>\[[^\]]+\])\)$"
+        )
+        conv_input_bridge_pattern = re.compile(
+            r"^(?P<out>\w+)\s*=\s*self\.(?P<module>\w+)\((?P<input>\w+)\.permute\(0, 3, 1, 2\)\.contiguous\(\)\)$"
+        )
+        output_bridge_pattern = re.compile(
+            r"^(?P<out>\w+)\s*=\s*_align_tensor_to_target_shape\((?P<input>\w+)\.permute\(0, 2, 3, 1\)\.contiguous\(\), (?P<shape>\[[^\]]+\])\)$"
+        )
+        transpose_back_pattern = re.compile(
+            r"^(?P<out>\w+)\s*=\s*_torch_permute\((?P<input>\w+), \[0, 3, 1, 2\]\)$"
+        )
+
+        def _name_use_count(candidate_lines: Sequence[str], name: str, *, start: int) -> int:
+            pattern = re.compile(rf"\b{re.escape(str(name))}\b")
+            return sum(1 for line in candidate_lines[start:] if pattern.search(str(line)))
+
+        while index < line_count:
+            if index + 2 < line_count:
+                bridge_match = public_bridge_pattern.match(lines[index])
+                binary_match = binary_align_pattern.match(lines[index + 1])
+                conv_match = conv_input_bridge_pattern.match(lines[index + 2])
+                if (
+                    bridge_match is not None
+                    and binary_match is not None
+                    and conv_match is not None
+                    and binary_match.group("out") == conv_match.group("input")
+                    and _name_use_count(lines, bridge_match.group("bridge"), start=index + 1) == 1
+                    and _name_use_count(lines, binary_match.group("out"), start=index + 2) == 1
+                ):
+                    bridge_var = bridge_match.group("bridge")
+                    source_var = bridge_match.group("input")
+                    lhs_expr = binary_match.group("lhs").strip()
+                    rhs_expr = binary_match.group("rhs").strip()
+                    target_shape = ast.literal_eval(binary_match.group("shape"))
+                    if (
+                        isinstance(target_shape, list)
+                        and len(target_shape) == 4
+                        and all(isinstance(v, int) for v in list(target_shape))
+                    ):
+                        cf_constant_shape = [int(target_shape[0]), int(target_shape[3]), 1, 1]
+                        buffer_expr = None
+                        if lhs_expr == bridge_var and rhs_expr.startswith("self."):
+                            buffer_expr = rhs_expr
+                        elif rhs_expr == bridge_var and lhs_expr.startswith("self."):
+                            buffer_expr = lhs_expr
+                        if buffer_expr is not None:
+                            cf_constant_expr = _channel_first_constant_expr_for_buffer_attr(
+                                buffer_expr,
+                                cf_constant_shape,
+                            )
+                            if cf_constant_expr is not None:
+                                binary_cf_var = _derived_local_var_name(f"{binary_match.group('out')}_cf")
+                                cf_lhs = source_var if lhs_expr == bridge_var else cf_constant_expr
+                                cf_rhs = source_var if rhs_expr == bridge_var else cf_constant_expr
+                                rewritten.append(
+                                    f"{binary_cf_var} = torch.{binary_match.group('fn')}({cf_lhs}, {cf_rhs})"
+                                )
+                                rewritten.append(
+                                    f"{conv_match.group('out')} = self.{conv_match.group('module')}({binary_cf_var})"
+                                )
+                                index += 3
+                                continue
+            if index + 3 < line_count:
+                output_bridge_match = output_bridge_pattern.match(lines[index + 1])
+                binary_match = binary_align_pattern.match(lines[index + 2])
+                transpose_back_match = transpose_back_pattern.match(lines[index + 3])
+                current_line = lines[index]
+                if (
+                    output_bridge_match is not None
+                    and binary_match is not None
+                    and transpose_back_match is not None
+                    and output_bridge_match.group("out") in {
+                        binary_match.group("lhs").strip(),
+                        binary_match.group("rhs").strip(),
+                    }
+                    and binary_match.group("out") == transpose_back_match.group("input")
+                    and _name_use_count(lines, output_bridge_match.group("out"), start=index + 2) == 1
+                    and _name_use_count(lines, binary_match.group("out"), start=index + 3) == 1
+                ):
+                    target_shape = ast.literal_eval(output_bridge_match.group("shape"))
+                    if (
+                        isinstance(target_shape, list)
+                        and len(target_shape) == 4
+                        and all(isinstance(v, int) for v in list(target_shape))
+                    ):
+                        cf_constant_shape = [int(target_shape[0]), int(target_shape[3]), 1, 1]
+                        bridge_var = output_bridge_match.group("out")
+                        cf_source_var = output_bridge_match.group("input")
+                        lhs_expr = binary_match.group("lhs").strip()
+                        rhs_expr = binary_match.group("rhs").strip()
+                        buffer_expr = None
+                        if lhs_expr == bridge_var and rhs_expr.startswith("self."):
+                            buffer_expr = rhs_expr
+                        elif rhs_expr == bridge_var and lhs_expr.startswith("self."):
+                            buffer_expr = lhs_expr
+                        if buffer_expr is not None:
+                            cf_constant_expr = _channel_first_constant_expr_for_buffer_attr(
+                                buffer_expr,
+                                cf_constant_shape,
+                            )
+                            if cf_constant_expr is not None:
+                                rewritten.append(current_line)
+                                cf_lhs = cf_source_var if lhs_expr == bridge_var else cf_constant_expr
+                                cf_rhs = cf_source_var if rhs_expr == bridge_var else cf_constant_expr
+                                rewritten.append(
+                                    f"{transpose_back_match.group('out')} = torch.{binary_match.group('fn')}({cf_lhs}, {cf_rhs})"
+                                )
+                                index += 4
+                                continue
+            rewritten.append(lines[index])
+            index += 1
+        return rewritten
+
     def _build_named_encoder_methods(
         stage_specs: Sequence[Dict[str, Any]],
         *,
@@ -14803,6 +15015,7 @@ def _write_native_model_file(
         return named_class_source, init_lines, forward_lines_local
 
     forward_lines = _fold_channel_last_affine_conv_bridges(forward_lines)
+    forward_lines = _rewrite_channel_last_binary_bridge_chains(forward_lines)
     forward_lines = _fold_single_use_static_reshape_chains(forward_lines)
     forward_lines = _prune_dead_forward_lines(forward_lines)
     stage_methods_source, forward_stage_calls, stage_specs = _build_forward_stage_methods(forward_lines)
