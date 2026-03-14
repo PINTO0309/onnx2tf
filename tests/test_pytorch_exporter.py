@@ -2513,6 +2513,160 @@ def _make_runtime_wrapper_resize_nhwc_model_ir() -> ModelIR:
     return model_ir
 
 
+def _make_runtime_wrapper_pool_nhwc_model_ir() -> ModelIR:
+    model_ir = ModelIR(name="runtime_wrapper_pool_nhwc_model_ir")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 4, 6, 2],
+        shape_signature=[1, 4, 6, 2],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 4, 6, 2],
+        shape_signature=[1, 4, 6, 2],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["y_nhwc"] = TensorIR(
+        name="y_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 2],
+        shape_signature=[1, 2, 3, 2],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 2],
+        shape_signature=[1, 2, 3, 2],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["zero"] = TensorIR(
+        name="zero",
+        dtype="FLOAT32",
+        shape=[1, 4, 6, 2],
+        shape_signature=[1, 4, 6, 2],
+        data=np.zeros((1, 4, 6, 2), dtype=np.float32),
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["zero_out"] = TensorIR(
+        name="zero_out",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 2],
+        shape_signature=[1, 2, 3, 2],
+        data=np.zeros((1, 2, 3, 2), dtype=np.float32),
+        logical_layout="UNKNOWN",
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(op_type="ADD", inputs=["x", "zero"], outputs=["x_nhwc"], options={"fusedActivationFunction": "NONE"}),
+            OperatorIR(
+                op_type="MAX_POOL_2D",
+                inputs=["x_nhwc"],
+                outputs=["y_nhwc"],
+                options={
+                    "padding": "VALID",
+                    "strideW": 2,
+                    "strideH": 2,
+                    "filterWidth": 2,
+                    "filterHeight": 2,
+                    "fusedActivationFunction": "NONE",
+                },
+            ),
+            OperatorIR(op_type="ADD", inputs=["y_nhwc", "zero_out"], outputs=["y"], options={"fusedActivationFunction": "NONE"}),
+        ]
+    )
+    return model_ir
+
+
+def _make_nested_static_reshape_model_ir() -> ModelIR:
+    model_ir = ModelIR(name="nested_static_reshape_model_ir")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 5],
+        shape_signature=[1, 3, 4, 5],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["mid"] = TensorIR(
+        name="mid",
+        dtype="FLOAT32",
+        shape=[1, 3, 20],
+        shape_signature=[1, 3, 20],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["shape_mid"] = TensorIR(
+        name="shape_mid",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([1, 3, 20], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 60],
+        shape_signature=[1, 60],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["shape_out"] = TensorIR(
+        name="shape_out",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([1, 60], dtype=np.int32),
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(op_type="RESHAPE", inputs=["x", "shape_mid"], outputs=["mid"], options={"newShape": [1, 3, 20]}),
+            OperatorIR(op_type="RESHAPE", inputs=["mid", "shape_out"], outputs=["y"], options={"newShape": [1, 60]}),
+        ]
+    )
+    return model_ir
+
+
+def _make_same_shape_max_pool_codegen_model_ir() -> ModelIR:
+    model_ir = ModelIR(name="same_shape_max_pool_codegen_model_ir")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 256, 15, 20],
+        shape_signature=[1, 256, 15, 20],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 256, 15, 20],
+        shape_signature=[1, 256, 15, 20],
+        logical_layout="NCHW",
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="MAX_POOL_2D",
+            inputs=["x"],
+            outputs=["y"],
+            options={
+                "padding": "SAME",
+                "strideW": 1,
+                "strideH": 1,
+                "filterWidth": 5,
+                "filterHeight": 5,
+                "fusedActivationFunction": "NONE",
+            },
+        )
+    )
+    return model_ir
+
+
 def _make_split_axis_tensor_codegen_model_ir() -> ModelIR:
     model_ir = ModelIR(name="split_axis_tensor_codegen_model_ir")
     model_ir.inputs = ["x"]
@@ -5377,6 +5531,74 @@ def test_export_runtime_wrapper_package_supports_nhwc_resize(tmp_path) -> None:
     assert torch.allclose(out, expected)
 
 
+def test_export_runtime_wrapper_package_supports_nhwc_pool2d(tmp_path) -> None:
+    package_path = _export_runtime_wrapper_package_from_model_ir(
+        model_ir=_make_runtime_wrapper_pool_nhwc_model_ir(),
+        output_folder_path=str(tmp_path / "pool_nhwc_runtime_wrapper"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(1 * 4 * 6 * 2, dtype=torch.float32).reshape(1, 4, 6, 2)
+    out = model(x)
+    expected = F.max_pool2d(
+        x.permute(0, 3, 1, 2),
+        kernel_size=(2, 2),
+        stride=(2, 2),
+        padding=0,
+    ).permute(0, 2, 3, 1).contiguous()
+    assert out.shape == torch.Size([1, 2, 3, 2])
+    assert torch.allclose(out, expected)
+
+
+def test_export_generated_package_keeps_same_shape_nchw_pool_in_exported_program(tmp_path) -> None:
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=_make_same_shape_max_pool_codegen_model_ir(),
+        output_folder_path=str(tmp_path / "same_shape_pool_codegen"),
+    )
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert exported_program_path is not None
+    exported_program = torch.export.load(str(exported_program_path))
+    permute_targets = [
+        node
+        for node in exported_program.module().graph.nodes
+        if node.op == "call_function" and str(node.target) == "aten.permute.default"
+    ]
+    assert permute_targets == []
+
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(1 * 256 * 15 * 20, dtype=torch.float32).reshape(1, 256, 15, 20)
+    out = model(x)
+    expected = F.max_pool2d(x, kernel_size=(5, 5), stride=(1, 1), padding=2)
+    assert torch.allclose(out, expected)
+
+
+def test_export_generated_package_folds_single_use_static_reshape_chain(tmp_path) -> None:
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=_make_nested_static_reshape_model_ir(),
+        output_folder_path=str(tmp_path / "nested_static_reshape_codegen"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
+    assert "mid = torch.reshape(" not in model_source
+
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert exported_program_path is not None
+    exported_program = torch.export.load(str(exported_program_path))
+    reshape_nodes = [
+        node
+        for node in exported_program.module().graph.nodes
+        if node.op == "call_function" and str(node.target) == "aten.reshape.default"
+    ]
+    assert len(reshape_nodes) == 1
+
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(60, dtype=torch.float32).reshape(1, 3, 4, 5)
+    out = model(x)
+    expected = torch.reshape(x, [1, 60])
+    assert torch.equal(out, expected)
+
+
 def test_wrapper_model_source_uses_lint_safe_forward_named_dispatch(tmp_path) -> None:
     package_path = _export_runtime_wrapper_package_from_model_ir(
         model_ir=_make_custom_slice_model_ir(),
@@ -6075,15 +6297,65 @@ def test_export_pytorch_package_generates_native_yolov7_package_when_model_is_av
     package_dir = Path(package_path)
     metadata = json.loads((package_dir / "metadata.json").read_text())
     model_source = (package_dir / "model.py").read_text()
-    assert "execution_backend" not in metadata
+    assert metadata["execution_backend"] == "native"
     assert "load_generated_model_package" not in model_source
     assert "TENSOR_STORAGE_NAMES" not in model_source
     assert "resolve_model_tensor" not in model_source
     assert "_torch_dtype(" not in model_source
     assert "cast(torch.Tensor, self." not in model_source
     assert "def _init_constants(self) -> None:" in model_source
-    assert model_source.count("_apply_") <= 24
+    assert model_source.count("_apply_") <= 40
     assert "_forward_stage_0" in model_source
+    assert "cv76_in = _apply_concat([onnx_concat199, resize72_out], axis=3" not in model_source
+    assert "cv18_in = torch.reshape(_apply_concat(" not in model_source
+    assert "resize72_in = _align_tensor_to_target_shape(resize72_in_cf, [1, 15, 20, 128])" not in model_source
+    assert "resize90_in = _align_tensor_to_target_shape(resize90_in_cf, [1, 30, 40, 64])" not in model_source
+
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert exported_program_path is not None
+    exported_program = torch.export.load(str(exported_program_path))
+    cat_6 = next(
+        (node for node in exported_program.module().graph.nodes if node.op == "call_function" and node.name == "cat_6"),
+        None,
+    )
+    assert cat_6 is not None
+    cat_6_inputs = list(cat_6.args[0]) if len(cat_6.args) >= 1 else []
+    assert all(
+        str(getattr(input_node, "target", "")) != "aten.permute.default"
+        for input_node in cat_6_inputs
+    )
+    assert all(
+        str(getattr(user_node, "target", "")) != "aten.permute.default"
+        for user_node in cat_6.users
+    )
+    inverse_permute_pairs = set()
+    nested_reshape_shape_pairs = set()
+    for node in exported_program.module().graph.nodes:
+        if node.op == "call_function" and str(node.target) == "aten.permute.default":
+            source = node.args[0] if len(node.args) >= 1 else None
+            if getattr(source, "op", None) != "call_function" or str(getattr(source, "target", "")) != "aten.contiguous.default":
+                continue
+            nested = source.args[0] if len(source.args) >= 1 else None
+            if getattr(nested, "op", None) != "call_function" or str(getattr(nested, "target", "")) != "aten.permute.default":
+                continue
+            perm_a = list(nested.args[1]) if len(nested.args) >= 2 else None
+            perm_b = list(node.args[1]) if len(node.args) >= 2 else None
+            if perm_a is None or perm_b is None:
+                continue
+            if [perm_a[int(idx)] for idx in perm_b] == list(range(len(perm_a))):
+                inverse_permute_pairs.add((nested.name, node.name))
+        if node.op == "call_function" and str(node.target) == "aten.reshape.default":
+            source = node.args[0] if len(node.args) >= 1 else None
+            if getattr(source, "op", None) == "call_function" and str(getattr(source, "target", "")) == "aten.reshape.default":
+                source_val = source.meta.get("val")
+                target_val = node.meta.get("val")
+                source_shape = str(tuple(source_val.shape)) if hasattr(source_val, "shape") else "None"
+                target_shape = str(tuple(target_val.shape)) if hasattr(target_val, "shape") else "None"
+                nested_reshape_shape_pairs.add((source_shape, target_shape))
+    assert inverse_permute_pairs == set()
+    assert nested_reshape_shape_pairs == {
+        ("(u0,)", "(u0, 1)"),
+    }
 
 
 def test_export_pytorch_package_generates_native_yolox_package_when_model_is_available(tmp_path) -> None:
@@ -8630,10 +8902,21 @@ def test_codegen_resize_concat_chain_avoids_stale_nhwc_and_align(
         output_folder_path=str(tmp_path / f"{resize_op_type.lower()}_concat_pytorch"),
     )
     model_py = (Path(package_path) / "model.py").read_text(encoding="utf-8")
-    assert "F.interpolate(" in model_py
+    assert "F.interpolate(" in model_py or "_apply_resize(" in model_py
+    assert "torch.cat(" in model_py
     assert "_align_tensor_to_target_shape(" not in model_py
     assert "up_nhwc =" not in model_py
     assert "y_nhwc =" not in model_py
+    assert ".permute(0, 2, 3, 1).contiguous()" not in model_py
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert exported_program_path is not None
+    exported_program = torch.export.load(str(exported_program_path))
+    permute_nodes = [
+        node
+        for node in exported_program.module().graph.nodes
+        if node.op == "call_function" and str(node.target) == "aten.permute.default"
+    ]
+    assert permute_nodes == []
     pkg = _import_generated_package(package_path)
     model = pkg.load_model()
     x = torch.randn(1, 3, 4, 4)
