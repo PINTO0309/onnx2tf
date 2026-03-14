@@ -14,7 +14,7 @@ import onnx
 import pytest
 import torch
 import torch.nn.functional as F
-from onnx import TensorProto, helper
+from onnx import TensorProto, external_data_helper, helper, numpy_helper
 
 import onnx2tf
 from onnx2tf.tflite_builder import export_tflite_model_flatbuffer_direct
@@ -51,6 +51,7 @@ from onnx2tf.tflite_builder.pytorch_exporter import (
     _propagate_pytorch_friendly_layouts,
     _reject_residual_layout_transposes,
     _remove_redundant_layout_transposes,
+    _sanitize_dynamo_exported_onnx_metadata,
     _should_prefer_tflite_backed_package,
     _write_native_model_file,
     export_dynamo_onnx_from_generated_package,
@@ -84,6 +85,20 @@ def _make_add_model() -> onnx.ModelProto:
     z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 3])
     node = helper.make_node("Add", ["x", "y"], ["z"], name="AddNode")
     graph = helper.make_graph([node], "add_graph", [x, y], [z])
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    model.ir_version = 10
+    return model
+
+
+def _make_initializer_add_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 300])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [1, 300])
+    bias = numpy_helper.from_array(
+        np.linspace(-1.0, 1.0, num=300, dtype=np.float32).reshape(1, 300),
+        name="bias",
+    )
+    node = helper.make_node("Add", ["x", "bias"], ["z"], name="AddBias")
+    graph = helper.make_graph([node], "add_bias_graph", [x], [z], initializer=[bias])
     model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
     model.ir_version = 10
     return model
@@ -7231,10 +7246,52 @@ def test_export_pytorch_package_generates_native_ts_ad_model_package_when_model_
     assert "_tmp_x_13 = self.const_onnx_mat_mul74_tr_last_two66_x2" in model_source
     assert "_tmp_y_13 = _tmp_y_13.transpose(-1, -2)" not in model_source
 
+    torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
     dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
     exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert torchscript_path is not None
     assert dynamo_onnx_path is not None
     assert exported_program_path is not None
+    exported_program = torch.export.load(str(exported_program_path))
+    permute_indices = [
+        idx
+        for idx, node in enumerate(exported_program.module().graph.nodes)
+        if node.op == "call_function" and str(node.target) == "aten.permute.default"
+    ]
+    assert permute_indices
+
+    def _inverse_perm(perm: list[int]) -> list[int]:
+        inverse = [0] * len(perm)
+        for idx, value in enumerate(perm):
+            inverse[value] = idx
+        return inverse
+
+    for node in (
+        graph_node
+        for graph_node in exported_program.module().graph.nodes
+        if graph_node.op == "call_function" and str(graph_node.target) == "aten.permute.default"
+    ):
+        permute_users = list(node.users)
+        if len(permute_users) != 1:
+            continue
+        contiguous_node = permute_users[0]
+        if (
+            contiguous_node.op != "call_function"
+            or str(contiguous_node.target) != "aten.contiguous.default"
+        ):
+            continue
+        contiguous_users = list(contiguous_node.users)
+        if len(contiguous_users) != 1:
+            continue
+        inverse_node = contiguous_users[0]
+        if (
+            inverse_node.op == "call_function"
+            and str(inverse_node.target) == "aten.permute.default"
+            and [int(v) for v in inverse_node.args[1]] == _inverse_perm([int(v) for v in node.args[1]])
+        ):
+            pytest.fail(
+                f"Found redundant inverse permute round-trip in ExportedProgram: {node.name} -> {inverse_node.name}"
+            )
     exported_program = torch.export.load(str(exported_program_path))
     first_ops = [
         str(node.target)
@@ -7274,11 +7331,15 @@ def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_av
     if not model_path.exists():
         pytest.skip("pidnet_S_cityscapes_192x320.onnx is not available")
     model_proto = onnx.load(model_path)
-    model_ir = lower_onnx_to_ir(
-        model_proto,
-        output_file_name="pidnet_native_codegen_test",
-        show_progress=False,
+    model_ir = clone_model_ir_with_float32(
+        lower_onnx_to_ir(
+            model_proto,
+            output_file_name="pidnet_native_codegen_test",
+            show_progress=False,
+        )
     )
+    prune_identity_cast_operators(model_ir, preserve_model_outputs=True)
+    optimize_redundant_transpose_operators(model_ir, preserve_model_outputs=True)
     package_path = export_pytorch_package_from_model_ir(
         model_ir=model_ir,
         output_folder_path=str(tmp_path / "pidnet_native_pytorch"),
@@ -7287,10 +7348,252 @@ def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_av
     package_dir = Path(package_path)
     metadata = json.loads((package_dir / "metadata.json").read_text())
     model_source = (package_dir / "model.py").read_text()
-    assert "execution_backend" not in metadata
+    assert metadata["execution_backend"] == "native"
     assert "load_generated_model_package" not in model_source
     assert "torch.argmax(" in model_source
-    assert "F.avg_pool2d(" in model_source or "self._avg_pool2d_same(" in model_source
+    assert "_apply_pool2d(" in model_source or "torch.mean(" in model_source
+    assert "spp_concat4_out0 = torch.cat([spp_add_out0, spp_add1_out0, spp_add2_out0, spp_add3_out0], dim=1)" in model_source
+    assert "spp_concat5_out0 = torch.cat([sppscale0_scale02_cv_out, sppscale_processscale_process2_cv_out], dim=1)" in model_source
+    assert "self.const_wa_spp_scale1_scale1_0_AveragePool_exclude_pad_mask_pool.permute(*(0, 3, 1, 2)).contiguous()" not in model_source
+    assert "self.const_wa_spp_scale1_scale1_1_BatchNormalization_bn_mul.permute(*(0, 3, 1, 2)).contiguous()" not in model_source
+    assert "self.const_wa_spp_scale1_scale1_1_BatchNormalization_bn_add.permute(*(0, 3, 1, 2)).contiguous()" not in model_source
+    assert "self.const_wa_spp_scale3_scale3_0_AveragePool_exclude_pad_mask_pool.permute(*(0, 3, 1, 2)).contiguous()" not in model_source
+    assert "self.const_wa_spp_scale3_scale3_1_BatchNormalization_bn_mul.permute(*(0, 3, 1, 2)).contiguous()" not in model_source
+    assert "self.const_wa_spp_scale3_scale3_1_BatchNormalization_bn_add.permute(*(0, 3, 1, 2)).contiguous()" not in model_source
+    assert "_align_binary_inputs(wasppscale1_scale10_average_p_in, self.const_wa_spp_x1_x512_d062, [1, 512, 3, 5])" not in model_source
+    assert "_align_binary_inputs(wasppscale1_scale10_average_p_in, self.const_wa_spp_x1_x512_764b, [1, 512, 3, 5])" not in model_source
+
+    pkg = _import_generated_package(package_path)
+    loaded_model = pkg.Model(load_weights=True, eval_mode=True)
+    reloaded_model = pkg.Model(load_weights=False, eval_mode=True)
+    reloaded_model.load_state_dict(torch.load(package_dir / "state_dict.pth", map_location="cpu"), strict=True)
+    x = torch.randn(1, 3, 192, 320)
+    with torch.no_grad():
+        loaded_outputs = loaded_model(x)
+        reloaded_outputs = reloaded_model(x)
+    assert isinstance(loaded_outputs, torch.Tensor)
+    assert isinstance(reloaded_outputs, torch.Tensor)
+    assert list(loaded_outputs.shape) == list(reloaded_outputs.shape)
+    assert torch.allclose(loaded_outputs, reloaded_outputs, atol=1e-4, rtol=1e-4)
+
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert dynamo_onnx_path is not None
+    assert exported_program_path is not None
+    dynamo_onnx_model = onnx.load(dynamo_onnx_path)
+    dynamo_transpose_names = sorted(
+        str(node.name)
+        for node in dynamo_onnx_model.graph.node
+        if node.op_type == "Transpose"
+    )
+    assert dynamo_transpose_names == ["node_permute_55"]
+    exported_program = torch.export.load(str(exported_program_path))
+    exported_program_nodes = {
+        str(node.name): node
+        for node in exported_program.module().graph.nodes
+    }
+    for node_name in ["mul_66", "mul_67", "div_12", "mul_68", "add_67", "div_13", "mul_69", "add_68", "div_14", "mul_70", "add_69"]:
+        node = exported_program_nodes.get(node_name, None)
+        assert node is not None
+        other_arg = node.args[1]
+        assert isinstance(other_arg, torch.fx.Node)
+        assert not (
+            other_arg.op == "call_function"
+            and str(other_arg.target) in {"aten.contiguous.default", "aten.permute.default"}
+        )
+    permute_nodes = [
+        node
+        for node in exported_program.module().graph.nodes
+        if node.op == "call_function" and str(node.target) == "aten.permute.default"
+    ]
+    permute_indices = [
+        idx
+        for idx, node in enumerate(exported_program.module().graph.nodes)
+        if node.op == "call_function" and str(node.target) == "aten.permute.default"
+    ]
+    assert permute_indices
+    assert min(permute_indices) > 300
+
+    def _inverse_perm(perm: list[int]) -> list[int]:
+        inverse = [0] * len(perm)
+        for idx, value in enumerate(perm):
+            inverse[value] = idx
+        return inverse
+
+    for node in permute_nodes:
+        perm = [int(v) for v in node.args[1]]
+        permute_users = list(node.users)
+        if len(permute_users) != 1:
+            continue
+        contiguous_node = permute_users[0]
+        if (
+            contiguous_node.op != "call_function"
+            or str(contiguous_node.target) != "aten.contiguous.default"
+        ):
+            continue
+        contiguous_users = list(contiguous_node.users)
+        if len(contiguous_users) != 1:
+            continue
+        inverse_node = contiguous_users[0]
+        if (
+            inverse_node.op == "call_function"
+            and str(inverse_node.target) == "aten.permute.default"
+            and [int(v) for v in inverse_node.args[1]] == _inverse_perm(perm)
+        ):
+            pytest.fail(
+                f"Found redundant inverse permute round-trip in ExportedProgram: {node.name} -> {inverse_node.name}"
+            )
+    for node in exported_program.module().graph.nodes:
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or [int(v) for v in node.args[1]] != [0, 3, 1, 2]
+        ):
+            continue
+        pad_node = node.args[0]
+        if not isinstance(pad_node, torch.fx.Node):
+            continue
+        if (
+            pad_node.op == "call_function"
+            and str(pad_node.target) == "aten.pad.default"
+            and len(pad_node.args) >= 2
+            and len(list(pad_node.args[1])) == 6
+            and [int(v) for v in list(pad_node.args[1])[:2]] == [0, 0]
+        ):
+            pad_input = pad_node.args[0]
+            if not isinstance(pad_input, torch.fx.Node):
+                continue
+            if not (
+                pad_input.op == "call_function"
+                and str(pad_input.target) == "aten.contiguous.default"
+                and len(pad_input.args) >= 1
+                and isinstance(pad_input.args[0], torch.fx.Node)
+                and pad_input.args[0].op == "call_function"
+                and str(pad_input.args[0].target) == "aten.permute.default"
+                and [int(v) for v in pad_input.args[0].args[1]] == [0, 2, 3, 1]
+            ):
+                continue
+            pytest.fail(
+                f"Found redundant NHWC pad followed by CF permute in ExportedProgram: {pad_node.name} -> {node.name}"
+            )
+    for node in exported_program.module().graph.nodes:
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or [int(v) for v in node.args[1]] != [0, 2, 3, 1]
+        ):
+            continue
+        permute_users = list(node.users)
+        if len(permute_users) != 1:
+            continue
+        contiguous_node = permute_users[0]
+        if (
+            contiguous_node.op != "call_function"
+            or str(contiguous_node.target) != "aten.contiguous.default"
+        ):
+            continue
+        contiguous_users = list(contiguous_node.users)
+        if len(contiguous_users) != 1:
+            continue
+        sum_node = contiguous_users[0]
+        if (
+            sum_node.op == "call_function"
+            and str(sum_node.target) == "aten.sum.dim_IntList"
+            and list(sum_node.args[1]) == [3]
+            and bool(sum_node.args[2]) is True
+        ):
+            pytest.fail(
+                f"Found redundant NHWC reduction bridge in ExportedProgram: {node.name} -> {sum_node.name}"
+            )
+    for node in exported_program.module().graph.nodes:
+        if node.op != "call_function" or str(node.target) != "aten.permute.default":
+            continue
+        inverse_perm = [int(v) for v in node.args[1]]
+        binary_node = node.args[0]
+        if not isinstance(binary_node, torch.fx.Node):
+            continue
+        if not (
+            binary_node.op == "call_function"
+            and str(binary_node.target) in {"aten.add.Tensor", "aten.div.Tensor", "aten.mul.Tensor", "aten.sub.Tensor"}
+            and len(binary_node.args) == 2
+        ):
+            continue
+
+        def _inverse_perm_of(perm: list[int]) -> list[int]:
+            inverse = [0] * len(perm)
+            for idx, value in enumerate(perm):
+                inverse[value] = idx
+            return inverse
+
+        def _matches_permute_chain(arg: object, perm: list[int]) -> bool:
+            if not isinstance(arg, torch.fx.Node):
+                return False
+            if (
+                arg.op == "call_function"
+                and str(arg.target) == "aten.contiguous.default"
+                and len(arg.args) >= 1
+                and isinstance(arg.args[0], torch.fx.Node)
+            ):
+                arg = arg.args[0]
+            return (
+                isinstance(arg, torch.fx.Node)
+                and arg.op == "call_function"
+                and str(arg.target) == "aten.permute.default"
+                and [int(v) for v in arg.args[1]] == _inverse_perm_of(inverse_perm)
+            )
+
+        if _matches_permute_chain(binary_node.args[0], _inverse_perm_of(inverse_perm)) and _matches_permute_chain(binary_node.args[1], _inverse_perm_of(inverse_perm)):
+            pytest.fail(
+                f"Found redundant permuted binary bridge in ExportedProgram: {binary_node.name} -> {node.name}"
+            )
+    for node in exported_program.module().graph.nodes:
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or [int(v) for v in node.args[1]] != [0, 2, 3, 1]
+        ):
+            continue
+        permute_users = list(node.users)
+        if len(permute_users) != 1:
+            continue
+        contiguous_node = permute_users[0]
+        if (
+            contiguous_node.op != "call_function"
+            or str(contiguous_node.target) != "aten.contiguous.default"
+        ):
+            continue
+        contiguous_users = list(contiguous_node.users)
+        if len(contiguous_users) != 1:
+            continue
+        mean_node = contiguous_users[0]
+        if (
+            mean_node.op != "call_function"
+            or str(mean_node.target) != "aten.mean.dim"
+            or list(mean_node.args[1]) != [1, 2]
+            or bool(mean_node.args[2]) is not True
+        ):
+            continue
+        mean_users = list(mean_node.users)
+        if len(mean_users) != 1:
+            continue
+        mul_node = mean_users[0]
+        if (
+            mul_node.op != "call_function"
+            or str(mul_node.target) != "aten.mul.Tensor"
+        ):
+            continue
+        mul_users = list(mul_node.users)
+        if len(mul_users) != 1:
+            continue
+        inverse_node = mul_users[0]
+        if (
+            inverse_node.op == "call_function"
+            and str(inverse_node.target) == "aten.permute.default"
+            and [int(v) for v in inverse_node.args[1]] == [0, 3, 1, 2]
+        ):
+            pytest.fail(
+                f"Found redundant mean/mul layout bridge in ExportedProgram: {node.name} -> {inverse_node.name}"
+            )
 
 
 def test_export_pytorch_package_conv2d_nchw(tmp_path) -> None:
@@ -8000,9 +8303,60 @@ def test_export_dynamo_onnx_from_generated_package_writes_artifact_and_metadata(
     _assert_graph_and_node_metadata_cleared(exported_model.graph)
     assert len(exported_model.graph.input) == 2
     assert len(exported_model.graph.output) == 1
+    uses_external_data = any(
+        initializer.data_location == onnx.TensorProto.EXTERNAL
+        for initializer in onnx.load(str(dynamo_onnx_path), load_external_data=False).graph.initializer
+    )
+    dynamo_sidecar_path = Path(f"{dynamo_onnx_path}.data")
+    assert dynamo_sidecar_path.exists() is uses_external_data
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["dynamo_onnx"]["file_name"] == Path(dynamo_onnx_path).name
     assert metadata["dynamo_onnx"]["dynamic_inputs_present"] is False
+
+
+def test_sanitize_dynamo_exported_onnx_metadata_preserves_external_data_mode(tmp_path) -> None:
+    onnx_path = tmp_path / "external_initializer.onnx"
+    external_data_path = tmp_path / f"{onnx_path.name}.data"
+    model = _make_initializer_add_model()
+    external_data_helper.convert_model_to_external_data(
+        model,
+        all_tensors_to_one_file=True,
+        location=external_data_path.name,
+        size_threshold=0,
+    )
+    onnx.save_model(
+        model,
+        str(onnx_path),
+        save_as_external_data=True,
+        all_tensors_to_one_file=True,
+        location=external_data_path.name,
+        size_threshold=0,
+    )
+
+    _sanitize_dynamo_exported_onnx_metadata(onnx_path)
+
+    sanitized_model = onnx.load(str(onnx_path), load_external_data=False)
+    assert any(
+        initializer.data_location == onnx.TensorProto.EXTERNAL
+        for initializer in sanitized_model.graph.initializer
+    )
+    assert external_data_path.exists()
+
+
+def test_sanitize_dynamo_exported_onnx_metadata_removes_orphan_external_data_file(tmp_path) -> None:
+    onnx_path = tmp_path / "embedded_initializer.onnx"
+    orphan_external_data_path = tmp_path / f"{onnx_path.name}.data"
+    onnx.save_model(_make_initializer_add_model(), str(onnx_path), save_as_external_data=False)
+    orphan_external_data_path.write_bytes(b"orphan")
+
+    _sanitize_dynamo_exported_onnx_metadata(onnx_path)
+
+    sanitized_model = onnx.load(str(onnx_path), load_external_data=False)
+    assert not any(
+        initializer.data_location == onnx.TensorProto.EXTERNAL
+        for initializer in sanitized_model.graph.initializer
+    )
+    assert not orphan_external_data_path.exists()
 
 
 def test_export_exported_program_from_generated_package_writes_artifact_and_metadata(tmp_path) -> None:

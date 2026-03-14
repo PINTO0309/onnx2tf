@@ -57,6 +57,8 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains,
     _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks,
     _optimize_center_size_offset_terminal_transpose_chains,
+    _optimize_constant_input_pad_chains,
+    _optimize_constant_input_pool_chains,
     _optimize_duplicate_reshape_fanout,
     _optimize_duplicate_transpose_fanout,
     _optimize_fuse_conv_activation_chains,
@@ -29983,8 +29985,11 @@ def test_flatbuffer_direct_average_pool_exclude_pad_uses_divisor_correction() ->
         output_file_name="average_pool_exclude_pad_correction_test",
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
-    assert op_types.count("AVERAGE_POOL_2D") == 2
+    assert op_types.count("AVERAGE_POOL_2D") == 1
     assert op_types.count("DIV") == 1
+    div_op = next(op for op in model_ir.operators if str(op.op_type) == "DIV")
+    div_denominator = model_ir.tensors[str(div_op.inputs[1])]
+    assert div_denominator.data is not None
 
 
 def test_flatbuffer_direct_average_pool_include_pad_materializes_zero_padding() -> None:
@@ -30011,8 +30016,11 @@ def test_flatbuffer_direct_average_pool_ceil_mode_exclude_pad_uses_builtin_ops()
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert "CUSTOM" not in op_types
-    assert op_types.count("AVERAGE_POOL_2D") == 2
+    assert op_types.count("AVERAGE_POOL_2D") == 1
     assert op_types.count("DIV") == 1
+    div_op = next(op for op in model_ir.operators if str(op.op_type) == "DIV")
+    div_denominator = model_ir.tensors[str(div_op.inputs[1])]
+    assert div_denominator.data is not None
 
 
 def test_flatbuffer_direct_rank6_slice_decomposed_to_rank5_by_default() -> None:
@@ -37636,6 +37644,271 @@ def test_flatbuffer_direct_gaze_keep_shape_inputs_fuses_late_conv_relu_chain() -
 
     assert all(str(op.op_type) != "RELU" for op in model_ir.operators)
     assert "Conv__58_output_nhwc" not in model_ir.tensors
+
+
+def test_flatbuffer_direct_pidnet_dfm_transpose_logistic_sub_mul_postadd_optimization() -> None:
+    model_path = os.path.join(os.getcwd(), "pidnet_S_cityscapes_192x320.onnx")
+    if not os.path.isfile(model_path):
+        pytest.skip("pidnet_S_cityscapes_192x320.onnx not found")
+
+    model = onnx.load(model_path)
+    model_ir_raw = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="pidnet_dfm_postadd_raw_test",
+        optimize_layout_transpose_chains=False,
+        show_progress=False,
+    )
+    model_ir_opt = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="pidnet_dfm_postadd_opt_test",
+        show_progress=False,
+    )
+
+    raw_transpose_outputs = {
+        str(output_name)
+        for op in model_ir_raw.operators
+        if str(op.op_type) == "TRANSPOSE"
+        for output_name in list(op.outputs)
+    }
+    opt_transpose_outputs = {
+        str(output_name)
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "TRANSPOSE"
+        for output_name in list(op.outputs)
+    }
+    assert "/dfm/Mul_1_output_0_nhwc_bridge" in raw_transpose_outputs
+
+    assert "/dfm/Mul_1_output_0_nhwc_bridge" not in opt_transpose_outputs
+    assert "/dfm/Mul_output_0_nhwc_bridge" not in opt_transpose_outputs
+    assert len(opt_transpose_outputs) < len(raw_transpose_outputs)
+
+    sigmoid_op = next(
+        op
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "LOGISTIC" and "/dfm/Sigmoid_output_0" in [str(v) for v in list(op.outputs)]
+    )
+    assert [str(v) for v in list(sigmoid_op.inputs)] == ["/layer5_d/layer5_d.0/Add_output_0__raw"]
+
+    mul1_op = next(
+        op
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "MUL" and "/dfm/Mul_1_output_0_nhwc_bridge" in [str(v) for v in list(op.outputs)]
+    )
+    assert "/layer5_/layer5_.0/Add_output_0__raw" in [str(v) for v in list(mul1_op.inputs)]
+
+    mul0_op = next(
+        op
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "MUL" and "/dfm/Mul_output_0_nhwc_bridge" in [str(v) for v in list(op.outputs)]
+    )
+    assert "/Resize_2_output_nhwc" in [str(v) for v in list(mul0_op.inputs)]
+
+
+def test_flatbuffer_direct_pidnet_spp_transpose_bridges_are_folded() -> None:
+    model_path = os.path.join(os.getcwd(), "pidnet_S_cityscapes_192x320.onnx")
+    if not os.path.isfile(model_path):
+        pytest.skip("pidnet_S_cityscapes_192x320.onnx not found")
+
+    model = onnx.load(model_path)
+    model_ir_opt = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="pidnet_spp_opt_test",
+        show_progress=False,
+    )
+
+    opt_transpose_outputs = {
+        str(output_name)
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "TRANSPOSE"
+        for output_name in list(op.outputs)
+    }
+    target_outputs = {
+        "/layer5/layer5.1/Add_output_0",
+        "/spp/scale0/scale0.2/Conv_output_0",
+        "/spp/Resize_output_0",
+        "/spp/Resize_1_output_0",
+        "/spp/Resize_2_output_0",
+        "/spp/Resize_3_output_0",
+        "/spp/scale_process/scale_process.0/BatchNormalization_mul_out_nhwc_bridge",
+        "/spp/compression/compression.0/BatchNormalization_mul_out_nhwc_bridge",
+    }
+    assert target_outputs.isdisjoint(opt_transpose_outputs)
+
+    concat4_op = next(
+        op
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "CONCATENATION" and "/spp/Concat_4_output_0" in [str(v) for v in list(op.outputs)]
+    )
+    concat5_op = next(
+        op
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "CONCATENATION" and "/spp/Concat_5_output_0" in [str(v) for v in list(op.outputs)]
+    )
+    assert int(concat4_op.options.get("axis", -1)) == 3
+    assert int(concat5_op.options.get("axis", -1)) == 3
+
+    mean_op = next(
+        op
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "MEAN" and "/spp/scale4/scale4.0/GlobalAveragePool_output_0" in [str(v) for v in list(op.outputs)]
+    )
+    assert [str(v) for v in list(mean_op.inputs)][0] == "/spp/scale1/scale1.0/AveragePool_input_nhwc"
+
+
+def test_constant_input_average_pool_is_folded_into_div_denominator() -> None:
+    model_ir = ModelIR(name="constant_pool_div_fold")
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 1],
+        shape_signature=[1, 2, 3, 1],
+    )
+    model_ir.tensors["mask"] = TensorIR(
+        name="mask",
+        dtype="FLOAT32",
+        shape=[1, 3, 5, 1],
+        shape_signature=[1, 3, 5, 1],
+        data=np.ones((1, 3, 5, 1), dtype=np.float32),
+    )
+    model_ir.tensors["mask_pool"] = TensorIR(
+        name="mask_pool",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 1],
+        shape_signature=[1, 2, 3, 1],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 1],
+        shape_signature=[1, 2, 3, 1],
+    )
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.operators = [
+        OperatorIR(
+            op_type="AVERAGE_POOL_2D",
+            inputs=["mask"],
+            outputs=["mask_pool"],
+            options={
+                "padding": "SAME",
+                "strideH": 2,
+                "strideW": 2,
+                "filterHeight": 5,
+                "filterWidth": 5,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+        OperatorIR(
+            op_type="DIV",
+            inputs=["x", "mask_pool"],
+            outputs=["y"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    result = _optimize_constant_input_pool_chains(model_ir)
+
+    assert result["optimized_constant_input_pool_chains"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["DIV"]
+    assert model_ir.tensors["mask_pool"].data is not None
+    np.testing.assert_allclose(
+        np.asarray(model_ir.tensors["mask_pool"].data),
+        np.asarray([[[[0.36], [0.6], [0.36]], [[0.36], [0.6], [0.36]]]], dtype=np.float32),
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
+def test_constant_input_padv2_and_average_pool_are_folded_into_div_denominator() -> None:
+    model_ir = ModelIR(name="constant_pad_pool_div_fold")
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 1, 2, 1],
+        shape_signature=[1, 1, 2, 1],
+    )
+    model_ir.tensors["mask"] = TensorIR(
+        name="mask",
+        dtype="FLOAT32",
+        shape=[1, 3, 5, 1],
+        shape_signature=[1, 3, 5, 1],
+        data=np.ones((1, 3, 5, 1), dtype=np.float32),
+    )
+    model_ir.tensors["pads"] = TensorIR(
+        name="pads",
+        dtype="INT32",
+        shape=[4, 2],
+        shape_signature=[4, 2],
+        data=np.asarray([[0, 0], [4, 4], [4, 4], [0, 0]], dtype=np.int32),
+    )
+    model_ir.tensors["pad_zero"] = TensorIR(
+        name="pad_zero",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([0.0], dtype=np.float32),
+    )
+    model_ir.tensors["mask_padded"] = TensorIR(
+        name="mask_padded",
+        dtype="FLOAT32",
+        shape=[1, 11, 13, 1],
+        shape_signature=[1, 11, 13, 1],
+    )
+    model_ir.tensors["mask_pool"] = TensorIR(
+        name="mask_pool",
+        dtype="FLOAT32",
+        shape=[1, 1, 2, 1],
+        shape_signature=[1, 1, 2, 1],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1, 2, 1],
+        shape_signature=[1, 1, 2, 1],
+    )
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.operators = [
+        OperatorIR(
+            op_type="PADV2",
+            inputs=["mask", "pads", "pad_zero"],
+            outputs=["mask_padded"],
+            options={},
+        ),
+        OperatorIR(
+            op_type="AVERAGE_POOL_2D",
+            inputs=["mask_padded"],
+            outputs=["mask_pool"],
+            options={
+                "padding": "VALID",
+                "strideH": 4,
+                "strideW": 4,
+                "filterHeight": 9,
+                "filterWidth": 9,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+        OperatorIR(
+            op_type="DIV",
+            inputs=["x", "mask_pool"],
+            outputs=["y"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    pad_result = _optimize_constant_input_pad_chains(model_ir)
+    pool_result = _optimize_constant_input_pool_chains(model_ir)
+
+    assert pad_result["optimized_constant_input_pad_chains"] == 1
+    assert pool_result["optimized_constant_input_pool_chains"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["DIV"]
+    assert model_ir.tensors["mask_pool"].data is not None
+    np.testing.assert_allclose(
+        np.asarray(model_ir.tensors["mask_pool"].data),
+        np.asarray([[[[15.0 / 81.0], [15.0 / 81.0]]]], dtype=np.float32),
+        rtol=0.0,
+        atol=1e-7,
+    )
 
 
 def _make_wave1_unary_builtin_model() -> onnx.ModelProto:
