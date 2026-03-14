@@ -6967,6 +6967,106 @@ def test_export_pytorch_package_concat_torchscript_regression(tmp_path) -> None:
     assert Path(torchscript_path).exists()
 
 
+def test_export_pytorch_package_rank4_concat_torchscript_regression(tmp_path) -> None:
+    model_ir = ModelIR(name="rank4_concat_torchscript_regression")
+    model_ir.inputs = ["x", "y"]
+    model_ir.outputs = ["z"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 1],
+        shape_signature=[1, 2, 2, 1],
+        logical_layout="NHWC",
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 2],
+        shape_signature=[1, 2, 2, 2],
+        logical_layout="NHWC",
+    )
+    model_ir.tensors["z"] = TensorIR(
+        name="z",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 3],
+        shape_signature=[1, 2, 2, 3],
+        logical_layout="NHWC",
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["x", "y"],
+            outputs=["z"],
+            options={"axis": 3, "fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "rank4_concat_torchscript_regression"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(4, dtype=torch.float32).reshape(1, 2, 2, 1)
+    y = torch.arange(8, dtype=torch.float32).reshape(1, 2, 2, 2)
+    out = model(x, y)
+    assert torch.equal(out, torch.cat([x, y], dim=3))
+
+    torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
+    assert torchscript_path is not None
+    assert Path(torchscript_path).exists()
+
+
+def test_export_pytorch_package_gather_nd_torchscript_regression(tmp_path) -> None:
+    model_ir = ModelIR(name="gather_nd_torchscript_regression")
+    model_ir.inputs = []
+    model_ir.outputs = ["y"]
+    model_ir.tensors["params"] = TensorIR(
+        name="params",
+        dtype="FLOAT32",
+        shape=[2, 3],
+        shape_signature=[2, 3],
+        data=np.asarray([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32),
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["indices"] = TensorIR(
+        name="indices",
+        dtype="INT32",
+        shape=[2, 2],
+        shape_signature=[2, 2],
+        data=np.asarray([[1, 2], [0, 1]], dtype=np.int32),
+        logical_layout="UNKNOWN",
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[2],
+        shape_signature=[2],
+        logical_layout="UNKNOWN",
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="GATHER_ND",
+            inputs=["params", "indices"],
+            outputs=["y"],
+            options={},
+        ),
+    ]
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "gather_nd_torchscript_regression"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    out = model()
+    assert torch.equal(out, torch.tensor([6.0, 2.0], dtype=torch.float32))
+
+    torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
+    assert torchscript_path is not None
+    assert Path(torchscript_path).exists()
+
+
 def test_export_pytorch_package_elides_inconsistent_same_layout_transpose(tmp_path) -> None:
     model_ir = ModelIR(name="stale_same_layout_transpose")
     model_ir.inputs = ["x"]

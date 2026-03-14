@@ -12456,6 +12456,60 @@ def _fold_inverse_permute_round_trips(exported_program):
             or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
         ):
             continue
+        cat_node = node.args[0]
+        if (
+            not isinstance(cat_node, torch.fx.Node)
+            or cat_node.op != "call_function"
+            or str(cat_node.target) != "aten.cat.default"
+            or len(cat_node.args) < 1
+        ):
+            continue
+        cat_inputs_arg = cat_node.args[0]
+        if not isinstance(cat_inputs_arg, (list, tuple)):
+            continue
+        cat_dim = None
+        if len(cat_node.args) >= 2:
+            cat_dim = int(cat_node.args[1])
+        elif "dim" in cat_node.kwargs:
+            cat_dim = int(cat_node.kwargs["dim"])
+        if cat_dim != 3:
+            continue
+        folded_inputs = []
+        for cat_input in list(cat_inputs_arg):
+            folded_source = _match_permute_chain_source(cat_input, [0, 2, 3, 1])
+            if folded_source is None:
+                folded_inputs = []
+                break
+            folded_inputs.append(folded_source)
+        if len(folded_inputs) != len(list(cat_inputs_arg)):
+            continue
+        folded_cat_kwargs = dict(cat_node.kwargs)
+        folded_cat_args = (folded_inputs, 1)
+        if "dim" in folded_cat_kwargs:
+            folded_cat_kwargs["dim"] = 1
+            folded_cat_args = (folded_inputs,)
+        cat_node.args = folded_cat_args
+        cat_node.kwargs = folded_cat_kwargs
+        cat_node.meta = dict(getattr(node, "meta", {}))
+        inverse_users = list(node.users)
+        if (
+            len(inverse_users) == 1
+            and inverse_users[0].op == "call_function"
+            and str(inverse_users[0].target) == "aten.contiguous.default"
+        ):
+            inverse_users[0].replace_all_uses_with(cat_node)
+        else:
+            node.replace_all_uses_with(cat_node)
+        changed = True
+
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+            or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+        ):
+            continue
         pad_node = node.args[0]
         if not isinstance(pad_node, torch.fx.Node):
             continue
@@ -18893,6 +18947,18 @@ def _write_native_model_file_codegen_core_body_main_inner_legacy_impl(
         "    unexpected = sorted(str(key) for key in raw_state_dict.keys() if str(key) not in recognized_keys)\n"
         "    if len(missing) > 0 or len(unexpected) > 0:\n"
         "        raise RuntimeError(f'state_dict mismatch. missing={missing} unexpected={unexpected}')\n\n"
+        "def _shape_list_contains(candidates: List[List[int]], target: List[int]) -> bool:\n"
+        "    for candidate in candidates:\n"
+        "        if len(candidate) != len(target):\n"
+        "            continue\n"
+        "        matches = True\n"
+        "        for index in range(len(target)):\n"
+        "            if int(candidate[index]) != int(target[index]):\n"
+        "                matches = False\n"
+        "                break\n"
+        "        if matches:\n"
+        "            return True\n"
+        "    return False\n\n"
         "def _apply_concat(values: Sequence[torch.Tensor], axis: int, target_shape: Optional[Sequence[int]], fused: str) -> torch.Tensor:\n"
         "    if any(int(value.ndim) == 0 for value in values):\n"
         "        values = [value.reshape(1) if int(value.ndim) == 0 else value for value in values]\n"
@@ -18904,12 +18970,12 @@ def _write_native_model_file_codegen_core_body_main_inner_legacy_impl(
         "        perm_cf_to_cl = _perm_cf_to_cl(rank)\n"
         "        if perm_cf_to_cl is not None:\n"
         "            alt_target = _permute_shape(target_list, perm_cf_to_cl)\n"
-        "            if alt_target is not None and alt_target not in candidate_targets:\n"
+        "            if alt_target is not None and not _shape_list_contains(candidate_targets, alt_target):\n"
         "                candidate_targets.append(alt_target)\n"
         "        perm_cl_to_cf = _perm_cl_to_cf(rank)\n"
         "        if perm_cl_to_cf is not None:\n"
         "            alt_target = _permute_shape(target_list, perm_cl_to_cf)\n"
-        "            if alt_target is not None and alt_target not in candidate_targets:\n"
+        "            if alt_target is not None and not _shape_list_contains(candidate_targets, alt_target):\n"
         "                candidate_targets.append(alt_target)\n"
         "        best_aligned_values: Optional[List[torch.Tensor]] = None\n"
         "        best_score: Optional[int] = None\n"
@@ -18928,15 +18994,21 @@ def _write_native_model_file_codegen_core_body_main_inner_legacy_impl(
         "                        aligned_values.append(chosen)\n"
         "                        continue\n"
         "                    matched = False\n"
-        "                    for perm in (_perm_cl_to_cf(value.ndim), _perm_cf_to_cl(value.ndim)):\n"
-        "                        if perm is None:\n"
-        "                            continue\n"
-        "                        permuted_shape = _permute_shape(actual, perm)\n"
+        "                    perm_cl_to_cf_value = _perm_cl_to_cf(value.ndim)\n"
+        "                    if perm_cl_to_cf_value is not None:\n"
+        "                        permuted_shape = _permute_shape(actual, perm_cl_to_cf_value)\n"
         "                        if _matches_target_except_axis(permuted_shape, candidate_target, resolved_axis):\n"
-        "                            chosen = _torch_permute(value, perm)\n"
+        "                            chosen = _torch_permute(value, perm_cl_to_cf_value)\n"
         "                            candidate_score += 1\n"
         "                            matched = True\n"
-        "                            break\n"
+        "                    if not matched:\n"
+        "                        perm_cf_to_cl_value = _perm_cf_to_cl(value.ndim)\n"
+        "                        if perm_cf_to_cl_value is not None:\n"
+        "                            permuted_shape = _permute_shape(actual, perm_cf_to_cl_value)\n"
+        "                            if _matches_target_except_axis(permuted_shape, candidate_target, resolved_axis):\n"
+        "                                chosen = _torch_permute(value, perm_cf_to_cl_value)\n"
+        "                                candidate_score += 1\n"
+        "                                matched = True\n"
         "                    if not matched:\n"
         "                        feasible = False\n"
         "                        break\n"
@@ -19089,11 +19161,31 @@ def _write_native_model_file_codegen_core_body_main_inner_legacy_impl(
         "    slice_shape = list(params.shape[index_depth:])\n"
         "    if index_depth == 0:\n"
         "        gathered_rows = params\n"
-        "    else:\n"
-        "        gather_indices = torch.jit.annotate(List[torch.Tensor], [])\n"
+        "    elif not torch.jit.is_scripting():\n"
+        "        gather_indices = []\n"
         "        for axis in range(index_depth):\n"
         "            gather_indices.append(flat_indices[:, axis])\n"
         "        gathered_rows = params[tuple(gather_indices)]\n"
+        "    else:\n"
+        "        row_shape = [int(v) for v in list(params.shape[:index_depth])]\n"
+        "        strides = [1] * index_depth\n"
+        "        running = 1\n"
+        "        for axis in range(index_depth - 1, -1, -1):\n"
+        "            strides[axis] = int(running)\n"
+        "            running *= int(row_shape[axis])\n"
+        "        flat_row_indices = torch.zeros_like(flat_indices[:, 0])\n"
+        "        for axis in range(index_depth):\n"
+        "            axis_indices = flat_indices[:, axis]\n"
+        "            dim_size = int(row_shape[axis])\n"
+        "            if dim_size > 0:\n"
+        "                dim_size_tensor = torch.as_tensor(dim_size, dtype=torch.int64, device=indices_i64.device)\n"
+        "                axis_indices = torch.where(axis_indices < 0, axis_indices + dim_size_tensor, axis_indices)\n"
+        "            flat_row_indices = flat_row_indices + (axis_indices * int(strides[axis]))\n"
+        "        flat_params_shape = torch.jit.annotate(List[int], [int(running)])\n"
+        "        for dim_value in slice_shape:\n"
+        "            flat_params_shape.append(int(dim_value))\n"
+        "        flat_params = torch.reshape(params, flat_params_shape)\n"
+        "        gathered_rows = torch.index_select(flat_params, 0, flat_row_indices)\n"
         "    output_shape = prefix_shape + slice_shape\n"
         "    if len(output_shape) == 0:\n"
         "        y = torch.reshape(gathered_rows, [])\n"
