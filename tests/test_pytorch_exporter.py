@@ -22,8 +22,11 @@ from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
     TensorIR,
+    clone_model_ir_with_float32,
     infer_model_ir_logical_layouts,
     normalize_logical_layout,
+    optimize_redundant_transpose_operators,
+    prune_identity_cast_operators,
 )
 from onnx2tf.tflite_builder.lower_from_onnx2tf import lower_onnx_to_ir
 from onnx2tf.tflite_builder.model_writer import write_model_file
@@ -6376,13 +6379,19 @@ def test_export_pytorch_package_generates_native_yolox_package_when_model_is_ava
     package_dir = Path(package_path)
     metadata = json.loads((package_dir / "metadata.json").read_text())
     model_source = (package_dir / "model.py").read_text()
-    assert "execution_backend" not in metadata
+    assert metadata["execution_backend"] == "native"
     assert "load_generated_model_package" not in model_source
     assert "class _Conv2dBlock(torch.nn.Module):" not in model_source
     assert "_apply_gather(" not in model_source
     assert "_apply_gather_nd(" not in model_source
     assert "_apply_slice(" not in model_source
     assert "_apply_strided_slice(" not in model_source
+    assert "t798_cf = torch.cat([cv261_out, t_796, t_797], dim=1)" in model_source
+    assert "t824_cf = torch.cat([cv282_out, t_822, t_823], dim=1)" in model_source
+    assert "t850_cf = torch.cat([cv303_out, t_848, t_849], dim=1)" in model_source
+    assert "t_798 = _align_tensor_to_target_shape(t798_cf.permute(0, 2, 3, 1).contiguous()" not in model_source
+    assert "t_824 = _align_tensor_to_target_shape(t824_cf.permute(0, 2, 3, 1).contiguous()" not in model_source
+    assert "t_850 = _align_tensor_to_target_shape(t850_cf.permute(0, 2, 3, 1).contiguous()" not in model_source
     assert model_source.count("register_buffer(") <= 12
     assert "    _Conv2dBlock,\n" in model_source
     assert "self.conv_block_0 = _Conv2dBlock(" in model_source
@@ -6400,6 +6409,67 @@ def test_export_pytorch_package_generates_native_yolox_package_when_model_is_ava
     assert isinstance(reloaded_outputs, torch.Tensor)
     assert list(loaded_outputs.shape) == list(reloaded_outputs.shape)
     assert torch.allclose(loaded_outputs, reloaded_outputs)
+
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert exported_program_path is not None
+    exported_program = torch.export.load(str(exported_program_path))
+    inverse_permute_pairs = set()
+    for node in exported_program.module().graph.nodes:
+        if node.op != "call_function" or str(node.target) != "aten.permute.default":
+            continue
+        source = node.args[0] if len(node.args) >= 1 else None
+        if getattr(source, "op", None) != "call_function" or str(getattr(source, "target", "")) != "aten.contiguous.default":
+            continue
+        nested = source.args[0] if len(source.args) >= 1 else None
+        if getattr(nested, "op", None) != "call_function" or str(getattr(nested, "target", "")) != "aten.permute.default":
+            continue
+        perm_a = list(nested.args[1]) if len(nested.args) >= 2 else None
+        perm_b = list(node.args[1]) if len(node.args) >= 2 else None
+        if perm_a is None or perm_b is None:
+            continue
+        if [perm_a[int(idx)] for idx in perm_b] == list(range(len(perm_a))):
+            inverse_permute_pairs.add((nested.name, node.name))
+    assert inverse_permute_pairs == set()
+
+
+def test_export_pytorch_package_folds_public_input_focus_bridge_for_yolox_when_model_is_available(tmp_path) -> None:
+    model_path = Path("yolox_s.onnx")
+    if not model_path.exists():
+        pytest.skip("yolox_s.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = clone_model_ir_with_float32(
+        lower_onnx_to_ir(
+            model_proto,
+            output_file_name="yolox_public_bridge_codegen_test",
+            show_progress=False,
+            transpose_inputs_to_nhwc=True,
+        )
+    )
+    prune_identity_cast_operators(model_ir, preserve_model_outputs=True)
+    optimize_redundant_transpose_operators(model_ir, preserve_model_outputs=True)
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "yolox_public_bridge_pytorch"),
+    )
+    package_dir = Path(package_path)
+    model_source = (package_dir / "model.py").read_text()
+    assert "images_public_layout_bridge = _torch_permute(images, [0, 2, 3, 1])" not in model_source
+    assert "t490_cf = images[0:1, 0:3, 0:640:2, 0:640:2]" in model_source
+    assert "cv41_in = torch.cat([t490_cf, t501_cf, t496_cf, t512_cf], dim=1)" in model_source
+
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert exported_program_path is not None
+    exported_program = torch.export.load(str(exported_program_path))
+    graph_nodes = list(exported_program.module().graph.nodes)
+    image_placeholder_index = next(
+        idx for idx, node in enumerate(graph_nodes)
+        if node.op == "placeholder" and node.name == "images"
+    )
+    first_call_function = next(
+        node for node in graph_nodes[image_placeholder_index + 1 :]
+        if node.op == "call_function"
+    )
+    assert str(first_call_function.target) == "aten.slice.Tensor"
 
 
 def test_export_pytorch_package_generates_native_mobilebert_package_when_model_is_available(tmp_path) -> None:
