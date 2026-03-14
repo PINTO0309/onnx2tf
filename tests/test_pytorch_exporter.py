@@ -6472,6 +6472,46 @@ def test_export_pytorch_package_folds_public_input_focus_bridge_for_yolox_when_m
     assert str(first_call_function.target) == "aten.slice.Tensor"
 
 
+def test_export_pytorch_package_avoids_early_permute_chain_for_human_segmentation_when_model_is_available(tmp_path) -> None:
+    model_path = Path("human_segmentation_pphumanseg_2021oct.onnx")
+    if not model_path.exists():
+        pytest.skip("human_segmentation_pphumanseg_2021oct.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = clone_model_ir_with_float32(
+        lower_onnx_to_ir(
+            model_proto,
+            output_file_name="human_segmentation_native_codegen_test",
+            show_progress=False,
+        )
+    )
+    prune_identity_cast_operators(model_ir, preserve_model_outputs=True)
+    optimize_redundant_transpose_operators(model_ir, preserve_model_outputs=True)
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "human_segmentation_native_pytorch"),
+    )
+    package_dir = Path(package_path)
+    metadata = json.loads((package_dir / "metadata.json").read_text())
+    model_source = (package_dir / "model.py").read_text()
+    assert metadata["execution_backend"] == "native"
+    assert "cv17_in_nhwc_cf.permute(0, 2, 3, 1).contiguous()" not in model_source
+    assert "cv19_in_nhwc.permute(0, 3, 1, 2).contiguous()" not in model_source
+    assert "cv20_out_nhwc_cf.permute(0, 2, 3, 1).contiguous()" not in model_source
+    assert "cv21_in_nhwc.permute(0, 3, 1, 2).contiguous()" not in model_source
+    assert "cv22_out_nhwc_cf.permute(0, 2, 3, 1).contiguous()" not in model_source
+
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert exported_program_path is not None
+    exported_program = torch.export.load(str(exported_program_path))
+    permute_indices = [
+        idx
+        for idx, node in enumerate(exported_program.module().graph.nodes)
+        if node.op == "call_function" and str(node.target) == "aten.permute.default"
+    ]
+    assert permute_indices
+    assert min(permute_indices) > 320
+
+
 def test_export_pytorch_package_generates_native_mobilebert_package_when_model_is_available(tmp_path) -> None:
     model_path = Path("lite_model_mobilebert_1_metadata_1.onnx")
     if not model_path.exists():

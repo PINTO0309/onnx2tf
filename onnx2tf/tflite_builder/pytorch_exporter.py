@@ -9062,6 +9062,44 @@ def _write_native_model_file(
         dim_literal: Any = normalized_axes[0] if len(normalized_axes) == 1 else normalized_axes
         return f"torch.mean({input_expr}, dim={repr(dim_literal)}, keepdim={keepdims})"
 
+    def _channel_first_passthrough_input_expr(
+        tensor_name: str,
+    ) -> Optional[str]:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            return None
+        tensor_layout = normalize_logical_layout(tensor.logical_layout)
+        if is_channel_first_logical_layout(tensor_layout):
+            return _tensor_expr(str(tensor_name))
+        return channel_first_tensor_expr_aliases.get(str(tensor_name), None)
+
+    def _can_emit_channel_first_shape_preserving_unary_op(
+        op: OperatorIR,
+    ) -> bool:
+        op_type = str(op.op_type)
+        if op_type not in _DIRECT_CODEGEN_UNARY_EXPRESSIONS:
+            return False
+        if len(op.inputs) != 1 or len(op.outputs) != 1:
+            return False
+        input_name = str(op.inputs[0])
+        output_name = str(op.outputs[0])
+        input_tensor = model_ir.tensors.get(input_name, None)
+        output_tensor = model_ir.tensors.get(output_name, None)
+        if input_tensor is None or output_tensor is None:
+            return False
+        output_rank = len(list(output_tensor.shape))
+        if output_rank not in {3, 4, 5}:
+            return False
+        input_shape = _tensor_shape_list(input_name)
+        output_shape = _tensor_shape_list(output_name)
+        if (
+            input_shape is None
+            or output_shape is None
+            or not _shape_lists_equal_relaxed(input_shape, output_shape)
+        ):
+            return False
+        return _channel_first_passthrough_input_expr(input_name) is not None
+
     def _can_omit_materialized_channel_last_alias(output_name: str) -> bool:
         return _can_omit_materialized_channel_last_alias_recursive(str(output_name), set())
 
@@ -9116,6 +9154,27 @@ def _write_native_model_file(
                 continue
             if consumer_type in {"SUM", "MEAN", "REDUCE_MAX", "REDUCE_MIN", "REDUCE_PROD", "REDUCE_ANY"}:
                 if _channel_first_reduction_plan(consumer_op, str(output_name)) is None:
+                    return False
+                continue
+            if consumer_type in _DIRECT_CODEGEN_UNARY_EXPRESSIONS:
+                if not _can_emit_channel_first_shape_preserving_unary_op(consumer_op):
+                    return False
+                if len(consumer_op.inputs) != 1 or len(consumer_op.outputs) != 1:
+                    return False
+                if str(consumer_op.inputs[0]) != str(output_name):
+                    return False
+                consumer_output_name = str(consumer_op.outputs[0])
+                consumer_output_tensor = model_ir.tensors.get(consumer_output_name, None)
+                if consumer_output_tensor is None or len(list(consumer_output_tensor.shape)) != output_rank:
+                    return False
+                current_shape = _tensor_shape_list(str(output_name))
+                consumer_output_shape = _tensor_shape_list(consumer_output_name)
+                if not _shape_lists_equal_relaxed(current_shape, consumer_output_shape):
+                    return False
+                if not _can_omit_materialized_channel_last_alias_recursive(
+                    consumer_output_name,
+                    next_seen_names,
+                ):
                     return False
                 continue
             if consumer_type in {"ADD", "DIV", "MAXIMUM", "MINIMUM", "MUL", "SUB"}:
@@ -10640,10 +10699,63 @@ def _write_native_model_file(
             continue
         if op_type in _DIRECT_CODEGEN_UNARY_EXPRESSIONS:
             template = _DIRECT_CODEGEN_UNARY_EXPRESSIONS[op_type]
+            input_name = str(op.inputs[0])
+            output_name = str(outputs[0])
+            channel_first_input_expr = _channel_first_passthrough_input_expr(input_name)
+            output_tensor = model_ir.tensors.get(output_name, None)
+            output_layout = (
+                normalize_logical_layout(output_tensor.logical_layout)
+                if output_tensor is not None
+                else LOGICAL_LAYOUT_UNKNOWN
+            )
+            if (
+                _can_emit_channel_first_shape_preserving_unary_op(op)
+                and channel_first_input_expr is not None
+                and output_tensor is not None
+            ):
+                if op_type == "LEAKY_RELU":
+                    channel_first_expr = template.format(
+                        x=channel_first_input_expr,
+                        alpha=float(op.options.get("alpha", 0.2)),
+                    )
+                else:
+                    channel_first_expr = template.format(x=channel_first_input_expr)
+                output_rank = len(list(output_tensor.shape))
+                if is_channel_first_logical_layout(output_layout):
+                    channel_first_tensor_expr_aliases.pop(output_name, None)
+                    forward_lines.append(f"{output_vars[0]} = {channel_first_expr}")
+                    continue
+                raw_output_var = (
+                    output_vars[0]
+                    if output_layout == LOGICAL_LAYOUT_UNKNOWN
+                    else _derived_local_var_name(f"{output_vars[0]}_cf")
+                )
+                channel_first_tensor_expr_aliases[output_name] = raw_output_var
+                forward_lines.append(f"{raw_output_var} = {channel_first_expr}")
+                if raw_output_var != output_vars[0]:
+                    if _can_omit_materialized_channel_last_alias(output_name):
+                        continue
+                    perm_to_output = logical_layout_permutation(
+                        source_layout=channel_first_logical_layout(output_rank),
+                        target_layout=output_layout,
+                    )
+                    if perm_to_output is None:
+                        raise ModelIRPyTorchExportError(
+                            "Native PyTorch-like model.py codegen could not derive a unary layout bridge. "
+                            f"output={output_name} output_layout={output_layout} rank={output_rank}"
+                        )
+                    runtime_imports.add("_align_tensor_to_target_shape")
+                    forward_lines.append(
+                        f"{output_vars[0]} = _align_tensor_to_target_shape("
+                        f"{raw_output_var}.permute({', '.join(str(int(v)) for v in perm_to_output)}).contiguous(), "
+                        f"{_target_shape_literal(output_name)})"
+                    )
+                continue
             if op_type == "LEAKY_RELU":
                 expr = template.format(x=_tensor_expr(str(op.inputs[0])), alpha=float(op.options.get("alpha", 0.2)))
             else:
                 expr = template.format(x=_tensor_expr(str(op.inputs[0])))
+            channel_first_tensor_expr_aliases.pop(output_name, None)
             inferred_shape = _tensor_shape_list(str(op.inputs[0]))
             if _should_skip_align_for_shape_preserving_unary(str(op.inputs[0]), outputs[0]):
                 forward_lines.append(f"{output_vars[0]} = {expr}")
@@ -11998,6 +12110,13 @@ def _write_native_model_file(
             resize_target_shape = _resize_target_shape_literal(outputs[0], str(op.inputs[0]))
             resize_effective_layout = _infer_effective_rank4_runtime_layout(str(op.inputs[0]))
             resize_input_expr = channel_first_tensor_expr_aliases.get(str(op.inputs[0]), _tensor_expr(str(op.inputs[0])))
+            output_cf_shape = _rank4_channel_first_shape_for_tensor(outputs[0])
+            can_emit_resize_cf_alias = (
+                str(op.inputs[0]) in channel_first_tensor_expr_aliases
+                and output_cf_shape is not None
+                and len(output_cf_shape) == 4
+                and all(int(dim) > 0 for dim in output_cf_shape)
+            )
             resize_channel_last_expr = (
                 "False"
                 if str(op.inputs[0]) in channel_first_tensor_expr_aliases else
@@ -12024,17 +12143,30 @@ def _write_native_model_file(
                     raw_output_var = _derived_local_var_name(f"{output_vars[0]}_cf")
                     channel_first_tensor_expr_aliases[str(outputs[0])] = raw_output_var
                     forward_lines.append(f"{raw_output_var} = {resize_expr}")
-                    runtime_imports.add("_align_tensor_to_target_shape")
-                    forward_lines.append(
-                        f"{output_vars[0]} = _align_tensor_to_target_shape({raw_output_var}.permute(0, 2, 3, 1).contiguous(), {resize_target_shape})"
-                    )
+                    if not _can_omit_materialized_channel_last_alias(outputs[0]):
+                        runtime_imports.add("_align_tensor_to_target_shape")
+                        forward_lines.append(
+                            f"{output_vars[0]} = _align_tensor_to_target_shape({raw_output_var}.permute(0, 2, 3, 1).contiguous(), {resize_target_shape})"
+                        )
                     emitted_direct_resize = True
             if not emitted_direct_resize:
                 runtime_imports.add("_apply_resize")
-                channel_first_tensor_expr_aliases.pop(str(outputs[0]), None)
-                forward_lines.append(
-                    f"{output_vars[0]} = _apply_resize({resize_input_expr}, {size_expr}, method='nearest', target_shape={resize_target_shape}, channel_last={resize_channel_last_expr})"
-                )
+                if can_emit_resize_cf_alias:
+                    raw_output_var = _derived_local_var_name(f"{output_vars[0]}_cf")
+                    channel_first_tensor_expr_aliases[str(outputs[0])] = raw_output_var
+                    forward_lines.append(
+                        f"{raw_output_var} = _apply_resize({resize_input_expr}, {size_expr}, method='nearest', target_shape={repr(output_cf_shape)}, channel_last=False)"
+                    )
+                    if not _can_omit_materialized_channel_last_alias(outputs[0]):
+                        runtime_imports.add("_align_tensor_to_target_shape")
+                        forward_lines.append(
+                            f"{output_vars[0]} = _align_tensor_to_target_shape({raw_output_var}.permute(0, 2, 3, 1).contiguous(), {resize_target_shape})"
+                        )
+                else:
+                    channel_first_tensor_expr_aliases.pop(str(outputs[0]), None)
+                    forward_lines.append(
+                        f"{output_vars[0]} = _apply_resize({resize_input_expr}, {size_expr}, method='nearest', target_shape={resize_target_shape}, channel_last={resize_channel_last_expr})"
+                    )
             continue
         if op_type == "RESIZE_BILINEAR":
             size_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
@@ -12045,6 +12177,13 @@ def _write_native_model_file(
             resize_target_shape = _resize_target_shape_literal(outputs[0], str(op.inputs[0]))
             resize_effective_layout = _infer_effective_rank4_runtime_layout(str(op.inputs[0]))
             resize_input_expr = channel_first_tensor_expr_aliases.get(str(op.inputs[0]), _tensor_expr(str(op.inputs[0])))
+            output_cf_shape = _rank4_channel_first_shape_for_tensor(outputs[0])
+            can_emit_resize_cf_alias = (
+                str(op.inputs[0]) in channel_first_tensor_expr_aliases
+                and output_cf_shape is not None
+                and len(output_cf_shape) == 4
+                and all(int(dim) > 0 for dim in output_cf_shape)
+            )
             resize_channel_last_expr = (
                 "False"
                 if str(op.inputs[0]) in channel_first_tensor_expr_aliases else
@@ -12080,17 +12219,30 @@ def _write_native_model_file(
                     raw_output_var = _derived_local_var_name(f"{output_vars[0]}_cf")
                     channel_first_tensor_expr_aliases[str(outputs[0])] = raw_output_var
                     forward_lines.append(f"{raw_output_var} = {resize_expr}")
-                    runtime_imports.add("_align_tensor_to_target_shape")
-                    forward_lines.append(
-                        f"{output_vars[0]} = _align_tensor_to_target_shape({raw_output_var}.permute(0, 2, 3, 1).contiguous(), {resize_target_shape})"
-                    )
+                    if not _can_omit_materialized_channel_last_alias(outputs[0]):
+                        runtime_imports.add("_align_tensor_to_target_shape")
+                        forward_lines.append(
+                            f"{output_vars[0]} = _align_tensor_to_target_shape({raw_output_var}.permute(0, 2, 3, 1).contiguous(), {resize_target_shape})"
+                        )
                     emitted_direct_resize = True
             if not emitted_direct_resize:
                 runtime_imports.add("_apply_resize")
-                channel_first_tensor_expr_aliases.pop(str(outputs[0]), None)
-                forward_lines.append(
-                    f"{output_vars[0]} = _apply_resize({resize_input_expr}, {size_expr}, method='bilinear', target_shape={resize_target_shape}, align_corners={align_corners}, half_pixel_centers={half_pixel_centers}, channel_last={resize_channel_last_expr})"
-                )
+                if can_emit_resize_cf_alias:
+                    raw_output_var = _derived_local_var_name(f"{output_vars[0]}_cf")
+                    channel_first_tensor_expr_aliases[str(outputs[0])] = raw_output_var
+                    forward_lines.append(
+                        f"{raw_output_var} = _apply_resize({resize_input_expr}, {size_expr}, method='bilinear', target_shape={repr(output_cf_shape)}, align_corners={align_corners}, half_pixel_centers={half_pixel_centers}, channel_last=False)"
+                    )
+                    if not _can_omit_materialized_channel_last_alias(outputs[0]):
+                        runtime_imports.add("_align_tensor_to_target_shape")
+                        forward_lines.append(
+                            f"{output_vars[0]} = _align_tensor_to_target_shape({raw_output_var}.permute(0, 2, 3, 1).contiguous(), {resize_target_shape})"
+                        )
+                else:
+                    channel_first_tensor_expr_aliases.pop(str(outputs[0]), None)
+                    forward_lines.append(
+                        f"{output_vars[0]} = _apply_resize({resize_input_expr}, {size_expr}, method='bilinear', target_shape={resize_target_shape}, align_corners={align_corners}, half_pixel_centers={half_pixel_centers}, channel_last={resize_channel_last_expr})"
+                    )
             continue
         if op_type in {"SUM", "MEAN", "REDUCE_MAX", "REDUCE_MIN", "REDUCE_PROD", "REDUCE_ANY"}:
             runtime_imports.update({"_normalize_axes"})
