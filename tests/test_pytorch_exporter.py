@@ -7201,6 +7201,74 @@ def test_export_pytorch_package_avoids_public_bridge_permute_pairs_for_swinir_wh
     )
 
 
+def test_export_pytorch_package_generates_native_ts_ad_model_package_when_model_is_available(tmp_path) -> None:
+    model_path = Path("ts_ad_model.onnx")
+    if not model_path.exists():
+        pytest.skip("ts_ad_model.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = clone_model_ir_with_float32(
+        lower_onnx_to_ir(
+            model_proto,
+            output_file_name="ts_ad_model_native_codegen_test",
+            show_progress=False,
+            transpose_inputs_to_nhwc=True,
+        )
+    )
+    prune_identity_cast_operators(model_ir, preserve_model_outputs=True)
+    optimize_redundant_transpose_operators(model_ir, preserve_model_outputs=True)
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "ts_ad_model_pytorch"),
+    )
+    package_dir = Path(package_path)
+    model_source = (package_dir / "model.py").read_text()
+    metadata = json.loads((package_dir / "metadata.json").read_text())
+    assert metadata["execution_backend"] == "native"
+    assert "cv2_in_nhwc = torch.reshape(cv2_cv1_d_in_nchw2_d.permute(0, 2, 3, 1).contiguous(), [1, 1, 64, 1])" not in model_source
+    assert "self.conv_block_0(cv2_in_nhwc.permute(0, 3, 1, 2).contiguous())" not in model_source
+    assert "cv4_in = _align_tensor_to_target_shape(self.conv_block_0(cv2_cv1_d_in_nchw2_d), [1, 64, 1, 64])" in model_source
+    assert "_tmp_x_13 = _tmp_x_13.transpose(-1, -2)" not in model_source
+    assert "_tmp_x_13 = self.const_onnx_mat_mul74_tr_last_two66_x2" in model_source
+    assert "_tmp_y_13 = _tmp_y_13.transpose(-1, -2)" not in model_source
+
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert dynamo_onnx_path is not None
+    assert exported_program_path is not None
+    exported_program = torch.export.load(str(exported_program_path))
+    first_ops = [
+        str(node.target)
+        for node in exported_program.module().graph.nodes
+        if node.op == "call_function"
+    ][:6]
+    assert first_ops[:3] == [
+        "aten.reshape.default",
+        "aten.pad.default",
+        "aten.conv2d.default",
+    ]
+    assert any(
+        node.op == "call_function" and str(node.target) == "aten.matmul.default"
+        for node in exported_program.module().graph.nodes
+    )
+    matmul_nodes = [
+        (idx, node.name)
+        for idx, node in enumerate(exported_program.module().graph.nodes)
+        if node.op == "call_function" and str(node.target) == "aten.matmul.default"
+    ]
+    assert len(matmul_nodes) >= 2
+    assert all(
+        not (node.op == "call_function" and str(node.target) == "aten.alias.default")
+        for node in exported_program.module().graph.nodes
+    )
+    matmul_1_index = matmul_nodes[1][0]
+    preceding_targets = [
+        str(node.target)
+        for node in list(exported_program.module().graph.nodes)[max(0, matmul_1_index - 3):matmul_1_index]
+        if node.op == "call_function"
+    ]
+    assert "aten.transpose.int" not in preceding_targets
+
+
 def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_available(tmp_path) -> None:
     model_path = Path("pidnet_S_cityscapes_192x320.onnx")
     if not model_path.exists():

@@ -4355,8 +4355,32 @@ model = module.load_model(device="cpu", eval_mode=True)
 if hasattr(model, "cpu"):
     model = model.cpu()
 setattr(model, "_onnx2tf_torch_export_mode", True)
+
+def _prune_alias_nodes(exported_program):
+    graph_module = getattr(exported_program, "graph_module", None)
+    if graph_module is None:
+        return exported_program
+    graph = graph_module.graph
+    changed = False
+    for node in list(graph.nodes):
+        if (
+            node.op == "call_function"
+            and str(node.target) == "aten.alias.default"
+            and len(node.args) >= 1
+            and isinstance(node.args[0], torch.fx.Node)
+        ):
+            node.replace_all_uses_with(node.args[0])
+            graph.erase_node(node)
+            changed = True
+    if changed:
+        graph.eliminate_dead_code()
+        graph.lint()
+        graph_module.recompile()
+    return exported_program
+
 with torch.no_grad():
     exported = torch.export.export(model, example_inputs)
+exported = _prune_alias_nodes(exported)
 torch.export.save(exported, str(exported_program_path))
 print(json.dumps({"file_name": exported_program_path.name}))
 """
@@ -8859,6 +8883,9 @@ def _write_native_model_file(
     channel_first_constant_buffer_alias_attr_names: Dict[Tuple[str, Tuple[int, ...]], str] = {}
     channel_first_constant_buffer_alias_exprs: Dict[str, str] = {}
     channel_first_constant_buffer_alias_refresh_specs: List[Tuple[str, str, List[int]]] = []
+    transposed_constant_buffer_alias_attr_names: Dict[Tuple[str, Tuple[int, ...]], str] = {}
+    transposed_constant_buffer_alias_exprs: Dict[str, str] = {}
+    transposed_constant_buffer_alias_refresh_specs: List[Tuple[str, str]] = []
     used_buffer_attr_names: Set[str] = set(buffer_attr_names.values())
     for op in model_ir.operators:
         if str(op.op_type) not in _DIRECT_CODEGEN_BINARY_FUNCTIONS:
@@ -8929,6 +8956,53 @@ def _write_native_model_file(
                     )
                 )
             channel_first_constant_buffer_alias_exprs[str(constant_name)] = f"self.{channel_first_attr_name}"
+    for op in model_ir.operators:
+        if str(op.op_type) != "BATCH_MATMUL" or len(op.inputs) < 2:
+            continue
+        input_names = [str(name) for name in list(op.inputs[:2])]
+        transpose_flags = [
+            bool(op.options.get("adjX", False)),
+            bool(op.options.get("adjY", False)),
+        ]
+        for input_name, requires_transpose in zip(input_names, transpose_flags):
+            if not bool(requires_transpose):
+                continue
+            tensor = model_ir.tensors.get(str(input_name), None)
+            if (
+                tensor is None
+                or not isinstance(tensor.data, np.ndarray)
+                or bool(tensor.is_variable)
+                or str(input_name) in model_ir.inputs
+                or str(input_name) in producer_index
+                or str(input_name) in inlined_constant_tensor_names
+            ):
+                continue
+            tensor_shape = [int(v) for v in list(tensor.shape)]
+            if len(tensor_shape) < 2:
+                continue
+            source_attr_name = buffer_attr_names.get(str(input_name), None)
+            if source_attr_name is None:
+                continue
+            alias_shape = list(tensor_shape[:-2]) + [int(tensor_shape[-1]), int(tensor_shape[-2])]
+            alias_key = (str(input_name), tuple(int(v) for v in alias_shape))
+            attr_name = transposed_constant_buffer_alias_attr_names.get(alias_key, None)
+            if attr_name is None:
+                dtype_name = str(tensor.dtype).upper()
+                storage_name = tensor_storage_name_map.get(str(input_name), str(input_name))
+                shape_suffix = "x".join(str(int(v)) for v in alias_shape)
+                base_attr_name = _shorten_generated_python_identifier(
+                    f"const_{storage_name}_transpose_last_two_{shape_suffix}",
+                    prefix="const",
+                )
+                attr_name = _make_unique_identifier(base_attr_name, used_buffer_attr_names)
+                transposed_constant_buffer_alias_attr_names[alias_key] = str(attr_name)
+                buffer_init_lines.append(
+                    f"self.register_buffer({attr_name!r}, torch.zeros({repr(alias_shape)}, dtype={_torch_dtype_literal(dtype_name)}), persistent=False)"
+                )
+                transposed_constant_buffer_alias_refresh_specs.append(
+                    (str(attr_name), str(source_attr_name))
+                )
+            transposed_constant_buffer_alias_exprs[str(input_name)] = f"self.{attr_name}"
 
     def _tensor_expr(tensor_name: str) -> str:
         if str(tensor_name) in tensor_expr_aliases:
@@ -9419,6 +9493,11 @@ def _write_native_model_file(
         if [int(v) for v in alias_shape] != [int(v) for v in list(target_shape)]:
             return None
         return str(alias_expr)
+
+    def _transposed_constant_expr_for_tensor_name(
+        tensor_name: str,
+    ) -> Optional[str]:
+        return transposed_constant_buffer_alias_exprs.get(str(tensor_name), None)
 
     def _can_emit_channel_first_binary_op(op: OperatorIR) -> bool:
         op_type = str(op.op_type)
@@ -12455,23 +12534,62 @@ def _write_native_model_file(
             y_expr = _tensor_expr(str(op.inputs[1]))
             adj_x = bool(op.options.get("adjX", False))
             adj_y = bool(op.options.get("adjY", False))
+            effective_adj_x = bool(adj_x)
+            effective_adj_y = bool(adj_y)
             x_shape = _tensor_shape_list(str(op.inputs[0]))
             y_shape = _tensor_shape_list(str(op.inputs[1]))
+            output_shape = _tensor_shape_list(outputs[0])
             inferred_shape = _infer_batch_matmul_shape(
                 x_shape,
                 y_shape,
-                adj_x=adj_x,
-                adj_y=adj_y,
+                adj_x=effective_adj_x,
+                adj_y=effective_adj_y,
             )
-            forward_lines.append(f"_tmp_x_{op_index} = {x_expr}")
-            forward_lines.append(f"_tmp_y_{op_index} = {y_expr}")
-            if adj_x:
+            if output_shape is not None and not _shape_lists_equal(inferred_shape, output_shape):
+                best_flag_choice: Optional[Tuple[int, bool, bool, List[int]]] = None
+                for candidate_adj_x, candidate_adj_y in [
+                    (effective_adj_x, effective_adj_y),
+                    (effective_adj_x, not effective_adj_y),
+                    (not effective_adj_x, effective_adj_y),
+                    (not effective_adj_x, not effective_adj_y),
+                ]:
+                    candidate_shape = _infer_batch_matmul_shape(
+                        x_shape,
+                        y_shape,
+                        adj_x=candidate_adj_x,
+                        adj_y=candidate_adj_y,
+                    )
+                    if not _shape_lists_equal(candidate_shape, output_shape):
+                        continue
+                    score = int(candidate_adj_x != adj_x) + int(candidate_adj_y != adj_y)
+                    choice = (int(score), bool(candidate_adj_x), bool(candidate_adj_y), [int(v) for v in list(candidate_shape or [])])
+                    if best_flag_choice is None or choice < best_flag_choice:
+                        best_flag_choice = choice
+                if best_flag_choice is not None:
+                    _, effective_adj_x, effective_adj_y, inferred_shape = best_flag_choice
+            emitted_x_expr = x_expr
+            emitted_y_expr = y_expr
+            runtime_adj_x = bool(effective_adj_x)
+            runtime_adj_y = bool(effective_adj_y)
+            if runtime_adj_x:
+                transposed_x_expr = _transposed_constant_expr_for_tensor_name(str(op.inputs[0]))
+                if transposed_x_expr is not None:
+                    emitted_x_expr = str(transposed_x_expr)
+                    runtime_adj_x = False
+            if runtime_adj_y:
+                transposed_y_expr = _transposed_constant_expr_for_tensor_name(str(op.inputs[1]))
+                if transposed_y_expr is not None:
+                    emitted_y_expr = str(transposed_y_expr)
+                    runtime_adj_y = False
+            forward_lines.append(f"_tmp_x_{op_index} = {emitted_x_expr}")
+            forward_lines.append(f"_tmp_y_{op_index} = {emitted_y_expr}")
+            if runtime_adj_x:
                 forward_lines.append(f"_tmp_x_{op_index} = _tmp_x_{op_index}.transpose(-1, -2)")
-            if adj_y:
+            if runtime_adj_y:
                 forward_lines.append(f"_tmp_y_{op_index} = _tmp_y_{op_index}.transpose(-1, -2)")
             if (
-                not adj_x
-                and not adj_y
+                not effective_adj_x
+                and not effective_adj_y
                 and x_shape is not None
                 and y_shape is not None
                 and len(x_shape) >= 3
@@ -14720,6 +14838,69 @@ def _write_native_model_file(
             index += 1
         return rewritten
 
+    def _fold_rank4_reshape_permute_conv_bridges(
+        lines: Sequence[str],
+    ) -> List[str]:
+        if len(lines) < 3:
+            return [str(line) for line in lines]
+
+        rewritten: List[str] = []
+        reshape_re = re.compile(
+            r"^(?P<out>\w+)\s*=\s*torch\.reshape\((?P<input>[^,]+), (?P<shape>\[[^\]]+\])\)$"
+        )
+        nhwc_bridge_re = re.compile(
+            r"^(?P<out>\w+)\s*=\s*torch\.reshape\((?P<input>\w+)\.permute\(0, 2, 3, 1\)\.contiguous\(\), (?P<shape>\[[^\]]+\])\)$"
+        )
+        conv_bridge_re = re.compile(
+            r"^(?P<out>\w+)\s*=\s*_align_tensor_to_target_shape\(self\.(?P<module>\w+)\((?P<input>\w+)\.permute\(0, 3, 1, 2\)\.contiguous\(\)\), (?P<target>\[[^\]]+\])\)$"
+        )
+
+        def _permute_shape(values: Sequence[int], perm: Sequence[int]) -> List[int]:
+            items = [int(v) for v in list(values)]
+            return [int(items[int(idx)]) for idx in list(perm)]
+
+        index = 0
+        while index < len(lines):
+            if index + 2 >= len(lines):
+                rewritten.extend(str(line) for line in lines[index:])
+                break
+            reshape_match = reshape_re.match(str(lines[index]))
+            bridge_match = nhwc_bridge_re.match(str(lines[index + 1]))
+            conv_match = conv_bridge_re.match(str(lines[index + 2]))
+            if (
+                reshape_match is None
+                or bridge_match is None
+                or conv_match is None
+                or bridge_match.group("input") != reshape_match.group("out")
+                or conv_match.group("input") != bridge_match.group("out")
+            ):
+                rewritten.append(str(lines[index]))
+                index += 1
+                continue
+            try:
+                reshape_shape = ast.literal_eval(reshape_match.group("shape"))
+                bridge_shape = ast.literal_eval(bridge_match.group("shape"))
+            except Exception:
+                rewritten.append(str(lines[index]))
+                index += 1
+                continue
+            if (
+                not isinstance(reshape_shape, list)
+                or not isinstance(bridge_shape, list)
+                or len(reshape_shape) != 4
+                or len(bridge_shape) != 4
+                or _permute_shape(reshape_shape, [0, 2, 3, 1]) != [int(v) for v in list(bridge_shape)]
+            ):
+                rewritten.append(str(lines[index]))
+                index += 1
+                continue
+            rewritten.append(str(lines[index]))
+            rewritten.append(
+                f"{conv_match.group('out')} = _align_tensor_to_target_shape(self.{conv_match.group('module')}({reshape_match.group('out')}), {conv_match.group('target')})"
+            )
+            index += 3
+        return rewritten
+
     def _build_named_encoder_methods(
         stage_specs: Sequence[Dict[str, Any]],
         *,
@@ -15016,6 +15197,7 @@ def _write_native_model_file(
 
     forward_lines = _fold_channel_last_affine_conv_bridges(forward_lines)
     forward_lines = _rewrite_channel_last_binary_bridge_chains(forward_lines)
+    forward_lines = _fold_rank4_reshape_permute_conv_bridges(forward_lines)
     forward_lines = _fold_single_use_static_reshape_chains(forward_lines)
     forward_lines = _prune_dead_forward_lines(forward_lines)
     stage_methods_source, forward_stage_calls, stage_specs = _build_forward_stage_methods(forward_lines)
@@ -15138,7 +15320,10 @@ def _write_native_model_file(
     )
     constant_buffer_alias_method_source = ""
     constant_buffer_alias_init_call = ""
-    if len(channel_first_constant_buffer_alias_refresh_specs) > 0:
+    if (
+        len(channel_first_constant_buffer_alias_refresh_specs) > 0
+        or len(transposed_constant_buffer_alias_refresh_specs) > 0
+    ):
         refresh_lines = [
             "    def _refresh_constant_buffer_aliases(self) -> None:\n",
             "        with torch.no_grad():\n",
@@ -15146,6 +15331,10 @@ def _write_native_model_file(
         for alias_attr_name, source_attr_name, alias_shape in channel_first_constant_buffer_alias_refresh_specs:
             refresh_lines.append(
                 f"            self.{alias_attr_name}.copy_(torch.reshape(self.{source_attr_name}, {repr(alias_shape)}))\n"
+            )
+        for alias_attr_name, source_attr_name in transposed_constant_buffer_alias_refresh_specs:
+            refresh_lines.append(
+                f"            self.{alias_attr_name}.copy_(self.{source_attr_name}.transpose(-1, -2))\n"
             )
         refresh_lines.append("\n")
         constant_buffer_alias_method_source = "".join(refresh_lines)
