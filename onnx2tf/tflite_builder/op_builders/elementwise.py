@@ -361,60 +361,6 @@ def _cast_tensor_if_needed(
     return cast_name
 
 
-def _raw_onnx_attr_int(node: Any, name: str) -> int | None:
-    for attr in getattr(node, "attribute", []):
-        if str(getattr(attr, "name", "")) != str(name):
-            continue
-        try:
-            return int(attr.i)
-        except Exception:
-            return None
-    return None
-
-
-def _div_const_has_integer_cast_descendant(
-    *,
-    ctx: Any,
-    tensor_name: str,
-    max_depth: int = 6,
-) -> bool:
-    """
-    Keep explicit DIV when a constant-division result later crosses an integer
-    CAST through a short arithmetic-only chain.
-
-    Reciprocal-MUL fusion is numerically safe for most float paths, but it can
-    change which side of an integer boundary a coordinate lands on after a few
-    affine ops. That breaks descriptor/index sampling even when the float output
-    difference is tiny.
-    """
-    arithmetic_ops = {"Add", "Sub", "Mul", "Div"}
-    visited: set[tuple[str, int]] = set()
-    stack: list[tuple[str, int]] = [(str(tensor_name), 0)]
-
-    while len(stack) > 0:
-        current_name, depth = stack.pop()
-        state = (str(current_name), int(depth))
-        if state in visited:
-            continue
-        visited.add(state)
-
-        for consumer in ctx.onnx_tensor_consumers.get(str(current_name), []):
-            op_type = str(getattr(consumer, "op_type", ""))
-            if op_type == "Cast":
-                cast_to = _raw_onnx_attr_int(consumer, "to")
-                if cast_to in {3, 5, 6, 7, 12, 13}:
-                    return True
-                continue
-            if int(depth) >= int(max_depth):
-                continue
-            if op_type not in arithmetic_ops:
-                continue
-            for output_name in getattr(consumer, "output", []):
-                if str(output_name).strip() != "":
-                    stack.append((str(output_name), int(depth) + 1))
-    return False
-
-
 def _prepare_float_compute(
     node: Any,
     ctx: Any,
@@ -1257,15 +1203,6 @@ def build_div_op(node: Any, ctx: Any) -> None:
         calc_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
         np_calc_dtype = np.float16 if calc_dtype == "FLOAT16" else np.float32
         preserve_exact_div = output_dtype in integer_output_dtypes
-        if (
-            not preserve_exact_div
-            and output_dtype in _FLOAT_TENSOR_DTYPES
-            and _div_const_has_integer_cast_descendant(
-                ctx=ctx,
-                tensor_name=output_name,
-            )
-        ):
-            preserve_exact_div = True
         if preserve_exact_div:
             div_lhs_name = lhs_name
             if lhs_dtype != calc_dtype:

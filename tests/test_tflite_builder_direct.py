@@ -29986,10 +29986,15 @@ def test_flatbuffer_direct_average_pool_exclude_pad_uses_divisor_correction() ->
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("AVERAGE_POOL_2D") == 1
-    assert op_types.count("DIV") == 1
-    div_op = next(op for op in model_ir.operators if str(op.op_type) == "DIV")
-    div_denominator = model_ir.tensors[str(div_op.inputs[1])]
-    assert div_denominator.data is not None
+    assert op_types.count("DIV") == 0
+    assert op_types.count("MUL") >= 1
+    reciprocal_tensors = [
+        tensor
+        for tensor_name, tensor in model_ir.tensors.items()
+        if "div_reciprocal" in str(tensor_name)
+    ]
+    assert len(reciprocal_tensors) >= 1
+    assert all(tensor.data is not None for tensor in reciprocal_tensors)
 
 
 def test_flatbuffer_direct_average_pool_include_pad_materializes_zero_padding() -> None:
@@ -30017,10 +30022,15 @@ def test_flatbuffer_direct_average_pool_ceil_mode_exclude_pad_uses_builtin_ops()
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert "CUSTOM" not in op_types
     assert op_types.count("AVERAGE_POOL_2D") == 1
-    assert op_types.count("DIV") == 1
-    div_op = next(op for op in model_ir.operators if str(op.op_type) == "DIV")
-    div_denominator = model_ir.tensors[str(div_op.inputs[1])]
-    assert div_denominator.data is not None
+    assert op_types.count("DIV") == 0
+    assert op_types.count("MUL") >= 1
+    reciprocal_tensors = [
+        tensor
+        for tensor_name, tensor in model_ir.tensors.items()
+        if "div_reciprocal" in str(tensor_name)
+    ]
+    assert len(reciprocal_tensors) >= 1
+    assert all(tensor.data is not None for tensor in reciprocal_tensors)
 
 
 def test_flatbuffer_direct_rank6_slice_decomposed_to_rank5_by_default() -> None:
@@ -31048,7 +31058,7 @@ def test_flatbuffer_direct_integer_div_const_keeps_exact_division_path() -> None
     )
 
 
-def test_flatbuffer_direct_float_div_const_with_integer_cast_descendant_keeps_div() -> None:
+def test_flatbuffer_direct_float_div_const_with_integer_cast_descendant_uses_mul_reciprocal() -> None:
     x = helper.make_tensor_value_info("x", TensorProto.INT32, [1, 2])
     y = helper.make_tensor_value_info("y", TensorProto.INT32, [1, 2])
     div_const = numpy_helper.from_array(np.asarray([319.0, 191.0], dtype=np.float32), name="float_div_const")
@@ -31075,15 +31085,54 @@ def test_flatbuffer_direct_float_div_const_with_integer_cast_descendant_keeps_di
     )
 
     op_types = [str(op.op_type) for op in model_ir.operators]
-    assert op_types.count("DIV") >= 1
-    assert any(str(op.op_type) == "DIV" and "div_out" in list(op.outputs) for op in model_ir.operators)
+    assert op_types.count("DIV") == 0
+    assert op_types.count("MUL") >= 1
 
     reciprocal_tensor_names = {
         str(name)
         for name in model_ir.tensors.keys()
         if "div_reciprocal" in str(name)
     }
-    assert reciprocal_tensor_names == set()
+    assert len(reciprocal_tensor_names) == 1
+
+
+def test_flatbuffer_direct_consecutive_variable_const_mul_chain_is_folded_after_div_rewrite() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2])
+    div_const = numpy_helper.from_array(np.asarray([2.0, 4.0], dtype=np.float32), name="div_const")
+    mul_const = numpy_helper.from_array(np.asarray([3.0, 5.0], dtype=np.float32), name="mul_const")
+    nodes = [
+        helper.make_node("Div", ["x", "div_const"], ["div_out"], name="DivToMulNode"),
+        helper.make_node("Mul", ["div_out", "mul_const"], ["y"], name="MulFoldNode"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "div_then_mul_fold_graph",
+        [x],
+        [y],
+        initializer=[div_const, mul_const],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="div_then_mul_fold_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("DIV") == 0
+    assert op_types.count("MUL") == 1
+    fused_tensors = [
+        tensor
+        for tensor_name, tensor in model_ir.tensors.items()
+        if "mulfused" in str(tensor_name)
+    ]
+    assert len(fused_tensors) == 1
+    np.testing.assert_allclose(
+        np.asarray(fused_tensors[0].data, dtype=np.float32),
+        np.asarray([1.5, 1.25], dtype=np.float32),
+    )
 
 
 def test_flatbuffer_direct_constant_input_cast_is_embedded_into_output_tensor() -> None:

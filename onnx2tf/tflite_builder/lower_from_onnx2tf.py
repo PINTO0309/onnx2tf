@@ -84,6 +84,166 @@ def _create_progress_bar(
     )
 
 
+def _rewrite_constant_divisors_to_multiplicative_reciprocals(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    integer_output_dtypes = {
+        "INT8",
+        "INT16",
+        "INT32",
+        "INT64",
+        "UINT8",
+        "UINT16",
+        "UINT32",
+        "UINT64",
+    }
+    changed_count = 0
+    existing_tensor_names = set(str(name) for name in model_ir.tensors.keys())
+    consumer_index: Dict[str, List[OperatorIR]] = {}
+    for candidate_op in model_ir.operators:
+        for input_name in candidate_op.inputs:
+            consumer_index.setdefault(str(input_name), []).append(candidate_op)
+
+    def _unique_tensor_name(base_name: str) -> str:
+        candidate = str(base_name)
+        suffix = 0
+        while candidate in existing_tensor_names:
+            suffix += 1
+            candidate = f"{base_name}_{suffix}"
+        existing_tensor_names.add(candidate)
+        return candidate
+
+    rewritten_ops: List[OperatorIR] = []
+    for op in model_ir.operators:
+        if str(op.op_type) != "DIV" or len(op.inputs) != 2 or len(op.outputs) != 1:
+            rewritten_ops.append(op)
+            continue
+
+        lhs_name = str(op.inputs[0])
+        rhs_name = str(op.inputs[1])
+        output_name = str(op.outputs[0])
+        rhs_tensor = model_ir.tensors.get(rhs_name, None)
+        output_tensor = model_ir.tensors.get(output_name, None)
+        lhs_tensor = model_ir.tensors.get(lhs_name, None)
+        if (
+            rhs_tensor is None
+            or not isinstance(rhs_tensor.data, np.ndarray)
+            or output_tensor is None
+        ):
+            rewritten_ops.append(op)
+            continue
+
+        output_dtype = str(output_tensor.dtype).upper()
+        if output_dtype in integer_output_dtypes:
+            rewritten_ops.append(op)
+            continue
+        direct_consumers = consumer_index.get(output_name, [])
+        if any(
+            str(consumer.op_type) == "CAST"
+            and str(consumer.options.get("outDataType", "")).upper() in integer_output_dtypes
+            for consumer in direct_consumers
+        ):
+            rewritten_ops.append(op)
+            continue
+
+        calc_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
+        np_calc_dtype = np.float16 if calc_dtype == "FLOAT16" else np.float32
+        reciprocal_name = _unique_tensor_name(f"{output_name}_div_reciprocal")
+        model_ir.tensors[reciprocal_name] = TensorIR(
+            name=reciprocal_name,
+            dtype=calc_dtype,
+            shape=[int(v) for v in list(np.asarray(rhs_tensor.data, dtype=np_calc_dtype).shape)],
+            shape_signature=[int(v) for v in list(np.asarray(rhs_tensor.data, dtype=np_calc_dtype).shape)],
+            data=np.asarray(
+                np.reciprocal(np.asarray(rhs_tensor.data, dtype=np_calc_dtype)),
+                dtype=np_calc_dtype,
+            ),
+            logical_layout=normalize_logical_layout(rhs_tensor.logical_layout),
+        )
+
+        mul_lhs_name = lhs_name
+        lhs_dtype = str(lhs_tensor.dtype).upper() if lhs_tensor is not None else "FLOAT32"
+        if lhs_dtype != calc_dtype:
+            lhs_shape = (
+                [int(v) for v in list(lhs_tensor.shape)]
+                if lhs_tensor is not None
+                else [int(v) for v in list(output_tensor.shape)]
+            )
+            lhs_shape_signature = (
+                [int(v) for v in list(lhs_tensor.shape_signature)]
+                if lhs_tensor is not None and lhs_tensor.shape_signature is not None
+                else list(lhs_shape)
+            )
+            lhs_cast_name = _unique_tensor_name(f"{output_name}_div_lhs_cast")
+            model_ir.tensors[lhs_cast_name] = TensorIR(
+                name=lhs_cast_name,
+                dtype=calc_dtype,
+                shape=lhs_shape,
+                shape_signature=lhs_shape_signature,
+                quantization=copy.deepcopy(lhs_tensor.quantization) if lhs_tensor is not None else None,
+                logical_layout=normalize_logical_layout(
+                    lhs_tensor.logical_layout if lhs_tensor is not None else output_tensor.logical_layout
+                ),
+            )
+            rewritten_ops.append(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[lhs_name],
+                    outputs=[lhs_cast_name],
+                    options={
+                        "inDataType": lhs_dtype,
+                        "outDataType": calc_dtype,
+                    },
+                )
+            )
+            mul_lhs_name = lhs_cast_name
+
+        mul_out_name = output_name
+        if output_dtype != calc_dtype:
+            mul_out_name = _unique_tensor_name(f"{output_name}_div_mul_out")
+            model_ir.tensors[mul_out_name] = TensorIR(
+                name=mul_out_name,
+                dtype=calc_dtype,
+                shape=[int(v) for v in list(output_tensor.shape)],
+                shape_signature=(
+                    [int(v) for v in list(output_tensor.shape_signature)]
+                    if output_tensor.shape_signature is not None
+                    else [int(v) for v in list(output_tensor.shape)]
+                ),
+                quantization=None,
+                logical_layout=normalize_logical_layout(output_tensor.logical_layout),
+            )
+
+        rewritten_ops.append(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[mul_lhs_name, reciprocal_name],
+                outputs=[mul_out_name],
+                options=dict(op.options),
+            )
+        )
+
+        if mul_out_name != output_name:
+            rewritten_ops.append(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[mul_out_name],
+                    outputs=[output_name],
+                    options={
+                        "inDataType": calc_dtype,
+                        "outDataType": output_dtype,
+                    },
+                )
+            )
+        changed_count += 1
+
+    if changed_count > 0:
+        model_ir.operators = rewritten_ops
+    return {
+        "rewritten_constant_div_to_mul": int(changed_count),
+    }
+
+
 class _ProgressSpinner:
     def __init__(self, progress_bar: Any) -> None:
         self._progress_bar = progress_bar
@@ -72618,6 +72778,9 @@ def lower_onnx_to_ir(
             _reconcile_static_tensor_shapes(fallback_ir)
             _topologically_sort_operators(fallback_ir)
             infer_model_ir_logical_layouts(fallback_ir)
+        _rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)
+        _optimize_fold_consecutive_mul_constants_chains(fallback_ir)
+        _topologically_sort_operators(fallback_ir)
         fallback_layout_problems = validate_model_ir_layout_annotations(fallback_ir)
         if len(fallback_layout_problems) > 0:
             fallback_ir.metadata["logical_layout_validation_errors"] = list(fallback_layout_problems)
@@ -72628,6 +72791,8 @@ def lower_onnx_to_ir(
         }
         return fallback_ir
 
+    _rewrite_constant_divisors_to_multiplicative_reciprocals(model_ir)
+    _optimize_fold_consecutive_mul_constants_chains(model_ir)
     _set_post_progress_desc("topological sort")
     _topologically_sort_operators(model_ir)
     if apply_safe_transpose_reduction_lite_on_no_layout_opt:

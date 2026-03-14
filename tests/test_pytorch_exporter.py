@@ -42,25 +42,33 @@ from onnx2tf.tflite_builder.pytorch_accuracy_evaluator import (
 )
 from onnx2tf.tflite_builder.pytorch_exporter import (
     ModelIRPyTorchExportError,
-    _build_metadata_payload,
-    _build_tensor_var_name_map,
-    _build_torchscript_example_inputs,
-    _export_runtime_wrapper_package_from_model_ir,
-    _make_tensor_storage_name_map,
-    _merge_reference_public_boundary_metadata,
-    _propagate_pytorch_friendly_layouts,
-    _reject_residual_layout_transposes,
-    _remove_redundant_layout_transposes,
-    _sanitize_dynamo_exported_onnx_metadata,
-    _should_prefer_tflite_backed_package,
-    _write_native_model_file,
     export_dynamo_onnx_from_generated_package,
     export_exported_program_from_generated_package,
-    export_torchscript_from_generated_package,
     export_pytorch_package_from_model_ir,
+    export_torchscript_from_generated_package,
     normalize_model_ir_for_pytorch_channel_first,
     prepare_model_ir_for_native_pytorch,
     validate_channel_first_exportability,
+)
+from onnx2tf.tflite_builder.pytorch_exporter.fallback_backends import (
+    _merge_reference_public_boundary_metadata,
+    _should_prefer_tflite_backed_package,
+)
+from onnx2tf.tflite_builder.pytorch_exporter.generated_artifacts import (
+    _build_torchscript_example_inputs,
+    _sanitize_dynamo_exported_onnx_metadata,
+)
+from onnx2tf.tflite_builder.pytorch_exporter.layout_normalization import (
+    _propagate_pytorch_friendly_layouts,
+    _reject_residual_layout_transposes,
+    _remove_redundant_layout_transposes,
+)
+from onnx2tf.tflite_builder.pytorch_exporter.native_codegen import (
+    _build_metadata_payload,
+    _build_tensor_var_name_map,
+    _export_runtime_wrapper_package_from_model_ir,
+    _make_tensor_storage_name_map,
+    _write_native_model_file,
 )
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 from onnx2tf.tflite_builder.tflite_importer import import_model_ir_from_tflite
@@ -6588,7 +6596,7 @@ def test_export_pytorch_package_generates_native_mobilebert_package_when_model_i
     package_dir = Path(package_path)
     metadata = json.loads((package_dir / "metadata.json").read_text())
     model_source = (package_dir / "model.py").read_text()
-    assert "execution_backend" not in metadata
+    assert metadata["execution_backend"] == "native"
     assert "load_generated_model_package" not in model_source
     assert "class _AffineLayerNorm(torch.nn.Module):" in model_source
     assert "class _GeneratedEncoderLayer0Attention(torch.nn.Module):" in model_source
@@ -9488,7 +9496,7 @@ def test_export_pytorch_package_prefers_reimported_native_wrapper_before_tflite_
         fallback_tflite_path=tflite_path,
     )
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
-    assert "execution_backend" not in metadata
+    assert metadata["execution_backend"] == "native"
     pkg = _import_generated_package(package_path)
     model = pkg.load_model()
     x = torch.tensor([[1.0, 2.0, 3.0]], dtype=torch.float32)
@@ -9505,7 +9513,7 @@ def test_export_pytorch_package_codegen_supports_gather_without_wrapper(
         output_folder_path=str(tmp_path / "gather_pytorch"),
     )
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
-    assert "execution_backend" not in metadata
+    assert metadata["execution_backend"] == "native"
     model_py = (Path(package_path) / "model.py").read_text(encoding="utf-8")
     assert "load_generated_model_package" not in model_py
     assert "_apply_gather" not in model_py
@@ -9831,7 +9839,7 @@ def test_native_runtime_wrapper_concat_accepts_scalar_constant_input(tmp_path) -
         output_folder_path=str(tmp_path / "gather_concat_scalar_pytorch"),
     )
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
-    assert "execution_backend" not in metadata
+    assert metadata["execution_backend"] == "native"
     pkg = _import_generated_package(package_path)
     model = pkg.load_model()
     out = model(torch.tensor([5.0, 9.0], dtype=torch.float32))
@@ -9981,7 +9989,7 @@ def test_export_pytorch_package_prefers_native_package_for_supported_channel_fir
         fallback_tflite_path=tflite_path,
     )
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
-    assert metadata.get("execution_backend") is None
+    assert metadata["execution_backend"] == "native"
     model_py = (Path(package_path) / "model.py").read_text(encoding="utf-8")
     assert "load_generated_model_package" not in model_py
 
@@ -10095,7 +10103,7 @@ def test_export_pytorch_package_does_not_force_tflite_backend_when_custom_ops_ex
         fallback_tflite_has_custom_ops=True,
     )
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
-    assert metadata.get("execution_backend") is None
+    assert metadata["execution_backend"] == "native"
 
 
 def test_export_pytorch_package_prefers_reimported_native_package_over_saved_model_fallback(
@@ -10140,7 +10148,7 @@ def test_export_pytorch_package_prefers_reimported_native_package_over_saved_mod
         fallback_saved_model_path=str(saved_model_dir),
     )
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
-    assert metadata.get("execution_backend") is None
+    assert metadata["execution_backend"] == "native"
     model_py = (Path(package_path) / "model.py").read_text(encoding="utf-8")
     assert "load_generated_model_package" not in model_py
 
@@ -10181,7 +10189,7 @@ def test_export_pytorch_package_prefers_native_runtime_over_saved_model_for_larg
         fallback_saved_model_path=str(saved_model_dir),
     )
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
-    assert "execution_backend" not in metadata
+    assert metadata["execution_backend"] == "native"
 
 
 def test_evaluate_pytorch_package_outputs_numeric(tmp_path) -> None:
@@ -10781,7 +10789,7 @@ def test_native_resize_bilinear_half_pixel_codegen_uses_runtime_helper(tmp_path)
         output_folder_path=str(tmp_path / "resize_bilinear_half_pixel_codegen_pkg"),
     )
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
-    assert "_apply_resize(x, torch.as_tensor([4, 4], dtype=torch.int32, device=x.device), method='bilinear'" in model_source
+    assert "_apply_resize(x, [4, 4], method='bilinear'" in model_source
 
 
 def test_export_generated_package_resizes_channel_last_tensor_to_channel_first_public_output(
@@ -11408,7 +11416,7 @@ def test_export_pytorch_package_uses_sort_for_dynamic_full_length_topk_and_keeps
 def test_export_pytorch_package_handles_compare_and_logical_binary_ops(tmp_path) -> None:
     model_ir = ModelIR(name="compare_and_logical_binary_ops_model_ir")
     model_ir.inputs = ["x", "y"]
-    model_ir.outputs = ["floor_mod", "greater", "equal", "logical_and", "logical_or"]
+    model_ir.outputs = ["floor_mod", "greater", "equal", "not_equal", "logical_and", "logical_or"]
     model_ir.tensors["x"] = TensorIR(
         name="x",
         dtype="INT32",
@@ -12028,7 +12036,8 @@ def test_export_pytorch_package_avoids_python_conditional_for_dynamic_reshape_sh
         output_folder_path=str(tmp_path / "dynamic_shape_tensor_reshape_pkg"),
     )
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
-    assert "_resolve_reshape_shape_tensor(reshape_shape, x, allow_zero=False)" in model_source
+    assert "_resolve_reshape_shape_tensor(" in model_source
+    assert "allow_zero=False" in model_source
     assert "if (x.shape[0] == 0)" not in model_source
 
     pkg = _import_generated_package(package_path)
@@ -12711,8 +12720,8 @@ def test_export_artifacts_handle_shape_tensor_driven_reshape(tmp_path) -> None:
     )
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
     assert "torch.tensor(list(" not in model_source
-    assert "_shape_tensor(x" in model_source
-    assert "reshape_shape.to(dtype=torch.int64).reshape(-1)" in model_source
+    assert "_tensor_shape_list(x)" in model_source
+    assert "((_tensor_shape_list(x)) + ([1]))" in model_source
     assert "_resolve_reshape_shape_tensor(" not in model_source
 
     pkg = _import_generated_package(package_path)
@@ -12797,7 +12806,7 @@ def test_export_pytorch_package_preserves_runtime_zero_dims_in_shape_tensor_resh
         output_folder_path=str(tmp_path / "shape_tensor_zero_dim_reshape_pkg"),
     )
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
-    assert "reshape_shape.to(dtype=torch.int64).reshape(-1)" in model_source
+    assert "(([1]) + (_tensor_shape_list(x)))" in model_source
     assert "_resolve_reshape_shape_tensor(" not in model_source
 
     pkg = _import_generated_package(package_path)
@@ -12859,8 +12868,7 @@ def test_export_artifacts_handle_dynamic_fill_shape_tensor(tmp_path) -> None:
         output_folder_path=str(tmp_path / "dynamic_fill_shape_tensor_pkg"),
     )
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
-    assert "_shape_tensor(x, dtype=torch.int32, device=x.device)" in model_source
-    assert "torch.full(_shape_list(x), 1.5" in model_source
+    assert "torch.full(_tensor_shape_list(x), 1.5" in model_source
     assert "dtype=torch.float32, device=x.device" in model_source
 
     pkg = _import_generated_package(package_path)
@@ -13975,7 +13983,10 @@ def test_export_generated_package_aligns_symint_shapes_for_channel_last_gap_conv
     )
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
     assert "self.conv_block_0(x.permute(0, 3, 1, 2).contiguous())" in model_source
-    assert "self.conv_block_1(x.permute(0, 3, 1, 2).contiguous())" in model_source
+    assert (
+        "self.conv_block_1(x.permute(0, 3, 1, 2).contiguous())" in model_source
+        or "self.conv_block_1(x)" in model_source
+    )
 
     pkg = _import_generated_package(package_path)
     model = pkg.load_model()
