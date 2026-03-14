@@ -304,7 +304,7 @@ def _make_conv3d_model() -> onnx.ModelProto:
         "w",
         TensorProto.FLOAT,
         [2, 1, 2, 2, 2],
-        (np.arange(2 * 1 * 2 * 2 * 2, dtype=np.float32) / 5.0).tolist(),
+        (np.asarray(list(range(2 * 1 * 2 * 2 * 2)), dtype=np.float32) / 5.0).tolist(),
     )
     b = helper.make_tensor(
         "b",
@@ -6337,7 +6337,8 @@ def test_export_pytorch_package_generates_native_yolov7_package_when_model_is_av
         None,
     )
     assert cat_6 is not None
-    cat_6_inputs = list(cat_6.args[0]) if len(cat_6.args) >= 1 else []
+    cat_6_arg0 = cat_6.args[0] if len(cat_6.args) >= 1 else ()
+    cat_6_inputs = list(cat_6_arg0) if isinstance(cat_6_arg0, (list, tuple)) else []
     assert all(
         str(getattr(input_node, "target", "")) != "aten.permute.default"
         for input_node in cat_6_inputs
@@ -6351,24 +6352,48 @@ def test_export_pytorch_package_generates_native_yolov7_package_when_model_is_av
     for node in exported_program.module().graph.nodes:
         if node.op == "call_function" and str(node.target) == "aten.permute.default":
             source = node.args[0] if len(node.args) >= 1 else None
-            if getattr(source, "op", None) != "call_function" or str(getattr(source, "target", "")) != "aten.contiguous.default":
+            if (
+                not isinstance(source, torch.fx.Node)
+                or source.op != "call_function"
+                or str(source.target) != "aten.contiguous.default"
+            ):
                 continue
             nested = source.args[0] if len(source.args) >= 1 else None
-            if getattr(nested, "op", None) != "call_function" or str(getattr(nested, "target", "")) != "aten.permute.default":
+            if (
+                not isinstance(nested, torch.fx.Node)
+                or nested.op != "call_function"
+                or str(nested.target) != "aten.permute.default"
+            ):
                 continue
-            perm_a = list(nested.args[1]) if len(nested.args) >= 2 else None
-            perm_b = list(node.args[1]) if len(node.args) >= 2 else None
+            perm_a_arg = nested.args[1] if len(nested.args) >= 2 else None
+            perm_b_arg = node.args[1] if len(node.args) >= 2 else None
+            perm_a = (
+                list(cast(list[int] | tuple[int, ...], perm_a_arg))
+                if isinstance(perm_a_arg, (list, tuple))
+                else None
+            )
+            perm_b = (
+                list(cast(list[int] | tuple[int, ...], perm_b_arg))
+                if isinstance(perm_b_arg, (list, tuple))
+                else None
+            )
             if perm_a is None or perm_b is None:
                 continue
-            if [perm_a[int(idx)] for idx in perm_b] == list(range(len(perm_a))):
+            if [perm_a[idx] for idx in perm_b] == list(range(len(perm_a))):
                 inverse_permute_pairs.add((nested.name, node.name))
         if node.op == "call_function" and str(node.target) == "aten.reshape.default":
             source = node.args[0] if len(node.args) >= 1 else None
-            if getattr(source, "op", None) == "call_function" and str(getattr(source, "target", "")) == "aten.reshape.default":
+            if (
+                isinstance(source, torch.fx.Node)
+                and source.op == "call_function"
+                and str(source.target) == "aten.reshape.default"
+            ):
                 source_val = source.meta.get("val")
                 target_val = node.meta.get("val")
-                source_shape = str(tuple(source_val.shape)) if hasattr(source_val, "shape") else "None"
-                target_shape = str(tuple(target_val.shape)) if hasattr(target_val, "shape") else "None"
+                source_shape_value = getattr(source_val, "shape", None)
+                target_shape_value = getattr(target_val, "shape", None)
+                source_shape = str(tuple(source_shape_value)) if source_shape_value is not None else "None"
+                target_shape = str(tuple(target_shape_value)) if target_shape_value is not None else "None"
                 nested_reshape_shape_pairs.add((source_shape, target_shape))
     assert inverse_permute_pairs == set()
     assert nested_reshape_shape_pairs == {
@@ -6433,16 +6458,34 @@ def test_export_pytorch_package_generates_native_yolox_package_when_model_is_ava
         if node.op != "call_function" or str(node.target) != "aten.permute.default":
             continue
         source = node.args[0] if len(node.args) >= 1 else None
-        if getattr(source, "op", None) != "call_function" or str(getattr(source, "target", "")) != "aten.contiguous.default":
+        if (
+            not isinstance(source, torch.fx.Node)
+            or source.op != "call_function"
+            or str(source.target) != "aten.contiguous.default"
+        ):
             continue
         nested = source.args[0] if len(source.args) >= 1 else None
-        if getattr(nested, "op", None) != "call_function" or str(getattr(nested, "target", "")) != "aten.permute.default":
+        if (
+            not isinstance(nested, torch.fx.Node)
+            or nested.op != "call_function"
+            or str(nested.target) != "aten.permute.default"
+        ):
             continue
-        perm_a = list(nested.args[1]) if len(nested.args) >= 2 else None
-        perm_b = list(node.args[1]) if len(node.args) >= 2 else None
+        perm_a_arg = nested.args[1] if len(nested.args) >= 2 else None
+        perm_b_arg = node.args[1] if len(node.args) >= 2 else None
+        perm_a = (
+            list(cast(list[int] | tuple[int, ...], perm_a_arg))
+            if isinstance(perm_a_arg, (list, tuple))
+            else None
+        )
+        perm_b = (
+            list(cast(list[int] | tuple[int, ...], perm_b_arg))
+            if isinstance(perm_b_arg, (list, tuple))
+            else None
+        )
         if perm_a is None or perm_b is None:
             continue
-        if [perm_a[int(idx)] for idx in perm_b] == list(range(len(perm_a))):
+        if [perm_a[idx] for idx in perm_b] == list(range(len(perm_a))):
             inverse_permute_pairs.add((nested.name, node.name))
     assert inverse_permute_pairs == set()
 
@@ -6645,6 +6688,7 @@ def test_export_pytorch_package_imported_tflite_with_cumsum_stays_native(tmp_pat
     assert torch.allclose(out, torch.cumsum(x, dim=1))
 
     torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
+    assert torchscript_path is not None
     assert Path(torchscript_path).exists()
 
 
@@ -6669,6 +6713,7 @@ def test_export_pytorch_package_bidirectional_sequence_lstm_stays_native(tmp_pat
     assert torch.isfinite(out).all()
 
     torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
+    assert torchscript_path is not None
     assert Path(torchscript_path).exists()
 
 
@@ -6723,6 +6768,7 @@ def test_export_pytorch_package_compact_bidirectional_sequence_lstm_stays_native
     assert torch.isfinite(out).all()
 
     torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
+    assert torchscript_path is not None
     assert Path(torchscript_path).exists()
 
 
@@ -6752,6 +6798,7 @@ def test_export_pytorch_package_reverse_lstm_from_onnx_stays_native(tmp_path) ->
     assert torch.isfinite(out).all()
 
     torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
+    assert torchscript_path is not None
     assert Path(torchscript_path).exists()
 
 
@@ -6779,6 +6826,9 @@ def test_export_pytorch_package_bidirectional_sequence_rnn_stays_native(tmp_path
     torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
     dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
     exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert torchscript_path is not None
+    assert dynamo_onnx_path is not None
+    assert exported_program_path is not None
     assert Path(torchscript_path).exists()
     assert Path(dynamo_onnx_path).exists()
     assert Path(exported_program_path).exists()
@@ -7284,10 +7334,24 @@ def test_export_pytorch_package_generates_native_ts_ad_model_package_when_model_
         if len(contiguous_users) != 1:
             continue
         inverse_node = contiguous_users[0]
+        node_perm_arg = node.args[1] if len(node.args) >= 2 else None
+        inverse_perm_arg = inverse_node.args[1] if len(inverse_node.args) >= 2 else None
+        node_perm = (
+            list(cast(list[int] | tuple[int, ...], node_perm_arg))
+            if isinstance(node_perm_arg, (list, tuple))
+            else None
+        )
+        inverse_perm = (
+            list(cast(list[int] | tuple[int, ...], inverse_perm_arg))
+            if isinstance(inverse_perm_arg, (list, tuple))
+            else None
+        )
         if (
             inverse_node.op == "call_function"
             and str(inverse_node.target) == "aten.permute.default"
-            and [int(v) for v in inverse_node.args[1]] == _inverse_perm([int(v) for v in node.args[1]])
+            and node_perm is not None
+            and inverse_perm is not None
+            and inverse_perm == _inverse_perm(node_perm)
         ):
             pytest.fail(
                 f"Found redundant inverse permute round-trip in ExportedProgram: {node.name} -> {inverse_node.name}"
@@ -7421,7 +7485,10 @@ def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_av
         return inverse
 
     for node in permute_nodes:
-        perm = [int(v) for v in node.args[1]]
+        perm_arg = node.args[1] if len(node.args) >= 2 else None
+        if not isinstance(perm_arg, (list, tuple)):
+            continue
+        perm = list(cast(list[int] | tuple[int, ...], perm_arg))
         permute_users = list(node.users)
         if len(permute_users) != 1:
             continue
@@ -7435,52 +7502,91 @@ def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_av
         if len(contiguous_users) != 1:
             continue
         inverse_node = contiguous_users[0]
+        inverse_perm_arg = inverse_node.args[1] if len(inverse_node.args) >= 2 else None
+        inverse_perm = (
+            list(cast(list[int] | tuple[int, ...], inverse_perm_arg))
+            if isinstance(inverse_perm_arg, (list, tuple))
+            else None
+        )
         if (
             inverse_node.op == "call_function"
             and str(inverse_node.target) == "aten.permute.default"
-            and [int(v) for v in inverse_node.args[1]] == _inverse_perm(perm)
+            and inverse_perm is not None
+            and inverse_perm == _inverse_perm(perm)
         ):
             pytest.fail(
                 f"Found redundant inverse permute round-trip in ExportedProgram: {node.name} -> {inverse_node.name}"
             )
     for node in exported_program.module().graph.nodes:
+        node_perm_arg = node.args[1] if len(node.args) >= 2 else None
+        node_perm = (
+            list(cast(list[int] | tuple[int, ...], node_perm_arg))
+            if isinstance(node_perm_arg, (list, tuple))
+            else None
+        )
         if (
             node.op != "call_function"
             or str(node.target) != "aten.permute.default"
-            or [int(v) for v in node.args[1]] != [0, 3, 1, 2]
+            or node_perm != [0, 3, 1, 2]
         ):
+            continue
+        if len(node.args) < 1:
             continue
         pad_node = node.args[0]
         if not isinstance(pad_node, torch.fx.Node):
             continue
+        pad_values_arg = pad_node.args[1] if len(pad_node.args) >= 2 else None
+        pad_values = (
+            list(cast(list[int] | tuple[int, ...], pad_values_arg))
+            if isinstance(pad_values_arg, (list, tuple))
+            else None
+        )
         if (
             pad_node.op == "call_function"
             and str(pad_node.target) == "aten.pad.default"
-            and len(pad_node.args) >= 2
-            and len(list(pad_node.args[1])) == 6
-            and [int(v) for v in list(pad_node.args[1])[:2]] == [0, 0]
+            and pad_values is not None
+            and len(pad_values) == 6
+            and pad_values[:2] == [0, 0]
         ):
+            if len(pad_node.args) < 1:
+                continue
             pad_input = pad_node.args[0]
             if not isinstance(pad_input, torch.fx.Node):
                 continue
+            pad_input_source = pad_input.args[0] if len(pad_input.args) >= 1 else None
+            pad_input_source_perm_arg = (
+                pad_input_source.args[1]
+                if isinstance(pad_input_source, torch.fx.Node) and len(pad_input_source.args) >= 2
+                else None
+            )
+            pad_input_source_perm = (
+                list(cast(list[int] | tuple[int, ...], pad_input_source_perm_arg))
+                if isinstance(pad_input_source_perm_arg, (list, tuple))
+                else None
+            )
             if not (
                 pad_input.op == "call_function"
                 and str(pad_input.target) == "aten.contiguous.default"
-                and len(pad_input.args) >= 1
-                and isinstance(pad_input.args[0], torch.fx.Node)
-                and pad_input.args[0].op == "call_function"
-                and str(pad_input.args[0].target) == "aten.permute.default"
-                and [int(v) for v in pad_input.args[0].args[1]] == [0, 2, 3, 1]
+                and isinstance(pad_input_source, torch.fx.Node)
+                and pad_input_source.op == "call_function"
+                and str(pad_input_source.target) == "aten.permute.default"
+                and pad_input_source_perm == [0, 2, 3, 1]
             ):
                 continue
             pytest.fail(
                 f"Found redundant NHWC pad followed by CF permute in ExportedProgram: {pad_node.name} -> {node.name}"
             )
     for node in exported_program.module().graph.nodes:
+        node_perm_arg = node.args[1] if len(node.args) >= 2 else None
+        node_perm = (
+            list(cast(list[int] | tuple[int, ...], node_perm_arg))
+            if isinstance(node_perm_arg, (list, tuple))
+            else None
+        )
         if (
             node.op != "call_function"
             or str(node.target) != "aten.permute.default"
-            or [int(v) for v in node.args[1]] != [0, 2, 3, 1]
+            or node_perm != [0, 2, 3, 1]
         ):
             continue
         permute_users = list(node.users)
@@ -7496,11 +7602,18 @@ def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_av
         if len(contiguous_users) != 1:
             continue
         sum_node = contiguous_users[0]
+        sum_dims_arg = sum_node.args[1] if len(sum_node.args) >= 2 else None
+        sum_dims = (
+            list(cast(list[int] | tuple[int, ...], sum_dims_arg))
+            if isinstance(sum_dims_arg, (list, tuple))
+            else None
+        )
+        sum_keepdim = bool(sum_node.args[2]) if len(sum_node.args) >= 3 else False
         if (
             sum_node.op == "call_function"
             and str(sum_node.target) == "aten.sum.dim_IntList"
-            and list(sum_node.args[1]) == [3]
-            and bool(sum_node.args[2]) is True
+            and sum_dims == [3]
+            and sum_keepdim is True
         ):
             pytest.fail(
                 f"Found redundant NHWC reduction bridge in ExportedProgram: {node.name} -> {sum_node.name}"
@@ -7508,7 +7621,15 @@ def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_av
     for node in exported_program.module().graph.nodes:
         if node.op != "call_function" or str(node.target) != "aten.permute.default":
             continue
-        inverse_perm = [int(v) for v in node.args[1]]
+        inverse_perm_arg = node.args[1] if len(node.args) >= 2 else None
+        inverse_perm = (
+            list(cast(list[int] | tuple[int, ...], inverse_perm_arg))
+            if isinstance(inverse_perm_arg, (list, tuple))
+            else None
+        )
+        if inverse_perm is None or len(node.args) < 1:
+            continue
+        resolved_inverse_perm = inverse_perm
         binary_node = node.args[0]
         if not isinstance(binary_node, torch.fx.Node):
             continue
@@ -7535,22 +7656,35 @@ def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_av
                 and isinstance(arg.args[0], torch.fx.Node)
             ):
                 arg = arg.args[0]
+            arg_perm_arg = arg.args[1] if isinstance(arg, torch.fx.Node) and len(arg.args) >= 2 else None
+            arg_perm = (
+                list(cast(list[int] | tuple[int, ...], arg_perm_arg))
+                if isinstance(arg_perm_arg, (list, tuple))
+                else None
+            )
             return (
                 isinstance(arg, torch.fx.Node)
                 and arg.op == "call_function"
                 and str(arg.target) == "aten.permute.default"
-                and [int(v) for v in arg.args[1]] == _inverse_perm_of(inverse_perm)
+                and arg_perm == _inverse_perm_of(resolved_inverse_perm)
             )
 
-        if _matches_permute_chain(binary_node.args[0], _inverse_perm_of(inverse_perm)) and _matches_permute_chain(binary_node.args[1], _inverse_perm_of(inverse_perm)):
+        target_perm = _inverse_perm_of(resolved_inverse_perm)
+        if _matches_permute_chain(binary_node.args[0], target_perm) and _matches_permute_chain(binary_node.args[1], target_perm):
             pytest.fail(
                 f"Found redundant permuted binary bridge in ExportedProgram: {binary_node.name} -> {node.name}"
             )
     for node in exported_program.module().graph.nodes:
+        node_perm_arg = node.args[1] if len(node.args) >= 2 else None
+        node_perm = (
+            list(cast(list[int] | tuple[int, ...], node_perm_arg))
+            if isinstance(node_perm_arg, (list, tuple))
+            else None
+        )
         if (
             node.op != "call_function"
             or str(node.target) != "aten.permute.default"
-            or [int(v) for v in node.args[1]] != [0, 2, 3, 1]
+            or node_perm != [0, 2, 3, 1]
         ):
             continue
         permute_users = list(node.users)
@@ -7566,11 +7700,18 @@ def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_av
         if len(contiguous_users) != 1:
             continue
         mean_node = contiguous_users[0]
+        mean_dims_arg = mean_node.args[1] if len(mean_node.args) >= 2 else None
+        mean_dims = (
+            list(cast(list[int] | tuple[int, ...], mean_dims_arg))
+            if isinstance(mean_dims_arg, (list, tuple))
+            else None
+        )
+        mean_keepdim = bool(mean_node.args[2]) if len(mean_node.args) >= 3 else False
         if (
             mean_node.op != "call_function"
             or str(mean_node.target) != "aten.mean.dim"
-            or list(mean_node.args[1]) != [1, 2]
-            or bool(mean_node.args[2]) is not True
+            or mean_dims != [1, 2]
+            or mean_keepdim is not True
         ):
             continue
         mean_users = list(mean_node.users)
@@ -7586,10 +7727,16 @@ def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_av
         if len(mul_users) != 1:
             continue
         inverse_node = mul_users[0]
+        inverse_perm_arg = inverse_node.args[1] if len(inverse_node.args) >= 2 else None
+        inverse_perm = (
+            list(cast(list[int] | tuple[int, ...], inverse_perm_arg))
+            if isinstance(inverse_perm_arg, (list, tuple))
+            else None
+        )
         if (
             inverse_node.op == "call_function"
             and str(inverse_node.target) == "aten.permute.default"
-            and [int(v) for v in inverse_node.args[1]] == [0, 3, 1, 2]
+            and inverse_perm == [0, 3, 1, 2]
         ):
             pytest.fail(
                 f"Found redundant mean/mul layout bridge in ExportedProgram: {node.name} -> {inverse_node.name}"
@@ -8200,6 +8347,7 @@ def test_export_pytorch_package_elides_inconsistent_layout_transpose_before_conv
     ref = model.conv_block_0(x)
     assert torch.allclose(out, ref, atol=1e-5, rtol=1e-5)
     torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
+    assert torchscript_path is not None
     assert Path(torchscript_path).exists()
 
 
@@ -8271,6 +8419,7 @@ def test_export_pytorch_package_infers_conv3d_ctor_from_imported_filter_layout(t
     assert list(out.shape) == [1, 32, 12, 12, 20]
 
     torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
+    assert torchscript_path is not None
     assert Path(torchscript_path).exists()
     metadata = json.loads((Path(package_path) / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["torchscript"]["trace_mode"] == "trace"
