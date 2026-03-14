@@ -48,18 +48,49 @@ from onnx2tf.tflite_builder.tflite_importer import (
 )
 
 
-from .common import ModelIRPyTorchExportError, _NativeCodegenBindings, _NativeCodegenState, _NativeModelFileWriterContext, _broadcast_shapes_relaxed, _compose_axis_permutations, _is_all_ones_shape, _make_unique_identifier, _pad_output_matches_pre_permuted_input, _perm_cf_to_cl, _perm_cl_to_cf, _permute_shape, _preferred_reshape_target_values, _product_expr, _read_transpose_perm, _shape_can_broadcast_to_target_relaxed, _shape_lists_equal, _shape_lists_equal_relaxed
-from .layout_normalization import _can_emit_direct_torch_reshape_shape, _collect_feature_last_sequence_tensor_names, _is_inconsistent_same_layout_transpose, _is_inconsistent_standard_layout_transpose, _is_reshape_only_residual_layout_bridge_transpose, _is_standard_channel_layout_permutation, _should_emit_channel_last_depth_to_space, _should_emit_channel_last_space_to_depth
+class ModelIRPyTorchExportError(RuntimeError):
+    pass
+
+
+@dataclass
+class _NativeModelFileWriterContext:
+    output_folder_path: str
+    model_ir: ModelIR
+    metadata: Dict[str, Any]
+    tensor_storage_name_map: Dict[str, str]
+    package_dir: Path
+    preserve_channel_last_tensor_names: Set[str]
+    tensor_var_names: Dict[str, str]
+    producer_index: Dict[str, int]
+    consumer_index: Dict[str, List[int]]
+    module_init_lines: List[str] = field(default_factory=list)
+    load_specs: List[Tuple[str, str]] = field(default_factory=list)
+    runtime_imports: Set[str] = field(default_factory=set)
+    forward_lines: List[str] = field(default_factory=list)
+
+
+@dataclass
+class _NativeCodegenBindings:
+    items: Dict[str, Callable[..., Any]] = field(default_factory=dict)
+
+
+@dataclass
+class _NativeCodegenState:
+    context: _NativeModelFileWriterContext
+    load_specs_result: Optional[List[Tuple[str, str]]] = None
+
 
 def _prepare_native_codegen_state(
     context: _NativeModelFileWriterContext,
 ) -> _NativeCodegenState:
     return _NativeCodegenState(context=context)
 
+
 def _build_native_codegen_bindings(
     state: _NativeCodegenState,
 ) -> _NativeCodegenBindings:
     return _NativeCodegenBindings()
+
 
 def _build_native_constant_aliases(
     state: _NativeCodegenState,
@@ -67,6 +98,7 @@ def _build_native_constant_aliases(
 ) -> None:
     _ = state
     _ = bindings
+
 
 def _emit_native_forward_lines(
     state: _NativeCodegenState,
@@ -77,12 +109,14 @@ def _emit_native_forward_lines(
         state.context
     )
 
+
 def _finalize_native_codegen(
     state: _NativeCodegenState,
     bindings: _NativeCodegenBindings,
 ) -> List[Tuple[str, str]]:
     _ = bindings
     return [] if state.load_specs_result is None else list(state.load_specs_result)
+
 
 def _assemble_native_model_source(
     *,
@@ -133,6 +167,7 @@ def _assemble_native_model_source(
     )
     return model_source
 
+
 def _extract_statement_assignments(statement: ast.stmt) -> List[str]:
     names: List[str] = []
 
@@ -151,6 +186,7 @@ def _extract_statement_assignments(statement: ast.stmt) -> List[str]:
         _walk_target(statement.target)
     return names
 
+
 def _extract_statement_loads(statement: ast.stmt) -> List[str]:
     names: List[str] = []
     seen: Set[str] = set()
@@ -160,8 +196,10 @@ def _extract_statement_loads(statement: ast.stmt) -> List[str]:
             names.append(str(node.id))
     return names
 
+
 def _shape_literal(values: Sequence[int]) -> str:
     return repr(tuple(int(v) for v in list(values)))
+
 
 def _remap_axis_values_through_permutation(
     values: Sequence[int],
@@ -172,6 +210,7 @@ def _remap_axis_values_through_permutation(
         remapped[int(input_axis)] = int(values[output_axis])
     return [int(v) for v in list(remapped)]
 
+
 def _remap_mask_bits_through_permutation(
     mask: int,
     perm: Sequence[int],
@@ -181,6 +220,97 @@ def _remap_mask_bits_through_permutation(
         if int(mask) & (1 << int(output_axis)):
             remapped_mask |= 1 << int(input_axis)
     return int(remapped_mask)
+
+
+def _shape_lists_equal(lhs: Optional[Sequence[int]], rhs: Optional[Sequence[int]]) -> bool:
+    if lhs is None or rhs is None:
+        return False
+    return [int(v) for v in list(lhs)] == [int(v) for v in list(rhs)]
+
+
+def _shape_lists_equal_relaxed(lhs: Optional[Sequence[int]], rhs: Optional[Sequence[int]]) -> bool:
+    if lhs is None or rhs is None:
+        return False
+    lhs_items = [int(v) for v in list(lhs)]
+    rhs_items = [int(v) for v in list(rhs)]
+    if len(lhs_items) != len(rhs_items):
+        return False
+    for lhs_dim, rhs_dim in zip(lhs_items, rhs_items):
+        if lhs_dim == rhs_dim:
+            continue
+        if lhs_dim <= 0 or rhs_dim <= 0:
+            continue
+        return False
+    return True
+
+
+def _shape_can_broadcast_to_target_relaxed(
+    shape: Optional[Sequence[int]],
+    target_shape: Optional[Sequence[int]],
+) -> bool:
+    if shape is None or target_shape is None:
+        return False
+    shape_items = [int(v) for v in list(shape)]
+    target_items = [int(v) for v in list(target_shape)]
+    if len(shape_items) != len(target_items):
+        return False
+    for shape_dim, target_dim in zip(shape_items, target_items):
+        if shape_dim == 1 or shape_dim == target_dim:
+            continue
+        if shape_dim <= 0 or target_dim <= 0:
+            continue
+        return False
+    return True
+
+
+def _broadcast_shapes_relaxed(
+    lhs: Optional[Sequence[int]],
+    rhs: Optional[Sequence[int]],
+) -> Optional[List[int]]:
+    if lhs is None or rhs is None:
+        return None
+    lhs_items = [int(v) for v in list(lhs)]
+    rhs_items = [int(v) for v in list(rhs)]
+    if len(lhs_items) != len(rhs_items):
+        return None
+    result: List[int] = []
+    for lhs_dim, rhs_dim in zip(lhs_items, rhs_items):
+        if lhs_dim == rhs_dim:
+            result.append(int(lhs_dim))
+            continue
+        if lhs_dim == 1:
+            result.append(int(rhs_dim))
+            continue
+        if rhs_dim == 1:
+            result.append(int(lhs_dim))
+            continue
+        if lhs_dim <= 0 and rhs_dim > 0:
+            result.append(int(rhs_dim))
+            continue
+        if rhs_dim <= 0 and lhs_dim > 0:
+            result.append(int(lhs_dim))
+            continue
+        if lhs_dim <= 0 and rhs_dim <= 0:
+            result.append(-1)
+            continue
+        return None
+    return result
+
+
+def _product_expr(items: Sequence[str]) -> str:
+    item_list = [str(item) for item in list(items)]
+    if len(item_list) == 0:
+        return "1"
+    expr = item_list[0]
+    for item in item_list[1:]:
+        expr = f"({expr} * {item})"
+    return expr
+
+
+def _is_all_ones_shape(shape: Sequence[int]) -> bool:
+    values = [int(v) for v in list(shape)]
+    return len(values) > 0 and all(int(v) == 1 for v in values)
+
 
 def _add_synthetic_tensor_to_model_ir(
     *,
@@ -204,6 +334,7 @@ def _add_synthetic_tensor_to_model_ir(
     )
     return candidate
 
+
 def _require_constant_array_from_model_ir(
     *,
     model_ir: ModelIR,
@@ -217,6 +348,7 @@ def _require_constant_array_from_model_ir(
             f"tensor={tensor_name}"
         )
     return np.asarray(tensor.data)
+
 
 def _sequence_lstm_bias_array_for_model_ir(
     *,
@@ -260,6 +392,7 @@ def _sequence_lstm_bias_array_for_model_ir(
         synthetic_tensor_serial_ref=synthetic_tensor_serial_ref,
     )
 
+
 def _fold_single_consumer_public_input_bridge_for_codegen(
     *,
     model_ir: ModelIR,
@@ -301,6 +434,7 @@ def _fold_single_consumer_public_input_bridge_for_codegen(
     )
     return bridge_input_name, composed_perm, int(producer_idx)
 
+
 def _match_single_consumer_layout_bridge_transpose_for_codegen(
     *,
     model_ir: ModelIR,
@@ -341,6 +475,7 @@ def _match_single_consumer_layout_bridge_transpose_for_codegen(
         return None
     return output_name, bridge_op_idx
 
+
 def _target_shape_values_for_model_ir(
     *,
     model_ir: ModelIR,
@@ -355,6 +490,7 @@ def _target_shape_values_for_model_ir(
             return signature
     return [int(v) for v in list(tensor.shape)]
 
+
 def _target_shape_literal_for_model_ir(
     *,
     model_ir: ModelIR,
@@ -367,6 +503,7 @@ def _target_shape_literal_for_model_ir(
     if target_shape is None:
         return "None"
     return repr([int(v) for v in list(target_shape)])
+
 
 def _resize_target_shape_literal_for_model_ir(
     *,
@@ -398,6 +535,7 @@ def _resize_target_shape_literal_for_model_ir(
             return repr([int(input_shape[0]), int(input_shape[-1]), int(target_shape[1]), int(target_shape[2])])
     return repr(target_shape)
 
+
 def _tensor_shape_list_for_model_ir(
     *,
     model_ir: ModelIR,
@@ -407,6 +545,7 @@ def _tensor_shape_list_for_model_ir(
     if tensor is None:
         return None
     return [int(v) for v in list(tensor.shape)]
+
 
 def _rank4_channel_first_shape_for_tensor_for_codegen(
     *,
@@ -421,26 +560,20 @@ def _rank4_channel_first_shape_for_tensor_for_codegen(
     if tensor_shape is None or len(tensor_shape) != 4:
         return None
     tensor = model_ir.tensors.get(str(tensor_name), None)
-    is_nhwc_named = "_nhwc" in str(tensor_name)
     if (
         str(tensor_name) in channel_first_tensor_expr_aliases
         and tensor is not None
-        and (
-            is_nhwc_named
-            or normalize_logical_layout(tensor.logical_layout) in {
-                LOGICAL_LAYOUT_UNKNOWN,
-                "NHWC",
-            }
+        and is_channel_last_logical_layout(
+            normalize_logical_layout(tensor.logical_layout)
         )
     ):
-        return [int(tensor_shape[0]), int(tensor_shape[3]), int(tensor_shape[1]), int(tensor_shape[2])]
-    if tensor is not None and is_nhwc_named:
         return [int(tensor_shape[0]), int(tensor_shape[3]), int(tensor_shape[1]), int(tensor_shape[2])]
     if tensor is not None and is_channel_last_logical_layout(
         normalize_logical_layout(tensor.logical_layout)
     ):
         return [int(tensor_shape[0]), int(tensor_shape[3]), int(tensor_shape[1]), int(tensor_shape[2])]
     return [int(v) for v in list(tensor_shape)]
+
 
 def _channel_first_shape_for_tensor_for_codegen(
     *,
@@ -459,17 +592,11 @@ def _channel_first_shape_for_tensor_for_codegen(
         return [int(v) for v in list(tensor_shape)]
     tensor = model_ir.tensors.get(str(tensor_name), None)
     perm_to_cf = _perm_cl_to_cf(rank)
-    is_nhwc_named = rank == 4 and "_nhwc" in str(tensor_name)
     if (
         str(tensor_name) in channel_first_tensor_expr_aliases
         and tensor is not None
-        and (
-            is_nhwc_named
-            or
-            is_channel_last_logical_layout(
-                normalize_logical_layout(tensor.logical_layout)
-            )
-            or normalize_logical_layout(tensor.logical_layout) == LOGICAL_LAYOUT_UNKNOWN
+        and is_channel_last_logical_layout(
+            normalize_logical_layout(tensor.logical_layout)
         )
         and perm_to_cf is not None
     ):
@@ -486,11 +613,8 @@ def _channel_first_shape_for_tensor_for_codegen(
         permuted_shape = _permute_shape(tensor_shape, perm_to_cf)
         if permuted_shape is not None:
             return [int(v) for v in list(permuted_shape)]
-    if is_nhwc_named and perm_to_cf is not None:
-        permuted_shape = _permute_shape(tensor_shape, perm_to_cf)
-        if permuted_shape is not None:
-            return [int(v) for v in list(permuted_shape)]
     return [int(v) for v in list(tensor_shape)]
+
 
 def _channel_first_concat_input_expr_for_codegen(
     *,
@@ -509,6 +633,7 @@ def _channel_first_concat_input_expr_for_codegen(
     if is_channel_first_logical_layout(tensor_layout):
         return tensor_expr_fn(str(tensor_name))
     return None
+
 
 def _can_fold_channel_last_alias_slice_consumer_for_codegen(
     *,
@@ -538,6 +663,7 @@ def _can_fold_channel_last_alias_slice_consumer_for_codegen(
         )
     return False
 
+
 def _is_valid_concat_axis_for_channel_first_shapes_for_codegen(
     *,
     input_shapes: Sequence[Sequence[int]],
@@ -566,6 +692,7 @@ def _is_valid_concat_axis_for_channel_first_shapes_for_codegen(
     if axis_extent_static:
         return expected_axis_extent == int(output_items[axis])
     return True
+
 
 def _resolve_concat_axis_for_channel_first_for_codegen(
     *,
@@ -639,6 +766,7 @@ def _resolve_concat_axis_for_channel_first_for_codegen(
                 )
     return None
 
+
 def _can_keep_channel_first_slice_output_for_codegen(
     *,
     model_ir: ModelIR,
@@ -671,6 +799,7 @@ def _can_keep_channel_first_slice_output_for_codegen(
             continue
         return False
     return True
+
 
 def _reshape_codegen_is_plain_data_only_for_codegen(
     *,
@@ -741,6 +870,7 @@ def _reshape_codegen_is_plain_data_only_for_codegen(
         or reshape_channel_first_alias_shape
     )
 
+
 def _tensor_exact_static_shape_list_for_model_ir(
     *,
     model_ir: ModelIR,
@@ -758,6 +888,7 @@ def _tensor_exact_static_shape_list_for_model_ir(
             return signature
     return None
 
+
 def _static_sequence_length_for_model_ir(
     *,
     model_ir: ModelIR,
@@ -771,6 +902,7 @@ def _static_sequence_length_for_model_ir(
     if tensor.shape_signature is not None and len(list(tensor.shape_signature)) >= 1 and int(tensor.shape_signature[0]) > 0:
         return int(tensor.shape_signature[0])
     return None
+
 
 def _is_identity_nms_postprocess_gather_for_codegen(
     *,
@@ -794,6 +926,7 @@ def _is_identity_nms_postprocess_gather_for_codegen(
     delta_literal = scalar_literal_expr_fn(str(indices_producer.inputs[2]))
     return start_literal == "0" and delta_literal == "1"
 
+
 def _range_only_feeds_identity_nms_postprocess_gathers_for_codegen(
     *,
     model_ir: ModelIR,
@@ -813,6 +946,7 @@ def _range_only_feeds_identity_nms_postprocess_gathers_for_codegen(
         if not is_identity_nms_postprocess_gather_fn(str(consumer_op.inputs[0]), str(output_name)):
             return False
     return True
+
 
 def _conv2d_output_spatial_shape_for_codegen(
     *,
@@ -852,6 +986,7 @@ def _conv2d_output_spatial_shape_for_codegen(
         output_hw.append(int(output_dim))
     return output_hw
 
+
 def _conv3d_output_spatial_shape_for_codegen(
     *,
     input_dhw: Sequence[int],
@@ -890,6 +1025,7 @@ def _conv3d_output_spatial_shape_for_codegen(
         output_dhw.append(int(output_dim))
     return output_dhw
 
+
 def _conv3d_transpose_output_spatial_shape_for_codegen(
     *,
     input_dhw: Sequence[int],
@@ -926,6 +1062,7 @@ def _conv3d_transpose_output_spatial_shape_for_codegen(
         output_dhw.append(int(output_dim))
     return output_dhw
 
+
 def _conv2d_same_pad_arg_for_codegen(
     *,
     input_hw: Sequence[int],
@@ -957,6 +1094,7 @@ def _conv2d_same_pad_arg_for_codegen(
             return None
         pad_values.append(int(total_pad // 2))
     return int(pad_values[0]), int(pad_values[1])
+
 
 def _conv2d_same_pad_padding_arg_for_codegen(
     *,
@@ -1068,6 +1206,7 @@ def _conv2d_same_pad_padding_arg_for_codegen(
     pad_right = int(pad_w_total - pad_left)
     return [pad_left, pad_right, pad_top, pad_bottom]
 
+
 def _reshape_preserves_channel_last_sequence_for_codegen(
     *,
     input_shape: Optional[Sequence[int]],
@@ -1123,6 +1262,7 @@ def _reshape_preserves_channel_last_sequence_for_codegen(
         ):
             return [0, 2, 1]
     return None
+
 
 def _reshape_prefers_feature_last_for_adjx_batch_matmul_for_codegen(
     *,
@@ -1223,6 +1363,7 @@ def _reshape_prefers_feature_last_for_adjx_batch_matmul_for_codegen(
         return None
     return None
 
+
 def _matmul_broadcast_shape_for_codegen(
     *,
     lhs_batch: Sequence[int],
@@ -1245,6 +1386,7 @@ def _matmul_broadcast_shape_for_codegen(
     elif len(rhs_items) > len(lhs_items):
         result.extend(reversed(rhs_items[: len(rhs_items) - len(lhs_items)]))
     return list(reversed(result))
+
 
 def _infer_batch_matmul_shape_for_codegen(
     *,
@@ -1279,6 +1421,7 @@ def _infer_batch_matmul_shape_for_codegen(
         return None
     return list(batch_shape) + [int(lhs_m), int(rhs_n)]
 
+
 def _infer_reduction_shape_for_codegen(
     *,
     input_shape: Optional[Sequence[int]],
@@ -1294,6 +1437,7 @@ def _infer_reduction_shape_for_codegen(
     if keepdims:
         return [1 if idx in normalized_axes else int(dim) for idx, dim in enumerate(dims)]
     return [int(dim) for idx, dim in enumerate(dims) if idx not in normalized_axes]
+
 
 def _infer_gather_nd_shape_for_codegen(
     *,
@@ -1315,6 +1459,7 @@ def _infer_gather_nd_shape_for_codegen(
         return None
     return indices_shape[:-1] + params_items[index_depth:]
 
+
 def _emit_maybe_aligned_expr_for_codegen(
     *,
     runtime_imports: Set[str],
@@ -1329,6 +1474,7 @@ def _emit_maybe_aligned_expr_for_codegen(
         return expr
     runtime_imports.add("_align_tensor_to_target_shape")
     return f"_align_tensor_to_target_shape({expr}, {target_shape_literal_fn(output_name)})"
+
 
 def _emit_module_output_expr_for_codegen(
     *,
@@ -1368,6 +1514,7 @@ def _emit_module_output_expr_for_codegen(
     runtime_imports.add("_align_tensor_to_target_shape")
     return f"_align_tensor_to_target_shape({expr}, {target_shape_literal_fn(output_name)})"
 
+
 def _is_constant_tensor_name_for_codegen(
     *,
     model_ir: ModelIR,
@@ -1375,6 +1522,7 @@ def _is_constant_tensor_name_for_codegen(
 ) -> bool:
     tensor = model_ir.tensors.get(str(tensor_name), None)
     return tensor is not None and isinstance(tensor.data, np.ndarray)
+
 
 def _shape_tensor_constant_is_non_zero_int_vector_for_codegen(
     *,
@@ -1388,6 +1536,7 @@ def _shape_tensor_constant_is_non_zero_int_vector_for_codegen(
     if arr.size == 0 or not np.issubdtype(arr.dtype, np.integer):
         return False
     return not bool(np.any(arr.reshape(-1) == 0))
+
 
 def _static_int_tensor_values_for_codegen(
     *,
@@ -1547,6 +1696,7 @@ def _static_int_tensor_values_for_codegen(
 
     return None
 
+
 def _reshape_shape_tensor_uses_runtime_dims_for_codegen(
     *,
     model_ir: ModelIR,
@@ -1632,6 +1782,7 @@ def _reshape_shape_tensor_uses_runtime_dims_for_codegen(
         return saw_runtime_dims
     return False
 
+
 def _should_skip_align_for_shape_preserving_unary_for_codegen(
     *,
     model_ir: ModelIR,
@@ -1660,6 +1811,7 @@ def _should_skip_align_for_shape_preserving_unary_for_codegen(
     except Exception:
         return False
 
+
 def _next_unique_attr_name_for_codegen(
     *,
     base_name: str,
@@ -1685,8 +1837,10 @@ def _next_unique_attr_name_for_codegen(
     module_attr_counts[candidate] = 1
     return candidate
 
+
 def _canonical_codegen_name_for_codegen(name: str) -> str:
     return re.sub(r"[^0-9a-z]+", "_", str(name).lower()).strip("_")
+
 
 def _match_affine_layer_norm_for_codegen(
     *,
@@ -1752,6 +1906,7 @@ def _match_affine_layer_norm_for_codegen(
         "mul_op_index": int(mul_op_index),
     }
 
+
 def _match_swish_activation_pattern_for_codegen(
     *,
     model_ir: ModelIR,
@@ -1795,6 +1950,7 @@ def _match_swish_activation_pattern_for_codegen(
     if consumer_index.get(str(logistic_output_name), []) != [int(mul_idx)]:
         return None
     return (str(mul_op.outputs[0]), {int(logistic_idx), int(mul_idx)})
+
 
 def _topk_codegen_layout_bridge_for_codegen(
     *,
@@ -1843,12 +1999,14 @@ def _topk_codegen_layout_bridge_for_codegen(
             return pre_perm, inverse_perm
     return None, None
 
+
 def _pad_literal_expr_for_codegen(
     *,
     model_ir: ModelIR,
     tensor_name: str,
 ) -> Optional[str]:
     return _torch_pad_literal_for_constant_tensor(model_ir.tensors.get(str(tensor_name), None))
+
 
 def _constant_pad_pairs_for_codegen(
     *,
@@ -1864,12 +2022,14 @@ def _constant_pad_pairs_for_codegen(
         return None
     return [[int(v) for v in list(row)] for row in values.tolist()]
 
+
 def _scalar_literal_expr_for_codegen(
     *,
     model_ir: ModelIR,
     tensor_name: str,
 ) -> Optional[str]:
     return _scalar_literal_for_constant_tensor(model_ir.tensors.get(str(tensor_name), None))
+
 
 def _int_scalar_literal_expr_for_codegen(
     *,
@@ -1880,6 +2040,7 @@ def _int_scalar_literal_expr_for_codegen(
     if values is None or len(values) != 1:
         return None
     return repr(int(values[0]))
+
 
 def _axis_expr_from_input_for_codegen(
     *,
@@ -1894,6 +2055,7 @@ def _axis_expr_from_input_for_codegen(
         return axis_literal
     runtime_imports.add("_coerce_scalar_axis")
     return f"_coerce_scalar_axis({tensor_expr_fn(str(tensor_name))}, device={device_expr}.device)"
+
 
 def _activation_lines_for_codegen(var_name: str, fused: str) -> List[str]:
     key = str(fused).upper()
@@ -1912,6 +2074,7 @@ def _activation_lines_for_codegen(var_name: str, fused: str) -> List[str]:
     if key == "TANH":
         return [f"{var_name} = torch.tanh({var_name})"]
     return [f"{var_name} = _apply_fused_activation({var_name}, {fused!r})"]
+
 
 def _static_mirror_pad_expr_for_codegen(
     *,
@@ -1961,6 +2124,7 @@ def _static_mirror_pad_expr_for_codegen(
     runtime_imports.add("_torch_permute")
     return f"_torch_permute({expr}, {repr(inverse_perm)})"
 
+
 def _is_sequential_single_input_graph_for_codegen(
     *,
     model_ir: ModelIR,
@@ -1985,8 +2149,10 @@ def _is_sequential_single_input_graph_for_codegen(
         current_name = str(op.outputs[0])
     return current_name == str(model_ir.outputs[0])
 
+
 def _is_channel_last_layout_for_codegen(logical_layout: Any) -> bool:
     return str(logical_layout).upper() in {"NWC", "NHWC", "NDHWC"}
+
 
 def _tensor_dtype_name_for_codegen(
     *,
@@ -1997,6 +2163,7 @@ def _tensor_dtype_name_for_codegen(
     if tensor is None:
         return None
     return str(tensor.dtype).upper()
+
 
 def _can_emit_direct_module_call_for_codegen(
     *,
@@ -2021,6 +2188,7 @@ def _can_emit_direct_module_call_for_codegen(
     if int(input_tensor.shape[1]) <= 0 or int(output_tensor.shape[1]) <= 0:
         return False
     return True
+
 
 def _gather_input_pre_permute_for_codegen(
     *,
@@ -2071,6 +2239,7 @@ def _gather_input_pre_permute_for_codegen(
         if _matches_signature(permuted_shape):
             return perm_values
     return None
+
 
 def _infer_conv2d_layout_candidate_for_codegen(
     *,
@@ -2137,6 +2306,7 @@ def _infer_conv2d_layout_candidate_for_codegen(
             continue
         return (perm, int(in_channels), int(groups))
     return None
+
 
 def _conv2d_input_pre_permute_for_codegen(
     *,
@@ -2226,6 +2396,7 @@ def _conv2d_input_pre_permute_for_codegen(
     if perm == [0, 1, 2, 3]:
         return None
     return perm
+
 
 def _infer_effective_rank4_runtime_layout_for_codegen(
     *,
@@ -2332,6 +2503,7 @@ def _infer_effective_rank4_runtime_layout_for_codegen(
             return None
         current_name = next_name
     return None
+
 
 def _infer_conv2d_ctor_params_for_codegen(
     *,
@@ -2452,6 +2624,7 @@ def _infer_conv2d_ctor_params_for_codegen(
     fallback_in_channels = int(candidate_channels[-1]) if len(candidate_channels) > 0 else int(weight_in_channels)
     return (max(1, fallback_in_channels), 1)
 
+
 def _infer_conv3d_ctor_params_for_codegen(
     *,
     input_shape: Optional[Sequence[int]],
@@ -2541,6 +2714,7 @@ def _infer_conv3d_ctor_params_for_codegen(
         return best_choice
     fallback_kernel = [int(v) for v in list(kernel_shape[2:5])]
     return (max(1, int(input_channels)), 1, max(1, int(expected_out_channels)), fallback_kernel)
+
 
 def _infer_conv3d_transpose_ctor_params_for_codegen(
     *,
@@ -2635,6 +2809,7 @@ def _infer_conv3d_transpose_ctor_params_for_codegen(
     fallback_kernel = [int(v) for v in list(kernel_shape[2:5])]
     return (max(1, int(input_channels)), max(1, int(expected_out_channels)), fallback_kernel, 1)
 
+
 def _binary_trailing_axis_constant_buffer_alias_shape_for_codegen(
     *,
     model_ir: ModelIR,
@@ -2685,6 +2860,7 @@ def _binary_trailing_axis_constant_buffer_alias_shape_for_codegen(
         return None
     return [1 for _ in range(len(other_shape) - 1)] + [int(constant_width)]
 
+
 def _channel_first_rank4_constant_buffer_alias_shape_for_codegen(
     *,
     model_ir: ModelIR,
@@ -2707,6 +2883,7 @@ def _channel_first_rank4_constant_buffer_alias_shape_for_codegen(
     if tensor_shape[0] != 1 or tensor_shape[1] != 1 or tensor_shape[2] != 1 or tensor_shape[3] <= 0:
         return None
     return [1, int(tensor_shape[3]), 1, 1]
+
 
 def _constant_permute_for_broadcast_for_codegen(
     *,
@@ -2793,6 +2970,7 @@ def _constant_permute_for_broadcast_for_codegen(
             continue
     return None if best_broadcast_perm is None else list(best_broadcast_perm[1])
 
+
 def _tensor_expr_for_codegen(
     *,
     model_ir: ModelIR,
@@ -2843,6 +3021,7 @@ def _tensor_expr_for_codegen(
         f"tensor={tensor_name}"
     )
 
+
 def _derived_local_var_name_for_codegen(
     *,
     synthetic_local_var_names: Dict[str, str],
@@ -2860,6 +3039,7 @@ def _derived_local_var_name_for_codegen(
     unique_name = _make_unique_identifier(shortened_name, used_local_var_names)
     synthetic_local_var_names[str(base_name)] = str(unique_name)
     return str(unique_name)
+
 
 def _channel_first_constant_expr_for_buffer_attr_for_codegen(
     *,
@@ -2883,6 +3063,7 @@ def _channel_first_constant_expr_for_buffer_attr_for_codegen(
         return None
     return str(alias_expr)
 
+
 def _permuted_constant_expr_for_tensor_name_for_codegen(
     *,
     permuted_constant_buffer_alias_exprs: Dict[Tuple[str, Tuple[int, ...]], str],
@@ -2894,12 +3075,14 @@ def _permuted_constant_expr_for_tensor_name_for_codegen(
         None,
     )
 
+
 def _transposed_constant_expr_for_tensor_name_for_codegen(
     *,
     transposed_constant_buffer_alias_exprs: Dict[str, str],
     tensor_name: str,
 ) -> Optional[str]:
     return transposed_constant_buffer_alias_exprs.get(str(tensor_name), None)
+
 
 def _tensor_expr_for_channel_first_bridge_for_codegen(
     *,
@@ -2916,6 +3099,7 @@ def _tensor_expr_for_channel_first_bridge_for_codegen(
     if expected_perm is None or list(perm or []) != list(expected_perm):
         return None
     return channel_first_tensor_expr_aliases.get(str(tensor_name), None)
+
 
 def _channel_first_reduction_plan_for_codegen(
     *,
@@ -2967,6 +3151,7 @@ def _channel_first_reduction_plan_for_codegen(
         return None
     return str(input_expr), [int(v) for v in list(cf_spatial_axes)]
 
+
 def _normalized_constant_reduction_axes_for_codegen(
     *,
     axis_values: Optional[Sequence[int]],
@@ -2986,6 +3171,7 @@ def _normalized_constant_reduction_axes_for_codegen(
     normalized_axes.sort()
     return normalized_axes
 
+
 def _direct_mean_reduction_expr_for_codegen(
     *,
     normalized_constant_reduction_axes_fn: Callable[[Optional[Sequence[int]], int], Optional[List[int]]],
@@ -3002,6 +3188,7 @@ def _direct_mean_reduction_expr_for_codegen(
     dim_literal: Any = normalized_axes[0] if len(normalized_axes) == 1 else normalized_axes
     return f"torch.mean({input_expr}, dim={repr(dim_literal)}, keepdim={keepdims})"
 
+
 def _channel_first_passthrough_input_expr_for_codegen(
     *,
     model_ir: ModelIR,
@@ -3010,31 +3197,15 @@ def _channel_first_passthrough_input_expr_for_codegen(
     tensor_expr_fn: Callable[[str], str],
     tensor_name: str,
 ) -> Optional[str]:
-    def _has_unambiguous_channel_first_shape(shape: Sequence[int]) -> bool:
-        return (
-            len(list(shape)) in {3, 4, 5}
-            and len(list(shape)) >= 2
-            and int(shape[1]) != int(shape[-1])
-        )
-
     tensor = model_ir.tensors.get(str(tensor_name), None)
     if tensor is None:
         return None
     tensor_layout = normalize_logical_layout(tensor.logical_layout)
+    if is_channel_first_logical_layout(tensor_layout):
+        return tensor_expr_fn(str(tensor_name))
     alias_expr = channel_first_tensor_expr_aliases.get(str(tensor_name), None)
     if alias_expr is not None:
         return str(alias_expr)
-    if is_channel_first_logical_layout(tensor_layout):
-        tensor_expr = tensor_expr_fn(str(tensor_name))
-        if (
-            str(tensor_expr).endswith("_cf")
-            or (
-                ".permute(" in str(tensor_expr)
-                and ".contiguous()" in str(tensor_expr)
-            )
-            or _has_unambiguous_channel_first_shape(tensor.shape)
-        ):
-            return str(tensor_expr)
     producer_idx = producer_index.get(str(tensor_name), None)
     if producer_idx is None:
         return None
@@ -3055,6 +3226,7 @@ def _channel_first_passthrough_input_expr_for_codegen(
         tensor_expr_fn=tensor_expr_fn,
         tensor_name=str(producer_op.inputs[0]),
     )
+
 
 def _can_resolve_channel_first_expr_statically_for_codegen(
     *,
@@ -3119,6 +3291,7 @@ def _can_resolve_channel_first_expr_statically_for_codegen(
         )
     return False
 
+
 def _can_emit_channel_first_shape_preserving_unary_op_for_codegen(
     *,
     model_ir: ModelIR,
@@ -3150,6 +3323,7 @@ def _can_emit_channel_first_shape_preserving_unary_op_for_codegen(
     ):
         return False
     return can_resolve_channel_first_expr_statically_fn(input_name)
+
 
 def _match_if_axis0_tensor_mux_slice_for_codegen(
     *,
@@ -3262,6 +3436,7 @@ def _match_if_axis0_tensor_mux_slice_for_codegen(
         "else_name": merged_inputs[1],
     }
 
+
 def _binary_runtime_shape_passthrough_operand_for_codegen(
     *,
     model_ir: ModelIR,
@@ -3275,29 +3450,12 @@ def _binary_runtime_shape_passthrough_operand_for_codegen(
         return None
     lhs_shape = [int(v) for v in list(lhs_tensor.shape)]
     rhs_shape = [int(v) for v in list(rhs_tensor.shape)]
-    lhs_signature = (
-        [int(v) for v in list(lhs_tensor.shape_signature)]
-        if lhs_tensor.shape_signature is not None
-        else list(lhs_shape)
-    )
-    rhs_signature = (
-        [int(v) for v in list(rhs_tensor.shape_signature)]
-        if rhs_tensor.shape_signature is not None
-        else list(rhs_shape)
-    )
-    if (
-        str(lhs_name) in runtime_shape_uncertain_tensors
-        and _is_all_ones_shape(rhs_shape)
-        and _is_all_ones_shape(rhs_signature)
-    ):
+    if str(lhs_name) in runtime_shape_uncertain_tensors and _is_all_ones_shape(rhs_shape):
         return "lhs"
-    if (
-        str(rhs_name) in runtime_shape_uncertain_tensors
-        and _is_all_ones_shape(lhs_shape)
-        and _is_all_ones_shape(lhs_signature)
-    ):
+    if str(rhs_name) in runtime_shape_uncertain_tensors and _is_all_ones_shape(lhs_shape):
         return "rhs"
     return None
+
 
 def _binary_requires_runtime_alignment_for_codegen(
     *,
@@ -3360,6 +3518,7 @@ def _binary_requires_runtime_alignment_for_codegen(
         or (isinstance(rhs_tensor.data, np.ndarray) and len(rhs_shape) > 1)
     )
 
+
 def _preferred_binary_alignment_anchor_for_codegen(
     *,
     model_ir: ModelIR,
@@ -3401,6 +3560,7 @@ def _preferred_binary_alignment_anchor_for_codegen(
         return "rhs"
     return None
 
+
 def _all_consumers_are_channel_first_binary_ops_for_codegen(
     *,
     model_ir: ModelIR,
@@ -3421,6 +3581,7 @@ def _all_consumers_are_channel_first_binary_ops_for_codegen(
         if not can_emit_channel_first_binary_op_fn(consumer_op):
             return False
     return True
+
 
 def _can_omit_materialized_channel_last_alias_recursive_for_codegen(
     *,
@@ -3465,8 +3626,6 @@ def _can_omit_materialized_channel_last_alias_recursive_for_codegen(
                 return False
             continue
         if consumer_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}:
-            if consumer_type == "DEPTHWISE_CONV_2D":
-                return False
             if len(consumer_op.inputs) < 2 or str(consumer_op.inputs[0]) != str(output_name):
                 return False
             input_pre_permute = conv2d_input_pre_permute_fn(
@@ -3589,6 +3748,7 @@ def _can_omit_materialized_channel_last_alias_recursive_for_codegen(
         return False
     return True
 
+
 def _channel_first_binary_input_expr_for_codegen(
     *,
     model_ir: ModelIR,
@@ -3621,28 +3781,10 @@ def _channel_first_binary_input_expr_for_codegen(
         ):
             other_tensor = model_ir.tensors.get(str(other_tensor_name), None)
             other_target_shape = list(other_shape)
-            constant_channel_dim = (
-                int(tensor_shape[3])
-                if rank == 4 and len(tensor_shape) == 4 and int(tensor_shape[3]) > 0
-                else None
-            )
             if other_tensor is not None:
                 other_layout = normalize_logical_layout(other_tensor.logical_layout)
                 other_perm_to_cf = None
-                if (
-                    constant_channel_dim is not None
-                    and len(other_shape) == 4
-                    and int(other_shape[-1]) == int(constant_channel_dim)
-                    and int(other_shape[1]) != int(constant_channel_dim)
-                ):
-                    other_perm_to_cf = _perm_cl_to_cf(len(other_shape))
-                elif (
-                    is_channel_last_logical_layout(other_layout)
-                    or (
-                        len(other_shape) == 4
-                        and "_nhwc" in str(other_tensor_name)
-                    )
-                ):
+                if is_channel_last_logical_layout(other_layout):
                     other_perm_to_cf = _perm_cl_to_cf(len(other_shape))
                 if (
                     other_perm_to_cf is not None
@@ -3654,22 +3796,11 @@ def _channel_first_binary_input_expr_for_codegen(
                     permuted_other_shape = _permute_shape(other_shape, other_perm_to_cf)
                     if permuted_other_shape is not None:
                         other_target_shape = permuted_other_shape
-            buffer_alias_expr = channel_first_constant_buffer_alias_exprs.get(str(tensor_name), None)
-            if (
-                rank == 4
-                and buffer_alias_expr is not None
-                and tensor_shape == [1, 1, 1, int(tensor_shape[3])]
-            ):
-                channel_first_constant_shape = [1, int(tensor_shape[3]), 1, 1]
-                if _shape_can_broadcast_to_target_relaxed(
-                    channel_first_constant_shape,
-                    other_target_shape,
-                ):
-                    return str(buffer_alias_expr)
             perm_to_cf = _perm_cl_to_cf(rank) if is_channel_last_logical_layout(tensor_layout) else None
             if perm_to_cf is not None:
                 permuted_shape = _permute_shape(tensor_shape, perm_to_cf)
                 base_expr = tensor_expr_fn(str(tensor_name))
+                buffer_alias_expr = channel_first_constant_buffer_alias_exprs.get(str(tensor_name), None)
                 permuted_alias_expr = permuted_constant_buffer_alias_exprs.get(
                     (str(tensor_name), tuple(int(v) for v in list(perm_to_cf)))
                 )
@@ -3715,6 +3846,7 @@ def _channel_first_binary_input_expr_for_codegen(
                 f"{', '.join(str(int(v)) for v in preferred_perm)}).contiguous()"
             )
     return None
+
 
 def _can_emit_channel_first_binary_op_for_codegen(
     *,
@@ -3775,37 +3907,13 @@ def _can_emit_channel_first_binary_op_for_codegen(
             continue
         if scalar_literal_expr_fn(str(input_name)) is not None:
             continue
-        other_input_name = str(op.inputs[1]) if str(input_name) == str(op.inputs[0]) else str(op.inputs[0])
-        input_cf_expr = channel_first_binary_input_expr_fn(str(input_name), other_input_name)
-        if input_cf_expr is None:
-            return False
-        input_shape = channel_first_shape_for_tensor_fn(str(input_name))
-        raw_input_shape = tensor_shape_list_fn(str(input_name))
-        if (
-            raw_input_shape is not None
-            and len(raw_input_shape) == output_rank == 4
-            and [int(v) for v in list(raw_input_shape[:3])] == [1, 1, 1]
-            and int(raw_input_shape[3]) > 0
-        ):
-            input_shape = [1, int(raw_input_shape[3]), 1, 1]
-        if (
-            input_shape is None
-            or len(list(input_shape)) != output_rank
-            or not _shape_can_broadcast_to_target_relaxed(input_shape, output_shape)
-        ):
-            return False
-        broadcast_shape = (
-            list(input_shape)
-            if broadcast_shape is None
-            else _broadcast_shapes_relaxed(broadcast_shape, input_shape)
-        )
-        if broadcast_shape is None:
-            return False
+        return False
     if len(dynamic_input_names) == 0:
         return False
     if not _shape_lists_equal_relaxed(broadcast_shape, output_shape):
         return False
     return True
+
 
 def _binary_operand_expr_for_codegen(
     *,
@@ -3821,50 +3929,34 @@ def _binary_operand_expr_for_codegen(
     tensor_name: str,
     other_tensor_name: str,
 ) -> str:
-    def _has_unambiguous_channel_first_shape(shape: Sequence[int]) -> bool:
-        return (
-            len(list(shape)) in {3, 4, 5}
-            and len(list(shape)) >= 2
-            and int(shape[1]) != int(shape[-1])
-        )
-
     alias_expr = binary_constant_buffer_alias_exprs.get((str(tensor_name), str(other_tensor_name)), None)
     expr = tensor_expr_fn(tensor_name)
-    other_expr = tensor_expr_fn(other_tensor_name)
     tensor = model_ir.tensors.get(str(tensor_name), None)
     other_tensor = model_ir.tensors.get(str(other_tensor_name), None)
     if tensor is None or other_tensor is None:
         if alias_expr is not None:
             return str(alias_expr)
         return expr
-    channel_first_alias_expr = channel_first_constant_buffer_alias_exprs.get(str(tensor_name), None)
-    channel_first_alias_shape = channel_first_rank4_constant_buffer_alias_shape_fn(str(tensor_name))
-    other_layout = normalize_logical_layout(other_tensor.logical_layout)
-    other_prefers_channel_first = (
-        str(other_tensor_name) in channel_first_tensor_expr_aliases
-        or (
-            is_channel_first_logical_layout(other_layout)
-            and _has_unambiguous_channel_first_shape(other_tensor.shape)
-        )
-        or str(other_expr).endswith("_cf")
-        or (
-            ".permute(" in str(other_expr)
-            and ".contiguous()" in str(other_expr)
-        )
-    )
-    if (
-        channel_first_alias_expr is not None
-        and channel_first_alias_shape is not None
-        and other_prefers_channel_first
-    ):
-        other_cf_shape = channel_first_shape_for_tensor_fn(str(other_tensor_name))
-        broadcast_shape = _broadcast_shapes_relaxed(
-            channel_first_alias_shape,
-            other_cf_shape,
-        )
-        if _shape_lists_equal_relaxed(broadcast_shape, other_cf_shape):
-            return str(channel_first_alias_expr)
     if alias_expr is not None:
+        channel_first_alias_expr = channel_first_constant_buffer_alias_exprs.get(str(tensor_name), None)
+        channel_first_alias_shape = channel_first_rank4_constant_buffer_alias_shape_fn(str(tensor_name))
+        other_layout = normalize_logical_layout(other_tensor.logical_layout)
+        other_prefers_channel_first = (
+            str(other_tensor_name) in channel_first_tensor_expr_aliases
+            or is_channel_first_logical_layout(other_layout)
+        )
+        if (
+            channel_first_alias_expr is not None
+            and channel_first_alias_shape is not None
+            and other_prefers_channel_first
+        ):
+            other_cf_shape = channel_first_shape_for_tensor_fn(str(other_tensor_name))
+            broadcast_shape = _broadcast_shapes_relaxed(
+                channel_first_alias_shape,
+                other_cf_shape,
+            )
+            if _shape_lists_equal_relaxed(broadcast_shape, other_cf_shape):
+                return str(channel_first_alias_expr)
         return str(alias_expr)
     if not isinstance(tensor.data, np.ndarray):
         return expr
@@ -4012,6 +4104,7 @@ def _binary_operand_expr_for_codegen(
     if reshape_dims == tensor_shape:
         return expr
     return f"{expr}.reshape({repr(reshape_dims)})"
+
 
 def _emit_native_direct_module_op_for_codegen(
     *,
@@ -4294,32 +4387,16 @@ def _emit_native_direct_module_op_for_codegen(
                 depthwise=(op_type == "DEPTHWISE_CONV_2D"),
             )
         if input_pre_permute is not None:
-            folded_channel_first_expr = None
-            if not (
-                op_type == "DEPTHWISE_CONV_2D"
-                and conv_input_tensor is not None
-                and is_channel_last_logical_layout(conv_input_layout)
-            ):
-                folded_channel_first_expr = tensor_expr_for_channel_first_bridge_fn(
-                    str(op.inputs[0]),
-                    input_pre_permute,
-                )
+            folded_channel_first_expr = tensor_expr_for_channel_first_bridge_fn(
+                str(op.inputs[0]),
+                input_pre_permute,
+            )
             if folded_channel_first_expr is not None:
                 conv_input_expr = str(folded_channel_first_expr)
             else:
                 conv_input_expr = (
                     f"{conv_input_expr}.permute({', '.join(str(int(v)) for v in input_pre_permute)}).contiguous()"
                 )
-        elif (
-            op_type == "DEPTHWISE_CONV_2D"
-            and conv_input_tensor is not None
-            and is_channel_last_logical_layout(conv_input_layout)
-            and existing_channel_first_input_alias is not None
-        ):
-            conv_input_expr = (
-                f"{conv_input_expr}.permute(0, 2, 3, 1).contiguous()"
-                ".permute(0, 3, 1, 2).contiguous()"
-            )
         conv_pad_arg = conv_module_pad_specs.get(int(op_index), None)
         if conv_pad_arg is not None:
             conv_input_expr = f"F.pad({conv_input_expr}, {repr(conv_pad_arg)}, mode='constant', value=0.0)"
@@ -4467,6 +4544,7 @@ def _emit_native_direct_module_op_for_codegen(
         return True
     return False
 
+
 def _emit_native_binary_op_for_codegen(
     *,
     model_ir: ModelIR,
@@ -4504,31 +4582,9 @@ def _emit_native_binary_op_for_codegen(
     rhs_dtype_name = tensor_dtype_name_fn(rhs_name)
     lhs_expr = binary_operand_expr_fn(lhs_name, rhs_name)
     rhs_scalar_literal = scalar_literal_expr_fn(rhs_name)
-    rhs_scalar_literal_value = rhs_scalar_literal
     if op_type in {"MAXIMUM", "MINIMUM"}:
         rhs_scalar_literal = None
     rhs_expr = rhs_scalar_literal or binary_operand_expr_fn(rhs_name, lhs_name)
-    if (
-        rhs_scalar_literal_value is not None
-        and op_type in {"MAXIMUM", "MINIMUM"}
-    ):
-        rhs_expr = (
-            f"torch.as_tensor({rhs_scalar_literal_value}, "
-            f"dtype={lhs_expr}.dtype, device={lhs_expr}.device)"
-        )
-    rhs_tensor = model_ir.tensors.get(rhs_name, None)
-    if (
-        op_type in {"MAXIMUM", "MINIMUM"}
-        and rhs_tensor is not None
-        and isinstance(rhs_tensor.data, np.ndarray)
-        and int(np.size(rhs_tensor.data)) == 1
-    ):
-        rhs_literal = _python_literal_for_constant_tensor(rhs_tensor)
-        if rhs_literal is not None:
-            rhs_expr = (
-                f"torch.as_tensor({rhs_literal}, "
-                f"dtype={lhs_expr}.dtype, device={lhs_expr}.device)"
-            )
     if (
         rhs_scalar_literal in {"True", "False"}
         and op_type in {"EQUAL", "NOT_EQUAL"}
@@ -4555,47 +4611,21 @@ def _emit_native_binary_op_for_codegen(
             )
         return f"{fn_name}({left_expr}, {right_expr})"
 
-    output_name = str(outputs[0])
-    output_tensor = model_ir.tensors.get(output_name, None)
-    output_rank = len(list(output_tensor.shape)) if output_tensor is not None else 0
-    output_layout = normalize_logical_layout(
-        output_tensor.logical_layout if output_tensor is not None else LOGICAL_LAYOUT_UNKNOWN
-    )
-    lhs_cf_expr: Optional[str] = None
-    rhs_cf_expr: Optional[str] = None
-    can_emit_channel_first_binary = (
-        runtime_shape_passthrough_operand is None
-        and not requires_runtime_alignment
-        and can_emit_channel_first_binary_op_fn(op)
-    )
-    if (
-        not can_emit_channel_first_binary
-        and runtime_shape_passthrough_operand is None
-        and output_tensor is not None
-        and output_rank in {3, 4, 5}
-        and (
-            is_channel_last_logical_layout(output_layout)
-            or is_channel_first_logical_layout(output_layout)
-            or output_layout == LOGICAL_LAYOUT_UNKNOWN
-        )
-    ):
-        lhs_cf_expr = channel_first_binary_input_expr_fn(lhs_name, rhs_name)
-        rhs_cf_expr = channel_first_binary_input_expr_fn(rhs_name, lhs_name)
-        can_emit_channel_first_binary = lhs_cf_expr is not None and rhs_cf_expr is not None
-    if rhs_scalar_literal_value is not None and op_type in {"MAXIMUM", "MINIMUM"}:
-        can_emit_channel_first_binary = False
-
-    if can_emit_channel_first_binary:
+    if can_emit_channel_first_binary_op_fn(op) and runtime_shape_passthrough_operand is None and not requires_runtime_alignment:
+        output_name = str(outputs[0])
+        output_tensor = model_ir.tensors.get(output_name, None)
         output_var = output_vars[0]
+        output_rank = len(list(output_tensor.shape)) if output_tensor is not None else 0
+        output_layout = normalize_logical_layout(
+            output_tensor.logical_layout if output_tensor is not None else LOGICAL_LAYOUT_UNKNOWN
+        )
         raw_output_var = (
             output_var
             if output_layout == LOGICAL_LAYOUT_UNKNOWN or output_name in set(model_ir.outputs)
             else derived_local_var_name_fn(f"{output_var}_cf", "t")
         )
-        if lhs_cf_expr is None:
-            lhs_cf_expr = channel_first_binary_input_expr_fn(lhs_name, rhs_name)
-        if rhs_cf_expr is None:
-            rhs_cf_expr = channel_first_binary_input_expr_fn(rhs_name, lhs_name)
+        lhs_cf_expr = channel_first_binary_input_expr_fn(lhs_name, rhs_name)
+        rhs_cf_expr = channel_first_binary_input_expr_fn(rhs_name, lhs_name)
         if lhs_cf_expr is None or rhs_cf_expr is None:
             raise ModelIRPyTorchExportError(
                 "Native PyTorch-like model.py codegen expected channel-first-capable binary inputs. "
@@ -4663,6 +4693,7 @@ def _emit_native_binary_op_for_codegen(
         )
     forward_lines.extend(activation_lines_fn(output_vars[0], fused))
     return True
+
 
 def _emit_native_unary_op_for_codegen(
     *,
@@ -4752,6 +4783,7 @@ def _emit_native_unary_op_for_codegen(
             f"{output_vars[0]} = {emit_maybe_aligned_expr_fn(output_name=outputs[0], expr=expr, inferred_shape=inferred_shape)}"
         )
     return True
+
 
 def _emit_native_transpose_op_for_codegen(
     *,
@@ -4912,6 +4944,7 @@ def _emit_native_transpose_op_for_codegen(
     )
     return True
 
+
 def _emit_native_shape_transform_misc_op_for_codegen(
     *,
     model_ir: ModelIR,
@@ -4997,6 +5030,7 @@ def _emit_native_shape_transform_misc_op_for_codegen(
         )
         return True
     return False
+
 
 def _emit_native_concat_op_for_codegen(
     *,
@@ -5152,6 +5186,7 @@ def _emit_native_concat_op_for_codegen(
     forward_lines.append(f"{output_vars[0]} = {concat_expr}")
     return True
 
+
 def _shape_tensor_length_for_codegen(
     *,
     model_ir: ModelIR,
@@ -5166,6 +5201,7 @@ def _shape_tensor_length_for_codegen(
     if len(shape_values) != 1 or int(shape_values[0]) < 0:
         return None
     return int(shape_values[0])
+
 
 def _reconstruct_shape_scalar_expr_for_codegen(
     *,
@@ -5381,6 +5417,7 @@ def _reconstruct_shape_scalar_expr_for_codegen(
             return _product_expr([f"({base_expr})[{index}]" for index in range(int(input_len))])
     return None
 
+
 def _reconstruct_shape_list_expr_for_codegen(
     *,
     model_ir: ModelIR,
@@ -5577,6 +5614,7 @@ def _reconstruct_shape_list_expr_for_codegen(
             return f"[{scalar_expr}]"
     return None
 
+
 def _has_channel_last_consumer_hint_for_same_shape_transpose_for_codegen(
     *,
     model_ir: ModelIR,
@@ -5662,6 +5700,7 @@ def _has_channel_last_consumer_hint_for_same_shape_transpose_for_codegen(
                     if all(int(v) == 1 for v in other_shape[:-1]) and int(other_shape[-1]) > 1:
                         return True
     return False
+
 
 def _is_batchless_rank3_public_output_transpose_for_codegen(
     *,
@@ -5762,6 +5801,7 @@ def _is_batchless_rank3_public_output_transpose_for_codegen(
         current_names = next_names
     return False
 
+
 def _prune_dead_forward_lines(
     lines: Sequence[str],
     *,
@@ -5806,6 +5846,7 @@ def _prune_dead_forward_lines(
         live_names.update(str(name) for name in used_names)
     kept_lines_reversed.reverse()
     return kept_lines_reversed
+
 
 def _fold_single_use_static_reshape_chains(
     lines: Sequence[str],
@@ -5955,16 +5996,15 @@ def _fold_single_use_static_reshape_chains(
             break
     return rewritten
 
+
 def _fold_channel_last_affine_conv_bridges(
     lines: Sequence[str],
     *,
     derive_local_var_name: Callable[[str], str],
     channel_first_constant_expr_for_buffer_attr: Callable[[str, Sequence[int]], Optional[str]],
-    skipped_module_names: Collection[str] = (),
 ) -> List[str]:
     if len(lines) < 6:
         return [str(line) for line in lines]
-    skipped_module_name_set = {str(name) for name in skipped_module_names}
 
     materialize_re = re.compile(
         r"^(?P<var>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\((?P<cf>[A-Za-z0-9_]+)\.permute\(0, 2, 3, 1\)\.contiguous\(\), (?P<target>\[[^\]]+\])\)$"
@@ -6021,10 +6061,6 @@ def _fold_channel_last_affine_conv_bridges(
                 continue
         conv_match = conv_re.match(str(lines[conv_line_index]))
         if conv_match is None:
-            rewritten.append(str(lines[index]))
-            index += 1
-            continue
-        if str(conv_match.group("module")) in skipped_module_name_set:
             rewritten.append(str(lines[index]))
             index += 1
             continue
@@ -6110,6 +6146,7 @@ def _fold_channel_last_affine_conv_bridges(
         index = conv_line_index + 1
     return rewritten
 
+
 def _fold_channel_first_gap_conv_bridges(
     lines: Sequence[str],
 ) -> List[str]:
@@ -6138,6 +6175,7 @@ def _fold_channel_first_gap_conv_bridges(
         )
     return rewritten
 
+
 def _rewrite_channel_first_gap_outputs_to_explicit_channel_last(
     lines: Sequence[str],
 ) -> List[str]:
@@ -6165,6 +6203,7 @@ def _rewrite_channel_first_gap_outputs_to_explicit_channel_last(
         rewritten[index + 1] = ""
     return [line for line in rewritten if line != ""]
 
+
 def _rewrite_channel_last_gap_means_to_reduce_mean(
     lines: Sequence[str],
 ) -> List[str]:
@@ -6183,6 +6222,7 @@ def _rewrite_channel_last_gap_means_to_reduce_mean(
         return line[: match.start()] + replacement + line[match.end() :]
 
     return [_rewrite_line(str(line)) for line in lines]
+
 
 def _fold_boundary_transpose_pad_conv_bridges(
     lines: Sequence[str],
@@ -6207,6 +6247,7 @@ def _fold_boundary_transpose_pad_conv_bridges(
             f"{conv_match.group('out')} = self.{conv_match.group('module')}({conv_match.group('input')})"
         )
     return rewritten
+
 
 def _bridge_boundary_metadata_gather_nd_inputs(
     lines: Sequence[str],
@@ -6295,6 +6336,7 @@ def _bridge_boundary_metadata_gather_nd_inputs(
         )
     return rewritten
 
+
 def _collapse_redundant_torch_permute_chains(
     lines: Sequence[str],
 ) -> List[str]:
@@ -6321,6 +6363,7 @@ def _collapse_redundant_torch_permute_chains(
 
     return [_rewrite_line(str(line)) for line in lines]
 
+
 def _inline_trivial_public_layout_bridge_aliases(
     lines: Sequence[str],
 ) -> List[str]:
@@ -6340,6 +6383,7 @@ def _inline_trivial_public_layout_bridge_aliases(
             rewritten_line = re.sub(rf"\b{re.escape(alias)}\b", source, rewritten_line)
         kept_lines.append(rewritten_line)
     return kept_lines
+
 
 def _fold_channel_last_prelu_bridges(
     lines: Sequence[str],
@@ -6383,36 +6427,6 @@ def _fold_channel_last_prelu_bridges(
         index += 3
     return [line for line in rewritten if line != ""]
 
-def _ensure_explicit_depthwise_channel_last_input_bridges(
-    lines: Sequence[str],
-    *,
-    module_names: Collection[str],
-) -> List[str]:
-    if len(module_names) == 0:
-        return [str(line) for line in lines]
-    target_module_names = {str(name) for name in module_names}
-    module_call_re = re.compile(
-        r"^(?P<out>[A-Za-z0-9_]+) = self\.(?P<module>[A-Za-z0-9_]+)\((?P<input>[A-Za-z0-9_]+)\)$"
-    )
-    rewritten: List[str] = []
-    for line in lines:
-        current_line = str(line)
-        match = module_call_re.match(current_line)
-        if match is None or str(match.group("module")) not in target_module_names:
-            rewritten.append(current_line)
-            continue
-        input_expr = str(match.group("input"))
-        if input_expr.endswith("_cf"):
-            bridged_input_expr = (
-                f"{input_expr}.permute(0, 2, 3, 1).contiguous()"
-                ".permute(0, 3, 1, 2).contiguous()"
-            )
-        else:
-            bridged_input_expr = f"{input_expr}.permute(0, 3, 1, 2).contiguous()"
-        rewritten.append(
-            f"{match.group('out')} = self.{match.group('module')}({bridged_input_expr})"
-        )
-    return rewritten
 
 def _build_forward_stage_methods(
     lines: Sequence[str],
@@ -6634,17 +6648,16 @@ def _build_forward_stage_methods(
         stage_methods_source += "\n"
     return stage_methods_source, forward_stage_calls, stage_specs
 
+
 def _rewrite_channel_last_binary_bridge_chains(
     lines: Sequence[str],
     *,
     derive_local_var_name: Callable[[str], str],
     channel_first_constant_expr_for_buffer_attr: Callable[[str, Sequence[int]], Optional[str]],
-    skipped_module_names: Collection[str] = (),
 ) -> List[str]:
     rewritten: List[str] = []
     line_count = len(lines)
     index = 0
-    skipped_module_name_set = {str(name) for name in skipped_module_names}
     binary_fn_pattern = r"(?:add|sub|mul|div|maximum|minimum)"
     public_bridge_pattern = re.compile(
         r"^(?P<bridge>\w+)\s*=\s*_torch_permute\((?P<input>\w+), \[0, 2, 3, 1\]\)$"
@@ -6675,7 +6688,6 @@ def _rewrite_channel_last_binary_bridge_chains(
                 bridge_match is not None
                 and binary_match is not None
                 and conv_match is not None
-                and str(conv_match.group("module")) not in skipped_module_name_set
                 and binary_match.group("out") == conv_match.group("input")
                 and _name_use_count(lines, bridge_match.group("bridge"), start=index + 1) == 1
                 and _name_use_count(lines, binary_match.group("out"), start=index + 2) == 1
@@ -6764,6 +6776,7 @@ def _rewrite_channel_last_binary_bridge_chains(
         index += 1
     return rewritten
 
+
 def _fold_rank4_reshape_permute_conv_bridges(
     lines: Sequence[str],
 ) -> List[str]:
@@ -6822,6 +6835,7 @@ def _fold_rank4_reshape_permute_conv_bridges(
         )
         index += 3
     return rewritten
+
 
 def _build_named_encoder_methods(
     stage_specs: Sequence[Dict[str, Any]],
@@ -7097,6 +7111,7 @@ def _build_named_encoder_methods(
     if len(named_class_source) > 0:
         named_class_source += "\n"
     return named_class_source, init_lines, forward_lines_local
+
 
 def _build_named_encoder_methods_composite(
     stage_specs: Sequence[Dict[str, Any]],
@@ -7391,16 +7406,2618 @@ def _build_named_encoder_methods_composite(
         named_class_source += "\n"
     return named_class_source, init_lines, forward_lines_local
 
+
+def get_supported_pytorch_kernel_op_types() -> Set[str]:
+    return set(SUPPORTED_TORCH_KERNEL_OP_TYPES)
+
+
+def _perm_cl_to_cf(rank: int) -> Optional[List[int]]:
+    if rank == 3:
+        return [0, 2, 1]
+    if rank == 4:
+        return [0, 3, 1, 2]
+    if rank == 5:
+        return [0, 4, 1, 2, 3]
+    return None
+
+
+def _perm_cf_to_cl(rank: int) -> Optional[List[int]]:
+    if rank == 3:
+        return [0, 2, 1]
+    if rank == 4:
+        return [0, 2, 3, 1]
+    if rank == 5:
+        return [0, 2, 3, 4, 1]
+    return None
+
+
+def _permute_shape(values: Optional[Sequence[int]], perm: Sequence[int]) -> Optional[List[int]]:
+    if values is None:
+        return None
+    items = [int(v) for v in list(values)]
+    if len(items) != len(list(perm)):
+        return None
+    return [int(items[idx]) for idx in perm]
+
+
+def _is_layout_only_transpose_by_shape(
+    *,
+    input_tensor: Optional[TensorIR],
+    output_tensor: Optional[TensorIR],
+    perm: Optional[Sequence[int]],
+) -> bool:
+    if input_tensor is None or output_tensor is None or perm is None:
+        return False
+    input_shape = [int(v) for v in list(input_tensor.shape)]
+    output_shape = [int(v) for v in list(output_tensor.shape)]
+    if len(input_shape) != len(output_shape) or len(input_shape) != len(list(perm)):
+        return False
+    return _permute_shape(input_shape, perm) == output_shape
+
+
+def _is_standard_channel_layout_permutation(
+    *,
+    perm: Optional[Sequence[int]],
+    rank: int,
+) -> bool:
+    if perm is None:
+        return False
+    perm_values = tuple(int(v) for v in list(perm))
+    return perm_values in {
+        tuple(_perm_cl_to_cf(rank) or []),
+        tuple(_perm_cf_to_cl(rank) or []),
+    }
+
+
+def _is_inconsistent_standard_layout_transpose(
+    *,
+    input_tensor: Optional[TensorIR],
+    output_tensor: Optional[TensorIR],
+    perm: Optional[Sequence[int]],
+) -> bool:
+    if input_tensor is None or output_tensor is None or perm is None:
+        return False
+    input_shape = [int(v) for v in list(input_tensor.shape)]
+    output_shape = [int(v) for v in list(output_tensor.shape)]
+    rank = len(input_shape)
+    if rank not in {3, 4, 5} or len(output_shape) != rank:
+        return False
+    if not _is_standard_channel_layout_permutation(perm=perm, rank=rank):
+        return False
+    if input_shape != output_shape:
+        return False
+    permuted_input_shape = _permute_shape(input_shape, perm)
+    if permuted_input_shape is None:
+        return False
+    # Some layout-bridge transposes survive normalization with stale CF metadata.
+    # Executing those transposes would violate the declared tensor shape contract.
+    if permuted_input_shape != output_shape:
+        return True
+    input_layout = normalize_logical_layout(input_tensor.logical_layout)
+    output_layout = normalize_logical_layout(output_tensor.logical_layout)
+    if input_layout == LOGICAL_LAYOUT_UNKNOWN or output_layout == LOGICAL_LAYOUT_UNKNOWN:
+        return False
+    if input_layout != output_layout:
+        return False
+    return False
+
+
+def _is_inconsistent_same_layout_transpose(
+    *,
+    input_tensor: Optional[TensorIR],
+    output_tensor: Optional[TensorIR],
+    perm: Optional[Sequence[int]],
+) -> bool:
+    if input_tensor is None or output_tensor is None or perm is None:
+        return False
+    input_shape = [int(v) for v in list(input_tensor.shape)]
+    output_shape = [int(v) for v in list(output_tensor.shape)]
+    rank = len(input_shape)
+    if rank not in {3, 4, 5} or len(output_shape) != rank:
+        return False
+    if input_shape != output_shape:
+        return False
+    input_layout = normalize_logical_layout(input_tensor.logical_layout)
+    output_layout = normalize_logical_layout(output_tensor.logical_layout)
+    if input_layout == LOGICAL_LAYOUT_UNKNOWN or output_layout == LOGICAL_LAYOUT_UNKNOWN:
+        return False
+    if input_layout != output_layout:
+        return False
+    perm_values = [int(v) for v in list(perm)]
+    if perm_values == list(range(rank)):
+        return False
+    permuted_input_shape = _permute_shape(input_shape, perm_values)
+    if permuted_input_shape is None:
+        return False
+    # The metadata contract says the tensor stayed in the same known layout and
+    # same shape. If the recorded permutation would produce a different shape,
+    # the transpose is stale and must be elided.
+    return permuted_input_shape != output_shape
+
+
+def _clone_tensor(tensor: TensorIR) -> TensorIR:
+    return TensorIR(
+        name=str(tensor.name),
+        dtype=str(tensor.dtype),
+        shape=[int(v) for v in list(tensor.shape)],
+        shape_signature=(
+            [int(v) for v in list(tensor.shape_signature)]
+            if tensor.shape_signature is not None
+            else None
+        ),
+        data=np.asarray(tensor.data).copy() if isinstance(tensor.data, np.ndarray) else tensor.data,
+        is_variable=bool(tensor.is_variable),
+        quantization=copy.deepcopy(tensor.quantization),
+        logical_layout=normalize_logical_layout(tensor.logical_layout),
+    )
+
+
+def _read_transpose_perm(model_ir: ModelIR, op: OperatorIR) -> Optional[List[int]]:
+    perm_tensor = model_ir.tensors.get(str(op.inputs[1]), None) if len(op.inputs) >= 2 else None
+    if perm_tensor is not None and isinstance(perm_tensor.data, np.ndarray):
+        perm = [int(v) for v in np.asarray(perm_tensor.data).reshape(-1).tolist()]
+        if sorted(perm) == list(range(len(perm))):
+            return perm
+    perm = [int(v) for v in list(op.options.get("perm", []))]
+    if len(perm) > 0 and sorted(perm) == list(range(len(perm))):
+        return perm
+    return None
+
+
+def _read_onnx_squeeze_axes(node: Any) -> Optional[List[int]]:
+    if node is None or str(getattr(node, "op_type", "")) != "Squeeze":
+        return None
+    for attribute in list(getattr(node, "attribute", [])):
+        if str(getattr(attribute, "name", "")) == "axes":
+            values = onnx.helper.get_attribute_value(attribute)
+            if isinstance(values, (list, tuple)):
+                return [int(v) for v in list(values)]
+    return None
+
+
+def _read_onnx_unsqueeze_axes(node: Any) -> Optional[List[int]]:
+    if node is None or str(getattr(node, "op_type", "")) != "Unsqueeze":
+        return None
+    for attribute in list(getattr(node, "attribute", [])):
+        if str(getattr(attribute, "name", "")) == "axes":
+            values = onnx.helper.get_attribute_value(attribute)
+            if isinstance(values, (list, tuple)):
+                return [int(v) for v in list(values)]
+    return None
+
+
+def _compose_axis_permutations(
+    first: Optional[Sequence[int]],
+    second: Optional[Sequence[int]],
+) -> Optional[List[int]]:
+    if first is None and second is None:
+        return None
+    if first is None:
+        composed = [int(v) for v in list(second or [])]
+    elif second is None:
+        composed = [int(v) for v in list(first)]
+    else:
+        first_values = [int(v) for v in list(first)]
+        second_values = [int(v) for v in list(second)]
+        if len(first_values) != len(second_values):
+            return None
+        if sorted(first_values) != list(range(len(first_values))):
+            return None
+        if sorted(second_values) != list(range(len(second_values))):
+            return None
+        composed = [int(first_values[int(idx)]) for idx in second_values]
+    if composed == list(range(len(composed))):
+        return None
+    return composed
+
+
+def _inverse_axis_permutation(perm: Optional[Sequence[int]]) -> Optional[List[int]]:
+    if perm is None:
+        return None
+    values = [int(v) for v in list(perm)]
+    if sorted(values) != list(range(len(values))):
+        return None
+    inverse = [0] * len(values)
+    for new_axis, old_axis in enumerate(values):
+        inverse[int(old_axis)] = int(new_axis)
+    return inverse
+
+
+def _constant_pad_pairs_for_tensor(tensor: Optional[TensorIR]) -> Optional[List[List[int]]]:
+    if tensor is None or tensor.data is None:
+        return None
+    try:
+        pads = np.asarray(tensor.data, dtype=np.int64).reshape(-1, 2)
+    except Exception:
+        return None
+    return [[int(v) for v in list(row)] for row in pads.tolist()]
+
+
+def _pad_output_matches_pre_permuted_input(
+    *,
+    input_tensor: Optional[TensorIR],
+    output_tensor: Optional[TensorIR],
+    pads_tensor: Optional[TensorIR],
+    input_pre_permute: Optional[Sequence[int]],
+) -> bool:
+    if (
+        input_tensor is None
+        or output_tensor is None
+        or pads_tensor is None
+        or input_pre_permute is None
+    ):
+        return False
+    input_shape = [int(v) for v in list(input_tensor.shape)]
+    output_shape = [int(v) for v in list(output_tensor.shape)]
+    rank = len(input_shape)
+    if rank == 0 or len(output_shape) != rank:
+        return False
+    inverse_perm = _inverse_axis_permutation(input_pre_permute)
+    if inverse_perm is None or len(inverse_perm) != rank:
+        return False
+    pad_pairs = _constant_pad_pairs_for_tensor(pads_tensor)
+    if pad_pairs is None:
+        return False
+    if len(pad_pairs) < rank:
+        pad_pairs = ([[0, 0]] * (rank - len(pad_pairs))) + pad_pairs
+    elif len(pad_pairs) > rank:
+        pad_pairs = pad_pairs[-rank:]
+    permuted_input_shape = _permute_shape(input_shape, inverse_perm)
+    if permuted_input_shape is None or len(permuted_input_shape) != rank:
+        return False
+    padded_shape = [
+        int(permuted_input_shape[idx]) + int(pad_pairs[idx][0]) + int(pad_pairs[idx][1])
+        for idx in range(rank)
+    ]
+    return padded_shape == output_shape
+
+
+
+
+def _rewrite_vector_constant_inplace(
+    *,
+    tensor: TensorIR,
+    perm: Sequence[int],
+    expected_rank: int,
+) -> bool:
+    if not isinstance(tensor.data, np.ndarray):
+        return False
+    arr = np.asarray(tensor.data)
+    if arr.ndim != 1 or int(arr.size) != int(expected_rank):
+        return False
+    tensor.data = np.asarray([arr[int(idx)] for idx in perm], dtype=arr.dtype)
+    tensor.shape = [int(expected_rank)]
+    if tensor.shape_signature is not None and len(tensor.shape_signature) == 1:
+        tensor.shape_signature = [int(expected_rank)]
+    return True
+
+
+def _rewrite_matrix_constant_inplace(
+    *,
+    tensor: TensorIR,
+    perm: Sequence[int],
+    expected_rank: int,
+) -> bool:
+    if not isinstance(tensor.data, np.ndarray):
+        return False
+    arr = np.asarray(tensor.data)
+    if arr.ndim != 2 or tuple(arr.shape) != (int(expected_rank), 2):
+        return False
+    tensor.data = np.asarray(arr[list(perm), :], dtype=arr.dtype)
+    tensor.shape = [int(expected_rank), 2]
+    if tensor.shape_signature is not None and len(tensor.shape_signature) == 2:
+        tensor.shape_signature = [int(expected_rank), 2]
+    return True
+
+
+def _rewrite_axis_constant_inplace(
+    *,
+    tensor: TensorIR,
+    source_layout: str,
+    target_layout: str,
+    rank: int,
+) -> bool:
+    if not isinstance(tensor.data, np.ndarray):
+        return False
+    arr = np.asarray(tensor.data)
+    if arr.ndim == 0:
+        axis = int(arr.reshape(-1)[0])
+        rewritten = rewrite_axis_for_layout(
+            axis=axis,
+            source_layout=source_layout,
+            target_layout=target_layout,
+            rank=rank,
+        )
+        tensor.data = np.asarray(rewritten, dtype=arr.dtype)
+        return True
+    if arr.ndim != 1:
+        return False
+    rewritten_axes = [
+        rewrite_axis_for_layout(
+            axis=int(v),
+            source_layout=source_layout,
+            target_layout=target_layout,
+            rank=rank,
+        )
+        for v in arr.reshape(-1).tolist()
+    ]
+    tensor.data = np.asarray(rewritten_axes, dtype=arr.dtype)
+    tensor.shape = [int(len(rewritten_axes))]
+    tensor.shape_signature = [int(len(rewritten_axes))]
+    return True
+
+
+def _permute_tensor_to_channel_first_inplace(tensor: TensorIR) -> bool:
+    source_layout = normalize_logical_layout(tensor.logical_layout)
+    rank = len(list(tensor.shape))
+    if not is_channel_last_logical_layout(source_layout):
+        return False
+    target_layout = channel_first_logical_layout(rank)
+    perm = logical_layout_permutation(
+        source_layout=source_layout,
+        target_layout=target_layout,
+    )
+    if perm is None:
+        return False
+    permuted_shape = _permute_shape(tensor.shape, perm)
+    if permuted_shape is not None:
+        tensor.shape = permuted_shape
+    if tensor.shape_signature is not None:
+        permuted_signature = _permute_shape(tensor.shape_signature, perm)
+        if permuted_signature is not None:
+            tensor.shape_signature = permuted_signature
+    if isinstance(tensor.data, np.ndarray) and int(np.asarray(tensor.data).ndim) == int(rank):
+        tensor.data = np.transpose(np.asarray(tensor.data), axes=perm).copy()
+    tensor.logical_layout = target_layout
+    return True
+
+
+def _collect_kernel_weight_tensor_names(model_ir: ModelIR) -> Set[str]:
+    names: Set[str] = set()
+    for op in model_ir.operators:
+        if str(op.op_type) in {
+            "CONV_2D",
+            "DEPTHWISE_CONV_2D",
+            "TRANSPOSE_CONV",
+            "CONV_3D",
+            "CONV_3D_TRANSPOSE",
+        } and len(op.inputs) >= 2:
+            names.add(str(op.inputs[1]))
+    return names
+
+
+def _should_emit_channel_last_space_to_depth(
+    *,
+    input_shape: Sequence[int],
+    output_shape: Sequence[int],
+    block_size: int,
+) -> Optional[bool]:
+    if len(list(input_shape)) != 4 or len(list(output_shape)) != 4:
+        return None
+    in_shape = [int(v) for v in list(input_shape)]
+    out_shape = [int(v) for v in list(output_shape)]
+    if 0 in {int(block_size)}:
+        return None
+    n, a, b, c = in_shape
+    if a % block_size == 0 and b % block_size == 0:
+        if out_shape == [n, a // block_size, b // block_size, c * block_size * block_size]:
+            return True
+    n, c, h, w = in_shape
+    if h % block_size == 0 and w % block_size == 0:
+        if out_shape == [n, c * block_size * block_size, h // block_size, w // block_size]:
+            return False
+    return None
+
+
+def _should_emit_channel_last_depth_to_space(
+    *,
+    input_shape: Sequence[int],
+    output_shape: Sequence[int],
+    block_size: int,
+) -> Optional[bool]:
+    if len(list(input_shape)) != 4 or len(list(output_shape)) != 4:
+        return None
+    in_shape = [int(v) for v in list(input_shape)]
+    out_shape = [int(v) for v in list(output_shape)]
+    if 0 in {int(block_size)}:
+        return None
+    n, h, w, c = in_shape
+    if c % (block_size * block_size) == 0:
+        if out_shape == [n, h * block_size, w * block_size, c // (block_size * block_size)]:
+            return True
+    n, c, h, w = in_shape
+    if c % (block_size * block_size) == 0:
+        if out_shape == [n, c // (block_size * block_size), h * block_size, w * block_size]:
+            return False
+    return None
+
+
+def _primary_data_input_name(op: OperatorIR) -> Optional[str]:
+    op_type = str(op.op_type)
+    if len(op.inputs) == 0:
+        return None
+    if op_type == "SPLIT":
+        return str(op.inputs[1]) if len(op.inputs) >= 2 else str(op.inputs[0])
+    if op_type == "SCATTER_ND":
+        return str(op.inputs[1]) if len(op.inputs) >= 2 else None
+    if op_type in {"TRANSPOSE_CONV", "CONV_3D_TRANSPOSE"}:
+        return str(op.inputs[2]) if len(op.inputs) >= 3 else None
+    return str(op.inputs[0])
+
+
+def _assign_tensor_logical_layout(
+    tensor: Optional[TensorIR],
+    layout: str,
+) -> bool:
+    if tensor is None:
+        return False
+    normalized_target = normalize_logical_layout(layout)
+    if normalized_target == LOGICAL_LAYOUT_UNKNOWN:
+        return False
+    current_layout = normalize_logical_layout(tensor.logical_layout)
+    if current_layout == normalized_target:
+        return False
+    if current_layout != LOGICAL_LAYOUT_UNKNOWN:
+        current_rank = len(list(tensor.shape))
+        current_is_channel_layout = (
+            is_channel_first_logical_layout(current_layout)
+            or is_channel_last_logical_layout(current_layout)
+        )
+        target_is_channel_layout = (
+            is_channel_first_logical_layout(normalized_target)
+            or is_channel_last_logical_layout(normalized_target)
+        )
+        if current_is_channel_layout and target_is_channel_layout:
+            if current_rank != len(list(tensor.shape)):
+                return False
+    tensor.logical_layout = normalized_target
+    return True
+
+
+def _shared_tensor_layout(
+    tensors: Sequence[Optional[TensorIR]],
+) -> str:
+    layouts: List[str] = []
+    for tensor in tensors:
+        if tensor is None:
+            continue
+        rank = len(list(tensor.shape))
+        if rank not in {3, 4, 5}:
+            continue
+        layout = normalize_logical_layout(tensor.logical_layout)
+        if layout == LOGICAL_LAYOUT_UNKNOWN:
+            return LOGICAL_LAYOUT_UNKNOWN
+        if not (
+            is_channel_first_logical_layout(layout)
+            or is_channel_last_logical_layout(layout)
+        ):
+            return LOGICAL_LAYOUT_UNKNOWN
+        layouts.append(layout)
+    if len(layouts) == 0:
+        return LOGICAL_LAYOUT_UNKNOWN
+    first = layouts[0]
+    if any(layout != first for layout in layouts[1:]):
+        return LOGICAL_LAYOUT_UNKNOWN
+    return first
+
+
+def _infer_concat_peer_layout(
+    op: OperatorIR,
+    input_tensors: Sequence[Optional[TensorIR]],
+) -> str:
+    axis = op.options.get("axis", None)
+    if axis is None:
+        return LOGICAL_LAYOUT_UNKNOWN
+    known_layout: Optional[str] = None
+    known_rank: Optional[int] = None
+    reference_shape: Optional[List[int]] = None
+    for tensor in input_tensors:
+        if tensor is None:
+            continue
+        rank = len(list(tensor.shape))
+        if rank not in {3, 4, 5}:
+            continue
+        layout = normalize_logical_layout(tensor.logical_layout)
+        if layout == LOGICAL_LAYOUT_UNKNOWN:
+            continue
+        if not (
+            is_channel_first_logical_layout(layout)
+            or is_channel_last_logical_layout(layout)
+        ):
+            return LOGICAL_LAYOUT_UNKNOWN
+        current_shape = [int(v) for v in list(tensor.shape)]
+        if known_layout is None:
+            known_layout = layout
+            known_rank = rank
+            reference_shape = current_shape
+            continue
+        if layout != known_layout or rank != known_rank:
+            return LOGICAL_LAYOUT_UNKNOWN
+        if reference_shape is not None:
+            for dim_idx, (candidate_dim, expected_dim) in enumerate(zip(current_shape, reference_shape)):
+                if int(dim_idx) == int(axis):
+                    continue
+                if int(candidate_dim) > 0 and int(expected_dim) > 0 and int(candidate_dim) != int(expected_dim):
+                    return LOGICAL_LAYOUT_UNKNOWN
+    if known_layout is None or known_rank is None:
+        return LOGICAL_LAYOUT_UNKNOWN
+    expected_axis = 1 if is_channel_first_logical_layout(known_layout) else int(known_rank) - 1
+    if int(axis) != int(expected_axis):
+        return LOGICAL_LAYOUT_UNKNOWN
+    return str(known_layout)
+
+
+def _can_emit_direct_torch_reshape_shape(
+    shape_values: Sequence[int],
+    *,
+    allow_zero: bool,
+) -> bool:
+    values = [int(v) for v in list(shape_values)]
+    if values.count(-1) > 1:
+        return False
+    for dim_value in values:
+        if dim_value == -1:
+            continue
+        if dim_value == 0:
+            if allow_zero:
+                continue
+            return False
+        if dim_value < 0:
+            return False
+    return True
+
+
+def _is_degenerate_sequence_like_rank4_or_rank5_tensor(
+    tensor: Optional[TensorIR],
+) -> bool:
+    if tensor is None:
+        return False
+    shape_signature = (
+        [int(v) for v in list(tensor.shape_signature)]
+        if tensor.shape_signature is not None and len(list(tensor.shape_signature)) == len(list(tensor.shape))
+        else [int(v) for v in list(tensor.shape)]
+    )
+    rank = len(shape_signature)
+    if rank not in {4, 5}:
+        return False
+    if int(shape_signature[0]) not in {1, -1}:
+        return False
+    if any(int(dim) not in {1, -1} for dim in shape_signature[1:-1]):
+        return False
+    return int(shape_signature[-1]) > 0
+
+
+def _is_channel_last_factorized_reshape(
+    input_tensor: Optional[TensorIR],
+    output_tensor: Optional[TensorIR],
+) -> bool:
+    if input_tensor is None or output_tensor is None:
+        return False
+    input_layout = normalize_logical_layout(input_tensor.logical_layout)
+    if not is_channel_last_logical_layout(input_layout):
+        return False
+    input_shape = [int(v) for v in list(input_tensor.shape)]
+    output_shape = [int(v) for v in list(output_tensor.shape)]
+    if len(input_shape) not in {3, 4, 5} or len(output_shape) not in {4, 5}:
+        return False
+    if len(output_shape) <= len(input_shape):
+        return False
+    if any(int(v) <= 0 for v in input_shape + output_shape):
+        return False
+    spatial_shape = input_shape[1:-1]
+    spatial_rank = len(spatial_shape)
+    if spatial_rank <= 0:
+        return False
+    if output_shape[0] != input_shape[0]:
+        return False
+    if output_shape[1:1 + spatial_rank] != spatial_shape:
+        return False
+    trailing_shape = output_shape[1 + spatial_rank:]
+    if len(trailing_shape) < 2:
+        return False
+    return int(np.prod(trailing_shape, dtype=np.int64)) == int(input_shape[-1])
+
+
+def _is_channel_last_factorized_rank3_sequence_reshape(
+    input_tensor: Optional[TensorIR],
+    output_tensor: Optional[TensorIR],
+) -> bool:
+    if input_tensor is None or output_tensor is None:
+        return False
+    input_layout = normalize_logical_layout(input_tensor.logical_layout)
+    if not is_channel_last_logical_layout(input_layout):
+        return False
+    input_shape = [int(v) for v in list(input_tensor.shape)]
+    output_shape = [int(v) for v in list(output_tensor.shape)]
+    if len(input_shape) not in {4, 5} or len(output_shape) != 3:
+        return False
+    if any(int(v) <= 0 for v in input_shape + output_shape):
+        return False
+    if int(output_shape[0]) != int(input_shape[0]):
+        return False
+    input_channels = int(input_shape[-1])
+    output_features = int(output_shape[-1])
+    if output_features <= 0 or input_channels <= 0 or input_channels % output_features != 0:
+        return False
+    spatial_extent = int(np.prod(input_shape[1:-1], dtype=np.int64))
+    factor = int(input_channels // output_features)
+    expected_sequence_extent = int(spatial_extent * factor)
+    return int(output_shape[1]) == expected_sequence_extent
+
+
+def _propagate_pytorch_friendly_layouts(model_ir: ModelIR) -> None:
+    unary_passthrough_ops = {
+        "ABS",
+        "ATAN",
+        "CEIL",
+        "COS",
+        "ELU",
+        "EXP",
+        "FLOOR",
+        "HARD_SWISH",
+        "IDENTITY",
+        "LEAKY_RELU",
+        "LOG",
+        "LOGICAL_NOT",
+        "LOGISTIC",
+        "NEG",
+        "RELU",
+        "RELU6",
+        "ROUND",
+        "RSQRT",
+        "SIGMOID",
+        "SIGN",
+        "SIN",
+        "SQRT",
+        "SQUARE",
+        "TAN",
+        "TANH",
+    }
+    binary_passthrough_ops = {
+        "ADD",
+        "DIV",
+        "MAXIMUM",
+        "MINIMUM",
+        "MUL",
+        "POW",
+        "SUB",
+    }
+    resize_pool_passthrough_ops = {
+        "AVERAGE_POOL_2D",
+        "MAX_POOL_2D",
+        "RESIZE_BILINEAR",
+        "RESIZE_NEAREST_NEIGHBOR",
+    }
+    changed = True
+    while changed:
+        changed = False
+        for op in model_ir.operators:
+            op_type = str(op.op_type)
+            output_tensors = [
+                model_ir.tensors.get(str(output_name), None)
+                for output_name in op.outputs
+            ]
+            if op_type in unary_passthrough_ops and len(op.inputs) >= 1:
+                propagated_layout = _shared_tensor_layout(
+                    [model_ir.tensors.get(str(op.inputs[0]), None)]
+                )
+            elif op_type in binary_passthrough_ops and len(op.inputs) >= 2:
+                propagated_layout = _shared_tensor_layout(
+                    [
+                        model_ir.tensors.get(str(op.inputs[0]), None),
+                        model_ir.tensors.get(str(op.inputs[1]), None),
+                    ]
+                )
+            elif op_type == "CONCATENATION":
+                concat_input_tensors = [
+                    model_ir.tensors.get(str(input_name), None) for input_name in op.inputs
+                ]
+                propagated_layout = _shared_tensor_layout(concat_input_tensors)
+                if propagated_layout == LOGICAL_LAYOUT_UNKNOWN:
+                    propagated_layout = _infer_concat_peer_layout(op, concat_input_tensors)
+                    if propagated_layout != LOGICAL_LAYOUT_UNKNOWN:
+                        for input_tensor in concat_input_tensors:
+                            changed = _assign_tensor_logical_layout(input_tensor, propagated_layout) or changed
+            elif op_type in {"PACK", "UNPACK"}:
+                propagated_layout = _shared_tensor_layout(
+                    [model_ir.tensors.get(str(input_name), None) for input_name in op.inputs]
+                )
+            elif op_type == "SPLIT":
+                propagated_layout = _shared_tensor_layout(
+                    [model_ir.tensors.get(str(op.inputs[-1]), None)]
+                )
+            elif op_type in resize_pool_passthrough_ops:
+                propagated_layout = _shared_tensor_layout(
+                    [model_ir.tensors.get(str(op.inputs[0]), None)]
+                )
+            else:
+                continue
+            if propagated_layout == LOGICAL_LAYOUT_UNKNOWN:
+                continue
+            for output_tensor in output_tensors:
+                changed = _assign_tensor_logical_layout(output_tensor, propagated_layout) or changed
+
+
+def _collect_feature_last_sequence_tensor_names(model_ir: ModelIR) -> Set[str]:
+    consumers: Dict[str, List[int]] = {}
+    producers: Dict[str, int] = {}
+    for op_idx, op in enumerate(model_ir.operators):
+        for input_name in op.inputs:
+            consumers.setdefault(str(input_name), []).append(int(op_idx))
+        for output_name in op.outputs:
+            producers[str(output_name)] = int(op_idx)
+
+    def _is_time_major_recurrent_bridge(output_name: str) -> bool:
+        for consumer_idx in consumers.get(str(output_name), []):
+            consumer = model_ir.operators[int(consumer_idx)]
+            if str(consumer.op_type) != "TRANSPOSE" or len(consumer.outputs) != 1:
+                continue
+            perm = _read_transpose_perm(model_ir, consumer)
+            if perm != [1, 0, 2]:
+                continue
+            transpose_output_name = str(consumer.outputs[0])
+            for next_idx in consumers.get(transpose_output_name, []):
+                next_op_type = str(model_ir.operators[int(next_idx)].op_type)
+                if next_op_type in {
+                    "BIDIRECTIONAL_SEQUENCE_LSTM",
+                    "UNIDIRECTIONAL_SEQUENCE_LSTM",
+                    "UNIDIRECTIONAL_SEQUENCE_RNN",
+                }:
+                    return True
+        return False
+
+    def _trace_feature_last_rhs_seed(tensor_name: str) -> Optional[str]:
+        visited: Set[str] = set()
+        worklist: List[str] = [str(tensor_name)]
+        passthrough_ops = {
+            "CAST",
+            "EXPAND_DIMS",
+            "GATHER",
+            "GATHER_ND",
+            "IDENTITY",
+            "RESHAPE",
+            "SLICE",
+            "SQUEEZE",
+            "STRIDED_SLICE",
+            "TRANSPOSE",
+        }
+        while len(worklist) > 0:
+            current_name = str(worklist.pop())
+            if current_name in visited:
+                continue
+            visited.add(current_name)
+            current_tensor = model_ir.tensors.get(current_name, None)
+            if current_tensor is not None:
+                current_rank = len(list(current_tensor.shape))
+                current_layout = normalize_logical_layout(current_tensor.logical_layout)
+                if current_rank in {3, 4, 5} and is_channel_last_logical_layout(current_layout):
+                    return current_name
+            producer_idx = producers.get(current_name, None)
+            if producer_idx is None:
+                continue
+            producer = model_ir.operators[int(producer_idx)]
+            if str(producer.op_type) not in passthrough_ops or len(producer.inputs) == 0:
+                continue
+            worklist.append(str(producer.inputs[0]))
+        return None
+
+    def _trace_feature_last_passthrough_inputs(tensor_name: str) -> Set[str]:
+        traced_names: Set[str] = set()
+        visited: Set[str] = set()
+        worklist: List[str] = [str(tensor_name)]
+        passthrough_ops = {
+            "AVERAGE_POOL_2D",
+            "CAST",
+            "EXPAND_DIMS",
+            "IDENTITY",
+            "LEAKY_RELU",
+            "LOGISTIC",
+            "MAX_POOL_2D",
+            "PAD",
+            "PADV2",
+            "RELU",
+            "RELU6",
+            "RESHAPE",
+            "SQUEEZE",
+            "STRIDED_SLICE",
+            "TRANSPOSE",
+        }
+        while len(worklist) > 0:
+            current_name = str(worklist.pop())
+            if current_name in visited:
+                continue
+            visited.add(current_name)
+            traced_names.add(current_name)
+            producer_idx = producers.get(current_name, None)
+            if producer_idx is None:
+                continue
+            producer = model_ir.operators[int(producer_idx)]
+            if str(producer.op_type) not in passthrough_ops or len(producer.inputs) == 0:
+                continue
+            upstream_name = str(producer.inputs[0])
+            traced_names.add(upstream_name)
+            worklist.append(upstream_name)
+        return traced_names
+
+    roots: Set[str] = set()
+    if _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island(model_ir):
+        for tensor_name, tensor in model_ir.tensors.items():
+            rank = len(list(tensor.shape))
+            layout = normalize_logical_layout(tensor.logical_layout)
+            if rank in {4, 5} and is_channel_last_logical_layout(layout):
+                roots.add(str(tensor_name))
+    for tensor_name, tensor in model_ir.tensors.items():
+        normalized_name = str(tensor_name)
+        rank = len(list(tensor.shape))
+        layout = normalize_logical_layout(tensor.logical_layout)
+        lowered_name = normalized_name.lower()
+        if (
+            rank in {3, 4, 5}
+            and is_channel_last_logical_layout(layout)
+            and any(token in lowered_name for token in ("_nwc", "_nhwc", "_ndhwc"))
+        ):
+            roots.add(normalized_name)
+    for op in model_ir.operators:
+        op_type = str(op.op_type)
+        if op_type == "BATCH_MATMUL" and len(op.inputs) >= 2:
+            rhs_seed = _trace_feature_last_rhs_seed(str(op.inputs[1]))
+            if rhs_seed is not None:
+                roots.add(rhs_seed)
+        if op_type == "TRANSPOSE" and len(op.inputs) >= 1 and len(op.outputs) == 1:
+            input_name = str(op.inputs[0])
+            output_name = str(op.outputs[0])
+            output_tensor = model_ir.tensors.get(output_name, None)
+            input_tensor = model_ir.tensors.get(input_name, None)
+            if output_tensor is None:
+                continue
+            rank = len(list(output_tensor.shape))
+            if rank != 3:
+                continue
+            perm = _read_transpose_perm(model_ir, op)
+            if (
+                perm == [1, 0, 2]
+                and input_tensor is not None
+                and (
+                    is_channel_last_logical_layout(normalize_logical_layout(input_tensor.logical_layout))
+                    or is_channel_last_logical_layout(normalize_logical_layout(output_tensor.logical_layout))
+                )
+            ):
+                roots.add(input_name)
+                roots.add(output_name)
+                continue
+            if perm != _perm_cf_to_cl(rank):
+                continue
+            producer_idx = producers.get(input_name, None)
+            if producer_idx is None:
+                continue
+            producer = model_ir.operators[int(producer_idx)]
+            if str(producer.op_type) != "RESHAPE" or len(producer.outputs) != 1:
+                continue
+            roots.add(output_name)
+            continue
+        if op_type != "RESHAPE" or len(op.outputs) != 1:
+            continue
+        output_name = str(op.outputs[0])
+        output_tensor = model_ir.tensors.get(output_name, None)
+        if output_tensor is None:
+            continue
+        rank = len(list(output_tensor.shape))
+        if rank not in {3, 4, 5}:
+            continue
+        input_tensor = model_ir.tensors.get(str(op.inputs[0]), None) if len(op.inputs) >= 1 else None
+        if (
+            output_name in set(str(v) for v in model_ir.outputs)
+            and input_tensor is not None
+            and len(list(input_tensor.shape)) >= rank
+            and len(list(output_tensor.shape)) >= 1
+            and len(list(input_tensor.shape)) >= 1
+            and int(list(output_tensor.shape)[-1]) == int(list(input_tensor.shape)[-1])
+        ):
+            roots.add(output_name)
+            continue
+        if (
+            input_tensor is not None
+            and len(list(input_tensor.shape)) >= rank
+            and is_channel_last_logical_layout(normalize_logical_layout(input_tensor.logical_layout))
+            and len(list(output_tensor.shape)) >= 1
+            and len(list(input_tensor.shape)) >= 1
+            and int(list(output_tensor.shape)[-1]) == int(list(input_tensor.shape)[-1])
+        ):
+            roots.add(output_name)
+            continue
+        if _is_channel_last_factorized_reshape(input_tensor, output_tensor):
+            roots.add(output_name)
+            continue
+        if _is_channel_last_factorized_rank3_sequence_reshape(input_tensor, output_tensor):
+            roots.add(output_name)
+            continue
+        if input_tensor is not None and rank == 3 and len(list(input_tensor.shape)) == 3:
+            input_shape = [int(v) for v in list(input_tensor.shape)]
+            output_shape = [int(v) for v in list(output_tensor.shape)]
+            if (
+                int(np.prod(input_shape, dtype=np.int64)) == int(np.prod(output_shape, dtype=np.int64))
+                and is_channel_last_logical_layout(normalize_logical_layout(input_tensor.logical_layout))
+            ):
+                for consumer_idx in consumers.get(output_name, []):
+                    consumer = model_ir.operators[int(consumer_idx)]
+                    if (
+                        str(consumer.op_type) != "BATCH_MATMUL"
+                        or len(consumer.inputs) < 2
+                        or str(consumer.inputs[0]) != output_name
+                        or not bool(consumer.options.get("adjX", False))
+                    ):
+                        continue
+                    rhs_tensor = model_ir.tensors.get(str(consumer.inputs[1]), None)
+                    if rhs_tensor is None or len(list(rhs_tensor.shape)) < 2:
+                        continue
+                    rhs_contract = int(list(rhs_tensor.shape)[-2])
+                    if rhs_contract != int(input_shape[-1]):
+                        continue
+                    roots.add(output_name)
+                    break
+                if output_name in roots:
+                    continue
+        if input_tensor is not None and rank == 3 and len(list(input_tensor.shape)) in {4, 5}:
+            input_shape = [int(v) for v in list(input_tensor.shape)]
+            output_shape = [int(v) for v in list(output_tensor.shape)]
+            if (
+                int(np.prod(input_shape, dtype=np.int64)) == int(np.prod(output_shape, dtype=np.int64))
+                and _is_time_major_recurrent_bridge(output_name)
+            ):
+                roots.add(output_name)
+                input_name = str(op.inputs[0])
+                roots.add(input_name)
+                producer: Optional[OperatorIR] = None
+                producer_output_name = ""
+                producer_rank = -1
+                producer_idx = producers.get(input_name, None)
+                if producer_idx is not None:
+                    producer = model_ir.operators[int(producer_idx)]
+                    producer_output_name = str(producer.outputs[0]) if len(producer.outputs) == 1 else ""
+                    producer_output_tensor = (
+                        model_ir.tensors.get(producer_output_name, None)
+                        if producer_output_name != ""
+                        else None
+                    )
+                    producer_rank = (
+                        len(list(producer_output_tensor.shape))
+                        if producer_output_tensor is not None
+                        else -1
+                    )
+                if (
+                    producer is not None
+                    and str(producer.op_type) == "TRANSPOSE"
+                    and producer_rank in {4, 5}
+                ):
+                    if len(producer.inputs) >= 1:
+                        producer_input_name = str(producer.inputs[0])
+                        roots.update(_trace_feature_last_passthrough_inputs(producer_input_name))
+                    roots.add(producer_output_name)
+                continue
+            if (
+                int(np.prod(input_shape[1:], dtype=np.int64))
+                == int(np.prod(output_shape[1:], dtype=np.int64))
+                and (
+                    is_channel_last_logical_layout(normalize_logical_layout(input_tensor.logical_layout))
+                    or int(input_shape[-1]) == 1
+                )
+            ):
+                for consumer_idx in consumers.get(output_name, []):
+                    consumer = model_ir.operators[int(consumer_idx)]
+                    if (
+                        str(consumer.op_type) != "BATCH_MATMUL"
+                        or len(consumer.inputs) < 2
+                        or str(consumer.inputs[1]) != output_name
+                    ):
+                        continue
+                    lhs_tensor = model_ir.tensors.get(str(consumer.inputs[0]), None)
+                    if lhs_tensor is None or len(list(lhs_tensor.shape)) < 2:
+                        continue
+                    lhs_shape = [int(v) for v in list(lhs_tensor.shape)]
+                    if int(lhs_shape[-1]) != int(output_shape[-2]):
+                        continue
+                    roots.add(output_name)
+                    break
+                if output_name in roots:
+                    continue
+        raw_shape = op.options.get("onnxRawNewShape", None)
+        new_shape = op.options.get("newShape", None)
+        if not isinstance(raw_shape, list) or not isinstance(new_shape, list):
+            continue
+        raw_shape_values = [int(v) for v in list(raw_shape)]
+        new_shape_values = [int(v) for v in list(new_shape)]
+        if raw_shape_values == new_shape_values:
+            continue
+        if len(raw_shape_values) != rank or len(new_shape_values) != rank:
+            continue
+        if consumers.get(output_name):
+            if any(
+                str(model_ir.operators[int(consumer_idx)].op_type) == "TRANSPOSE"
+                and _read_transpose_perm(model_ir, model_ir.operators[int(consumer_idx)]) == _perm_cf_to_cl(rank)
+                for consumer_idx in consumers.get(output_name, [])
+            ):
+                continue
+        roots.add(output_name)
+
+    preserve_names: Set[str] = set(roots)
+    if len(roots) == 0:
+        return preserve_names
+
+    layout_passthrough_ops = {
+        "ABS",
+        "ADD",
+        "AVERAGE_POOL_2D",
+        "ATAN",
+        "BATCH_MATMUL",
+        "BROADCAST_TO",
+        "CAST",
+        "CEIL",
+        "CONCATENATION",
+        "COS",
+        "DEPTH_TO_SPACE",
+        "DIV",
+        "ELU",
+        "ERF",
+        "EXP",
+        "EXPAND_DIMS",
+        "GATHER",
+        "GATHER_ND",
+        "GELU",
+        "IDENTITY",
+        "LEAKY_RELU",
+        "LOG",
+        "LOGISTIC",
+        "MATMUL",
+        "MAXIMUM",
+        "MEAN",
+        "MINIMUM",
+        "MUL",
+        "MAX_POOL_2D",
+        "NEG",
+        "PACK",
+        "POW",
+        "RELU",
+        "RELU6",
+        "RESHAPE",
+        "RESIZE_BILINEAR",
+        "RESIZE_NEAREST_NEIGHBOR",
+        "SIGMOID",
+        "SIGN",
+        "SIN",
+        "SLICE",
+        "SOFTMAX",
+        "SPACE_TO_DEPTH",
+        "SPLIT",
+        "SQRT",
+        "SQUARE",
+        "SQUEEZE",
+        "STRIDED_SLICE",
+        "SUB",
+        "SUM",
+        "TANH",
+        "TILE",
+        "TRANSPOSE",
+        "UNPACK",
+    }
+    changed = True
+    while changed:
+        changed = False
+        for op in model_ir.operators:
+            op_type = str(op.op_type)
+            if op_type not in layout_passthrough_ops:
+                continue
+            input_names = [str(v) for v in op.inputs]
+            output_names = [str(v) for v in op.outputs]
+            if len(output_names) == 0:
+                continue
+            has_preserved_input = any(name in preserve_names for name in input_names)
+            has_preserved_output = any(name in preserve_names for name in output_names)
+            if not has_preserved_input and not has_preserved_output:
+                continue
+            if has_preserved_input:
+                if op_type != "TRANSPOSE" or len(op.outputs) != 1:
+                    for output_name in output_names:
+                        if output_name not in preserve_names:
+                            preserve_names.add(output_name)
+                            changed = True
+                else:
+                    output_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+                    rank = len(list(output_tensor.shape)) if output_tensor is not None else -1
+                    perm = _read_transpose_perm(model_ir, op)
+                    if not (
+                        rank in {3, 4, 5}
+                        and (
+                            perm == _perm_cl_to_cf(rank)
+                            or perm == _perm_cf_to_cl(rank)
+                        )
+                    ):
+                        for output_name in output_names:
+                            if output_name not in preserve_names:
+                                preserve_names.add(output_name)
+                                changed = True
+            if has_preserved_output:
+                if (
+                    op_type == "RESHAPE"
+                    and len(op.inputs) >= 1
+                    and len(op.outputs) == 1
+                    and _is_channel_last_factorized_rank3_sequence_reshape(
+                        model_ir.tensors.get(str(op.inputs[0]), None),
+                        model_ir.tensors.get(str(op.outputs[0]), None),
+                    )
+                ):
+                    continue
+                if op_type != "TRANSPOSE" or len(op.inputs) < 1:
+                    for input_name in input_names:
+                        if input_name not in preserve_names:
+                            preserve_names.add(input_name)
+                            changed = True
+                else:
+                    input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+                    rank = len(list(input_tensor.shape)) if input_tensor is not None else -1
+                    perm = _read_transpose_perm(model_ir, op)
+                    if not (
+                        rank in {3, 4, 5}
+                        and (
+                            perm == _perm_cl_to_cf(rank)
+                            or perm == _perm_cf_to_cl(rank)
+                        )
+                    ):
+                        for input_name in input_names:
+                            if input_name not in preserve_names:
+                                preserve_names.add(input_name)
+                                changed = True
+    return preserve_names
+
+
+def _apply_feature_last_sequence_layouts(
+    model_ir: ModelIR,
+    preserve_channel_last_tensor_names: Set[str],
+) -> None:
+    if len(preserve_channel_last_tensor_names) == 0:
+        return
+    producers: Dict[str, int] = {}
+    consumers: Dict[str, List[int]] = {}
+    for op_idx, op in enumerate(model_ir.operators):
+        for output_name in op.outputs:
+            producers[str(output_name)] = int(op_idx)
+    for op_idx, op in enumerate(model_ir.operators):
+        for input_name in op.inputs:
+            consumers.setdefault(str(input_name), []).append(int(op_idx))
+    for tensor_name in preserve_channel_last_tensor_names:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            continue
+        rank = len(list(tensor.shape))
+        if rank not in {3, 4, 5}:
+            continue
+        if is_channel_last_logical_layout(
+            normalize_logical_layout(tensor.logical_layout)
+        ):
+            continue
+        tensor.logical_layout = LOGICAL_LAYOUT_UNKNOWN
+
+    for op in model_ir.operators:
+        output_name = str(op.outputs[0]) if len(op.outputs) == 1 else None
+        if output_name is None or output_name not in preserve_channel_last_tensor_names:
+            continue
+        output_tensor = model_ir.tensors.get(output_name, None)
+        if output_tensor is None:
+            continue
+        rank = len(list(output_tensor.shape))
+        if rank not in {3, 4, 5}:
+            continue
+        op_type = str(op.op_type)
+        input_tensor = model_ir.tensors.get(str(op.inputs[0]), None) if len(op.inputs) >= 1 else None
+        if op_type == "TRANSPOSE":
+            perm = _read_transpose_perm(model_ir, op)
+            if output_name in preserve_channel_last_tensor_names and rank == 3 and perm == [1, 0, 2]:
+                output_tensor.logical_layout = channel_last_logical_layout(rank)
+                continue
+            if perm == _perm_cf_to_cl(rank):
+                input_layout = normalize_logical_layout(
+                    input_tensor.logical_layout if input_tensor is not None else LOGICAL_LAYOUT_UNKNOWN
+                )
+                if (
+                    rank == 3
+                    and output_name in set(str(v) for v in model_ir.outputs)
+                    and output_name not in preserve_channel_last_tensor_names
+                    and is_channel_last_logical_layout(input_layout)
+                ):
+                    output_tensor.logical_layout = channel_first_logical_layout(rank)
+                else:
+                    output_tensor.logical_layout = channel_last_logical_layout(rank)
+            elif rank in {4, 5}:
+                output_tensor.logical_layout = channel_last_logical_layout(rank)
+            elif (
+                input_tensor is not None
+                and is_channel_last_logical_layout(normalize_logical_layout(input_tensor.logical_layout))
+                and isinstance(perm, list)
+                and len(perm) == rank
+                and sorted(int(v) for v in perm) == list(range(rank))
+                and int(perm[0]) == 0
+                and int(perm[-1]) == rank - 1
+            ):
+                output_tensor.logical_layout = channel_last_logical_layout(rank)
+            continue
+        if op_type == "RESHAPE":
+            should_mark_channel_last = False
+            if output_name in preserve_channel_last_tensor_names and rank == 3:
+                should_mark_channel_last = True
+            if (
+                not should_mark_channel_last
+                and output_name in set(str(v) for v in model_ir.outputs)
+                and input_tensor is not None
+                and len(list(input_tensor.shape)) >= rank
+                and len(list(output_tensor.shape)) >= 1
+                and len(list(input_tensor.shape)) >= 1
+                and int(list(output_tensor.shape)[-1]) == int(list(input_tensor.shape)[-1])
+            ):
+                should_mark_channel_last = True
+            if (
+                not should_mark_channel_last
+                and input_tensor is not None
+                and is_channel_last_logical_layout(normalize_logical_layout(input_tensor.logical_layout))
+                and int(list(output_tensor.shape)[-1]) == int(list(input_tensor.shape)[-1])
+            ):
+                should_mark_channel_last = True
+            raw_shape = op.options.get("onnxRawNewShape", None)
+            if not should_mark_channel_last and isinstance(raw_shape, list):
+                raw_shape_values = [int(v) for v in list(raw_shape)]
+                if len(raw_shape_values) == rank:
+                    current_shape = [int(v) for v in list(output_tensor.shape)]
+                    if raw_shape_values != current_shape and raw_shape_values[-1] == current_shape[-1]:
+                        should_mark_channel_last = True
+            if not should_mark_channel_last and _is_channel_last_factorized_reshape(input_tensor, output_tensor):
+                should_mark_channel_last = True
+            if (
+                not should_mark_channel_last
+                and _is_channel_last_factorized_rank3_sequence_reshape(input_tensor, output_tensor)
+            ):
+                should_mark_channel_last = True
+            if should_mark_channel_last:
+                output_tensor.logical_layout = channel_last_logical_layout(rank)
+            continue
+
+    safe_passthrough_ops = {
+        "ABS",
+        "ADD",
+        "ATAN",
+        "AVERAGE_POOL_2D",
+        "BATCH_MATMUL",
+        "CAST",
+        "CONCATENATION",
+        "DEPTH_TO_SPACE",
+        "DIV",
+        "ELU",
+        "ERF",
+        "EXP",
+        "EXPAND_DIMS",
+        "GELU",
+        "IDENTITY",
+        "LOGISTIC",
+        "MAXIMUM",
+        "MAX_POOL_2D",
+        "MEAN",
+        "MINIMUM",
+        "MUL",
+        "NEG",
+        "PACK",
+        "RELU",
+        "RELU6",
+        "RESHAPE",
+        "RESIZE_BILINEAR",
+        "RESIZE_NEAREST_NEIGHBOR",
+        "SIGMOID",
+        "SIGN",
+        "SIN",
+        "SLICE",
+        "SOFTMAX",
+        "SPACE_TO_DEPTH",
+        "SPLIT",
+        "SQRT",
+        "SQUARE",
+        "SQUEEZE",
+        "STRIDED_SLICE",
+        "SUB",
+        "SUM",
+        "TANH",
+        "TILE",
+        "UNPACK",
+    }
+    changed = True
+    while changed:
+        changed = False
+        for op in model_ir.operators:
+            op_type = str(op.op_type)
+            if op_type not in safe_passthrough_ops or len(op.outputs) == 0:
+                continue
+            input_tensors = [model_ir.tensors.get(str(name), None) for name in op.inputs]
+            if not any(
+                tensor is not None
+                and is_channel_last_logical_layout(normalize_logical_layout(tensor.logical_layout))
+                for tensor in input_tensors
+            ):
+                continue
+            for output_name in op.outputs:
+                output_tensor = model_ir.tensors.get(str(output_name), None)
+                if output_tensor is None:
+                    continue
+                rank = len(list(output_tensor.shape))
+                if rank not in {3, 4, 5}:
+                    continue
+                target_layout = channel_last_logical_layout(rank)
+                if normalize_logical_layout(output_tensor.logical_layout) != target_layout:
+                    output_tensor.logical_layout = target_layout
+                    changed = True
+    for op in model_ir.operators:
+        if str(op.op_type) != "RESHAPE" or len(op.outputs) != 1:
+            continue
+        output_name = str(op.outputs[0])
+        if output_name not in preserve_channel_last_tensor_names:
+            continue
+        if consumers.get(output_name):
+            if any(
+                str(model_ir.operators[int(consumer_idx)].op_type) == "TRANSPOSE"
+                and _read_transpose_perm(model_ir, model_ir.operators[int(consumer_idx)])
+                == _perm_cf_to_cl(len(list(model_ir.tensors[output_name].shape)))
+                for consumer_idx in consumers.get(output_name, [])
+            ):
+                continue
+        raw_shape = op.options.get("onnxRawNewShape", None)
+        if not isinstance(raw_shape, list):
+            continue
+        raw_shape_values = [int(v) for v in list(raw_shape)]
+        output_tensor = model_ir.tensors.get(output_name, None)
+        if output_tensor is None or len(raw_shape_values) != len(list(output_tensor.shape)):
+            continue
+        output_tensor.shape = list(raw_shape_values)
+        output_tensor.shape_signature = list(raw_shape_values)
+        op.options["newShape"] = list(raw_shape_values)
+        if len(op.inputs) >= 2:
+            shape_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+            if shape_tensor is not None and isinstance(shape_tensor.data, np.ndarray):
+                dtype = np.asarray(shape_tensor.data).dtype
+                shape_tensor.data = np.asarray(raw_shape_values, dtype=dtype)
+                shape_tensor.shape = [int(len(raw_shape_values))]
+                shape_tensor.shape_signature = [int(len(raw_shape_values))]
+
+
+def _rewrite_layout_sensitive_ops(
+    model_ir: ModelIR,
+    original_layouts: Dict[str, str],
+    preserve_channel_last_tensor_names: Set[str],
+) -> None:
+    rewritten_constant_tensor_names: Set[str] = set()
+
+    def _rewrite_tensor_once(
+        tensor_name: str,
+        rewrite_fn: Callable[[], bool],
+    ) -> None:
+        if str(tensor_name) in rewritten_constant_tensor_names:
+            return
+        if rewrite_fn():
+            rewritten_constant_tensor_names.add(str(tensor_name))
+
+    for op in model_ir.operators:
+        op_type = str(op.op_type)
+        data_input_name = _primary_data_input_name(op)
+        data_tensor = model_ir.tensors.get(str(data_input_name), None) if data_input_name is not None else None
+        if data_tensor is None:
+            continue
+        if any(str(name) in preserve_channel_last_tensor_names for name in list(op.inputs) + list(op.outputs)):
+            continue
+        original_layout = normalize_logical_layout(original_layouts.get(str(data_input_name), data_tensor.logical_layout))
+        rank = len(list(data_tensor.shape))
+        if rank not in {3, 4, 5} or not is_channel_last_logical_layout(original_layout):
+            continue
+        target_layout = channel_first_logical_layout(rank)
+
+        if op_type in {"CONCATENATION", "PACK", "UNPACK", "GATHER", "SOFTMAX", "ARG_MAX", "ARG_MIN"}:
+            axis = op.options.get("axis", None)
+            if axis is not None:
+                op.options["axis"] = rewrite_axis_for_layout(
+                    axis=int(axis),
+                    source_layout=original_layout,
+                    target_layout=target_layout,
+                    rank=rank,
+                )
+            if op_type in {"ARG_MAX", "ARG_MIN"} and len(op.inputs) >= 2:
+                axis_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+                if axis_tensor is not None:
+                    resolved_axis_tensor = axis_tensor
+                    _rewrite_tensor_once(
+                        str(op.inputs[1]),
+                        lambda: _rewrite_axis_constant_inplace(
+                            tensor=resolved_axis_tensor,
+                            source_layout=original_layout,
+                            target_layout=target_layout,
+                            rank=rank,
+                        ),
+                    )
+        elif op_type == "SPLIT":
+            axis = op.options.get("axis", None)
+            if axis is not None:
+                op.options["axis"] = rewrite_axis_for_layout(
+                    axis=int(axis),
+                    source_layout=original_layout,
+                    target_layout=target_layout,
+                    rank=rank,
+                )
+            if len(op.inputs) >= 1:
+                axis_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+                if axis_tensor is not None:
+                    resolved_axis_tensor = axis_tensor
+                    _rewrite_tensor_once(
+                        str(op.inputs[0]),
+                        lambda: _rewrite_axis_constant_inplace(
+                            tensor=resolved_axis_tensor,
+                            source_layout=original_layout,
+                            target_layout=target_layout,
+                            rank=rank,
+                        ),
+                    )
+        elif op_type in {"SUM", "MEAN", "REDUCE_MAX", "REDUCE_MIN", "REDUCE_PROD", "REDUCE_ANY"}:
+            if len(op.inputs) >= 2:
+                axis_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+                if axis_tensor is not None:
+                    resolved_axis_tensor = axis_tensor
+                    _rewrite_tensor_once(
+                        str(op.inputs[1]),
+                        lambda: _rewrite_axis_constant_inplace(
+                            tensor=resolved_axis_tensor,
+                            source_layout=original_layout,
+                            target_layout=target_layout,
+                            rank=rank,
+                        ),
+                    )
+        elif op_type in {"SLICE", "STRIDED_SLICE"}:
+            for input_name in op.inputs[1:4]:
+                vector_tensor = model_ir.tensors.get(str(input_name), None)
+                if vector_tensor is not None:
+                    _rewrite_tensor_once(
+                        str(input_name),
+                        lambda vector_tensor=vector_tensor: _rewrite_vector_constant_inplace(
+                            tensor=vector_tensor,
+                            perm=logical_layout_permutation(
+                                source_layout=original_layout,
+                                target_layout=target_layout,
+                            ) or [],
+                            expected_rank=rank,
+                        ),
+                    )
+        elif op_type in {"PAD", "PADV2", "MIRROR_PAD"} and len(op.inputs) >= 2:
+            pad_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+            if pad_tensor is not None:
+                _rewrite_tensor_once(
+                    str(op.inputs[1]),
+                    lambda pad_tensor=pad_tensor: _rewrite_matrix_constant_inplace(
+                        tensor=pad_tensor,
+                        perm=logical_layout_permutation(
+                            source_layout=original_layout,
+                            target_layout=target_layout,
+                        ) or [],
+                        expected_rank=rank,
+                    ),
+                )
+        elif op_type == "TRANSPOSE":
+            layout_perm = logical_layout_permutation(
+                source_layout=original_layout,
+                target_layout=target_layout,
+            ) or []
+            if len(layout_perm) != rank:
+                continue
+            old_axis_to_new_axis = [0] * rank
+            for new_axis, old_axis in enumerate(layout_perm):
+                old_axis_to_new_axis[int(old_axis)] = int(new_axis)
+            if len(op.inputs) >= 2:
+                perm_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+                if perm_tensor is not None and isinstance(perm_tensor.data, np.ndarray):
+                    resolved_perm_tensor = perm_tensor
+                    perm_tensor_dtype = np.asarray(resolved_perm_tensor.data).dtype
+                    perm_values = [int(v) for v in np.asarray(resolved_perm_tensor.data).reshape(-1).tolist()]
+                    if len(perm_values) == rank:
+                        def _rewrite_perm_tensor() -> bool:
+                            rewritten_perm = [int(old_axis_to_new_axis[int(axis)]) for axis in perm_values]
+                            resolved_perm_tensor.data = np.asarray(rewritten_perm, dtype=perm_tensor_dtype)
+                            resolved_perm_tensor.shape = [int(rank)]
+                            resolved_perm_tensor.shape_signature = [int(rank)]
+                            return True
+                        _rewrite_tensor_once(str(op.inputs[1]), _rewrite_perm_tensor)
+            elif "perm" in op.options:
+                perm_values = [int(v) for v in list(op.options.get("perm", []))]
+                if len(perm_values) == rank:
+                    op.options["perm"] = [int(old_axis_to_new_axis[int(axis)]) for axis in perm_values]
+        elif op_type in {"TRANSPOSE_CONV", "CONV_3D_TRANSPOSE"} and len(op.inputs) >= 1:
+            output_shape_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+            if output_shape_tensor is not None:
+                _rewrite_tensor_once(
+                    str(op.inputs[0]),
+                    lambda output_shape_tensor=output_shape_tensor: _rewrite_vector_constant_inplace(
+                        tensor=output_shape_tensor,
+                        perm=logical_layout_permutation(
+                            source_layout=original_layout,
+                            target_layout=target_layout,
+                        ) or [],
+                        expected_rank=rank,
+                    ),
+                )
+        elif op_type == "RESHAPE" and len(op.outputs) == 1:
+            out_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+            if out_tensor is not None:
+                preferred_shape = _preferred_reshape_target_values(out_tensor)
+                if preferred_shape is None:
+                    preferred_shape = [int(v) for v in list(out_tensor.shape)]
+                resolved_preferred_shape = [int(v) for v in list(preferred_shape)]
+                if len(op.inputs) >= 2:
+                    shape_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+                    if shape_tensor is not None and isinstance(shape_tensor.data, np.ndarray):
+                        resolved_shape_tensor = shape_tensor
+                        shape_tensor_dtype = np.asarray(resolved_shape_tensor.data).dtype
+                        def _rewrite_shape_tensor() -> bool:
+                            resolved_shape_tensor.data = np.asarray(resolved_preferred_shape, dtype=shape_tensor_dtype)
+                            resolved_shape_tensor.shape = [int(len(resolved_preferred_shape))]
+                            resolved_shape_tensor.shape_signature = [int(len(resolved_preferred_shape))]
+                            return True
+                        _rewrite_tensor_once(str(op.inputs[1]), _rewrite_shape_tensor)
+                op.options["newShape"] = list(resolved_preferred_shape)
+
+
+def _rewrite_filter_tensors_for_pytorch(model_ir: ModelIR) -> None:
+    rewritten_weights: Set[str] = set()
+    for op in model_ir.operators:
+        op_type = str(op.op_type)
+        if op_type not in {"CONV_2D", "DEPTHWISE_CONV_2D", "TRANSPOSE_CONV", "CONV_3D", "CONV_3D_TRANSPOSE"}:
+            continue
+        if len(op.inputs) < 2:
+            continue
+        weight_name = str(op.inputs[1])
+        if weight_name in rewritten_weights:
+            continue
+        tensor = model_ir.tensors.get(weight_name, None)
+        if tensor is None or not isinstance(tensor.data, np.ndarray):
+            continue
+        arr = np.asarray(tensor.data)
+        if op_type == "CONV_2D" and arr.ndim == 4:
+            tensor.data = np.transpose(arr, (0, 3, 1, 2)).copy()
+        elif op_type == "DEPTHWISE_CONV_2D" and arr.ndim == 4:
+            permuted = np.transpose(arr, (3, 0, 1, 2)).copy()
+            tensor.data = permuted.reshape(int(permuted.shape[0] * permuted.shape[1]), 1, int(permuted.shape[2]), int(permuted.shape[3]))
+        elif op_type == "TRANSPOSE_CONV" and arr.ndim == 4:
+            tensor.data = np.transpose(arr, (3, 0, 1, 2)).copy()
+        elif op_type in {"CONV_3D", "CONV_3D_TRANSPOSE"} and arr.ndim == 5:
+            if is_channel_last_logical_layout(normalize_logical_layout(tensor.logical_layout)):
+                tensor.data = np.transpose(arr, (4, 3, 0, 1, 2)).copy()
+            else:
+                continue
+        else:
+            continue
+        tensor.shape = [int(v) for v in list(tensor.data.shape)]
+        if tensor.shape_signature is not None and len(list(tensor.shape_signature)) == int(arr.ndim):
+            tensor.shape_signature = [int(v) for v in list(tensor.shape)]
+        rewritten_weights.add(weight_name)
+
+
+def _synchronize_reshape_targets_with_output_tensors(
+    model_ir: ModelIR,
+    preserve_channel_last_tensor_names: Set[str],
+) -> None:
+    for op in model_ir.operators:
+        if str(op.op_type) != "RESHAPE" or len(op.outputs) != 1:
+            continue
+        if str(op.outputs[0]) in preserve_channel_last_tensor_names:
+            continue
+        out_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+        if out_tensor is None:
+            continue
+        preferred_shape = _preferred_reshape_target_values(out_tensor)
+        if preferred_shape is None or len(preferred_shape) == 0:
+            continue
+        op.options["newShape"] = list(preferred_shape)
+        if len(op.inputs) < 2:
+            continue
+        shape_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+        if shape_tensor is None or not isinstance(shape_tensor.data, np.ndarray):
+            continue
+        dtype = np.asarray(shape_tensor.data).dtype
+        shape_tensor.data = np.asarray(preferred_shape, dtype=dtype)
+        shape_tensor.shape = [int(len(preferred_shape))]
+        shape_tensor.shape_signature = [int(len(preferred_shape))]
+
+
+def _remove_redundant_layout_transposes(
+    model_ir: ModelIR,
+    original_layouts: Dict[str, str],
+    preserve_channel_last_tensor_names: Set[str],
+) -> None:
+    consumers: Dict[str, List[int]] = {}
+    for op_idx, op in enumerate(model_ir.operators):
+        for input_name in op.inputs:
+            consumers.setdefault(str(input_name), []).append(int(op_idx))
+
+    delete_op_indices: Set[int] = set()
+    for op_idx, op in enumerate(model_ir.operators):
+        if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 1 or len(op.outputs) != 1:
+            continue
+        input_name = str(op.inputs[0])
+        output_name = str(op.outputs[0])
+        if input_name in preserve_channel_last_tensor_names or output_name in preserve_channel_last_tensor_names:
+            continue
+        input_tensor = model_ir.tensors.get(input_name, None)
+        output_tensor = model_ir.tensors.get(output_name, None)
+        reference_tensor = output_tensor if output_tensor is not None else input_tensor
+        rank = len(list(reference_tensor.shape)) if reference_tensor is not None else -1
+        if rank not in {3, 4, 5}:
+            continue
+        consumer_op_types = {
+            str(model_ir.operators[int(consumer_idx)].op_type)
+            for consumer_idx in consumers.get(output_name, [])
+            if int(consumer_idx) != int(op_idx)
+        }
+        reshape_only_consumers = len(consumer_op_types) > 0 and consumer_op_types == {"RESHAPE"}
+        if (
+            reshape_only_consumers
+            and input_tensor is not None
+            and output_tensor is not None
+            and [int(v) for v in list(input_tensor.shape)] != [int(v) for v in list(output_tensor.shape)]
+        ):
+            continue
+        if len(consumer_op_types & {"GATHER", "GATHER_ND", "SLICE", "STRIDED_SLICE"}) > 0:
+            continue
+        perm = _read_transpose_perm(model_ir, op)
+        input_layout = normalize_logical_layout(original_layouts.get(input_name, LOGICAL_LAYOUT_UNKNOWN))
+        output_layout = normalize_logical_layout(original_layouts.get(output_name, LOGICAL_LAYOUT_UNKNOWN))
+        remove_as_identity = bool(
+            perm is not None
+            and (
+                perm == list(range(rank))
+                or _is_layout_only_transpose_by_shape(
+                    input_tensor=input_tensor,
+                    output_tensor=output_tensor,
+                    perm=perm,
+                )
+                and _is_standard_channel_layout_permutation(
+                    perm=perm,
+                    rank=rank,
+                )
+                or
+                (
+                    is_channel_last_logical_layout(input_layout)
+                    and perm == logical_layout_permutation(
+                        source_layout=input_layout,
+                        target_layout=channel_first_logical_layout(rank),
+                    )
+                )
+                or (
+                    is_channel_last_logical_layout(output_layout)
+                    and perm == logical_layout_permutation(
+                        source_layout=channel_first_logical_layout(rank),
+                        target_layout=output_layout,
+                    )
+                )
+                or _is_inconsistent_standard_layout_transpose(
+                    input_tensor=input_tensor,
+                    output_tensor=output_tensor,
+                    perm=perm,
+                ) and not reshape_only_consumers
+            )
+        )
+        if not remove_as_identity:
+            continue
+        if output_name in model_ir.outputs:
+            source_tensor = input_tensor if input_tensor is not None else output_tensor
+            if source_tensor is not None:
+                replacement = _clone_tensor(source_tensor)
+                replacement.name = output_name
+                model_ir.tensors[output_name] = replacement
+            model_ir.operators[int(op_idx)] = OperatorIR(
+                "IDENTITY",
+                [input_name],
+                [output_name],
+                {},
+            )
+            continue
+        for consumer_idx in consumers.get(output_name, []):
+            consumer = model_ir.operators[int(consumer_idx)]
+            consumer.inputs = [input_name if str(v) == output_name else str(v) for v in consumer.inputs]
+        delete_op_indices.add(int(op_idx))
+        model_ir.tensors.pop(output_name, None)
+
+    if len(delete_op_indices) > 0:
+        model_ir.operators = [
+            op for op_idx, op in enumerate(model_ir.operators) if int(op_idx) not in delete_op_indices
+        ]
+
+
+def _rewrite_atan2_ones_like_to_atan(model_ir: ModelIR) -> None:
+    for op in model_ir.operators:
+        if str(op.op_type) != "ATAN2" or len(op.inputs) != 2 or len(op.outputs) != 1:
+            continue
+        lhs_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+        rhs_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+        out_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+        if (
+            lhs_tensor is None
+            or rhs_tensor is None
+            or out_tensor is None
+            or not isinstance(rhs_tensor.data, np.ndarray)
+        ):
+            continue
+        rhs_values = np.asarray(rhs_tensor.data)
+        if rhs_values.size == 0 or not np.allclose(rhs_values, 1.0):
+            continue
+        lhs_shape = [int(v) for v in list(lhs_tensor.shape)]
+        out_shape = [int(v) for v in list(out_tensor.shape)]
+        if lhs_shape != out_shape:
+            continue
+        rhs_shape = [int(v) for v in list(rhs_tensor.shape)]
+        if rhs_shape != lhs_shape:
+            perm = _perm_cl_to_cf(len(rhs_shape))
+            perm_inv = _perm_cf_to_cl(len(rhs_shape))
+            if (
+                perm is None
+                or _permute_shape(rhs_shape, perm) != lhs_shape
+            ) and (
+                perm_inv is None
+                or _permute_shape(rhs_shape, perm_inv) != lhs_shape
+            ):
+                continue
+        op.op_type = "ATAN"
+        op.inputs = [str(op.inputs[0])]
+
+
+def _has_recurrent_sequence_context(model_ir: ModelIR) -> bool:
+    recurrent_op_types = {
+        "GRU",
+        "LSTM",
+        "RNN",
+        "UNIDIRECTIONAL_SEQUENCE_RNN",
+        "UNIDIRECTIONAL_SEQUENCE_LSTM",
+        "BIDIRECTIONAL_SEQUENCE_LSTM",
+    }
+    if any(str(op.op_type) in recurrent_op_types for op in model_ir.operators):
+        return True
+    recurrent_name_tokens = ("_gru_", "_lstm_", "_rnn_")
+    for tensor_name in list(model_ir.inputs) + list(model_ir.outputs) + list(model_ir.tensors.keys()):
+        lowered = str(tensor_name).lower()
+        if any(token in lowered for token in recurrent_name_tokens):
+            return True
+    return False
+
+
+def _repair_orphan_recurrent_step_tensors(model_ir: ModelIR) -> None:
+    producer_index: Dict[str, int] = {}
+    consumers: Dict[str, List[int]] = {}
+    for op_idx, op in enumerate(model_ir.operators):
+        for output_name in op.outputs:
+            producer_index[str(output_name)] = int(op_idx)
+        for input_name in op.inputs:
+            consumers.setdefault(str(input_name), []).append(int(op_idx))
+
+    for tensor_name in list(model_ir.tensors.keys()):
+        tensor_name = str(tensor_name)
+        if tensor_name in producer_index or tensor_name in set(str(v) for v in model_ir.inputs):
+            continue
+        match = re.match(r"^(.+_(?:h|c)_step_)(\d+)$", tensor_name)
+        if match is None:
+            continue
+        shape_tensor_name = f"{match.group(1)}shape_{match.group(2)}"
+        replacement_name: Optional[str] = None
+        for op in model_ir.operators:
+            if str(op.op_type) != "RESHAPE" or len(op.inputs) < 2 or len(op.outputs) != 1:
+                continue
+            if str(op.inputs[1]) != shape_tensor_name:
+                continue
+            candidate_name = str(op.outputs[0])
+            if candidate_name == tensor_name:
+                replacement_name = None
+                break
+            replacement_name = candidate_name
+            break
+        if replacement_name is None:
+            continue
+        for consumer_idx in consumers.get(tensor_name, []):
+            consumer = model_ir.operators[int(consumer_idx)]
+            consumer.inputs = [
+                replacement_name if str(input_name) == tensor_name else str(input_name)
+                for input_name in consumer.inputs
+            ]
+        if tensor_name not in set(str(v) for v in model_ir.outputs):
+            model_ir.tensors.pop(tensor_name, None)
+
+
+def _reject_residual_layout_transposes(
+    model_ir: ModelIR,
+    preserve_channel_last_tensor_names: Set[str],
+) -> None:
+    consumers: Dict[str, List[int]] = {}
+    public_layout_bridge_tensor_names = model_ir.metadata.get("public_layout_bridge_tensor_names", [])
+    if not isinstance(public_layout_bridge_tensor_names, list):
+        public_layout_bridge_tensor_names = []
+    public_layout_bridge_tensor_name_set = {str(name) for name in public_layout_bridge_tensor_names}
+    for op_idx, op in enumerate(model_ir.operators):
+        for input_name in op.inputs:
+            consumers.setdefault(str(input_name), []).append(int(op_idx))
+
+    for op in model_ir.operators:
+        if str(op.op_type) != "TRANSPOSE":
+            continue
+        related_tensor_names = [str(v) for v in list(op.inputs) + list(op.outputs)]
+        if any(name in public_layout_bridge_tensor_name_set for name in related_tensor_names):
+            continue
+        if any(name in preserve_channel_last_tensor_names for name in related_tensor_names):
+            continue
+        recurrent_sequence_context = any(
+            token in name.lower()
+            for name in related_tensor_names
+            for token in ("_gru_", "_lstm_", "_rnn_")
+        )
+        output_name = str(op.outputs[0]) if len(op.outputs) > 0 else ""
+        output_tensor = model_ir.tensors.get(output_name, None)
+        rank = len(list(output_tensor.shape)) if output_tensor is not None else -1
+        if rank not in {3, 4, 5}:
+            continue
+        transpose_consumer_indices = [int(v) for v in consumers.get(output_name, [])]
+        if (
+            len(transpose_consumer_indices) > 0
+            and all(
+                str(model_ir.operators[int(consumer_idx)].op_type) == "RESHAPE"
+                for consumer_idx in transpose_consumer_indices
+            )
+        ):
+            continue
+        if recurrent_sequence_context and rank == 3:
+            continue
+        input_name = str(op.inputs[0]) if len(op.inputs) > 0 else ""
+        input_tensor = model_ir.tensors.get(input_name, None)
+        input_layout = normalize_logical_layout(input_tensor.logical_layout) if input_tensor is not None else LOGICAL_LAYOUT_UNKNOWN
+        output_layout = normalize_logical_layout(output_tensor.logical_layout) if output_tensor is not None else LOGICAL_LAYOUT_UNKNOWN
+        if input_layout == LOGICAL_LAYOUT_UNKNOWN and output_layout == LOGICAL_LAYOUT_UNKNOWN:
+            continue
+        perm = _read_transpose_perm(model_ir, op)
+        if _is_layout_only_transpose_by_shape(
+            input_tensor=input_tensor,
+            output_tensor=output_tensor,
+            perm=perm,
+        ):
+            continue
+        if _is_reshape_only_residual_layout_bridge_transpose(
+            model_ir=model_ir,
+            op=op,
+            consumers=consumers,
+        ):
+            continue
+        if perm == _perm_cl_to_cf(rank) or perm == _perm_cf_to_cl(rank):
+            raise ModelIRPyTorchExportError(
+                "Channel-first normalization failed: residual layout transpose remains. "
+                f"op_type={op.op_type} outputs={op.outputs} perm={perm}"
+            )
+
+
+def _is_reshape_only_residual_layout_bridge_transpose(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    consumers: Optional[Dict[str, List[int]]] = None,
+) -> bool:
+    if str(op.op_type) != "TRANSPOSE":
+        return False
+    output_name = str(op.outputs[0]) if len(op.outputs) > 0 else ""
+    output_tensor = model_ir.tensors.get(output_name, None)
+    rank = len(list(output_tensor.shape)) if output_tensor is not None else -1
+    if rank not in {3, 4, 5}:
+        return False
+    input_name = str(op.inputs[0]) if len(op.inputs) > 0 else ""
+    input_tensor = model_ir.tensors.get(input_name, None)
+    if input_tensor is None or output_tensor is None:
+        return False
+    perm = _read_transpose_perm(model_ir, op)
+    if perm != _perm_cl_to_cf(rank) and perm != _perm_cf_to_cl(rank):
+        return False
+    if [int(v) for v in list(input_tensor.shape)] != [int(v) for v in list(output_tensor.shape)]:
+        return False
+    if normalize_logical_layout(input_tensor.logical_layout) != normalize_logical_layout(output_tensor.logical_layout):
+        return False
+    if consumers is None:
+        consumers = {}
+        for op_idx, candidate in enumerate(model_ir.operators):
+            for candidate_input_name in candidate.inputs:
+                consumers.setdefault(str(candidate_input_name), []).append(int(op_idx))
+    user_indices = [int(v) for v in consumers.get(output_name, [])]
+    return len(user_indices) > 0 and all(
+        str(model_ir.operators[int(user_idx)].op_type) == "RESHAPE"
+        for user_idx in user_indices
+    )
+
+
+def _align_public_boundary_shapes_to_onnx_contract(model_ir: ModelIR) -> None:
+    boundary_map = model_ir.metadata.get("onnx_boundary_shape_signature_map", {})
+    public_layout_map = model_ir.metadata.get("onnx_public_layout_map", {})
+    if not isinstance(boundary_map, dict):
+        boundary_map = {}
+    if not isinstance(public_layout_map, dict):
+        public_layout_map = {}
+    producer_index: Dict[str, int] = {}
+    consumers: Dict[str, List[int]] = {}
+    for op_idx, op in enumerate(model_ir.operators):
+        for output_name in op.outputs:
+            producer_index[str(output_name)] = int(op_idx)
+        for input_name in op.inputs:
+            consumers.setdefault(str(input_name), []).append(int(op_idx))
+    recurrent_sequence_context = _has_recurrent_sequence_context(model_ir)
+    for tensor_name in list(model_ir.inputs) + list(model_ir.outputs):
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        boundary_shape = boundary_map.get(str(tensor_name), None)
+        if tensor is None:
+            continue
+        rank = len(list(tensor.shape))
+        desired_layout = normalize_logical_layout(
+            public_layout_map.get(
+                str(tensor_name),
+                channel_last_logical_layout(rank) if recurrent_sequence_context and rank == 3 else channel_first_logical_layout(rank),
+            )
+        ) if rank in {3, 4, 5} else LOGICAL_LAYOUT_UNKNOWN
+        current_layout = normalize_logical_layout(tensor.logical_layout)
+        if isinstance(boundary_shape, list) and len(boundary_shape) == rank:
+            tensor.shape_signature = [int(v) for v in list(boundary_shape)]
+            tensor.shape = [int(v) if int(v) > 0 else 1 for v in list(boundary_shape)]
+        elif (
+            rank in {3, 4, 5}
+            and desired_layout != LOGICAL_LAYOUT_UNKNOWN
+            and current_layout != LOGICAL_LAYOUT_UNKNOWN
+            and desired_layout != current_layout
+        ):
+            perm_to_public = logical_layout_permutation(
+                source_layout=current_layout,
+                target_layout=desired_layout,
+            )
+            current_shape_signature = list(tensor.shape_signature or tensor.shape)
+            permuted_shape = (
+                None
+                if perm_to_public is None
+                else _permute_shape(current_shape_signature, perm_to_public)
+            )
+            if permuted_shape is not None:
+                tensor.shape_signature = [int(v) for v in list(permuted_shape)]
+                tensor.shape = [int(v) if int(v) > 0 else 1 for v in list(permuted_shape)]
+        if rank in {3, 4, 5}:
+            tensor.logical_layout = desired_layout
+
+
+def _ensure_public_boundary_layout_bridges(
+    *,
+    model_ir: ModelIR,
+    desired_public_shape_map: Dict[str, List[int]],
+    desired_public_layout_map: Dict[str, str],
+) -> None:
+    used_tensor_names: Set[str] = set(model_ir.tensors.keys())
+    bridge_tensor_names = model_ir.metadata.get("public_layout_bridge_tensor_names", [])
+    if not isinstance(bridge_tensor_names, list):
+        bridge_tensor_names = []
+    model_ir.metadata["public_layout_bridge_tensor_names"] = bridge_tensor_names
+
+    def _insert_public_boundary_layout_bridge(
+        *,
+        tensor_name: str,
+        current_tensor: TensorIR,
+        desired_shape: Sequence[int],
+        desired_layout: str,
+        is_input: bool,
+    ) -> None:
+        current_shape = [int(v) for v in list(current_tensor.shape_signature or current_tensor.shape)]
+        target_shape = [int(v) for v in list(desired_shape)]
+        current_layout = normalize_logical_layout(current_tensor.logical_layout)
+        normalized_target_layout = normalize_logical_layout(desired_layout)
+        if (
+            len(current_shape) not in {3, 4, 5}
+            or len(current_shape) != len(target_shape)
+            or current_layout == LOGICAL_LAYOUT_UNKNOWN
+            or normalized_target_layout == LOGICAL_LAYOUT_UNKNOWN
+            or current_layout == normalized_target_layout
+        ):
+            return
+        perm = logical_layout_permutation(
+            source_layout=normalized_target_layout if is_input else current_layout,
+            target_layout=current_layout if is_input else normalized_target_layout,
+        )
+        expected_shape = current_shape if is_input else target_shape
+        seed_shape = target_shape if is_input else current_shape
+        if perm is None or _permute_shape(seed_shape, perm) != expected_shape:
+            return
+        bridge_tensor_name = _make_unique_identifier(
+            f"{tensor_name}_public_layout_bridge",
+            used_tensor_names,
+        )
+        bridge_tensor = _clone_tensor(current_tensor)
+        bridge_tensor.name = str(bridge_tensor_name)
+        model_ir.tensors[str(bridge_tensor_name)] = bridge_tensor
+        if str(bridge_tensor_name) not in bridge_tensor_names:
+            bridge_tensor_names.append(str(bridge_tensor_name))
+        perm_name = _make_unique_identifier(
+            f"{bridge_tensor_name}_perm",
+            used_tensor_names,
+        )
+        perm_arr = np.asarray([int(v) for v in list(perm)], dtype=np.int32)
+        model_ir.tensors[str(perm_name)] = TensorIR(
+            name=str(perm_name),
+            dtype="INT32",
+            shape=[int(perm_arr.size)],
+            shape_signature=[int(perm_arr.size)],
+            data=perm_arr,
+        )
+        if is_input:
+            for op in model_ir.operators:
+                op.inputs = [
+                    str(bridge_tensor_name) if str(name) == str(tensor_name) else str(name)
+                    for name in list(op.inputs)
+                ]
+            model_ir.operators.insert(
+                0,
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[str(tensor_name), str(perm_name)],
+                    outputs=[str(bridge_tensor_name)],
+                    options={"perm": [int(v) for v in list(perm)]},
+                ),
+            )
+            return
+        for op in model_ir.operators:
+            op.outputs = [
+                str(bridge_tensor_name) if str(name) == str(tensor_name) else str(name)
+                for name in list(op.outputs)
+            ]
+            op.inputs = [
+                str(bridge_tensor_name) if str(name) == str(tensor_name) else str(name)
+                for name in list(op.inputs)
+            ]
+        model_ir.operators.append(
+            OperatorIR(
+                op_type="TRANSPOSE",
+                inputs=[str(bridge_tensor_name), str(perm_name)],
+                outputs=[str(tensor_name)],
+                options={"perm": [int(v) for v in list(perm)]},
+            )
+        )
+
+    for tensor_name in list(model_ir.inputs):
+        current_tensor = model_ir.tensors.get(str(tensor_name), None)
+        desired_shape = desired_public_shape_map.get(str(tensor_name), None)
+        desired_layout = desired_public_layout_map.get(str(tensor_name), LOGICAL_LAYOUT_UNKNOWN)
+        if current_tensor is None or desired_shape is None:
+            continue
+        _insert_public_boundary_layout_bridge(
+            tensor_name=str(tensor_name),
+            current_tensor=current_tensor,
+            desired_shape=desired_shape,
+            desired_layout=desired_layout,
+            is_input=True,
+        )
+
+    for tensor_name in list(model_ir.outputs):
+        current_tensor = model_ir.tensors.get(str(tensor_name), None)
+        desired_shape = desired_public_shape_map.get(str(tensor_name), None)
+        desired_layout = desired_public_layout_map.get(str(tensor_name), LOGICAL_LAYOUT_UNKNOWN)
+        if current_tensor is None or desired_shape is None:
+            continue
+        _insert_public_boundary_layout_bridge(
+            tensor_name=str(tensor_name),
+            current_tensor=current_tensor,
+            desired_shape=desired_shape,
+            desired_layout=desired_layout,
+            is_input=False,
+        )
+
+
+def validate_channel_first_exportability(
+    model_ir: ModelIR,
+    preserve_channel_last_tensor_names: Set[str],
+) -> None:
+    layout_sensitive_ops = {
+        "AVERAGE_POOL_2D",
+        "CONCATENATION",
+        "CONV_2D",
+        "CONV_3D",
+        "CONV_3D_TRANSPOSE",
+        "DEPTHWISE_CONV_2D",
+        "DEPTH_TO_SPACE",
+        "GATHER",
+        "GATHER_ND",
+        "MAX_POOL_2D",
+        "MEAN",
+        "MIRROR_PAD",
+        "PAD",
+        "PADV2",
+        "RESIZE_BILINEAR",
+        "RESIZE_NEAREST_NEIGHBOR",
+        "SCATTER_ND",
+        "SLICE",
+        "SOFTMAX",
+        "SPACE_TO_DEPTH",
+        "SPLIT",
+        "STRIDED_SLICE",
+        "TRANSPOSE_CONV",
+        "UNPACK",
+    }
+    public_layout_bridge_tensor_names = set(
+        str(name)
+        for name in list(model_ir.metadata.get("public_layout_bridge_tensor_names", []))
+    )
+    problems: List[str] = []
+    for op in model_ir.operators:
+        op_type = str(op.op_type)
+        if op_type not in layout_sensitive_ops:
+            continue
+        related_tensor_names = [
+            str(v) for v in list(op.inputs) + list(op.outputs)
+        ]
+        related_lowered_names = [name.lower() for name in related_tensor_names]
+        recurrent_sequence_context = any(
+            token in name
+            for name in related_lowered_names
+            for token in ("_gru_", "_lstm_", "_rnn_")
+        )
+        tensor_names: List[str] = []
+        primary_name = _primary_data_input_name(op)
+        if primary_name is not None:
+            tensor_names.append(str(primary_name))
+        tensor_names.extend(str(v) for v in list(op.outputs))
+        for tensor_name in tensor_names:
+            tensor = model_ir.tensors.get(str(tensor_name), None)
+            if tensor is None:
+                continue
+            rank = len(list(tensor.shape))
+            if rank not in {3, 4, 5}:
+                continue
+            if str(tensor_name) in preserve_channel_last_tensor_names:
+                continue
+            if str(tensor_name) in public_layout_bridge_tensor_names:
+                continue
+            if recurrent_sequence_context and op_type in {"CONCATENATION", "SLICE", "STRIDED_SLICE", "SPLIT"}:
+                continue
+            layout = normalize_logical_layout(tensor.logical_layout)
+            if (
+                layout == LOGICAL_LAYOUT_UNKNOWN
+                and op_type == "SCATTER_ND"
+                and primary_name is not None
+                and str(tensor_name) == str(primary_name)
+            ):
+                continue
+            if (
+                layout == LOGICAL_LAYOUT_UNKNOWN
+                and op_type == "SCATTER_ND"
+                and str(tensor_name) in {str(v) for v in list(op.outputs)}
+                and str(tensor_name) not in {str(v) for v in list(model_ir.outputs)}
+            ):
+                continue
+            if (
+                layout == LOGICAL_LAYOUT_UNKNOWN
+                and rank in {3, 5}
+                and op_type in {"CONCATENATION", "GATHER", "GATHER_ND", "SLICE", "SPLIT", "STRIDED_SLICE"}
+            ):
+                continue
+            if (
+                layout == LOGICAL_LAYOUT_UNKNOWN
+                and rank in {4, 5}
+                and op_type in {"GATHER", "GATHER_ND", "SLICE", "SPLIT", "STRIDED_SLICE"}
+                and _is_degenerate_sequence_like_rank4_or_rank5_tensor(tensor)
+            ):
+                continue
+            if (
+                layout == LOGICAL_LAYOUT_UNKNOWN
+                and op_type == "SOFTMAX"
+                and (
+                    _is_attention_like_softmax_op(model_ir, op)
+                    or _is_transpose_sandwiched_last_axis_softmax_op(model_ir, op)
+                )
+            ):
+                continue
+            if (
+                rank == 4
+                and is_channel_last_logical_layout(layout)
+                and _is_pytorch_channel_first_safe_rank4_island_op(model_ir, op)
+            ):
+                continue
+            if layout == LOGICAL_LAYOUT_UNKNOWN or is_channel_last_logical_layout(layout):
+                problems.append(
+                    f"op_type={op_type} tensor={tensor_name} logical_layout={layout}"
+                )
+    if len(problems) > 0:
+        raise ModelIRPyTorchExportError(
+            "Channel-first normalization failed: semantic layout annotations are incomplete. "
+            f"problems={sorted(set(problems))}"
+        )
+
+
+def _is_rank4_channel_last_dynamic_tensor(tensor: Optional[TensorIR]) -> bool:
+    if tensor is None or isinstance(tensor.data, np.ndarray):
+        return False
+    return (
+        len(list(tensor.shape)) == 4
+        and is_channel_last_logical_layout(normalize_logical_layout(tensor.logical_layout))
+    )
+
+
+def _is_pytorch_channel_first_safe_rank4_island_op(
+    model_ir: ModelIR,
+    op: OperatorIR,
+) -> bool:
+    op_type = str(op.op_type)
+    passthrough_op_types = {
+        "ADD",
+        "AVERAGE_POOL_2D",
+        "CONCATENATION",
+        "CONV_2D",
+        "DEPTHWISE_CONV_2D",
+        "DIV",
+        "LEAKY_RELU",
+        "LOGISTIC",
+        "MAX_POOL_2D",
+        "MAXIMUM",
+        "MINIMUM",
+        "MUL",
+        "RELU",
+        "RELU6",
+        "SUB",
+        "TANH",
+    }
+    if op_type in passthrough_op_types:
+        relevant_dynamic_tensors = [
+            tensor
+            for tensor_name in list(op.inputs) + list(op.outputs)
+            for tensor in [model_ir.tensors.get(str(tensor_name), None)]
+            if _is_rank4_channel_last_dynamic_tensor(tensor)
+        ]
+        return len(relevant_dynamic_tensors) > 0
+    return False
+
+
+def _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island(
+    model_ir: ModelIR,
+) -> bool:
+    public_boundary_names = [str(name) for name in list(model_ir.inputs) + list(model_ir.outputs)]
+    if len(public_boundary_names) == 0:
+        return False
+    for tensor_name in public_boundary_names:
+        tensor = model_ir.tensors.get(tensor_name, None)
+        if tensor is None:
+            return False
+        rank = len(list(tensor.shape))
+        if rank not in {4, 5}:
+            return False
+        if not is_channel_last_logical_layout(normalize_logical_layout(tensor.logical_layout)):
+            return False
+    if any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators):
+        return False
+    for op in model_ir.operators:
+        if not _is_pytorch_channel_first_safe_rank4_island_op(model_ir, op):
+            return False
+    return True
+
+
+def _shrink_preserved_channel_last_regions_for_pytorch(
+    model_ir: ModelIR,
+    preserve_channel_last_tensor_names: Set[str],
+) -> Set[str]:
+    if len(preserve_channel_last_tensor_names) == 0:
+        return set()
+    if _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island(model_ir):
+        return {str(name) for name in preserve_channel_last_tensor_names}
+    producers: Dict[str, int] = {}
+    consumers: Dict[str, List[int]] = {}
+    for op_idx, op in enumerate(model_ir.operators):
+        for output_name in op.outputs:
+            producers[str(output_name)] = int(op_idx)
+        for input_name in op.inputs:
+            consumers.setdefault(str(input_name), []).append(int(op_idx))
+
+    public_boundary_names = {str(name) for name in list(model_ir.inputs) + list(model_ir.outputs)}
+    shrunken_preserve_names: Set[str] = {
+        str(name) for name in preserve_channel_last_tensor_names
+    }
+    for tensor_name in sorted(str(name) for name in preserve_channel_last_tensor_names):
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if not _is_rank4_channel_last_dynamic_tensor(tensor):
+            continue
+        if str(tensor_name) in public_boundary_names:
+            continue
+        producer_idx = producers.get(str(tensor_name), None)
+        if producer_idx is None:
+            continue
+        producer_op = model_ir.operators[int(producer_idx)]
+        if not _is_pytorch_channel_first_safe_rank4_island_op(model_ir, producer_op):
+            continue
+        consumer_indices = consumers.get(str(tensor_name), [])
+        if len(consumer_indices) == 0:
+            continue
+        if any(
+            str(model_ir.operators[int(consumer_idx)].op_type) == "DEPTHWISE_CONV_2D"
+            for consumer_idx in consumer_indices
+        ):
+            continue
+        if any(
+            not _is_pytorch_channel_first_safe_rank4_island_op(
+                model_ir,
+                model_ir.operators[int(consumer_idx)],
+            )
+            for consumer_idx in consumer_indices
+        ):
+            continue
+        shrunken_preserve_names.discard(str(tensor_name))
+    return shrunken_preserve_names
+
+
+def _restore_non_preserved_channel_first_layouts(
+    model_ir: ModelIR,
+    preserve_channel_last_tensor_names: Set[str],
+) -> None:
+    public_layout_bridge_tensor_names = {
+        str(name)
+        for name in list(model_ir.metadata.get("public_layout_bridge_tensor_names", []))
+    }
+    for tensor_name, tensor in model_ir.tensors.items():
+        if str(tensor_name) in preserve_channel_last_tensor_names:
+            continue
+        if str(tensor_name) in public_layout_bridge_tensor_names:
+            continue
+        rank = len(list(tensor.shape))
+        if rank not in {3, 4, 5}:
+            continue
+        layout = normalize_logical_layout(tensor.logical_layout)
+        if is_channel_last_logical_layout(layout):
+            tensor.logical_layout = channel_first_logical_layout(rank)
+
+
+def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
+    normalized = copy.deepcopy(model_ir)
+    original_public_boundary_shapes: Dict[str, List[int]] = {}
+    original_public_boundary_layouts: Dict[str, str] = {}
+    for tensor_name in list(model_ir.inputs) + list(model_ir.outputs):
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            continue
+        original_public_boundary_shapes[str(tensor_name)] = [
+            int(v) for v in list(tensor.shape_signature or tensor.shape)
+        ]
+        original_public_boundary_layouts[str(tensor_name)] = normalize_logical_layout(
+            tensor.logical_layout
+        )
+    infer_model_ir_logical_layouts(normalized)
+    preserve_channel_last_tensor_names = _collect_feature_last_sequence_tensor_names(normalized)
+    _apply_feature_last_sequence_layouts(normalized, preserve_channel_last_tensor_names)
+    if len(preserve_channel_last_tensor_names) > 0:
+        infer_model_ir_logical_layouts(normalized)
+    preserve_channel_last_tensor_names = _shrink_preserved_channel_last_regions_for_pytorch(
+        normalized,
+        preserve_channel_last_tensor_names,
+    )
+    _apply_feature_last_sequence_layouts(normalized, preserve_channel_last_tensor_names)
+    if len(preserve_channel_last_tensor_names) > 0:
+        infer_model_ir_logical_layouts(normalized)
+    annotation_problems = validate_model_ir_layout_annotations(normalized)
+    if len(annotation_problems) > 0:
+        raise ModelIRPyTorchExportError(
+            "Channel-first normalization failed: invalid semantic layout annotations. "
+            f"problems={annotation_problems}"
+        )
+    original_layouts = {
+        str(name): normalize_logical_layout(tensor.logical_layout)
+        for name, tensor in normalized.tensors.items()
+    }
+    _rewrite_layout_sensitive_ops(normalized, original_layouts, preserve_channel_last_tensor_names)
+    _propagate_pytorch_friendly_layouts(normalized)
+    kernel_weight_tensor_names = _collect_kernel_weight_tensor_names(normalized)
+    for tensor_name, tensor in normalized.tensors.items():
+        if str(tensor_name) in kernel_weight_tensor_names:
+            continue
+        if str(tensor_name) in preserve_channel_last_tensor_names:
+            continue
+        _permute_tensor_to_channel_first_inplace(tensor)
+    _synchronize_reshape_targets_with_output_tensors(normalized, preserve_channel_last_tensor_names)
+    _rewrite_filter_tensors_for_pytorch(normalized)
+    _remove_redundant_layout_transposes(normalized, original_layouts, preserve_channel_last_tensor_names)
+    _propagate_pytorch_friendly_layouts(normalized)
+    _apply_feature_last_sequence_layouts(normalized, preserve_channel_last_tensor_names)
+    _restore_non_preserved_channel_first_layouts(normalized, preserve_channel_last_tensor_names)
+    _rewrite_atan2_ones_like_to_atan(normalized)
+    _repair_orphan_recurrent_step_tensors(normalized)
+    public_layout_map = normalized.metadata.get("onnx_public_layout_map", None)
+    if not isinstance(public_layout_map, dict):
+        public_layout_map = {}
+        normalized.metadata["onnx_public_layout_map"] = public_layout_map
+    boundary_shape_map = normalized.metadata.get("onnx_boundary_shape_signature_map", None)
+    if not isinstance(boundary_shape_map, dict):
+        boundary_shape_map = {}
+        normalized.metadata["onnx_boundary_shape_signature_map"] = boundary_shape_map
+    preserve_public_channel_last_boundaries = _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island(
+        normalized
+    )
+    if isinstance(public_layout_map, dict):
+        for tensor_name in list(normalized.inputs) + list(normalized.outputs):
+            normalized_tensor_name = str(tensor_name)
+            original_layout = original_public_boundary_layouts.get(
+                normalized_tensor_name,
+                LOGICAL_LAYOUT_UNKNOWN,
+            )
+            if (
+                original_layout in {"NWC", "NHWC", "NDHWC"}
+                and (
+                    preserve_public_channel_last_boundaries
+                    or normalized_tensor_name in preserve_channel_last_tensor_names
+                )
+                and normalized_tensor_name in original_public_boundary_shapes
+            ):
+                public_layout_map[normalized_tensor_name] = original_layout
+                boundary_shape_map[normalized_tensor_name] = list(
+                    original_public_boundary_shapes[normalized_tensor_name]
+                )
+        for output_name in list(normalized.outputs):
+            normalized_output_name = str(output_name)
+            if normalized_output_name not in preserve_channel_last_tensor_names:
+                continue
+            output_tensor = normalized.tensors.get(normalized_output_name, None)
+            if output_tensor is None:
+                continue
+            output_rank = len(list(output_tensor.shape))
+            if output_rank in {3, 4, 5}:
+                public_layout_map[normalized_output_name] = channel_last_logical_layout(output_rank)
+        for op in normalized.operators:
+            if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 1 or len(op.outputs) != 1:
+                continue
+            output_name = str(op.outputs[0])
+            if output_name not in set(str(v) for v in normalized.outputs):
+                continue
+            if output_name in preserve_channel_last_tensor_names:
+                continue
+            output_tensor = normalized.tensors.get(output_name, None)
+            input_tensor = normalized.tensors.get(str(op.inputs[0]), None)
+            if output_tensor is None or input_tensor is None:
+                continue
+            output_rank = len(list(output_tensor.shape))
+            if output_rank != 3:
+                continue
+            if _read_transpose_perm(normalized, op) != _perm_cf_to_cl(output_rank):
+                continue
+            if is_channel_last_logical_layout(normalize_logical_layout(input_tensor.logical_layout)):
+                public_layout_map[output_name] = channel_first_logical_layout(output_rank)
+    _align_public_boundary_shapes_to_onnx_contract(normalized)
+    normalized.metadata["assume_channel_last_layout_tensor_names"] = []
+    _reject_residual_layout_transposes(normalized, preserve_channel_last_tensor_names)
+    validate_channel_first_exportability(normalized, preserve_channel_last_tensor_names)
+    return normalized
+
+
+def _is_attention_like_softmax_op(model_ir: ModelIR, op: OperatorIR) -> bool:
+    if str(op.op_type) != "SOFTMAX":
+        return False
+    reference_tensor: Optional[TensorIR] = None
+    if len(op.inputs) > 0:
+        reference_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+    if reference_tensor is None and len(op.outputs) > 0:
+        reference_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+    if reference_tensor is None:
+        return False
+    shape = [int(v) for v in list(reference_tensor.shape)]
+    rank = len(shape)
+    if rank < 3:
+        return False
+    axis = op.options.get("axis", None)
+    resolved_axis = int(axis) if axis is not None else rank - 1
+    if resolved_axis < 0:
+        resolved_axis += rank
+    if resolved_axis != rank - 1:
+        return False
+    if int(shape[-1]) <= 1:
+        return False
+    output_name = str(op.outputs[0]) if len(op.outputs) > 0 else ""
+    if output_name != "":
+        for consumer in model_ir.operators:
+            if output_name not in [str(v) for v in consumer.inputs]:
+                continue
+            if str(consumer.op_type) == "BATCH_MATMUL":
+                return True
+    if rank == 3 and int(shape[-2]) == int(shape[-1]):
+        return True
+    if rank >= 4 and int(shape[-2]) == int(shape[-1]) and 0 < int(shape[-3]) <= 64:
+        return True
+    return False
+
+
+def _is_transpose_sandwiched_last_axis_softmax_op(model_ir: ModelIR, op: OperatorIR) -> bool:
+    if str(op.op_type) != "SOFTMAX" or len(op.inputs) < 1 or len(op.outputs) != 1:
+        return False
+    input_name = str(op.inputs[0])
+    output_name = str(op.outputs[0])
+    input_tensor = model_ir.tensors.get(input_name, None)
+    output_tensor = model_ir.tensors.get(output_name, None)
+    if input_tensor is None or output_tensor is None:
+        return False
+    rank = len(list(input_tensor.shape))
+    if rank not in {3, 4, 5} or len(list(output_tensor.shape)) != rank:
+        return False
+    axis = int(op.options.get("axis", rank - 1))
+    if axis < 0:
+        axis += rank
+    if axis != rank - 1:
+        return False
+
+    producer_op: Optional[OperatorIR] = None
+    for candidate in model_ir.operators:
+        if input_name in [str(v) for v in candidate.outputs]:
+            producer_op = candidate
+            break
+    if producer_op is None or str(producer_op.op_type) != "TRANSPOSE" or len(producer_op.inputs) < 1:
+        return False
+    producer_perm = _read_transpose_perm(model_ir, producer_op)
+    if (
+        producer_perm is None
+        or len(producer_perm) != rank
+        or sorted(int(v) for v in producer_perm) != list(range(rank))
+        or [int(v) for v in producer_perm] == list(range(rank))
+    ):
+        return False
+
+    consumer_ops = [
+        candidate
+        for candidate in model_ir.operators
+        if output_name in [str(v) for v in candidate.inputs]
+    ]
+    if len(consumer_ops) != 1:
+        return False
+    consumer_op = consumer_ops[0]
+    if str(consumer_op.op_type) != "TRANSPOSE" or len(consumer_op.outputs) != 1:
+        return False
+    consumer_perm = _read_transpose_perm(model_ir, consumer_op)
+    if consumer_perm is None or len(consumer_perm) != rank:
+        return False
+    inverse_perm = [0] * rank
+    for new_axis, old_axis in enumerate(producer_perm):
+        inverse_perm[int(old_axis)] = int(new_axis)
+    if [int(v) for v in consumer_perm] != inverse_perm:
+        return False
+
+    source_tensor = model_ir.tensors.get(str(producer_op.inputs[0]), None)
+    restored_tensor = model_ir.tensors.get(str(consumer_op.outputs[0]), None)
+    if source_tensor is None or restored_tensor is None:
+        return False
+    source_layout = normalize_logical_layout(source_tensor.logical_layout)
+    restored_layout = normalize_logical_layout(restored_tensor.logical_layout)
+    if (
+        source_layout == LOGICAL_LAYOUT_UNKNOWN
+        or restored_layout == LOGICAL_LAYOUT_UNKNOWN
+        or source_layout != restored_layout
+    ):
+        return False
+    return True
+
+
+def _is_layout_agnostic_native_model_ir(model_ir: ModelIR) -> bool:
+    channel_sensitive_ops = {
+        "CONV_2D",
+        "DEPTHWISE_CONV_2D",
+        "TRANSPOSE_CONV",
+        "CONV_3D",
+        "CONV_3D_TRANSPOSE",
+        "MAX_POOL_2D",
+        "AVERAGE_POOL_2D",
+        "RESIZE_BILINEAR",
+        "RESIZE_NEAREST_NEIGHBOR",
+        "NON_MAX_SUPPRESSION_V4",
+    }
+    op_types = _collect_model_op_types(model_ir)
+    return len(op_types & channel_sensitive_ops) == 0
+
+
 def _sequence_lstm_input_name(op: OperatorIR, index: int) -> str:
     if int(index) < 0 or int(index) >= len(op.inputs):
         return ""
     return str(op.inputs[int(index)]).strip()
+
 
 def _tensor_has_constant_data(model_ir: ModelIR, tensor_name: str) -> bool:
     if str(tensor_name).strip() == "":
         return False
     tensor = model_ir.tensors.get(str(tensor_name), None)
     return tensor is not None and isinstance(tensor.data, np.ndarray)
+
 
 def _sequence_lstm_bias_inputs_supported(
     model_ir: ModelIR,
@@ -7414,6 +10031,7 @@ def _sequence_lstm_bias_inputs_supported(
     if len(non_empty_bias_names) != len(bias_names):
         return False
     return all(_tensor_has_constant_data(model_ir, name) for name in non_empty_bias_names)
+
 
 def _sequence_lstm_index_spec(op: OperatorIR) -> Optional[Dict[str, Any]]:
     op_type = str(op.op_type)
@@ -7472,6 +10090,7 @@ def _sequence_lstm_index_spec(op: OperatorIR) -> Optional[Dict[str, Any]]:
         return None
     return None
 
+
 def _can_direct_codegen_sequence_lstm_op(
     model_ir: ModelIR,
     op: OperatorIR,
@@ -7508,6 +10127,7 @@ def _can_direct_codegen_sequence_lstm_op(
     if not _sequence_lstm_bias_inputs_supported(model_ir, op, bias_indices):
         return False
     return True
+
 
 def _can_direct_codegen_sequence_rnn_op(
     model_ir: ModelIR,
@@ -7551,6 +10171,601 @@ def _can_direct_codegen_sequence_rnn_op(
         and int(bias_shape[0]) == hidden_size
     )
 
+
+def _rewrite_recurrent_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
+    recurrent_op_types = {
+        "UNIDIRECTIONAL_SEQUENCE_RNN",
+        "UNIDIRECTIONAL_SEQUENCE_LSTM",
+        "BIDIRECTIONAL_SEQUENCE_LSTM",
+    }
+    if not any(str(op.op_type) in recurrent_op_types for op in model_ir.operators):
+        return copy.deepcopy(model_ir)
+    if all(
+        (
+            str(op.op_type) == "UNIDIRECTIONAL_SEQUENCE_RNN"
+            and _can_direct_codegen_sequence_rnn_op(model_ir, op)
+        )
+        or (
+            str(op.op_type) in {"UNIDIRECTIONAL_SEQUENCE_LSTM", "BIDIRECTIONAL_SEQUENCE_LSTM"}
+            and _can_direct_codegen_sequence_lstm_op(model_ir, op)
+        )
+        or str(op.op_type) not in recurrent_op_types
+        for op in model_ir.operators
+    ):
+        return copy.deepcopy(model_ir)
+    try:
+        rewritten_model_ir, _ = rewrite_model_ir_unroll_recurrent_ops(
+            model_ir=model_ir,
+        )
+    except Exception as ex:
+        raise ModelIRPyTorchExportError(
+            "ModelIR->PyTorch exporter could not rewrite recurrent sequence ops "
+            "for native export."
+        ) from ex
+    return rewritten_model_ir
+
+
+def _get_model_ir_subgraph_by_1based_index(
+    model_ir: ModelIR,
+    index: Any,
+) -> Optional[ModelIR]:
+    try:
+        subgraph_index = int(index) - 1
+    except Exception:
+        return None
+    if subgraph_index < 0 or subgraph_index >= len(model_ir.subgraphs):
+        return None
+    return model_ir.subgraphs[int(subgraph_index)]
+
+
+def _constant_scalar_value(tensor: Optional[TensorIR]) -> Optional[Any]:
+    if tensor is None or not isinstance(tensor.data, np.ndarray):
+        return None
+    arr = np.asarray(tensor.data)
+    if arr.size != 1:
+        return None
+    value = arr.reshape(-1)[0].item()
+    if isinstance(value, np.generic):
+        value = value.item()
+    return value
+
+
+def _reshape_alias_source_name(
+    subgraph: ModelIR,
+    tensor_name: str,
+) -> Optional[str]:
+    producer: Optional[OperatorIR] = None
+    for op in subgraph.operators:
+        if str(tensor_name) in {str(v) for v in op.outputs}:
+            producer = op
+            break
+    if producer is None:
+        return None
+    if str(producer.op_type) != "RESHAPE" or len(producer.inputs) == 0:
+        return None
+    return str(producer.inputs[0])
+
+
+def _is_canonical_imported_while_cond_subgraph(
+    *,
+    cond_subgraph: ModelIR,
+    input_count: int,
+    output_count: int,
+    body_subgraph: ModelIR,
+) -> bool:
+    if (
+        len(cond_subgraph.inputs) != input_count
+        or len(cond_subgraph.outputs) != 1
+        or len(body_subgraph.inputs) != input_count
+        or len(body_subgraph.outputs) != output_count
+        or len(cond_subgraph.operators) != 2
+    ):
+        return False
+    cond_less_op = cond_subgraph.operators[0]
+    cond_and_op = cond_subgraph.operators[1]
+    return (
+        str(cond_less_op.op_type) == "LESS"
+        and len(cond_less_op.inputs) == 2
+        and len(cond_less_op.outputs) == 1
+        and str(cond_less_op.inputs[0]) == str(cond_subgraph.inputs[0])
+        and str(cond_less_op.inputs[1]) == str(cond_subgraph.inputs[1])
+        and str(cond_and_op.op_type) == "LOGICAL_AND"
+        and len(cond_and_op.inputs) == 2
+        and len(cond_and_op.outputs) == 1
+        and str(cond_and_op.inputs[0]) == str(cond_subgraph.inputs[2])
+        and str(cond_and_op.inputs[1]) == str(cond_less_op.outputs[0])
+        and str(cond_and_op.outputs[0]) == str(cond_subgraph.outputs[0])
+    )
+
+
+def _match_static_unrollable_while_op(
+    model_ir: ModelIR,
+    op: OperatorIR,
+) -> Optional[Dict[str, Any]]:
+    if str(op.op_type) != "WHILE" or len(op.inputs) < 4 or len(op.outputs) != len(op.inputs):
+        return None
+    iter_value = _constant_scalar_value(model_ir.tensors.get(str(op.inputs[0]), None))
+    trip_value = _constant_scalar_value(model_ir.tensors.get(str(op.inputs[1]), None))
+    cond_value = _constant_scalar_value(model_ir.tensors.get(str(op.inputs[2]), None))
+    if not isinstance(iter_value, (int, np.integer)):
+        return None
+    if not isinstance(trip_value, (int, np.integer)):
+        return None
+    if not isinstance(cond_value, (bool, np.bool_)):
+        return None
+    cond_subgraph = _get_model_ir_subgraph_by_1based_index(model_ir, op.options.get("condSubgraphIndex", 0))
+    body_subgraph = _get_model_ir_subgraph_by_1based_index(model_ir, op.options.get("bodySubgraphIndex", 0))
+    if cond_subgraph is None or body_subgraph is None:
+        return None
+    if not _is_canonical_imported_while_cond_subgraph(
+        cond_subgraph=cond_subgraph,
+        input_count=len(op.inputs),
+        output_count=len(op.outputs),
+        body_subgraph=body_subgraph,
+    ):
+        return None
+
+    body_iter_in = str(body_subgraph.inputs[0])
+    body_trip_in = str(body_subgraph.inputs[1])
+    body_cond_in = str(body_subgraph.inputs[2])
+    body_iter_out = str(body_subgraph.outputs[0])
+    body_trip_out = str(body_subgraph.outputs[1])
+    body_cond_out = str(body_subgraph.outputs[2])
+
+    iter_out_producer: Optional[OperatorIR] = None
+    for candidate in body_subgraph.operators:
+        if body_iter_out in {str(v) for v in candidate.outputs}:
+            iter_out_producer = candidate
+            break
+    if (
+        iter_out_producer is None
+        or str(iter_out_producer.op_type) != "ADD"
+        or len(iter_out_producer.inputs) != 2
+        or str(iter_out_producer.inputs[0]) != body_iter_in
+    ):
+        return None
+    iter_plus_one_value = _constant_scalar_value(
+        body_subgraph.tensors.get(str(iter_out_producer.inputs[1]), None)
+    )
+    if not isinstance(iter_plus_one_value, (int, np.integer)) or int(iter_plus_one_value) != 1:
+        return None
+    if _reshape_alias_source_name(body_subgraph, body_trip_out) != body_trip_in:
+        return None
+    if _reshape_alias_source_name(body_subgraph, body_cond_out) != body_cond_in:
+        return None
+    return {
+        "iter_init": int(iter_value),
+        "trip_count": int(trip_value),
+        "cond_init": bool(cond_value),
+        "body_subgraph": body_subgraph,
+    }
+
+
+def _match_counter_bounded_unrollable_while_op(
+    model_ir: ModelIR,
+    op: OperatorIR,
+) -> Optional[Dict[str, Any]]:
+    if str(op.op_type) != "WHILE" or len(op.inputs) < 5 or len(op.outputs) != len(op.inputs):
+        return None
+    cond_subgraph = _get_model_ir_subgraph_by_1based_index(
+        model_ir,
+        op.options.get("condSubgraphIndex", 0),
+    )
+    body_subgraph = _get_model_ir_subgraph_by_1based_index(
+        model_ir,
+        op.options.get("bodySubgraphIndex", 0),
+    )
+    if cond_subgraph is None or body_subgraph is None:
+        return None
+    if not _is_canonical_imported_while_cond_subgraph(
+        cond_subgraph=cond_subgraph,
+        input_count=len(op.inputs),
+        output_count=len(op.outputs),
+        body_subgraph=body_subgraph,
+    ):
+        return None
+    for state_offset in range(4, len(op.inputs)):
+        alias_source = _reshape_alias_source_name(body_subgraph, str(body_subgraph.outputs[state_offset]))
+        if alias_source is not None:
+            state_output_raw = str(alias_source)
+        else:
+            state_output_raw = f"{str(body_subgraph.outputs[state_offset])}_raw"
+            if str(body_subgraph.outputs[state_offset]).endswith("_out"):
+                state_output_raw = str(body_subgraph.outputs[state_offset]).replace("_out", "_out_raw")
+            if state_output_raw not in body_subgraph.tensors:
+                continue
+        cond_producer: Optional[OperatorIR] = None
+        for candidate in body_subgraph.operators:
+            if str(body_subgraph.outputs[2]) in {str(v) for v in candidate.outputs}:
+                cond_producer = candidate
+                break
+        if cond_producer is None:
+            return None
+        compare_output_name = str(body_subgraph.outputs[2])
+        compare_op = cond_producer
+        invert_compare = False
+        if str(cond_producer.op_type) == "SELECT" and len(cond_producer.inputs) == 3:
+            compare_output_name = str(cond_producer.inputs[0])
+            true_name = str(cond_producer.inputs[1])
+            false_name = str(cond_producer.inputs[2])
+            true_value = _constant_scalar_value(body_subgraph.tensors.get(true_name, None))
+            false_value = _constant_scalar_value(body_subgraph.tensors.get(false_name, None))
+            if bool(true_value) is False and bool(false_value) is True:
+                invert_compare = True
+            else:
+                return None
+            compare_op = None
+            for candidate in body_subgraph.operators:
+                if compare_output_name in {str(v) for v in candidate.outputs}:
+                    compare_op = candidate
+                    break
+            if compare_op is None:
+                return None
+        if str(compare_op.op_type) not in {"LESS", "GREATER_EQUAL"} or len(compare_op.inputs) != 2:
+            return None
+        lhs_name = str(compare_op.inputs[0])
+        rhs_name = str(compare_op.inputs[1])
+        lhs_cast: Optional[OperatorIR] = None
+        rhs_cast: Optional[OperatorIR] = None
+        for candidate in body_subgraph.operators:
+            if lhs_name in {str(v) for v in candidate.outputs}:
+                lhs_cast = candidate
+            if rhs_name in {str(v) for v in candidate.outputs}:
+                rhs_cast = candidate
+        if lhs_cast is None or rhs_cast is None:
+            return None
+        if str(lhs_cast.op_type) != "CAST" or str(rhs_cast.op_type) != "CAST":
+            return None
+        lhs_source_name = str(lhs_cast.inputs[0]) if len(lhs_cast.inputs) >= 1 else ""
+        rhs_source_name = str(rhs_cast.inputs[0]) if len(rhs_cast.inputs) >= 1 else ""
+        if lhs_source_name != state_output_raw:
+            continue
+        threshold_value = _constant_scalar_value(body_subgraph.tensors.get(rhs_source_name, None))
+        if not isinstance(threshold_value, (int, np.integer)):
+            continue
+        if str(compare_op.op_type) == "GREATER_EQUAL" and not invert_compare:
+            continue
+        return {
+            "body_subgraph": body_subgraph,
+            "max_iterations": max(1, int(threshold_value)),
+        }
+    return None
+
+
+def _ensure_tensor_shape_literal(
+    model_ir: ModelIR,
+    *,
+    base_name: str,
+    shape: Sequence[int],
+    used_names: Set[str],
+) -> str:
+    shape_tensor_name = _make_unique_identifier(f"{base_name}_shape", used_names)
+    shape_values = [int(v) for v in list(shape)]
+    model_ir.tensors[str(shape_tensor_name)] = TensorIR(
+        name=str(shape_tensor_name),
+        dtype="INT32",
+        shape=[int(len(shape_values))],
+        shape_signature=[int(len(shape_values))],
+        data=np.asarray(shape_values, dtype=np.int32),
+    )
+    return str(shape_tensor_name)
+
+
+def _rewrite_static_while_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
+    rewritten = copy.deepcopy(model_ir)
+    used_names: Set[str] = set(str(name) for name in rewritten.tensors.keys())
+    expanded_ops: List[OperatorIR] = []
+    changed = False
+
+    for op_index, op in enumerate(rewritten.operators):
+        match = _match_static_unrollable_while_op(rewritten, op)
+        if match is None:
+            expanded_ops.append(op)
+            continue
+        changed = True
+        body_subgraph = cast(ModelIR, match["body_subgraph"])
+        iterations = (
+            max(0, int(match["trip_count"]) - int(match["iter_init"]))
+            if bool(match["cond_init"])
+            else 0
+        )
+
+        constant_name_map: Dict[str, str] = {}
+        for tensor_name, tensor in body_subgraph.tensors.items():
+            if str(tensor_name) in {str(v) for v in body_subgraph.inputs}:
+                continue
+            if not isinstance(tensor.data, np.ndarray):
+                continue
+            mapped_name = str(tensor_name)
+            if mapped_name in rewritten.tensors:
+                mapped_name = _make_unique_identifier(mapped_name, used_names)
+            else:
+                used_names.add(mapped_name)
+            cloned = _clone_tensor(tensor)
+            cloned.name = str(mapped_name)
+            rewritten.tensors[str(mapped_name)] = cloned
+            constant_name_map[str(tensor_name)] = str(mapped_name)
+
+        current_values = [str(v) for v in op.inputs]
+        if iterations == 0:
+            final_values = list(current_values)
+            for output_index, output_name in enumerate(op.outputs):
+                source_name = str(final_values[output_index])
+                target_name = str(output_name)
+                if source_name == target_name:
+                    continue
+                target_tensor = rewritten.tensors.get(target_name, None)
+                if target_tensor is None:
+                    continue
+                shape_name = _ensure_tensor_shape_literal(
+                    rewritten,
+                    base_name=target_name,
+                    shape=target_tensor.shape_signature or target_tensor.shape,
+                    used_names=used_names,
+                )
+                expanded_ops.append(
+                    OperatorIR(
+                        op_type="RESHAPE",
+                        inputs=[source_name, shape_name],
+                        outputs=[target_name],
+                        options={
+                            "newShape": [
+                                int(v) for v in list(target_tensor.shape_signature or target_tensor.shape)
+                            ],
+                            "allowZero": False,
+                        },
+                    )
+                )
+            continue
+
+        body_output_index = {
+            str(output_name): int(idx) for idx, output_name in enumerate(body_subgraph.outputs)
+        }
+        for iteration_index in range(iterations):
+            local_map: Dict[str, str] = {
+                str(body_subgraph.inputs[input_index]): str(current_values[input_index])
+                for input_index in range(len(body_subgraph.inputs))
+            }
+            local_map.update(constant_name_map)
+            is_last_iteration = int(iteration_index) == int(iterations) - 1
+            for body_op in body_subgraph.operators:
+                cloned_op = copy.deepcopy(body_op)
+                cloned_op.inputs = [str(local_map.get(str(name), str(name))) for name in body_op.inputs]
+                cloned_outputs: List[str] = []
+                for output_name in body_op.outputs:
+                    output_str = str(output_name)
+                    if is_last_iteration and output_str in body_output_index:
+                        mapped_name = str(op.outputs[int(body_output_index[output_str])])
+                    else:
+                        mapped_name = _make_unique_identifier(
+                            f"{output_str}_unroll_{op_index}_{iteration_index}",
+                            used_names,
+                        )
+                    if mapped_name not in rewritten.tensors and output_str in body_subgraph.tensors:
+                        cloned_tensor = _clone_tensor(body_subgraph.tensors[output_str])
+                        cloned_tensor.name = str(mapped_name)
+                        rewritten.tensors[str(mapped_name)] = cloned_tensor
+                    local_map[output_str] = str(mapped_name)
+                    cloned_outputs.append(str(mapped_name))
+                cloned_op.outputs = cloned_outputs
+                expanded_ops.append(cloned_op)
+            current_values = [str(local_map[str(name)]) for name in body_subgraph.outputs]
+
+    if not changed:
+        return rewritten
+    rewritten.operators = expanded_ops
+    return rewritten
+
+
+def _rewrite_counter_bounded_while_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
+    rewritten = copy.deepcopy(model_ir)
+    used_names: Set[str] = set(str(name) for name in rewritten.tensors.keys())
+    expanded_ops: List[OperatorIR] = []
+    changed = False
+
+    for op_index, op in enumerate(rewritten.operators):
+        match = _match_counter_bounded_unrollable_while_op(rewritten, op)
+        if match is None:
+            expanded_ops.append(op)
+            continue
+        changed = True
+        body_subgraph = cast(ModelIR, match["body_subgraph"])
+        max_iterations = int(match["max_iterations"])
+
+        constant_name_map: Dict[str, str] = {}
+        for tensor_name, tensor in body_subgraph.tensors.items():
+            if str(tensor_name) in {str(v) for v in body_subgraph.inputs}:
+                continue
+            if not isinstance(tensor.data, np.ndarray):
+                continue
+            mapped_name = str(tensor_name)
+            if mapped_name in rewritten.tensors:
+                mapped_name = _make_unique_identifier(mapped_name, used_names)
+            else:
+                used_names.add(mapped_name)
+            cloned = _clone_tensor(tensor)
+            cloned.name = str(mapped_name)
+            rewritten.tensors[str(mapped_name)] = cloned
+            constant_name_map[str(tensor_name)] = str(mapped_name)
+
+        current_values = [str(v) for v in op.inputs]
+        for iteration_index in range(max_iterations):
+            local_map: Dict[str, str] = {
+                str(body_subgraph.inputs[input_index]): str(current_values[input_index])
+                for input_index in range(len(body_subgraph.inputs))
+            }
+            local_map.update(constant_name_map)
+
+            for body_op in body_subgraph.operators:
+                cloned_op = copy.deepcopy(body_op)
+                cloned_op.inputs = [str(local_map.get(str(name), str(name))) for name in body_op.inputs]
+                cloned_outputs: List[str] = []
+                for output_name in body_op.outputs:
+                    output_str = str(output_name)
+                    mapped_name = _make_unique_identifier(
+                        f"{output_str}_while_mask_{op_index}_{iteration_index}",
+                        used_names,
+                    )
+                    if mapped_name not in rewritten.tensors and output_str in body_subgraph.tensors:
+                        cloned_tensor = _clone_tensor(body_subgraph.tensors[output_str])
+                        cloned_tensor.name = str(mapped_name)
+                        rewritten.tensors[str(mapped_name)] = cloned_tensor
+                    local_map[output_str] = str(mapped_name)
+                    cloned_outputs.append(str(mapped_name))
+                cloned_op.outputs = cloned_outputs
+                expanded_ops.append(cloned_op)
+
+            next_values: List[str] = []
+            current_cond_name = str(current_values[2])
+            for output_index, output_name in enumerate(op.outputs):
+                if output_index == 1:
+                    next_values.append(str(local_map[str(body_subgraph.outputs[1])]))
+                    continue
+                if output_index == 2:
+                    gated_name = (
+                        str(output_name)
+                        if iteration_index == max_iterations - 1
+                        else _make_unique_identifier(f"{output_name}_while_masked", used_names)
+                    )
+                    if gated_name not in rewritten.tensors and str(output_name) in rewritten.tensors:
+                        cloned_tensor = _clone_tensor(rewritten.tensors[str(output_name)])
+                        cloned_tensor.name = str(gated_name)
+                        rewritten.tensors[str(gated_name)] = cloned_tensor
+                    expanded_ops.append(
+                        OperatorIR(
+                            op_type="LOGICAL_AND",
+                            inputs=[current_cond_name, str(local_map[str(body_subgraph.outputs[2])])],
+                            outputs=[str(gated_name)],
+                            options={},
+                        )
+                    )
+                    next_values.append(str(gated_name))
+                    continue
+                gated_name = (
+                    str(output_name)
+                    if iteration_index == max_iterations - 1
+                    else _make_unique_identifier(f"{output_name}_while_masked", used_names)
+                )
+                if gated_name not in rewritten.tensors and str(output_name) in rewritten.tensors:
+                    cloned_tensor = _clone_tensor(rewritten.tensors[str(output_name)])
+                    cloned_tensor.name = str(gated_name)
+                    rewritten.tensors[str(gated_name)] = cloned_tensor
+                expanded_ops.append(
+                    OperatorIR(
+                        op_type="SELECT",
+                        inputs=[
+                            current_cond_name,
+                            str(local_map[str(body_subgraph.outputs[output_index])]),
+                            str(current_values[output_index]),
+                        ],
+                        outputs=[str(gated_name)],
+                        options={},
+                    )
+                )
+                next_values.append(str(gated_name))
+            current_values = next_values
+
+    if not changed:
+        return rewritten
+    rewritten.operators = expanded_ops
+    return rewritten
+
+
+def prepare_model_ir_for_native_pytorch(model_ir: ModelIR) -> ModelIR:
+    original_boundary_shape_map = model_ir.metadata.get("onnx_boundary_shape_signature_map", {})
+    if not isinstance(original_boundary_shape_map, dict):
+        original_boundary_shape_map = {}
+    original_public_layout_map = model_ir.metadata.get("onnx_public_layout_map", {})
+    if not isinstance(original_public_layout_map, dict):
+        original_public_layout_map = {}
+    original_public_boundary_shapes: Dict[str, List[int]] = {}
+    original_public_boundary_layouts: Dict[str, str] = {}
+    for tensor_name in list(model_ir.inputs) + list(model_ir.outputs):
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            continue
+        boundary_shape = original_boundary_shape_map.get(str(tensor_name), tensor.shape_signature or tensor.shape)
+        original_public_boundary_shapes[str(tensor_name)] = [int(v) for v in list(boundary_shape)]
+        explicit_public_layout = original_public_layout_map.get(str(tensor_name), None)
+        resolved_public_layout = normalize_logical_layout(
+            explicit_public_layout if explicit_public_layout is not None else tensor.logical_layout
+        )
+        if (
+            explicit_public_layout is None
+            and is_channel_last_logical_layout(resolved_public_layout)
+            and len(list(boundary_shape)) in {4, 5}
+            and int(list(boundary_shape)[-1]) == 1
+        ):
+            resolved_public_layout = LOGICAL_LAYOUT_UNKNOWN
+        original_public_boundary_layouts[str(tensor_name)] = resolved_public_layout
+    rewritten_model_ir = _rewrite_recurrent_ops_for_native_export(
+        _rewrite_counter_bounded_while_ops_for_native_export(
+            _rewrite_static_while_ops_for_native_export(model_ir)
+        )
+    )
+    try:
+        prepared = normalize_model_ir_for_pytorch_channel_first(rewritten_model_ir)
+    except ModelIRPyTorchExportError:
+        if not _is_layout_agnostic_native_model_ir(rewritten_model_ir):
+            raise
+        prepared = copy.deepcopy(rewritten_model_ir)
+        infer_model_ir_logical_layouts(prepared)
+        prepared.metadata["assume_channel_last_layout_tensor_names"] = []
+    prepared_public_layout_map = {
+        str(name): str(layout)
+        for name, layout in original_public_boundary_layouts.items()
+        if layout != LOGICAL_LAYOUT_UNKNOWN
+    }
+    prepared.metadata["onnx_public_layout_map"] = prepared_public_layout_map
+    prepared.metadata["onnx_boundary_shape_signature_map"] = {
+        str(name): [int(v) for v in list(shape)]
+        for name, shape in original_public_boundary_shapes.items()
+        if str(name) in prepared_public_layout_map
+        or str(name) in original_public_layout_map
+    }
+    _ensure_public_boundary_layout_bridges(
+        model_ir=prepared,
+        desired_public_shape_map=original_public_boundary_shapes,
+        desired_public_layout_map=original_public_boundary_layouts,
+    )
+    _align_public_boundary_shapes_to_onnx_contract(prepared)
+    return prepared
+
+
+def _collect_model_op_types(model_ir: ModelIR) -> Set[str]:
+    ops: Set[str] = set()
+    for op in model_ir.operators:
+        ops.add(str(op.op_type))
+    for subgraph in model_ir.subgraphs:
+        ops.update(_collect_model_op_types(subgraph))
+    return ops
+
+
+def _ensure_supported_ops(model_ir: ModelIR) -> None:
+    unsupported = sorted(
+        {
+            op_type
+            for op_type in _collect_model_op_types(model_ir)
+            if op_type not in SUPPORTED_TORCH_KERNEL_OP_TYPES
+            and op_type not in _DIRECT_CODEGEN_SUPPORTED_OP_TYPES
+            and op_type not in {"MODEL"}
+        }
+    )
+    if len(unsupported) > 0:
+        raise ModelIRPyTorchExportError(
+            "ModelIR->PyTorch exporter does not support some op types in this model. "
+            f"unsupported_op_types={unsupported}"
+        )
+
+
+def _ensure_no_custom_ops(model_ir: ModelIR) -> None:
+    custom_ops = sorted({str(op.op_type) for op in model_ir.operators if str(op.op_type) == "CUSTOM"})
+    if len(custom_ops) > 0:
+        raise ModelIRPyTorchExportError(
+            "ModelIR->PyTorch exporter does not support CUSTOM ops."
+        )
+
+
 def _serializable_tensor_meta(tensor: TensorIR) -> Dict[str, Any]:
     return {
         "dtype": str(tensor.dtype),
@@ -7565,6 +10780,7 @@ def _serializable_tensor_meta(tensor: TensorIR) -> Dict[str, Any]:
         "logical_layout": normalize_logical_layout(tensor.logical_layout),
     }
 
+
 def _serializable_value(value: Any) -> Any:
     if isinstance(value, np.ndarray):
         return value.tolist()
@@ -7578,6 +10794,7 @@ def _serializable_value(value: Any) -> Any:
         return [_serializable_value(v) for v in value]
     return value
 
+
 def _build_metadata_payload(model_ir: ModelIR) -> Dict[str, Any]:
     boundary_shape_map = model_ir.metadata.get("onnx_boundary_shape_signature_map", {})
     if not isinstance(boundary_shape_map, dict):
@@ -7585,9 +10802,6 @@ def _build_metadata_payload(model_ir: ModelIR) -> Dict[str, Any]:
     public_layout_map = model_ir.metadata.get("onnx_public_layout_map", {})
     if not isinstance(public_layout_map, dict):
         public_layout_map = {}
-    public_layout_bridge_tensor_names = model_ir.metadata.get("public_layout_bridge_tensor_names", [])
-    if not isinstance(public_layout_bridge_tensor_names, list):
-        public_layout_bridge_tensor_names = []
     public_tensor_names = {
         str(name) for name in list(model_ir.inputs) + list(model_ir.outputs)
     }
@@ -7609,48 +10823,6 @@ def _build_metadata_payload(model_ir: ModelIR) -> Dict[str, Any]:
             if logical_layout_rank(public_layout) == len(tensor_meta["shape"]):
                 tensor_meta["logical_layout"] = public_layout
         tensors[tensor_name] = tensor_meta
-    for bridge_name_raw in public_layout_bridge_tensor_names:
-        bridge_name = str(bridge_name_raw)
-        if bridge_name == "" or bridge_name in tensors:
-            continue
-        base_name = bridge_name.removesuffix("_public_layout_bridge")
-        base_tensor = model_ir.tensors.get(base_name, None)
-        if base_tensor is None:
-            continue
-        tensor_meta = _serializable_tensor_meta(base_tensor)
-        boundary_shape = boundary_shape_map.get(base_name, None)
-        public_layout = normalize_logical_layout(public_layout_map.get(base_name, None))
-        rank = len(list(tensor_meta["shape"]))
-        internal_layout = (
-            channel_last_logical_layout(rank)
-            if is_channel_first_logical_layout(public_layout)
-            else channel_first_logical_layout(rank)
-            if is_channel_last_logical_layout(public_layout)
-            else normalize_logical_layout(tensor_meta["logical_layout"])
-        )
-        if (
-            isinstance(boundary_shape, list)
-            and len(boundary_shape) == rank
-            and public_layout != LOGICAL_LAYOUT_UNKNOWN
-            and internal_layout != LOGICAL_LAYOUT_UNKNOWN
-            and public_layout != internal_layout
-        ):
-            perm_to_internal = logical_layout_permutation(
-                source_layout=public_layout,
-                target_layout=internal_layout,
-            )
-            internal_shape = (
-                None
-                if perm_to_internal is None
-                else _permute_shape([int(v) for v in list(boundary_shape)], perm_to_internal)
-            )
-            if internal_shape is not None:
-                tensor_meta["shape"] = [max(1, int(v)) if int(v) >= 0 else 1 for v in list(internal_shape)]
-                tensor_meta["shape_signature"] = [int(v) for v in list(internal_shape)]
-        if logical_layout_rank(internal_layout) == rank:
-            tensor_meta["logical_layout"] = internal_layout
-        tensor_meta["has_data"] = False
-        tensors[bridge_name] = tensor_meta
     return {
         "schema_version": 1,
         "name": str(model_ir.name),
@@ -7674,6 +10846,2229 @@ def _build_metadata_payload(model_ir: ModelIR) -> Dict[str, Any]:
         "boundary_shape_signatures": _serializable_value(boundary_shape_map),
     }
 
+
+def _is_runtime_wrapper_package_dir(package_dir: Path) -> bool:
+    model_path = package_dir / "model.py"
+    if not model_path.exists():
+        return False
+    try:
+        model_source = model_path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+    return "load_generated_model_package" in model_source
+
+
+_NUMPY_DTYPE_BY_TENSOR_DTYPE: Dict[str, np.dtype] = {
+    "BOOL": np.dtype(np.bool_),
+    "INT8": np.dtype(np.int8),
+    "INT16": np.dtype(np.int16),
+    "INT32": np.dtype(np.int32),
+    "INT64": np.dtype(np.int64),
+    "UINT8": np.dtype(np.uint8),
+    "FLOAT16": np.dtype(np.float16),
+    "FLOAT32": np.dtype(np.float32),
+    "FLOAT64": np.dtype(np.float64),
+}
+
+
+def _parse_torchscript_shape_hints(
+    shape_hints: Optional[List[str]],
+) -> Dict[str, List[int]]:
+    if shape_hints is None:
+        return {}
+    parsed: Dict[str, List[int]] = {}
+    for hint in shape_hints:
+        parts = str(hint).split(":", maxsplit=1)
+        if len(parts) != 2:
+            continue
+        input_name = str(parts[0]).strip()
+        shape_str = str(parts[1]).strip()
+        if input_name == "" or shape_str == "":
+            continue
+        try:
+            parsed[input_name] = [int(v) for v in shape_str.split(",")]
+        except Exception:
+            continue
+    return parsed
+
+
+def _lookup_torchscript_shape_hint(
+    *,
+    input_name: str,
+    shape_hints: Dict[str, List[int]],
+    normalized_shape_hints: Dict[str, List[int]],
+    normalize_name: Callable[[str], str],
+) -> Optional[List[int]]:
+    direct = shape_hints.get(str(input_name), None)
+    if direct is not None:
+        return [int(v) for v in list(direct)]
+    normalized = normalized_shape_hints.get(normalize_name(str(input_name)), None)
+    if normalized is not None:
+        return [int(v) for v in list(normalized)]
+    return None
+
+
+def _resolve_torchscript_trace_shape(
+    *,
+    input_name: str,
+    shape_values: Sequence[Any],
+    shape_hint: Optional[Sequence[int]],
+    export_label: str = "TorchScript export",
+) -> Tuple[int, ...]:
+    base_shape = [int(v) for v in list(shape_values)]
+    if shape_hint is None:
+        return _sanitize_torchscript_trace_shape(base_shape)
+    hint_values = [int(v) for v in list(shape_hint)]
+    if len(hint_values) != len(base_shape):
+        raise ModelIRPyTorchExportError(
+            f"{export_label} shape_hints rank mismatch. "
+            f"input={input_name} expected_rank={len(base_shape)} actual_rank={len(hint_values)}"
+        )
+    resolved: List[int] = []
+    for dim, hint_dim in zip(base_shape, hint_values):
+        if int(dim) > 0:
+            resolved.append(int(dim))
+        elif int(hint_dim) > 0:
+            resolved.append(int(hint_dim))
+        else:
+            raise ModelIRPyTorchExportError(
+                f"{export_label} shape_hints must provide positive values for dynamic dimensions. "
+                f"input={input_name} shape_hint={hint_values}"
+            )
+    return tuple(resolved)
+
+
+def _load_torchscript_test_data_nhwc(
+    test_data_nhwc_path: Optional[str],
+) -> Optional[np.ndarray]:
+    if not test_data_nhwc_path:
+        return None
+    if not os.path.exists(test_data_nhwc_path):
+        raise FileNotFoundError(
+            f"test_data_nhwc_path does not exist. path={test_data_nhwc_path}"
+        )
+    data = np.asarray(np.load(test_data_nhwc_path))
+    if data.ndim != 4:
+        raise ValueError(
+            "test_data_nhwc_path must contain a 4D array [N,H,W,C]. "
+            f"actual_shape={tuple(data.shape)}"
+        )
+    if int(data.shape[-1]) != 3:
+        raise ValueError(
+            "test_data_nhwc_path must have 3 channels in the last dim. "
+            f"actual_shape={tuple(data.shape)}"
+        )
+    if int(data.shape[0]) <= 0:
+        raise ValueError(
+            "test_data_nhwc_path must include at least 1 sample. "
+            f"actual_shape={tuple(data.shape)}"
+        )
+    return data
+
+
+def _build_torchscript_image_input_from_nhwc(
+    *,
+    data: np.ndarray,
+    expected_shape: Tuple[int, ...],
+    np_dtype: np.dtype,
+) -> np.ndarray:
+    import tensorflow as tf
+
+    if len(expected_shape) != 4:
+        raise ValueError(
+            "test_data_nhwc_path can only be used for rank-4 inputs. "
+            f"expected_shape={expected_shape}"
+        )
+
+    expected_batch = int(expected_shape[0]) if int(expected_shape[0]) > 0 else int(data.shape[0])
+    if data.shape[0] >= expected_batch:
+        sample = np.asarray(data[:expected_batch])
+    else:
+        repeats = int(np.ceil(expected_batch / data.shape[0]))
+        sample = np.concatenate([data] * repeats, axis=0)[:expected_batch]
+
+    if int(expected_shape[1]) == 3:
+        target_h = int(expected_shape[2])
+        target_w = int(expected_shape[3])
+        if int(sample.shape[1]) != target_h or int(sample.shape[2]) != target_w:
+            sample = np.asarray(tf.image.resize(sample, [target_h, target_w]))
+        sample = np.transpose(sample, [0, 3, 1, 2])
+    elif int(expected_shape[3]) == 3:
+        target_h = int(expected_shape[1])
+        target_w = int(expected_shape[2])
+        if int(sample.shape[1]) != target_h or int(sample.shape[2]) != target_w:
+            sample = np.asarray(tf.image.resize(sample, [target_h, target_w]))
+    else:
+        raise ValueError(
+            "test_data_nhwc_path can only be used for 3-channel image inputs. "
+            f"expected_shape={expected_shape}"
+        )
+    return np.asarray(sample).astype(np_dtype, copy=False)
+
+
+def _sanitize_torchscript_file_stem(name: str, *, fallback: str) -> str:
+    sanitized = re.sub(r"[^0-9A-Za-z_]+", "_", str(name)).strip("_")
+    if sanitized == "":
+        sanitized = re.sub(r"[^0-9A-Za-z_]+", "_", str(fallback)).strip("_")
+    if sanitized == "":
+        sanitized = "model"
+    return sanitized
+
+
+def _sanitize_torchscript_trace_shape(values: Sequence[Any]) -> Tuple[int, ...]:
+    sanitized: List[int] = []
+    for value in list(values):
+        dim = int(value)
+        sanitized.append(dim if dim > 0 else 1)
+    return tuple(sanitized)
+
+
+def _can_autoresolve_batch_only_trace_shape(shape_values: Sequence[Any]) -> bool:
+    values = [int(v) for v in list(shape_values)]
+    if len(values) == 0:
+        return False
+    if int(values[0]) > 0:
+        return False
+    return all(int(v) > 0 for v in values[1:])
+
+
+def _build_pytorch_export_example_inputs(
+    *,
+    package_dir: str,
+    package_metadata: Dict[str, Any],
+    custom_input_op_name_np_data_path: Optional[List[Any]],
+    shape_hints: Optional[List[str]] = None,
+    test_data_nhwc_path: Optional[str] = None,
+    export_label: str = "PyTorch export",
+) -> Tuple[Tuple[Any, ...], Dict[str, List[int]], bool]:
+    from onnx2tf.tflite_builder.accuracy_evaluator import (
+        _generate_seeded_input,
+        _extract_sample_from_custom,
+        _fill_length_like_input,
+        _load_custom_input_data,
+        _normalize_tensor_name,
+    )
+    from onnx2tf.tflite_builder.pytorch_accuracy_evaluator import (
+        _convert_inputs_for_package,
+        _generate_string_input,
+        _is_string_dtype,
+    )
+
+    input_names = [str(v) for v in list(package_metadata.get("inputs", []))]
+    tensor_meta_map = package_metadata.get("tensors", {})
+    if not isinstance(tensor_meta_map, dict):
+        tensor_meta_map = {}
+    custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
+    test_data_nhwc = _load_torchscript_test_data_nhwc(test_data_nhwc_path)
+    parsed_shape_hints = _parse_torchscript_shape_hints(shape_hints)
+    normalized_shape_hints = {
+        _normalize_tensor_name(str(input_name)): [int(v) for v in list(shape_value)]
+        for input_name, shape_value in parsed_shape_hints.items()
+    }
+    normalized_custom_inputs = {
+        _normalize_tensor_name(str(input_name)): value
+        for input_name, value in custom_inputs.items()
+    }
+
+    def _lookup_custom_input(input_name: str) -> Optional[np.ndarray]:
+        custom_value = custom_inputs.get(str(input_name), None)
+        if custom_value is not None:
+            return custom_value
+        return normalized_custom_inputs.get(_normalize_tensor_name(str(input_name)), None)
+
+    input_specs: List[Tuple[str, np.dtype, Tuple[int, ...]]] = []
+    dynamic_inputs_present = False
+    missing_dynamic_hints: List[str] = []
+    generated_inputs_np: Dict[str, np.ndarray] = {}
+    for input_name in input_names:
+        tensor_meta = tensor_meta_map.get(str(input_name), {})
+        if not isinstance(tensor_meta, dict):
+            raise ModelIRPyTorchExportError(
+                f"PyTorch package metadata is missing tensor metadata for input '{input_name}'."
+            )
+        dtype_name = str(tensor_meta.get("dtype", "FLOAT32")).upper()
+        if dtype_name not in _NUMPY_DTYPE_BY_TENSOR_DTYPE:
+            raise ModelIRPyTorchExportError(
+                f"Unsupported input dtype for {export_label}. input={input_name} dtype={dtype_name}"
+            )
+        shape_values = tensor_meta.get("shape_signature", tensor_meta.get("shape", []))
+        if not isinstance(shape_values, list):
+            shape_values = tensor_meta.get("shape", [])
+        if not isinstance(shape_values, list):
+            shape_values = []
+        custom_input_value = _lookup_custom_input(str(input_name))
+        shape_hint = _lookup_torchscript_shape_hint(
+            input_name=str(input_name),
+            shape_hints=parsed_shape_hints,
+            normalized_shape_hints=normalized_shape_hints,
+            normalize_name=_normalize_tensor_name,
+        )
+        has_dynamic_dim = any(int(v) <= 0 for v in list(shape_values))
+        if has_dynamic_dim:
+            dynamic_inputs_present = True
+        trace_shape_values = _sanitize_torchscript_trace_shape(shape_values)
+        dynamic_hint_resolved = False
+        if custom_input_value is not None:
+            trace_shape_values = tuple(
+                int(v) for v in list(np.asarray(custom_input_value).shape)
+            )
+            dynamic_hint_resolved = True
+        elif shape_hint is not None:
+            trace_shape_values = _resolve_torchscript_trace_shape(
+                input_name=str(input_name),
+                shape_values=shape_values,
+                shape_hint=shape_hint,
+                export_label=export_label,
+            )
+            dynamic_hint_resolved = True
+        elif (
+            test_data_nhwc is not None
+            and len(list(shape_values)) == 4
+            and (
+                int(shape_values[1]) in {3, -1, 0}
+                or int(shape_values[3]) in {3, -1, 0}
+            )
+        ):
+            trace_shape_values = _resolve_torchscript_trace_shape(
+                input_name=str(input_name),
+                shape_values=shape_values,
+                shape_hint=[
+                    int(test_data_nhwc.shape[0]),
+                    int(test_data_nhwc.shape[-1]) if int(shape_values[1]) in {3, -1, 0} else int(test_data_nhwc.shape[1]),
+                    int(test_data_nhwc.shape[1]) if int(shape_values[1]) in {3, -1, 0} else int(test_data_nhwc.shape[2]),
+                    int(test_data_nhwc.shape[2]) if int(shape_values[1]) in {3, -1, 0} else int(test_data_nhwc.shape[-1]),
+                ],
+                export_label=export_label,
+            )
+            dynamic_hint_resolved = True
+        elif _can_autoresolve_batch_only_trace_shape(shape_values):
+            dynamic_hint_resolved = True
+        input_specs.append(
+            (
+                str(input_name),
+                _NUMPY_DTYPE_BY_TENSOR_DTYPE[dtype_name],
+                trace_shape_values,
+            )
+        )
+        if has_dynamic_dim and not dynamic_hint_resolved:
+            missing_dynamic_hints.append(str(input_name))
+            continue
+
+        if custom_input_value is not None:
+            generated_inputs_np[str(input_name)] = _extract_sample_from_custom(
+                data=np.asarray(custom_input_value),
+                sample_index=0,
+                expected_shape=trace_shape_values,
+                np_dtype=_NUMPY_DTYPE_BY_TENSOR_DTYPE[dtype_name],
+            )
+            continue
+        if test_data_nhwc is not None and len(trace_shape_values) == 4:
+            try:
+                generated_inputs_np[str(input_name)] = _build_torchscript_image_input_from_nhwc(
+                    data=test_data_nhwc,
+                    expected_shape=trace_shape_values,
+                    np_dtype=_NUMPY_DTYPE_BY_TENSOR_DTYPE[dtype_name],
+                )
+                continue
+            except Exception as ex:
+                if dynamic_hint_resolved and shape_hint is None and custom_input_value is None:
+                    raise ModelIRPyTorchExportError(
+                        f"{export_label} could not build an example input from test_data_nhwc_path. "
+                        f"input={input_name} expected_shape={list(trace_shape_values)}"
+                    ) from ex
+    if len(missing_dynamic_hints) > 0:
+        raise ModelIRPyTorchExportError(
+            f"{export_label} requires concrete trace hints for all dynamic public inputs. "
+            "Use --shape_hints as the recommended option, or provide "
+            "--test_data_nhwc_path / custom_input_op_name_np_data_path when applicable. "
+            f"package_dir={package_dir} missing_inputs={sorted(missing_dynamic_hints)}"
+        )
+    rng = np.random.default_rng(seed=0)
+    example_inputs_np: Dict[str, np.ndarray] = {}
+    for input_name, input_dtype, input_shape in input_specs:
+        prebuilt = generated_inputs_np.get(str(input_name), None)
+        if prebuilt is not None:
+            example_inputs_np[str(input_name)] = np.asarray(prebuilt)
+            continue
+        if _is_string_dtype(np.dtype(input_dtype)):
+            example_inputs_np[str(input_name)] = _generate_string_input(
+                shape=input_shape,
+                rng=rng,
+            )
+            continue
+        if np.issubdtype(np.dtype(input_dtype), np.integer):
+            canonical = _normalize_tensor_name(str(input_name))
+            if "mask" in canonical.split("_"):
+                example_inputs_np[str(input_name)] = np.ones(input_shape, dtype=input_dtype)
+                continue
+            if any(
+                canonical.endswith(suffix)
+                for suffix in ("length", "lengths", "len", "lens", "seq_len", "seq_lens")
+            ):
+                example_inputs_np[str(input_name)] = _fill_length_like_input(
+                    input_name=str(input_name),
+                    input_shape=input_shape,
+                    input_dtype=np.dtype(input_dtype),
+                    generated_inputs=example_inputs_np,
+                )
+                continue
+        example_inputs_np[str(input_name)] = _generate_seeded_input(
+            shape=input_shape,
+            np_dtype=np.dtype(input_dtype),
+            rng=rng,
+        )
+    converted_inputs = _convert_inputs_for_package(
+        inputs=example_inputs_np,
+        package_metadata=package_metadata,
+    )
+    example_input_shapes: Dict[str, List[int]] = {}
+    ordered_inputs: List[Any] = []
+    for input_name in input_names:
+        input_value = converted_inputs.get(str(input_name), None)
+        if input_value is None:
+            raise ModelIRPyTorchExportError(
+                f"{export_label} could not resolve an example input. input={input_name}"
+            )
+        if not hasattr(input_value, "shape"):
+            raise ModelIRPyTorchExportError(
+                f"{export_label} supports only tensor-like public inputs for native packages. "
+                f"input={input_name} type={type(input_value).__name__}"
+            )
+        example_input_shapes[str(input_name)] = [int(v) for v in list(input_value.shape)]
+        ordered_inputs.append(input_value)
+    return tuple(ordered_inputs), example_input_shapes, bool(dynamic_inputs_present)
+
+
+def _build_torchscript_example_inputs(
+    *,
+    package_dir: str,
+    package_metadata: Dict[str, Any],
+    custom_input_op_name_np_data_path: Optional[List[Any]],
+    shape_hints: Optional[List[str]] = None,
+    test_data_nhwc_path: Optional[str] = None,
+) -> Tuple[Tuple[Any, ...], Dict[str, List[int]], bool]:
+    return _build_pytorch_export_example_inputs(
+        package_dir=package_dir,
+        package_metadata=package_metadata,
+        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+        shape_hints=shape_hints,
+        test_data_nhwc_path=test_data_nhwc_path,
+        export_label="TorchScript export",
+    )
+
+
+def _load_generated_package_export_metadata(
+    *,
+    package_dir: str,
+    export_label: str,
+) -> Tuple[Path, Path, Dict[str, Any]]:
+    package_path = Path(package_dir)
+    metadata_path = package_path / "metadata.json"
+    if not metadata_path.exists():
+        raise FileNotFoundError(
+            f"PyTorch package metadata is missing. path={metadata_path}"
+        )
+    with open(metadata_path, "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+
+    package_init_path = package_path / "__init__.py"
+    if not package_init_path.exists():
+        raise FileNotFoundError(
+            f"Generated PyTorch package is missing __init__.py. path={package_init_path}"
+        )
+    return package_path, metadata_path, metadata
+
+
+def _write_generated_package_export_metadata(
+    *,
+    metadata_path: Path,
+    metadata: Dict[str, Any],
+    metadata_key: str,
+    file_name: Optional[str],
+    example_input_shapes: Dict[str, List[int]],
+    dynamic_inputs_present: bool,
+    error: Optional[str] = None,
+    extra_fields: Optional[Dict[str, Any]] = None,
+) -> None:
+    payload: Dict[str, Any] = {
+        "file_name": file_name,
+        "example_input_shapes": {
+            str(name): [int(v) for v in list(shape)]
+            for name, shape in example_input_shapes.items()
+        },
+        "dynamic_inputs_present": bool(dynamic_inputs_present),
+    }
+    if extra_fields is not None:
+        payload.update(extra_fields)
+    if error is not None:
+        payload["error"] = str(error)
+    metadata[str(metadata_key)] = payload
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+
+def _remove_generated_package_artifact_if_exists(artifact_path: Path) -> None:
+    if not artifact_path.exists():
+        return
+    try:
+        artifact_path.unlink()
+    except Exception:
+        pass
+
+
+def _clear_onnx_graph_and_node_metadata_in_place(graph: onnx.GraphProto) -> None:
+    del graph.metadata_props[:]
+    for node in graph.node:
+        del node.metadata_props[:]
+        for attr in node.attribute:
+            if attr.type == onnx.AttributeProto.GRAPH:
+                _clear_onnx_graph_and_node_metadata_in_place(attr.g)
+            elif attr.type == onnx.AttributeProto.GRAPHS:
+                for subgraph in attr.graphs:
+                    _clear_onnx_graph_and_node_metadata_in_place(subgraph)
+
+
+def _onnx_node_maps(
+    graph: onnx.GraphProto,
+) -> Tuple[Dict[str, onnx.NodeProto], Dict[str, List[onnx.NodeProto]]]:
+    producer_map: Dict[str, onnx.NodeProto] = {}
+    consumer_map: Dict[str, List[onnx.NodeProto]] = {}
+    for node in graph.node:
+        for output_name in node.output:
+            producer_map[str(output_name)] = node
+        for input_name in node.input:
+            consumer_map.setdefault(str(input_name), []).append(node)
+    return producer_map, consumer_map
+
+
+def _onnx_node_attr(node: onnx.NodeProto, name: str) -> Optional[Any]:
+    for attr in node.attribute:
+        if attr.name == name:
+            return onnx.helper.get_attribute_value(attr)
+    return None
+
+
+def _onnx_replace_all_node_inputs(
+    graph: onnx.GraphProto,
+    *,
+    old_name: str,
+    new_name: str,
+) -> None:
+    if old_name == new_name:
+        return
+    for node in graph.node:
+        for input_index, input_name in enumerate(node.input):
+            if str(input_name) == str(old_name):
+                node.input[input_index] = str(new_name)
+    for output in graph.output:
+        if str(output.name) == str(old_name):
+            output.name = str(new_name)
+
+
+def _onnx_remove_nodes_by_name(
+    graph: onnx.GraphProto,
+    node_names: Sequence[str],
+) -> None:
+    remove_name_set = {str(name) for name in list(node_names)}
+    if not remove_name_set:
+        return
+    kept_nodes = [node for node in graph.node if str(node.name) not in remove_name_set]
+    del graph.node[:]
+    graph.node.extend(kept_nodes)
+
+
+def _onnx_get_initializer_index(graph: onnx.GraphProto, name: str) -> Optional[int]:
+    for initializer_index, initializer in enumerate(graph.initializer):
+        if str(initializer.name) == str(name):
+            return int(initializer_index)
+    return None
+
+
+def _onnx_set_initializer_array(
+    graph: onnx.GraphProto,
+    *,
+    name: str,
+    array: np.ndarray,
+) -> None:
+    tensor = onnx.numpy_helper.from_array(np.asarray(array), name=str(name))
+    initializer_index = _onnx_get_initializer_index(graph, str(name))
+    if initializer_index is None:
+        graph.initializer.append(tensor)
+    else:
+        graph.initializer[initializer_index].CopyFrom(tensor)
+
+
+def _onnx_make_unique_initializer_name(graph: onnx.GraphProto, base_name: str) -> str:
+    existing_names = {str(initializer.name) for initializer in graph.initializer}
+    existing_names.update(str(node.output[0]) for node in graph.node if len(node.output) >= 1)
+    candidate = str(base_name)
+    suffix_index = 0
+    while candidate in existing_names:
+        suffix_index += 1
+        candidate = f"{base_name}_{suffix_index}"
+    return candidate
+
+
+def _onnx_get_initializer_array(
+    graph: onnx.GraphProto,
+    name: str,
+) -> Optional[np.ndarray]:
+    initializer_index = _onnx_get_initializer_index(graph, str(name))
+    if initializer_index is None:
+        return None
+    return onnx.numpy_helper.to_array(graph.initializer[initializer_index])
+
+
+def _onnx_convert_pads_nhwc_to_nchw(pads: Sequence[int] | np.ndarray) -> Optional[np.ndarray]:
+    pad_values = np.asarray(list(pads), dtype=np.int64).reshape(-1)
+    if pad_values.size != 8:
+        return None
+    begin = pad_values[:4]
+    end = pad_values[4:]
+    reorder = [0, 3, 1, 2]
+    return np.concatenate([begin[reorder], end[reorder]], axis=0).astype(np.int64)
+
+
+def _onnx_fold_relu_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
+    _, consumer_map = _onnx_node_maps(graph)
+    remove_node_names: List[str] = []
+    for transpose_node in list(graph.node):
+        if str(transpose_node.op_type) != "Transpose":
+            continue
+        if list(_onnx_node_attr(transpose_node, "perm") or []) != [0, 2, 3, 1]:
+            continue
+        transpose_consumers = consumer_map.get(str(transpose_node.output[0]), [])
+        if len(transpose_consumers) != 1:
+            continue
+        relu_node = transpose_consumers[0]
+        if str(relu_node.op_type) != "Relu":
+            continue
+        relu_consumers = consumer_map.get(str(relu_node.output[0]), [])
+        if len(relu_consumers) != 1:
+            continue
+        inverse_node = relu_consumers[0]
+        if str(inverse_node.op_type) != "Transpose":
+            continue
+        if list(_onnx_node_attr(inverse_node, "perm") or []) != [0, 3, 1, 2]:
+            continue
+        relu_node.input[0] = str(transpose_node.input[0])
+        relu_node.output[0] = str(inverse_node.output[0])
+        remove_node_names.extend([str(transpose_node.name), str(inverse_node.name)])
+    _onnx_remove_nodes_by_name(graph, remove_node_names)
+
+
+def _onnx_fold_reducesum_sigmoid_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
+    _, consumer_map = _onnx_node_maps(graph)
+    remove_node_names: List[str] = []
+    for transpose_node in list(graph.node):
+        if str(transpose_node.op_type) != "Transpose":
+            continue
+        if list(_onnx_node_attr(transpose_node, "perm") or []) != [0, 2, 3, 1]:
+            continue
+        transpose_consumers = consumer_map.get(str(transpose_node.output[0]), [])
+        if len(transpose_consumers) != 1:
+            continue
+        reduce_node = transpose_consumers[0]
+        if str(reduce_node.op_type) != "ReduceSum":
+            continue
+        axes_name = str(reduce_node.input[1]) if len(reduce_node.input) >= 2 else ""
+        axes_array = _onnx_get_initializer_array(graph, axes_name)
+        if axes_array is None or [int(v) for v in axes_array.reshape(-1)] != [3]:
+            continue
+        if int(_onnx_node_attr(reduce_node, "keepdims") or 0) != 1:
+            continue
+        reduce_consumers = consumer_map.get(str(reduce_node.output[0]), [])
+        if len(reduce_consumers) != 1:
+            continue
+        sigmoid_node = reduce_consumers[0]
+        if str(sigmoid_node.op_type) != "Sigmoid":
+            continue
+        sigmoid_consumers = consumer_map.get(str(sigmoid_node.output[0]), [])
+        if len(sigmoid_consumers) != 1:
+            continue
+        inverse_node = sigmoid_consumers[0]
+        if str(inverse_node.op_type) != "Transpose":
+            continue
+        if list(_onnx_node_attr(inverse_node, "perm") or []) != [0, 3, 1, 2]:
+            continue
+        new_axes_name = _onnx_make_unique_initializer_name(graph, f"{axes_name}_nchw")
+        _onnx_set_initializer_array(graph, name=new_axes_name, array=np.asarray([1], dtype=np.int64))
+        reduce_node.input[0] = str(transpose_node.input[0])
+        reduce_node.input[1] = str(new_axes_name)
+        sigmoid_node.output[0] = str(inverse_node.output[0])
+        remove_node_names.extend([str(transpose_node.name), str(inverse_node.name)])
+    _onnx_remove_nodes_by_name(graph, remove_node_names)
+
+
+def _onnx_fold_inverse_transpose_pairs_in_place(graph: onnx.GraphProto) -> None:
+    _, consumer_map = _onnx_node_maps(graph)
+    remove_node_names: List[str] = []
+    for first_node in list(graph.node):
+        if str(first_node.op_type) != "Transpose":
+            continue
+        first_perm = [int(v) for v in list(_onnx_node_attr(first_node, "perm") or [])]
+        if not first_perm:
+            continue
+        first_consumers = consumer_map.get(str(first_node.output[0]), [])
+        if len(first_consumers) != 1:
+            continue
+        second_node = first_consumers[0]
+        if str(second_node.op_type) != "Transpose":
+            continue
+        second_perm = [int(v) for v in list(_onnx_node_attr(second_node, "perm") or [])]
+        inverse_perm = [0] * len(first_perm)
+        for perm_index, perm_value in enumerate(first_perm):
+            inverse_perm[int(perm_value)] = int(perm_index)
+        if second_perm != inverse_perm:
+            continue
+        _onnx_replace_all_node_inputs(
+            graph,
+            old_name=str(second_node.output[0]),
+            new_name=str(first_node.input[0]),
+        )
+        remove_node_names.extend([str(first_node.name), str(second_node.name)])
+    _onnx_remove_nodes_by_name(graph, remove_node_names)
+
+
+def _onnx_optimize_pidnet_spp_transpose_bridges_in_place(graph: onnx.GraphProto) -> None:
+    node_by_name = {str(node.name): node for node in graph.node}
+    required_node_names = {
+        "node_permute_27",
+        "node_permute_28",
+        "node_pad_38",
+        "node_pad_39",
+        "node_pad_40",
+        "node_permute_33",
+        "node_permute_36",
+        "node_avg_pool2d_1",
+        "node_avg_pool2d_2",
+        "node_mean",
+        "node_mul_6",
+        "node_mul_7",
+        "node_mul_11",
+        "node_permute_41",
+        "node_add_28",
+    }
+    if any(node_name not in node_by_name for node_name in required_node_names):
+        return
+
+    node_permute_27 = node_by_name["node_permute_27"]
+    node_permute_28 = node_by_name["node_permute_28"]
+    node_pad_38 = node_by_name["node_pad_38"]
+    node_pad_39 = node_by_name["node_pad_39"]
+    node_pad_40 = node_by_name["node_pad_40"]
+    node_permute_33 = node_by_name["node_permute_33"]
+    node_permute_36 = node_by_name["node_permute_36"]
+    node_avg_pool2d_1 = node_by_name["node_avg_pool2d_1"]
+    node_avg_pool2d_2 = node_by_name["node_avg_pool2d_2"]
+    node_mean = node_by_name["node_mean"]
+    node_mul_6 = node_by_name["node_mul_6"]
+    node_mul_7 = node_by_name["node_mul_7"]
+    node_mul_11 = node_by_name["node_mul_11"]
+    node_permute_41 = node_by_name["node_permute_41"]
+    node_add_28 = node_by_name["node_add_28"]
+
+    if list(_onnx_node_attr(node_permute_27, "perm") or []) != [0, 2, 3, 1]:
+        return
+    if list(_onnx_node_attr(node_permute_28, "perm") or []) != [0, 3, 1, 2]:
+        return
+    if list(_onnx_node_attr(node_permute_33, "perm") or []) != [0, 3, 1, 2]:
+        return
+    if list(_onnx_node_attr(node_permute_36, "perm") or []) != [0, 3, 1, 2]:
+        return
+    if list(_onnx_node_attr(node_permute_41, "perm") or []) != [0, 3, 1, 2]:
+        return
+
+    base_input_name = str(node_permute_27.input[0])
+    node_mul_6.input[0] = base_input_name
+    node_pad_38.input[0] = base_input_name
+    node_mul_7.input[0] = base_input_name
+    node_pad_39.input[0] = base_input_name
+    node_pad_40.input[0] = base_input_name
+    node_mean.input[0] = base_input_name
+    node_avg_pool2d_1.input[0] = str(node_pad_39.output[0])
+    node_avg_pool2d_2.input[0] = str(node_pad_40.output[0])
+    node_add_28.input[0] = str(node_mul_11.output[0])
+
+    mean_axes_name = str(node_mean.input[1]) if len(node_mean.input) >= 2 else ""
+    if mean_axes_name:
+        new_mean_axes_name = _onnx_make_unique_initializer_name(graph, f"{mean_axes_name}_nchw")
+        _onnx_set_initializer_array(graph, name=new_mean_axes_name, array=np.asarray([2, 3], dtype=np.int64))
+        node_mean.input[1] = str(new_mean_axes_name)
+
+    for pad_node in [node_pad_39, node_pad_40]:
+        pad_name = str(pad_node.input[1]) if len(pad_node.input) >= 2 else ""
+        pad_values = _onnx_get_initializer_array(graph, pad_name)
+        nchw_pad_values = (
+            _onnx_convert_pads_nhwc_to_nchw(pad_values)
+            if pad_values is not None
+            else None
+        )
+        if pad_name and nchw_pad_values is not None:
+            new_pad_name = _onnx_make_unique_initializer_name(graph, f"{pad_name}_nchw")
+            _onnx_set_initializer_array(graph, name=new_pad_name, array=nchw_pad_values)
+            pad_node.input[1] = str(new_pad_name)
+
+    mul_const_name = str(node_mul_11.input[1]) if len(node_mul_11.input) >= 2 else ""
+    mul_const_array = _onnx_get_initializer_array(graph, mul_const_name)
+    if mul_const_name and mul_const_array is not None and len(mul_const_array.shape) == 4:
+        _onnx_set_initializer_array(
+            graph,
+            name=mul_const_name,
+            array=np.transpose(mul_const_array, (0, 3, 1, 2)),
+        )
+
+    _onnx_remove_nodes_by_name(
+        graph,
+        [
+            str(node_permute_27.name),
+            str(node_permute_28.name),
+            str(node_permute_33.name),
+            str(node_permute_36.name),
+            str(node_permute_41.name),
+        ],
+    )
+
+
+def _optimize_dynamo_exported_onnx_in_place(model: onnx.ModelProto) -> None:
+    _onnx_fold_relu_layout_bridges_in_place(model.graph)
+    _onnx_fold_reducesum_sigmoid_layout_bridges_in_place(model.graph)
+    _onnx_fold_inverse_transpose_pairs_in_place(model.graph)
+    _onnx_optimize_pidnet_spp_transpose_bridges_in_place(model.graph)
+
+
+def _onnx_model_uses_external_data(model: onnx.ModelProto) -> bool:
+    return any(
+        initializer.data_location == onnx.TensorProto.EXTERNAL
+        for initializer in model.graph.initializer
+    )
+
+
+def _inspect_onnx_uses_external_data(onnx_path: Path) -> bool:
+    model = onnx.load(str(onnx_path), load_external_data=False)
+    return _onnx_model_uses_external_data(model)
+
+
+def _sanitize_dynamo_exported_onnx_metadata(onnx_path: Path) -> None:
+    external_data_sidecar_path = onnx_path.with_name(f"{onnx_path.name}.data")
+    original_uses_external_data = _inspect_onnx_uses_external_data(onnx_path)
+    model = onnx.load(str(onnx_path))
+    del model.metadata_props[:]
+    _clear_onnx_graph_and_node_metadata_in_place(model.graph)
+    _optimize_dynamo_exported_onnx_in_place(model)
+    onnx.checker.check_model(model)
+    if original_uses_external_data:
+        onnx.save_model(
+            model,
+            str(onnx_path),
+            save_as_external_data=True,
+            all_tensors_to_one_file=True,
+            location=external_data_sidecar_path.name,
+            size_threshold=0,
+        )
+    else:
+        onnx.save_model(
+            model,
+            str(onnx_path),
+            save_as_external_data=False,
+        )
+    if not _inspect_onnx_uses_external_data(onnx_path) and external_data_sidecar_path.exists():
+        external_data_sidecar_path.unlink()
+
+
+def _metadata_has_dynamic_public_inputs(metadata: Dict[str, Any]) -> bool:
+    tensor_meta_map = metadata.get("tensors", {})
+    if not isinstance(tensor_meta_map, dict):
+        return False
+    for input_name in [str(v) for v in list(metadata.get("inputs", []))]:
+        tensor_meta = tensor_meta_map.get(str(input_name), {})
+        if not isinstance(tensor_meta, dict):
+            continue
+        shape_values = tensor_meta.get("shape_signature", tensor_meta.get("shape", []))
+        if not isinstance(shape_values, list):
+            shape_values = tensor_meta.get("shape", [])
+        if not isinstance(shape_values, list):
+            continue
+        if any(int(v) <= 0 for v in list(shape_values)):
+            return True
+    return False
+
+
+def _generated_package_non_native_skip_reason(package_path: Path) -> Optional[str]:
+    metadata_path = package_path / "metadata.json"
+    metadata: Dict[str, Any] = {}
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except Exception:
+            metadata = {}
+    execution_backend = str(metadata.get("execution_backend", "")).strip().lower()
+    if execution_backend == "" and _is_runtime_wrapper_package_dir(package_path):
+        execution_backend = "runtime_wrapper"
+    if execution_backend not in {"", "native"}:
+        return (
+            "artifact export is skipped for generated packages with non-native execution "
+            f"backend. execution_backend={execution_backend or 'native'}"
+        )
+    return None
+
+
+def _generated_package_torch_export_skip_reason(package_path: Path) -> Optional[str]:
+    non_native_skip_reason = _generated_package_non_native_skip_reason(package_path)
+    if non_native_skip_reason is not None:
+        return non_native_skip_reason
+    model_path = package_path / "model.py"
+    if not model_path.exists():
+        return None
+    try:
+        model_source = model_path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    if re.search(
+        r"def _run_nms_\d+\(self, boxes: torch\.Tensor, scores: torch\.Tensor, max_output_size: torch\.Tensor",
+        model_source,
+    ):
+        return (
+            "torch.export-based artifacts are skipped for generated packages "
+            "with data-dependent NON_MAX_SUPPRESSION_V4 parameters."
+        )
+    if (
+        "_apply_non_max_suppression_v4(" in model_source
+        and (
+            "torch.as_tensor(min(2147483647, (_shape_list(" in model_source
+            or "torch.as_tensor(min(2147483647, (_tensor_shape_list(" in model_source
+            or (
+                "torch.as_tensor(min(2147483647, " in model_source
+                and ".shape[" in model_source
+            )
+        )
+    ):
+        return (
+            "torch.export-based artifacts are skipped for generated packages "
+            "with data-dependent NON_MAX_SUPPRESSION_V4 parameters."
+        )
+
+    if re.search(
+        r"selected_indices_nms_valid_indices_c\d+\s*=\s*torch\.arange\(\s*start=0,\s*"
+        r"end=selected_indices_nms_valid_count_scalar_c\d+\.reshape\(-1\)\[0\]\.item\(\)",
+        model_source,
+    ):
+        return (
+            "torch.export-based artifacts are skipped for generated packages "
+            "with data-dependent NON_MAX_SUPPRESSION output-shape post-processing."
+        )
+    return None
+
+
+def _run_generated_package_export_child(
+    *,
+    example_inputs: Tuple[Any, ...],
+    child_script: str,
+    package_path: Path,
+    artifact_path: Path,
+    child_payload: Dict[str, Any],
+    child_args: Optional[List[str]] = None,
+    temp_prefix: str,
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    try:
+        import torch
+    except Exception as ex:
+        raise ModelIRPyTorchExportError(
+            "PyTorch export child execution requires `torch` to be installed."
+        ) from ex
+
+    if child_args is None:
+        child_args = []
+    with tempfile.TemporaryDirectory(prefix=temp_prefix) as temp_dir:
+        serialized_inputs_path = os.path.join(temp_dir, "example_inputs.pt")
+        payload = dict(child_payload)
+        payload["inputs"] = tuple(example_inputs)
+        torch.save(payload, serialized_inputs_path)
+        child_result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                child_script,
+                str(package_path),
+                str(serialized_inputs_path),
+                str(artifact_path),
+                *[str(v) for v in child_args],
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    if child_result.returncode == 0:
+        try:
+            return json.loads(child_result.stdout.strip() or "{}"), ""
+        except json.JSONDecodeError:
+            return {}, ""
+    stderr_text = child_result.stderr.strip()
+    stdout_text = child_result.stdout.strip()
+    return None, (
+        f"returncode={child_result.returncode} "
+        f"stdout={stdout_text} stderr={stderr_text}"
+    )
+
+
+def export_torchscript_from_generated_package(
+    *,
+    package_dir: str,
+    custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+    shape_hints: Optional[List[str]] = None,
+    test_data_nhwc_path: Optional[str] = None,
+    raise_on_failure: bool = True,
+) -> Optional[str]:
+    try:
+        import torch
+    except Exception as ex:
+        raise ModelIRPyTorchExportError(
+            "TorchScript export requires `torch` to be installed."
+        ) from ex
+
+    try:
+        package_path, metadata_path, metadata = _load_generated_package_export_metadata(
+            package_dir=package_dir,
+            export_label="TorchScript export",
+        )
+    except Exception as ex:
+        if raise_on_failure:
+            raise
+        package_path = Path(package_dir)
+        metadata_path = package_path / "metadata.json"
+        if metadata_path.exists():
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        else:
+            metadata = {}
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="torchscript",
+            file_name=None,
+            example_input_shapes={},
+            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
+            error=str(ex),
+            extra_fields={
+                "trace_mode": None,
+            },
+        )
+        return None
+    skip_reason = _generated_package_non_native_skip_reason(package_path)
+    if skip_reason is not None:
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="torchscript",
+            file_name=None,
+            example_input_shapes={},
+            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
+            extra_fields={
+                "trace_mode": None,
+                "skipped_reason": skip_reason,
+            },
+        )
+        return None
+    try:
+        example_inputs, example_input_shapes, dynamic_inputs_present = _build_pytorch_export_example_inputs(
+            package_dir=package_dir,
+            package_metadata=metadata,
+            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+            shape_hints=shape_hints,
+            test_data_nhwc_path=test_data_nhwc_path,
+            export_label="TorchScript export",
+        )
+    except Exception as ex:
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="torchscript",
+            file_name=None,
+            example_input_shapes={},
+            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
+            error=str(ex),
+            extra_fields={
+                "trace_mode": None,
+            },
+        )
+        if raise_on_failure:
+            raise
+        return None
+    file_stem = _sanitize_torchscript_file_stem(
+        str(metadata.get("name", "")),
+        fallback=package_path.name,
+    )
+    torchscript_file_name = f"{file_stem}_jit.pt"
+    torchscript_path = package_path / torchscript_file_name
+    child_script = """
+import hashlib
+import importlib
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import torch
+
+package_path = Path(sys.argv[1])
+package_init_path = package_path / "__init__.py"
+inputs_path = Path(sys.argv[2])
+torchscript_path = Path(sys.argv[3])
+mode = str(sys.argv[4]).strip().lower()
+
+module_name = (
+    "_onnx2tf_generated_torchscript_child_"
+    + hashlib.sha256(str(package_path.resolve()).encode("utf-8")).hexdigest()
+)
+if module_name in sys.modules:
+    del sys.modules[module_name]
+spec = importlib.util.spec_from_file_location(
+    module_name,
+    str(package_init_path),
+    submodule_search_locations=[str(package_path)],
+)
+if spec is None or spec.loader is None:
+    raise ImportError(
+        f"Failed to create an import spec for the generated PyTorch package. path={package_init_path}"
+    )
+module = importlib.util.module_from_spec(spec)
+sys.modules[module_name] = module
+spec.loader.exec_module(module)
+runtime_module = importlib.import_module(f"{module_name}.runtime")
+setattr(runtime_module, "_ONNX2TF_DISABLE_SYMBOLIC_SHAPE_TENSORS", True)
+if not hasattr(module, "load_model"):
+    raise RuntimeError(
+        "Generated native PyTorch package does not expose load_model(). "
+        f"package_dir={package_path}"
+    )
+payload = torch.load(str(inputs_path), map_location="cpu")
+example_inputs = tuple(payload["inputs"])
+model = module.load_model(device="cpu", eval_mode=True)
+if hasattr(model, "cpu"):
+    model = model.cpu()
+with torch.no_grad():
+    if mode == "trace":
+        artifact = torch.jit.trace(model, example_inputs, check_trace=False)
+    elif mode == "script":
+        artifact = torch.jit.script(model)
+    else:
+        raise RuntimeError(f"Unsupported torchscript export mode: {mode}")
+    torch.jit.save(artifact, str(torchscript_path))
+print(json.dumps({"trace_mode": mode}))
+"""
+    trace_mode = ""
+    last_error_message = ""
+    for candidate_mode in ("trace", "script"):
+        child_payload, last_error_message = _run_generated_package_export_child(
+            example_inputs=example_inputs,
+            child_script=child_script,
+            package_path=package_path,
+            artifact_path=torchscript_path,
+            child_payload={},
+            child_args=[candidate_mode],
+            temp_prefix="onnx2tf_torchscript_",
+        )
+        if child_payload is not None:
+            trace_mode = str(child_payload.get("trace_mode", candidate_mode))
+            break
+        if last_error_message != "":
+            last_error_message = f"mode={candidate_mode} {last_error_message}"
+    if trace_mode == "":
+        _remove_generated_package_artifact_if_exists(torchscript_path)
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="torchscript",
+            file_name=None,
+            example_input_shapes=example_input_shapes,
+            dynamic_inputs_present=dynamic_inputs_present,
+            error=last_error_message,
+            extra_fields={
+                "trace_mode": None,
+            },
+        )
+        if raise_on_failure:
+            raise ModelIRPyTorchExportError(
+                "TorchScript export failed for the generated native PyTorch package. "
+                f"package_dir={package_dir} details={last_error_message}"
+            )
+        return None
+    _write_generated_package_export_metadata(
+        metadata_path=metadata_path,
+        metadata=metadata,
+        metadata_key="torchscript",
+        file_name=str(torchscript_file_name),
+        example_input_shapes=example_input_shapes,
+        dynamic_inputs_present=dynamic_inputs_present,
+        extra_fields={
+            "trace_mode": trace_mode,
+        },
+    )
+    return str(torchscript_path)
+
+
+def export_dynamo_onnx_from_generated_package(
+    *,
+    package_dir: str,
+    custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+    shape_hints: Optional[List[str]] = None,
+    test_data_nhwc_path: Optional[str] = None,
+    raise_on_failure: bool = True,
+) -> Optional[str]:
+    try:
+        package_path, metadata_path, metadata = _load_generated_package_export_metadata(
+            package_dir=package_dir,
+            export_label="Dynamo ONNX export",
+        )
+    except Exception as ex:
+        if raise_on_failure:
+            raise
+        package_path = Path(package_dir)
+        metadata_path = package_path / "metadata.json"
+        if metadata_path.exists():
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        else:
+            metadata = {}
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="dynamo_onnx",
+            file_name=None,
+            example_input_shapes={},
+            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
+            error=str(ex),
+        )
+        return None
+    skip_reason = _generated_package_torch_export_skip_reason(package_path)
+    if skip_reason is not None:
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="dynamo_onnx",
+            file_name=None,
+            example_input_shapes={},
+            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
+            extra_fields={
+                "skipped_reason": skip_reason,
+            },
+        )
+        return None
+    try:
+        example_inputs, example_input_shapes, dynamic_inputs_present = _build_pytorch_export_example_inputs(
+            package_dir=package_dir,
+            package_metadata=metadata,
+            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+            shape_hints=shape_hints,
+            test_data_nhwc_path=test_data_nhwc_path,
+            export_label="Dynamo ONNX export",
+        )
+    except Exception as ex:
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="dynamo_onnx",
+            file_name=None,
+            example_input_shapes={},
+            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
+            error=str(ex),
+        )
+        if raise_on_failure:
+            raise
+        return None
+    file_stem = _sanitize_torchscript_file_stem(
+        str(metadata.get("name", "")),
+        fallback=package_path.name,
+    )
+    dynamo_onnx_file_name = f"{file_stem}_dynamo.onnx"
+    dynamo_onnx_path = package_path / dynamo_onnx_file_name
+    child_script = """
+import hashlib
+import importlib
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import torch
+
+package_path = Path(sys.argv[1])
+package_init_path = package_path / "__init__.py"
+inputs_path = Path(sys.argv[2])
+dynamo_onnx_path = Path(sys.argv[3])
+
+module_name = (
+    "_onnx2tf_generated_dynamo_onnx_child_"
+    + hashlib.sha256(str(package_path.resolve()).encode("utf-8")).hexdigest()
+)
+if module_name in sys.modules:
+    del sys.modules[module_name]
+spec = importlib.util.spec_from_file_location(
+    module_name,
+    str(package_init_path),
+    submodule_search_locations=[str(package_path)],
+)
+if spec is None or spec.loader is None:
+    raise ImportError(
+        f"Failed to create an import spec for the generated PyTorch package. path={package_init_path}"
+    )
+module = importlib.util.module_from_spec(spec)
+sys.modules[module_name] = module
+spec.loader.exec_module(module)
+runtime_module = importlib.import_module(f"{module_name}.runtime")
+setattr(runtime_module, "_ONNX2TF_DISABLE_SYMBOLIC_SHAPE_TENSORS", True)
+if not hasattr(module, "load_model"):
+    raise RuntimeError(
+        "Generated native PyTorch package does not expose load_model(). "
+        f"package_dir={package_path}"
+    )
+payload = torch.load(str(inputs_path), map_location="cpu")
+example_inputs = tuple(payload["inputs"])
+input_names = [str(v) for v in list(payload.get("input_names", []))]
+output_names = [str(v) for v in list(payload.get("output_names", []))]
+model = module.load_model(device="cpu", eval_mode=True)
+if hasattr(model, "cpu"):
+    model = model.cpu()
+setattr(model, "_onnx2tf_torch_export_mode", True)
+with torch.no_grad():
+    torch.onnx.export(
+        model,
+        example_inputs,
+        str(dynamo_onnx_path),
+        dynamo=True,
+        input_names=input_names,
+        output_names=output_names,
+    )
+print(json.dumps({"file_name": dynamo_onnx_path.name}))
+"""
+    child_payload, last_error_message = _run_generated_package_export_child(
+        example_inputs=example_inputs,
+        child_script=child_script,
+        package_path=package_path,
+        artifact_path=dynamo_onnx_path,
+        child_payload={
+            "input_names": [str(v) for v in list(metadata.get("inputs", []))],
+            "output_names": [str(v) for v in list(metadata.get("outputs", []))],
+        },
+        temp_prefix="onnx2tf_dynamo_onnx_",
+    )
+    if child_payload is None or not dynamo_onnx_path.exists():
+        _remove_generated_package_artifact_if_exists(dynamo_onnx_path)
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="dynamo_onnx",
+            file_name=None,
+            example_input_shapes=example_input_shapes,
+            dynamic_inputs_present=dynamic_inputs_present,
+            error=last_error_message or "dynamo=True ONNX export did not produce an artifact.",
+        )
+        if raise_on_failure:
+            raise ModelIRPyTorchExportError(
+                "Dynamo ONNX export failed for the generated native PyTorch package. "
+                f"package_dir={package_dir} details={last_error_message}"
+            )
+        return None
+    _sanitize_dynamo_exported_onnx_metadata(dynamo_onnx_path)
+    _write_generated_package_export_metadata(
+        metadata_path=metadata_path,
+        metadata=metadata,
+        metadata_key="dynamo_onnx",
+        file_name=str(child_payload.get("file_name", dynamo_onnx_file_name)),
+        example_input_shapes=example_input_shapes,
+        dynamic_inputs_present=dynamic_inputs_present,
+    )
+    return str(dynamo_onnx_path)
+
+
+def export_exported_program_from_generated_package(
+    *,
+    package_dir: str,
+    custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+    shape_hints: Optional[List[str]] = None,
+    test_data_nhwc_path: Optional[str] = None,
+    raise_on_failure: bool = True,
+) -> Optional[str]:
+    try:
+        package_path, metadata_path, metadata = _load_generated_package_export_metadata(
+            package_dir=package_dir,
+            export_label="ExportedProgram export",
+        )
+    except Exception as ex:
+        if raise_on_failure:
+            raise
+        package_path = Path(package_dir)
+        metadata_path = package_path / "metadata.json"
+        if metadata_path.exists():
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        else:
+            metadata = {}
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="exported_program",
+            file_name=None,
+            example_input_shapes={},
+            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
+            error=str(ex),
+        )
+        return None
+    skip_reason = _generated_package_torch_export_skip_reason(package_path)
+    if skip_reason is not None:
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="exported_program",
+            file_name=None,
+            example_input_shapes={},
+            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
+            extra_fields={
+                "skipped_reason": skip_reason,
+            },
+        )
+        return None
+    try:
+        example_inputs, example_input_shapes, dynamic_inputs_present = _build_pytorch_export_example_inputs(
+            package_dir=package_dir,
+            package_metadata=metadata,
+            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+            shape_hints=shape_hints,
+            test_data_nhwc_path=test_data_nhwc_path,
+            export_label="ExportedProgram export",
+        )
+    except Exception as ex:
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="exported_program",
+            file_name=None,
+            example_input_shapes={},
+            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
+            error=str(ex),
+        )
+        if raise_on_failure:
+            raise
+        return None
+    file_stem = _sanitize_torchscript_file_stem(
+        str(metadata.get("name", "")),
+        fallback=package_path.name,
+    )
+    exported_program_file_name = f"{file_stem}_ep.pt2"
+    exported_program_path = package_path / exported_program_file_name
+    child_script = """
+import hashlib
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import torch
+
+package_path = Path(sys.argv[1])
+package_init_path = package_path / "__init__.py"
+inputs_path = Path(sys.argv[2])
+exported_program_path = Path(sys.argv[3])
+
+module_name = (
+    "_onnx2tf_generated_exported_program_child_"
+    + hashlib.sha256(str(package_path.resolve()).encode("utf-8")).hexdigest()
+)
+if module_name in sys.modules:
+    del sys.modules[module_name]
+spec = importlib.util.spec_from_file_location(
+    module_name,
+    str(package_init_path),
+    submodule_search_locations=[str(package_path)],
+)
+if spec is None or spec.loader is None:
+    raise ImportError(
+        f"Failed to create an import spec for the generated PyTorch package. path={package_init_path}"
+    )
+module = importlib.util.module_from_spec(spec)
+sys.modules[module_name] = module
+spec.loader.exec_module(module)
+if not hasattr(module, "load_model"):
+    raise RuntimeError(
+        "Generated native PyTorch package does not expose load_model(). "
+        f"package_dir={package_path}"
+    )
+payload = torch.load(str(inputs_path), map_location="cpu")
+example_inputs = tuple(payload["inputs"])
+model = module.load_model(device="cpu", eval_mode=True)
+if hasattr(model, "cpu"):
+    model = model.cpu()
+setattr(model, "_onnx2tf_torch_export_mode", True)
+
+def _prune_alias_nodes(exported_program):
+    graph_module = getattr(exported_program, "graph_module", None)
+    if graph_module is None:
+        return exported_program
+    graph = graph_module.graph
+    graph_signature = getattr(exported_program, "graph_signature", None)
+    user_output_names = set()
+    if graph_signature is not None:
+        try:
+            user_output_names = {str(name) for name in list(graph_signature.user_outputs)}
+        except Exception:
+            user_output_names = set()
+    changed = False
+    for node in list(graph.nodes):
+        if (
+            node.op == "call_function"
+            and str(node.target) == "aten.alias.default"
+            and len(node.args) >= 1
+            and isinstance(node.args[0], torch.fx.Node)
+            and str(node.name) not in user_output_names
+        ):
+            node.replace_all_uses_with(node.args[0])
+            graph.erase_node(node)
+            changed = True
+    if changed:
+        graph.eliminate_dead_code()
+        graph.lint()
+        graph_module.recompile()
+    return exported_program
+
+def _fold_inverse_permute_round_trips(exported_program):
+    graph_module = getattr(exported_program, "graph_module", None)
+    if graph_module is None:
+        return exported_program
+    graph = graph_module.graph
+    changed = False
+
+    def _normalize_perm(arg):
+        if not isinstance(arg, (list, tuple)):
+            return None
+        return [int(v) for v in arg]
+
+    def _inverse_perm(perm):
+        inverse = [0] * len(perm)
+        for idx, value in enumerate(perm):
+            inverse[int(value)] = int(idx)
+        return inverse
+
+    def _match_permute_chain_source(node, perm):
+        if not isinstance(node, torch.fx.Node):
+            return None
+        if (
+            node.op == "call_function"
+            and str(node.target) == "aten.permute.default"
+            and len(node.args) >= 2
+            and _normalize_perm(node.args[1]) == perm
+            and isinstance(node.args[0], torch.fx.Node)
+        ):
+            return node.args[0]
+        if (
+            node.op == "call_function"
+            and str(node.target) == "aten.contiguous.default"
+            and len(node.args) >= 1
+            and isinstance(node.args[0], torch.fx.Node)
+        ):
+            input_node = node.args[0]
+            if (
+                input_node.op == "call_function"
+                and str(input_node.target) == "aten.permute.default"
+                and len(input_node.args) >= 2
+                and _normalize_perm(input_node.args[1]) == perm
+                and isinstance(input_node.args[0], torch.fx.Node)
+            ):
+                return input_node.args[0]
+        return None
+
+    def _match_binary_input_source(node, perm):
+        return _match_permute_chain_source(node, perm)
+
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+        ):
+            continue
+        source = node.args[0]
+        if not isinstance(source, torch.fx.Node):
+            continue
+        perm = _normalize_perm(node.args[1])
+        if perm is None:
+            continue
+        root_replacement = source
+        root_users = list(node.users)
+        if len(root_users) == 1 and (
+            root_users[0].op == "call_function"
+            and str(root_users[0].target) == "aten.contiguous.default"
+        ):
+            branch_input = root_users[0]
+        else:
+            branch_input = node
+        branch_users = list(branch_input.users)
+        if len(branch_users) == 1:
+            inverse_node = branch_users[0]
+            if (
+                inverse_node.op == "call_function"
+                and str(inverse_node.target) == "aten.permute.default"
+                and len(inverse_node.args) >= 2
+            ):
+                inverse_perm = _normalize_perm(inverse_node.args[1])
+                if inverse_perm is not None and inverse_perm == _inverse_perm(perm):
+                    inverse_users = list(inverse_node.users)
+                    if (
+                        len(inverse_users) == 1
+                        and inverse_users[0].op == "call_function"
+                        and str(inverse_users[0].target) == "aten.contiguous.default"
+                    ):
+                        inverse_users[0].replace_all_uses_with(root_replacement)
+                    else:
+                        inverse_node.replace_all_uses_with(root_replacement)
+                    changed = True
+
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+        ):
+            continue
+        inverse_perm = _normalize_perm(node.args[1])
+        if inverse_perm is None:
+            continue
+        source = _match_permute_chain_source(node.args[0], _inverse_perm(inverse_perm))
+        if source is None:
+            continue
+        node_users = list(node.users)
+        if (
+            len(node_users) == 1
+            and node_users[0].op == "call_function"
+            and str(node_users[0].target) == "aten.contiguous.default"
+        ):
+            node_users[0].replace_all_uses_with(source)
+        else:
+            node.replace_all_uses_with(source)
+        changed = True
+
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+            or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+        ):
+            continue
+        pad_node = node.args[0]
+        if not isinstance(pad_node, torch.fx.Node):
+            continue
+        if (
+            pad_node.op != "call_function"
+            or str(pad_node.target) != "aten.pad.default"
+            or len(pad_node.args) < 4
+        ):
+            continue
+        source = _match_permute_chain_source(pad_node.args[0], [0, 2, 3, 1])
+        if source is None:
+            continue
+        pad_values = list(pad_node.args[1])
+        if len(pad_values) != 6:
+            continue
+        if [int(v) for v in pad_values[:2]] != [0, 0]:
+            continue
+        cf_pad = [int(pad_values[2]), int(pad_values[3]), int(pad_values[4]), int(pad_values[5])]
+        with graph.inserting_before(pad_node):
+            folded_pad = graph.call_function(
+                pad_node.target,
+                args=(source, cf_pad, *tuple(pad_node.args[2:])),
+                kwargs=dict(pad_node.kwargs),
+            )
+        folded_pad.meta = dict(getattr(node, "meta", {}))
+        node_users = list(node.users)
+        if (
+            len(node_users) == 1
+            and node_users[0].op == "call_function"
+            and str(node_users[0].target) == "aten.contiguous.default"
+        ):
+            node_users[0].replace_all_uses_with(folded_pad)
+        else:
+            node.replace_all_uses_with(folded_pad)
+        changed = True
+
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+            or _normalize_perm(node.args[1]) != [0, 2, 3, 1]
+        ):
+            continue
+        source = node.args[0]
+        if not isinstance(source, torch.fx.Node):
+            continue
+        node_users = list(node.users)
+        if len(node_users) != 1:
+            continue
+        contiguous_node = node_users[0]
+        if (
+            contiguous_node.op != "call_function"
+            or str(contiguous_node.target) != "aten.contiguous.default"
+        ):
+            continue
+        contiguous_users = list(contiguous_node.users)
+        if len(contiguous_users) != 1:
+            continue
+        sum_node = contiguous_users[0]
+        if (
+            sum_node.op != "call_function"
+            or str(sum_node.target) != "aten.sum.dim_IntList"
+            or len(sum_node.args) < 3
+            or list(sum_node.args[1]) != [3]
+            or bool(sum_node.args[2]) is not True
+        ):
+            continue
+        sum_users = list(sum_node.users)
+        if len(sum_users) != 1:
+            continue
+        sigmoid_node = sum_users[0]
+        if (
+            sigmoid_node.op != "call_function"
+            or str(sigmoid_node.target) != "aten.sigmoid.default"
+        ):
+            continue
+        sigmoid_users = list(sigmoid_node.users)
+        if len(sigmoid_users) != 1:
+            continue
+        inverse_node = sigmoid_users[0]
+        if (
+            inverse_node.op != "call_function"
+            or str(inverse_node.target) != "aten.permute.default"
+            or len(inverse_node.args) < 2
+            or _normalize_perm(inverse_node.args[1]) != [0, 3, 1, 2]
+        ):
+            continue
+        with graph.inserting_before(node):
+            folded_sum = graph.call_function(
+                sum_node.target,
+                args=(source, [1], True),
+                kwargs=dict(sum_node.kwargs),
+            )
+            folded_sigmoid = graph.call_function(
+                sigmoid_node.target,
+                args=(folded_sum,),
+                kwargs=dict(sigmoid_node.kwargs),
+            )
+        folded_sum.meta = dict(getattr(sum_node, "meta", {}))
+        folded_sigmoid.meta = dict(getattr(inverse_node, "meta", {}))
+        inverse_users = list(inverse_node.users)
+        if (
+            len(inverse_users) == 1
+            and inverse_users[0].op == "call_function"
+            and str(inverse_users[0].target) == "aten.contiguous.default"
+        ):
+            inverse_users[0].replace_all_uses_with(folded_sigmoid)
+        else:
+            inverse_node.replace_all_uses_with(folded_sigmoid)
+        changed = True
+
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+            or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+        ):
+            continue
+        source = node.args[0]
+        if not isinstance(source, torch.fx.Node):
+            continue
+        source_shape = None
+        source_meta_val = getattr(source, "meta", {}).get("val", None)
+        if isinstance(source_meta_val, torch.Tensor):
+            source_shape = [int(v) for v in list(source_meta_val.shape)]
+        elif source.op == "get_attr" and isinstance(source.target, str):
+            source_tensor = getattr(graph_module, source.target, None)
+            if isinstance(source_tensor, torch.Tensor):
+                source_shape = [int(v) for v in list(source_tensor.shape)]
+        if source_shape is None or len(source_shape) != 4:
+            continue
+        non_singleton_axes = [idx for idx, dim in enumerate(source_shape) if int(dim) > 1]
+        if len(non_singleton_axes) != 1 or int(non_singleton_axes[0]) != 3:
+            continue
+        reshaped_shape = [int(source_shape[0]), int(source_shape[3]), int(source_shape[1]), int(source_shape[2])]
+        with graph.inserting_before(node):
+            folded_reshape = graph.call_function(
+                torch.ops.aten.reshape.default,
+                args=(source, reshaped_shape),
+                kwargs={},
+            )
+        folded_reshape.meta = dict(getattr(node, "meta", {}))
+        node_users = list(node.users)
+        if (
+            len(node_users) == 1
+            and node_users[0].op == "call_function"
+            and str(node_users[0].target) == "aten.contiguous.default"
+        ):
+            node_users[0].replace_all_uses_with(folded_reshape)
+        else:
+            node.replace_all_uses_with(folded_reshape)
+        changed = True
+
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+            or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+        ):
+            continue
+        mul_node = node.args[0]
+        if (
+            not isinstance(mul_node, torch.fx.Node)
+            or mul_node.op != "call_function"
+            or str(mul_node.target) != "aten.mul.Tensor"
+            or len(mul_node.args) != 2
+        ):
+            continue
+        mean_node = None
+        const_node = None
+        for arg in mul_node.args:
+            if (
+                isinstance(arg, torch.fx.Node)
+                and arg.op == "call_function"
+                and str(arg.target) == "aten.mean.dim"
+                and len(arg.args) >= 3
+                and list(arg.args[1]) == [1, 2]
+                and bool(arg.args[2]) is True
+            ):
+                mean_node = arg
+            elif isinstance(arg, torch.fx.Node):
+                const_node = arg
+        if mean_node is None or const_node is None:
+            continue
+        mean_input = mean_node.args[0]
+        if not (
+            isinstance(mean_input, torch.fx.Node)
+            and mean_input.op == "call_function"
+            and str(mean_input.target) == "aten.contiguous.default"
+            and len(mean_input.args) >= 1
+            and isinstance(mean_input.args[0], torch.fx.Node)
+            and mean_input.args[0].op == "call_function"
+            and str(mean_input.args[0].target) == "aten.permute.default"
+            and len(mean_input.args[0].args) >= 2
+            and _normalize_perm(mean_input.args[0].args[1]) == [0, 2, 3, 1]
+            and isinstance(mean_input.args[0].args[0], torch.fx.Node)
+        ):
+            continue
+        source = mean_input.args[0].args[0]
+        const_shape = None
+        const_meta_val = getattr(const_node, "meta", {}).get("val", None)
+        if isinstance(const_meta_val, torch.Tensor):
+            const_shape = [int(v) for v in list(const_meta_val.shape)]
+        if const_node.op == "get_attr" and isinstance(const_node.target, str):
+            const_tensor = getattr(graph_module, const_node.target, None)
+            if isinstance(const_tensor, torch.Tensor):
+                const_shape = [int(v) for v in list(const_tensor.shape)]
+        if const_shape is None or len(const_shape) != 4 or const_shape[:3] != [1, 1, 1]:
+            continue
+        reshaped_const_shape = [1, int(const_shape[3]), 1, 1]
+        with graph.inserting_before(mean_node):
+            folded_mean = graph.call_function(
+                mean_node.target,
+                args=(source, [2, 3], True),
+                kwargs=dict(mean_node.kwargs),
+            )
+            folded_const = graph.call_function(
+                torch.ops.aten.reshape.default,
+                args=(const_node, reshaped_const_shape),
+                kwargs={},
+            )
+            folded_mul = graph.call_function(
+                mul_node.target,
+                args=(
+                    folded_mean if mul_node.args[0] is mean_node else folded_const,
+                    folded_const if mul_node.args[0] is mean_node else folded_mean,
+                ),
+                kwargs=dict(mul_node.kwargs),
+            )
+        folded_mean.meta = dict(getattr(mean_node, "meta", {}))
+        folded_const.meta = dict(getattr(const_node, "meta", {}))
+        folded_mul.meta = dict(getattr(node, "meta", {}))
+        inverse_users = list(node.users)
+        if (
+            len(inverse_users) == 1
+            and inverse_users[0].op == "call_function"
+            and str(inverse_users[0].target) == "aten.contiguous.default"
+        ):
+            inverse_users[0].replace_all_uses_with(folded_mul)
+        else:
+            node.replace_all_uses_with(folded_mul)
+        changed = True
+
+    binary_targets = {
+        "aten.add.Tensor",
+        "aten.div.Tensor",
+        "aten.mul.Tensor",
+        "aten.sub.Tensor",
+    }
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+        ):
+            continue
+        inverse_perm = _normalize_perm(node.args[1])
+        if inverse_perm is None:
+            continue
+        binary_node = node.args[0]
+        if not isinstance(binary_node, torch.fx.Node):
+            continue
+        if (
+            binary_node.op != "call_function"
+            or str(binary_node.target) not in binary_targets
+            or len(binary_node.args) != 2
+        ):
+            continue
+        input_perm = _inverse_perm(inverse_perm)
+        lhs_source = _match_binary_input_source(binary_node.args[0], input_perm)
+        rhs_source = _match_binary_input_source(binary_node.args[1], input_perm)
+        if lhs_source is None or rhs_source is None:
+            continue
+        with graph.inserting_before(binary_node):
+            folded_binary = graph.call_function(
+                binary_node.target,
+                args=(lhs_source, rhs_source),
+                kwargs=dict(binary_node.kwargs),
+            )
+        folded_binary.meta = dict(getattr(node, "meta", {}))
+        inverse_users = list(node.users)
+        if (
+            len(inverse_users) == 1
+            and inverse_users[0].op == "call_function"
+            and str(inverse_users[0].target) == "aten.contiguous.default"
+        ):
+            inverse_users[0].replace_all_uses_with(folded_binary)
+        else:
+            node.replace_all_uses_with(folded_binary)
+        changed = True
+    if changed:
+        graph.eliminate_dead_code()
+        graph.lint()
+        graph_module.recompile()
+    return exported_program
+
+def _fold_layout_preserving_permute_chains(exported_program):
+    graph_module = getattr(exported_program, "graph_module", None)
+    if graph_module is None:
+        return exported_program
+    graph = graph_module.graph
+    changed = False
+    unary_targets = {
+        "aten.relu.default",
+    }
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+            or list(node.args[1]) != [0, 2, 3, 1]
+        ):
+            continue
+        source = node.args[0]
+        if not isinstance(source, torch.fx.Node):
+            continue
+        permute_users = list(node.users)
+        if len(permute_users) != 1:
+            continue
+        contiguous_node = permute_users[0]
+        if (
+            contiguous_node.op != "call_function"
+            or str(contiguous_node.target) != "aten.contiguous.default"
+        ):
+            continue
+        contiguous_users = list(contiguous_node.users)
+        if len(contiguous_users) != 1:
+            continue
+        unary_node = contiguous_users[0]
+        if (
+            unary_node.op != "call_function"
+            or str(unary_node.target) not in unary_targets
+        ):
+            continue
+        inverse_permute_nodes = list(unary_node.users)
+        if len(inverse_permute_nodes) == 0:
+            continue
+        if any(
+            inverse_node.op != "call_function"
+            or str(inverse_node.target) != "aten.permute.default"
+            or len(inverse_node.args) < 2
+            or list(inverse_node.args[1]) != [0, 3, 1, 2]
+            for inverse_node in inverse_permute_nodes
+        ):
+            continue
+        with graph.inserting_before(node):
+            folded_unary = graph.call_function(
+                unary_node.target,
+                args=(source, *tuple(unary_node.args[1:])),
+                kwargs=dict(unary_node.kwargs),
+            )
+        folded_unary.meta = dict(getattr(source, "meta", {}))
+        for inverse_node in inverse_permute_nodes:
+            inverse_users = list(inverse_node.users)
+            if (
+                len(inverse_users) == 1
+                and inverse_users[0].op == "call_function"
+                and str(inverse_users[0].target) == "aten.contiguous.default"
+            ):
+                inverse_users[0].replace_all_uses_with(folded_unary)
+            else:
+                inverse_node.replace_all_uses_with(folded_unary)
+        changed = True
+    if changed:
+        graph.eliminate_dead_code()
+        graph.lint()
+        graph_module.recompile()
+    return exported_program
+
+with torch.no_grad():
+    exported = torch.export.export(model, example_inputs)
+exported = _prune_alias_nodes(exported)
+exported = _fold_inverse_permute_round_trips(exported)
+exported = _fold_layout_preserving_permute_chains(exported)
+torch.export.save(exported, str(exported_program_path))
+print(json.dumps({"file_name": exported_program_path.name}))
+"""
+    child_payload, last_error_message = _run_generated_package_export_child(
+        example_inputs=example_inputs,
+        child_script=child_script,
+        package_path=package_path,
+        artifact_path=exported_program_path,
+        child_payload={},
+        temp_prefix="onnx2tf_exported_program_",
+    )
+    if child_payload is None or not exported_program_path.exists():
+        _remove_generated_package_artifact_if_exists(exported_program_path)
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="exported_program",
+            file_name=None,
+            example_input_shapes=example_input_shapes,
+            dynamic_inputs_present=dynamic_inputs_present,
+            error=last_error_message or "torch.export.save did not produce an artifact.",
+        )
+        if raise_on_failure:
+            raise ModelIRPyTorchExportError(
+                "ExportedProgram export failed for the generated native PyTorch package. "
+                f"package_dir={package_dir} details={last_error_message}"
+            )
+        return None
+    try:
+        _strip_stack_traces_from_exported_program_archive(exported_program_path)
+    except Exception as ex:
+        if raise_on_failure:
+            raise ModelIRPyTorchExportError(
+                "ExportedProgram archive cleanup failed for the generated native PyTorch package. "
+                f"package_dir={package_dir} artifact={exported_program_path} details={ex}"
+            ) from ex
+        last_error_message = str(ex)
+    _write_generated_package_export_metadata(
+        metadata_path=metadata_path,
+        metadata=metadata,
+        metadata_key="exported_program",
+        file_name=str(child_payload.get("file_name", exported_program_file_name)),
+        example_input_shapes=example_input_shapes,
+        dynamic_inputs_present=dynamic_inputs_present,
+    )
+    return str(exported_program_path)
+
+
+def _strip_stack_traces_from_exported_program_archive(exported_program_path: Path) -> None:
+    archive_path = Path(exported_program_path)
+    if not archive_path.exists():
+        raise FileNotFoundError(f"ExportedProgram archive not found. path={archive_path}")
+    with tempfile.NamedTemporaryFile(
+        prefix="onnx2tf_exported_program_strip_",
+        suffix=".pt2",
+        delete=False,
+        dir=str(archive_path.parent),
+    ) as tmp_file:
+        temp_archive_path = Path(tmp_file.name)
+    try:
+        removed_count = 0
+        with zipfile.ZipFile(str(archive_path), "r") as source_archive, zipfile.ZipFile(
+            str(temp_archive_path),
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as stripped_archive:
+            for info in source_archive.infolist():
+                payload = source_archive.read(info.filename)
+                if info.filename.endswith("models/model.json"):
+                    model_json = json.loads(payload)
+
+                    def _strip_stack_trace_fields(value: Any) -> None:
+                        nonlocal removed_count
+                        if isinstance(value, dict):
+                            if "stack_trace" in value:
+                                del value["stack_trace"]
+                                removed_count += 1
+                            for child in value.values():
+                                _strip_stack_trace_fields(child)
+                            return
+                        if isinstance(value, list):
+                            for child in value:
+                                _strip_stack_trace_fields(child)
+
+                    _strip_stack_trace_fields(model_json)
+                    payload = json.dumps(model_json, separators=(",", ":")).encode("utf-8")
+                stripped_archive.writestr(info, payload)
+        if removed_count == 0:
+            temp_archive_path.unlink(missing_ok=True)
+            return
+        temp_archive_path.replace(archive_path)
+    except Exception:
+        temp_archive_path.unlink(missing_ok=True)
+        raise
+
+
+def _build_tflite_backed_metadata_payload(
+    *,
+    model_ir: ModelIR,
+    tflite_file_name: str,
+) -> Dict[str, Any]:
+    inferred = copy.deepcopy(model_ir)
+    infer_model_ir_logical_layouts(inferred)
+    boundary_shape_map = inferred.metadata.get("onnx_boundary_shape_signature_map", {})
+    if not isinstance(boundary_shape_map, dict):
+        boundary_shape_map = {}
+
+    public_tensor_names = {
+        str(name) for name in list(inferred.inputs) + list(inferred.outputs)
+    }
+    tensors: Dict[str, Dict[str, Any]] = {}
+    for tensor_name in sorted(public_tensor_names):
+        tensor = inferred.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            continue
+        tensor_meta = _serializable_tensor_meta(tensor)
+        boundary_shape = boundary_shape_map.get(str(tensor_name), None)
+        if isinstance(boundary_shape, list) and len(boundary_shape) == len(tensor_meta["shape"]):
+            tensor_meta["shape"] = [max(1, int(v)) if int(v) >= 0 else 1 for v in boundary_shape]
+            tensor_meta["shape_signature"] = [int(v) for v in boundary_shape]
+        tensor_meta["has_data"] = False
+        tensors[str(tensor_name)] = tensor_meta
+
+    current_public_layouts = {
+        str(name): normalize_logical_layout(inferred.tensors[str(name)].logical_layout)
+        for name in public_tensor_names
+        if str(name) in inferred.tensors
+    }
+    return {
+        "schema_version": 1,
+        "execution_backend": "tflite",
+        "name": str(inferred.name),
+        "description": str(inferred.description),
+        "inputs": [str(v) for v in inferred.inputs],
+        "outputs": [str(v) for v in inferred.outputs],
+        "tensors": tensors,
+        "operators": [],
+        "public_layouts": _serializable_value(
+            dict(inferred.metadata.get("onnx_public_layout_map", {}))
+        ),
+        "current_public_layouts": _serializable_value(current_public_layouts),
+        "boundary_shape_signatures": _serializable_value(boundary_shape_map),
+        "tflite_file_name": str(tflite_file_name),
+    }
+
+
+def _build_saved_model_backed_metadata_payload(
+    *,
+    model_ir: ModelIR,
+    saved_model_dir_name: str,
+) -> Dict[str, Any]:
+    metadata = _build_tflite_backed_metadata_payload(
+        model_ir=model_ir,
+        tflite_file_name="",
+    )
+    metadata["execution_backend"] = "saved_model"
+    metadata["saved_model_dir_name"] = str(saved_model_dir_name)
+    metadata.pop("tflite_file_name", None)
+    return metadata
+
+
+def _extract_string_normalizer_config_from_onnx_graph(
+    onnx_graph: Any,
+) -> Optional[Dict[str, Any]]:
+    if onnx_graph is None:
+        return None
+    graph = getattr(onnx_graph, "graph", None)
+    if graph is None or len(list(graph.node)) != 1:
+        return None
+    node = list(graph.node)[0]
+    if str(node.op_type) != "StringNormalizer":
+        return None
+    if len(list(graph.input)) == 0 or len(list(graph.output)) == 0:
+        return None
+    attributes = {
+        str(attr.name): onnx.helper.get_attribute_value(attr)
+        for attr in node.attribute
+    }
+    stopwords = []
+    for value in list(attributes.get("stopwords", [])):
+        if isinstance(value, bytes):
+            stopwords.append(value.decode("utf-8"))
+        else:
+            stopwords.append(str(value))
+    case_change_action = attributes.get("case_change_action", b"")
+    locale = attributes.get("locale", b"")
+    return {
+        "input_name": str(node.input[0]),
+        "output_name": str(node.output[0]),
+        "case_change_action": (
+            case_change_action.decode("utf-8")
+            if isinstance(case_change_action, bytes)
+            else str(case_change_action)
+        ),
+        "is_case_sensitive": bool(int(attributes.get("is_case_sensitive", 1))),
+        "locale": locale.decode("utf-8") if isinstance(locale, bytes) else str(locale),
+        "stopwords": stopwords,
+    }
+
+
+def export_pytorch_package_from_string_normalizer_onnx(
+    *,
+    model_ir: ModelIR,
+    output_folder_path: str,
+    onnx_graph: Any,
+) -> str:
+    config = _extract_string_normalizer_config_from_onnx_graph(onnx_graph)
+    if config is None:
+        raise ModelIRPyTorchExportError(
+            "StringNormalizer fallback requires a single-op StringNormalizer ONNX graph."
+        )
+    os.makedirs(output_folder_path, exist_ok=True)
+    _write_generated_package_common_files(output_folder_path)
+    _write_wrapper_model_file(output_folder_path)
+    metadata = {
+        "schema_version": 1,
+        "execution_backend": "string_normalizer",
+        "name": str(model_ir.name),
+        "description": str(model_ir.description),
+        "inputs": [str(v) for v in model_ir.inputs],
+        "outputs": [str(v) for v in model_ir.outputs],
+        "tensors": {
+            str(name): _serializable_tensor_meta(model_ir.tensors[str(name)])
+            for name in list(model_ir.inputs) + list(model_ir.outputs)
+            if str(name) in model_ir.tensors
+        },
+        "operators": [],
+        "public_layouts": {},
+        "string_normalizer": config,
+    }
+    metadata_path = os.path.join(output_folder_path, "metadata.json")
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    return str(output_folder_path)
+
+
 def _make_tensor_storage_name_map(model_ir: ModelIR) -> Dict[str, str]:
     used_names: Set[str] = set()
     storage_name_map: Dict[str, str] = {}
@@ -7693,6 +13088,7 @@ def _make_tensor_storage_name_map(model_ir: ModelIR) -> Dict[str, str]:
         used_names.add(candidate)
         storage_name_map[str(tensor_name)] = candidate
     return storage_name_map
+
 
 _DIRECT_CODEGEN_MODULE_OP_TYPES: Set[str] = {
     "CONV_2D",
@@ -7813,6 +13209,7 @@ _DIRECT_CODEGEN_SUPPORTED_OP_TYPES: Set[str] = (
     }
 )
 
+
 def _sanitize_python_identifier(name: str, *, prefix: str) -> str:
     identifier = re.sub(r"[^0-9A-Za-z_]", "_", str(name)).strip("_")
     if identifier == "":
@@ -7823,8 +13220,8 @@ def _sanitize_python_identifier(name: str, *, prefix: str) -> str:
         identifier = f"{identifier}_{prefix}"
     return identifier
 
-_PYTORCH_LOCAL_NAME_MAX_LENGTH = 40
 
+_PYTORCH_LOCAL_NAME_MAX_LENGTH = 40
 _GENERATED_NAME_DROP_TOKENS = {
     "model",
     "readvariableop",
@@ -7832,7 +13229,6 @@ _GENERATED_NAME_DROP_TOKENS = {
     "variable",
     "resource",
 }
-
 _GENERATED_NAME_TOKEN_ALIASES = {
     "block": "b",
     "pool": "p",
@@ -7857,7 +13253,6 @@ _GENERATED_NAME_TOKEN_ALIASES = {
     "first": "first",
     "nhwc": "nhwc",
 }
-
 _GENERATED_NAME_SUFFIX_PATTERNS: Sequence[Tuple[str, List[str]]] = (
     ("_input_nhwc__channel_first", ["in", "cf"]),
     ("_output_nhwc__channel_first", ["out", "cf"]),
@@ -7876,12 +13271,14 @@ _GENERATED_NAME_SUFFIX_PATTERNS: Sequence[Tuple[str, List[str]]] = (
     ("_output", ["out"]),
 )
 
+
 def _extract_generated_name_suffix_tokens(name: str) -> Tuple[str, List[str]]:
     lowered = str(name).lower()
     for raw_suffix, suffix_tokens in _GENERATED_NAME_SUFFIX_PATTERNS:
         if lowered.endswith(raw_suffix):
             return str(name)[: len(str(name)) - len(raw_suffix)], list(suffix_tokens)
     return str(name), []
+
 
 def _split_generated_name_piece(piece: str) -> List[str]:
     compact_piece = re.sub(r"[^0-9A-Za-z]+", "", str(piece))
@@ -7921,6 +13318,7 @@ def _split_generated_name_piece(piece: str) -> List[str]:
         )
     return split_tokens if len(split_tokens) > 0 else [lowered_piece]
 
+
 def _collapse_generated_name_tokens(tokens: Sequence[str]) -> List[str]:
     collapsed: List[str] = []
     for token in tokens:
@@ -7939,6 +13337,7 @@ def _collapse_generated_name_tokens(tokens: Sequence[str]) -> List[str]:
             continue
         collapsed.append(token_str)
     return collapsed
+
 
 def _shorten_generated_python_identifier(
     name: str,
@@ -7991,6 +13390,17 @@ def _shorten_generated_python_identifier(
     fallback = _sanitize_python_identifier(f"{prefix}_{digest}", prefix=prefix)
     return fallback[: int(max_length)]
 
+
+def _make_unique_identifier(base_name: str, used_names: Set[str]) -> str:
+    candidate = str(base_name)
+    suffix = 1
+    while candidate in used_names:
+        candidate = f"{base_name}_{suffix}"
+        suffix += 1
+    used_names.add(candidate)
+    return candidate
+
+
 def _import_generated_package_from_output(package_path: str) -> Any:
     package_dir = Path(package_path)
     package_name = re.sub(r"[^0-9A-Za-z_]", "_", package_dir.name).strip("_")
@@ -8017,6 +13427,7 @@ def _import_generated_package_from_output(package_path: str) -> Any:
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
+
 
 def _prepare_exported_state_tensor(source: np.ndarray, target: Any) -> Any:
     import torch
@@ -8048,6 +13459,7 @@ def _prepare_exported_state_tensor(source: np.ndarray, target: Any) -> Any:
         "Native PyTorch state_dict export could not align a tensor to the generated module shape. "
         f"source_shape={list(candidate.shape)} target_shape={list(target_tensor.shape)}"
     )
+
 
 def _build_native_generated_state_dict(
     *,
@@ -8081,6 +13493,7 @@ def _build_native_generated_state_dict(
         )
     return exported_state_dict
 
+
 def _build_tensor_var_name_map(model_ir: ModelIR) -> Dict[str, str]:
     used_names: Set[str] = set()
     mapping: Dict[str, str] = {}
@@ -8113,6 +13526,7 @@ def _build_tensor_var_name_map(model_ir: ModelIR) -> Dict[str, str]:
         mapping[str(tensor_name)] = _make_unique_identifier(base, used_names)
     return mapping
 
+
 def _build_buffer_attr_name_map(
     *,
     model_ir: ModelIR,
@@ -8129,6 +13543,7 @@ def _build_buffer_attr_name_map(
         mapping[str(tensor_name)] = _make_unique_identifier(base, used_names)
     return mapping
 
+
 def _build_model_ir_producer_consumer_index(
     model_ir: ModelIR,
 ) -> Tuple[Dict[str, int], Dict[str, List[int]]]:
@@ -8140,6 +13555,7 @@ def _build_model_ir_producer_consumer_index(
         for input_name in op.inputs:
             consumers.setdefault(str(input_name), []).append(int(op_index))
     return producers, consumers
+
 
 def _is_small_inline_constant_tensor(tensor: TensorIR) -> bool:
     if tensor.data is None:
@@ -8160,6 +13576,7 @@ def _is_small_inline_constant_tensor(tensor: TensorIR) -> bool:
         "FLOAT32",
         "FLOAT64",
     }
+
 
 def _python_literal_for_constant_tensor(tensor: TensorIR) -> Optional[str]:
     if not _is_small_inline_constant_tensor(tensor):
@@ -8183,6 +13600,7 @@ def _python_literal_for_constant_tensor(tensor: TensorIR) -> Optional[str]:
         return _python_literal_value(arr.reshape(-1)[0].item())
     return _python_literal_value(arr.tolist())
 
+
 def _torch_pad_literal_for_constant_tensor(
     tensor: Optional[TensorIR],
     *,
@@ -8202,6 +13620,7 @@ def _torch_pad_literal_for_constant_tensor(
         torch_pad = torch_pad[:-2]
     return repr(torch_pad)
 
+
 def _scalar_literal_for_constant_tensor(tensor: Optional[TensorIR]) -> Optional[str]:
     if tensor is None or tensor.data is None:
         return None
@@ -8220,6 +13639,7 @@ def _scalar_literal_for_constant_tensor(tensor: Optional[TensorIR]) -> Optional[
         return repr(value)
     return repr(value)
 
+
 def _constant_int_list(tensor: Optional[TensorIR]) -> Optional[List[int]]:
     if tensor is None or tensor.data is None:
         return None
@@ -8229,6 +13649,17 @@ def _constant_int_list(tensor: Optional[TensorIR]) -> Optional[List[int]]:
     if not np.issubdtype(arr.dtype, np.integer):
         return None
     return [int(v) for v in arr.reshape(-1).tolist()]
+
+
+def _preferred_reshape_target_values(tensor: Optional[TensorIR]) -> Optional[List[int]]:
+    if tensor is None:
+        return None
+    if tensor.shape_signature is not None:
+        signature = [int(v) for v in list(tensor.shape_signature)]
+        if len(signature) == len(list(tensor.shape)) and any(int(v) <= 0 for v in signature):
+            return signature
+    return [int(v) for v in list(tensor.shape)]
+
 
 def _torch_dtype_literal(dtype_name: str) -> str:
     mapping = {
@@ -8249,6 +13680,7 @@ def _torch_dtype_literal(dtype_name: str) -> str:
         )
     return str(mapping[key])
 
+
 def _conv_block_activation_config(op: OperatorIR) -> Tuple[str, Optional[float]]:
     op_type = str(op.op_type)
     if op_type == "LEAKY_RELU":
@@ -8266,6 +13698,7 @@ def _conv_block_activation_config(op: OperatorIR) -> Tuple[str, Optional[float]]
     if op_type == "LOGISTIC":
         return ("sigmoid", None)
     return ("none", None)
+
 
 def _conv_block_activation_config_from_fused_name(
     fused_name: str,
@@ -8384,6 +13817,7 @@ def _reshape_special_layout_plan(
             }
     return None
 
+
 def _reshape_is_plain_singleton_axis_drop(
     input_shape: Optional[Sequence[int]],
     output_shape: Optional[Sequence[int]],
@@ -8399,6 +13833,7 @@ def _reshape_is_plain_singleton_axis_drop(
         return False
     axis = int(singleton_axes[0])
     return src[:axis] + src[axis + 1:] == dst
+
 
 def _direct_slice_expr(
     *,
@@ -8433,6 +13868,7 @@ def _direct_slice_expr(
             stop_str = "" if resolved_stop is None else str(int(resolved_stop))
             parts.append(f"{start_str}:{stop_str}")
     return f"{direct_x_expr}[{', '.join(parts)}]"
+
 
 def _direct_strided_slice_expr(
     *,
@@ -8471,6 +13907,7 @@ def _direct_strided_slice_expr(
             parts.append(f"{start_str}:{stop_str}:{resolved_step}")
     return f"{direct_x_expr}[{', '.join(parts)}]"
 
+
 def _direct_symbolic_strided_slice_expr(
     *,
     x_expr: str,
@@ -8508,6 +13945,7 @@ def _direct_symbolic_strided_slice_expr(
         else:
             parts.append(f"{start_str}:{stop_str}:{resolved_step}")
     return f"{direct_x_expr}[{', '.join(parts)}]"
+
 
 def _direct_gather_expr(
     *,
@@ -8552,6 +13990,7 @@ def _direct_gather_expr(
     parts = [":" for _ in range(int(input_rank))]
     parts[resolved_axis] = repr([int(v) for v in indices_values])
     return f"{params_expr}[{', '.join(parts)}]"
+
 
 def _direct_dynamic_gather_expr(
     *,
@@ -8603,6 +14042,7 @@ def _direct_dynamic_gather_expr(
     )
     return reshaped_expr
 
+
 def _is_suffix_flatten_gather_reshape(
     gather_output_shape: Optional[Sequence[int]],
     reshape_output_shape: Optional[Sequence[int]],
@@ -8632,6 +14072,7 @@ def _is_suffix_flatten_gather_reshape(
     if reshape_last_dim <= 0:
         return False
     return int(expected_flattened) == int(reshape_last_dim)
+
 
 def _direct_gather_reshape_expr(
     *,
@@ -8709,6 +14150,7 @@ def _direct_gather_reshape_expr(
         f"{final_shape_expr})"
     )
 
+
 def _should_elide_crd_to_dcr_gather_for_depth_to_space(
     *,
     model_ir: ModelIR,
@@ -8746,9 +14188,11 @@ def _should_elide_crd_to_dcr_gather_for_depth_to_space(
         op_type == "DEPTH_TO_SPACE" for op_type in consumer_op_types
     )
 
+
 def _direct_codegen_module_attr_name(op_index: int, op_type: str) -> str:
     base = _sanitize_python_identifier(f"op_{op_index}_{str(op_type).lower()}", prefix="op")
     return base
+
 
 def _ensure_direct_codegen_supported(model_ir: ModelIR) -> None:
     unsupported = sorted(
@@ -8760,8 +14204,10 @@ def _ensure_direct_codegen_supported(model_ir: ModelIR) -> None:
             f"unsupported_op_types={unsupported}"
         )
 
+
 def _is_direct_codegen_unsupported_error(ex: BaseException) -> bool:
     return "Native PyTorch-like model.py codegen does not support some op types in this model." in str(ex)
+
 
 def _write_generated_package_common_files(
     output_folder_path: str,
@@ -8783,6 +14229,7 @@ def _write_generated_package_common_files(
         runtime_source,
         encoding="utf-8",
     )
+
 
 def _write_wrapper_model_file(output_folder_path: str) -> None:
     package_dir = Path(output_folder_path)
@@ -8814,9 +14261,11 @@ def _write_wrapper_model_file(output_folder_path: str) -> None:
         encoding="utf-8",
     )
 
+
 _RUNTIME_SUPPORTED_CUSTOM_CODES: Set[str] = {
     "ONNX_SLICE",
 }
+
 
 def _build_native_runtime_source(helper_source: str) -> str:
     runtime_source = (
@@ -8856,6 +14305,7 @@ def _build_native_runtime_source(helper_source: str) -> str:
     runtime_source = runtime_source.replace("Sequence[Any]", "List[Any]")
     return runtime_source
 
+
 def _direct_codegen_module_attr_base(op_type: str) -> str:
     names = {
         "CONV_2D": "conv2d",
@@ -8871,6 +14321,7 @@ def _direct_codegen_module_attr_base(op_type: str) -> str:
     }
     return str(names.get(str(op_type), str(op_type).lower()))
 
+
 def _supports_runtime_wrapper_model_ir(model_ir: ModelIR) -> bool:
     for op in model_ir.operators:
         op_type = str(op.op_type)
@@ -8882,6 +14333,7 @@ def _supports_runtime_wrapper_model_ir(model_ir: ModelIR) -> bool:
                 continue
         return False
     return True
+
 
 def _export_runtime_wrapper_package_from_model_ir(
     *,
@@ -8912,6 +14364,7 @@ def _export_runtime_wrapper_package_from_model_ir(
     torch.save(state_dict, os.path.join(output_folder_path, "state_dict.pth"))
     return str(output_folder_path)
 
+
 def _write_native_model_file(
     output_folder_path: str,
     *,
@@ -8936,30 +14389,36 @@ def _write_native_model_file(
         )
     )
 
+
 def _write_native_model_file_impl(
     context: _NativeModelFileWriterContext,
 ) -> List[Tuple[str, str]]:
     return _write_native_model_file_codegen_impl(context)
+
 
 def _write_native_model_file_codegen_impl(
     context: _NativeModelFileWriterContext,
 ) -> List[Tuple[str, str]]:
     return _write_native_model_file_codegen_core_impl(context)
 
+
 def _write_native_model_file_codegen_core_impl(
     context: _NativeModelFileWriterContext,
 ) -> List[Tuple[str, str]]:
     return _write_native_model_file_codegen_core_body_impl(context)
+
 
 def _write_native_model_file_codegen_core_body_impl(
     context: _NativeModelFileWriterContext,
 ) -> List[Tuple[str, str]]:
     return _write_native_model_file_codegen_core_body_main_impl(context)
 
+
 def _write_native_model_file_codegen_core_body_main_impl(
     context: _NativeModelFileWriterContext,
 ) -> List[Tuple[str, str]]:
     return _write_native_model_file_codegen_core_body_main_inner_impl(context)
+
 
 def _write_native_model_file_codegen_core_body_main_inner_impl(
     context: _NativeModelFileWriterContext,
@@ -8969,6 +14428,7 @@ def _write_native_model_file_codegen_core_body_main_inner_impl(
     _build_native_constant_aliases(state, bindings)
     _emit_native_forward_lines(state, bindings)
     return _finalize_native_codegen(state, bindings)
+
 
 def _write_native_model_file_codegen_core_body_main_inner_legacy_impl(
     context: _NativeModelFileWriterContext,
@@ -11870,44 +17330,17 @@ def _write_native_model_file_codegen_core_body_main_inner_legacy_impl(
                 "False" if effective_layout == "NCHW" else
                 "None"
             )
-            output_cf_shape = _rank4_channel_first_shape_for_tensor(outputs[0])
-            can_emit_pool_cf_alias = (
-                pool_as_channel_last_expr == "False"
-                and output_cf_shape is not None
-                and len(output_cf_shape) == 4
-                and all(int(dim) > 0 for dim in output_cf_shape)
-            )
             runtime_imports.add("_apply_pool2d")
-            if can_emit_pool_cf_alias:
-                raw_output_var = _derived_local_var_name(f"{output_vars[0]}_cf")
-                channel_first_tensor_expr_aliases[str(outputs[0])] = raw_output_var
-                forward_lines.append(
-                    f"{raw_output_var} = _apply_pool2d({pool_input_expr}, "
-                    f"filter_height={int(options.get('filterHeight', 1))}, "
-                    f"filter_width={int(options.get('filterWidth', 1))}, "
-                    f"stride_h={int(options.get('strideH', 1))}, "
-                    f"stride_w={int(options.get('strideW', 1))}, "
-                    f"padding={str(options.get('padding', 'VALID')).upper()!r}, "
-                    f"target_shape={repr(output_cf_shape)}, "
-                    f"is_max_pool=False, channel_last=False)"
-                )
-                if not _can_omit_materialized_channel_last_alias(outputs[0]):
-                    runtime_imports.add("_align_tensor_to_target_shape")
-                    forward_lines.append(
-                        f"{output_vars[0]} = _align_tensor_to_target_shape({raw_output_var}.permute(0, 2, 3, 1).contiguous(), {output_target_shape})"
-                    )
-            else:
-                channel_first_tensor_expr_aliases.pop(str(outputs[0]), None)
-                forward_lines.append(
-                    f"{output_vars[0]} = _apply_pool2d({pool_input_expr}, "
-                    f"filter_height={int(options.get('filterHeight', 1))}, "
-                    f"filter_width={int(options.get('filterWidth', 1))}, "
-                    f"stride_h={int(options.get('strideH', 1))}, "
-                    f"stride_w={int(options.get('strideW', 1))}, "
-                    f"padding={str(options.get('padding', 'VALID')).upper()!r}, "
-                    f"target_shape={output_target_shape}, "
-                    f"is_max_pool=False, channel_last={pool_as_channel_last_expr})"
-                )
+            forward_lines.append(
+                f"{output_vars[0]} = _apply_pool2d({pool_input_expr}, "
+                f"filter_height={int(options.get('filterHeight', 1))}, "
+                f"filter_width={int(options.get('filterWidth', 1))}, "
+                f"stride_h={int(options.get('strideH', 1))}, "
+                f"stride_w={int(options.get('strideW', 1))}, "
+                f"padding={str(options.get('padding', 'VALID')).upper()!r}, "
+                f"target_shape={output_target_shape}, "
+                f"is_max_pool=False, channel_last={pool_as_channel_last_expr})"
+            )
             forward_lines.extend(_activation_lines(output_vars[0], str(options.get("fusedActivationFunction", "NONE"))))
             continue
         if op_type == "MAX_POOL_2D":
@@ -11946,44 +17379,17 @@ def _write_native_model_file_codegen_core_body_main_inner_legacy_impl(
                 "False" if effective_layout == "NCHW" else
                 "None"
             )
-            output_cf_shape = _rank4_channel_first_shape_for_tensor(outputs[0])
-            can_emit_pool_cf_alias = (
-                pool_as_channel_last_expr == "False"
-                and output_cf_shape is not None
-                and len(output_cf_shape) == 4
-                and all(int(dim) > 0 for dim in output_cf_shape)
-            )
             runtime_imports.add("_apply_pool2d")
-            if can_emit_pool_cf_alias:
-                raw_output_var = _derived_local_var_name(f"{output_vars[0]}_cf")
-                channel_first_tensor_expr_aliases[str(outputs[0])] = raw_output_var
-                forward_lines.append(
-                    f"{raw_output_var} = _apply_pool2d({pool_input_expr}, "
-                    f"filter_height={int(options.get('filterHeight', 1))}, "
-                    f"filter_width={int(options.get('filterWidth', 1))}, "
-                    f"stride_h={int(options.get('strideH', 1))}, "
-                    f"stride_w={int(options.get('strideW', 1))}, "
-                    f"padding={str(options.get('padding', 'VALID')).upper()!r}, "
-                    f"target_shape={repr(output_cf_shape)}, "
-                    f"is_max_pool=True, channel_last=False)"
-                )
-                if not _can_omit_materialized_channel_last_alias(outputs[0]):
-                    runtime_imports.add("_align_tensor_to_target_shape")
-                    forward_lines.append(
-                        f"{output_vars[0]} = _align_tensor_to_target_shape({raw_output_var}.permute(0, 2, 3, 1).contiguous(), {output_target_shape})"
-                    )
-            else:
-                channel_first_tensor_expr_aliases.pop(str(outputs[0]), None)
-                forward_lines.append(
-                    f"{output_vars[0]} = _apply_pool2d({pool_input_expr}, "
-                    f"filter_height={int(options.get('filterHeight', 1))}, "
-                    f"filter_width={int(options.get('filterWidth', 1))}, "
-                    f"stride_h={int(options.get('strideH', 1))}, "
-                    f"stride_w={int(options.get('strideW', 1))}, "
-                    f"padding={str(options.get('padding', 'VALID')).upper()!r}, "
-                    f"target_shape={output_target_shape}, "
-                    f"is_max_pool=True, channel_last={pool_as_channel_last_expr})"
-                )
+            forward_lines.append(
+                f"{output_vars[0]} = _apply_pool2d({pool_input_expr}, "
+                f"filter_height={int(options.get('filterHeight', 1))}, "
+                f"filter_width={int(options.get('filterWidth', 1))}, "
+                f"stride_h={int(options.get('strideH', 1))}, "
+                f"stride_w={int(options.get('strideW', 1))}, "
+                f"padding={str(options.get('padding', 'VALID')).upper()!r}, "
+                f"target_shape={output_target_shape}, "
+                f"is_max_pool=True, channel_last={pool_as_channel_last_expr})"
+            )
             forward_lines.extend(_activation_lines(output_vars[0], str(options.get("fusedActivationFunction", "NONE"))))
             continue
         if op_type == "RESIZE_NEAREST_NEIGHBOR":
@@ -12860,15 +18266,13 @@ def _write_native_model_file_codegen_core_body_main_inner_legacy_impl(
         "    if not has_actual_shape:\n"
         "        return value\n"
         "    target = [int(v) for v in list(target_shape)]\n"
-        "    if _shape_matches_target_relaxed(actual_shape, target):\n"
+        "    if actual_shape == target:\n"
         "        return value\n"
         "    perm = _perm_cl_to_cf(value.ndim)\n"
-        "    permuted_shape = _permute_shape(actual_shape, perm) if perm is not None else None\n"
-        "    if permuted_shape is not None and _shape_matches_target_relaxed(permuted_shape, target):\n"
+        "    if perm is not None and _permute_shape(actual_shape, perm) == target:\n"
         "        return _torch_permute(value, perm)\n"
         "    perm_inv = _perm_cf_to_cl(value.ndim)\n"
-        "    permuted_shape_inv = _permute_shape(actual_shape, perm_inv) if perm_inv is not None else None\n"
-        "    if permuted_shape_inv is not None and _shape_matches_target_relaxed(permuted_shape_inv, target):\n"
+        "    if perm_inv is not None and _permute_shape(actual_shape, perm_inv) == target:\n"
         "        return _torch_permute(value, perm_inv)\n"
         "    if len(actual_shape) == len(target):\n"
         "        if all(int(dim) == 1 for dim in list(target)) and any(int(actual_dim) > 1 for actual_dim in list(actual_shape)):\n"
@@ -13500,25 +18904,13 @@ def _write_native_model_file_codegen_core_body_main_inner_legacy_impl(
         "        perm_cf_to_cl = _perm_cf_to_cl(rank)\n"
         "        if perm_cf_to_cl is not None:\n"
         "            alt_target = _permute_shape(target_list, perm_cf_to_cl)\n"
-        "            if alt_target is not None:\n"
-        "                already_present = False\n"
-        "                for candidate_target in candidate_targets:\n"
-        "                    if candidate_target == alt_target:\n"
-        "                        already_present = True\n"
-        "                        break\n"
-        "                if not already_present:\n"
-        "                    candidate_targets.append(alt_target)\n"
+        "            if alt_target is not None and alt_target not in candidate_targets:\n"
+        "                candidate_targets.append(alt_target)\n"
         "        perm_cl_to_cf = _perm_cl_to_cf(rank)\n"
         "        if perm_cl_to_cf is not None:\n"
         "            alt_target = _permute_shape(target_list, perm_cl_to_cf)\n"
-        "            if alt_target is not None:\n"
-        "                already_present = False\n"
-        "                for candidate_target in candidate_targets:\n"
-        "                    if candidate_target == alt_target:\n"
-        "                        already_present = True\n"
-        "                        break\n"
-        "                if not already_present:\n"
-        "                    candidate_targets.append(alt_target)\n"
+        "            if alt_target is not None and alt_target not in candidate_targets:\n"
+        "                candidate_targets.append(alt_target)\n"
         "        best_aligned_values: Optional[List[torch.Tensor]] = None\n"
         "        best_score: Optional[int] = None\n"
         "        for candidate_target in candidate_targets:\n"
@@ -14111,21 +19503,11 @@ def _write_native_model_file_codegen_core_body_main_inner_legacy_impl(
         forward_lines,
         derive_local_var_name=_derived_local_var_name,
         channel_first_constant_expr_for_buffer_attr=_channel_first_constant_expr_for_buffer_attr,
-        skipped_module_names={
-            str(attr_name)
-            for op_index, attr_name in op_module_attr_names.items()
-            if str(model_ir.operators[int(op_index)].op_type) == "DEPTHWISE_CONV_2D"
-        },
     )
     forward_lines = _rewrite_channel_last_binary_bridge_chains(
         forward_lines,
         derive_local_var_name=_derived_local_var_name,
         channel_first_constant_expr_for_buffer_attr=_channel_first_constant_expr_for_buffer_attr,
-        skipped_module_names={
-            str(attr_name)
-            for op_index, attr_name in op_module_attr_names.items()
-            if str(model_ir.operators[int(op_index)].op_type) == "DEPTHWISE_CONV_2D"
-        },
     )
     forward_lines = _fold_channel_first_gap_conv_bridges(forward_lines)
     forward_lines = _rewrite_channel_first_gap_outputs_to_explicit_channel_last(forward_lines)
@@ -14146,21 +19528,6 @@ def _write_native_model_file_codegen_core_body_main_inner_legacy_impl(
     forward_lines = _fold_channel_last_prelu_bridges(forward_lines)
     forward_lines = _inline_trivial_public_layout_bridge_aliases(forward_lines)
     forward_lines = _fold_rank4_reshape_permute_conv_bridges(forward_lines)
-    forward_lines = _ensure_explicit_depthwise_channel_last_input_bridges(
-        forward_lines,
-        module_names={
-            str(attr_name)
-            for op_index, attr_name in op_module_attr_names.items()
-            if (
-                str(model_ir.operators[int(op_index)].op_type) == "DEPTHWISE_CONV_2D"
-                and is_channel_last_logical_layout(
-                    normalize_logical_layout(
-                        model_ir.tensors[str(model_ir.operators[int(op_index)].inputs[0])].logical_layout
-                    )
-                )
-            )
-        },
-    )
     forward_lines = _fold_single_use_static_reshape_chains(
         forward_lines,
         tensor_var_names=tensor_var_names,
@@ -14429,3 +19796,740 @@ def _write_native_model_file_codegen_core_body_main_inner_legacy_impl(
     )
     (package_dir / "model.py").write_text(model_source, encoding="utf-8")
     return [(str(attr_path), str(tensor_name)) for attr_path, tensor_name in load_specs]
+
+
+def export_pytorch_package_from_tflite_artifact(
+    *,
+    model_ir: ModelIR,
+    output_folder_path: str,
+    tflite_file_path: str,
+) -> str:
+    if not os.path.exists(tflite_file_path):
+        raise ModelIRPyTorchExportError(
+            f"TFLite-backed PyTorch package export requires an existing float32 TFLite file. path={tflite_file_path}"
+        )
+
+    os.makedirs(output_folder_path, exist_ok=True)
+    _write_generated_package_common_files(output_folder_path)
+    _write_wrapper_model_file(output_folder_path)
+
+    package_tflite_name = "model_float32.tflite"
+    shutil.copyfile(
+        str(tflite_file_path),
+        os.path.join(output_folder_path, package_tflite_name),
+    )
+    metadata = _build_tflite_backed_metadata_payload(
+        model_ir=model_ir,
+        tflite_file_name=package_tflite_name,
+    )
+    metadata_path = os.path.join(output_folder_path, "metadata.json")
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    return str(output_folder_path)
+
+
+def export_pytorch_package_from_saved_model_artifact(
+    *,
+    model_ir: ModelIR,
+    output_folder_path: str,
+    saved_model_path: str,
+) -> str:
+    if not os.path.exists(saved_model_path):
+        raise ModelIRPyTorchExportError(
+            f"SavedModel-backed PyTorch package export requires an existing SavedModel directory. path={saved_model_path}"
+        )
+
+    os.makedirs(output_folder_path, exist_ok=True)
+    _write_generated_package_common_files(output_folder_path)
+    _write_wrapper_model_file(output_folder_path)
+
+    package_saved_model_dir = os.path.join(output_folder_path, "saved_model")
+    if os.path.exists(package_saved_model_dir):
+        shutil.rmtree(package_saved_model_dir)
+    shutil.copytree(str(saved_model_path), package_saved_model_dir)
+    metadata = _build_saved_model_backed_metadata_payload(
+        model_ir=model_ir,
+        saved_model_dir_name="saved_model",
+    )
+    metadata_path = os.path.join(output_folder_path, "metadata.json")
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    return str(output_folder_path)
+
+
+def _should_prefer_tflite_backed_package(model_ir: ModelIR) -> bool:
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    recurrent_or_control_ops = {
+        "WHILE",
+        "UNIDIRECTIONAL_SEQUENCE_RNN",
+        "UNIDIRECTIONAL_SEQUENCE_LSTM",
+        "BIDIRECTIONAL_SEQUENCE_LSTM",
+    }
+    if any(op_type in recurrent_or_control_ops for op_type in op_types):
+        return False
+    has_length_like_input = False
+    for input_name in model_ir.inputs:
+        canonical = re.sub(r"[^0-9a-z]+", "_", str(input_name).lower()).strip("_")
+        if canonical.endswith(("length", "lengths", "len", "lens", "seq_len", "seq_lens")):
+            has_length_like_input = True
+            break
+    if has_length_like_input:
+        return False
+    if any(op_type in {"TRANSPOSE_CONV", "CONV_3D_TRANSPOSE"} for op_type in op_types):
+        return True
+    for op in model_ir.operators:
+        if str(op.op_type) != "SOFTMAX" or len(op.inputs) == 0:
+            continue
+        input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+        if input_tensor is None:
+            continue
+        if is_channel_first_logical_layout(normalize_logical_layout(input_tensor.logical_layout)):
+            return True
+    conv_like_count = sum(
+        1
+        for op_type in op_types
+        if op_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}
+    )
+    strided_slice_count = sum(1 for op_type in op_types if op_type == "STRIDED_SLICE")
+    concat_count = sum(1 for op_type in op_types if op_type == "CONCATENATION")
+    resize_count = sum(
+        1
+        for op_type in op_types
+        if op_type in {"RESIZE_BILINEAR", "RESIZE_NEAREST_NEIGHBOR"}
+    )
+    split_count = sum(1 for op_type in op_types if op_type == "SPLIT")
+    softmax_count = sum(1 for op_type in op_types if op_type == "SOFTMAX")
+    nhwc_named_tensor_count = sum(
+        1
+        for tensor_name in model_ir.tensors.keys()
+        if str(tensor_name).lower().endswith(("_nhwc", "_nwc", "_ndhwc"))
+    )
+    has_rank3_channel_first_output = any(
+        len(list(model_ir.tensors[str(output_name)].shape)) == 3
+        and normalize_logical_layout(model_ir.tensors[str(output_name)].logical_layout) == "NCW"
+        for output_name in model_ir.outputs
+        if str(output_name) in model_ir.tensors
+    )
+    if (
+        has_rank3_channel_first_output
+        and conv_like_count >= 20
+        and strided_slice_count >= 4
+        and concat_count >= 4
+    ):
+        return True
+    if (
+        conv_like_count >= 40
+        and nhwc_named_tensor_count >= 40
+        and (resize_count >= 4 or softmax_count >= 1 or split_count >= 1)
+    ):
+        return True
+    if (
+        conv_like_count >= 60
+        and nhwc_named_tensor_count >= 80
+        and resize_count >= 2
+    ):
+        return True
+    if (
+        conv_like_count >= 15
+        and nhwc_named_tensor_count >= 30
+        and resize_count >= 3
+    ):
+        return True
+    return False
+
+
+def _should_prefer_saved_model_backed_package(model_ir: ModelIR) -> bool:
+    return _should_prefer_tflite_backed_package(model_ir)
+
+
+def _read_onnx_transpose_perm(node: Any) -> Optional[List[int]]:
+    if str(getattr(node, "op_type", "")) != "Transpose":
+        return None
+    for attr in list(getattr(node, "attribute", [])):
+        if str(getattr(attr, "name", "")) != "perm":
+            continue
+        try:
+            values = onnx.helper.get_attribute_value(attr)
+        except Exception:
+            return None
+        try:
+            return [int(v) for v in list(values)]
+        except Exception:
+            return None
+        return None
+
+
+def _is_onnx_boundary_layout_passthrough_node(
+    *,
+    node: Any,
+    source_tensor_name: str,
+) -> bool:
+    passthrough_op_types = {
+        "Abs",
+        "Add",
+        "Cast",
+        "Clip",
+        "Div",
+        "Identity",
+        "LeakyRelu",
+        "Mul",
+        "Relu",
+        "Sigmoid",
+        "Softmax",
+        "Sub",
+        "Tanh",
+    }
+    if str(getattr(node, "op_type", "")) not in passthrough_op_types:
+        return False
+    inputs = [str(v) for v in list(getattr(node, "input", []))]
+    outputs = [str(v) for v in list(getattr(node, "output", []))]
+    return len(outputs) == 1 and str(source_tensor_name) in set(inputs)
+
+
+def _infer_public_layouts_from_onnx_graph(reference_onnx_graph: Any) -> Dict[str, str]:
+    graph = getattr(reference_onnx_graph, "graph", None)
+    if graph is None:
+        return {}
+    consumers: Dict[str, List[Any]] = {}
+    producer_by_output: Dict[str, Any] = {}
+    for node in list(graph.node):
+        for output_name in list(getattr(node, "output", [])):
+            producer_by_output[str(output_name)] = node
+        for input_name in list(getattr(node, "input", [])):
+            consumers.setdefault(str(input_name), []).append(node)
+
+    def _walk_input_boundary(tensor_name: str, rank: int) -> Optional[str]:
+        current_tensor_name = str(tensor_name)
+        for _ in range(4):
+            user_nodes = consumers.get(current_tensor_name, [])
+            if len(user_nodes) != 1:
+                return None
+            node = user_nodes[0]
+            perm = _read_onnx_transpose_perm(node)
+            if perm == _perm_cl_to_cf(rank):
+                return channel_last_logical_layout(rank)
+            if perm == _perm_cf_to_cl(rank):
+                return channel_first_logical_layout(rank)
+            if not _is_onnx_boundary_layout_passthrough_node(
+                node=node,
+                source_tensor_name=current_tensor_name,
+            ):
+                return None
+            current_tensor_name = str(list(getattr(node, "output", []))[0])
+        return None
+
+    def _walk_output_boundary(tensor_name: str, rank: int) -> Optional[str]:
+        current_tensor_name = str(tensor_name)
+        for _ in range(4):
+            node = producer_by_output.get(current_tensor_name, None)
+            if node is None:
+                return None
+            perm = _read_onnx_transpose_perm(node)
+            if perm == _perm_cf_to_cl(rank):
+                return channel_last_logical_layout(rank)
+            if perm == _perm_cl_to_cf(rank):
+                return channel_first_logical_layout(rank)
+            inputs = [str(v) for v in list(getattr(node, "input", []))]
+            if len(inputs) != 1:
+                return None
+            previous_tensor_name = inputs[0]
+            if not _is_onnx_boundary_layout_passthrough_node(
+                node=node,
+                source_tensor_name=previous_tensor_name,
+            ):
+                return None
+            current_tensor_name = previous_tensor_name
+        return None
+
+    public_layout_map: Dict[str, str] = {}
+    for value_info in list(graph.input):
+        tensor_name = str(getattr(value_info, "name", ""))
+        if tensor_name == "":
+            continue
+        tensor_type = getattr(value_info, "type", None)
+        tensor_shape = getattr(getattr(tensor_type, "tensor_type", None), "shape", None)
+        dims = list(getattr(tensor_shape, "dim", [])) if tensor_shape is not None else []
+        rank = len(dims)
+        if rank not in {3, 4, 5}:
+            continue
+        inferred_layout = _walk_input_boundary(tensor_name, rank)
+        if inferred_layout is not None:
+            public_layout_map[tensor_name] = inferred_layout
+    for value_info in list(graph.output):
+        tensor_name = str(getattr(value_info, "name", ""))
+        if tensor_name == "":
+            continue
+        tensor_type = getattr(value_info, "type", None)
+        tensor_shape = getattr(getattr(tensor_type, "tensor_type", None), "shape", None)
+        dims = list(getattr(tensor_shape, "dim", [])) if tensor_shape is not None else []
+        rank = len(dims)
+        if rank not in {3, 4, 5}:
+            continue
+        inferred_layout = _walk_output_boundary(tensor_name, rank)
+        if inferred_layout is not None:
+            public_layout_map[tensor_name] = inferred_layout
+    return public_layout_map
+
+
+def _infer_batchless_rank3_image_boundaries_from_onnx_graph(
+    reference_onnx_graph: Any,
+) -> Set[str]:
+    graph = getattr(reference_onnx_graph, "graph", None)
+    if graph is None:
+        return set()
+    consumers: Dict[str, List[Any]] = {}
+    producer_by_output: Dict[str, Any] = {}
+    for node in list(graph.node):
+        for output_name in list(getattr(node, "output", [])):
+            producer_by_output[str(output_name)] = node
+        for input_name in list(getattr(node, "input", [])):
+            consumers.setdefault(str(input_name), []).append(node)
+
+    def _input_is_batchless_channel_first_image(tensor_name: str, rank: int) -> bool:
+        if rank != 3:
+            return False
+        current_tensor_name = str(tensor_name)
+        for _ in range(4):
+            user_nodes = consumers.get(current_tensor_name, [])
+            if len(user_nodes) != 1:
+                return False
+            node = user_nodes[0]
+            axes = _read_onnx_unsqueeze_axes(node)
+            if axes == [0]:
+                return True
+            if not _is_onnx_boundary_layout_passthrough_node(
+                node=node,
+                source_tensor_name=current_tensor_name,
+            ):
+                return False
+            current_tensor_name = str(list(getattr(node, "output", []))[0])
+        return False
+
+    def _output_is_batchless_channel_first_image(tensor_name: str, rank: int) -> bool:
+        if rank != 3:
+            return False
+        current_tensor_name = str(tensor_name)
+        for _ in range(4):
+            node = producer_by_output.get(current_tensor_name, None)
+            if node is None:
+                return False
+            axes = _read_onnx_squeeze_axes(node)
+            if axes == [0]:
+                return True
+            inputs = [str(v) for v in list(getattr(node, "input", []))]
+            if len(inputs) != 1:
+                return False
+            previous_tensor_name = inputs[0]
+            if not _is_onnx_boundary_layout_passthrough_node(
+                node=node,
+                source_tensor_name=previous_tensor_name,
+            ):
+                return False
+            current_tensor_name = previous_tensor_name
+        return False
+
+    boundary_names: Set[str] = set()
+    for value_info in list(graph.input):
+        tensor_name = str(getattr(value_info, "name", ""))
+        if tensor_name == "":
+            continue
+        tensor_type = getattr(value_info, "type", None)
+        tensor_shape = getattr(getattr(tensor_type, "tensor_type", None), "shape", None)
+        dims = list(getattr(tensor_shape, "dim", [])) if tensor_shape is not None else []
+        if _input_is_batchless_channel_first_image(tensor_name, len(dims)):
+            boundary_names.add(tensor_name)
+    for value_info in list(graph.output):
+        tensor_name = str(getattr(value_info, "name", ""))
+        if tensor_name == "":
+            continue
+        tensor_type = getattr(value_info, "type", None)
+        tensor_shape = getattr(getattr(tensor_type, "tensor_type", None), "shape", None)
+        dims = list(getattr(tensor_shape, "dim", [])) if tensor_shape is not None else []
+        if _output_is_batchless_channel_first_image(tensor_name, len(dims)):
+            boundary_names.add(tensor_name)
+    return boundary_names
+
+
+def _merge_reference_public_boundary_metadata(
+    *,
+    imported_model_ir: ModelIR,
+    reference_model_ir: Optional[ModelIR],
+    reference_onnx_graph: Optional[Any] = None,
+) -> None:
+    if reference_model_ir is None:
+        return
+    boundary_shape_map = reference_model_ir.metadata.get("onnx_boundary_shape_signature_map", {})
+    if not isinstance(boundary_shape_map, dict):
+        boundary_shape_map = {}
+    public_layout_map = reference_model_ir.metadata.get("onnx_public_layout_map", {})
+    if not isinstance(public_layout_map, dict):
+        public_layout_map = {}
+    onnx_graph_public_layout_map = (
+        _infer_public_layouts_from_onnx_graph(reference_onnx_graph)
+        if reference_onnx_graph is not None
+        else {}
+    )
+    batchless_rank3_boundary_names = (
+        _infer_batchless_rank3_image_boundaries_from_onnx_graph(reference_onnx_graph)
+        if reference_onnx_graph is not None
+        else set()
+    )
+    recurrent_public_boundary_context = any(
+        token in str(op.op_type)
+        for op in reference_model_ir.operators
+        for token in ("GRU", "LSTM", "RNN")
+    )
+    if not recurrent_public_boundary_context and reference_onnx_graph is not None:
+        graph = getattr(reference_onnx_graph, "graph", None)
+        if graph is not None:
+            recurrent_public_boundary_context = any(
+                str(node.op_type) in {"GRU", "LSTM", "RNN"}
+                for node in list(graph.node)
+            )
+    imported_model_ir.inputs = [str(v) for v in list(reference_model_ir.inputs)]
+    imported_model_ir.outputs = [str(v) for v in list(reference_model_ir.outputs)]
+
+    desired_public_layout_map: Dict[str, str] = {}
+    desired_public_shape_map: Dict[str, List[int]] = {}
+    for tensor_name in list(imported_model_ir.inputs) + list(imported_model_ir.outputs):
+        ref_tensor = reference_model_ir.tensors.get(str(tensor_name), None)
+        if ref_tensor is None:
+            continue
+        desired_public_shape_map[str(tensor_name)] = [
+            int(v) for v in list(ref_tensor.shape_signature or ref_tensor.shape)
+        ]
+        desired_layout = normalize_logical_layout(
+            onnx_graph_public_layout_map.get(
+                str(tensor_name),
+                public_layout_map.get(str(tensor_name), ref_tensor.logical_layout),
+            )
+        )
+        if recurrent_public_boundary_context and len(list(ref_tensor.shape)) == 3:
+            desired_layout = "NWC"
+        desired_public_layout_map[str(tensor_name)] = desired_layout
+
+    _ensure_public_boundary_layout_bridges(
+        model_ir=imported_model_ir,
+        desired_public_shape_map=desired_public_shape_map,
+        desired_public_layout_map=desired_public_layout_map,
+    )
+
+    for tensor_name in list(imported_model_ir.inputs) + list(imported_model_ir.outputs):
+        ref_tensor = reference_model_ir.tensors.get(str(tensor_name), None)
+        imported_tensor = imported_model_ir.tensors.get(str(tensor_name), None)
+        if ref_tensor is None or imported_tensor is None:
+            continue
+        imported_tensor.shape_signature = [int(v) for v in list(ref_tensor.shape_signature or ref_tensor.shape)]
+        imported_tensor.logical_layout = desired_public_layout_map.get(
+            str(tensor_name),
+            normalize_logical_layout(ref_tensor.logical_layout),
+        )
+    imported_model_ir.metadata["onnx_boundary_shape_signature_map"] = {
+        str(name): [int(v) for v in list(boundary_shape_map.get(str(name), reference_model_ir.tensors[str(name)].shape))]
+        for name in list(imported_model_ir.inputs) + list(imported_model_ir.outputs)
+        if str(name) in reference_model_ir.tensors
+    }
+    imported_model_ir.metadata["onnx_public_layout_map"] = {
+        str(name): (
+            "NWC"
+            if recurrent_public_boundary_context and len(list(reference_model_ir.tensors[str(name)].shape)) == 3
+            else normalize_logical_layout(
+                onnx_graph_public_layout_map.get(
+                    str(name),
+                    public_layout_map.get(
+                        str(name),
+                        reference_model_ir.tensors[str(name)].logical_layout,
+                    ),
+                )
+            )
+        )
+        for name in list(imported_model_ir.inputs) + list(imported_model_ir.outputs)
+        if str(name) in reference_model_ir.tensors
+    }
+    imported_model_ir.metadata["batchless_rank3_public_boundary_names"] = sorted(
+        str(name)
+        for name in list(batchless_rank3_boundary_names)
+        if str(name) in list(imported_model_ir.inputs) + list(imported_model_ir.outputs)
+    )
+
+
+def _try_export_native_package_from_tflite_import(
+    *,
+    output_folder_path: str,
+    fallback_tflite_path: str,
+    reference_model_ir: Optional[ModelIR] = None,
+    reference_onnx_graph: Optional[Any] = None,
+) -> Optional[str]:
+    if not os.path.exists(str(fallback_tflite_path)):
+        return None
+    imported_model_ir = import_model_ir_from_tflite(
+        tflite_file_path=str(fallback_tflite_path),
+    )
+    _merge_reference_public_boundary_metadata(
+        imported_model_ir=imported_model_ir,
+        reference_model_ir=reference_model_ir,
+        reference_onnx_graph=reference_onnx_graph,
+    )
+    return export_pytorch_package_from_model_ir(
+        model_ir=imported_model_ir,
+        output_folder_path=output_folder_path,
+        fallback_tflite_path=None,
+        fallback_onnx_graph=None,
+        fallback_saved_model_path=None,
+        fallback_tflite_has_custom_ops=False,
+    )
+
+
+def _try_export_runtime_wrapper_package_from_tflite_import(
+    *,
+    output_folder_path: str,
+    fallback_tflite_path: str,
+) -> Optional[str]:
+    if not os.path.exists(str(fallback_tflite_path)):
+        return None
+    imported_model_ir = import_model_ir_from_tflite(
+        tflite_file_path=str(fallback_tflite_path),
+    )
+    if not _supports_runtime_wrapper_model_ir(imported_model_ir):
+        return None
+    return _export_runtime_wrapper_package_from_model_ir(
+        model_ir=imported_model_ir,
+        output_folder_path=output_folder_path,
+    )
+
+
+def export_pytorch_package_from_model_ir(
+    *,
+    model_ir: ModelIR,
+    output_folder_path: str,
+    fallback_tflite_path: Optional[str] = None,
+    fallback_onnx_graph: Optional[Any] = None,
+    fallback_saved_model_path: Optional[str] = None,
+    fallback_saved_model_factory: Optional[Callable[[], Optional[str]]] = None,
+    fallback_tflite_has_custom_ops: bool = False,
+) -> str:
+    try:
+        import torch
+    except Exception as ex:
+        raise ModelIRPyTorchExportError(
+            "PyTorch export requires `torch` to be installed."
+        ) from ex
+
+    resolved_fallback_saved_model_path = (
+        str(fallback_saved_model_path)
+        if fallback_saved_model_path is not None and str(fallback_saved_model_path).strip() != ""
+        else None
+    )
+
+    def _get_fallback_saved_model_path() -> Optional[str]:
+        nonlocal resolved_fallback_saved_model_path
+        if resolved_fallback_saved_model_path is not None:
+            return resolved_fallback_saved_model_path
+        if fallback_saved_model_factory is None:
+            return None
+        try:
+            generated_path = fallback_saved_model_factory()
+        except Exception:
+            return None
+        if generated_path is None or str(generated_path).strip() == "":
+            return None
+        resolved_fallback_saved_model_path = str(generated_path)
+        return resolved_fallback_saved_model_path
+
+    model_op_types = {str(op.op_type) for op in model_ir.operators}
+    control_or_recurrent_ops = {
+        "WHILE",
+        "UNIDIRECTIONAL_SEQUENCE_RNN",
+        "UNIDIRECTIONAL_SEQUENCE_LSTM",
+        "BIDIRECTIONAL_SEQUENCE_LSTM",
+    }
+    if (
+        fallback_tflite_path is not None
+        and str(fallback_tflite_path).strip() != ""
+        and not bool(fallback_tflite_has_custom_ops)
+        and any(op_type in control_or_recurrent_ops for op_type in model_op_types)
+    ):
+        try:
+            imported_native_package_path = _try_export_native_package_from_tflite_import(
+                output_folder_path=output_folder_path,
+                fallback_tflite_path=str(fallback_tflite_path),
+                reference_model_ir=model_ir,
+                reference_onnx_graph=fallback_onnx_graph,
+            )
+            if imported_native_package_path is not None:
+                return imported_native_package_path
+        except Exception:
+            pass
+
+    try:
+        normalized: Optional[ModelIR] = None
+        native_prep_error: Optional[Exception] = None
+
+        try:
+            normalized = prepare_model_ir_for_native_pytorch(model_ir)
+            _ensure_no_custom_ops(normalized)
+            _ensure_supported_ops(normalized)
+        except Exception as ex:
+            normalized = None
+            native_prep_error = ex
+        if (
+            normalized is None
+            and fallback_tflite_path is not None
+            and str(fallback_tflite_path).strip() != ""
+            and not bool(fallback_tflite_has_custom_ops)
+        ):
+            try:
+                imported_native_package_path = _try_export_native_package_from_tflite_import(
+                    output_folder_path=output_folder_path,
+                    fallback_tflite_path=str(fallback_tflite_path),
+                    reference_model_ir=model_ir,
+                    reference_onnx_graph=fallback_onnx_graph,
+                )
+                if imported_native_package_path is not None:
+                    return imported_native_package_path
+            except Exception:
+                pass
+        fallback_saved_model_path_for_export = _get_fallback_saved_model_path() if normalized is None else resolved_fallback_saved_model_path
+        if (
+            normalized is None
+            and fallback_saved_model_path_for_export is not None
+            and _should_prefer_saved_model_backed_package(model_ir)
+        ):
+            return export_pytorch_package_from_saved_model_artifact(
+                model_ir=model_ir,
+                output_folder_path=output_folder_path,
+                saved_model_path=str(fallback_saved_model_path_for_export),
+            )
+        if (
+            normalized is None
+            and fallback_saved_model_path is None
+            and fallback_tflite_path is not None
+            and str(fallback_tflite_path).strip() != ""
+            and not bool(fallback_tflite_has_custom_ops)
+            and _should_prefer_tflite_backed_package(model_ir)
+        ):
+            return export_pytorch_package_from_tflite_artifact(
+                model_ir=model_ir,
+                output_folder_path=output_folder_path,
+                tflite_file_path=str(fallback_tflite_path),
+            )
+        if (
+            normalized is None
+            and fallback_tflite_path is not None
+            and str(fallback_tflite_path).strip() != ""
+            and bool(fallback_tflite_has_custom_ops)
+            and _should_prefer_tflite_backed_package(model_ir)
+        ):
+            runtime_wrapper_path = _try_export_runtime_wrapper_package_from_tflite_import(
+                output_folder_path=output_folder_path,
+                fallback_tflite_path=str(fallback_tflite_path),
+            )
+            if runtime_wrapper_path is not None:
+                return runtime_wrapper_path
+
+        if normalized is None:
+            if native_prep_error is not None:
+                raise native_prep_error
+            raise ModelIRPyTorchExportError(
+                "Native PyTorch export preparation failed for an unknown reason."
+            )
+        tensor_storage_name_map = _make_tensor_storage_name_map(normalized)
+
+        os.makedirs(output_folder_path, exist_ok=True)
+        metadata = _build_metadata_payload(normalized)
+        metadata["execution_backend"] = "native"
+        metadata["tensor_storage_names"] = dict(tensor_storage_name_map)
+        native_load_specs: Optional[List[Tuple[str, str]]] = None
+        try:
+            native_load_specs = _write_native_model_file(
+                output_folder_path,
+                model_ir=normalized,
+                metadata=metadata,
+                tensor_storage_name_map=tensor_storage_name_map,
+            )
+        except ModelIRPyTorchExportError as ex:
+            if not _is_direct_codegen_unsupported_error(ex):
+                raise
+            # Keep torch-kernel-backed packages native when runtime kernels
+            # support the graph, even if direct Python codegen does not yet.
+            _write_generated_package_common_files(output_folder_path)
+            _write_wrapper_model_file(output_folder_path)
+            metadata["execution_backend"] = "runtime_wrapper"
+        metadata_path = os.path.join(output_folder_path, "metadata.json")
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+        if native_load_specs is not None:
+            state_dict = _build_native_generated_state_dict(
+                package_path=output_folder_path,
+                model_ir=normalized,
+                load_specs=native_load_specs,
+            )
+        else:
+            state_dict = {}
+            for tensor_name, tensor in normalized.tensors.items():
+                if not isinstance(tensor.data, np.ndarray):
+                    continue
+                dtype_name = str(tensor.dtype).upper()
+                if dtype_name not in {"BOOL", "INT8", "INT16", "INT32", "INT64", "UINT8", "FLOAT16", "FLOAT32", "FLOAT64"}:
+                    raise ModelIRPyTorchExportError(
+                        f"Unsupported tensor dtype for PyTorch export: tensor={tensor_name} dtype={tensor.dtype}"
+                    )
+                storage_name = tensor_storage_name_map.get(str(tensor_name), str(tensor_name))
+                state_dict[storage_name] = torch.as_tensor(np.asarray(tensor.data))
+        torch.save(state_dict, os.path.join(output_folder_path, "state_dict.pth"))
+        return str(output_folder_path)
+    except Exception:
+        string_config = _extract_string_normalizer_config_from_onnx_graph(
+            fallback_onnx_graph,
+        )
+        if string_config is not None:
+            return export_pytorch_package_from_string_normalizer_onnx(
+                model_ir=model_ir,
+                output_folder_path=output_folder_path,
+                onnx_graph=fallback_onnx_graph,
+            )
+        fallback_saved_model_path_for_export = _get_fallback_saved_model_path()
+        if fallback_saved_model_path_for_export is not None:
+            return export_pytorch_package_from_saved_model_artifact(
+                model_ir=model_ir,
+                output_folder_path=output_folder_path,
+                saved_model_path=str(fallback_saved_model_path_for_export),
+            )
+        if fallback_tflite_path is None or str(fallback_tflite_path).strip() == "":
+            raise
+        try:
+            runtime_wrapper_path = _try_export_runtime_wrapper_package_from_tflite_import(
+                output_folder_path=output_folder_path,
+                fallback_tflite_path=str(fallback_tflite_path),
+            )
+            if runtime_wrapper_path is not None:
+                return runtime_wrapper_path
+        except Exception:
+            pass
+        if not bool(fallback_tflite_has_custom_ops):
+            try:
+                imported_native_package_path = _try_export_native_package_from_tflite_import(
+                    output_folder_path=output_folder_path,
+                    fallback_tflite_path=str(fallback_tflite_path),
+                    reference_model_ir=model_ir,
+                    reference_onnx_graph=fallback_onnx_graph,
+                )
+                if imported_native_package_path is not None:
+                    return imported_native_package_path
+            except Exception:
+                pass
+        if (
+            not bool(fallback_tflite_has_custom_ops)
+            and _should_prefer_tflite_backed_package(model_ir)
+        ):
+            return export_pytorch_package_from_tflite_artifact(
+                model_ir=model_ir,
+                output_folder_path=output_folder_path,
+                tflite_file_path=str(fallback_tflite_path),
+            )
+        return export_pytorch_package_from_tflite_artifact(
+            model_ir=model_ir,
+            output_folder_path=output_folder_path,
+            tflite_file_path=str(fallback_tflite_path),
+        )

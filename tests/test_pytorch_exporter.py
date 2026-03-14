@@ -42,6 +42,18 @@ from onnx2tf.tflite_builder.pytorch_accuracy_evaluator import (
 )
 from onnx2tf.tflite_builder.pytorch_exporter import (
     ModelIRPyTorchExportError,
+    _build_metadata_payload,
+    _build_tensor_var_name_map,
+    _build_torchscript_example_inputs,
+    _export_runtime_wrapper_package_from_model_ir,
+    _make_tensor_storage_name_map,
+    _merge_reference_public_boundary_metadata,
+    _propagate_pytorch_friendly_layouts,
+    _reject_residual_layout_transposes,
+    _remove_redundant_layout_transposes,
+    _sanitize_dynamo_exported_onnx_metadata,
+    _should_prefer_tflite_backed_package,
+    _write_native_model_file,
     export_dynamo_onnx_from_generated_package,
     export_exported_program_from_generated_package,
     export_pytorch_package_from_model_ir,
@@ -49,26 +61,6 @@ from onnx2tf.tflite_builder.pytorch_exporter import (
     normalize_model_ir_for_pytorch_channel_first,
     prepare_model_ir_for_native_pytorch,
     validate_channel_first_exportability,
-)
-from onnx2tf.tflite_builder.pytorch_exporter.fallback_backends import (
-    _merge_reference_public_boundary_metadata,
-    _should_prefer_tflite_backed_package,
-)
-from onnx2tf.tflite_builder.pytorch_exporter.generated_artifacts import (
-    _build_torchscript_example_inputs,
-    _sanitize_dynamo_exported_onnx_metadata,
-)
-from onnx2tf.tflite_builder.pytorch_exporter.layout_normalization import (
-    _propagate_pytorch_friendly_layouts,
-    _reject_residual_layout_transposes,
-    _remove_redundant_layout_transposes,
-)
-from onnx2tf.tflite_builder.pytorch_exporter.native_codegen import (
-    _build_metadata_payload,
-    _build_tensor_var_name_map,
-    _export_runtime_wrapper_package_from_model_ir,
-    _make_tensor_storage_name_map,
-    _write_native_model_file,
 )
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 from onnx2tf.tflite_builder.tflite_importer import import_model_ir_from_tflite
