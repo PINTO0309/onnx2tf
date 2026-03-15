@@ -323,7 +323,8 @@ def assemble_and_write_model_phase(
     load_specs_result = impl(state.context)
     if bindings.canonicalize_generated_model_source_fn is not None:
         bindings.canonicalize_generated_model_source_fn(
-            state.context.package_dir
+            state.context.package_dir,
+            model_ir=state.context.model_ir,
         )
     _rewrite_public_layout_bridge_binary_align_calls(
         state.context.package_dir / "model.py"
