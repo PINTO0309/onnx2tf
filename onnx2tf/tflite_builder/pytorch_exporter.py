@@ -16098,6 +16098,7 @@ def _fold_inverse_permute_round_trips_in_exported_program_archive(
         "aten.div.Tensor",
         "aten.exp.default",
         "aten.leaky_relu.default",
+        "aten.lift_fresh_copy.default",
         "aten.matmul.default",
         "aten.maximum.default",
         "aten.minimum.default",
@@ -16174,7 +16175,7 @@ def _fold_inverse_permute_round_trips_in_exported_program_archive(
         if node.op != "call_function":
             return _rank_shape(node)
         target = str(node.target)
-        if target == "aten.contiguous.default" and len(node.args) >= 1:
+        if target in {"aten.contiguous.default", "aten.lift_fresh_copy.default"} and len(node.args) >= 1:
             return _rank_shape(node.args[0])
         if target in {
             "aten.clamp.default",
@@ -17465,6 +17466,26 @@ def _canonicalize_generated_model_source_for_raw_export(
     if not model_path.exists():
         return
     lines = model_path.read_text(encoding="utf-8").splitlines()
+    register_buffer_re = re.compile(
+        r"^(?P<indent>\s*)self\.register_buffer\('(?P<name>[A-Za-z0-9_]+)', torch\.zeros\(\[(?P<shape>[0-9, ]+)\], dtype=torch\.(?P<dtype>[A-Za-z0-9_]+)\), persistent=(?P<persistent>True|False)\)$"
+    )
+    self_const_alias_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = self\.(?P<attr>[A-Za-z0-9_]+)$"
+    )
+    transposed_const_use_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P<expr>.*torch\.matmul\(.+, (?P<temp>[A-Za-z0-9_]+)\.transpose\(-1, -2\)\).*)$"
+    )
+    scalar_as_tensor_re = re.compile(
+        r"torch\.as_tensor\((?P<value>[-+]?(?:[0-9]*\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?\d+)?), dtype=torch\.[A-Za-z0-9_]+, device=_module_device\(self\)\)"
+    )
+    minimum_scalar_tensor_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P<prefix>.*)torch\.minimum\((?P<tensor>[A-Za-z0-9_]+), "
+        r"torch\.as_tensor\((?P<value>[-+]?(?:[0-9]*\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?\d+)?), dtype=torch\.[A-Za-z0-9_]+, device=_module_device\(self\)\)\)(?P<suffix>.*)$"
+    )
+    maximum_scalar_tensor_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P<prefix>.*)torch\.maximum\((?P<tensor>[A-Za-z0-9_]+), "
+        r"torch\.as_tensor\((?P<value>[-+]?(?:[0-9]*\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?\d+)?), dtype=torch\.[A-Za-z0-9_]+, device=_module_device\(self\)\)\)(?P<suffix>.*)$"
+    )
     assign_re = re.compile(
         r"^(?P<indent>\s*)(?P<alias>(?:[A-Za-z0-9_]+_public_layout_bridge|in_public_layout_bridge)) = _torch_permute\((?P<input>[A-Za-z0-9_]+), \[0, 2, 3, 1\]\)$"
     )
@@ -17576,6 +17597,77 @@ def _canonicalize_generated_model_source_for_raw_export(
             or name.endswith("_cf")
             or name.endswith("_out_cf")
         )
+
+    buffer_specs: Dict[str, Tuple[int, List[int], str, bool]] = {}
+    const_temp_assignments: Dict[str, Tuple[int, str, str, str]] = {}
+    transposed_const_alias_specs: Dict[str, Tuple[str, List[int], str]] = {}
+    for index, line in enumerate(lines):
+        minimum_scalar_match = minimum_scalar_tensor_re.match(line)
+        if minimum_scalar_match is not None:
+            lines[index] = (
+                f"{minimum_scalar_match.group('indent')}{minimum_scalar_match.group('lhs')} = "
+                f"{minimum_scalar_match.group('prefix')}torch.clamp({minimum_scalar_match.group('tensor')}, "
+                f"max={minimum_scalar_match.group('value')}){minimum_scalar_match.group('suffix')}"
+            )
+            changed = True
+            line = lines[index]
+        maximum_scalar_match = maximum_scalar_tensor_re.match(line)
+        if maximum_scalar_match is not None:
+            lines[index] = (
+                f"{maximum_scalar_match.group('indent')}{maximum_scalar_match.group('lhs')} = "
+                f"{maximum_scalar_match.group('prefix')}torch.clamp({maximum_scalar_match.group('tensor')}, "
+                f"min={maximum_scalar_match.group('value')}){maximum_scalar_match.group('suffix')}"
+            )
+            changed = True
+            line = lines[index]
+        scalar_as_tensor_replaced = scalar_as_tensor_re.sub(r"\g<value>", line)
+        if scalar_as_tensor_replaced != line:
+            lines[index] = scalar_as_tensor_replaced
+            changed = True
+            line = scalar_as_tensor_replaced
+        register_buffer_match = register_buffer_re.match(line)
+        if register_buffer_match is not None:
+            shape_values = [
+                int(value.strip())
+                for value in str(register_buffer_match.group("shape")).split(",")
+                if value.strip()
+            ]
+            buffer_specs[str(register_buffer_match.group("name"))] = (
+                int(index),
+                shape_values,
+                str(register_buffer_match.group("dtype")),
+                str(register_buffer_match.group("persistent")) == "True",
+            )
+            continue
+        self_const_alias_match = self_const_alias_re.match(line)
+        if self_const_alias_match is not None:
+            const_temp_assignments[str(self_const_alias_match.group("lhs"))] = (
+                int(index),
+                str(self_const_alias_match.group("attr")),
+                str(self_const_alias_match.group("indent")),
+                str(self_const_alias_match.group("lhs")),
+            )
+            continue
+        transposed_const_use_match = transposed_const_use_re.match(line)
+        if transposed_const_use_match is None:
+            continue
+        temp_name = str(transposed_const_use_match.group("temp"))
+        temp_assignment = const_temp_assignments.get(temp_name, None)
+        if temp_assignment is None:
+            continue
+        temp_index, source_attr, temp_indent, temp_lhs = temp_assignment
+        buffer_spec = buffer_specs.get(source_attr, None)
+        if buffer_spec is None:
+            continue
+        _, source_shape, source_dtype, _ = buffer_spec
+        if len(source_shape) < 2:
+            continue
+        alias_attr = f"{source_attr}_transposed"
+        alias_shape = list(source_shape[:-2]) + [int(source_shape[-1]), int(source_shape[-2])]
+        transposed_const_alias_specs[alias_attr] = (source_attr, alias_shape, source_dtype)
+        lines[temp_index] = f"{temp_indent}{temp_lhs} = self.{alias_attr}"
+        lines[index] = line.replace(f"{temp_name}.transpose(-1, -2)", temp_name)
+        changed = True
     for index in range(len(lines)):
         cf_nhwc_materialize_match = cf_nhwc_materialize_re.match(lines[index])
         if cf_nhwc_materialize_match is not None:
@@ -18324,6 +18416,67 @@ def _canonicalize_generated_model_source_for_raw_export(
         )
         changed = True
         index += 6
+    if len(transposed_const_alias_specs) > 0:
+        if not any("from typing import" in line and "Mapping" in line for line in lines):
+            for idx, line in enumerate(lines):
+                if line.startswith("from typing import "):
+                    if "Mapping" not in line:
+                        lines[idx] = line.replace("from typing import ", "from typing import Mapping, ")
+                        changed = True
+                    break
+        existing_alias_names = set(buffer_specs.keys())
+        init_constants_start = next((idx for idx, line in enumerate(lines) if line.startswith("    def _init_constants(self) -> None:")), None)
+        if init_constants_start is not None:
+            insert_after = init_constants_start + 1
+            while insert_after < len(lines) and lines[insert_after].startswith("        self.register_buffer("):
+                insert_after += 1
+            alias_init_lines: List[str] = []
+            for alias_attr, (_, alias_shape, source_dtype) in sorted(transposed_const_alias_specs.items()):
+                if alias_attr in existing_alias_names:
+                    continue
+                alias_shape_text = ", ".join(str(v) for v in alias_shape)
+                alias_init_lines.append(
+                    f"        self.register_buffer('{alias_attr}', torch.zeros([{alias_shape_text}], dtype=torch.{source_dtype}), persistent=False)"
+                )
+                existing_alias_names.add(alias_attr)
+            if len(alias_init_lines) > 0:
+                lines[insert_after:insert_after] = alias_init_lines
+                changed = True
+        refresh_method_name = "_refresh_transposed_constant_buffers"
+        has_refresh_method = any(line.startswith(f"    def {refresh_method_name}(self) -> None:") for line in lines)
+        if not has_refresh_method:
+            insert_index = next((idx for idx, line in enumerate(lines) if line.startswith("    def _forward_stage_0(")), None)
+            if insert_index is not None:
+                refresh_method_lines = [
+                    f"    def {refresh_method_name}(self) -> None:",
+                    "        with torch.no_grad():",
+                ]
+                for alias_attr, (source_attr, _, _) in sorted(transposed_const_alias_specs.items()):
+                    refresh_method_lines.append(
+                        f"            self.{alias_attr}.copy_(self.{source_attr}.transpose(-1, -2))"
+                    )
+                refresh_method_lines.append("")
+                lines[insert_index:insert_index] = refresh_method_lines
+                changed = True
+        refresh_call_line = f"        self.{refresh_method_name}()"
+        if not any(line == refresh_call_line for line in lines):
+            eval_index = next((idx for idx, line in enumerate(lines) if line.strip() == "if eval_mode:"), None)
+            if eval_index is not None:
+                lines.insert(eval_index, refresh_call_line)
+                changed = True
+        has_load_state_dict_override = any(line.startswith("    def load_state_dict(") for line in lines)
+        if not has_load_state_dict_override:
+            insert_index = next((idx for idx, line in enumerate(lines) if line.startswith("    def _forward_stage_0(")), None)
+            if insert_index is not None:
+                load_state_dict_lines = [
+                    "    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False):",
+                    "        result = super().load_state_dict(state_dict, strict=strict, assign=assign)",
+                    f"        self.{refresh_method_name}()",
+                    "        return result",
+                    "",
+                ]
+                lines[insert_index:insert_index] = load_state_dict_lines
+                changed = True
     if changed:
         model_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

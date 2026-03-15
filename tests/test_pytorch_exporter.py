@@ -7699,7 +7699,19 @@ def test_export_pytorch_package_canonicalizes_bread_nonfm_source_for_raw_export_
     assert "torch.tensor_split(concat_out0, 3, dim=_normalize_dim(1, concat_out0.ndim))" in model_source
     assert "mul6_out0 = torch.mul(clip_out0, split_out0)" in model_source
     assert "resize_cubic_h_in = split_out0" in model_source
-    assert "torch.matmul(_tmp_y_18, _tmp_x_18.transpose(-1, -2)), [1, 1, 90, 160])" in model_source
+    assert "torch.matmul(_tmp_y_18, _tmp_x_18), [1, 1, 90, 160])" in model_source
+    assert "self.register_buffer('const_Resize_resize_cubic_w_matrix_transposed'" in model_source
+    assert "self.register_buffer('const_Resize_1_resize_cubic_w_matrix_transposed'" in model_source
+    assert "def _refresh_transposed_constant_buffers(self) -> None:" in model_source
+    assert "self.const_Resize_resize_cubic_w_matrix_transposed.copy_(self.const_Resize_resize_cubic_w_matrix.transpose(-1, -2))" in model_source
+    assert "_tmp_x_18 = self.const_Resize_resize_cubic_w_matrix_transposed" in model_source
+    assert "_tmp_x_62 = self.const_Resize_1_resize_cubic_w_matrix_transposed" in model_source
+    assert "_tmp_x_18.transpose(-1, -2)" not in model_source
+    assert "_tmp_x_62.transpose(-1, -2)" not in model_source
+    assert "torch.as_tensor(1.0, dtype=torch.float32, device=_module_device(self))" not in model_source
+    assert "torch.as_tensor(255.0, dtype=torch.float32, device=_module_device(self))" not in model_source
+    assert "torch.sub(1.0, clip_out0)" in model_source
+    assert "torch.clamp(clip7_clip_min_out_cf, max=255.0)" in model_source
     assert "ianetincconvconv3_cv_in_cf = self.conv_block_0(resize_out_nhwc)" in model_source
     assert (
         "canetup2_upup_resize_out_nhwc = _apply_resize("
@@ -7766,6 +7778,18 @@ def test_export_pytorch_package_raw_exports_bread_nonfm_package_when_model_is_av
     assert raw_exported_program_path.exists()
     reloaded = torch.export.load(str(raw_exported_program_path))
     assert reloaded is not None
+    transpose_nodes = [
+        node
+        for node in reloaded.module().graph.nodes
+        if node.op == "call_function" and str(node.target) == "aten.transpose.int"
+    ]
+    assert transpose_nodes == []
+    lift_fresh_copy_nodes = [
+        node
+        for node in reloaded.module().graph.nodes
+        if node.op == "call_function" and str(node.target) == "aten.lift_fresh_copy.default"
+    ]
+    assert lift_fresh_copy_nodes == []
 
 
 def test_export_pytorch_package_helper_and_raw_exports_are_structurally_equivalent_for_bread_nonfm_when_model_is_available(tmp_path) -> None:
