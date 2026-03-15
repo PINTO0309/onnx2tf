@@ -72839,6 +72839,11 @@ def lower_onnx_to_ir(
         _reconcile_static_tensor_shapes(model_ir)
         _topologically_sort_operators(model_ir)
         infer_model_ir_logical_layouts(model_ir)
+    # Absolute-final reshape cleanup:
+    # very late repair/reconciliation passes above can still recreate trivial
+    # singleton-growth RESHAPE chains (e.g. 2D->3D->4D Conv1D input shims).
+    _optimize_consecutive_reshape_passthrough_chains(model_ir)
+    _reconcile_static_tensor_shapes(model_ir)
     layout_problems = validate_model_ir_layout_annotations(model_ir)
     if len(layout_problems) > 0:
         model_ir.metadata["logical_layout_validation_errors"] = list(layout_problems)

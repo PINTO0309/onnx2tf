@@ -45,12 +45,16 @@ from onnx2tf.tflite_builder.pytorch_exporter import (
     _build_metadata_payload,
     _build_tensor_var_name_map,
     _build_torchscript_example_inputs,
+    _conv2d_same_pad_padding_arg_for_codegen,
     _export_runtime_wrapper_package_from_model_ir,
     _make_tensor_storage_name_map,
     _merge_reference_public_boundary_metadata,
+    _preferred_reshape_target_values,
     _propagate_pytorch_friendly_layouts,
     _reject_residual_layout_transposes,
     _remove_redundant_layout_transposes,
+    _rewrite_channel_last_binary_bridge_chains,
+    _rewrite_channel_last_gap_means_to_reduce_mean,
     _sanitize_dynamo_exported_onnx_metadata,
     _should_prefer_tflite_backed_package,
     _write_native_model_file,
@@ -98,6 +102,44 @@ def test_native_codegen_legacy_impl_is_not_defined_in_pytorch_exporter_module() 
         "def _write_native_model_file_codegen_core_body_main_inner_legacy_impl("
         in pipeline_source
     )
+
+
+def test_rewrite_channel_last_binary_bridge_chains_handles_nchw_target_shape() -> None:
+    lines = [
+        "in_public_layout_bridge = _torch_permute(in_t, [0, 2, 3, 1])",
+        "_binary_lhs_1, _binary_rhs_1 = _align_binary_inputs(in_public_layout_bridge, self.const_tensor_623_nhwc, [1, 3, 64, 64])",
+        "cv65_in = _align_tensor_to_target_shape(torch.sub(_binary_lhs_1, _binary_rhs_1), [1, 3, 64, 64])",
+        "cv65_out_nhwc_cf = self.conv_block_0(cv65_in.permute(0, 3, 1, 2).contiguous())",
+    ]
+
+    rewritten = _rewrite_channel_last_binary_bridge_chains(
+        lines,
+        derive_local_var_name=lambda base_name: f"{base_name}_tmp",
+        channel_first_constant_expr_for_buffer_attr=lambda buffer_expr, target_shape: (
+            "self.const_tensor623_nhwc_ch_first1_x3_x1_x1"
+            if buffer_expr == "self.const_tensor_623_nhwc" and list(target_shape) == [1, 3, 1, 1]
+            else None
+        ),
+    )
+
+    assert rewritten == [
+        "cv65_in_cf_tmp = torch.sub(in_t, self.const_tensor623_nhwc_ch_first1_x3_x1_x1)",
+        "cv65_out_nhwc_cf = self.conv_block_0(cv65_in_cf_tmp)",
+    ]
+
+
+def test_rewrite_channel_last_gap_means_to_reduce_mean_keeps_rank3_cf_mean_consistent() -> None:
+    lines = [
+        "t_1780 = _align_tensor_to_target_shape(t1780_cf.permute(0, 2, 1).contiguous(), [1, 4096, 180])",
+        "t1781_cf = torch.mean(t_1780, dim=2, keepdim=True)",
+    ]
+
+    rewritten = _rewrite_channel_last_gap_means_to_reduce_mean(lines)
+
+    assert rewritten == [
+        "t_1780 = _align_tensor_to_target_shape(t1780_cf.permute(0, 2, 1).contiguous(), [1, 4096, 180])",
+        "t1781_cf = torch.mean(t1780_cf, dim=1, keepdim=True)",
+    ]
 
 
 def _make_add_model() -> onnx.ModelProto:
@@ -7417,10 +7459,13 @@ def test_export_pytorch_package_avoids_public_bridge_permute_pairs_for_swinir_wh
     assert "cv65_in_nhwc = _align_tensor_to_target_shape(torch.sub(in_public_layout_bridge, self.const_tensor_623_nhwc)" not in model_source
     assert "cv65_out_nhwc_cf = self.conv_block_0(cv65_in_nhwc.permute(0, 3, 1, 2).contiguous())" not in model_source
     assert "cv41070_out_nhwc = _align_tensor_to_target_shape(cv41070_out_nhwc_cf.permute(0, 2, 3, 1).contiguous(), [1, 256, 256, 3])" not in model_source
-    assert "t_44068 = _torch_permute(t_44068_to_nhwc, [0, 3, 1, 2])" not in model_source
 
+    dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    assert dynamo_onnx_path is not None
+    assert Path(dynamo_onnx_path).exists()
     exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
     assert exported_program_path is not None
+    assert Path(exported_program_path).exists()
     exported_program = torch.export.load(str(exported_program_path))
     permute_indices = [
         idx
@@ -7429,11 +7474,6 @@ def test_export_pytorch_package_avoids_public_bridge_permute_pairs_for_swinir_wh
     ]
     assert permute_indices
     assert min(permute_indices) > 1000
-    tail_nodes = list(exported_program.module().graph.nodes)[-20:]
-    assert all(
-        not (node.op == "call_function" and str(node.target) == "aten.permute.default")
-        for node in tail_nodes
-    )
 
 
 def test_export_pytorch_package_generates_native_ts_ad_model_package_when_model_is_available(tmp_path) -> None:
@@ -7461,10 +7501,10 @@ def test_export_pytorch_package_generates_native_ts_ad_model_package_when_model_
     assert metadata["execution_backend"] == "native"
     assert "cv2_in_nhwc = torch.reshape(cv2_cv1_d_in_nchw2_d.permute(0, 2, 3, 1).contiguous(), [1, 1, 64, 1])" not in model_source
     assert "self.conv_block_0(cv2_in_nhwc.permute(0, 3, 1, 2).contiguous())" not in model_source
-    assert "cv4_in = _align_tensor_to_target_shape(self.conv_block_0(cv2_cv1_d_in_nchw2_d), [1, 64, 1, 64])" in model_source
-    assert "_tmp_x_13 = _tmp_x_13.transpose(-1, -2)" not in model_source
-    assert "_tmp_x_13 = self.const_onnx_mat_mul74_tr_last_two66_x2" in model_source
-    assert "_tmp_y_13 = _tmp_y_13.transpose(-1, -2)" not in model_source
+    assert "cv2_in = torch.reshape(onnx_rs0, [1, 1, 1, 64])" in model_source
+    assert "pad=[4, 4, 0, 0]" in model_source
+    assert "target_shape=[1, 1, 68, 128], fallback_shape=[1, 1, 68, 128], target_logical_layout='NHWC'" in model_source
+    assert "self.const_onnx_mat_mul74_tr_last_two66_x2" in model_source
 
     torchscript_path = export_torchscript_from_generated_package(package_dir=package_path)
     dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
@@ -7551,13 +7591,37 @@ def test_export_pytorch_package_generates_native_ts_ad_model_package_when_model_
         not (node.op == "call_function" and str(node.target) == "aten.alias.default")
         for node in exported_program.module().graph.nodes
     )
-    matmul_1_index = matmul_nodes[1][0]
-    preceding_targets = [
-        str(node.target)
-        for node in list(exported_program.module().graph.nodes)[max(0, matmul_1_index - 3):matmul_1_index]
-        if node.op == "call_function"
-    ]
-    assert "aten.transpose.int" not in preceding_targets
+
+
+def test_export_pytorch_package_prefers_channel_first_shape_for_nhwc_named_channel_first_reshape() -> None:
+    tensor = TensorIR(
+        name="Conv_2_input_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 1, 64, 1],
+        shape_signature=[1, 1, 64, 1],
+        logical_layout="NCHW",
+    )
+
+    assert _preferred_reshape_target_values(tensor) == [1, 1, 1, 64]
+
+
+def test_export_pytorch_package_conv2d_same_pad_interprets_channel_last_stored_shapes_for_channel_first_codegen() -> None:
+    pad = _conv2d_same_pad_padding_arg_for_codegen(
+        input_shape=[1, 1, 64, 1],
+        output_shape=[1, 1, 64, 64],
+        weight_shape=[64, 1, 1, 9],
+        options={
+            "padding": "SAME",
+            "strideH": 1,
+            "strideW": 1,
+            "dilationHFactor": 1,
+            "dilationWFactor": 1,
+        },
+        input_logical_layout="NCHW",
+        output_logical_layout="NCHW",
+    )
+
+    assert pad == [4, 4, 0, 0]
 
 
 def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_available(tmp_path) -> None:

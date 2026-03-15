@@ -472,8 +472,22 @@ def _target_shape_values_for_model_ir(
     if tensor.shape_signature is not None:
         signature = [int(v) for v in list(tensor.shape_signature)]
         if len(signature) == len(list(tensor.shape)):
-            return signature
-    return [int(v) for v in list(tensor.shape)]
+            preferred = signature
+        else:
+            preferred = [int(v) for v in list(tensor.shape)]
+    else:
+        preferred = [int(v) for v in list(tensor.shape)]
+    rank = len(list(preferred))
+    perm_to_cf = _perm_cl_to_cf(rank)
+    if (
+        perm_to_cf is not None
+        and is_channel_first_logical_layout(normalize_logical_layout(tensor.logical_layout))
+        and _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor_name))
+    ):
+        permuted = _permute_shape(preferred, perm_to_cf)
+        if permuted is not None:
+            return [int(v) for v in list(permuted)]
+    return [int(v) for v in list(preferred)]
 
 
 def _target_shape_literal_for_model_ir(
@@ -885,6 +899,16 @@ def _tensor_exact_static_shape_list_for_model_ir(
     ):
         signature = [int(v) for v in list(tensor.shape_signature)]
         if all(int(v) > 0 for v in signature):
+            rank = len(list(signature))
+            perm_to_cf = _perm_cl_to_cf(rank)
+            if (
+                perm_to_cf is not None
+                and is_channel_first_logical_layout(normalize_logical_layout(tensor.logical_layout))
+                and _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor_name))
+            ):
+                permuted = _permute_shape(signature, perm_to_cf)
+                if permuted is not None:
+                    return [int(v) for v in list(permuted)]
             return signature
     return None
 
@@ -1117,6 +1141,20 @@ def _conv2d_same_pad_padding_arg_for_codegen(
     normalized_output_layout = normalize_logical_layout(output_logical_layout)
     if len(in_shape) != 4 or len(out_shape) != 4 or len(kernel_shape) != 4:
         return None
+    if (
+        is_channel_first_logical_layout(normalized_input_layout)
+        and is_channel_first_logical_layout(normalized_output_layout)
+        and int(kernel_shape[0]) > 0
+        and int(out_shape[1]) != int(kernel_shape[0])
+        and int(out_shape[3]) == int(kernel_shape[0])
+    ):
+        perm_to_cf = _perm_cl_to_cf(4)
+        if perm_to_cf is not None:
+            permuted_input_shape = _permute_shape(in_shape, perm_to_cf)
+            permuted_output_shape = _permute_shape(out_shape, perm_to_cf)
+            if permuted_input_shape is not None and permuted_output_shape is not None:
+                in_shape = [int(v) for v in list(permuted_input_shape)]
+                out_shape = [int(v) for v in list(permuted_output_shape)]
     if input_pre_permute is not None:
         perm = [int(v) for v in list(input_pre_permute)]
         if len(perm) != 4:
@@ -2524,6 +2562,25 @@ def _infer_conv2d_ctor_params_for_codegen(
     normalized_input_layout = normalize_logical_layout(input_logical_layout)
     normalized_output_layout = normalize_logical_layout(output_logical_layout)
     preferred_input_channels: Optional[int] = None
+    if (
+        output_shape is not None
+        and is_channel_first_logical_layout(normalized_input_layout)
+        and is_channel_first_logical_layout(normalized_output_layout)
+    ):
+        out_shape_values = [int(v) for v in list(output_shape)]
+        if (
+            len(out_shape_values) == 4
+            and int(kernel_shape[0]) > 0
+            and int(out_shape_values[1]) != int(kernel_shape[0])
+            and int(out_shape_values[3]) == int(kernel_shape[0])
+        ):
+            perm_to_cf = _perm_cl_to_cf(4)
+            if perm_to_cf is not None:
+                permuted_input_shape = _permute_shape(in_shape, perm_to_cf)
+                permuted_output_shape = _permute_shape(out_shape_values, perm_to_cf)
+                if permuted_input_shape is not None and permuted_output_shape is not None:
+                    in_shape = [int(v) for v in list(permuted_input_shape)]
+                    output_shape = [int(v) for v in list(permuted_output_shape)]
 
     def _choose_unknown_input_channel_candidate() -> Optional[int]:
         candidate_channels: List[int] = []
@@ -4447,18 +4504,29 @@ def _emit_native_direct_module_op_for_codegen(
     if op_type == "TRANSPOSE_CONV":
         runtime_imports.add("_apply_module_transpose_conv2d")
         output_shape_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+        output_tensor = model_ir.tensors.get(str(outputs[0]), None)
         fallback_shape = (
             [int(v) for v in np.asarray(output_shape_tensor.data).reshape(-1).tolist()]
             if output_shape_tensor is not None and isinstance(output_shape_tensor.data, np.ndarray)
             else [int(v) for v in list(model_ir.tensors[outputs[0]].shape)]
         )
+        transpose_conv_target_shape = output_target_shape
+        transpose_conv_target_layout = normalize_logical_layout(model_ir.tensors[outputs[0]].logical_layout)
+        if (
+            output_tensor is not None
+            and len(list(output_tensor.shape)) == 4
+            and is_channel_first_logical_layout(transpose_conv_target_layout)
+            and _tensor_name_suggests_channel_last_layout_for_codegen(str(outputs[0]))
+        ):
+            transpose_conv_target_shape = repr([int(v) for v in list(output_tensor.shape)])
+            transpose_conv_target_layout = "NHWC"
         forward_lines.append(
             f"{output_vars[0]} = _apply_module_transpose_conv2d("
             f"{tensor_expr_fn(str(op.inputs[2]))}, self.{attr_name}.weight, self.{attr_name}.bias, "
             f"list(self.{attr_name}.stride), list(self.{attr_name}.padding), list(self.{attr_name}.dilation), "
             f"list(self.{attr_name}.output_padding), self.{attr_name}.groups, "
-            f"target_shape={output_target_shape}, fallback_shape={repr(fallback_shape)}, "
-            f"target_logical_layout={repr(normalize_logical_layout(model_ir.tensors[outputs[0]].logical_layout))}, fused='NONE')"
+            f"target_shape={transpose_conv_target_shape}, fallback_shape={repr(fallback_shape)}, "
+            f"target_logical_layout={repr(transpose_conv_target_layout)}, fused='NONE')"
         )
         forward_lines.extend(activation_lines_fn(output_vars[0], fused))
         return True
@@ -6216,6 +6284,12 @@ def _rewrite_channel_last_gap_means_to_reduce_mean(
     pattern = re.compile(
         r"torch\.mean\((?P<expr>.+?\.permute\(0, 2, 3, 1\)\.contiguous\(\)), dim=\[1, 2\], keepdim=True\)"
     )
+    rank3_cf_materialize_re = re.compile(
+        r"^(?P<out>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\((?P<cf>[A-Za-z0-9_]+)\.permute\(0, 2, 1\)\.contiguous\(\), (?P<target>\[[^\]]+\])\)$"
+    )
+    rank3_mean_re = re.compile(
+        r"^(?P<out>[A-Za-z0-9_]+) = torch\.mean\((?P<input>[A-Za-z0-9_]+), dim=2, keepdim=True\)$"
+    )
 
     def _rewrite_line(line: str) -> str:
         match = pattern.search(line)
@@ -6227,7 +6301,29 @@ def _rewrite_channel_last_gap_means_to_reduce_mean(
         )
         return line[: match.start()] + replacement + line[match.end() :]
 
-    return [_rewrite_line(str(line)) for line in lines]
+    rewritten = [_rewrite_line(str(line)) for line in lines]
+    for index in range(1, len(rewritten)):
+        materialize_match = rank3_cf_materialize_re.match(str(rewritten[index - 1]))
+        mean_match = rank3_mean_re.match(str(rewritten[index]))
+        if materialize_match is None or mean_match is None:
+            continue
+        if mean_match.group("input") != materialize_match.group("out"):
+            continue
+        try:
+            target_shape = ast.literal_eval(materialize_match.group("target"))
+        except Exception:
+            continue
+        if (
+            not isinstance(target_shape, list)
+            or len(target_shape) != 3
+            or not all(isinstance(value, int) for value in list(target_shape))
+        ):
+            continue
+        rewritten[index] = (
+            f"{mean_match.group('out')} = torch.mean("
+            f"{materialize_match.group('cf')}, dim=1, keepdim=True)"
+        )
+    return rewritten
 
 
 def _fold_boundary_transpose_pad_conv_bridges(
@@ -6668,6 +6764,9 @@ def _rewrite_channel_last_binary_bridge_chains(
     public_bridge_pattern = re.compile(
         r"^(?P<bridge>\w+)\s*=\s*_torch_permute\((?P<input>\w+), \[0, 2, 3, 1\]\)$"
     )
+    binary_input_align_pattern = re.compile(
+        r"^(?P<lhs_var>\w+), (?P<rhs_var>\w+)\s*=\s*_align_binary_inputs\((?P<lhs_expr>[^,]+), (?P<rhs_expr>[^,]+), (?P<shape>\[[^\]]+\])\)$"
+    )
     binary_align_pattern = re.compile(
         rf"^(?P<out>\w+)\s*=\s*_align_tensor_to_target_shape\(torch\.(?P<fn>{binary_fn_pattern})\((?P<lhs>[^,]+), (?P<rhs>[^,]+)\), (?P<shape>\[[^\]]+\])\)$"
     )
@@ -6681,11 +6780,78 @@ def _rewrite_channel_last_binary_bridge_chains(
         r"^(?P<out>\w+)\s*=\s*_torch_permute\((?P<input>\w+), \[0, 3, 1, 2\]\)$"
     )
 
+    def _resolve_channel_first_constant_expr(
+        buffer_expr: str,
+        target_shape: Sequence[int],
+    ) -> Optional[str]:
+        if len(target_shape) != 4:
+            return None
+        batch_dim = int(target_shape[0])
+        candidate_shapes: List[List[int]] = []
+        channel_last_candidate = [batch_dim, int(target_shape[3]), 1, 1]
+        channel_first_candidate = [batch_dim, int(target_shape[1]), 1, 1]
+        for candidate in (channel_last_candidate, channel_first_candidate):
+            if candidate not in candidate_shapes:
+                candidate_shapes.append(candidate)
+        for candidate_shape in candidate_shapes:
+            buffer_expr_resolved = channel_first_constant_expr_for_buffer_attr(
+                buffer_expr,
+                candidate_shape,
+            )
+            if buffer_expr_resolved is not None:
+                return buffer_expr_resolved
+        return None
+
     def _name_use_count(candidate_lines: Sequence[str], name: str, *, start: int) -> int:
         pattern = re.compile(rf"\b{re.escape(str(name))}\b")
         return sum(1 for line in candidate_lines[start:] if pattern.search(str(line)))
 
     while index < line_count:
+        if index + 3 < line_count:
+            bridge_match = public_bridge_pattern.match(str(lines[index]))
+            aligned_binary_match = binary_input_align_pattern.match(str(lines[index + 1]))
+            binary_match = binary_align_pattern.match(str(lines[index + 2]))
+            conv_match = conv_input_bridge_pattern.match(str(lines[index + 3]))
+            if (
+                bridge_match is not None
+                and aligned_binary_match is not None
+                and binary_match is not None
+                and conv_match is not None
+                and aligned_binary_match.group("lhs_expr").strip() == bridge_match.group("bridge")
+                and binary_match.group("out") == conv_match.group("input")
+                and binary_match.group("lhs").strip() == aligned_binary_match.group("lhs_var")
+                and binary_match.group("rhs").strip() == aligned_binary_match.group("rhs_var")
+                and aligned_binary_match.group("shape") == binary_match.group("shape")
+                and _name_use_count(lines, bridge_match.group("bridge"), start=index + 1) == 1
+                and _name_use_count(lines, aligned_binary_match.group("lhs_var"), start=index + 2) == 1
+                and _name_use_count(lines, aligned_binary_match.group("rhs_var"), start=index + 2) == 1
+                and _name_use_count(lines, binary_match.group("out"), start=index + 3) == 1
+            ):
+                try:
+                    target_shape = ast.literal_eval(binary_match.group("shape"))
+                except Exception:
+                    target_shape = None
+                if (
+                    isinstance(target_shape, list)
+                    and len(target_shape) == 4
+                    and all(isinstance(v, int) for v in list(target_shape))
+                ):
+                    source_var = bridge_match.group("input")
+                    buffer_expr = aligned_binary_match.group("rhs_expr").strip()
+                    cf_constant_expr = _resolve_channel_first_constant_expr(
+                        buffer_expr,
+                        target_shape,
+                    )
+                    if cf_constant_expr is not None:
+                        binary_cf_var = derive_local_var_name(f"{binary_match.group('out')}_cf")
+                        rewritten.append(
+                            f"{binary_cf_var} = torch.{binary_match.group('fn')}({source_var}, {cf_constant_expr})"
+                        )
+                        rewritten.append(
+                            f"{conv_match.group('out')} = self.{conv_match.group('module')}({binary_cf_var})"
+                        )
+                        index += 4
+                        continue
         if index + 2 < line_count:
             bridge_match = public_bridge_pattern.match(str(lines[index]))
             binary_match = binary_align_pattern.match(str(lines[index + 1]))
@@ -6708,16 +6874,15 @@ def _rewrite_channel_last_binary_bridge_chains(
                     and len(target_shape) == 4
                     and all(isinstance(v, int) for v in list(target_shape))
                 ):
-                    cf_constant_shape = [int(target_shape[0]), int(target_shape[3]), 1, 1]
                     buffer_expr = None
                     if lhs_expr == bridge_var and rhs_expr.startswith("self."):
                         buffer_expr = rhs_expr
                     elif rhs_expr == bridge_var and lhs_expr.startswith("self."):
                         buffer_expr = lhs_expr
                     if buffer_expr is not None:
-                        cf_constant_expr = channel_first_constant_expr_for_buffer_attr(
+                        cf_constant_expr = _resolve_channel_first_constant_expr(
                             buffer_expr,
-                            cf_constant_shape,
+                            target_shape,
                         )
                         if cf_constant_expr is not None:
                             binary_cf_var = derive_local_var_name(f"{binary_match.group('out')}_cf")
@@ -6754,7 +6919,6 @@ def _rewrite_channel_last_binary_bridge_chains(
                     and len(target_shape) == 4
                     and all(isinstance(v, int) for v in list(target_shape))
                 ):
-                    cf_constant_shape = [int(target_shape[0]), int(target_shape[3]), 1, 1]
                     bridge_var = output_bridge_match.group("out")
                     cf_source_var = output_bridge_match.group("input")
                     lhs_expr = binary_match.group("lhs").strip()
@@ -6765,9 +6929,9 @@ def _rewrite_channel_last_binary_bridge_chains(
                     elif rhs_expr == bridge_var and lhs_expr.startswith("self."):
                         buffer_expr = lhs_expr
                     if buffer_expr is not None:
-                        cf_constant_expr = channel_first_constant_expr_for_buffer_attr(
+                        cf_constant_expr = _resolve_channel_first_constant_expr(
                             buffer_expr,
-                            cf_constant_shape,
+                            target_shape,
                         )
                         if cf_constant_expr is not None:
                             rewritten.append(current_line)
@@ -13905,8 +14069,30 @@ def _preferred_reshape_target_values(tensor: Optional[TensorIR]) -> Optional[Lis
     if tensor.shape_signature is not None:
         signature = [int(v) for v in list(tensor.shape_signature)]
         if len(signature) == len(list(tensor.shape)) and any(int(v) <= 0 for v in signature):
-            return signature
-    return [int(v) for v in list(tensor.shape)]
+            preferred = signature
+            rank = len(list(preferred))
+            perm_to_cf = _perm_cl_to_cf(rank)
+            if (
+                perm_to_cf is not None
+                and is_channel_first_logical_layout(normalize_logical_layout(tensor.logical_layout))
+                and _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor.name))
+            ):
+                permuted = _permute_shape(preferred, perm_to_cf)
+                if permuted is not None:
+                    return [int(v) for v in list(permuted)]
+            return preferred
+    preferred = [int(v) for v in list(tensor.shape)]
+    rank = len(list(preferred))
+    perm_to_cf = _perm_cl_to_cf(rank)
+    if (
+        perm_to_cf is not None
+        and is_channel_first_logical_layout(normalize_logical_layout(tensor.logical_layout))
+        and _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor.name))
+    ):
+        permuted = _permute_shape(preferred, perm_to_cf)
+        if permuted is not None:
+            return [int(v) for v in list(permuted)]
+    return preferred
 
 
 def _torch_dtype_literal(dtype_name: str) -> str:

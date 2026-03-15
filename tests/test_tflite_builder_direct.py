@@ -1759,6 +1759,40 @@ def _make_conv1d_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_conv1d_with_input_reshape_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 8])
+    reshape_shape = numpy_helper.from_array(
+        np.asarray([-1, 1, 8], dtype=np.int64),
+        name="reshape_shape",
+    )
+    w = numpy_helper.from_array(np.ones((2, 1, 3), dtype=np.float32), name="W")
+    b = numpy_helper.from_array(np.zeros((2,), dtype=np.float32), name="B")
+    reshape = helper.make_node(
+        "Reshape",
+        ["x", "reshape_shape"],
+        ["x3"],
+        name="Conv1DInputReshape",
+    )
+    conv = helper.make_node(
+        "Conv",
+        ["x3", "W", "B"],
+        ["y"],
+        name="Conv1DNode",
+        pads=[1, 1],
+        strides=[1],
+        dilations=[1],
+    )
+    graph = helper.make_graph(
+        [reshape, conv],
+        "conv1d_input_reshape_graph",
+        [x],
+        [y],
+        initializer=[reshape_shape, w, b],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_convtranspose1d_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 8])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 8])
@@ -11409,6 +11443,32 @@ def test_flatbuffer_direct_reshape_minus_one_resolved_to_static_shape() -> None:
     output_tensor = model_ir.tensors["y"]
     assert list(output_tensor.shape) == [3, 2]
     assert list(output_tensor.shape_signature) == [3, 2]
+
+
+def test_flatbuffer_direct_conv1d_input_reshape_chain_collapses_to_single_nhwc_reshape() -> None:
+    model = _make_conv1d_with_input_reshape_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="conv1d_input_reshape_chain_test",
+        transpose_inputs_to_nhwc=True,
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators[:4]]
+    assert op_types[:3] == ["RESHAPE", "CONV_2D", "TRANSPOSE"]
+
+    reshape_op = model_ir.operators[0]
+    assert list(reshape_op.inputs)[0] == "x"
+    assert str(reshape_op.inputs[1]).endswith("_input_nhwc_reshape_shape")
+    assert str(reshape_op.outputs[0]).endswith("_input_nhwc")
+    assert list(reshape_op.options.get("newShape", [])) == [1, 1, 8, 1]
+
+    reshape_ops = [op for op in model_ir.operators if str(op.op_type) == "RESHAPE"]
+    assert len(reshape_ops) == 2
+    conv_op = model_ir.operators[1]
+    assert list(conv_op.inputs)[0] == str(reshape_op.outputs[0])
+    assert list(reshape_ops[1].outputs) == ["y"]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_pass() -> None:
