@@ -469,6 +469,39 @@ def _target_shape_values_for_model_ir(
     tensor = model_ir.tensors.get(str(tensor_name), None)
     if tensor is None:
         return None
+    resolved = _base_target_shape_values_for_model_ir(
+        model_ir=model_ir,
+        tensor_name=str(tensor_name),
+    )
+    inferred_channel_first = _channel_first_shape_values_for_model_ir(
+        model_ir=model_ir,
+        tensor_name=str(tensor_name),
+    )
+    if inferred_channel_first is None:
+        return resolved
+    layout = normalize_logical_layout(tensor.logical_layout)
+    rank = len(inferred_channel_first)
+    if is_channel_last_logical_layout(layout):
+        perm_to_layout = logical_layout_permutation(
+            source_layout=channel_first_logical_layout(rank),
+            target_layout=layout,
+        )
+        permuted = _permute_shape(inferred_channel_first, perm_to_layout or [])
+        if permuted is not None:
+            return [int(v) for v in list(permuted)]
+    if is_channel_first_logical_layout(layout):
+        return [int(v) for v in list(inferred_channel_first)]
+    return resolved
+
+
+def _base_target_shape_values_for_model_ir(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> Optional[List[int]]:
+    tensor = model_ir.tensors.get(str(tensor_name), None)
+    if tensor is None:
+        return None
     if tensor.shape_signature is not None:
         signature = [int(v) for v in list(tensor.shape_signature)]
         if len(signature) == len(list(tensor.shape)):
@@ -483,6 +516,135 @@ def _target_shape_values_for_model_ir(
         preferred=preferred,
         logical_layout=str(tensor.logical_layout),
     )
+
+
+def _producer_op_for_model_ir(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> Optional[OperatorIR]:
+    target_name = str(tensor_name)
+    for op in model_ir.operators:
+        if target_name in {str(v) for v in list(op.outputs)}:
+            return op
+    return None
+
+
+def _channel_first_shape_values_for_model_ir(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+    _seen: Optional[Set[str]] = None,
+) -> Optional[List[int]]:
+    current_name = str(tensor_name)
+    if _seen is None:
+        _seen = set()
+    if current_name in _seen:
+        base_shape = _base_target_shape_values_for_model_ir(
+            model_ir=model_ir,
+            tensor_name=current_name,
+        )
+        return _to_channel_first_shape_for_model_ir(
+            model_ir=model_ir,
+            tensor_name=current_name,
+            shape_values=base_shape,
+        )
+    base_shape = _base_target_shape_values_for_model_ir(
+        model_ir=model_ir,
+        tensor_name=current_name,
+    )
+    channel_first_shape = _to_channel_first_shape_for_model_ir(
+        model_ir=model_ir,
+        tensor_name=current_name,
+        shape_values=base_shape,
+    )
+    if channel_first_shape is None:
+        return None
+    tensor = model_ir.tensors.get(current_name, None)
+    if tensor is None:
+        return channel_first_shape
+    rank = len(channel_first_shape)
+    if rank not in {3, 4, 5}:
+        return channel_first_shape
+    producer_op = _producer_op_for_model_ir(
+        model_ir=model_ir,
+        tensor_name=current_name,
+    )
+    if producer_op is None or str(producer_op.op_type) not in {"ADD", "DIV", "MAXIMUM", "MINIMUM", "MUL", "SUB"}:
+        return channel_first_shape
+    next_seen = set(_seen)
+    next_seen.add(current_name)
+    broadcast_shape: Optional[List[int]] = None
+    for input_name in list(producer_op.inputs)[:2]:
+        input_tensor = model_ir.tensors.get(str(input_name), None)
+        if input_tensor is None:
+            return channel_first_shape
+        if isinstance(input_tensor.data, np.ndarray) and int(np.asarray(input_tensor.data).size) == 1:
+            continue
+        input_shape = _channel_first_shape_values_for_model_ir(
+            model_ir=model_ir,
+            tensor_name=str(input_name),
+            _seen=next_seen,
+        )
+        if input_shape is None or len(input_shape) != rank:
+            return channel_first_shape
+        broadcast_shape = (
+            [int(v) for v in list(input_shape)]
+            if broadcast_shape is None
+            else _broadcast_shapes_relaxed(broadcast_shape, input_shape)
+        )
+        if broadcast_shape is None:
+            return channel_first_shape
+    if broadcast_shape is not None:
+        return [int(v) for v in list(broadcast_shape)]
+    return channel_first_shape
+
+
+def _to_channel_first_shape_for_model_ir(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+    shape_values: Optional[Sequence[int]],
+) -> Optional[List[int]]:
+    if shape_values is None:
+        return None
+    values = [int(v) for v in list(shape_values)]
+    rank = len(values)
+    if rank not in {3, 4, 5}:
+        return values
+    tensor = model_ir.tensors.get(str(tensor_name), None)
+    layout = (
+        normalize_logical_layout(tensor.logical_layout)
+        if tensor is not None
+        else LOGICAL_LAYOUT_UNKNOWN
+    )
+    perm_to_cf = _perm_cl_to_cf(rank)
+    if is_channel_last_logical_layout(layout) and perm_to_cf is not None:
+        expected_channels = _expected_channel_dim_for_tensor_for_codegen(
+            model_ir=model_ir,
+            tensor_name=str(tensor_name),
+        )
+        if expected_channels is not None and len(values) >= 3:
+            second_axis_matches = int(values[1]) == int(expected_channels)
+            last_axis_matches = int(values[-1]) == int(expected_channels)
+            if second_axis_matches and not last_axis_matches:
+                return values
+            if last_axis_matches and not second_axis_matches:
+                permuted = _permute_shape(values, perm_to_cf)
+                if permuted is not None:
+                    return [int(v) for v in list(permuted)]
+                return values
+        if (
+            rank in {4, 5}
+            and int(values[1]) > 0
+            and int(values[1]) <= 4
+            and int(values[-1]) > 4
+        ):
+            return values
+        permuted = _permute_shape(values, perm_to_cf)
+        if permuted is not None:
+            return [int(v) for v in list(permuted)]
+    return values
 
 
 def _target_shape_literal_for_model_ir(
@@ -545,7 +707,7 @@ def _tensor_name_suggests_channel_last_layout_for_codegen(tensor_name: str) -> b
     return str(tensor_name).lower().endswith(("_nhwc", "_nwc", "_ndhwc"))
 
 
-def _expected_channel_dim_for_channel_last_named_tensor_for_codegen(
+def _expected_channel_dim_for_tensor_for_codegen(
     *,
     model_ir: ModelIR,
     tensor_name: str,
@@ -580,6 +742,17 @@ def _expected_channel_dim_for_channel_last_named_tensor_for_codegen(
     if len(candidates) == 1:
         return int(candidates[0])
     return None
+
+
+def _expected_channel_dim_for_channel_last_named_tensor_for_codegen(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> Optional[int]:
+    return _expected_channel_dim_for_tensor_for_codegen(
+        model_ir=model_ir,
+        tensor_name=tensor_name,
+    )
 
 
 def _resolve_channel_first_named_tensor_shape_for_codegen(
@@ -624,12 +797,13 @@ def _rank4_channel_first_shape_for_tensor_for_codegen(
     channel_first_tensor_expr_aliases: Dict[str, str],
     tensor_name: str,
 ) -> Optional[List[int]]:
-    tensor_shape = _tensor_shape_list_for_model_ir(
+    inferred_shape = _channel_first_shape_values_for_model_ir(
         model_ir=model_ir,
         tensor_name=str(tensor_name),
     )
-    if tensor_shape is None or len(tensor_shape) != 4:
+    if inferred_shape is None or len(inferred_shape) != 4:
         return None
+    tensor_shape = list(inferred_shape)
     tensor = model_ir.tensors.get(str(tensor_name), None)
     tensor_layout = (
         normalize_logical_layout(tensor.logical_layout)
@@ -658,7 +832,7 @@ def _channel_first_shape_for_tensor_for_codegen(
     channel_first_tensor_expr_aliases: Dict[str, str],
     tensor_name: str,
 ) -> Optional[List[int]]:
-    tensor_shape = _tensor_shape_list_for_model_ir(
+    tensor_shape = _channel_first_shape_values_for_model_ir(
         model_ir=model_ir,
         tensor_name=str(tensor_name),
     )
@@ -3114,12 +3288,31 @@ def _tensor_expr_for_codegen(
     if str(tensor_name) in tensor_expr_aliases:
         return str(tensor_expr_aliases[str(tensor_name)])
     tensor = model_ir.tensors.get(str(tensor_name), None)
+    channel_first_alias_expr = channel_first_tensor_expr_aliases.get(str(tensor_name), None)
+    if channel_first_alias_expr is not None and tensor is not None:
+        tensor_layout = normalize_logical_layout(tensor.logical_layout)
+        if is_channel_first_logical_layout(tensor_layout):
+            return str(channel_first_alias_expr)
+        base_target_shape = _base_target_shape_values_for_model_ir(
+            model_ir=model_ir,
+            tensor_name=str(tensor_name),
+        )
+        channel_first_shape = _channel_first_shape_values_for_model_ir(
+            model_ir=model_ir,
+            tensor_name=str(tensor_name),
+        )
+        if (
+            base_target_shape is not None
+            and channel_first_shape is not None
+            and [int(v) for v in list(base_target_shape)] == [int(v) for v in list(channel_first_shape)]
+        ):
+            return str(channel_first_alias_expr)
     if (
-        str(tensor_name) in channel_first_tensor_expr_aliases
+        channel_first_alias_expr is not None
         and tensor is not None
         and is_channel_first_logical_layout(normalize_logical_layout(tensor.logical_layout))
     ):
-        return str(channel_first_tensor_expr_aliases[str(tensor_name)])
+        return str(channel_first_alias_expr)
     if (
         tensor is not None
         and str(tensor_name) not in model_ir.inputs
@@ -3605,6 +3798,38 @@ def _binary_requires_runtime_alignment_for_codegen(
         or str(output_name) in runtime_shape_uncertain_tensors
     ):
         return True
+    lhs_layout = normalize_logical_layout(lhs_tensor.logical_layout)
+    rhs_layout = normalize_logical_layout(rhs_tensor.logical_layout)
+    lhs_cf_shape = _channel_first_shape_values_for_model_ir(
+        model_ir=model_ir,
+        tensor_name=str(lhs_name),
+    )
+    rhs_cf_shape = _channel_first_shape_values_for_model_ir(
+        model_ir=model_ir,
+        tensor_name=str(rhs_name),
+    )
+    output_cf_shape = _channel_first_shape_values_for_model_ir(
+        model_ir=model_ir,
+        tensor_name=str(output_name),
+    )
+    if (
+        lhs_cf_shape is not None
+        and rhs_cf_shape is not None
+        and output_cf_shape is not None
+        and len(lhs_cf_shape) == len(rhs_cf_shape) == len(output_cf_shape)
+        and len(lhs_cf_shape) in {3, 4, 5}
+        and is_channel_first_logical_layout(lhs_layout)
+        and is_channel_first_logical_layout(rhs_layout)
+    ):
+        try:
+            broadcast_cf_shape = [
+                int(v)
+                for v in list(np.broadcast_shapes(tuple(lhs_cf_shape), tuple(rhs_cf_shape)))
+            ]
+            if [int(v) for v in list(broadcast_cf_shape)] == [int(v) for v in list(output_cf_shape)]:
+                return False
+        except Exception:
+            pass
     lhs_shape = [int(v) for v in list(lhs_tensor.shape)]
     rhs_shape = [int(v) for v in list(rhs_tensor.shape)]
     lhs_signature = (
@@ -3961,12 +4186,51 @@ def _channel_first_binary_input_expr_for_codegen(
     other_tensor = model_ir.tensors.get(str(other_tensor_name), None)
     if other_tensor is None:
         return None
+    rank = len(list(tensor.shape))
+    if is_channel_last_logical_layout(tensor_layout):
+        preferred_perm = _perm_cl_to_cf(rank)
+        if preferred_perm is not None:
+            permuted_shape = _permute_shape(
+                [int(v) for v in list(tensor.shape)],
+                preferred_perm,
+            )
+            other_target_shape: Optional[List[int]] = [
+                int(v) for v in list(other_tensor.shape)
+            ]
+            other_layout = normalize_logical_layout(other_tensor.logical_layout)
+            other_channel_first_expr = channel_first_passthrough_input_expr_fn(
+                str(other_tensor_name)
+            )
+            if (
+                other_target_shape is not None
+                and len(other_target_shape) == rank
+                and is_channel_last_logical_layout(other_layout)
+                and (
+                    other_channel_first_expr is not None
+                    or str(other_tensor_name) in channel_first_tensor_expr_aliases
+                )
+            ):
+                permuted_other_shape = _permute_shape(other_target_shape, preferred_perm)
+                if permuted_other_shape is not None:
+                    other_target_shape = [int(v) for v in list(permuted_other_shape)]
+            if (
+                permuted_shape is not None
+                and other_target_shape is not None
+                and len(list(permuted_shape)) == len(list(other_target_shape))
+                and _shape_can_broadcast_to_target_relaxed(
+                    permuted_shape,
+                    other_target_shape,
+                )
+            ):
+                return (
+                    f"{tensor_expr_fn(str(tensor_name))}.permute("
+                    f"{', '.join(str(int(v)) for v in preferred_perm)}).contiguous()"
+                )
     if (
         len(list(tensor.shape)) == len(list(other_tensor.shape))
         and _shape_lists_equal(tensor_shape_list_fn(str(tensor_name)), tensor_shape_list_fn(str(other_tensor_name)))
     ):
-        preferred_perm: Optional[List[int]] = None
-        rank = len(list(tensor.shape))
+        preferred_perm = None
         if is_channel_last_logical_layout(tensor_layout):
             preferred_perm = _perm_cl_to_cf(rank)
         if preferred_perm is not None:
@@ -4066,6 +4330,34 @@ def _binary_operand_expr_for_codegen(
         if alias_expr is not None:
             return str(alias_expr)
         return expr
+    tensor_layout = normalize_logical_layout(tensor.logical_layout)
+    if (
+        tensor.data is None
+        and len(list(tensor.shape)) in {3, 4, 5}
+        and is_channel_last_logical_layout(tensor_layout)
+    ):
+        producer_op = _producer_op_for_model_ir(
+            model_ir=model_ir,
+            tensor_name=str(tensor_name),
+        )
+        expected_perm = _perm_cf_to_cl(len(list(tensor.shape)))
+        if (
+            producer_op is not None
+            and str(producer_op.op_type) == "TRANSPOSE"
+            and len(producer_op.inputs) >= 1
+            and list(_read_transpose_perm(model_ir, producer_op) or []) == list(expected_perm or [])
+        ):
+            source_name = str(producer_op.inputs[0])
+            if source_name in {str(name) for name in list(model_ir.inputs)}:
+                source_cf_shape = channel_first_shape_for_tensor_fn(source_name)
+                other_cf_shape = channel_first_shape_for_tensor_fn(str(other_tensor_name))
+                if (
+                    source_cf_shape is not None
+                    and other_cf_shape is not None
+                    and len(list(source_cf_shape)) == len(list(other_cf_shape))
+                    and _shape_can_broadcast_to_target_relaxed(source_cf_shape, other_cf_shape)
+                ):
+                    return tensor_expr_fn(source_name)
     if alias_expr is not None:
         channel_first_alias_expr = channel_first_constant_buffer_alias_exprs.get(str(tensor_name), None)
         channel_first_alias_shape = channel_first_rank4_constant_buffer_alias_shape_fn(str(tensor_name))
@@ -4160,7 +4452,6 @@ def _binary_operand_expr_for_codegen(
             except Exception:
                 pass
             preferred_perm: Optional[Tuple[int, ...]] = None
-            tensor_layout = normalize_logical_layout(tensor.logical_layout)
             if tensor_layout == "NCHW" and len(tensor_shape) == 4:
                 preferred_perm = (0, 2, 3, 1)
             elif tensor_layout == "NCDHW" and len(tensor_shape) == 5:
@@ -4685,6 +4976,57 @@ def _emit_native_direct_module_op_for_codegen(
     return False
 
 
+def _binary_output_target_shape_literal_for_codegen(
+    *,
+    model_ir: ModelIR,
+    lhs_name: str,
+    rhs_name: str,
+    output_name: str,
+    fallback_literal: str,
+) -> str:
+    output_tensor = model_ir.tensors.get(str(output_name), None)
+    if output_tensor is None:
+        return fallback_literal
+    rank = len(list(output_tensor.shape))
+    if rank not in {3, 4, 5}:
+        return fallback_literal
+    broadcast_cf_shape: Optional[List[int]] = None
+    for input_name in (str(lhs_name), str(rhs_name)):
+        input_tensor = model_ir.tensors.get(input_name, None)
+        if input_tensor is None:
+            return fallback_literal
+        if isinstance(input_tensor.data, np.ndarray) and int(np.asarray(input_tensor.data).size) == 1:
+            continue
+        input_cf_shape = _channel_first_shape_values_for_model_ir(
+            model_ir=model_ir,
+            tensor_name=input_name,
+        )
+        if input_cf_shape is None or len(input_cf_shape) != rank:
+            return fallback_literal
+        broadcast_cf_shape = (
+            [int(v) for v in list(input_cf_shape)]
+            if broadcast_cf_shape is None
+            else _broadcast_shapes_relaxed(broadcast_cf_shape, input_cf_shape)
+        )
+        if broadcast_cf_shape is None:
+            return fallback_literal
+    if broadcast_cf_shape is None:
+        return fallback_literal
+    output_layout = normalize_logical_layout(output_tensor.logical_layout)
+    if is_channel_last_logical_layout(output_layout):
+        perm_to_output = logical_layout_permutation(
+            source_layout=channel_first_logical_layout(rank),
+            target_layout=output_layout,
+        )
+        permuted = _permute_shape(broadcast_cf_shape, perm_to_output or [])
+        if permuted is not None:
+            return repr([int(v) for v in list(permuted)])
+        return fallback_literal
+    if is_channel_first_logical_layout(output_layout):
+        return repr([int(v) for v in list(broadcast_cf_shape)])
+    return fallback_literal
+
+
 def _emit_native_binary_op_for_codegen(
     *,
     model_ir: ModelIR,
@@ -4718,6 +5060,14 @@ def _emit_native_binary_op_for_codegen(
     fused = str(op.options.get("fusedActivationFunction", "NONE"))
     lhs_name = str(op.inputs[0])
     rhs_name = str(op.inputs[1])
+    output_name = str(outputs[0])
+    resolved_output_target_shape = _binary_output_target_shape_literal_for_codegen(
+        model_ir=model_ir,
+        lhs_name=lhs_name,
+        rhs_name=rhs_name,
+        output_name=output_name,
+        fallback_literal=output_target_shape,
+    )
     lhs_dtype_name = tensor_dtype_name_fn(lhs_name)
     rhs_dtype_name = tensor_dtype_name_fn(rhs_name)
     lhs_expr = binary_operand_expr_fn(lhs_name, rhs_name)
@@ -4751,8 +5101,7 @@ def _emit_native_binary_op_for_codegen(
             )
         return f"{fn_name}({left_expr}, {right_expr})"
 
-    if can_emit_channel_first_binary_op_fn(op) and runtime_shape_passthrough_operand is None and not requires_runtime_alignment:
-        output_name = str(outputs[0])
+    if can_emit_channel_first_binary_op_fn(op) and runtime_shape_passthrough_operand is None:
         output_tensor = model_ir.tensors.get(output_name, None)
         output_var = output_vars[0]
         output_rank = len(list(output_tensor.shape)) if output_tensor is not None else 0
@@ -4813,16 +5162,16 @@ def _emit_native_binary_op_for_codegen(
             runtime_imports.add("_align_binary_inputs_to_anchor")
             if lhs_uncertain or preferred_anchor == "lhs":
                 forward_lines.append(
-                    f"{lhs_var}, {rhs_var} = _align_binary_inputs_to_anchor({lhs_expr}, {binary_operand_expr_fn(rhs_name, lhs_name)}, {output_target_shape})"
+                    f"{lhs_var}, {rhs_var} = _align_binary_inputs_to_anchor({lhs_expr}, {binary_operand_expr_fn(rhs_name, lhs_name)}, {resolved_output_target_shape})"
                 )
             else:
                 forward_lines.append(
-                    f"{rhs_var}, {lhs_var} = _align_binary_inputs_to_anchor({binary_operand_expr_fn(rhs_name, lhs_name)}, {lhs_expr}, {output_target_shape})"
+                    f"{rhs_var}, {lhs_var} = _align_binary_inputs_to_anchor({binary_operand_expr_fn(rhs_name, lhs_name)}, {lhs_expr}, {resolved_output_target_shape})"
                 )
         else:
             runtime_imports.add("_align_binary_inputs")
             forward_lines.append(
-                f"{lhs_var}, {rhs_var} = _align_binary_inputs({lhs_expr}, {binary_operand_expr_fn(rhs_name, lhs_name)}, {output_target_shape})"
+                f"{lhs_var}, {rhs_var} = _align_binary_inputs({lhs_expr}, {binary_operand_expr_fn(rhs_name, lhs_name)}, {resolved_output_target_shape})"
             )
         forward_lines.append(
             f"{output_vars[0]} = {emit_maybe_aligned_expr_fn(output_name=outputs[0], expr=_binary_expr(lhs_var, rhs_var), inferred_shape=None)}"
@@ -13676,13 +14025,21 @@ def _fold_nhwc_binary_expr_trees_in_exported_program(exported_program):
         graph_module.recompile()
     return exported_program
 
+def _optimize_exported_program(exported_program):
+    exported_program = _prune_alias_nodes(exported_program)
+    exported_program = _fold_inverse_permute_round_trips(exported_program)
+    exported_program = _fold_layout_preserving_permute_chains(exported_program)
+    exported_program = _fold_nhwc_binary_expr_trees_in_exported_program(exported_program)
+    return exported_program
+
 with torch.no_grad():
     exported = torch.export.export(model, example_inputs)
-exported = _prune_alias_nodes(exported)
-exported = _fold_inverse_permute_round_trips(exported)
-exported = _fold_layout_preserving_permute_chains(exported)
-exported = _fold_nhwc_binary_expr_trees_in_exported_program(exported)
-torch.export.save(exported, str(exported_program_path))
+try:
+    torch.export.save(_optimize_exported_program(exported), str(exported_program_path))
+except Exception:
+    with torch.no_grad():
+        exported = torch.export.export(model, example_inputs)
+    torch.export.save(exported, str(exported_program_path))
 print(json.dumps({"file_name": exported_program_path.name}))
 """
     child_payload, last_error_message = _run_generated_package_export_child(

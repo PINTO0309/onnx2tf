@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional, cast
 
 from ._pytorch_exporter_native_codegen_common import (
@@ -15,8 +17,213 @@ _NATIVE_CODEGEN_FUNCTION_SOURCE = _NATIVE_CODEGEN_FUNCTION_SOURCE.replace(
 ).replace(
     "from typing import Any, Callable, Dict, Optional, Tuple",
     "from typing import Any, Callable, Dict, Mapping, Optional, Tuple",
+).replace(
+    '''resize_channel_last_expr = (
+                "False"
+                if resize_uses_channel_first_alias else
+                "True" if resize_shape_implies_channel_last is True else
+                "False" if resize_shape_implies_channel_last is False else
+                "True" if resize_effective_layout == "NHWC" else
+                "False" if resize_effective_layout == "NCHW" else
+                "None"
+            )''',
+    '''resize_channel_last_expr = (
+                "False"
+                if resize_uses_channel_first_alias else
+                "True" if resize_effective_layout == "NHWC" else
+                "False" if resize_effective_layout == "NCHW" else
+                "True" if resize_shape_implies_channel_last is True else
+                "False" if resize_shape_implies_channel_last is False else
+                "None"
+            )''',
+).replace(
+    "if can_emit_channel_first_binary_op_fn(op) and runtime_shape_passthrough_operand is None and not requires_runtime_alignment:",
+    "if can_emit_channel_first_binary_op_fn(op) and runtime_shape_passthrough_operand is None:",
 )
 _NATIVE_CODEGEN_IMPL: Optional[Callable[..., Any]] = None
+
+
+def _rewrite_public_layout_bridge_binary_align_calls(model_file: Path) -> None:
+    if not model_file.exists():
+        return
+    source = model_file.read_text(encoding="utf-8")
+    bridge_assignments: Dict[str, list[int]] = {}
+    for match in re.finditer(
+        r"(?m)^\s*(?P<bridge>[A-Za-z0-9_]*layout_bridge)\s*=\s*_torch_permute\((?P<source>[A-Za-z0-9_]+), \[(?P<perm>[0-9,\s]+)\]\)\s*$",
+        source,
+    ):
+        perm = [int(token.strip()) for token in str(match.group("perm")).split(",")]
+        if sorted(perm) != list(range(len(perm))):
+            continue
+        inverse_perm = [0 for _ in perm]
+        for axis, value in enumerate(perm):
+            inverse_perm[int(value)] = int(axis)
+        bridge_assignments[str(match.group("bridge"))] = inverse_perm
+    if len(bridge_assignments) == 0:
+        return
+    rewritten = source
+    for bridge_name, inverse_perm in bridge_assignments.items():
+        bridge_pattern = re.escape(bridge_name)
+        perm_literal = "[" + ", ".join(str(int(v)) for v in inverse_perm) + "]"
+
+        def _wrap_other_arg(match: re.Match[str]) -> str:
+            other_expr = str(match.group("other")).strip()
+            if other_expr.startswith("_torch_permute("):
+                return str(match.group(0))
+            return (
+                f"_align_binary_inputs(_torch_permute({other_expr}, {perm_literal}), "
+                f"{bridge_name}, {match.group('target')})"
+            )
+
+        def _wrap_other_arg_rhs(match: re.Match[str]) -> str:
+            other_expr = str(match.group("other")).strip()
+            if other_expr.startswith("_torch_permute("):
+                return str(match.group(0))
+            return (
+                f"_align_binary_inputs({bridge_name}, "
+                f"_torch_permute({other_expr}, {perm_literal}), {match.group('target')})"
+            )
+
+        rewritten = re.sub(
+            rf"_align_binary_inputs\((?P<other>[^,\n]+),\s*{bridge_pattern},\s*(?P<target>\[[^\]]+\])\)",
+            _wrap_other_arg,
+            rewritten,
+        )
+        rewritten = re.sub(
+            rf"_align_binary_inputs\({bridge_pattern},\s*(?P<other>[^,\n]+),\s*(?P<target>\[[^\]]+\])\)",
+            _wrap_other_arg_rhs,
+            rewritten,
+        )
+    if rewritten != source:
+        model_file.write_text(rewritten, encoding="utf-8")
+
+
+def _resolve_static_split_axis(
+    input_shape: list[int],
+    output_shapes: list[list[int]],
+) -> Optional[int]:
+    rank = len(input_shape)
+    if rank == 0 or len(output_shapes) == 0:
+        return None
+    candidate_axes: list[int] = []
+    for axis in range(rank):
+        valid = True
+        axis_extent_static = int(input_shape[axis]) > 0
+        expected_axis_extent = 0
+        for output_shape in output_shapes:
+            if len(output_shape) != rank:
+                valid = False
+                break
+            for dim_index, (input_dim, output_dim) in enumerate(zip(input_shape, output_shape)):
+                if dim_index == axis:
+                    continue
+                if int(input_dim) > 0 and int(output_dim) > 0 and int(input_dim) != int(output_dim):
+                    valid = False
+                    break
+            if not valid:
+                break
+            if int(output_shape[axis]) <= 0:
+                axis_extent_static = False
+            else:
+                expected_axis_extent += int(output_shape[axis])
+        if valid and (not axis_extent_static or expected_axis_extent == int(input_shape[axis])):
+            candidate_axes.append(int(axis))
+    if len(candidate_axes) == 1:
+        return int(candidate_axes[0])
+    return None
+
+
+def _rewrite_split_axes_from_static_shapes(
+    model_file: Path,
+    *,
+    model_ir: Any,
+    tensor_var_names: Dict[str, str],
+) -> None:
+    if not model_file.exists():
+        return
+    desired_axis_by_first_output_var: Dict[str, int] = {}
+    for op in list(model_ir.operators):
+        if str(op.op_type) != "SPLIT" or len(op.outputs) == 0 or len(op.inputs) == 0:
+            continue
+        input_tensor = model_ir.tensors.get(str(op.inputs[-1]), None)
+        if input_tensor is None:
+            continue
+        input_shape = [int(v) for v in list(input_tensor.shape)]
+        if len(input_shape) == 0:
+            continue
+        output_shapes: list[list[int]] = []
+        for output_name in list(op.outputs):
+            output_tensor = model_ir.tensors.get(str(output_name), None)
+            if output_tensor is None:
+                output_shapes = []
+                break
+            output_shape = [int(v) for v in list(output_tensor.shape)]
+            if len(output_shape) != len(input_shape):
+                output_shapes = []
+                break
+            output_shapes.append(output_shape)
+        if len(output_shapes) == 0:
+            continue
+        desired_axis = _resolve_static_split_axis(input_shape, output_shapes)
+        if desired_axis is None:
+            continue
+        first_output_var = tensor_var_names.get(str(op.outputs[0]), "")
+        if first_output_var != "":
+            desired_axis_by_first_output_var[str(first_output_var)] = int(desired_axis)
+    if len(desired_axis_by_first_output_var) == 0:
+        return
+    lines = model_file.read_text(encoding="utf-8").splitlines()
+    split_pattern = re.compile(
+        r"^(?P<indent>\s*)(?P<outputs>[A-Za-z0-9_, ]+)\s*=\s*list\(torch\.tensor_split\("
+        r"(?P<input>[A-Za-z0-9_]+),\s*(?P<sections>\d+),\s*dim=_normalize_dim\((?P<axis>-?\d+),\s*"
+        r"(?P=input)\.ndim\)\)\)\s*$"
+    )
+    rewritten = False
+    for index, line in enumerate(lines):
+        match = split_pattern.match(str(line))
+        if match is None:
+            continue
+        output_vars = [token.strip() for token in str(match.group("outputs")).split(",") if token.strip() != ""]
+        if len(output_vars) == 0:
+            continue
+        desired_axis = desired_axis_by_first_output_var.get(str(output_vars[0]), None)
+        if desired_axis is None:
+            continue
+        current_axis = int(match.group("axis"))
+        if int(current_axis) == int(desired_axis):
+            continue
+        lines[index] = (
+            f"{match.group('indent')}{match.group('outputs')} = list(torch.tensor_split("
+            f"{match.group('input')}, {match.group('sections')}, "
+            f"dim=_normalize_dim({int(desired_axis)}, {match.group('input')}.ndim)))"
+        )
+        rewritten = True
+    for index, line in enumerate(lines):
+        match = split_pattern.match(str(line))
+        if match is None:
+            continue
+        input_var = str(match.group("input"))
+        current_axis = int(match.group("axis"))
+        if not input_var.endswith("_cf") or int(current_axis) != 3:
+            continue
+        output_vars = [token.strip() for token in str(match.group("outputs")).split(",") if token.strip() != ""]
+        if len(output_vars) == 0:
+            continue
+        lookahead = "\n".join(lines[index + 1:index + 9])
+        concat_uses_outputs = any(f"{output_var}" in lookahead for output_var in output_vars)
+        if (
+            concat_uses_outputs
+            and "_apply_concat(" in lookahead
+            and "axis=3" in lookahead
+        ):
+            lines[index] = (
+                f"{match.group('indent')}{match.group('outputs')} = list(torch.tensor_split("
+                f"{match.group('input')}, {match.group('sections')}, "
+                f"dim=_normalize_dim(1, {match.group('input')}.ndim)))"
+            )
+            rewritten = True
+    if rewritten:
+        model_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _load_native_codegen_impl(bindings: _NativeCodegenBindings) -> Callable[..., Any]:
@@ -77,6 +284,14 @@ def assemble_and_write_model_phase(
 ) -> None:
     impl = _load_native_codegen_impl(bindings)
     load_specs_result = impl(state.context)
+    _rewrite_public_layout_bridge_binary_align_calls(
+        state.context.package_dir / "model.py"
+    )
+    _rewrite_split_axes_from_static_shapes(
+        state.context.package_dir / "model.py",
+        model_ir=state.context.model_ir,
+        tensor_var_names=state.context.tensor_var_names,
+    )
     state.load_specs_result = [
         (str(attr_path), str(tensor_name))
         for attr_path, tensor_name in list(load_specs_result)

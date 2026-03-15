@@ -8344,6 +8344,131 @@ def test_export_pytorch_package_broadcasts_ncw_channelwise_constant_to_nchw(tmp_
     assert torch.allclose(out, ref, atol=1e-5, rtol=1e-5)
 
 
+def test_export_pytorch_package_permutes_channel_last_dynamic_binary_input_for_channel_first_broadcast(
+    tmp_path,
+) -> None:
+    model_ir = ModelIR(name="dynamic_channel_last_binary_broadcast")
+    model_ir.inputs = ["x", "mask"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 5],
+        shape_signature=[1, 3, 4, 5],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["mask"] = TensorIR(
+        name="mask",
+        dtype="FLOAT32",
+        shape=[1, 4, 5, 1],
+        shape_signature=[1, 4, 5, 1],
+        logical_layout="NHWC",
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 5],
+        shape_signature=[1, 3, 4, 5],
+        logical_layout="NCHW",
+    )
+    model_ir.operators.append(
+        OperatorIR(op_type="MUL", inputs=["mask", "x"], outputs=["y"], options={})
+    )
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "dynamic_channel_last_binary_broadcast_pkg"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text()
+    assert "mask.permute(0, 3, 1, 2).contiguous()" in model_source
+    assert "_align_binary_inputs(" not in model_source
+
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(1, 1 + (1 * 3 * 4 * 5), dtype=torch.float32).reshape(1, 3, 4, 5)
+    mask = torch.linspace(0.5, 1.5, steps=20, dtype=torch.float32).reshape(1, 4, 5, 1)
+    out = model(x, mask)
+    ref = x * mask.permute(0, 3, 1, 2).contiguous()
+    assert torch.allclose(out, ref, atol=1e-5, rtol=1e-5)
+
+
+def test_export_pytorch_package_uses_channel_first_binary_codegen_through_public_layout_bridge(
+    tmp_path,
+) -> None:
+    model_ir = ModelIR(name="public_layout_bridge_binary_broadcast")
+    model_ir.inputs = ["x", "mask"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 5],
+        shape_signature=[1, 3, 4, 5],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["mask"] = TensorIR(
+        name="mask",
+        dtype="FLOAT32",
+        shape=[1, 4, 5, 1],
+        shape_signature=[1, 4, 5, 1],
+        logical_layout="NHWC",
+    )
+    model_ir.tensors["x_public_layout_bridge_perm"] = TensorIR(
+        name="x_public_layout_bridge_perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    model_ir.tensors["x_public_layout_bridge"] = TensorIR(
+        name="x_public_layout_bridge",
+        dtype="FLOAT32",
+        shape=[1, 4, 5, 3],
+        shape_signature=[1, 4, 5, 3],
+        logical_layout="NHWC",
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 3, 4, 5],
+        shape_signature=[1, 3, 4, 5],
+        logical_layout="NCHW",
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["x", "x_public_layout_bridge_perm"],
+            outputs=["x_public_layout_bridge"],
+            options={"perm": [0, 2, 3, 1]},
+        )
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="MUL",
+            inputs=["mask", "x_public_layout_bridge"],
+            outputs=["y"],
+            options={},
+        )
+    )
+    model_ir.metadata["public_layout_bridge_tensor_names"] = ["x_public_layout_bridge"]
+
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "public_layout_bridge_binary_broadcast_pkg"),
+    )
+    model_source = (Path(package_path) / "model.py").read_text()
+    assert "mask.permute(0, 3, 1, 2).contiguous()" in model_source
+    assert "torch.mul(" in model_source
+    assert "_align_binary_inputs(" not in model_source
+
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model()
+    x = torch.arange(1, 1 + (1 * 3 * 4 * 5), dtype=torch.float32).reshape(1, 3, 4, 5)
+    mask = torch.linspace(0.5, 1.5, steps=20, dtype=torch.float32).reshape(1, 4, 5, 1)
+    out = model(x, mask)
+    ref = x * mask.permute(0, 3, 1, 2).contiguous()
+    assert torch.allclose(out, ref, atol=1e-5, rtol=1e-5)
+
+
 def test_export_pytorch_package_batch_matmul_transposes_channel_first_sequence_input(tmp_path) -> None:
     model_ir = ModelIR(name="channel_first_batch_matmul")
     model_ir.inputs = ["x"]
