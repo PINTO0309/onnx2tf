@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import dataclasses
 import hashlib
 import importlib.util
 import json
@@ -19,6 +20,7 @@ from typing import Any, Callable, Collection, Dict, List, Optional, Sequence, Se
 
 import numpy as np
 import onnx
+import torch
 
 from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_common import (
     _NativeCodegenBindings,
@@ -11971,6 +11973,67 @@ def _onnx_remove_nodes_by_name(
     graph.node.extend(kept_nodes)
 
 
+def _onnx_repair_inferred_shapes_in_place(model: onnx.ModelProto) -> None:
+    del model.graph.value_info[:]
+    produced_tensor_names = {
+        str(output_name)
+        for node in model.graph.node
+        for output_name in list(node.output)
+        if str(output_name) != ""
+    }
+    for output in model.graph.output:
+        if str(output.name) not in produced_tensor_names:
+            continue
+        tensor_type = getattr(output.type, "tensor_type", None)
+        if tensor_type is None:
+            continue
+        shape = getattr(tensor_type, "shape", None)
+        if shape is None:
+            continue
+        del shape.dim[:]
+    try:
+        inferred_model = onnx.shape_inference.infer_shapes(
+            model,
+            check_type=False,
+            strict_mode=False,
+            data_prop=True,
+        )
+    except TypeError:
+        try:
+            inferred_model = onnx.shape_inference.infer_shapes(
+                model,
+                check_type=False,
+                strict_mode=False,
+            )
+        except Exception:
+            return
+    except Exception:
+        return
+    if inferred_model is None:
+        return
+    model.CopyFrom(inferred_model)
+    producer_map, _ = _onnx_node_maps(model.graph)
+    for output in model.graph.output:
+        tensor_type = getattr(output.type, "tensor_type", None)
+        if tensor_type is None:
+            continue
+        shape = getattr(tensor_type, "shape", None)
+        if shape is None or len(list(shape.dim)) != 0:
+            continue
+        output_name = str(output.name)
+        if output_name == "" or output_name not in producer_map:
+            continue
+        inferred_shape = _onnx_resolve_rank4_shape(
+            model.graph,
+            output_name,
+            producer_map=producer_map,
+        )
+        if not inferred_shape:
+            continue
+        for dim_value in inferred_shape:
+            shape.dim.add().dim_value = int(dim_value)
+
+
 def _onnx_get_initializer_index(graph: onnx.GraphProto, name: str) -> Optional[int]:
     for initializer_index, initializer in enumerate(graph.initializer):
         if str(initializer.name) == str(name):
@@ -12013,6 +12076,119 @@ def _onnx_get_initializer_array(
     return onnx.numpy_helper.to_array(graph.initializer[initializer_index])
 
 
+def _onnx_get_value_info_shape(
+    graph: onnx.GraphProto,
+    name: str,
+) -> Optional[List[int]]:
+    target_name = str(name)
+    for value_info in list(graph.value_info) + list(graph.input) + list(graph.output):
+        if str(value_info.name) != target_name:
+            continue
+        shape: List[int] = []
+        for dim in value_info.type.tensor_type.shape.dim:
+            if dim.HasField("dim_value"):
+                shape.append(int(dim.dim_value))
+            else:
+                return None
+        return shape
+    return None
+
+
+def _onnx_resolve_rank4_shape(
+    graph: onnx.GraphProto,
+    name: str,
+    *,
+    producer_map: Optional[Dict[str, onnx.NodeProto]] = None,
+    depth: int = 0,
+) -> Optional[List[int]]:
+    if depth > 4:
+        return None
+    shape = _onnx_get_value_info_shape(graph, name)
+    if shape is not None and len(shape) == 4:
+        return shape
+    initializer_array = _onnx_get_initializer_array(graph, name)
+    if initializer_array is not None and initializer_array.ndim == 4:
+        return [int(v) for v in initializer_array.shape]
+    if producer_map is None:
+        producer_map, _ = _onnx_node_maps(graph)
+    producer_node = producer_map.get(str(name))
+    if producer_node is None:
+        return None
+    op_type = str(producer_node.op_type)
+    if op_type in {"Clip", "Exp", "Identity", "LeakyRelu", "Neg", "Relu", "Sigmoid"} and producer_node.input:
+        return _onnx_resolve_rank4_shape(
+            graph,
+            str(producer_node.input[0]),
+            producer_map=producer_map,
+            depth=depth + 1,
+        )
+    if op_type in {"Add", "Div", "Max", "Min", "Mul", "Sub"} and len(producer_node.input) == 2:
+        lhs_shape = _onnx_resolve_rank4_shape(
+            graph,
+            str(producer_node.input[0]),
+            producer_map=producer_map,
+            depth=depth + 1,
+        )
+        rhs_shape = _onnx_resolve_rank4_shape(
+            graph,
+            str(producer_node.input[1]),
+            producer_map=producer_map,
+            depth=depth + 1,
+        )
+        if lhs_shape is None:
+            return rhs_shape
+        if rhs_shape is None:
+            return lhs_shape
+        resolved: List[int] = []
+        for lhs_dim, rhs_dim in zip(lhs_shape, rhs_shape):
+            if lhs_dim == rhs_dim:
+                resolved.append(int(lhs_dim))
+            elif lhs_dim == 1:
+                resolved.append(int(rhs_dim))
+            elif rhs_dim == 1:
+                resolved.append(int(lhs_dim))
+            else:
+                return None
+        return resolved
+    if op_type == "Concat":
+        axis = int(_onnx_node_attr(producer_node, "axis") or -1)
+        input_shapes: List[List[int]] = []
+        for input_name in list(producer_node.input):
+            input_shape = _onnx_resolve_rank4_shape(
+                graph,
+                str(input_name),
+                producer_map=producer_map,
+                depth=depth + 1,
+            )
+            if input_shape is None:
+                return None
+            input_shapes.append(input_shape)
+        if not input_shapes or axis < 0 or axis >= 4:
+            return None
+        base_shape = list(input_shapes[0])
+        concat_dim = 0
+        for input_shape in input_shapes:
+            for dim_index, dim_value in enumerate(input_shape):
+                if dim_index == axis:
+                    concat_dim += int(dim_value)
+                elif int(base_shape[dim_index]) != int(dim_value):
+                    return None
+        base_shape[axis] = int(concat_dim)
+        return base_shape
+    if op_type == "Transpose" and producer_node.input:
+        perm = list(_onnx_node_attr(producer_node, "perm") or [])
+        input_shape = _onnx_resolve_rank4_shape(
+            graph,
+            str(producer_node.input[0]),
+            producer_map=producer_map,
+            depth=depth + 1,
+        )
+        if input_shape is None or len(perm) != 4:
+            return None
+        return [int(input_shape[index]) for index in perm]
+    return None
+
+
 def _onnx_convert_pads_nhwc_to_nchw(pads: Sequence[int] | np.ndarray) -> Optional[np.ndarray]:
     pad_values = np.asarray(list(pads), dtype=np.int64).reshape(-1)
     if pad_values.size != 8:
@@ -12021,6 +12197,24 @@ def _onnx_convert_pads_nhwc_to_nchw(pads: Sequence[int] | np.ndarray) -> Optiona
     end = pad_values[4:]
     reorder = [0, 3, 1, 2]
     return np.concatenate([begin[reorder], end[reorder]], axis=0).astype(np.int64)
+
+
+def _onnx_rewrite_slice_axis_to_nchw_in_place(
+    graph: onnx.GraphProto,
+    *,
+    slice_node: onnx.NodeProto,
+) -> bool:
+    axes_name = str(slice_node.input[3]) if len(slice_node.input) >= 4 else ""
+    axes_array = _onnx_get_initializer_array(graph, axes_name)
+    if axes_array is None:
+        return False
+    axes_values = [int(v) for v in axes_array.reshape(-1)]
+    if axes_values != [3]:
+        return False
+    new_axes_name = _onnx_make_unique_initializer_name(graph, f"{axes_name}_nchw")
+    _onnx_set_initializer_array(graph, name=new_axes_name, array=np.asarray([1], dtype=np.int64))
+    slice_node.input[3] = str(new_axes_name)
+    return True
 
 
 def _onnx_fold_relu_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
@@ -12488,6 +12682,579 @@ def _onnx_fold_concat_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
     _onnx_remove_nodes_by_name(graph, remove_node_names)
 
 
+def _onnx_fold_pad_concat_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
+    producer_map, consumer_map = _onnx_node_maps(graph)
+    remove_node_names: List[str] = []
+    for inverse_transpose_node in list(graph.node):
+        if str(inverse_transpose_node.op_type) != "Transpose":
+            continue
+        if list(_onnx_node_attr(inverse_transpose_node, "perm") or []) != [0, 3, 1, 2]:
+            continue
+        concat_node_name = str(inverse_transpose_node.input[0]) if inverse_transpose_node.input else ""
+        concat_node = producer_map.get(concat_node_name)
+        if concat_node is None or str(concat_node.op_type) != "Concat":
+            continue
+        if int(_onnx_node_attr(concat_node, "axis") or -1) != 3:
+            continue
+        if len(consumer_map.get(str(concat_node.output[0]), [])) != 1:
+            continue
+
+        rewritten_inputs: List[str] = []
+        local_remove_node_names: List[str] = [str(inverse_transpose_node.name)]
+        valid = True
+        for input_name in list(concat_node.input):
+            input_node = producer_map.get(str(input_name))
+            if input_node is None:
+                valid = False
+                break
+            if (
+                str(input_node.op_type) == "Transpose"
+                and list(_onnx_node_attr(input_node, "perm") or []) == [0, 2, 3, 1]
+                and len(consumer_map.get(str(input_node.output[0]), [])) == 1
+            ):
+                rewritten_inputs.append(str(input_node.input[0]))
+                local_remove_node_names.append(str(input_node.name))
+                continue
+            if str(input_node.op_type) != "Pad" or len(input_node.input) < 2:
+                valid = False
+                break
+            pad_input_node = producer_map.get(str(input_node.input[0]))
+            if (
+                pad_input_node is None
+                or str(pad_input_node.op_type) != "Transpose"
+                or list(_onnx_node_attr(pad_input_node, "perm") or []) != [0, 2, 3, 1]
+                or len(consumer_map.get(str(pad_input_node.output[0]), [])) != 1
+            ):
+                valid = False
+                break
+            pad_values = _onnx_get_initializer_array(graph, str(input_node.input[1]))
+            nchw_pad_values = (
+                _onnx_convert_pads_nhwc_to_nchw(pad_values)
+                if pad_values is not None
+                else None
+            )
+            if nchw_pad_values is None:
+                valid = False
+                break
+            new_pad_name = _onnx_make_unique_initializer_name(graph, f"{input_node.input[1]}_nchw")
+            _onnx_set_initializer_array(graph, name=new_pad_name, array=nchw_pad_values)
+            input_node.input[0] = str(pad_input_node.input[0])
+            input_node.input[1] = str(new_pad_name)
+            rewritten_inputs.append(str(input_node.output[0]))
+            local_remove_node_names.append(str(pad_input_node.name))
+        if not valid or not rewritten_inputs:
+            continue
+
+        for input_index, rewritten_input_name in enumerate(rewritten_inputs):
+            concat_node.input[input_index] = str(rewritten_input_name)
+        _onnx_set_node_attr(concat_node, "axis", 1)
+        _onnx_replace_all_node_inputs(
+            graph,
+            old_name=str(inverse_transpose_node.output[0]),
+            new_name=str(concat_node.output[0]),
+        )
+        remove_node_names.extend(local_remove_node_names)
+    _onnx_remove_nodes_by_name(graph, remove_node_names)
+
+
+def _onnx_fold_singleton_resize_matmul_transpose_bridges_in_place(graph: onnx.GraphProto) -> None:
+    while True:
+        producer_map, consumer_map = _onnx_node_maps(graph)
+        remove_node_names: List[str] = []
+        optimized = False
+        for matmul_node in list(graph.node):
+            if str(matmul_node.op_type) != "MatMul" or len(matmul_node.input) != 2:
+                continue
+
+            reshape_node: Optional[onnx.NodeProto] = None
+            reshape_input_index: Optional[int] = None
+            for input_index, input_name in enumerate(list(matmul_node.input)):
+                candidate_node = producer_map.get(str(input_name))
+                if candidate_node is not None and str(candidate_node.op_type) == "Reshape" and len(candidate_node.input) >= 2:
+                    reshape_node = candidate_node
+                    reshape_input_index = int(input_index)
+                    break
+            if reshape_node is None or reshape_input_index is None:
+                continue
+
+            reshape_shape_name = str(reshape_node.input[1]) if len(reshape_node.input) >= 2 else ""
+            reshape_shape_array = _onnx_get_initializer_array(graph, reshape_shape_name)
+            if reshape_shape_array is None:
+                continue
+            reshape_shape = [int(v) for v in reshape_shape_array.reshape(-1)]
+            constant_input_index = 1 - int(reshape_input_index)
+            constant_input_name = str(matmul_node.input[constant_input_index])
+            constant_array = _onnx_get_initializer_array(graph, constant_input_name)
+            if constant_array is None or constant_array.ndim < 2:
+                continue
+
+            if len(reshape_shape) == 4 and int(reshape_shape[1]) != 1 and int(reshape_shape[3]) == 1:
+                nchw_shape = np.asarray(
+                    [int(reshape_shape[0]), 1, int(reshape_shape[1]), int(reshape_shape[2])],
+                    dtype=np.int64,
+                )
+                transposed_constant_array = np.swapaxes(constant_array, -1, -2)
+                new_constant_name = _onnx_make_unique_initializer_name(graph, f"{constant_input_name}_nchw")
+                _onnx_set_initializer_array(
+                    graph,
+                    name=new_constant_name,
+                    array=np.asarray(transposed_constant_array),
+                )
+
+                new_shape_name = _onnx_make_unique_initializer_name(graph, f"{reshape_shape_name}_nchw")
+                _onnx_set_initializer_array(graph, name=new_shape_name, array=nchw_shape)
+                reshape_node.input[1] = str(new_shape_name)
+                matmul_node.input[0] = str(reshape_node.output[0])
+                matmul_node.input[1] = str(new_constant_name)
+                for user_node in list(consumer_map.get(str(matmul_node.output[0]), [])):
+                    if (
+                        str(user_node.op_type) == "Transpose"
+                        and list(_onnx_node_attr(user_node, "perm") or []) == [0, 3, 1, 2]
+                    ):
+                        _onnx_replace_all_node_inputs(
+                            graph,
+                            old_name=str(user_node.output[0]),
+                            new_name=str(matmul_node.output[0]),
+                        )
+                        remove_node_names.append(str(user_node.name))
+                _onnx_remove_nodes_by_name(graph, remove_node_names)
+                optimized = True
+                break
+
+            if len(reshape_shape) != 3 or constant_array.ndim != 3:
+                continue
+            matmul_output_name = str(matmul_node.output[0]) if matmul_node.output else ""
+            if matmul_output_name == "":
+                continue
+            matmul_users = consumer_map.get(matmul_output_name, [])
+            if len(matmul_users) != 1:
+                continue
+            trailing_reshape_node = matmul_users[0]
+            if str(trailing_reshape_node.op_type) != "Reshape" or len(trailing_reshape_node.input) < 2:
+                continue
+            trailing_shape_name = str(trailing_reshape_node.input[1])
+            trailing_shape_array = _onnx_get_initializer_array(graph, trailing_shape_name)
+            if trailing_shape_array is None:
+                continue
+            trailing_shape = [int(v) for v in trailing_shape_array.reshape(-1)]
+            if len(trailing_shape) != 4 or int(trailing_shape[1]) != 1:
+                continue
+            if int(trailing_shape[2]) != int(constant_array.shape[-2]) or int(trailing_shape[3]) != int(reshape_shape[-1]):
+                continue
+
+            nchw_shape = np.asarray(
+                [int(reshape_shape[0]), 1, int(reshape_shape[1]), int(reshape_shape[2])],
+                dtype=np.int64,
+            )
+            expanded_constant_array = np.expand_dims(np.asarray(constant_array), axis=1)
+            new_constant_name = _onnx_make_unique_initializer_name(graph, f"{constant_input_name}_nchw")
+            _onnx_set_initializer_array(
+                graph,
+                name=new_constant_name,
+                array=expanded_constant_array,
+            )
+            new_shape_name = _onnx_make_unique_initializer_name(graph, f"{reshape_shape_name}_nchw")
+            _onnx_set_initializer_array(graph, name=new_shape_name, array=nchw_shape)
+            reshape_node.input[1] = str(new_shape_name)
+            matmul_node.input[constant_input_index] = str(new_constant_name)
+            _onnx_replace_all_node_inputs(
+                graph,
+                old_name=str(trailing_reshape_node.output[0]),
+                new_name=str(matmul_node.output[0]),
+            )
+            remove_node_names.append(str(trailing_reshape_node.name))
+            _onnx_remove_nodes_by_name(graph, remove_node_names)
+            optimized = True
+            break
+        if not optimized:
+            break
+
+
+def _onnx_fold_singleton_slice_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
+    while True:
+        producer_map, consumer_map = _onnx_node_maps(graph)
+        remove_node_names: List[str] = []
+        optimized = False
+
+        for transpose_node in list(graph.node):
+            if str(transpose_node.op_type) != "Transpose":
+                continue
+            transpose_perm = list(_onnx_node_attr(transpose_node, "perm") or [])
+            if transpose_perm not in ([0, 2, 3, 1], [0, 3, 1, 2]):
+                continue
+            if not transpose_node.input or not transpose_node.output:
+                continue
+            transpose_input_name = str(transpose_node.input[0])
+            transpose_output_name = str(transpose_node.output[0])
+            transpose_consumers = consumer_map.get(transpose_output_name, [])
+            if not transpose_consumers:
+                continue
+            inverse_perm = [0, 3, 1, 2] if transpose_perm == [0, 2, 3, 1] else [0, 2, 3, 1]
+            slice_nodes: List[onnx.NodeProto] = []
+            inverse_transpose_nodes: List[onnx.NodeProto] = []
+            supported = True
+            for consumer_node in transpose_consumers:
+                if str(consumer_node.op_type) == "Slice":
+                    slice_nodes.append(consumer_node)
+                    continue
+                if (
+                    str(consumer_node.op_type) == "Transpose"
+                    and list(_onnx_node_attr(consumer_node, "perm") or []) == inverse_perm
+                ):
+                    inverse_transpose_nodes.append(consumer_node)
+                    continue
+                supported = False
+                break
+            if not supported or not slice_nodes:
+                continue
+            if not all(_onnx_rewrite_slice_axis_to_nchw_in_place(graph, slice_node=node) for node in slice_nodes):
+                continue
+            for slice_node in slice_nodes:
+                slice_node.input[0] = str(transpose_input_name)
+
+            remove_node_names.append(str(transpose_node.name))
+            for inverse_transpose_node in inverse_transpose_nodes:
+                _onnx_replace_all_node_inputs(
+                    graph,
+                    old_name=str(inverse_transpose_node.output[0]),
+                    new_name=transpose_input_name,
+                )
+                remove_node_names.append(str(inverse_transpose_node.name))
+
+            for slice_node in slice_nodes:
+                slice_output_name = str(slice_node.output[0]) if slice_node.output else ""
+                if slice_output_name == "":
+                    continue
+                for user_node in list(consumer_map.get(slice_output_name, [])):
+                    if str(user_node.op_type) != "Transpose":
+                        continue
+                    user_perm = list(_onnx_node_attr(user_node, "perm") or [])
+                    if transpose_perm == [0, 2, 3, 1] and user_perm != [0, 3, 1, 2]:
+                        continue
+                    if transpose_perm == [0, 3, 1, 2] and user_perm != [0, 2, 3, 1]:
+                        continue
+                    _onnx_replace_all_node_inputs(
+                        graph,
+                        old_name=str(user_node.output[0]),
+                        new_name=slice_output_name,
+                    )
+                    remove_node_names.append(str(user_node.name))
+
+            for user_node in list(transpose_consumers):
+                slice_output_name = str(user_node.output[0]) if user_node.output else ""
+                if slice_output_name == "":
+                    continue
+                passthrough_nodes = consumer_map.get(slice_output_name, [])
+                for passthrough_node in list(passthrough_nodes):
+                    if str(passthrough_node.op_type) not in {"Mul", "Add", "Sub", "Div", "Clip"}:
+                        continue
+                    passthrough_output_name = str(passthrough_node.output[0]) if passthrough_node.output else ""
+                    if passthrough_output_name == "":
+                        continue
+                    for inverse_node in list(consumer_map.get(passthrough_output_name, [])):
+                        if str(inverse_node.op_type) != "Transpose":
+                            continue
+                        inverse_perm = list(_onnx_node_attr(inverse_node, "perm") or [])
+                        if transpose_perm == [0, 2, 3, 1] and inverse_perm != [0, 3, 1, 2]:
+                            continue
+                        if transpose_perm == [0, 3, 1, 2] and inverse_perm != [0, 2, 3, 1]:
+                            continue
+                        _onnx_replace_all_node_inputs(
+                            graph,
+                            old_name=str(inverse_node.output[0]),
+                            new_name=passthrough_output_name,
+                        )
+                        remove_node_names.append(str(inverse_node.name))
+
+            _onnx_remove_nodes_by_name(graph, remove_node_names)
+            optimized = True
+            break
+
+        if not optimized:
+            break
+
+
+def _onnx_fold_singleton_concat_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
+    layout_preserving_unary_op_types = {
+        "Clip",
+        "Exp",
+        "Identity",
+        "LeakyRelu",
+        "Relu",
+        "Sigmoid",
+    }
+    scalar_binary_op_types = {
+        "Add",
+        "Div",
+        "Mul",
+        "Sub",
+    }
+    while True:
+        producer_map, consumer_map = _onnx_node_maps(graph)
+        optimized = False
+        for inverse_transpose_node in list(graph.node):
+            if str(inverse_transpose_node.op_type) != "Transpose":
+                continue
+            if list(_onnx_node_attr(inverse_transpose_node, "perm") or []) != [0, 3, 1, 2]:
+                continue
+            concat_node_name = str(inverse_transpose_node.input[0]) if inverse_transpose_node.input else ""
+            concat_node = producer_map.get(concat_node_name)
+            if concat_node is None or str(concat_node.op_type) != "Concat":
+                continue
+            if int(_onnx_node_attr(concat_node, "axis") or -1) != 3:
+                continue
+            if len(consumer_map.get(str(concat_node.output[0]), [])) != 1:
+                continue
+
+            rewritten_inputs: List[str] = []
+            remove_node_names: List[str] = [str(inverse_transpose_node.name)]
+            valid = True
+            for input_name in list(concat_node.input):
+                input_producer = producer_map.get(str(input_name))
+                if input_producer is None:
+                    valid = False
+                    break
+                if str(input_producer.op_type) == "Slice":
+                    axes_array = _onnx_get_initializer_array(
+                        graph,
+                        str(input_producer.input[3]) if len(input_producer.input) >= 4 else "",
+                    )
+                    if axes_array is not None and [int(v) for v in axes_array.reshape(-1)] == [1]:
+                        rewritten_inputs.append(str(input_name))
+                        continue
+                input_shape = _onnx_resolve_rank4_shape(
+                    graph,
+                    str(input_name),
+                    producer_map=producer_map,
+                )
+                if (
+                    input_shape is not None
+                    and len(input_shape) == 4
+                    and int(input_shape[1]) == 1
+                    and int(input_shape[2]) > 0
+                    and int(input_shape[3]) > 0
+                ):
+                    rewritten_inputs.append(str(input_name))
+                    continue
+                if (
+                    str(input_producer.op_type) == "Transpose"
+                    and list(_onnx_node_attr(input_producer, "perm") or []) == [0, 2, 3, 1]
+                    and len(consumer_map.get(str(input_producer.output[0]), [])) == 1
+                ):
+                    rewritten_inputs.append(str(input_producer.input[0]))
+                    remove_node_names.append(str(input_producer.name))
+                    continue
+                if str(input_producer.op_type) in layout_preserving_unary_op_types and len(input_producer.input) >= 1:
+                    unary_input_name = str(input_producer.input[0])
+                    unary_input_producer = producer_map.get(unary_input_name)
+                    if (
+                        unary_input_producer is not None
+                        and str(unary_input_producer.op_type) == "Transpose"
+                        and list(_onnx_node_attr(unary_input_producer, "perm") or []) == [0, 2, 3, 1]
+                        and len(consumer_map.get(str(unary_input_producer.output[0]), [])) == 1
+                    ):
+                        input_producer.input[0] = str(unary_input_producer.input[0])
+                        rewritten_inputs.append(str(input_producer.output[0]))
+                        remove_node_names.append(str(unary_input_producer.name))
+                        continue
+                if str(input_producer.op_type) in scalar_binary_op_types and len(input_producer.input) == 2:
+                    transpose_input_index: Optional[int] = None
+                    for input_index, candidate_input_name in enumerate(list(input_producer.input)):
+                        candidate_producer = producer_map.get(str(candidate_input_name))
+                        if (
+                            candidate_producer is not None
+                            and str(candidate_producer.op_type) == "Transpose"
+                            and list(_onnx_node_attr(candidate_producer, "perm") or []) == [0, 2, 3, 1]
+                            and len(consumer_map.get(str(candidate_producer.output[0]), [])) == 1
+                        ):
+                            transpose_input_index = int(input_index)
+                            break
+                    if transpose_input_index is not None:
+                        transpose_input_name = str(input_producer.input[transpose_input_index])
+                        transpose_input_producer = producer_map.get(transpose_input_name)
+                        if transpose_input_producer is not None:
+                            input_producer.input[transpose_input_index] = str(transpose_input_producer.input[0])
+                            rewritten_inputs.append(str(input_producer.output[0]))
+                            remove_node_names.append(str(transpose_input_producer.name))
+                            continue
+                valid = False
+                break
+            if not valid or not rewritten_inputs:
+                continue
+
+            for input_index, rewritten_input_name in enumerate(rewritten_inputs):
+                concat_node.input[input_index] = str(rewritten_input_name)
+            _onnx_set_node_attr(concat_node, "axis", 1)
+            _onnx_replace_all_node_inputs(
+                graph,
+                old_name=str(inverse_transpose_node.output[0]),
+                new_name=str(concat_node.output[0]),
+            )
+            _onnx_remove_nodes_by_name(graph, remove_node_names)
+            optimized = True
+            break
+        if not optimized:
+            break
+
+
+def _onnx_fold_singleton_concat_slice_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
+    while True:
+        producer_map, consumer_map = _onnx_node_maps(graph)
+        optimized = False
+        for concat_node in list(graph.node):
+            if str(concat_node.op_type) != "Concat":
+                continue
+            if int(_onnx_node_attr(concat_node, "axis") or -1) != 3:
+                continue
+
+            rewritten_inputs: List[str] = []
+            remove_node_names: List[str] = []
+            valid_inputs = True
+            for input_name in list(concat_node.input):
+                input_str = str(input_name)
+                input_shape = _onnx_resolve_rank4_shape(
+                    graph,
+                    input_str,
+                    producer_map=producer_map,
+                )
+                if (
+                    input_shape is not None
+                    and len(input_shape) == 4
+                    and int(input_shape[1]) == 1
+                    and int(input_shape[2]) > 0
+                    and int(input_shape[3]) > 0
+                ):
+                    rewritten_inputs.append(input_str)
+                    continue
+                input_producer = producer_map.get(input_str)
+                if (
+                    input_producer is not None
+                    and str(input_producer.op_type) == "Transpose"
+                    and list(_onnx_node_attr(input_producer, "perm") or []) == [0, 2, 3, 1]
+                    and len(consumer_map.get(str(input_producer.output[0]), [])) == 1
+                ):
+                    source_name = str(input_producer.input[0]) if input_producer.input else ""
+                    source_shape = _onnx_resolve_rank4_shape(
+                        graph,
+                        source_name,
+                        producer_map=producer_map,
+                    )
+                    if (
+                        source_name != ""
+                        and source_shape is not None
+                        and len(source_shape) == 4
+                        and int(source_shape[1]) == 1
+                    ):
+                        rewritten_inputs.append(source_name)
+                        remove_node_names.append(str(input_producer.name))
+                        continue
+                valid_inputs = False
+                break
+            if not valid_inputs or not rewritten_inputs:
+                continue
+
+            concat_consumers = consumer_map.get(str(concat_node.output[0]), [])
+            if not concat_consumers:
+                continue
+            if not all(str(node.op_type) == "Slice" for node in concat_consumers):
+                continue
+            if not all(_onnx_rewrite_slice_axis_to_nchw_in_place(graph, slice_node=node) for node in concat_consumers):
+                continue
+
+            for input_index, rewritten_input_name in enumerate(rewritten_inputs):
+                concat_node.input[input_index] = str(rewritten_input_name)
+            _onnx_set_node_attr(concat_node, "axis", 1)
+            _onnx_remove_nodes_by_name(graph, remove_node_names)
+            optimized = True
+            break
+        if not optimized:
+            break
+
+
+def _onnx_fold_singleton_binary_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
+    binary_op_types = {
+        "Add",
+        "Div",
+        "Mul",
+        "Sub",
+    }
+    producer_map, consumer_map = _onnx_node_maps(graph)
+    remove_node_names: List[str] = []
+    for transpose_node in list(graph.node):
+        if str(transpose_node.op_type) != "Transpose":
+            continue
+        if list(_onnx_node_attr(transpose_node, "perm") or []) != [0, 3, 1, 2]:
+            continue
+        transpose_input_name = str(transpose_node.input[0]) if transpose_node.input else ""
+        transpose_output_name = str(transpose_node.output[0]) if transpose_node.output else ""
+        if transpose_input_name == "" or transpose_output_name == "":
+            continue
+        transpose_input_shape = _onnx_resolve_rank4_shape(
+            graph,
+            transpose_input_name,
+            producer_map=producer_map,
+        )
+        if (
+            transpose_input_shape is None
+            or len(transpose_input_shape) != 4
+            or int(transpose_input_shape[1]) != 1
+        ):
+            continue
+        transpose_consumers = consumer_map.get(transpose_output_name, [])
+        if not transpose_consumers:
+            continue
+        rewrites: List[Tuple[onnx.NodeProto, int]] = []
+        valid = True
+        for binary_node in list(transpose_consumers):
+            if str(binary_node.op_type) not in binary_op_types or len(binary_node.input) != 2:
+                valid = False
+                break
+            binary_input_index = None
+            other_input_name = ""
+            for input_index, input_name in enumerate(list(binary_node.input)):
+                if str(input_name) == transpose_output_name:
+                    binary_input_index = int(input_index)
+                    other_input_name = str(binary_node.input[1 - input_index])
+                    break
+            if binary_input_index is None or other_input_name == "":
+                valid = False
+                break
+            other_input_shape = _onnx_resolve_rank4_shape(
+                graph,
+                other_input_name,
+                producer_map=producer_map,
+            )
+            if other_input_shape is None:
+                scalar_initializer = _onnx_get_initializer_array(graph, other_input_name)
+                if scalar_initializer is not None and int(np.asarray(scalar_initializer).size) == 1:
+                    rewrites.append((binary_node, int(binary_input_index)))
+                    continue
+                other_input_producer = producer_map.get(other_input_name)
+                if (
+                    other_input_producer is None
+                    or str(other_input_producer.op_type) != "Concat"
+                    or int(_onnx_node_attr(other_input_producer, "axis") or -1) != 1
+                ):
+                    valid = False
+                    break
+            else:
+                if (
+                    len(other_input_shape) != 4
+                    or int(other_input_shape[1]) <= 0
+                    or int(other_input_shape[2]) != int(transpose_input_shape[2])
+                    or int(other_input_shape[3]) != int(transpose_input_shape[3])
+                ):
+                    valid = False
+                    break
+            rewrites.append((binary_node, int(binary_input_index)))
+        if not valid:
+            continue
+        for binary_node, binary_input_index in rewrites:
+            binary_node.input[binary_input_index] = transpose_input_name
+        remove_node_names.append(str(transpose_node.name))
+    _onnx_remove_nodes_by_name(graph, remove_node_names)
+
+
 def _onnx_fold_softmax_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
     producer_map, consumer_map = _onnx_node_maps(graph)
     remove_node_names: List[str] = []
@@ -12531,15 +13298,61 @@ def _onnx_fold_softmax_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
 
 
 def _optimize_dynamo_exported_onnx_in_place(model: onnx.ModelProto) -> None:
-    _onnx_remove_passthrough_identity_nodes_in_place(model.graph)
-    _onnx_fold_relu_layout_bridges_in_place(model.graph)
-    _onnx_fold_mul_reducesum_sigmoid_layout_bridges_in_place(model.graph)
-    _onnx_fold_reducesum_sigmoid_layout_bridges_in_place(model.graph)
-    _onnx_fold_inverse_transpose_pairs_in_place(model.graph)
-    _onnx_optimize_pidnet_spp_transpose_bridges_in_place(model.graph)
-    _onnx_optimize_pphumanseg_add_resize_layout_bridges_in_place(model.graph)
-    _onnx_fold_concat_layout_bridges_in_place(model.graph)
-    _onnx_fold_softmax_layout_bridges_in_place(model.graph)
+    def _value_info_signature(graph: onnx.GraphProto) -> Tuple[Any, ...]:
+        signature: List[Tuple[str, Tuple[Any, ...]]] = []
+        for value_info in list(graph.value_info) + list(graph.input) + list(graph.output):
+            dims: List[Any] = []
+            for dim in value_info.type.tensor_type.shape.dim:
+                if dim.HasField("dim_value"):
+                    dims.append(int(dim.dim_value))
+                elif dim.HasField("dim_param"):
+                    dims.append(str(dim.dim_param))
+                else:
+                    dims.append("?")
+            signature.append((str(value_info.name), tuple(dims)))
+        return tuple(signature)
+
+    def _graph_signature(graph: onnx.GraphProto) -> Tuple[Any, ...]:
+        return (
+            tuple(
+            (
+                str(node.name),
+                str(node.op_type),
+                tuple(str(v) for v in node.input),
+                tuple(str(v) for v in node.output),
+                tuple(
+                    (
+                        str(attr.name),
+                        repr(onnx.helper.get_attribute_value(attr)),
+                    )
+                    for attr in node.attribute
+                ),
+            )
+            for node in graph.node
+            ),
+            _value_info_signature(graph),
+        )
+
+    for _ in range(4):
+        before_signature = _graph_signature(model.graph)
+        _onnx_remove_passthrough_identity_nodes_in_place(model.graph)
+        _onnx_fold_relu_layout_bridges_in_place(model.graph)
+        _onnx_fold_mul_reducesum_sigmoid_layout_bridges_in_place(model.graph)
+        _onnx_fold_reducesum_sigmoid_layout_bridges_in_place(model.graph)
+        _onnx_fold_inverse_transpose_pairs_in_place(model.graph)
+        _onnx_fold_singleton_resize_matmul_transpose_bridges_in_place(model.graph)
+        _onnx_fold_singleton_slice_layout_bridges_in_place(model.graph)
+        _onnx_optimize_pidnet_spp_transpose_bridges_in_place(model.graph)
+        _onnx_optimize_pphumanseg_add_resize_layout_bridges_in_place(model.graph)
+        _onnx_fold_singleton_concat_slice_layout_bridges_in_place(model.graph)
+        _onnx_fold_singleton_binary_layout_bridges_in_place(model.graph)
+        _onnx_fold_concat_layout_bridges_in_place(model.graph)
+        _onnx_fold_pad_concat_layout_bridges_in_place(model.graph)
+        _onnx_fold_singleton_concat_layout_bridges_in_place(model.graph)
+        _onnx_fold_softmax_layout_bridges_in_place(model.graph)
+        _onnx_repair_inferred_shapes_in_place(model)
+        if _graph_signature(model.graph) == before_signature:
+            break
 
 
 def _onnx_model_uses_external_data(model: onnx.ModelProto) -> bool:
@@ -12555,12 +13368,48 @@ def _inspect_onnx_uses_external_data(onnx_path: Path) -> bool:
 
 
 def _sanitize_dynamo_exported_onnx_metadata(onnx_path: Path) -> None:
+    def _sanitize_signature(model: onnx.ModelProto) -> Tuple[Any, ...]:
+        node_signature = tuple(
+            (
+                str(node.name),
+                str(node.op_type),
+                tuple(str(v) for v in node.input),
+                tuple(str(v) for v in node.output),
+                tuple(
+                    (
+                        str(attr.name),
+                        repr(onnx.helper.get_attribute_value(attr)),
+                    )
+                    for attr in node.attribute
+                ),
+            )
+            for node in model.graph.node
+        )
+        value_info_signature = tuple(
+            (
+                str(value_info.name),
+                tuple(
+                    int(dim.dim_value)
+                    if dim.HasField("dim_value")
+                    else (str(dim.dim_param) if dim.HasField("dim_param") else "?")
+                    for dim in value_info.type.tensor_type.shape.dim
+                ),
+            )
+            for value_info in list(model.graph.value_info) + list(model.graph.input) + list(model.graph.output)
+        )
+        return node_signature, value_info_signature
+
     external_data_sidecar_path = onnx_path.with_name(f"{onnx_path.name}.data")
     original_uses_external_data = _inspect_onnx_uses_external_data(onnx_path)
     model = onnx.load(str(onnx_path))
     del model.metadata_props[:]
     _clear_onnx_graph_and_node_metadata_in_place(model.graph)
-    _optimize_dynamo_exported_onnx_in_place(model)
+    for _ in range(4):
+        before_signature = _sanitize_signature(model)
+        _optimize_dynamo_exported_onnx_in_place(model)
+        _onnx_repair_inferred_shapes_in_place(model)
+        if _sanitize_signature(model) == before_signature:
+            break
     onnx.checker.check_model(model)
     if original_uses_external_data:
         onnx.save_model(
@@ -12808,6 +13657,7 @@ def export_torchscript_from_generated_package(
     torchscript_file_name = f"{file_stem}_jit.pt"
     torchscript_path = package_path / torchscript_file_name
     child_script = """
+import dataclasses
 import hashlib
 import importlib
 import importlib.util
@@ -13135,6 +13985,7 @@ def export_exported_program_from_generated_package(
             },
         )
         return None
+    _rewrite_generated_model_source_for_exported_program(package_path)
     try:
         example_inputs, example_input_shapes, dynamic_inputs_present = _build_pytorch_export_example_inputs(
             package_dir=package_dir,
@@ -13237,7 +14088,7 @@ def _prune_alias_nodes(exported_program):
         graph_module.recompile()
     return exported_program
 
-def _fold_inverse_permute_round_trips(exported_program):
+def _fold_singleton_channel_split_permute_bridges_in_exported_program(exported_program):
     graph_module = getattr(exported_program, "graph_module", None)
     if graph_module is None:
         return exported_program
@@ -13249,11 +14100,323 @@ def _fold_inverse_permute_round_trips(exported_program):
             return None
         return [int(v) for v in arg]
 
+    def _rank4_shape(node):
+        if not isinstance(node, torch.fx.Node):
+            return None
+        meta_val = getattr(node, "meta", {}).get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            shape = [int(v) for v in list(meta_val.shape)]
+            return shape if len(shape) == 4 else None
+        if node.op == "get_attr" and isinstance(node.target, str):
+            tensor = getattr(graph_module, node.target, None)
+            if isinstance(tensor, torch.Tensor):
+                shape = [int(v) for v in list(tensor.shape)]
+                return shape if len(shape) == 4 else None
+        return None
+
+    def _shape_meta_like(node, shape):
+        meta = dict(getattr(node, "meta", {}))
+        meta_val = meta.get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            try:
+                meta["val"] = torch.empty(
+                    tuple(int(v) for v in shape),
+                    dtype=meta_val.dtype,
+                    device="meta",
+                )
+            except Exception:
+                pass
+        return meta
+
+    def _shape_list_from_arg(arg):
+        if not isinstance(arg, (list, tuple)):
+            return None
+        try:
+            return [int(v) for v in list(arg)]
+        except Exception:
+            return None
+
+    def _is_scalar_like(value):
+        if not isinstance(value, torch.fx.Node):
+            return True
+        meta_val = getattr(value, "meta", {}).get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            return int(meta_val.numel()) == 1
+        if value.op == "get_attr" and isinstance(value.target, str):
+            tensor = getattr(graph_module, value.target, None)
+            if isinstance(tensor, torch.Tensor):
+                return int(tensor.numel()) == 1
+        return False
+
+    def _sync_user_output_signature():
+        graph_signature = getattr(exported_program, "graph_signature", None)
+        if graph_signature is None:
+            return
+        output_node = None
+        for maybe_output in graph.nodes:
+            if maybe_output.op == "output":
+                output_node = maybe_output
+                break
+        if output_node is None or len(output_node.args) == 0:
+            return
+        output_args = output_node.args[0]
+        if not isinstance(output_args, (list, tuple)):
+            output_args = (output_args,)
+        output_specs = []
+        for arg in output_args:
+            if not isinstance(arg, torch.fx.Node):
+                return
+            output_specs.append(
+                torch.export.graph_signature.OutputSpec(
+                    kind=torch.export.graph_signature.OutputKind.USER_OUTPUT,
+                    arg=torch.export.graph_signature.TensorArgument(name=str(arg.name)),
+                    target=None,
+                )
+            )
+        try:
+            exported_program._graph_signature = dataclasses.replace(
+                graph_signature,
+                output_specs=output_specs,
+            )
+        except Exception:
+            pass
+
+    def _shape_meta_like(node, shape):
+        meta = dict(getattr(node, "meta", {}))
+        meta_val = meta.get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            try:
+                meta["val"] = torch.empty(
+                    tuple(int(v) for v in shape),
+                    dtype=meta_val.dtype,
+                    device="meta",
+                )
+            except Exception:
+                pass
+        return meta
+
+    while True:
+        local_changed = False
+        for split_node in list(graph.nodes):
+            if (
+                split_node.op != "call_function"
+                or str(split_node.target) != "aten.tensor_split.sections"
+                or len(split_node.args) < 3
+            ):
+                continue
+            split_input = split_node.args[0]
+            if not (
+                isinstance(split_input, torch.fx.Node)
+                and split_input.op == "call_function"
+                and str(split_input.target) == "aten.contiguous.default"
+                and len(split_input.args) >= 1
+                and isinstance(split_input.args[0], torch.fx.Node)
+            ):
+                continue
+            permute_node = split_input.args[0]
+            if (
+                permute_node.op != "call_function"
+                or str(permute_node.target) != "aten.permute.default"
+                or len(permute_node.args) < 2
+                or _normalize_perm(permute_node.args[1]) != [0, 2, 3, 1]
+                or not isinstance(permute_node.args[0], torch.fx.Node)
+            ):
+                continue
+            if int(split_node.args[2]) != 3:
+                continue
+            base_source = permute_node.args[0]
+            base_shape = _rank4_shape(base_source)
+            permuted_shape = _rank4_shape(split_input)
+            if (
+                base_shape is None
+                or permuted_shape is None
+                or int(base_shape[1]) <= 0
+                or int(permuted_shape[3]) != 1
+                or int(base_shape[1]) != int(permuted_shape[3]) * len(list(split_node.users))
+            ):
+                pass
+            if base_shape is None or len(base_shape) != 4:
+                continue
+            getitem_users = []
+            for user in list(split_node.users):
+                if (
+                    user.op != "call_function"
+                    or str(user.target) != "<built-in function getitem>"
+                    or len(user.args) < 2
+                    or user.args[0] is not split_node
+                ):
+                    getitem_users = []
+                    break
+                item_shape = _rank4_shape(user)
+                if item_shape is None or item_shape != [int(base_shape[0]), int(base_shape[2]), int(base_shape[3]), 1]:
+                    getitem_users = []
+                    break
+                getitem_users.append(user)
+            if len(getitem_users) == 0:
+                continue
+
+            with graph.inserting_before(split_node):
+                new_split = graph.call_function(
+                    torch.ops.aten.tensor_split.sections,
+                    args=(base_source, 1, 1),
+                    kwargs=dict(split_node.kwargs),
+                )
+            new_split.meta = dict(getattr(split_node, "meta", {}))
+
+            for getitem_node in list(getitem_users):
+                split_index = int(getitem_node.args[1])
+                with graph.inserting_before(getitem_node):
+                    new_getitem = graph.call_function(
+                        getitem_node.target,
+                        args=(new_split, split_index),
+                        kwargs=dict(getitem_node.kwargs),
+                    )
+                cf_shape = [int(base_shape[0]), 1, int(base_shape[2]), int(base_shape[3])]
+                nhwc_shape = [int(base_shape[0]), int(base_shape[2]), int(base_shape[3]), 1]
+                new_getitem.meta = _shape_meta_like(getitem_node, cf_shape)
+                nhwc_view = None
+
+                def _get_nhwc_view(insert_before_node):
+                    nonlocal nhwc_view
+                    if nhwc_view is not None:
+                        return nhwc_view
+                    with graph.inserting_before(insert_before_node):
+                        nhwc_view = graph.call_function(
+                            torch.ops.aten.reshape.default,
+                            args=(new_getitem, nhwc_shape),
+                            kwargs={},
+                        )
+                    nhwc_view.meta = _shape_meta_like(getitem_node, nhwc_shape)
+                    return nhwc_view
+
+                for user in list(getitem_node.users):
+                    if (
+                        user.op == "call_function"
+                        and str(user.target) == "aten.permute.default"
+                        and len(user.args) >= 2
+                        and user.args[0] is getitem_node
+                        and _normalize_perm(user.args[1]) == [0, 3, 1, 2]
+                    ):
+                        permute_users = list(user.users)
+                        if (
+                            len(permute_users) == 1
+                            and permute_users[0].op == "call_function"
+                            and str(permute_users[0].target) == "aten.contiguous.default"
+                        ):
+                            permute_users[0].replace_all_uses_with(new_getitem)
+                        else:
+                            user.replace_all_uses_with(new_getitem)
+                        local_changed = True
+                        changed = True
+                        continue
+                    if (
+                        user.op == "call_function"
+                        and str(user.target) == "aten.reshape.default"
+                        and len(user.args) >= 2
+                        and _shape_list_from_arg(user.args[1]) == cf_shape
+                    ):
+                        user.replace_all_uses_with(new_getitem)
+                        local_changed = True
+                        changed = True
+                        continue
+                    if (
+                        user.op == "call_function"
+                        and str(user.target) in {
+                            "aten.add.Tensor",
+                            "aten.div.Tensor",
+                            "aten.mul.Tensor",
+                            "aten.sub.Tensor",
+                        }
+                        and len(user.args) == 2
+                        and (
+                            (user.args[0] is getitem_node and _is_scalar_like(user.args[1]))
+                            or (user.args[1] is getitem_node and _is_scalar_like(user.args[0]))
+                        )
+                    ):
+                        user.replace_input_with(getitem_node, new_getitem)
+                        user.meta = _shape_meta_like(user, cf_shape)
+                        local_changed = True
+                        changed = True
+                        continue
+                    replacement = _get_nhwc_view(user)
+                    user.replace_input_with(getitem_node, replacement)
+                    local_changed = True
+                    changed = True
+
+            for getitem_node in list(getitem_users):
+                if len(list(getitem_node.users)) == 0:
+                    graph.erase_node(getitem_node)
+            if len(list(split_node.users)) == 0:
+                graph.erase_node(split_node)
+
+            if local_changed:
+                graph.eliminate_dead_code()
+                graph.lint()
+                graph_module.recompile()
+                break
+
+        if not local_changed:
+            break
+
+    if changed:
+        graph.eliminate_dead_code()
+        graph.lint()
+        graph_module.recompile()
+        _sync_user_output_signature()
+    return exported_program
+
+def _fold_inverse_permute_round_trips(exported_program):
+    graph_module = getattr(exported_program, "graph_module", None)
+    if graph_module is None:
+        return exported_program
+    graph = graph_module.graph
+    graph_signature = getattr(exported_program, "graph_signature", None)
+    user_output_names = set()
+    if graph_signature is not None:
+        try:
+            user_output_names = {str(name) for name in list(graph_signature.user_outputs)}
+        except Exception:
+            user_output_names = set()
+    changed = False
+
+    def _normalize_perm(arg):
+        if not isinstance(arg, (list, tuple)):
+            return None
+        return [int(v) for v in arg]
+
+    def _is_user_output_node(node):
+        return isinstance(node, torch.fx.Node) and str(node.name) in user_output_names
+
     def _inverse_perm(perm):
         inverse = [0] * len(perm)
         for idx, value in enumerate(perm):
             inverse[int(value)] = int(idx)
         return inverse
+
+    def _convert_nhwc_pad_to_nchw_pad(pad_values):
+        values = [int(v) for v in list(pad_values)]
+        if len(values) % 2 != 0 or len(values) > 8:
+            return None
+        nhwc_inner_to_outer = ["C", "W", "H", "N"]
+        nchw_inner_to_outer = ["W", "H", "C", "N"]
+        semantic_pairs = {name: [0, 0] for name in nhwc_inner_to_outer}
+        pair_count = len(values) // 2
+        for idx in range(pair_count):
+            semantic_pairs[nhwc_inner_to_outer[idx]] = [
+                values[idx * 2],
+                values[idx * 2 + 1],
+            ]
+        output_pairs = [semantic_pairs[name] for name in nchw_inner_to_outer]
+        last_nonzero = -1
+        for idx, pair in enumerate(output_pairs):
+            if pair != [0, 0]:
+                last_nonzero = idx
+        if last_nonzero < 0:
+            return []
+        flattened = []
+        for pair in output_pairs[: last_nonzero + 1]:
+            flattened.extend(pair)
+        return flattened
 
     def _match_permute_chain_source(node, perm):
         if not isinstance(node, torch.fx.Node):
@@ -13285,6 +14448,64 @@ def _fold_inverse_permute_round_trips(exported_program):
 
     def _match_binary_input_source(node, perm):
         return _match_permute_chain_source(node, perm)
+
+    def _match_cat_input_fold_source(node):
+        if not isinstance(node, torch.fx.Node):
+            return None
+        source = _match_permute_chain_source(node, [0, 2, 3, 1])
+        if source is not None:
+            return source
+        direct_shape = _rank4_shape(node)
+        if direct_shape is not None and int(direct_shape[3]) == 1:
+            return ("reshape", node, [int(direct_shape[0]), 1, int(direct_shape[1]), int(direct_shape[2])])
+        if (
+            node.op == "call_function"
+            and str(node.target) == "aten.pad.default"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], torch.fx.Node)
+        ):
+            pad_source = _match_permute_chain_source(node.args[0], [0, 2, 3, 1])
+            if pad_source is None:
+                return None
+            nchw_pad = _convert_nhwc_pad_to_nchw_pad(node.args[1])
+            if nchw_pad is None:
+                return None
+            return (pad_source, nchw_pad, tuple(node.args[2:]), dict(node.kwargs))
+        return None
+
+    def _rank4_shape(node):
+        if not isinstance(node, torch.fx.Node):
+            return None
+        meta_val = getattr(node, "meta", {}).get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            shape = [int(v) for v in list(meta_val.shape)]
+            return shape if len(shape) == 4 else None
+        if node.op == "get_attr" and isinstance(node.target, str):
+            tensor = getattr(graph_module, node.target, None)
+            if isinstance(tensor, torch.Tensor):
+                shape = [int(v) for v in list(tensor.shape)]
+                return shape if len(shape) == 4 else None
+        return None
+
+    def _match_nhwc_singleton_view_source(node):
+        if not isinstance(node, torch.fx.Node):
+            return None
+        if (
+            node.op == "call_function"
+            and str(node.target) == "aten.reshape.default"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], torch.fx.Node)
+            and isinstance(node.args[1], (list, tuple))
+        ):
+            input_shape = _rank4_shape(node.args[0])
+            view_shape = [int(v) for v in list(node.args[1])]
+            if (
+                input_shape is not None
+                and view_shape == [int(input_shape[0]), int(input_shape[2]), int(input_shape[3]), 1]
+                and int(input_shape[1]) == 1
+            ):
+                return node.args[0]
+        return _match_permute_chain_source(node, [0, 2, 3, 1])
 
     for node in list(graph.nodes):
         if (
@@ -13324,8 +14545,12 @@ def _fold_inverse_permute_round_trips(exported_program):
                         and inverse_users[0].op == "call_function"
                         and str(inverse_users[0].target) == "aten.contiguous.default"
                     ):
+                        if _is_user_output_node(inverse_users[0]):
+                            continue
                         inverse_users[0].replace_all_uses_with(root_replacement)
                     else:
+                        if _is_user_output_node(inverse_node):
+                            continue
                         inverse_node.replace_all_uses_with(root_replacement)
                     changed = True
 
@@ -13348,8 +14573,12 @@ def _fold_inverse_permute_round_trips(exported_program):
             and node_users[0].op == "call_function"
             and str(node_users[0].target) == "aten.contiguous.default"
         ):
+            if _is_user_output_node(node_users[0]):
+                continue
             node_users[0].replace_all_uses_with(source)
         else:
+            if _is_user_output_node(node):
+                continue
             node.replace_all_uses_with(source)
         changed = True
 
@@ -13381,11 +14610,33 @@ def _fold_inverse_permute_round_trips(exported_program):
             continue
         folded_inputs = []
         for cat_input in list(cat_inputs_arg):
-            folded_source = _match_permute_chain_source(cat_input, [0, 2, 3, 1])
+            folded_source = _match_cat_input_fold_source(cat_input)
             if folded_source is None:
                 folded_inputs = []
                 break
-            folded_inputs.append(folded_source)
+            if isinstance(folded_source, tuple):
+                if len(folded_source) == 3 and folded_source[0] == "reshape":
+                    _, source_node, reshaped_shape = folded_source
+                    with graph.inserting_before(cat_node):
+                        folded_reshape = graph.call_function(
+                            torch.ops.aten.reshape.default,
+                            args=(source_node, reshaped_shape),
+                            kwargs={},
+                        )
+                    folded_reshape.meta = _shape_meta_like(cat_input, reshaped_shape)
+                    folded_inputs.append(folded_reshape)
+                else:
+                    source_node, nchw_pad, pad_args_tail, pad_kwargs = folded_source
+                    with graph.inserting_before(cat_node):
+                        folded_pad = graph.call_function(
+                            torch.ops.aten.pad.default,
+                            args=(source_node, nchw_pad, *pad_args_tail),
+                            kwargs=pad_kwargs,
+                        )
+                    folded_pad.meta = dict(getattr(cat_input, "meta", {}))
+                    folded_inputs.append(folded_pad)
+            else:
+                folded_inputs.append(folded_source)
         if len(folded_inputs) != len(list(cat_inputs_arg)):
             continue
         folded_cat_kwargs = dict(cat_node.kwargs)
@@ -13402,8 +14653,12 @@ def _fold_inverse_permute_round_trips(exported_program):
             and inverse_users[0].op == "call_function"
             and str(inverse_users[0].target) == "aten.contiguous.default"
         ):
+            if _is_user_output_node(inverse_users[0]):
+                continue
             inverse_users[0].replace_all_uses_with(cat_node)
         else:
+            if _is_user_output_node(node):
+                continue
             node.replace_all_uses_with(cat_node)
         changed = True
 
@@ -13446,8 +14701,12 @@ def _fold_inverse_permute_round_trips(exported_program):
             and node_users[0].op == "call_function"
             and str(node_users[0].target) == "aten.contiguous.default"
         ):
+            if _is_user_output_node(node_users[0]):
+                continue
             node_users[0].replace_all_uses_with(folded_pad)
         else:
+            if _is_user_output_node(node):
+                continue
             node.replace_all_uses_with(folded_pad)
         changed = True
 
@@ -13522,8 +14781,12 @@ def _fold_inverse_permute_round_trips(exported_program):
             and inverse_users[0].op == "call_function"
             and str(inverse_users[0].target) == "aten.contiguous.default"
         ):
+            if _is_user_output_node(inverse_users[0]):
+                continue
             inverse_users[0].replace_all_uses_with(folded_sigmoid)
         else:
+            if _is_user_output_node(inverse_node):
+                continue
             inverse_node.replace_all_uses_with(folded_sigmoid)
         changed = True
 
@@ -13548,8 +14811,7 @@ def _fold_inverse_permute_round_trips(exported_program):
                 source_shape = [int(v) for v in list(source_tensor.shape)]
         if source_shape is None or len(source_shape) != 4:
             continue
-        non_singleton_axes = [idx for idx, dim in enumerate(source_shape) if int(dim) > 1]
-        if len(non_singleton_axes) != 1 or int(non_singleton_axes[0]) != 3:
+        if int(source_shape[3]) != 1:
             continue
         reshaped_shape = [int(source_shape[0]), int(source_shape[3]), int(source_shape[1]), int(source_shape[2])]
         with graph.inserting_before(node):
@@ -13565,9 +14827,64 @@ def _fold_inverse_permute_round_trips(exported_program):
             and node_users[0].op == "call_function"
             and str(node_users[0].target) == "aten.contiguous.default"
         ):
+            if _is_user_output_node(node_users[0]):
+                continue
             node_users[0].replace_all_uses_with(folded_reshape)
         else:
+            if _is_user_output_node(node):
+                continue
             node.replace_all_uses_with(folded_reshape)
+        changed = True
+
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+            or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+        ):
+            continue
+        mul_node = node.args[0]
+        if (
+            not isinstance(mul_node, torch.fx.Node)
+            or mul_node.op != "call_function"
+            or str(mul_node.target) != "aten.mul.Tensor"
+            or len(mul_node.args) != 2
+        ):
+            continue
+        nhwc_source = None
+        scalar_arg = None
+        if isinstance(mul_node.args[0], torch.fx.Node):
+            nhwc_source = _match_nhwc_singleton_view_source(mul_node.args[0])
+            scalar_arg = mul_node.args[1]
+        if nhwc_source is None and isinstance(mul_node.args[1], torch.fx.Node):
+            nhwc_source = _match_nhwc_singleton_view_source(mul_node.args[1])
+            scalar_arg = mul_node.args[0]
+        if nhwc_source is None or isinstance(scalar_arg, torch.fx.Node):
+            continue
+        with graph.inserting_before(mul_node):
+            folded_mul = graph.call_function(
+                mul_node.target,
+                args=(
+                    nhwc_source if mul_node.args[0] is not scalar_arg else scalar_arg,
+                    scalar_arg if mul_node.args[0] is not scalar_arg else nhwc_source,
+                ),
+                kwargs=dict(mul_node.kwargs),
+            )
+        folded_mul.meta = dict(getattr(node, "meta", {}))
+        inverse_users = list(node.users)
+        if (
+            len(inverse_users) == 1
+            and inverse_users[0].op == "call_function"
+            and str(inverse_users[0].target) == "aten.contiguous.default"
+        ):
+            if _is_user_output_node(inverse_users[0]):
+                continue
+            inverse_users[0].replace_all_uses_with(folded_mul)
+        else:
+            if _is_user_output_node(node):
+                continue
+            node.replace_all_uses_with(folded_mul)
         changed = True
 
     for node in list(graph.nodes):
@@ -13656,8 +14973,12 @@ def _fold_inverse_permute_round_trips(exported_program):
             and inverse_users[0].op == "call_function"
             and str(inverse_users[0].target) == "aten.contiguous.default"
         ):
+            if _is_user_output_node(inverse_users[0]):
+                continue
             inverse_users[0].replace_all_uses_with(folded_mul)
         else:
+            if _is_user_output_node(node):
+                continue
             node.replace_all_uses_with(folded_mul)
         changed = True
 
@@ -13704,8 +15025,12 @@ def _fold_inverse_permute_round_trips(exported_program):
             and inverse_users[0].op == "call_function"
             and str(inverse_users[0].target) == "aten.contiguous.default"
         ):
+            if _is_user_output_node(inverse_users[0]):
+                continue
             inverse_users[0].replace_all_uses_with(folded_binary)
         else:
+            if _is_user_output_node(node):
+                continue
             node.replace_all_uses_with(folded_binary)
         changed = True
     if changed:
@@ -13793,6 +15118,13 @@ def _fold_nhwc_binary_expr_trees_in_exported_program(exported_program):
     if graph_module is None:
         return exported_program
     graph = graph_module.graph
+    graph_signature = getattr(exported_program, "graph_signature", None)
+    user_output_names = set()
+    if graph_signature is not None:
+        try:
+            user_output_names = {str(name) for name in list(graph_signature.user_outputs)}
+        except Exception:
+            user_output_names = set()
     changed = False
     binary_targets = {
         "aten.add.Tensor",
@@ -13805,6 +15137,9 @@ def _fold_nhwc_binary_expr_trees_in_exported_program(exported_program):
         if not isinstance(arg, (list, tuple)):
             return None
         return [int(v) for v in arg]
+
+    def _is_user_output_node(node):
+        return isinstance(node, torch.fx.Node) and str(node.name) in user_output_names
 
     def _rank4_shape(node):
         if not isinstance(node, torch.fx.Node):
@@ -13888,21 +15223,21 @@ def _fold_nhwc_binary_expr_trees_in_exported_program(exported_program):
                 return None
             if _rank4_shape(lhs) is None or _rank4_shape(rhs) is None:
                 return None
-                with graph.inserting_before(node):
-                    folded_binary = graph.call_function(
-                        node.target,
-                        args=(lhs, rhs),
-                        kwargs=dict(node.kwargs),
-                    )
-                lhs_shape = _rank4_shape(lhs)
-                folded_binary.meta = (
-                    _shape_meta_from_node(lhs, lhs_shape)
-                    if lhs_shape is not None
-                    else dict(getattr(lhs, "meta", {}))
+            with graph.inserting_before(node):
+                folded_binary = graph.call_function(
+                    node.target,
+                    args=(lhs, rhs),
+                    kwargs=dict(node.kwargs),
                 )
-                folded_expr_cache[node] = folded_binary
-                return folded_binary
-            return None
+            lhs_shape = _rank4_shape(lhs)
+            folded_binary.meta = (
+                _shape_meta_from_node(lhs, lhs_shape)
+                if lhs_shape is not None
+                else dict(getattr(lhs, "meta", {}))
+            )
+            folded_expr_cache[node] = folded_binary
+            return folded_binary
+        return None
 
     def _materialize_nhwc(node, insert_before_node):
         source_shape = _rank4_shape(node)
@@ -13946,6 +15281,8 @@ def _fold_nhwc_binary_expr_trees_in_exported_program(exported_program):
             lhs_source = _match_nhwc_materialize_source(node.args[0])
             rhs_source = _match_nhwc_materialize_source(node.args[1])
             if lhs_source is None or rhs_source is None:
+                continue
+            if lhs_source is node.args[0] and rhs_source is node.args[1]:
                 continue
             lhs_shape = _rank4_shape(lhs_source)
             rhs_shape = _rank4_shape(rhs_source)
@@ -14014,8 +15351,12 @@ def _fold_nhwc_binary_expr_trees_in_exported_program(exported_program):
                 and node_users[0].op == "call_function"
                 and str(node_users[0].target) == "aten.contiguous.default"
             ):
+                if _is_user_output_node(node_users[0]):
+                    continue
                 node_users[0].replace_all_uses_with(folded_source)
             else:
+                if _is_user_output_node(node):
+                    continue
                 node.replace_all_uses_with(folded_source)
             changed = True
 
@@ -14027,9 +15368,459 @@ def _fold_nhwc_binary_expr_trees_in_exported_program(exported_program):
 
 def _optimize_exported_program(exported_program):
     exported_program = _prune_alias_nodes(exported_program)
+    exported_program = _fold_singleton_channel_split_permute_bridges_in_exported_program(exported_program)
     exported_program = _fold_inverse_permute_round_trips(exported_program)
     exported_program = _fold_layout_preserving_permute_chains(exported_program)
     exported_program = _fold_nhwc_binary_expr_trees_in_exported_program(exported_program)
+    return exported_program
+
+def _postprocess_saved_exported_program(exported_program):
+    graph_module = getattr(exported_program, "graph_module", None)
+    if graph_module is None:
+        return exported_program
+    graph = graph_module.graph
+    graph_signature = getattr(exported_program, "graph_signature", None)
+    user_output_names = set()
+    if graph_signature is not None:
+        try:
+            user_output_names = {str(name) for name in list(graph_signature.user_outputs)}
+        except Exception:
+            user_output_names = set()
+    changed = False
+
+    def _normalize_perm(arg):
+        if not isinstance(arg, (list, tuple)):
+            return None
+        return [int(v) for v in arg]
+
+    def _is_user_output_node(node):
+        return isinstance(node, torch.fx.Node) and str(node.name) in user_output_names
+
+    def _rank4_shape(node):
+        if not isinstance(node, torch.fx.Node):
+            return None
+        meta_val = getattr(node, "meta", {}).get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            shape = [int(v) for v in list(meta_val.shape)]
+            return shape if len(shape) == 4 else None
+        return None
+
+    def _shape_meta_like(node, shape):
+        meta = dict(getattr(node, "meta", {}))
+        meta_val = meta.get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            try:
+                meta["val"] = torch.empty(
+                    tuple(int(v) for v in shape),
+                    dtype=meta_val.dtype,
+                    device="meta",
+                )
+            except Exception:
+                pass
+        return meta
+
+    def _shape_list_from_arg(arg):
+        if not isinstance(arg, (list, tuple)):
+            return None
+        try:
+            return [int(v) for v in list(arg)]
+        except Exception:
+            return None
+
+    def _is_scalar_like(value):
+        if not isinstance(value, torch.fx.Node):
+            return True
+        meta_val = getattr(value, "meta", {}).get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            return int(meta_val.numel()) == 1
+        if value.op == "get_attr" and isinstance(value.target, str):
+            tensor = getattr(graph_module, value.target, None)
+            if isinstance(tensor, torch.Tensor):
+                return int(tensor.numel()) == 1
+        return False
+
+    def _match_permute_chain_source(node, perm):
+        if not isinstance(node, torch.fx.Node):
+            return None
+        if (
+            node.op == "call_function"
+            and str(node.target) == "aten.permute.default"
+            and len(node.args) >= 2
+            and _normalize_perm(node.args[1]) == perm
+            and isinstance(node.args[0], torch.fx.Node)
+        ):
+            return node.args[0]
+        if (
+            node.op == "call_function"
+            and str(node.target) == "aten.contiguous.default"
+            and len(node.args) >= 1
+        ):
+            return _match_permute_chain_source(node.args[0], perm)
+        return None
+
+    def _convert_nhwc_pad_to_nchw_pad(pad_values):
+        values = [int(v) for v in list(pad_values)]
+        if len(values) % 2 != 0 or len(values) > 8:
+            return None
+        nhwc_inner_to_outer = ["C", "W", "H", "N"]
+        nchw_inner_to_outer = ["W", "H", "C", "N"]
+        semantic_pairs = {name: [0, 0] for name in nhwc_inner_to_outer}
+        pair_count = len(values) // 2
+        for idx in range(pair_count):
+            semantic_pairs[nhwc_inner_to_outer[idx]] = [
+                values[idx * 2],
+                values[idx * 2 + 1],
+            ]
+        output_pairs = [semantic_pairs[name] for name in nchw_inner_to_outer]
+        last_nonzero = -1
+        for idx, pair in enumerate(output_pairs):
+            if pair != [0, 0]:
+                last_nonzero = idx
+        if last_nonzero < 0:
+            return []
+        flattened = []
+        for pair in output_pairs[: last_nonzero + 1]:
+            flattened.extend(pair)
+        return flattened
+
+    def _match_cat_input_fold_source(node):
+        source = _match_permute_chain_source(node, [0, 2, 3, 1])
+        if source is not None:
+            return source
+        if (
+            isinstance(node, torch.fx.Node)
+            and node.op == "call_function"
+            and str(node.target) == "aten.pad.default"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], torch.fx.Node)
+        ):
+            pad_source = _match_permute_chain_source(node.args[0], [0, 2, 3, 1])
+            if pad_source is None:
+                return None
+            nchw_pad = _convert_nhwc_pad_to_nchw_pad(node.args[1])
+            if nchw_pad is None:
+                return None
+            return (pad_source, nchw_pad, tuple(node.args[2:]), dict(node.kwargs))
+        return None
+
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.contiguous.default"
+            or len(node.args) < 1
+            or not isinstance(node.args[0], torch.fx.Node)
+        ):
+            continue
+        permute_node = node.args[0]
+        if (
+            permute_node.op != "call_function"
+            or str(permute_node.target) != "aten.permute.default"
+            or len(permute_node.args) < 2
+            or _normalize_perm(permute_node.args[1]) != [0, 2, 3, 1]
+            or not isinstance(permute_node.args[0], torch.fx.Node)
+        ):
+            continue
+        source = permute_node.args[0]
+        for user in list(node.users):
+            if (
+                user.op == "call_function"
+                and str(user.target) == "aten.permute.default"
+                and len(user.args) >= 2
+                and _normalize_perm(user.args[1]) == [0, 3, 1, 2]
+            ):
+                user_users = list(user.users)
+                if (
+                    len(user_users) == 1
+                    and user_users[0].op == "call_function"
+                    and str(user_users[0].target) == "aten.contiguous.default"
+                ):
+                    user_users[0].replace_all_uses_with(source)
+                else:
+                    user.replace_all_uses_with(source)
+                changed = True
+
+    while True:
+        local_changed = False
+        for split_node in list(graph.nodes):
+            if (
+                split_node.op != "call_function"
+                or str(split_node.target) != "aten.tensor_split.sections"
+                or len(split_node.args) < 3
+            ):
+                continue
+            split_input = split_node.args[0]
+            if not (
+                isinstance(split_input, torch.fx.Node)
+                and split_input.op == "call_function"
+                and str(split_input.target) == "aten.contiguous.default"
+                and len(split_input.args) >= 1
+                and isinstance(split_input.args[0], torch.fx.Node)
+            ):
+                continue
+            permute_node = split_input.args[0]
+            if (
+                permute_node.op != "call_function"
+                or str(permute_node.target) != "aten.permute.default"
+                or len(permute_node.args) < 2
+                or _normalize_perm(permute_node.args[1]) != [0, 2, 3, 1]
+                or not isinstance(permute_node.args[0], torch.fx.Node)
+            ):
+                continue
+            if int(split_node.args[2]) != 3:
+                continue
+            base_source = permute_node.args[0]
+            base_shape = _rank4_shape(base_source)
+            if base_shape is None or int(base_shape[1]) <= 0:
+                continue
+            getitem_users = []
+            for user in list(split_node.users):
+                if (
+                    user.op != "call_function"
+                    or str(user.target) != "<built-in function getitem>"
+                    or len(user.args) < 2
+                    or user.args[0] is not split_node
+                ):
+                    getitem_users = []
+                    break
+                getitem_users.append(user)
+            if len(getitem_users) == 0:
+                continue
+
+            with graph.inserting_before(split_node):
+                new_split = graph.call_function(
+                    torch.ops.aten.tensor_split.sections,
+                    args=(base_source, 1, 1),
+                    kwargs=dict(split_node.kwargs),
+                )
+            new_split.meta = dict(getattr(split_node, "meta", {}))
+
+            cf_shape = [int(base_shape[0]), 1, int(base_shape[2]), int(base_shape[3])]
+            nhwc_shape = [int(base_shape[0]), int(base_shape[2]), int(base_shape[3]), 1]
+
+            for getitem_node in list(getitem_users):
+                split_index = int(getitem_node.args[1])
+                with graph.inserting_before(getitem_node):
+                    new_getitem = graph.call_function(
+                        getitem_node.target,
+                        args=(new_split, split_index),
+                        kwargs=dict(getitem_node.kwargs),
+                    )
+                new_getitem.meta = _shape_meta_like(getitem_node, cf_shape)
+                nhwc_holder = [None]
+
+                def _get_nhwc_view(insert_before_node):
+                    if nhwc_holder[0] is not None:
+                        return nhwc_holder[0]
+                    with graph.inserting_before(insert_before_node):
+                        nhwc_holder[0] = graph.call_function(
+                            torch.ops.aten.reshape.default,
+                            args=(new_getitem, nhwc_shape),
+                            kwargs={},
+                        )
+                    nhwc_holder[0].meta = _shape_meta_like(getitem_node, nhwc_shape)
+                    return nhwc_holder[0]
+
+                for user in list(getitem_node.users):
+                    if (
+                        user.op == "call_function"
+                        and str(user.target) == "aten.reshape.default"
+                        and len(user.args) >= 2
+                        and _shape_list_from_arg(user.args[1]) == cf_shape
+                    ):
+                        user.replace_all_uses_with(new_getitem)
+                        local_changed = True
+                        changed = True
+                        continue
+                    if (
+                        user.op == "call_function"
+                        and str(user.target) in {
+                            "aten.add.Tensor",
+                            "aten.div.Tensor",
+                            "aten.mul.Tensor",
+                            "aten.sub.Tensor",
+                        }
+                        and len(user.args) == 2
+                        and (
+                            (user.args[0] is getitem_node and _is_scalar_like(user.args[1]))
+                            or (user.args[1] is getitem_node and _is_scalar_like(user.args[0]))
+                        )
+                    ):
+                        user.replace_input_with(getitem_node, new_getitem)
+                        user.meta = _shape_meta_like(user, cf_shape)
+                        local_changed = True
+                        changed = True
+                        continue
+                    replacement = _get_nhwc_view(user)
+                    user.replace_input_with(getitem_node, replacement)
+                    local_changed = True
+                    changed = True
+
+            if local_changed:
+                graph.eliminate_dead_code()
+                graph.lint()
+                graph_module.recompile()
+                break
+        if not local_changed:
+            break
+
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+            or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+        ):
+            continue
+        source = node.args[0]
+        source_shape = _rank4_shape(source)
+        if source_shape is None or int(source_shape[3]) != 1:
+            continue
+        reshaped_shape = [int(source_shape[0]), 1, int(source_shape[1]), int(source_shape[2])]
+        with graph.inserting_before(node):
+            folded_reshape = graph.call_function(
+                torch.ops.aten.reshape.default,
+                args=(source, reshaped_shape),
+                kwargs={},
+            )
+        folded_reshape.meta = _shape_meta_like(node, reshaped_shape)
+        node_users = list(node.users)
+        if (
+            len(node_users) == 1
+            and node_users[0].op == "call_function"
+            and str(node_users[0].target) == "aten.contiguous.default"
+        ):
+            node_users[0].replace_all_uses_with(folded_reshape)
+        else:
+            node.replace_all_uses_with(folded_reshape)
+        changed = True
+
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+            or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+        ):
+            continue
+        cat_node = node.args[0]
+        if (
+            not isinstance(cat_node, torch.fx.Node)
+            or cat_node.op != "call_function"
+            or str(cat_node.target) != "aten.cat.default"
+            or len(cat_node.args) < 1
+        ):
+            continue
+        cat_inputs_arg = cat_node.args[0]
+        if not isinstance(cat_inputs_arg, (list, tuple)):
+            continue
+        cat_dim = None
+        if len(cat_node.args) >= 2:
+            cat_dim = int(cat_node.args[1])
+        elif "dim" in cat_node.kwargs:
+            cat_dim = int(cat_node.kwargs["dim"])
+        if cat_dim != 3:
+            continue
+        folded_inputs = []
+        for cat_input in list(cat_inputs_arg):
+            folded_source = _match_cat_input_fold_source(cat_input)
+            if folded_source is None:
+                folded_inputs = []
+                break
+            if isinstance(folded_source, tuple):
+                source_node, nchw_pad, pad_args_tail, pad_kwargs = folded_source
+                if _rank4_shape(source_node) is None:
+                    folded_inputs = []
+                    break
+                with graph.inserting_before(cat_node):
+                    folded_pad = graph.call_function(
+                        torch.ops.aten.pad.default,
+                        args=(source_node, nchw_pad, *pad_args_tail),
+                        kwargs=pad_kwargs,
+                    )
+                folded_pad.meta = dict(getattr(cat_input, "meta", {}))
+                folded_inputs.append(folded_pad)
+            else:
+                if _rank4_shape(folded_source) is None:
+                    folded_inputs = []
+                    break
+                folded_inputs.append(folded_source)
+        if len(folded_inputs) != len(list(cat_inputs_arg)):
+            continue
+        folded_cat_kwargs = dict(cat_node.kwargs)
+        folded_cat_args = (folded_inputs, 1)
+        if "dim" in folded_cat_kwargs:
+            folded_cat_kwargs["dim"] = 1
+            folded_cat_args = (folded_inputs,)
+        cat_node.args = folded_cat_args
+        cat_node.kwargs = folded_cat_kwargs
+        cat_node.meta = dict(getattr(node, "meta", {}))
+        node_users = list(node.users)
+        if (
+            len(node_users) == 1
+            and node_users[0].op == "call_function"
+            and str(node_users[0].target) == "aten.contiguous.default"
+        ):
+            if _is_user_output_node(node_users[0]):
+                continue
+            node_users[0].replace_all_uses_with(cat_node)
+        else:
+            if _is_user_output_node(node):
+                continue
+            node.replace_all_uses_with(cat_node)
+        changed = True
+
+    for node in list(graph.nodes):
+        if (
+            node.op != "call_function"
+            or str(node.target) != "aten.permute.default"
+            or len(node.args) < 2
+            or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+        ):
+            continue
+        cat_node = node.args[0]
+        if (
+            not isinstance(cat_node, torch.fx.Node)
+            or cat_node.op != "call_function"
+            or str(cat_node.target) != "aten.cat.default"
+            or len(cat_node.args) < 2
+            or not isinstance(cat_node.args[0], (list, tuple))
+            or int(cat_node.args[1]) != 3
+        ):
+            continue
+        folded_inputs = []
+        for cat_input in list(cat_node.args[0]):
+            input_shape = _rank4_shape(cat_input)
+            if input_shape is None or int(input_shape[3]) != 1:
+                folded_inputs = []
+                break
+            reshaped_shape = [int(input_shape[0]), 1, int(input_shape[1]), int(input_shape[2])]
+            with graph.inserting_before(cat_node):
+                folded_input = graph.call_function(
+                    torch.ops.aten.reshape.default,
+                    args=(cat_input, reshaped_shape),
+                    kwargs={},
+                )
+            folded_input.meta = _shape_meta_like(cat_input, reshaped_shape)
+            folded_inputs.append(folded_input)
+        if len(folded_inputs) != len(list(cat_node.args[0])):
+            continue
+        cat_node.args = (folded_inputs, 1)
+        cat_node.meta = dict(getattr(node, "meta", {}))
+        node_users = list(node.users)
+        if (
+            len(node_users) == 1
+            and node_users[0].op == "call_function"
+            and str(node_users[0].target) == "aten.contiguous.default"
+        ):
+            node_users[0].replace_all_uses_with(cat_node)
+        else:
+            node.replace_all_uses_with(cat_node)
+        changed = True
+
+    if changed:
+        graph.eliminate_dead_code()
+        graph.lint()
+        graph_module.recompile()
     return exported_program
 
 with torch.no_grad():
@@ -14040,6 +15831,18 @@ except Exception:
     with torch.no_grad():
         exported = torch.export.export(model, example_inputs)
     torch.export.save(exported, str(exported_program_path))
+postprocessed_exported_program_path = exported_program_path.with_name(
+    exported_program_path.stem + "_postprocess.pt2"
+)
+try:
+    postprocessed_exported = _postprocess_saved_exported_program(torch.export.load(str(exported_program_path)))
+    torch.export.save(postprocessed_exported, str(postprocessed_exported_program_path))
+    postprocessed_exported_program_path.replace(exported_program_path)
+except Exception:
+    try:
+        postprocessed_exported_program_path.unlink(missing_ok=True)
+    except Exception:
+        pass
 print(json.dumps({"file_name": exported_program_path.name}))
 """
     child_payload, last_error_message = _run_generated_package_export_child(
@@ -14067,6 +15870,15 @@ print(json.dumps({"file_name": exported_program_path.name}))
                 f"package_dir={package_dir} details={last_error_message}"
             )
         return None
+    try:
+        _fold_inverse_permute_round_trips_in_exported_program_archive(exported_program_path)
+    except Exception as ex:
+        if raise_on_failure:
+            raise ModelIRPyTorchExportError(
+                "ExportedProgram archive inverse-permute cleanup failed for the generated native PyTorch package. "
+                f"package_dir={package_dir} artifact={exported_program_path} details={ex}"
+            ) from ex
+        last_error_message = str(ex)
     try:
         _strip_stack_traces_from_exported_program_archive(exported_program_path)
     except Exception as ex:
@@ -14133,6 +15945,1708 @@ def _strip_stack_traces_from_exported_program_archive(exported_program_path: Pat
     except Exception:
         temp_archive_path.unlink(missing_ok=True)
         raise
+
+
+def _fold_inverse_permute_round_trips_in_exported_program_archive(
+    exported_program_path: Path,
+) -> None:
+    archive_path = Path(exported_program_path)
+    if not archive_path.exists():
+        raise FileNotFoundError(f"ExportedProgram archive not found. path={archive_path}")
+
+    exported_program = torch.export.load(str(archive_path))
+    graph_module = getattr(exported_program, "graph_module", None)
+    if graph_module is None:
+        return
+    graph = graph_module.graph
+    graph_signature = getattr(exported_program, "graph_signature", None)
+    changed = False
+
+    def _normalize_perm(arg: Any) -> Optional[List[int]]:
+        if not isinstance(arg, (list, tuple)):
+            return None
+        return [int(v) for v in arg]
+
+    def _is_scalar_like(value: Any) -> bool:
+        if not isinstance(value, torch.fx.Node):
+            return True
+        meta_val = getattr(value, "meta", {}).get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            return int(meta_val.numel()) == 1
+        if value.op == "get_attr" and isinstance(value.target, str):
+            tensor = getattr(graph_module, value.target, None)
+            if isinstance(tensor, torch.Tensor):
+                return int(tensor.numel()) == 1
+        return False
+
+    def _rank_shape(node: Any) -> Optional[List[int]]:
+        if not isinstance(node, torch.fx.Node):
+            return None
+        meta_val = getattr(node, "meta", {}).get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            return [int(v) for v in list(meta_val.shape)]
+        if node.op == "get_attr" and isinstance(node.target, str):
+            tensor = getattr(graph_module, node.target, None)
+            if isinstance(tensor, torch.Tensor):
+                return [int(v) for v in list(tensor.shape)]
+        return None
+
+    def _shape_meta_from_node(node: torch.fx.Node, shape: Sequence[int]) -> Dict[str, Any]:
+        meta = dict(getattr(node, "meta", {}))
+        meta_val = meta.get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            try:
+                meta["val"] = torch.empty(
+                    tuple(int(v) for v in shape),
+                    dtype=meta_val.dtype,
+                    device="meta",
+                )
+            except Exception:
+                pass
+        return meta
+
+    def _nchw_singleton_shape_from_nhwc(node: Any) -> Optional[List[int]]:
+        source_shape = _rank_shape(node)
+        if source_shape is None or len(source_shape) != 4 or int(source_shape[3]) != 1:
+            return None
+        return [int(source_shape[0]), 1, int(source_shape[1]), int(source_shape[2])]
+
+    scalar_binary_targets = {
+        "aten.add.Tensor",
+        "aten.maximum.default",
+        "aten.minimum.default",
+        "aten.mul.Tensor",
+        "aten.sub.Tensor",
+        "aten.div.Tensor",
+    }
+
+    def _broadcast_shapes(lhs: Optional[List[int]], rhs: Optional[List[int]]) -> Optional[List[int]]:
+        if lhs is None:
+            return rhs
+        if rhs is None:
+            return lhs
+        result: List[int] = []
+        for lhs_dim, rhs_dim in zip(reversed(lhs), reversed(rhs)):
+            if lhs_dim == rhs_dim:
+                result.append(int(lhs_dim))
+            elif lhs_dim == 1:
+                result.append(int(rhs_dim))
+            elif rhs_dim == 1:
+                result.append(int(lhs_dim))
+            else:
+                return None
+        if len(lhs) > len(rhs):
+            result.extend(reversed(lhs[: len(lhs) - len(rhs)]))
+        elif len(rhs) > len(lhs):
+            result.extend(reversed(rhs[: len(rhs) - len(lhs)]))
+        result.reverse()
+        return [int(v) for v in result]
+
+    def _shape_arg_list(arg: Any) -> Optional[List[int]]:
+        if not isinstance(arg, (list, tuple)):
+            return None
+        shape: List[int] = []
+        for dim in arg:
+            if not isinstance(dim, (int, bool)):
+                return None
+            shape.append(int(dim))
+        return shape
+
+    def _first_meta_source_node(node: torch.fx.Node) -> Optional[torch.fx.Node]:
+        for arg in node.args:
+            if isinstance(arg, torch.fx.Node) and _rank_shape(arg) is not None:
+                return arg
+            if isinstance(arg, (list, tuple)):
+                for item in arg:
+                    if isinstance(item, torch.fx.Node) and _rank_shape(item) is not None:
+                        return item
+        return None
+
+    placeholder_constant_tensors: Dict[str, torch.Tensor] = {}
+    mutable_input_specs: List[torch.export.graph_signature.InputSpec] = list(
+        getattr(exported_program.graph_signature, "input_specs", ())
+    )
+    if graph_signature is not None:
+        for input_spec in list(mutable_input_specs):
+            arg = getattr(input_spec, "arg", None)
+            placeholder_name = str(getattr(arg, "name", ""))
+            if placeholder_name == "":
+                continue
+            kind_name = str(getattr(input_spec, "kind", ""))
+            target_name = str(getattr(input_spec, "target", ""))
+            tensor_value: Optional[torch.Tensor] = None
+            if "PARAMETER" in kind_name or "BUFFER" in kind_name:
+                candidate = exported_program.state_dict.get(target_name, None)
+                if isinstance(candidate, torch.Tensor):
+                    tensor_value = candidate
+            elif "CONSTANT_TENSOR" in kind_name:
+                candidate = exported_program.constants.get(target_name, None)
+                if not isinstance(candidate, torch.Tensor):
+                    candidate = exported_program.tensor_constants.get(target_name, None)
+                if isinstance(candidate, torch.Tensor):
+                    tensor_value = candidate
+            if isinstance(tensor_value, torch.Tensor):
+                placeholder_constant_tensors[placeholder_name] = tensor_value.detach()
+
+    def _constant_meta_from_tensor(reference_node: torch.fx.Node, value: torch.Tensor) -> Dict[str, Any]:
+        meta = dict(getattr(reference_node, "meta", {}))
+        try:
+            meta["val"] = torch.empty(
+                tuple(int(v) for v in list(value.shape)),
+                dtype=value.dtype,
+                device="meta",
+            )
+        except Exception:
+            pass
+        return meta
+
+    def _make_unique_folded_constant_names(base_name: str) -> Tuple[str, str]:
+        sanitized = re.sub(r"[^0-9A-Za-z_]+", "_", str(base_name)).strip("_")
+        if sanitized == "":
+            sanitized = "folded_const"
+        if sanitized[0].isdigit():
+            sanitized = f"const_{sanitized}"
+        target_candidate = f"folded_const_{sanitized}"
+        suffix = 0
+        existing_placeholder_names = {str(node.name) for node in graph.nodes if node.op == "placeholder"}
+        existing_targets = {
+            str(getattr(input_spec, "target", ""))
+            for input_spec in mutable_input_specs
+            if getattr(input_spec, "target", None) is not None
+        }
+        placeholder_candidate = f"c_{target_candidate}"
+        while target_candidate in existing_targets or placeholder_candidate in existing_placeholder_names:
+            suffix += 1
+            target_candidate = f"folded_const_{sanitized}_{suffix}"
+            placeholder_candidate = f"c_{target_candidate}"
+        return placeholder_candidate, target_candidate
+
+    def _insert_folded_constant_placeholder(reference_node: torch.fx.Node, value: torch.Tensor) -> torch.fx.Node:
+        placeholder_name, target_name = _make_unique_folded_constant_names(str(reference_node.name))
+        insert_before_node = next(
+            (
+                node
+                for node in graph.nodes
+                if node.op == "placeholder" and str(node.name) == "in_t"
+            ),
+            next((node for node in graph.nodes if node.op != "placeholder"), None),
+        )
+        if insert_before_node is None:
+            raise RuntimeError("Could not find insertion point for folded constant placeholder.")
+        with graph.inserting_before(insert_before_node):
+            placeholder_node = graph.placeholder(placeholder_name)
+        placeholder_node.meta = _constant_meta_from_tensor(reference_node, value)
+        placeholder_constant_tensors[placeholder_name] = value.detach().clone()
+        exported_program.constants[target_name] = value.detach().clone()
+        exported_program.tensor_constants[target_name] = value.detach().clone()
+        insert_index = next(
+            (
+                index
+                for index, input_spec in enumerate(mutable_input_specs)
+                if str(getattr(input_spec, "kind", "")) == "InputKind.USER_INPUT"
+            ),
+            len(mutable_input_specs),
+        )
+        mutable_input_specs.insert(
+            insert_index,
+            torch.export.graph_signature.InputSpec(
+                kind=torch.export.graph_signature.InputKind.CONSTANT_TENSOR,
+                arg=torch.export.graph_signature.TensorArgument(name=placeholder_name),
+                target=target_name,
+            ),
+        )
+        return placeholder_node
+
+    constant_foldable_targets = {
+        "aten.add.Tensor",
+        "aten.cat.default",
+        "aten.clamp.default",
+        "aten.contiguous.default",
+        "aten.div.Tensor",
+        "aten.exp.default",
+        "aten.leaky_relu.default",
+        "aten.matmul.default",
+        "aten.maximum.default",
+        "aten.minimum.default",
+        "aten.mul.Tensor",
+        "aten.neg.default",
+        "aten.pad.default",
+        "aten.permute.default",
+        "aten.relu.default",
+        "aten.reshape.default",
+        "aten.sigmoid.default",
+        "aten.slice.Tensor",
+        "aten.sub.Tensor",
+    }
+
+    constant_value_cache: Dict[str, Optional[torch.Tensor]] = {}
+
+    def _constant_value_from_arg(arg: Any) -> Optional[Any]:
+        if isinstance(arg, torch.fx.Node):
+            return _constant_tensor_value(arg)
+        if isinstance(arg, dict):
+            dict_values: Dict[Any, Any] = {}
+            for key, value in arg.items():
+                folded_value = _constant_value_from_arg(value)
+                if folded_value is None and isinstance(value, torch.fx.Node):
+                    return None
+                if folded_value is None and not isinstance(value, torch.fx.Node):
+                    folded_value = value
+                dict_values[key] = folded_value
+            return dict_values
+        if isinstance(arg, (list, tuple)):
+            values: List[Any] = []
+            for item in list(arg):
+                item_value = _constant_value_from_arg(item)
+                if item_value is None and isinstance(item, torch.fx.Node):
+                    return None
+                if item_value is None and not isinstance(item, torch.fx.Node):
+                    item_value = item
+                values.append(item_value)
+            return type(arg)(values)
+        return arg
+
+    def _constant_tensor_value(node: torch.fx.Node) -> Optional[torch.Tensor]:
+        cached = constant_value_cache.get(str(node.name), None)
+        if str(node.name) in constant_value_cache:
+            return cached
+        result: Optional[torch.Tensor] = None
+        if node.op == "placeholder":
+            candidate = placeholder_constant_tensors.get(str(node.name), None)
+            if isinstance(candidate, torch.Tensor):
+                result = candidate
+        elif node.op == "get_attr" and isinstance(node.target, str):
+            candidate = getattr(graph_module, node.target, None)
+            if isinstance(candidate, torch.Tensor):
+                result = candidate.detach()
+        elif (
+            node.op == "call_function"
+            and callable(node.target)
+            and str(node.target) in constant_foldable_targets
+        ):
+            evaluated_args = _constant_value_from_arg(node.args)
+            evaluated_kwargs = _constant_value_from_arg(dict(node.kwargs))
+            if evaluated_args is not None and evaluated_kwargs is not None:
+                try:
+                    with torch.no_grad():
+                        candidate = node.target(*tuple(evaluated_args), **dict(evaluated_kwargs))
+                    if isinstance(candidate, torch.Tensor):
+                        result = candidate.detach()
+                except Exception:
+                    result = None
+        constant_value_cache[str(node.name)] = result
+        return result
+
+    def _infer_tensor_shape(node: torch.fx.Node) -> Optional[List[int]]:
+        if node.op != "call_function":
+            return _rank_shape(node)
+        target = str(node.target)
+        if target == "aten.contiguous.default" and len(node.args) >= 1:
+            return _rank_shape(node.args[0])
+        if target in {
+            "aten.clamp.default",
+            "aten.relu.default",
+            "aten.exp.default",
+            "aten.neg.default",
+            "aten.sigmoid.default",
+            "aten.leaky_relu.default",
+        } and len(node.args) >= 1:
+            return _rank_shape(node.args[0])
+        if target in scalar_binary_targets and len(node.args) == 2:
+            return _broadcast_shapes(_rank_shape(node.args[0]), _rank_shape(node.args[1]))
+        if target == "aten.reshape.default" and len(node.args) >= 2:
+            return _shape_arg_list(node.args[1])
+        if target == "aten.permute.default" and len(node.args) >= 2:
+            source_shape = _rank_shape(node.args[0])
+            perm = _shape_arg_list(node.args[1])
+            if source_shape is None or perm is None or len(source_shape) != len(perm):
+                return None
+            return [int(source_shape[int(axis)]) for axis in perm]
+        if target == "aten.cat.default" and len(node.args) >= 2:
+            cat_inputs = node.args[0]
+            cat_dim_arg = node.args[1]
+            if not isinstance(cat_inputs, (list, tuple)) or not isinstance(cat_dim_arg, (int, bool)):
+                return None
+            input_shapes = [_rank_shape(inp) for inp in cat_inputs if isinstance(inp, torch.fx.Node)]
+            if len(input_shapes) != len(cat_inputs) or len(input_shapes) == 0 or any(shape is None for shape in input_shapes):
+                return None
+            cat_dim = int(cat_dim_arg)
+            base_shape = list(input_shapes[0] or [])
+            if cat_dim < 0:
+                cat_dim += len(base_shape)
+            if cat_dim < 0 or cat_dim >= len(base_shape):
+                return None
+            base_shape[cat_dim] = sum(int((shape or base_shape)[cat_dim]) for shape in input_shapes)
+            return base_shape
+        if target == "aten.slice.Tensor" and len(node.args) >= 4:
+            source_shape = _rank_shape(node.args[0])
+            if source_shape is None:
+                return None
+            dim_arg = node.args[1]
+            start_arg = node.args[2]
+            end_arg = node.args[3]
+            if not isinstance(dim_arg, (int, bool)):
+                return None
+            if not isinstance(start_arg, (int, bool)):
+                return None
+            if not isinstance(end_arg, (int, bool)):
+                return None
+            dim = int(dim_arg)
+            start = int(start_arg)
+            end = int(end_arg)
+            if dim < 0:
+                dim += len(source_shape)
+            if dim < 0 or dim >= len(source_shape):
+                return None
+            output_shape = list(source_shape)
+            output_shape[dim] = max(0, end - start)
+            return output_shape
+        if target == "aten.pad.default" and len(node.args) >= 2:
+            source_shape = _rank_shape(node.args[0])
+            pad = _shape_arg_list(node.args[1])
+            if source_shape is None or pad is None or len(source_shape) != 4 or len(pad) != 4:
+                return None
+            output_shape = list(source_shape)
+            output_shape[3] += int(pad[0]) + int(pad[1])
+            output_shape[2] += int(pad[2]) + int(pad[3])
+            return output_shape
+        return _rank_shape(node)
+
+    def _repair_inferred_meta_shapes() -> bool:
+        inferred_changed = False
+        for node in list(graph.nodes):
+            if not isinstance(node, torch.fx.Node):
+                continue
+            inferred_shape = _infer_tensor_shape(node)
+            if inferred_shape is None:
+                continue
+            current_shape = _rank_shape(node)
+            if current_shape == inferred_shape:
+                continue
+            meta_source = _first_meta_source_node(node)
+            if meta_source is None:
+                continue
+            node.meta = _shape_meta_from_node(meta_source, inferred_shape)
+            inferred_changed = True
+        if inferred_changed:
+            graph_module.recompile()
+        return inferred_changed
+
+    def _run_one_pass() -> bool:
+        local_changed = False
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) != "aten.reshape.default"
+                or len(node.args) < 2
+                or not isinstance(node.args[0], torch.fx.Node)
+            ):
+                continue
+            source_node = node.args[0]
+            source_shape = _rank_shape(source_node)
+            reshape_shape = _shape_arg_list(node.args[1])
+            if (
+                source_shape is None
+                or reshape_shape is None
+                or len(source_shape) != len(reshape_shape)
+                or [int(v) for v in source_shape] != [int(v) for v in reshape_shape]
+            ):
+                continue
+            node.replace_all_uses_with(source_node)
+            local_changed = True
+
+        for node in list(graph.nodes):
+            if node.op != "call_function" or str(node.target) not in constant_foldable_targets:
+                continue
+            constant_value = _constant_tensor_value(node)
+            if not isinstance(constant_value, torch.Tensor):
+                continue
+            folded_const_node = _insert_folded_constant_placeholder(node, constant_value)
+            node.replace_all_uses_with(folded_const_node)
+            local_changed = True
+
+        for width_matmul_node in list(graph.nodes):
+            if (
+                width_matmul_node.op != "call_function"
+                or str(width_matmul_node.target) != "aten.matmul.default"
+                or len(width_matmul_node.args) != 2
+                or not isinstance(width_matmul_node.args[0], torch.fx.Node)
+                or not isinstance(width_matmul_node.args[1], torch.fx.Node)
+            ):
+                continue
+            width_const_node = width_matmul_node.args[0]
+            trailing_reshape_node = width_matmul_node.args[1]
+            if (
+                trailing_reshape_node.op != "call_function"
+                or str(trailing_reshape_node.target) != "aten.reshape.default"
+                or len(trailing_reshape_node.args) < 2
+                or not isinstance(trailing_reshape_node.args[0], torch.fx.Node)
+            ):
+                continue
+            trailing_reshape_shape = _shape_arg_list(trailing_reshape_node.args[1])
+            if (
+                trailing_reshape_shape is None
+                or len(trailing_reshape_shape) != 4
+                or int(trailing_reshape_shape[3]) != 1
+            ):
+                continue
+
+            height_matmul_node = trailing_reshape_node.args[0]
+            if (
+                height_matmul_node.op != "call_function"
+                or str(height_matmul_node.target) != "aten.matmul.default"
+                or len(height_matmul_node.args) != 2
+                or not isinstance(height_matmul_node.args[0], torch.fx.Node)
+                or not isinstance(height_matmul_node.args[1], torch.fx.Node)
+            ):
+                continue
+            height_const_node = height_matmul_node.args[0]
+            leading_reshape_node = height_matmul_node.args[1]
+            if (
+                leading_reshape_node.op != "call_function"
+                or str(leading_reshape_node.target) != "aten.reshape.default"
+                or len(leading_reshape_node.args) < 2
+                or not isinstance(leading_reshape_node.args[0], torch.fx.Node)
+            ):
+                continue
+
+            source_node = leading_reshape_node.args[0]
+            source_shape = _rank_shape(source_node)
+            leading_reshape_shape = _shape_arg_list(leading_reshape_node.args[1])
+            height_const_shape = _rank_shape(height_const_node)
+            width_const_shape = _rank_shape(width_const_node)
+            if (
+                source_shape is None
+                or len(source_shape) != 4
+                or int(source_shape[1]) != 1
+                or leading_reshape_shape is None
+                or len(leading_reshape_shape) != 3
+                or int(leading_reshape_shape[0]) != int(source_shape[0])
+                or int(leading_reshape_shape[1]) != int(source_shape[2])
+                or int(leading_reshape_shape[2]) != int(source_shape[3])
+                or height_const_shape is None
+                or len(height_const_shape) != 3
+                or int(height_const_shape[2]) != int(source_shape[2])
+                or int(trailing_reshape_shape[0]) != int(source_shape[0])
+                or int(trailing_reshape_shape[1]) != int(height_const_shape[1])
+                or int(trailing_reshape_shape[2]) != int(source_shape[3])
+                or width_const_shape is None
+                or len(width_const_shape) != 4
+                or int(width_const_shape[3]) != int(source_shape[3])
+            ):
+                continue
+
+            height_const_nchw_shape = [
+                int(height_const_shape[0]),
+                1,
+                int(height_const_shape[1]),
+                int(height_const_shape[2]),
+            ]
+            width_const_nchw_shape = [
+                int(width_const_shape[0]),
+                int(width_const_shape[1]),
+                int(width_const_shape[3]),
+                int(width_const_shape[2]),
+            ]
+            folded_height_shape = [
+                int(source_shape[0]),
+                int(source_shape[1]),
+                int(height_const_shape[1]),
+                int(source_shape[3]),
+            ]
+            folded_width_shape = [
+                int(source_shape[0]),
+                int(source_shape[1]),
+                int(height_const_shape[1]),
+                int(width_const_shape[2]),
+            ]
+
+            with graph.inserting_before(height_matmul_node):
+                height_const_nchw = graph.call_function(
+                    torch.ops.aten.reshape.default,
+                    args=(height_const_node, height_const_nchw_shape),
+                    kwargs={},
+                )
+            height_const_nchw.meta = _shape_meta_from_node(height_const_node, height_const_nchw_shape)
+
+            with graph.inserting_before(height_matmul_node):
+                folded_height_matmul = graph.call_function(
+                    height_matmul_node.target,
+                    args=(height_const_nchw, source_node),
+                    kwargs=dict(height_matmul_node.kwargs),
+                )
+            folded_height_matmul.meta = _shape_meta_from_node(source_node, folded_height_shape)
+
+            with graph.inserting_before(width_matmul_node):
+                width_const_nchw = graph.call_function(
+                    torch.ops.aten.permute.default,
+                    args=(width_const_node, [0, 1, 3, 2]),
+                    kwargs={},
+                )
+            width_const_nchw.meta = _shape_meta_from_node(width_const_node, width_const_nchw_shape)
+
+            with graph.inserting_before(width_matmul_node):
+                folded_width_matmul = graph.call_function(
+                    width_matmul_node.target,
+                    args=(folded_height_matmul, width_const_nchw),
+                    kwargs=dict(width_matmul_node.kwargs),
+                )
+            folded_width_matmul.meta = _shape_meta_from_node(source_node, folded_width_shape)
+
+            width_matmul_node.replace_all_uses_with(folded_width_matmul)
+            local_changed = True
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) != "aten.contiguous.default"
+                or len(node.args) < 1
+                or not isinstance(node.args[0], torch.fx.Node)
+            ):
+                continue
+            permute_node = node.args[0]
+            if (
+                permute_node.op != "call_function"
+                or str(permute_node.target) != "aten.permute.default"
+                or len(permute_node.args) < 2
+                or _normalize_perm(permute_node.args[1]) != [0, 2, 3, 1]
+                or not isinstance(permute_node.args[0], torch.fx.Node)
+            ):
+                continue
+            source = permute_node.args[0]
+            for user in list(node.users):
+                if (
+                    user.op == "call_function"
+                    and str(user.target) == "aten.permute.default"
+                    and len(user.args) >= 2
+                    and _normalize_perm(user.args[1]) == [0, 3, 1, 2]
+                ):
+                    user_users = list(user.users)
+                    if (
+                        len(user_users) == 1
+                        and user_users[0].op == "call_function"
+                        and str(user_users[0].target) == "aten.contiguous.default"
+                    ):
+                        user_users[0].replace_all_uses_with(source)
+                    else:
+                        user.replace_all_uses_with(source)
+                    local_changed = True
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) != "aten.contiguous.default"
+                or len(node.args) < 1
+                or not isinstance(node.args[0], torch.fx.Node)
+            ):
+                continue
+            permute_node = node.args[0]
+            if (
+                permute_node.op != "call_function"
+                or str(permute_node.target) != "aten.permute.default"
+                or len(permute_node.args) < 2
+                or _normalize_perm(permute_node.args[1]) != [0, 2, 3, 1]
+                or not isinstance(permute_node.args[0], torch.fx.Node)
+            ):
+                continue
+            source = permute_node.args[0]
+            node_users = list(node.users)
+            if len(node_users) != 1:
+                continue
+            binary_node = node_users[0]
+            if (
+                binary_node.op != "call_function"
+                or str(binary_node.target) not in scalar_binary_targets
+                or len(binary_node.args) != 2
+            ):
+                continue
+            lhs_is_source = binary_node.args[0] is node and _is_scalar_like(binary_node.args[1])
+            rhs_is_source = binary_node.args[1] is node and _is_scalar_like(binary_node.args[0])
+            if not lhs_is_source and not rhs_is_source:
+                continue
+            binary_users = list(binary_node.users)
+            if len(binary_users) != 1:
+                continue
+            inverse_node = binary_users[0]
+            if (
+                inverse_node.op != "call_function"
+                or str(inverse_node.target) != "aten.permute.default"
+                or len(inverse_node.args) < 2
+                or _normalize_perm(inverse_node.args[1]) != [0, 3, 1, 2]
+            ):
+                continue
+            with graph.inserting_before(binary_node):
+                folded_binary = graph.call_function(
+                    binary_node.target,
+                    args=(
+                        source if lhs_is_source else binary_node.args[0],
+                        binary_node.args[1] if lhs_is_source else source,
+                    ),
+                    kwargs=dict(binary_node.kwargs),
+                )
+            folded_binary.meta = dict(getattr(inverse_node, "meta", {}))
+            inverse_users = list(inverse_node.users)
+            if (
+                len(inverse_users) == 1
+                and inverse_users[0].op == "call_function"
+                and str(inverse_users[0].target) == "aten.contiguous.default"
+            ):
+                inverse_users[0].replace_all_uses_with(folded_binary)
+            else:
+                inverse_node.replace_all_uses_with(folded_binary)
+            local_changed = True
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) != "aten.permute.default"
+                or len(node.args) < 2
+                or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+                or not isinstance(node.args[0], torch.fx.Node)
+            ):
+                continue
+            source = node.args[0]
+            nchw_shape = _nchw_singleton_shape_from_nhwc(source)
+            if nchw_shape is None:
+                continue
+            with graph.inserting_before(node):
+                reshape_node = graph.call_function(
+                    torch.ops.aten.reshape.default,
+                    args=(source, nchw_shape),
+                    kwargs={},
+                )
+            reshape_node.meta = _shape_meta_from_node(source, nchw_shape)
+            node_users = list(node.users)
+            if (
+                len(node_users) == 1
+                and node_users[0].op == "call_function"
+                and str(node_users[0].target) == "aten.contiguous.default"
+            ):
+                node_users[0].replace_all_uses_with(reshape_node)
+            else:
+                node.replace_all_uses_with(reshape_node)
+            local_changed = True
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) != "aten.permute.default"
+                or len(node.args) < 2
+                or _normalize_perm(node.args[1]) != [0, 2, 3, 1]
+                or not isinstance(node.args[0], torch.fx.Node)
+            ):
+                continue
+            reshape_node = node.args[0]
+            reshape_shape_arg = reshape_node.args[1] if len(reshape_node.args) >= 2 else None
+            if (
+                reshape_node.op != "call_function"
+                or str(reshape_node.target) != "aten.reshape.default"
+                or len(reshape_node.args) < 2
+                or not isinstance(reshape_node.args[0], torch.fx.Node)
+                or not isinstance(reshape_shape_arg, (list, tuple))
+            ):
+                continue
+            source = reshape_node.args[0]
+            source_shape = _rank_shape(source)
+            if source_shape is None or len(source_shape) != 4 or int(source_shape[3]) != 1:
+                continue
+            expected_shape = _nchw_singleton_shape_from_nhwc(source)
+            if expected_shape is None:
+                continue
+            if [int(v) for v in list(reshape_shape_arg)] != expected_shape:
+                continue
+            node_users = list(node.users)
+            if (
+                len(node_users) == 1
+                and node_users[0].op == "call_function"
+                and str(node_users[0].target) == "aten.contiguous.default"
+            ):
+                node_users[0].replace_all_uses_with(source)
+            else:
+                node.replace_all_uses_with(source)
+            local_changed = True
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) not in scalar_binary_targets
+                or len(node.args) != 2
+            ):
+                continue
+            nhwc_arg = None
+            nchw_arg = None
+            nhwc_index = -1
+            if (
+                isinstance(node.args[0], torch.fx.Node)
+                and isinstance(node.args[1], torch.fx.Node)
+                and _nchw_singleton_shape_from_nhwc(node.args[0]) is not None
+            ):
+                nhwc_arg = node.args[0]
+                nchw_arg = node.args[1]
+                nhwc_index = 0
+            elif (
+                isinstance(node.args[0], torch.fx.Node)
+                and isinstance(node.args[1], torch.fx.Node)
+                and _nchw_singleton_shape_from_nhwc(node.args[1]) is not None
+            ):
+                nhwc_arg = node.args[1]
+                nchw_arg = node.args[0]
+                nhwc_index = 1
+            if nhwc_arg is None or nchw_arg is None:
+                continue
+            nchw_shape = _rank_shape(nchw_arg)
+            target_shape = _nchw_singleton_shape_from_nhwc(nhwc_arg)
+            if (
+                nchw_shape is None
+                or target_shape is None
+                or len(nchw_shape) != 4
+                or nchw_shape != target_shape
+            ):
+                continue
+            with graph.inserting_before(node):
+                reshaped_nhwc = graph.call_function(
+                    torch.ops.aten.reshape.default,
+                    args=(nhwc_arg, target_shape),
+                    kwargs={},
+                )
+            reshaped_nhwc.meta = _shape_meta_from_node(nhwc_arg, target_shape)
+            node.args = (
+                (reshaped_nhwc, nchw_arg)
+                if nhwc_index == 0
+                else (nchw_arg, reshaped_nhwc)
+            )
+            node.meta = _shape_meta_from_node(nchw_arg, target_shape)
+            local_changed = True
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) != "aten.permute.default"
+                or len(node.args) < 2
+                or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+            ):
+                continue
+            cat_node = node.args[0]
+            cat_dim_arg = cat_node.args[1] if isinstance(cat_node, torch.fx.Node) and len(cat_node.args) >= 2 else None
+            if (
+                not isinstance(cat_node, torch.fx.Node)
+                or cat_node.op != "call_function"
+                or str(cat_node.target) != "aten.cat.default"
+                or len(cat_node.args) < 2
+                or not isinstance(cat_node.args[0], (list, tuple))
+                or not isinstance(cat_dim_arg, (int, bool))
+                or int(cat_dim_arg) != 3
+            ):
+                continue
+            folded_inputs = []
+            valid = True
+            for cat_input in list(cat_node.args[0]):
+                if (
+                    not isinstance(cat_input, torch.fx.Node)
+                    or cat_input.op != "call_function"
+                    or str(cat_input.target) != "aten.contiguous.default"
+                    or len(cat_input.args) < 1
+                    or not isinstance(cat_input.args[0], torch.fx.Node)
+                ):
+                    valid = False
+                    break
+                permute_node = cat_input.args[0]
+                if (
+                    permute_node.op != "call_function"
+                    or str(permute_node.target) != "aten.permute.default"
+                    or len(permute_node.args) < 2
+                    or _normalize_perm(permute_node.args[1]) != [0, 2, 3, 1]
+                    or not isinstance(permute_node.args[0], torch.fx.Node)
+                    or _rank_shape(permute_node.args[0]) is None
+                    or len(_rank_shape(permute_node.args[0]) or []) != 4
+                ):
+                    valid = False
+                    break
+                folded_inputs.append(permute_node.args[0])
+            if not valid:
+                continue
+            cat_node.args = (folded_inputs, 1)
+            cat_input_shape = _rank_shape(folded_inputs[0])
+            if cat_input_shape is not None and len(cat_input_shape) == 4:
+                cat_shape = list(cat_input_shape)
+                cat_shape[1] = sum(
+                    int((_rank_shape(inp) or cat_input_shape)[1])
+                    for inp in folded_inputs
+                    if _rank_shape(inp) is not None and len(_rank_shape(inp) or []) == 4
+                )
+                cat_node.meta = _shape_meta_from_node(folded_inputs[0], cat_shape)
+            else:
+                cat_node.meta = dict(getattr(node, "meta", {}))
+            node_users = list(node.users)
+            if (
+                len(node_users) == 1
+                and node_users[0].op == "call_function"
+                and str(node_users[0].target) == "aten.contiguous.default"
+            ):
+                node_users[0].replace_all_uses_with(cat_node)
+            else:
+                node.replace_all_uses_with(cat_node)
+            local_changed = True
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) != "aten.permute.default"
+                or len(node.args) < 2
+                or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+            ):
+                continue
+            cat_node = node.args[0]
+            cat_dim_arg = cat_node.args[1] if isinstance(cat_node, torch.fx.Node) and len(cat_node.args) >= 2 else None
+            if (
+                not isinstance(cat_node, torch.fx.Node)
+                or cat_node.op != "call_function"
+                or str(cat_node.target) != "aten.cat.default"
+                or len(cat_node.args) < 2
+                or not isinstance(cat_node.args[0], (list, tuple))
+                or not isinstance(cat_dim_arg, (int, bool))
+                or int(cat_dim_arg) != 3
+            ):
+                continue
+            folded_inputs = []
+            valid = True
+            for cat_input in list(cat_node.args[0]):
+                if not isinstance(cat_input, torch.fx.Node):
+                    valid = False
+                    break
+                nchw_shape = _nchw_singleton_shape_from_nhwc(cat_input)
+                if nchw_shape is None:
+                    valid = False
+                    break
+                with graph.inserting_before(cat_node):
+                    reshaped_input = graph.call_function(
+                        torch.ops.aten.reshape.default,
+                        args=(cat_input, nchw_shape),
+                        kwargs={},
+                    )
+                reshaped_input.meta = _shape_meta_from_node(cat_input, nchw_shape)
+                folded_inputs.append(reshaped_input)
+            if not valid:
+                continue
+            cat_node.args = (folded_inputs, 1)
+            cat_input_shape = _rank_shape(folded_inputs[0])
+            if cat_input_shape is not None and len(cat_input_shape) == 4:
+                cat_shape = list(cat_input_shape)
+                cat_shape[1] = sum(int((_rank_shape(inp) or cat_input_shape)[1]) for inp in folded_inputs)
+                cat_node.meta = _shape_meta_from_node(folded_inputs[0], cat_shape)
+            node_users = list(node.users)
+            if (
+                len(node_users) == 1
+                and node_users[0].op == "call_function"
+                and str(node_users[0].target) == "aten.contiguous.default"
+            ):
+                node_users[0].replace_all_uses_with(cat_node)
+            else:
+                node.replace_all_uses_with(cat_node)
+            local_changed = True
+
+        layout_preserving_unary_targets = {
+            "aten.clamp.default",
+            "aten.relu.default",
+        }
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) not in layout_preserving_unary_targets
+                or len(node.args) < 1
+                or not isinstance(node.args[0], torch.fx.Node)
+            ):
+                continue
+            permute_node = node.args[0]
+            if (
+                permute_node.op != "call_function"
+                or str(permute_node.target) != "aten.permute.default"
+                or len(permute_node.args) < 2
+                or _normalize_perm(permute_node.args[1]) != [0, 2, 3, 1]
+                or not isinstance(permute_node.args[0], torch.fx.Node)
+            ):
+                continue
+            source = permute_node.args[0]
+            source_shape = _rank_shape(source)
+            if source_shape is None or len(source_shape) != 4 or int(source_shape[1]) != 1:
+                continue
+            node_users = list(node.users)
+            if len(node_users) == 0:
+                continue
+            folded_shape = list(source_shape)
+            valid = True
+            for user in node_users:
+                reshape_arg = user.args[1] if len(user.args) >= 2 else None
+                if (
+                    user.op != "call_function"
+                    or str(user.target) != "aten.reshape.default"
+                    or len(user.args) < 2
+                    or not isinstance(reshape_arg, (list, tuple))
+                ):
+                    valid = False
+                    break
+                reshape_shape = []
+                for dim in reshape_arg:
+                    if not isinstance(dim, (int, bool)):
+                        valid = False
+                        break
+                    reshape_shape.append(int(dim))
+                if not valid or reshape_shape != folded_shape:
+                    valid = False
+                    break
+            if not valid:
+                continue
+            with graph.inserting_before(node):
+                folded_unary = graph.call_function(
+                    node.target,
+                    args=(source, *tuple(node.args[1:])),
+                    kwargs=dict(node.kwargs),
+                )
+            folded_unary.meta = _shape_meta_from_node(source, folded_shape)
+            for user in node_users:
+                user.replace_all_uses_with(folded_unary)
+            local_changed = True
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) != "aten.permute.default"
+                or len(node.args) < 2
+                or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+            ):
+                continue
+            unary_node = node.args[0]
+            if (
+                not isinstance(unary_node, torch.fx.Node)
+                or unary_node.op != "call_function"
+                or str(unary_node.target) not in layout_preserving_unary_targets
+                or len(unary_node.args) < 1
+                or not isinstance(unary_node.args[0], torch.fx.Node)
+            ):
+                continue
+            permute_source = unary_node.args[0]
+            if (
+                permute_source.op != "call_function"
+                or str(permute_source.target) != "aten.permute.default"
+                or len(permute_source.args) < 2
+                or _normalize_perm(permute_source.args[1]) != [0, 2, 3, 1]
+                or not isinstance(permute_source.args[0], torch.fx.Node)
+            ):
+                continue
+            source = permute_source.args[0]
+            with graph.inserting_before(unary_node):
+                folded_unary = graph.call_function(
+                    unary_node.target,
+                    args=(source, *tuple(unary_node.args[1:])),
+                    kwargs=dict(unary_node.kwargs),
+                )
+            folded_unary.meta = dict(getattr(node, "meta", {}))
+            node_users = list(node.users)
+            if (
+                len(node_users) == 1
+                and node_users[0].op == "call_function"
+                and str(node_users[0].target) == "aten.contiguous.default"
+            ):
+                node_users[0].replace_all_uses_with(folded_unary)
+            else:
+                node.replace_all_uses_with(folded_unary)
+            local_changed = True
+
+        for split_node in list(graph.nodes):
+            if (
+                split_node.op != "call_function"
+                or str(split_node.target) != "aten.tensor_split.sections"
+                or len(split_node.args) < 3
+                or int(split_node.args[1]) != 3
+                or int(split_node.args[2]) != 3
+            ):
+                continue
+            cat_node = split_node.args[0]
+            cat_dim_arg = cat_node.args[1] if len(cat_node.args) >= 2 else None
+            if (
+                not isinstance(cat_node, torch.fx.Node)
+                or cat_node.op != "call_function"
+                or str(cat_node.target) != "aten.cat.default"
+                or len(cat_node.args) < 2
+                or not isinstance(cat_node.args[0], (list, tuple))
+                or not isinstance(cat_dim_arg, (int, bool))
+                or int(cat_dim_arg) != 3
+                or len(cat_node.args[0]) != 3
+            ):
+                continue
+            replacement_inputs = list(cat_node.args[0])
+            getitems = []
+            for user in list(split_node.users):
+                if (
+                    user.op != "call_function"
+                    or str(user.target) != "<built-in function getitem>"
+                    or len(user.args) < 2
+                    or user.args[0] is not split_node
+                ):
+                    getitems = []
+                    break
+                getitems.append(user)
+            if len(getitems) != 3:
+                continue
+            valid = True
+            for getitem_node in getitems:
+                split_index = int(getitem_node.args[1])
+                if split_index < 0 or split_index >= 3:
+                    valid = False
+                    break
+                getitem_node.replace_all_uses_with(replacement_inputs[split_index])
+                local_changed = True
+            if not valid:
+                continue
+
+        def _match_nchw_singleton_source(node: Any) -> Optional[torch.fx.Node]:
+            if not isinstance(node, torch.fx.Node):
+                return None
+            if (
+                node.op == "call_function"
+                and str(node.target) == "<built-in function getitem>"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], torch.fx.Node)
+            ):
+                split_node = node.args[0]
+                split_dim_arg = split_node.args[2] if len(split_node.args) >= 3 else None
+                if (
+                    split_node.op == "call_function"
+                    and str(split_node.target) == "aten.tensor_split.sections"
+                    and len(split_node.args) >= 3
+                    and isinstance(split_dim_arg, (int, bool))
+                    and int(split_dim_arg) == 3
+                    and isinstance(split_node.args[0], torch.fx.Node)
+                ):
+                    split_input = split_node.args[0]
+                    if (
+                        split_input.op == "call_function"
+                        and str(split_input.target) == "aten.contiguous.default"
+                        and len(split_input.args) >= 1
+                        and isinstance(split_input.args[0], torch.fx.Node)
+                    ):
+                        permute_node = split_input.args[0]
+                        if (
+                            permute_node.op == "call_function"
+                            and str(permute_node.target) == "aten.permute.default"
+                            and len(permute_node.args) >= 2
+                            and _normalize_perm(permute_node.args[1]) == [0, 2, 3, 1]
+                            and isinstance(permute_node.args[0], torch.fx.Node)
+                        ):
+                            base = permute_node.args[0]
+                            split_index_arg = node.args[1] if len(node.args) >= 2 else None
+                            if not isinstance(split_index_arg, (int, bool)):
+                                return None
+                            split_index = int(split_index_arg)
+                            with graph.inserting_before(node):
+                                return graph.call_function(
+                                    torch.ops.aten.slice.Tensor,
+                                    args=(base, 1, split_index, split_index + 1),
+                                    kwargs={},
+                                )
+            if (
+                node.op == "call_function"
+                and str(node.target) in layout_preserving_unary_targets
+                and len(node.args) >= 1
+                and isinstance(node.args[0], torch.fx.Node)
+            ):
+                permute_input = node.args[0]
+                if (
+                    permute_input.op == "call_function"
+                    and str(permute_input.target) == "aten.permute.default"
+                    and len(permute_input.args) >= 2
+                    and _normalize_perm(permute_input.args[1]) == [0, 2, 3, 1]
+                    and isinstance(permute_input.args[0], torch.fx.Node)
+                ):
+                    with graph.inserting_before(node):
+                        return graph.call_function(
+                            node.target,
+                            args=(permute_input.args[0], *tuple(node.args[1:])),
+                            kwargs=dict(node.kwargs),
+                        )
+            if (
+                node.op == "call_function"
+                and str(node.target) == "aten.permute.default"
+                and len(node.args) >= 2
+                and _normalize_perm(node.args[1]) == [0, 2, 3, 1]
+                and isinstance(node.args[0], torch.fx.Node)
+            ):
+                return node.args[0]
+            return None
+
+        def _nchw_singleton_meta_like(node: torch.fx.Node) -> Dict[str, Any]:
+            meta = dict(getattr(node, "meta", {}))
+            meta_val = meta.get("val", None)
+            if isinstance(meta_val, torch.Tensor) and len(list(meta_val.shape)) == 4:
+                nhwc_shape = [int(v) for v in list(meta_val.shape)]
+                if int(nhwc_shape[3]) == 1:
+                    try:
+                        meta["val"] = torch.empty(
+                            (int(nhwc_shape[0]), 1, int(nhwc_shape[1]), int(nhwc_shape[2])),
+                            dtype=meta_val.dtype,
+                            device="meta",
+                        )
+                    except Exception:
+                        pass
+            return meta
+
+        for split_node in list(graph.nodes):
+            split_dim_arg = split_node.args[2] if len(split_node.args) >= 3 else None
+            split_sections_arg = split_node.args[1] if len(split_node.args) >= 2 else None
+            if (
+                split_node.op != "call_function"
+                or str(split_node.target) != "aten.tensor_split.sections"
+                or len(split_node.args) < 3
+                or not isinstance(split_sections_arg, (int, bool))
+                or int(split_sections_arg) != 3
+                or not isinstance(split_dim_arg, (int, bool))
+                or int(split_dim_arg) != 3
+                or not isinstance(split_node.args[0], torch.fx.Node)
+            ):
+                continue
+            split_input = split_node.args[0]
+            if (
+                split_input.op != "call_function"
+                or str(split_input.target) != "aten.contiguous.default"
+                or len(split_input.args) < 1
+                or not isinstance(split_input.args[0], torch.fx.Node)
+            ):
+                continue
+            permute_node = split_input.args[0]
+            if (
+                permute_node.op != "call_function"
+                or str(permute_node.target) != "aten.permute.default"
+                or len(permute_node.args) < 2
+                or _normalize_perm(permute_node.args[1]) != [0, 2, 3, 1]
+                or not isinstance(permute_node.args[0], torch.fx.Node)
+            ):
+                continue
+            base = permute_node.args[0]
+            getitem_nodes: Dict[int, torch.fx.Node] = {}
+            valid = True
+            for user in list(split_node.users):
+                split_index_arg = user.args[1] if len(user.args) >= 2 else None
+                if (
+                    user.op != "call_function"
+                    or str(user.target) != "<built-in function getitem>"
+                    or user.args[0] is not split_node
+                    or not isinstance(split_index_arg, (int, bool))
+                ):
+                    valid = False
+                    break
+                split_index = int(split_index_arg)
+                if split_index < 0 or split_index >= 3:
+                    valid = False
+                    break
+                getitem_nodes[split_index] = user
+            if not valid or len(getitem_nodes) != 3:
+                continue
+            split_node.args = (base, 3, 1)
+            for getitem_node in getitem_nodes.values():
+                getitem_node.meta = _nchw_singleton_meta_like(getitem_node)
+                for user in list(getitem_node.users):
+                    if (
+                        user.op == "call_function"
+                        and str(user.target) == "aten.permute.default"
+                        and len(user.args) >= 2
+                        and _normalize_perm(user.args[1]) == [0, 3, 1, 2]
+                    ):
+                        permute_users = list(user.users)
+                        if (
+                            len(permute_users) == 1
+                            and permute_users[0].op == "call_function"
+                            and str(permute_users[0].target) == "aten.contiguous.default"
+                        ):
+                            permute_users[0].replace_all_uses_with(getitem_node)
+                        else:
+                            user.replace_all_uses_with(getitem_node)
+                        local_changed = True
+                        continue
+                    if (
+                        user.op == "call_function"
+                        and str(user.target) in scalar_binary_targets
+                        and len(user.args) == 2
+                        and (
+                            (user.args[0] is getitem_node and _is_scalar_like(user.args[1]))
+                            or (user.args[1] is getitem_node and _is_scalar_like(user.args[0]))
+                        )
+                    ):
+                        user.meta = _nchw_singleton_meta_like(getitem_node)
+                        user_users = list(user.users)
+                        if len(user_users) == 1:
+                            reshape_node = user_users[0]
+                            reshape_arg = reshape_node.args[1] if len(reshape_node.args) >= 2 else None
+                            reshape_shape = None
+                            if (
+                                reshape_node.op == "call_function"
+                                and str(reshape_node.target) == "aten.reshape.default"
+                                and len(reshape_node.args) >= 2
+                                and isinstance(reshape_arg, (list, tuple))
+                            ):
+                                reshape_shape = []
+                                for dim in reshape_arg:
+                                    if not isinstance(dim, (int, bool)):
+                                        reshape_shape = None
+                                        break
+                                    reshape_shape.append(int(dim))
+                            user_shape = _rank_shape(user)
+                            if user_shape is not None and reshape_shape == user_shape:
+                                reshape_node.replace_all_uses_with(user)
+                                local_changed = True
+            local_changed = True
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) != "aten.permute.default"
+                or len(node.args) < 2
+                or _normalize_perm(node.args[1]) != [0, 3, 1, 2]
+            ):
+                continue
+            cat_node = node.args[0]
+            cat_dim_arg = cat_node.args[1] if len(cat_node.args) >= 2 else None
+            if (
+                not isinstance(cat_node, torch.fx.Node)
+                or cat_node.op != "call_function"
+                or str(cat_node.target) != "aten.cat.default"
+                or len(cat_node.args) < 2
+                or not isinstance(cat_node.args[0], (list, tuple))
+                or not isinstance(cat_dim_arg, (int, bool))
+                or int(cat_dim_arg) != 3
+            ):
+                continue
+            folded_inputs = []
+            valid = True
+            for cat_input in list(cat_node.args[0]):
+                if not isinstance(cat_input, torch.fx.Node):
+                    valid = False
+                    break
+                folded_input = _match_nchw_singleton_source(cat_input)
+                if folded_input is None:
+                    valid = False
+                    break
+                folded_input.meta = _nchw_singleton_meta_like(cat_input)
+                folded_inputs.append(folded_input)
+            if not valid:
+                continue
+            cat_node.args = (folded_inputs, 1)
+            cat_node.meta = dict(getattr(node, "meta", {}))
+            node_users = list(node.users)
+            if (
+                len(node_users) == 1
+                and node_users[0].op == "call_function"
+                and str(node_users[0].target) == "aten.contiguous.default"
+            ):
+                node_users[0].replace_all_uses_with(cat_node)
+            else:
+                node.replace_all_uses_with(cat_node)
+            local_changed = True
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) != "aten.reshape.default"
+                or len(node.args) < 2
+                or not isinstance(node.args[0], torch.fx.Node)
+            ):
+                continue
+            reshape_shape = [int(v) for v in list(node.args[1])] if isinstance(node.args[1], (list, tuple)) else None
+            if reshape_shape is None or len(reshape_shape) != 4 or int(reshape_shape[1]) != 1:
+                continue
+            binary_node = node.args[0]
+            if (
+                binary_node.op != "call_function"
+                or str(binary_node.target) not in scalar_binary_targets
+                or len(binary_node.args) != 2
+            ):
+                continue
+            permute_input = None
+            scalar_arg = None
+            if isinstance(binary_node.args[0], torch.fx.Node) and _is_scalar_like(binary_node.args[1]):
+                permute_input = binary_node.args[0]
+                scalar_arg = binary_node.args[1]
+            elif isinstance(binary_node.args[1], torch.fx.Node) and _is_scalar_like(binary_node.args[0]):
+                permute_input = binary_node.args[1]
+                scalar_arg = binary_node.args[0]
+            if (
+                not isinstance(permute_input, torch.fx.Node)
+                or permute_input.op != "call_function"
+                or str(permute_input.target) != "aten.permute.default"
+                or len(permute_input.args) < 2
+                or _normalize_perm(permute_input.args[1]) != [0, 2, 3, 1]
+                or not isinstance(permute_input.args[0], torch.fx.Node)
+            ):
+                continue
+            source = permute_input.args[0]
+            with graph.inserting_before(binary_node):
+                folded_binary = graph.call_function(
+                    binary_node.target,
+                    args=(
+                        source if binary_node.args[0] is permute_input else scalar_arg,
+                        scalar_arg if binary_node.args[0] is permute_input else source,
+                    ),
+                    kwargs=dict(binary_node.kwargs),
+                )
+            folded_binary.meta = dict(getattr(node, "meta", {}))
+            node.replace_all_uses_with(folded_binary)
+            local_changed = True
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) != "aten.reshape.default"
+                or len(node.args) < 2
+                or not isinstance(node.args[0], torch.fx.Node)
+                or not isinstance(node.args[1], (list, tuple))
+            ):
+                continue
+            source_shape = _rank_shape(node.args[0])
+            if source_shape is None:
+                continue
+            try:
+                target_shape = [int(v) for v in list(node.args[1])]
+            except Exception:
+                continue
+            if source_shape != target_shape:
+                continue
+            node.replace_all_uses_with(node.args[0])
+            local_changed = True
+
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) != "aten.slice.Tensor"
+                or len(node.args) < 4
+                or not isinstance(node.args[0], torch.fx.Node)
+            ):
+                continue
+            source_shape = _rank_shape(node.args[0])
+            if source_shape is None or len(source_shape) != 4:
+                continue
+            try:
+                dim = int(node.args[1])
+                start = int(node.args[2])
+                end = int(node.args[3])
+            except Exception:
+                continue
+            if dim != 1 or end - start != 1:
+                continue
+            meta_val = getattr(node, "meta", {}).get("val", None)
+            if isinstance(meta_val, torch.Tensor) and list(meta_val.shape) == [source_shape[0], 1, source_shape[2], source_shape[3]]:
+                continue
+            meta = dict(getattr(node, "meta", {}))
+            if isinstance(meta_val, torch.Tensor):
+                try:
+                    meta["val"] = torch.empty(
+                        (int(source_shape[0]), 1, int(source_shape[2]), int(source_shape[3])),
+                        dtype=meta_val.dtype,
+                        device="meta",
+                    )
+                except Exception:
+                    pass
+            node.meta = meta
+            local_changed = True
+
+        for split_node in list(graph.nodes):
+            split_sections_arg = split_node.args[1] if len(split_node.args) >= 2 else None
+            split_dim_arg = split_node.args[2] if len(split_node.args) >= 3 else None
+            if (
+                split_node.op != "call_function"
+                or str(split_node.target) != "aten.tensor_split.sections"
+                or len(split_node.args) < 3
+                or not isinstance(split_node.args[0], torch.fx.Node)
+                or not isinstance(split_sections_arg, (int, bool))
+                or not isinstance(split_dim_arg, (int, bool))
+            ):
+                continue
+            source_shape = _rank_shape(split_node.args[0])
+            if source_shape is None:
+                continue
+            split_dim = int(split_dim_arg)
+            if split_dim < 0:
+                split_dim += len(source_shape)
+            if split_dim < 0 or split_dim >= len(source_shape):
+                continue
+            section_count = int(split_sections_arg)
+            if section_count <= 0:
+                continue
+            dim_size = int(source_shape[split_dim])
+            if dim_size < 0:
+                continue
+            base_extent, remainder = divmod(dim_size, section_count)
+            getitem_users = []
+            valid = True
+            for user in list(split_node.users):
+                split_index_arg = user.args[1] if len(user.args) >= 2 else None
+                if (
+                    user.op != "call_function"
+                    or str(user.target) != "<built-in function getitem>"
+                    or user.args[0] is not split_node
+                    or not isinstance(split_index_arg, (int, bool))
+                ):
+                    valid = False
+                    break
+                split_index = int(split_index_arg)
+                if split_index < 0 or split_index >= section_count:
+                    valid = False
+                    break
+                getitem_users.append((split_index, user))
+            if not valid:
+                continue
+            offset = 0
+            split_bounds = []
+            for split_index in range(section_count):
+                extent = base_extent + (1 if split_index < remainder else 0)
+                split_bounds.append((offset, offset + extent))
+                offset += extent
+            if getitem_users:
+                for split_index, user in getitem_users:
+                    start, end = split_bounds[split_index]
+                    output_shape = list(source_shape)
+                    output_shape[split_dim] = end - start
+                    with graph.inserting_before(user):
+                        slice_node = graph.call_function(
+                            torch.ops.aten.slice.Tensor,
+                            args=(split_node.args[0], split_dim, start, end),
+                            kwargs={},
+                        )
+                    slice_node.meta = _shape_meta_from_node(split_node.args[0], output_shape)
+                    user.replace_all_uses_with(slice_node)
+                    local_changed = True
+                continue
+            for user in list(split_node.users):
+                split_index_arg = user.args[1] if len(user.args) >= 2 else None
+                if (
+                    user.op != "call_function"
+                    or str(user.target) != "<built-in function getitem>"
+                    or user.args[0] is not split_node
+                    or not isinstance(split_index_arg, (int, bool))
+                ):
+                    continue
+                split_index = int(split_index_arg)
+                if split_index < 0 or split_index >= section_count:
+                    continue
+                extent = base_extent + (1 if split_index < remainder else 0)
+                output_shape = list(source_shape)
+                output_shape[split_dim] = extent
+                current_shape = getattr(getattr(user, "meta", {}).get("val", None), "shape", None)
+                if current_shape is not None and list(current_shape) == output_shape:
+                    continue
+                user.meta = _shape_meta_from_node(split_node.args[0], output_shape)
+                local_changed = True
+
+        if local_changed:
+            graph.eliminate_dead_code()
+            graph.lint()
+            graph_module.recompile()
+        return local_changed
+
+    while True:
+        pass_changed = _run_one_pass()
+        repair_changed = _repair_inferred_meta_shapes()
+        if pass_changed or repair_changed:
+            changed = True
+        if not pass_changed and not repair_changed:
+            break
+
+    if not changed:
+        return
+
+    graph.eliminate_dead_code()
+    graph.lint()
+    graph_module.recompile()
+
+    output_node = next((node for node in graph.nodes if node.op == "output"), None)
+    if output_node is not None and len(output_node.args) > 0:
+        output_args = output_node.args[0]
+        if not isinstance(output_args, (list, tuple)):
+            output_args = (output_args,)
+        output_specs = []
+        for arg in output_args:
+            if not isinstance(arg, torch.fx.Node):
+                output_specs = []
+                break
+            output_specs.append(
+                torch.export.graph_signature.OutputSpec(
+                    kind=torch.export.graph_signature.OutputKind.USER_OUTPUT,
+                    arg=torch.export.graph_signature.TensorArgument(name=str(arg.name)),
+                    target=None,
+                )
+            )
+        if output_specs:
+            exported_program._graph_signature = dataclasses.replace(
+                exported_program.graph_signature,
+                input_specs=mutable_input_specs,
+                output_specs=output_specs,
+            )
+    elif list(getattr(exported_program.graph_signature, "input_specs", ())) != mutable_input_specs:
+        exported_program._graph_signature = dataclasses.replace(
+            exported_program.graph_signature,
+            input_specs=mutable_input_specs,
+        )
+
+    with tempfile.NamedTemporaryFile(
+        prefix="onnx2tf_exported_program_post_",
+        suffix=".pt2",
+        delete=False,
+        dir=str(archive_path.parent),
+    ) as tmp_file:
+        temp_archive_path = Path(tmp_file.name)
+    try:
+        torch.export.save(exported_program, str(temp_archive_path))
+        temp_archive_path.replace(archive_path)
+    except Exception:
+        temp_archive_path.unlink(missing_ok=True)
+        raise
+
+
+def _rewrite_generated_model_source_for_exported_program(
+    package_path: Path,
+) -> None:
+    def _convert_nhwc_pad_to_nchw_pad_for_source(pad_values: list[int]) -> list[int] | None:
+        if len(pad_values) % 2 != 0 or len(pad_values) > 8:
+            return None
+        nhwc_inner_to_outer = ["C", "W", "H", "N"]
+        nchw_inner_to_outer = ["W", "H", "C", "N"]
+        semantic_pairs = {name: [0, 0] for name in nhwc_inner_to_outer}
+        pair_count = len(pad_values) // 2
+        for idx in range(pair_count):
+            semantic_pairs[nhwc_inner_to_outer[idx]] = [
+                int(pad_values[idx * 2]),
+                int(pad_values[idx * 2 + 1]),
+            ]
+        output_pairs = [semantic_pairs[name] for name in nchw_inner_to_outer]
+        last_nonzero = -1
+        for idx, pair in enumerate(output_pairs):
+            if pair != [0, 0]:
+                last_nonzero = idx
+        if last_nonzero < 0:
+            return []
+        flattened = []
+        for pair in output_pairs[: last_nonzero + 1]:
+            flattened.extend(pair)
+        return flattened
+
+    model_path = package_path / "model.py"
+    if not model_path.exists():
+        return
+    lines = model_path.read_text(encoding="utf-8").splitlines()
+    assign_re = re.compile(
+        r"^(?P<indent>\s*)(?P<alias>(?:[A-Za-z0-9_]+_public_layout_bridge|in_public_layout_bridge)) = _torch_permute\((?P<input>[A-Za-z0-9_]+), \[0, 2, 3, 1\]\)$"
+    )
+    split_re = re.compile(
+        r"^(?P<indent>\s*)(?P<outputs>[A-Za-z0-9_, ]+) = list\(torch\.tensor_split\((?P<alias>[A-Za-z0-9_]+), (?P<sections>\d+), dim=_normalize_dim\(3, (?P=alias)\.ndim\)\)\)$"
+    )
+    concat_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _apply_concat\(\[(?P<inputs>[A-Za-z0-9_, ]+)\], axis=3, target_shape=\[(?P<shape>[0-9, ]+)\], fused='NONE'\)$"
+    )
+    pad_align_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = F\.pad\(_align_tensor_to_target_shape\((?P<input>[A-Za-z0-9_]+), \[(?P<shape>[0-9, ]+)\]\), \[(?P<pad>[0-9, ]+)\], mode='constant', value=(?P<value>[-0-9.eE]+)\)$"
+    )
+    cf_nhwc_materialize_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\((?P<src>[A-Za-z0-9_]+)\.permute\(0, 2, 3, 1\)\.contiguous\(\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
+    )
+    binary_align_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs0>[A-Za-z0-9_]+), (?P<lhs1>[A-Za-z0-9_]+) = _align_binary_inputs\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+), \[(?P<n>\d+), (?P<c>\d+), (?P<h>\d+), (?P<w>\d+)\]\)$"
+    )
+    singleton_cf_align_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\((?P<expr>.+), \[(?P<n>\d+), 1, (?P<h>\d+), (?P<w>\d+)\]\)$"
+    )
+    changed = False
+    cf_pad_aliases: set[str] = set()
+    cf_aliases: set[str] = set()
+    for index in range(len(lines)):
+        cf_nhwc_materialize_match = cf_nhwc_materialize_re.match(lines[index])
+        if cf_nhwc_materialize_match is not None:
+            alias = str(cf_nhwc_materialize_match.group("lhs"))
+            source = str(cf_nhwc_materialize_match.group("src"))
+            n = int(cf_nhwc_materialize_match.group("n"))
+            h = int(cf_nhwc_materialize_match.group("h"))
+            w = int(cf_nhwc_materialize_match.group("w"))
+            c = int(cf_nhwc_materialize_match.group("c"))
+            for lookahead in range(index + 1, min(index + 5, len(lines))):
+                binary_align_match = binary_align_re.match(lines[lookahead])
+                if binary_align_match is None:
+                    continue
+                if str(binary_align_match.group("a")) != alias:
+                    continue
+                if (
+                    int(binary_align_match.group("n")) == n
+                    and int(binary_align_match.group("c")) == c
+                    and int(binary_align_match.group("h")) == h
+                    and int(binary_align_match.group("w")) == w
+                    and "_cf" in str(binary_align_match.group("b"))
+                ):
+                    indent = str(cf_nhwc_materialize_match.group("indent"))
+                    lines[index] = f"{indent}{alias} = {source}"
+                    cf_aliases.add(alias)
+                    changed = True
+                    break
+        singleton_cf_align_match = singleton_cf_align_re.match(lines[index])
+        if singleton_cf_align_match is not None:
+            expr = str(singleton_cf_align_match.group("expr"))
+            if "_torch_permute(" not in expr and ".permute(" not in expr and ("_nhwc" in expr or "torch." in expr):
+                indent = str(singleton_cf_align_match.group("indent"))
+                lhs = str(singleton_cf_align_match.group("lhs"))
+                n = int(singleton_cf_align_match.group("n"))
+                h = int(singleton_cf_align_match.group("h"))
+                w = int(singleton_cf_align_match.group("w"))
+                lines[index] = f"{indent}{lhs} = torch.reshape({expr}, [{n}, 1, {h}, {w}])"
+                changed = True
+        pad_align_match = pad_align_re.match(lines[index])
+        if pad_align_match is not None:
+            input_name = str(pad_align_match.group("input"))
+            if "_nhwc" not in input_name:
+                try:
+                    pad_values = [int(value.strip()) for value in str(pad_align_match.group("pad")).split(",")]
+                except Exception:
+                    pad_values = []
+                nchw_pad = _convert_nhwc_pad_to_nchw_pad_for_source(pad_values)
+                if nchw_pad is not None:
+                    indent = str(pad_align_match.group("indent"))
+                    lhs = str(pad_align_match.group("lhs"))
+                    value = str(pad_align_match.group("value"))
+                    pad_text = ", ".join(str(v) for v in nchw_pad)
+                    lines[index] = (
+                        f"{indent}{lhs} = F.pad({input_name}, [{pad_text}], mode='constant', value={value})"
+                    )
+                    cf_pad_aliases.add(lhs)
+                    changed = True
+        concat_match = concat_re.match(lines[index])
+        if concat_match is not None:
+            input_names = [name.strip() for name in str(concat_match.group("inputs")).split(",") if name.strip()]
+            if len(input_names) >= 2 and all(
+                ("_cf" in input_name) or (input_name in cf_pad_aliases) or (input_name in cf_aliases)
+                for input_name in input_names
+            ):
+                indent = str(concat_match.group("indent"))
+                lhs = str(concat_match.group("lhs"))
+                lines[index] = f"{indent}{lhs} = torch.cat([{', '.join(input_names)}], dim=1)"
+                cf_aliases.add(lhs)
+                changed = True
+    for index in range(len(lines) - 1):
+        assign_match = assign_re.match(lines[index])
+        if assign_match is None:
+            continue
+        split_match = split_re.match(lines[index + 1])
+        if split_match is None or str(split_match.group("alias")) != str(assign_match.group("alias")):
+            continue
+        indent = str(assign_match.group("indent"))
+        alias = str(assign_match.group("alias"))
+        input_name = str(assign_match.group("input"))
+        outputs = str(split_match.group("outputs"))
+        sections = int(split_match.group("sections"))
+        if sections <= 1:
+            continue
+        lines[index] = f"{indent}{alias} = {input_name}"
+        lines[index + 1] = (
+            f"{indent}{outputs} = list(torch.tensor_split("
+            f"{alias}, {sections}, dim=_normalize_dim(1, {alias}.ndim)))"
+        )
+        changed = True
+    if changed:
+        model_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _build_tflite_backed_metadata_payload(

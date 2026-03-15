@@ -3053,6 +3053,166 @@ def _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir: ModelI
     return {"inserted_rank4_binary_layout_fix_transpose": int(inserted)}
 
 
+def _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Repair rank-4 binary ops where one input remains singleton-channel NCHW
+    ([N,1,H,W]) and the other side is NHWC ([N,H,W,C]).
+    """
+    repaired = 0
+    binary_ops = {"ADD", "MUL", "SUB", "DIV", "MAXIMUM", "MINIMUM"}
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+
+    def _make_unique_tensor_name(base: str) -> str:
+        name = str(base)
+        suffix = 1
+        while name in model_ir.tensors:
+            name = f"{base}_{suffix}"
+            suffix += 1
+        return name
+
+    while True:
+        changed = False
+        for op_idx, op in enumerate(model_ir.operators):
+            if str(op.op_type) not in binary_ops or len(op.inputs) != 2 or len(op.outputs) != 1:
+                continue
+            out_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+            t0 = model_ir.tensors.get(str(op.inputs[0]), None)
+            t1 = model_ir.tensors.get(str(op.inputs[1]), None)
+            if out_tensor is None or t0 is None or t1 is None:
+                continue
+            s0 = [int(v) for v in list(t0.shape)]
+            s1 = [int(v) for v in list(t1.shape)]
+            sout = [int(v) for v in list(out_tensor.shape)]
+            if any(len(v) != 4 or any(int(d) <= 0 for d in v) for v in [s0, s1, sout]):
+                continue
+
+            def _singleton_nchw(shape: List[int]) -> bool:
+                return int(shape[1]) == 1
+
+            def _insert_transpose_adapter(input_index: int, source_name: str, source_tensor: TensorIR, target_shape: List[int]) -> None:
+                perm_name = _make_unique_tensor_name(f"{source_name}_singleton_layout_fix_perm")
+                adapted_name = _make_unique_tensor_name(f"{source_name}_singleton_layout_fix")
+                model_ir.tensors[perm_name] = TensorIR(
+                    name=perm_name,
+                    dtype="INT32",
+                    shape=[4],
+                    shape_signature=[4],
+                    data=np.asarray(perm_nhwc_to_nchw, dtype=np.int32),
+                    is_variable=False,
+                )
+                model_ir.tensors[adapted_name] = TensorIR(
+                    name=adapted_name,
+                    dtype=str(source_tensor.dtype),
+                    shape=[int(v) for v in list(target_shape)],
+                    shape_signature=[int(v) for v in list(target_shape)],
+                    data=None,
+                    is_variable=False,
+                    quantization=_clone_quantization(source_tensor.quantization),
+                )
+                model_ir.operators.insert(
+                    int(op_idx),
+                    OperatorIR(
+                        op_type="TRANSPOSE",
+                        inputs=[str(source_name), str(perm_name)],
+                        outputs=[str(adapted_name)],
+                    ),
+                )
+                _replace_operator_input_at(
+                    model_ir=model_ir,
+                    op=op,
+                    input_index=int(input_index),
+                    new_input_name=str(adapted_name),
+                )
+
+            def _insert_reshape_adapter(input_index: int, source_name: str, source_tensor: TensorIR, target_shape: List[int]) -> None:
+                shape_name = _make_unique_tensor_name(f"{source_name}_singleton_layout_fix_shape")
+                adapted_name = _make_unique_tensor_name(f"{source_name}_singleton_layout_fix")
+                model_ir.tensors[shape_name] = TensorIR(
+                    name=str(shape_name),
+                    dtype="INT32",
+                    shape=[4],
+                    shape_signature=[4],
+                    data=np.asarray(target_shape, dtype=np.int32),
+                    is_variable=False,
+                )
+                model_ir.tensors[adapted_name] = TensorIR(
+                    name=str(adapted_name),
+                    dtype=str(source_tensor.dtype),
+                    shape=[int(v) for v in list(target_shape)],
+                    shape_signature=[int(v) for v in list(target_shape)],
+                    data=None,
+                    is_variable=False,
+                    quantization=_clone_quantization(source_tensor.quantization),
+                )
+                model_ir.operators.insert(
+                    int(op_idx),
+                    OperatorIR(
+                        op_type="RESHAPE",
+                        inputs=[str(source_name), str(shape_name)],
+                        outputs=[str(adapted_name)],
+                        options={"newShape": [int(v) for v in list(target_shape)]},
+                    ),
+                )
+                _replace_operator_input_at(
+                    model_ir=model_ir,
+                    op=op,
+                    input_index=int(input_index),
+                    new_input_name=str(adapted_name),
+                )
+
+            if (
+                _singleton_nchw(s0)
+                and s1[0] == s0[0]
+                and s1[1] == s0[2]
+                and s1[2] == s0[3]
+                and sout == [int(s0[0]), int(s1[3]), int(s0[2]), int(s0[3])]
+            ):
+                _insert_transpose_adapter(1, str(op.inputs[1]), t1, sout)
+                repaired += 1
+                changed = True
+                break
+            if (
+                _singleton_nchw(s1)
+                and s0[0] == s1[0]
+                and s0[1] == s1[2]
+                and s0[2] == s1[3]
+                and sout == [int(s1[0]), int(s0[3]), int(s1[2]), int(s1[3])]
+            ):
+                _insert_transpose_adapter(0, str(op.inputs[0]), t0, sout)
+                repaired += 1
+                changed = True
+                break
+            if (
+                _singleton_nchw(s0)
+                and s1[0] == s0[0]
+                and s1[1] == s0[2]
+                and s1[2] == s0[3]
+                and sout == s1
+            ):
+                _insert_reshape_adapter(0, str(op.inputs[0]), t0, [int(s0[0]), int(s0[2]), int(s0[3]), 1])
+                repaired += 1
+                changed = True
+                break
+            if (
+                _singleton_nchw(s1)
+                and s0[0] == s1[0]
+                and s0[1] == s1[2]
+                and s0[2] == s1[3]
+                and sout == s0
+            ):
+                _insert_reshape_adapter(1, str(op.inputs[1]), t1, [int(s1[0]), int(s1[2]), int(s1[3]), 1])
+                repaired += 1
+                changed = True
+                break
+
+        if not changed:
+            break
+
+    if repaired > 0:
+        _prune_unused_tensors(model_ir)
+    return {"repaired_rank4_binary_singleton_broadcast_layout_mismatch": int(repaired)}
+
+
 def _sanitize_static_shape_signature_consistency(model_ir: ModelIR) -> Dict[str, int]:
     """
     For fully static tensors, keep shape_signature consistent with runtime shape.
@@ -58209,36 +58369,55 @@ def _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir: ModelIR) -
             clip_nhwc_name = ""
             split_nchw_name = ""
             sig_idx = None
-            conv_reshape_idx = None
-            conv_nhwc_name = ""
+            aux_adapter_idx = None
+            aux_nhwc_name = ""
             sub_idx = None
             gate_mul_idx = None
             sig_mul_idx = None
             for mul_idx in [int(v) for v in mul_indices if v is not None]:
                 mul_op = model_ir.operators[int(mul_idx)]
                 mul_inputs = [str(v) for v in list(mul_op.inputs)]
-                maybe_sig_idx = next((producers.get(name, None) for name in mul_inputs if producers.get(name, None) is not None and str(model_ir.operators[int(producers.get(name))].op_type) == "LOGISTIC"), None)
-                if maybe_sig_idx is not None:
-                    sig_idx = int(maybe_sig_idx)
-                    other_name = next(name for name in mul_inputs if name != str(model_ir.operators[int(sig_idx)].outputs[0]))
-                    sub_idx = producers.get(other_name, None)
-                    if sub_idx is None or str(model_ir.operators[int(sub_idx)].op_type) != "SUB":
-                        sig_idx = None
+                found_gated_branch = False
+                for maybe_aux_name in mul_inputs:
+                    maybe_aux_idx = producers.get(maybe_aux_name, None)
+                    if maybe_aux_idx is None:
                         continue
-                    clip_adapter_out = str(model_ir.operators[int(sub_idx)].inputs[1])
-                    clip_adapter_idx = producers.get(clip_adapter_out, None)
-                    if clip_adapter_idx is None or not _is_singleton_layout_reshape(model_ir.operators[int(clip_adapter_idx)]):
-                        sig_idx = None
+                    maybe_aux_op = model_ir.operators[int(maybe_aux_idx)]
+                    if not (
+                        str(maybe_aux_op.op_type) == "LOGISTIC"
+                        or _is_singleton_layout_reshape(maybe_aux_op)
+                    ):
                         continue
+                    other_name = next(name for name in mul_inputs if name != str(maybe_aux_op.outputs[0]))
+                    cand_sub_idx = producers.get(other_name, None)
+                    if cand_sub_idx is None or str(model_ir.operators[int(cand_sub_idx)].op_type) != "SUB":
+                        continue
+                    clip_adapter_out = str(model_ir.operators[int(cand_sub_idx)].inputs[1])
+                    cand_clip_adapter_idx = producers.get(clip_adapter_out, None)
+                    if cand_clip_adapter_idx is None or not _is_singleton_layout_reshape(model_ir.operators[int(cand_clip_adapter_idx)]):
+                        continue
+                    sub_idx = int(cand_sub_idx)
+                    clip_adapter_idx = int(cand_clip_adapter_idx)
                     clip_nhwc_name = str(model_ir.operators[int(clip_adapter_idx)].inputs[0])
-                    conv_nchw_name = str(model_ir.operators[int(sig_idx)].inputs[0])
-                    conv_reshape_idx = producers.get(conv_nchw_name, None)
-                    if conv_reshape_idx is None or not _is_singleton_layout_reshape(model_ir.operators[int(conv_reshape_idx)]):
+                    if str(maybe_aux_op.op_type) == "LOGISTIC":
+                        sig_idx = int(maybe_aux_idx)
+                        aux_input_name = str(maybe_aux_op.inputs[0])
+                        aux_adapter_idx = producers.get(aux_input_name, None)
+                        if aux_adapter_idx is None or not _is_singleton_layout_reshape(model_ir.operators[int(aux_adapter_idx)]):
+                            sig_idx = None
+                            sub_idx = None
+                            clip_adapter_idx = None
+                            clip_nhwc_name = ""
+                            continue
+                        aux_nhwc_name = str(model_ir.operators[int(aux_adapter_idx)].inputs[0])
+                    else:
                         sig_idx = None
-                        continue
-                    conv_nhwc_name = str(model_ir.operators[int(conv_reshape_idx)].inputs[0])
+                        aux_adapter_idx = int(maybe_aux_idx)
+                        aux_nhwc_name = str(maybe_aux_op.inputs[0])
                     sig_mul_idx = int(mul_idx)
-                else:
+                    found_gated_branch = True
+                    break
+                if not found_gated_branch:
                     clip_side = next((name for name in mul_inputs if producers.get(name, None) is not None and _is_singleton_layout_reshape(model_ir.operators[int(producers.get(name))])), None)
                     if clip_side is None:
                         continue
@@ -58246,7 +58425,7 @@ def _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir: ModelIR) -
                     clip_nhwc_name = str(model_ir.operators[int(clip_adapter_idx)].inputs[0])
                     split_nchw_name = next(name for name in mul_inputs if name != clip_side)
                     gate_mul_idx = int(mul_idx)
-            if None in {clip_adapter_idx, sig_idx, conv_reshape_idx, sub_idx, gate_mul_idx, sig_mul_idx}:
+            if None in {clip_adapter_idx, aux_adapter_idx, sub_idx, gate_mul_idx, sig_mul_idx}:
                 continue
 
             split_reshape_idx = producers.get(next((name for name in concat_inputs if name != clip3_nhwc_name and producers.get(name, None) is not None and _is_singleton_layout_reshape(model_ir.operators[int(producers.get(name))]) and str(model_ir.operators[int(producers.get(name))].inputs[0]) == split_nchw_name), ""), None)
@@ -58254,12 +58433,21 @@ def _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir: ModelIR) -
             gate_clip_out = str(model_ir.operators[int(clip_adapter_idx)].outputs[0])
             gate_mul_op = model_ir.operators[int(gate_mul_idx)]
             sub_op = model_ir.operators[int(sub_idx)]
-            sig_op = model_ir.operators[int(sig_idx)]
             sig_mul_op = model_ir.operators[int(sig_mul_idx)]
 
             _set_operator_inputs(model_ir=model_ir, op=gate_mul_op, new_inputs=[clip_nhwc_name if str(v) == gate_clip_out else str(v) for v in list(gate_mul_op.inputs)])
             _set_operator_inputs(model_ir=model_ir, op=sub_op, new_inputs=[clip_nhwc_name if str(v) == gate_clip_out else str(v) for v in list(sub_op.inputs)])
-            _set_operator_inputs(model_ir=model_ir, op=sig_op, new_inputs=[conv_nhwc_name])
+            if sig_idx is not None:
+                sig_op = model_ir.operators[int(sig_idx)]
+                _set_operator_inputs(model_ir=model_ir, op=sig_op, new_inputs=[aux_nhwc_name])
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=sig_mul_op,
+                new_inputs=[
+                    aux_nhwc_name if str(v) == str(model_ir.operators[int(aux_adapter_idx)].outputs[0]) else str(v)
+                    for v in list(sig_mul_op.inputs)
+                ],
+            )
 
             rgb_mul_idx = next((int(user_idx) for user_idx in consumers.get(gate_clip_out, []) if int(user_idx) not in {int(gate_mul_idx), int(sub_idx)} and str(model_ir.operators[int(user_idx)].op_type) == "MUL"), None)
             input_transpose_idx = None
@@ -58287,23 +58475,29 @@ def _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir: ModelIR) -
                 str(model_ir.tensors[split_nchw_name].name),
                 str(gate_mul_op.outputs[0]),
                 str(sub_op.outputs[0]),
-                str(sig_op.outputs[0]),
                 str(sig_mul_op.outputs[0]),
                 str(model_ir.operators[int(add_idx)].outputs[0]),
                 str(model_ir.operators[int(clip3_unary_idx)].outputs[0]),
             ]:
                 _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(tensor_name, None), perm_nchw_to_nhwc)
+            if sig_idx is not None:
+                _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(str(model_ir.operators[int(sig_idx)].outputs[0]), None), perm_nchw_to_nhwc)
 
-            for user_idx in consumers.get(str(clip3_nhwc_name), []):
-                user_op = model_ir.operators[int(user_idx)]
-                _set_operator_inputs(model_ir=model_ir, op=user_op, new_inputs=[clip3_nchw_name if str(v) == clip3_nhwc_name else str(v) for v in list(user_op.inputs)])
             if split_reshape_idx is not None:
                 split_reshape_out = str(model_ir.operators[int(split_reshape_idx)].outputs[0])
                 for user_idx in consumers.get(split_reshape_out, []):
                     user_op = model_ir.operators[int(user_idx)]
                     _set_operator_inputs(model_ir=model_ir, op=user_op, new_inputs=[split_nchw_name if str(v) == split_reshape_out else str(v) for v in list(user_op.inputs)])
 
-            remove_indices = {int(clip_adapter_idx), int(conv_reshape_idx), int(clip3_adapter_idx)}
+            for user_idx in consumers.get(str(clip3_nhwc_name), []):
+                user_op = model_ir.operators[int(user_idx)]
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=user_op,
+                    new_inputs=[clip3_nchw_name if str(v) == clip3_nhwc_name else str(v) for v in list(user_op.inputs)],
+                )
+
+            remove_indices = {int(clip_adapter_idx), int(aux_adapter_idx), int(clip3_adapter_idx)}
             if split_reshape_idx is not None:
                 remove_indices.add(int(split_reshape_idx))
             if input_transpose_idx is not None:
@@ -58321,6 +58515,143 @@ def _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir: ModelIR) -
     if rewritten > 0:
         _prune_unused_tensors(model_ir)
     return {"optimized_singleton_gate_conv_concat_nhwc_bridge_blocks": int(rewritten)}
+
+
+def _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Repair remaining NHWC CONCAT(axis=3) ops that still consume singleton-channel
+    NCHW tensors directly.
+
+    Pattern:
+      CONCAT(axis=3, [..., x_nchw=[N,1,H,W], ... y_nhwc=[N,H,W,1] ...])
+
+    Rewrite:
+      Insert a local RESHAPE adapter for each direct singleton NCHW input:
+        x_nchw -> x_nhwc_adapter=[N,H,W,1]
+      and rewire CONCAT to consume the adapter.
+    """
+    repaired = 0
+    perm_nchw_to_nhwc = [0, 2, 3, 1]
+
+    def _unique_tensor_name(base: str) -> str:
+        existing = set(model_ir.tensors.keys())
+        existing.update(str(v) for op in list(model_ir.operators) for v in list(op.outputs))
+        if str(base) not in existing:
+            return str(base)
+        suffix = 1
+        while f"{base}_{suffix}" in existing:
+            suffix += 1
+        return f"{base}_{suffix}"
+
+    while True:
+        changed = False
+        producers = _build_tensor_producer_map(model_ir)
+        for concat_idx, concat_op in enumerate(model_ir.operators):
+            if str(concat_op.op_type) != "CONCATENATION" or int(concat_op.options.get("axis", 3)) != 3:
+                continue
+            concat_out_name = str(concat_op.outputs[0]) if len(concat_op.outputs) == 1 else ""
+            concat_out_tensor = model_ir.tensors.get(concat_out_name, None)
+            if (
+                concat_out_tensor is None
+                or not _is_fully_known_positive_shape(concat_out_tensor.shape)
+                or len(list(concat_out_tensor.shape)) != 4
+            ):
+                continue
+            target_shape = [int(v) for v in list(concat_out_tensor.shape)]
+            if int(target_shape[3]) <= 0:
+                continue
+
+            new_inputs: List[str] = []
+            adapters_to_insert: List[Tuple[str, str, str, List[int]]] = []
+            valid = True
+            needs_repair = False
+
+            for input_name in [str(v) for v in list(concat_op.inputs)]:
+                input_tensor = model_ir.tensors.get(str(input_name), None)
+                if (
+                    input_tensor is None
+                    or not _is_fully_known_positive_shape(input_tensor.shape)
+                    or len(list(input_tensor.shape)) != 4
+                ):
+                    valid = False
+                    break
+                input_shape = [int(v) for v in list(input_tensor.shape)]
+                if input_shape == target_shape[:-1] + [1]:
+                    new_inputs.append(str(input_name))
+                    continue
+                nhwc_shape = _permute_shape(input_shape, perm_nchw_to_nhwc)
+                if (
+                    nhwc_shape is not None
+                    and [int(v) for v in list(nhwc_shape)] == target_shape[:-1] + [1]
+                    and int(input_shape[1]) == 1
+                ):
+                    adapter_name = _unique_tensor_name(f"{input_name}_nhwc_concat_adapter")
+                    shape_name = _unique_tensor_name(f"{adapter_name}_reshape_shape")
+                    adapters_to_insert.append(
+                        (
+                            str(input_name),
+                            str(adapter_name),
+                            str(shape_name),
+                            [int(v) for v in list(nhwc_shape)],
+                        )
+                    )
+                    new_inputs.append(str(adapter_name))
+                    needs_repair = True
+                    continue
+                valid = False
+                break
+
+            if not valid or not needs_repair:
+                continue
+
+            insert_pos = int(concat_idx)
+            for source_name, adapter_name, shape_name, nhwc_shape in adapters_to_insert:
+                source_tensor = model_ir.tensors.get(source_name, None)
+                source_dtype = str(source_tensor.dtype) if source_tensor is not None else "FLOAT32"
+                source_quant = _clone_quantization(source_tensor.quantization) if source_tensor is not None else None
+                model_ir.tensors[shape_name] = TensorIR(
+                    name=str(shape_name),
+                    dtype="INT32",
+                    shape=[len(nhwc_shape)],
+                    shape_signature=[len(nhwc_shape)],
+                    data=np.asarray(nhwc_shape, dtype=np.int32),
+                    is_variable=False,
+                    quantization=None,
+                )
+                model_ir.tensors[adapter_name] = TensorIR(
+                    name=str(adapter_name),
+                    dtype=str(source_dtype),
+                    shape=[int(v) for v in list(nhwc_shape)],
+                    shape_signature=[int(v) for v in list(nhwc_shape)],
+                    data=None,
+                    is_variable=False,
+                    quantization=_clone_quantization(source_quant),
+                )
+                model_ir.operators.insert(
+                    int(insert_pos),
+                    OperatorIR(
+                        op_type="RESHAPE",
+                        inputs=[str(source_name), str(shape_name)],
+                        outputs=[str(adapter_name)],
+                        options={"newShape": [int(v) for v in list(nhwc_shape)]},
+                    ),
+                )
+                insert_pos += 1
+
+            concat_op = next((op for op in model_ir.operators if op is concat_op), None)
+            if concat_op is None:
+                continue
+            _set_operator_inputs(model_ir=model_ir, op=concat_op, new_inputs=[str(v) for v in list(new_inputs)])
+            repaired += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    if repaired > 0:
+        _prune_unused_tensors(model_ir)
+    return {"repaired_mixed_singleton_nchw_inputs_for_nhwc_concat": int(repaired)}
 
 
 def _optimize_transpose_unary_split_concat_single_post_nchw(model_ir: ModelIR) -> Dict[str, int]:
@@ -58655,6 +58986,226 @@ def _optimize_transpose_split_channelwise_tail_to_single_post_nchw(model_ir: Mod
     if optimized > 0:
         _prune_unused_tensors(model_ir)
     return {"optimized_transpose_split_channelwise_tail_to_single_post_nchw": int(optimized)}
+
+
+def _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Propagate NHWC through a local channelwise tail that currently starts with
+    NHWC->NCHW TRANSPOSE -> BINARY -> BINARY -> SPLIT.
+    """
+    optimized = 0
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+    perm_nchw_to_nhwc = [0, 2, 3, 1]
+    unary_ops = {"RELU", "RELU6", "RELU_0_TO_1", "LOGISTIC", "HARD_SWISH", "LEAKY_RELU", "TANH", "NEG", "EXP"}
+    binary_ops = {"ADD", "SUB", "MUL", "DIV", "MAXIMUM", "MINIMUM"}
+
+    def _unique_tensor_name(base: str) -> str:
+        name = str(base)
+        suffix = 1
+        while name in model_ir.tensors:
+            name = f"{base}_{suffix}"
+            suffix += 1
+        return name
+
+    def _is_probably_nhwc_tensor(name: str) -> bool:
+        tensor = model_ir.tensors.get(str(name), None)
+        if tensor is None or not _is_fully_known_positive_shape(tensor.shape):
+            return False
+        shape = [int(v) for v in list(tensor.shape)]
+        if len(shape) != 4:
+            return False
+        if int(shape[1]) <= 4 and int(shape[2]) > 4 and int(shape[3]) > 4:
+            return False
+        return True
+
+    while True:
+        changed = False
+        producers = _build_tensor_producer_map(model_ir)
+        consumers = _build_tensor_consumer_map(model_ir)
+
+        for pre_idx, pre_op in enumerate(model_ir.operators):
+            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+                continue
+            if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
+                continue
+            pre_in_name = str(pre_op.inputs[0])
+            pre_out_name = str(pre_op.outputs[0])
+            pre_users = [int(v) for v in consumers.get(pre_out_name, [])]
+            if len(pre_users) != 1:
+                continue
+            first_idx = int(pre_users[0])
+            first_op = model_ir.operators[int(first_idx)]
+            if str(first_op.op_type) not in binary_ops or len(first_op.outputs) != 1:
+                continue
+            first_out_name = str(first_op.outputs[0])
+            second_users = [int(v) for v in consumers.get(first_out_name, [])]
+            if len(second_users) != 1:
+                continue
+            second_idx = int(second_users[0])
+            second_op = model_ir.operators[int(second_idx)]
+            if str(second_op.op_type) not in binary_ops or len(second_op.outputs) != 1:
+                continue
+            second_out_name = str(second_op.outputs[0])
+            split_users = [int(v) for v in consumers.get(second_out_name, [])]
+            if len(split_users) != 1:
+                continue
+            split_idx = int(split_users[0])
+            split_op = model_ir.operators[int(split_idx)]
+            if str(split_op.op_type) != "SPLIT" or len(split_op.inputs) < 2:
+                continue
+            axis_tensor = model_ir.tensors.get(str(split_op.inputs[0]), None)
+            axis_vals = _read_const_ints_from_tensor(axis_tensor)
+            if axis_vals is None or len(axis_vals) != 1 or int(axis_vals[0]) != 1:
+                continue
+
+            ext_tensor_inputs = []
+            for candidate_op in [first_op, second_op]:
+                for input_name in [str(v) for v in list(candidate_op.inputs)]:
+                    if input_name in {pre_out_name, first_out_name, second_out_name}:
+                        continue
+                    tensor = model_ir.tensors.get(input_name, None)
+                    if tensor is None or tensor.data is not None:
+                        continue
+                    ext_tensor_inputs.append(str(input_name))
+            if any(not _is_probably_nhwc_tensor(name) for name in ext_tensor_inputs):
+                continue
+
+            _replace_tensor_inputs(model_ir, pre_out_name, pre_in_name)
+            _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(first_out_name, None), perm_nchw_to_nhwc)
+            _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(second_out_name, None), perm_nchw_to_nhwc)
+
+            if axis_tensor is not None:
+                axis_users = [int(v) for v in consumers.get(str(split_op.inputs[0]), [])]
+                if set(axis_users) == {int(split_idx)}:
+                    _write_const_ints_to_tensor(axis_tensor, [3])
+                else:
+                    axis_name = _unique_tensor_name(f"{str(split_op.inputs[0])}_nhwc")
+                    model_ir.tensors[axis_name] = TensorIR(
+                        name=axis_name,
+                        dtype=str(axis_tensor.dtype),
+                        shape=[1],
+                        shape_signature=[1],
+                        data=np.asarray([3], dtype=np.int32),
+                        is_variable=False,
+                        quantization=_clone_quantization(axis_tensor.quantization),
+                    )
+                    _set_operator_inputs(model_ir=model_ir, op=split_op, new_inputs=[axis_name, str(split_op.inputs[1])])
+
+            nhwc_tensors = {str(pre_in_name), str(first_out_name), str(second_out_name)}
+            for out_name in list(split_op.outputs):
+                _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(str(out_name), None), perm_nchw_to_nhwc)
+                nhwc_tensors.add(str(out_name))
+
+            propagated = True
+            while propagated:
+                propagated = False
+                for op in model_ir.operators:
+                    if len(op.outputs) != 1:
+                        continue
+                    out_name = str(op.outputs[0])
+                    if out_name in nhwc_tensors:
+                        continue
+                    op_type = str(op.op_type)
+                    if op_type in unary_ops and len(op.inputs) == 1 and str(op.inputs[0]) in nhwc_tensors:
+                        _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(out_name, None), perm_nchw_to_nhwc)
+                        nhwc_tensors.add(out_name)
+                        propagated = True
+                        continue
+                    if op_type in binary_ops and len(op.inputs) == 2:
+                        tensor_inputs = [
+                            str(v)
+                            for v in list(op.inputs)
+                            if model_ir.tensors.get(str(v), None) is not None and model_ir.tensors[str(v)].data is None
+                        ]
+                        if len(tensor_inputs) == 0:
+                            continue
+                        if all(name in nhwc_tensors or _is_probably_nhwc_tensor(name) for name in tensor_inputs):
+                            _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(out_name, None), perm_nchw_to_nhwc)
+                            nhwc_tensors.add(out_name)
+                            propagated = True
+                        continue
+                    if op_type == "CONCATENATION" and len(op.inputs) > 0 and all(str(v) in nhwc_tensors for v in list(op.inputs)):
+                        axis = int(op.options.get("axis", -1))
+                        if axis in {1, -3}:
+                            op.options["axis"] = 3
+                        _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(out_name, None), perm_nchw_to_nhwc)
+                        nhwc_tensors.add(out_name)
+                        propagated = True
+                        continue
+                    if op_type == "SPLIT" and len(op.inputs) >= 2 and str(op.inputs[1]) in nhwc_tensors:
+                        axis_tensor_local = model_ir.tensors.get(str(op.inputs[0]), None)
+                        axis_vals_local = _read_const_ints_from_tensor(axis_tensor_local)
+                        if axis_vals_local is None or len(axis_vals_local) != 1 or int(axis_vals_local[0]) not in {1, 3}:
+                            continue
+                        if int(axis_vals_local[0]) == 1:
+                            axis_users = [int(v) for v in consumers.get(str(op.inputs[0]), [])]
+                            op_idx = next((idx for idx, candidate in enumerate(model_ir.operators) if candidate is op), None)
+                            if op_idx is None:
+                                continue
+                            if set(axis_users) == {int(op_idx)}:
+                                _write_const_ints_to_tensor(axis_tensor_local, [3])
+                            else:
+                                axis_name = _unique_tensor_name(f"{str(op.inputs[0])}_nhwc")
+                                model_ir.tensors[axis_name] = TensorIR(
+                                    name=axis_name,
+                                    dtype=str(axis_tensor_local.dtype),
+                                    shape=[1],
+                                    shape_signature=[1],
+                                    data=np.asarray([3], dtype=np.int32),
+                                    is_variable=False,
+                                    quantization=_clone_quantization(axis_tensor_local.quantization),
+                                )
+                                _set_operator_inputs(model_ir=model_ir, op=op, new_inputs=[axis_name, str(op.inputs[1])])
+                        for split_out_name in list(op.outputs):
+                            _permute_tensor_metadata_if_rank_matches(model_ir.tensors.get(str(split_out_name), None), perm_nchw_to_nhwc)
+                            nhwc_tensors.add(str(split_out_name))
+                        propagated = True
+
+            output_name = str(model_ir.outputs[0]) if len(model_ir.outputs) == 1 else ""
+            if output_name != "" and output_name in nhwc_tensors:
+                prod_idx = producers.get(output_name, None)
+                if prod_idx is not None:
+                    prod_op = model_ir.operators[int(prod_idx)]
+                    output_nhwc_name = _unique_tensor_name(f"{output_name}_nhwc")
+                    out_tensor = model_ir.tensors.get(output_name, None)
+                    if out_tensor is not None and _is_fully_known_positive_shape(out_tensor.shape):
+                        nhwc_shape = [int(v) for v in list(out_tensor.shape)]
+                        nhwc_sig = [int(v) for v in list(out_tensor.shape_signature)] if out_tensor.shape_signature is not None else list(nhwc_shape)
+                        model_ir.tensors[output_nhwc_name] = TensorIR(
+                            name=output_nhwc_name,
+                            dtype=str(out_tensor.dtype),
+                            shape=list(nhwc_shape),
+                            shape_signature=list(nhwc_sig),
+                            data=None,
+                            is_variable=False,
+                            quantization=_clone_quantization(out_tensor.quantization),
+                        )
+                        _set_operator_outputs(model_ir=model_ir, op=prod_op, new_outputs=[output_nhwc_name])
+                        perm_name = _unique_tensor_name(f"{output_name}_perm")
+                        model_ir.tensors[perm_name] = TensorIR(
+                            name=perm_name,
+                            dtype="INT32",
+                            shape=[4],
+                            shape_signature=[4],
+                            data=np.asarray(perm_nhwc_to_nchw, dtype=np.int32),
+                            is_variable=False,
+                        )
+                        model_ir.operators.insert(
+                            int(prod_idx) + 1,
+                            OperatorIR(op_type="TRANSPOSE", inputs=[output_nhwc_name, perm_name], outputs=[output_name], options={}),
+                        )
+
+            del model_ir.operators[int(pre_idx)]
+            optimized += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    if optimized > 0:
+        _prune_unused_tensors(model_ir)
+    return {"optimized_transpose_binary_split_channelwise_tail_to_single_post_nchw": int(optimized)}
 
 
 def _sanitize_probable_nhwc_axis_sensitive_ops(model_ir: ModelIR) -> Dict[str, int]:
@@ -73111,6 +73662,7 @@ def lower_onnx_to_ir(
     _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir)
     _optimize_transpose_unary_split_concat_single_post_nchw(model_ir)
     _optimize_transpose_split_channelwise_tail_to_single_post_nchw(model_ir)
+    _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir)
     _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
     _optimize_transpose_pre_add_nhwc_chains(model_ir)
@@ -73315,6 +73867,7 @@ def lower_onnx_to_ir(
     _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir)
     _optimize_transpose_unary_split_concat_single_post_nchw(model_ir)
     _optimize_transpose_split_channelwise_tail_to_single_post_nchw(model_ir)
+    _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir)
     _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
     _optimize_transpose_pre_add_nhwc_chains(model_ir)
@@ -73409,12 +73962,14 @@ def lower_onnx_to_ir(
     _sanitize_squeeze_axes_with_static_input_shapes(model_ir)
     _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir)
     _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
+    _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
     _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
     _optimize_duplicate_reshape_fanout(model_ir)
     _optimize_consecutive_reshape_passthrough_chains(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     _sanitize_static_shape_signature_consistency(model_ir)
     _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
+    _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     if optimize_layout_transpose_chains or apply_safe_transpose_reduction_lite_on_no_layout_opt:
         # Late binary-layout repairs can recreate PRELU bridge wrappers.
@@ -73447,6 +74002,7 @@ def lower_onnx_to_ir(
     _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir)
     _optimize_transpose_unary_split_concat_single_post_nchw(model_ir)
     _optimize_transpose_split_channelwise_tail_to_single_post_nchw(model_ir)
+    _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir)
     _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
     _optimize_transpose_pre_add_nhwc_chains(model_ir)
     _optimize_transpose_channel_slice_dual_add_bridges_strict(model_ir)
@@ -73468,6 +74024,7 @@ def lower_onnx_to_ir(
     _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir)
     _optimize_transpose_unary_split_concat_single_post_nchw(model_ir)
     _optimize_transpose_split_channelwise_tail_to_single_post_nchw(model_ir)
+    _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir)
     _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
     _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
@@ -73565,6 +74122,7 @@ def lower_onnx_to_ir(
         fallback_norm_stats = _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(fallback_ir)
         if int(fallback_norm_stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)) > 0:
             _repair_rank4_binary_layout_mismatch_with_transpose_adapter(fallback_ir)
+            _repair_rank4_binary_singleton_broadcast_layout_mismatch(fallback_ir)
             _optimize_singleton_channel_layout_transpose_to_reshape(fallback_ir)
             _optimize_duplicate_reshape_fanout(fallback_ir)
             _optimize_consecutive_reshape_passthrough_chains(fallback_ir)
@@ -73629,6 +74187,8 @@ def lower_onnx_to_ir(
         _reconcile_static_tensor_shapes(model_ir)
         _topologically_sort_operators(model_ir)
         infer_model_ir_logical_layouts(model_ir)
+    _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(model_ir)
+    _reconcile_static_tensor_shapes(model_ir)
     # Absolute-final reshape cleanup:
     # very late repair/reconciliation passes above can still recreate trivial
     # singleton-growth RESHAPE chains (e.g. 2D->3D->4D Conv1D input shims).

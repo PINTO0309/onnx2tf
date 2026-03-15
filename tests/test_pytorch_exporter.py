@@ -7596,6 +7596,42 @@ def test_export_pytorch_package_generates_native_ts_ad_model_package_when_model_
     )
 
 
+def test_export_pytorch_package_avoids_early_permute_chain_for_bread_nonfm_when_model_is_available(tmp_path) -> None:
+    model_path = Path("bread_nonfm_180x320.onnx")
+    if not model_path.exists():
+        pytest.skip("bread_nonfm_180x320.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = clone_model_ir_with_float32(
+        lower_onnx_to_ir(
+            model_proto,
+            output_file_name="bread_nonfm_exported_program_opt_test",
+            show_progress=False,
+            transpose_inputs_to_nhwc=True,
+        )
+    )
+    prune_identity_cast_operators(model_ir, preserve_model_outputs=True)
+    optimize_redundant_transpose_operators(model_ir, preserve_model_outputs=True)
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "bread_nonfm_pytorch"),
+    )
+    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert exported_program_path is not None
+    exported_program = torch.export.load(str(exported_program_path))
+    graph_names = {
+        str(node.name)
+        for node in exported_program.module().graph.nodes
+        if node.op == "call_function"
+    }
+    assert "permute" not in graph_names
+    assert "permute_1" not in graph_names
+    assert "permute_2" not in graph_names
+    assert "permute_3" not in graph_names
+    assert "permute_4" not in graph_names
+    assert "permute_5" not in graph_names
+    assert "permute_6" not in graph_names
+
+
 def test_export_pytorch_package_prefers_channel_first_shape_for_nhwc_named_channel_first_reshape() -> None:
     tensor = TensorIR(
         name="Conv_2_input_nhwc",
