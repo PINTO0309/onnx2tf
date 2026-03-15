@@ -17437,6 +17437,7 @@ def _fold_inverse_permute_round_trips_in_exported_program_archive(
 
 def _canonicalize_generated_model_source_for_raw_export(
     package_path: Path,
+    model_ir: ModelIR | None = None,
 ) -> None:
     def _convert_nhwc_pad_to_nchw_pad_for_source(pad_values: list[int]) -> list[int] | None:
         if len(pad_values) % 2 != 0 or len(pad_values) > 8:
@@ -17466,6 +17467,22 @@ def _canonicalize_generated_model_source_for_raw_export(
     if not model_path.exists():
         return
     lines = model_path.read_text(encoding="utf-8").splitlines()
+    model_ir_shape_map: Dict[str, List[int]] = {}
+    model_ir_cf_names: Set[str] = set()
+    if model_ir is not None:
+        for tensor_name, tensor in model_ir.tensors.items():
+            shape_values = list(getattr(tensor, "shape", []) or [])
+            if len(shape_values) > 0 and all(int(v) > 0 for v in shape_values):
+                model_ir_shape_map[str(tensor_name)] = [int(v) for v in shape_values]
+            if is_channel_first_logical_layout(normalize_logical_layout(tensor.logical_layout)):
+                model_ir_cf_names.add(str(tensor_name))
+
+    def _model_ir_exact_shape(name: str) -> List[int] | None:
+        return model_ir_shape_map.get(str(name), None)
+
+    def _model_ir_is_channel_first(name: str) -> bool:
+        return str(name) in model_ir_cf_names
+
     register_buffer_re = re.compile(
         r"^(?P<indent>\s*)self\.register_buffer\('(?P<name>[A-Za-z0-9_]+)', torch\.zeros\(\[(?P<shape>[0-9, ]+)\], dtype=torch\.(?P<dtype>[A-Za-z0-9_]+)\), persistent=(?P<persistent>True|False)\)$"
     )
@@ -17521,6 +17538,12 @@ def _canonicalize_generated_model_source_for_raw_export(
     )
     cf_concat_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = torch\.cat\(\[(?P<inputs>[A-Za-z0-9_, ]+)\], dim=1\)$"
+    )
+    generic_torch_cat_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = torch\.cat\(\[(?P<inputs>[A-Za-z0-9_, ]+)\], dim=(?P<axis>-?\d+)\)$"
+    )
+    pool2d_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _apply_pool2d\((?P<input>[A-Za-z0-9_]+), (?P<rest>.+), target_shape=\[(?P<shape>[0-9, ]+)\], is_max_pool=(?P<is_max>True|False), channel_last=False\)$"
     )
     binary_anchor_align_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs0>[A-Za-z0-9_]+), (?P<lhs1>[A-Za-z0-9_]+) = _align_binary_inputs_to_anchor\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+), \[(?P<n>\d+), 1, (?P<h>\d+), (?P<w>\d+)\]\)$"
@@ -17585,23 +17608,48 @@ def _canonicalize_generated_model_source_for_raw_export(
     apply_resize_nhwc_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _apply_resize\((?P<input>[A-Za-z0-9_]+), \[(?P<out_h>\d+), (?P<out_w>\d+)\], method='(?P<method>[^']+)', target_shape=\[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\], align_corners=(?P<align>True|False), half_pixel_centers=(?P<hpc>True|False), channel_last=True\)$"
     )
+    apply_resize_cf_bad_target_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _apply_resize\((?P<input>[A-Za-z0-9_]+), \[(?P<out_h>\d+), (?P<out_w>\d+)\], method='(?P<method>[^']+)', target_shape=\[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\](?P<rest>.*), channel_last=False\)$"
+    )
     changed = False
     cf_pad_aliases: set[str] = set()
     cf_aliases: set[str] = set()
     singleton_cf_seeds: set[str] = set()
+    cf_materialized_alias_sources: Dict[str, str] = {}
 
     def _is_known_cf_name(name: str, singleton_names: set[str]) -> bool:
         return (
             name in cf_aliases
             or name in singleton_names
+            or _model_ir_is_channel_first(name)
             or name.endswith("_cf")
             or name.endswith("_out_cf")
         )
 
+    def _is_name_available_in_function(name: str, line_index: int) -> bool:
+        function_start = -1
+        for candidate in range(line_index, -1, -1):
+            if lines[candidate].startswith("    def "):
+                function_start = candidate
+                break
+        if function_start < 0:
+            return False
+        if re.search(rf"\b{re.escape(name)}\b", lines[function_start]) is not None:
+            return True
+        assign_re = re.compile(rf"^\s*{re.escape(name)}\s*=")
+        for candidate in range(function_start + 1, line_index):
+            if assign_re.match(lines[candidate]) is not None:
+                return True
+        return False
+
     buffer_specs: Dict[str, Tuple[int, List[int], str, bool]] = {}
     const_temp_assignments: Dict[str, Tuple[int, str, str, str]] = {}
     transposed_const_alias_specs: Dict[str, Tuple[str, List[int], str]] = {}
+    inside_nms_method = False
     for index, line in enumerate(lines):
+        stripped_line = line.strip()
+        if line.startswith("    def "):
+            inside_nms_method = stripped_line.startswith("def _run_nms_")
         minimum_scalar_match = minimum_scalar_tensor_re.match(line)
         if minimum_scalar_match is not None:
             lines[index] = (
@@ -17620,7 +17668,9 @@ def _canonicalize_generated_model_source_for_raw_export(
             )
             changed = True
             line = lines[index]
-        scalar_as_tensor_replaced = scalar_as_tensor_re.sub(r"\g<value>", line)
+        scalar_as_tensor_replaced = line
+        if not inside_nms_method and "_apply_non_max_suppression_v4(" not in line:
+            scalar_as_tensor_replaced = scalar_as_tensor_re.sub(r"\g<value>", line)
         if scalar_as_tensor_replaced != line:
             lines[index] = scalar_as_tensor_replaced
             changed = True
@@ -17740,6 +17790,35 @@ def _canonicalize_generated_model_source_for_raw_export(
                     )
                     cf_pad_aliases.add(lhs)
                     changed = True
+        pool2d_match = pool2d_re.match(lines[index])
+        if pool2d_match is not None:
+            lhs = str(pool2d_match.group("lhs"))
+            input_name = str(pool2d_match.group("input"))
+            rest = str(pool2d_match.group("rest"))
+            exact_shape = _model_ir_exact_shape(lhs)
+            if (
+                "stride_h=1" in rest
+                and "stride_w=1" in rest
+                and "padding='SAME'" in rest
+                and _is_known_cf_name(input_name, singleton_cf_seeds)
+            ):
+                indent = str(pool2d_match.group("indent"))
+                lines[index] = (
+                    f"{indent}{lhs} = _apply_pool2d("
+                    f"{input_name}, {rest}, "
+                    f"target_shape=_tensor_shape_list({input_name}), is_max_pool={pool2d_match.group('is_max')}, channel_last=False)"
+                )
+                changed = True
+            elif exact_shape is not None and len(exact_shape) == 4:
+                indent = str(pool2d_match.group("indent"))
+                lines[index] = (
+                    f"{indent}{lhs} = _apply_pool2d("
+                    f"{input_name}, {pool2d_match.group('rest')}, "
+                    f"target_shape={repr(exact_shape)}, is_max_pool={pool2d_match.group('is_max')}, channel_last=False)"
+                )
+                changed = True
+            if _is_known_cf_name(input_name, singleton_cf_seeds) or _model_ir_is_channel_first(lhs):
+                cf_aliases.add(lhs)
         concat_match = concat_re.match(lines[index])
         if concat_match is not None:
             input_names = [name.strip() for name in str(concat_match.group("inputs")).split(",") if name.strip()]
@@ -17750,6 +17829,29 @@ def _canonicalize_generated_model_source_for_raw_export(
                 indent = str(concat_match.group("indent"))
                 lhs = str(concat_match.group("lhs"))
                 lines[index] = f"{indent}{lhs} = torch.cat([{', '.join(input_names)}], dim=1)"
+                cf_aliases.add(lhs)
+                changed = True
+        generic_cat_match = generic_torch_cat_re.match(lines[index])
+        if generic_cat_match is not None:
+            input_names = [name.strip() for name in str(generic_cat_match.group("inputs")).split(",") if name.strip()]
+            normalized_inputs = [
+                source_name if source_name != name and _is_name_available_in_function(source_name, index) else name
+                for name in input_names
+                for source_name in [cf_materialized_alias_sources.get(name, name)]
+            ]
+            lhs = str(generic_cat_match.group("lhs"))
+            axis = int(generic_cat_match.group("axis"))
+            if (
+                len(normalized_inputs) >= 2
+                and all(_is_known_cf_name(name, singleton_cf_seeds) for name in normalized_inputs)
+                and (
+                    axis != 1
+                    or normalized_inputs != input_names
+                )
+                and (_is_known_cf_name(lhs, singleton_cf_seeds) or _model_ir_is_channel_first(lhs) or lhs.endswith("_cf"))
+            ):
+                indent = str(generic_cat_match.group("indent"))
+                lines[index] = f"{indent}{lhs} = torch.cat([{', '.join(normalized_inputs)}], dim=1)"
                 cf_aliases.add(lhs)
                 changed = True
     for index in range(len(lines) - 1):
@@ -18054,6 +18156,25 @@ def _canonicalize_generated_model_source_for_raw_export(
         cf_aliases.add(rank4_matmul_lhs)
         changed = True
         index += 8
+    for index, line in enumerate(lines):
+        resize_cf_match = apply_resize_cf_bad_target_re.match(line)
+        if resize_cf_match is None:
+            continue
+        input_name = str(resize_cf_match.group("input"))
+        lhs = str(resize_cf_match.group("lhs"))
+        if not _is_known_cf_name(input_name, singleton_cf_vars):
+            continue
+        indent = str(resize_cf_match.group("indent"))
+        out_h = int(resize_cf_match.group("out_h"))
+        out_w = int(resize_cf_match.group("out_w"))
+        lines[index] = (
+            f"{indent}{lhs} = _apply_resize("
+            f"{input_name}, [{out_h}, {out_w}], method='{resize_cf_match.group('method')}', "
+            f"target_shape=[_tensor_shape_list({input_name})[0], _tensor_shape_list({input_name})[1], {out_h}, {out_w}]"
+            f"{resize_cf_match.group('rest')}, channel_last=False)"
+        )
+        cf_aliases.add(lhs)
+        changed = True
     index = 0
     while index < len(lines):
         concat_match = concat_re.match(lines[index])
@@ -18062,6 +18183,23 @@ def _canonicalize_generated_model_source_for_raw_export(
         if aligned_rank4_seed_match is not None:
             lhs = str(aligned_rank4_seed_match.group("lhs"))
             expr = str(aligned_rank4_seed_match.group("expr"))
+            simple_source_match = re.fullmatch(r"[A-Za-z0-9_]+", expr)
+            if simple_source_match is not None and _is_known_cf_name(expr, singleton_cf_vars):
+                cf_materialized_alias_sources[lhs] = expr
+            if simple_source_match is not None and _is_known_cf_name(expr, singleton_cf_vars):
+                future_uses = [
+                    future_line
+                    for future_line in lines[index + 1 :]
+                    if re.search(rf"\b{re.escape(lhs)}\b", future_line) is not None
+                ]
+                if len(future_uses) > 0 and all(future_line.lstrip().startswith("return ") for future_line in future_uses):
+                    indent = str(aligned_rank4_seed_match.group("indent"))
+                    lines[index] = f"{indent}{lhs} = {expr}"
+                    cf_aliases.add(lhs)
+                    if int(aligned_rank4_seed_match.group("c")) == 1:
+                        singleton_cf_vars.add(lhs)
+                    changed = True
+                    aligned_rank4_seed_match = aligned_nhwc_rank4_re.match(lines[index])
             if (
                 "_nhwc" not in lhs
                 and (
@@ -18259,6 +18397,7 @@ def _canonicalize_generated_model_source_for_raw_export(
             source = str(cf_nhwc_materialize_match.group("src"))
             alias = str(cf_nhwc_materialize_match.group("lhs"))
             if _is_known_cf_name(source, singleton_cf_vars):
+                cf_materialized_alias_sources[alias] = source
                 immediate_uses = "\n".join(lines[index + 1:index + 4])
                 if (
                     f"{alias}" in immediate_uses
@@ -18269,8 +18408,29 @@ def _canonicalize_generated_model_source_for_raw_export(
                     cf_aliases.add(alias)
                     if int(cf_nhwc_materialize_match.group("c")) == 1:
                         singleton_cf_vars.add(alias)
-                    changed = True
+                changed = True
         index += 1
+    for index, line in enumerate(lines):
+        generic_cat_match = generic_torch_cat_re.match(line)
+        if generic_cat_match is None:
+            continue
+        input_names = [name.strip() for name in str(generic_cat_match.group("inputs")).split(",") if name.strip()]
+        normalized_inputs = [
+            source_name if source_name != name and _is_name_available_in_function(source_name, index) else name
+            for name in input_names
+            for source_name in [cf_materialized_alias_sources.get(name, name)]
+        ]
+        if normalized_inputs == input_names:
+            continue
+        lhs = str(generic_cat_match.group("lhs"))
+        axis = int(generic_cat_match.group("axis"))
+        if axis != 1:
+            continue
+        if not all(_is_known_cf_name(name, singleton_cf_vars) for name in normalized_inputs):
+            continue
+        lines[index] = f"{generic_cat_match.group('indent')}{lhs} = torch.cat([{', '.join(normalized_inputs)}], dim=1)"
+        cf_aliases.add(lhs)
+        changed = True
     for index, line in enumerate(lines):
         split_match = generic_split_re.match(line)
         if split_match is None or int(split_match.group("axis")) != 3:
@@ -18416,6 +18576,24 @@ def _canonicalize_generated_model_source_for_raw_export(
         )
         changed = True
         index += 6
+    return_tuple_re = re.compile(r"^(?P<indent>\s*)return \((?P<values>[A-Za-z0-9_, ]+)\)$")
+    return_single_re = re.compile(r"^(?P<indent>\s*)return (?P<value>[A-Za-z0-9_]+)$")
+    for index, line in enumerate(lines):
+        return_tuple_match = return_tuple_re.match(line)
+        if return_tuple_match is not None:
+            values = [value.strip() for value in str(return_tuple_match.group("values")).split(",") if value.strip()]
+            rewritten_values = [cf_materialized_alias_sources.get(value, value) for value in values]
+            if rewritten_values != values:
+                lines[index] = f"{return_tuple_match.group('indent')}return ({', '.join(rewritten_values)})"
+                changed = True
+            continue
+        return_single_match = return_single_re.match(line)
+        if return_single_match is not None:
+            value = str(return_single_match.group("value"))
+            rewritten_value = cf_materialized_alias_sources.get(value, value)
+            if rewritten_value != value:
+                lines[index] = f"{return_single_match.group('indent')}return {rewritten_value}"
+                changed = True
     if len(transposed_const_alias_specs) > 0:
         if not any("from typing import" in line and "Mapping" in line for line in lines):
             for idx, line in enumerate(lines):
@@ -18477,14 +18655,33 @@ def _canonicalize_generated_model_source_for_raw_export(
                 ]
                 lines[insert_index:insert_index] = load_state_dict_lines
                 changed = True
+    if any("_tensor_shape_list(" in line for line in lines):
+        runtime_import_line = "    _tensor_shape_list,"
+        has_runtime_import = any(line.strip() == "_tensor_shape_list," for line in lines)
+        if not has_runtime_import:
+            runtime_import_block_start = next(
+                (idx for idx, line in enumerate(lines) if line.strip() == "from .runtime import ("),
+                None,
+            )
+            runtime_import_block_end = next(
+                (
+                    idx for idx, line in enumerate(lines)
+                    if runtime_import_block_start is not None and idx > runtime_import_block_start and line.strip() == ")"
+                ),
+                None,
+            )
+            if runtime_import_block_end is not None:
+                lines.insert(runtime_import_block_end, runtime_import_line)
+                changed = True
     if changed:
         model_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _rewrite_generated_model_source_for_exported_program(
     package_path: Path,
+    model_ir: ModelIR | None = None,
 ) -> None:
-    _canonicalize_generated_model_source_for_raw_export(package_path)
+    _canonicalize_generated_model_source_for_raw_export(package_path, model_ir=model_ir)
 
 
 def _build_tflite_backed_metadata_payload(
@@ -20659,7 +20856,10 @@ def export_pytorch_package_from_model_ir(
                 metadata=metadata,
                 tensor_storage_name_map=tensor_storage_name_map,
             )
-            _canonicalize_generated_model_source_for_raw_export(Path(output_folder_path))
+            _canonicalize_generated_model_source_for_raw_export(
+                Path(output_folder_path),
+                model_ir=normalized,
+            )
         except ModelIRPyTorchExportError as ex:
             if not _is_direct_codegen_unsupported_error(ex):
                 raise

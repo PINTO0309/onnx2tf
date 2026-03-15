@@ -123,7 +123,7 @@ def _exported_program_structural_signature(exported_program: Any) -> dict[str, A
         meta_val = getattr(node, "meta", {}).get("val", None)
         shape = None
         if isinstance(meta_val, torch.Tensor):
-            shape = tuple(int(v) for v in meta_val.shape)
+            shape = tuple(str(v) for v in meta_val.shape)
         nodes.append((str(node.target), shape))
     return {
         "nodes": tuple(nodes),
@@ -6439,6 +6439,9 @@ def test_export_pytorch_package_generates_native_yolov7_package_when_model_is_av
     assert "cv18_in = torch.reshape(_apply_concat(" not in model_source
     assert "resize72_in = _align_tensor_to_target_shape(resize72_in_cf, [1, 15, 20, 128])" not in model_source
     assert "resize90_in = _align_tensor_to_target_shape(resize90_in_cf, [1, 30, 40, 64])" not in model_source
+    assert "target_shape=_tensor_shape_list(max_p60_in_cf)" in model_source
+    assert "cv64_in_cf = torch.cat([max_p62_out, max_p61_out, max_p60_out, max_p60_in_cf], dim=1)" in model_source
+    assert "torch.as_tensor(20, dtype=torch.int32, device=_module_device(self))" in model_source
 
     exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
     assert exported_program_path is not None
@@ -6537,8 +6540,11 @@ def test_export_pytorch_package_generates_native_yolox_package_when_model_is_ava
     assert "_apply_gather_nd(" not in model_source
     assert "_apply_slice(" not in model_source
     assert "_apply_strided_slice(" not in model_source
-    assert "cv167_in = torch.cat([resize165_out_cf, cv132_in_cf], dim=1)" in model_source
-    assert "cv189_in = torch.cat([resize187_out_cf, cv98_in_cf], dim=1)" in model_source
+    assert "return (cv98_in_cf, cv132_in_cf, cv158_in)" in model_source
+    assert "target_shape=_tensor_shape_list(max_p138_in_cf)" in model_source
+    assert "cv167_in = torch.cat([resize165_out_cf, cv132_in], dim=1)" in model_source
+    assert "cv189_in = torch.cat([resize187_out_cf, cv98_in], dim=1)" in model_source
+    assert "cv229_in = torch.cat([t750_cf, resize165_in_cf], dim=1)" in model_source
     assert "t798_cf = torch.cat([cv261_out_cf, t796_cf, t797_cf], dim=1)" in model_source
     assert "t824_cf = torch.cat([cv282_out_cf, t822_cf, t823_cf], dim=1)" in model_source
     assert "t850_cf = torch.cat([cv303_out_cf, t848_cf, t849_cf], dim=1)" in model_source
@@ -6641,6 +6647,95 @@ def test_export_pytorch_package_folds_public_input_focus_bridge_for_yolox_when_m
         if node.op == "call_function"
     )
     assert str(first_call_function.target) == "aten.slice.Tensor"
+
+
+def test_export_pytorch_package_helper_and_raw_exports_are_structurally_equivalent_for_yolov7_when_model_is_available(tmp_path) -> None:
+    model_path = Path("yolov7_tiny_head_0.768_post_480x640.onnx")
+    if not model_path.exists():
+        pytest.skip("yolov7_tiny_head_0.768_post_480x640.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = lower_onnx_to_ir(
+        model_proto,
+        output_file_name="yolov7_raw_helper_equivalence_test",
+        show_progress=False,
+    )
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "yolov7_equivalence_pkg"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model(device="cpu", eval_mode=True)
+    example_inputs = (torch.randn(1, 3, 480, 640),)
+
+    raw_dynamo_onnx_path = tmp_path / "yolov7_raw_equiv_dynamo.onnx"
+    with torch.no_grad():
+        torch.onnx.export(
+            model,
+            example_inputs,
+            str(raw_dynamo_onnx_path),
+            dynamo=True,
+            input_names=model.input_names,
+            output_names=model.output_names,
+        )
+    helper_dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    assert helper_dynamo_onnx_path is not None
+    assert _onnx_model_structural_signature(onnx.load(str(raw_dynamo_onnx_path))) == _onnx_model_structural_signature(
+        onnx.load(str(helper_dynamo_onnx_path))
+    )
+
+    raw_exported_program_path = tmp_path / "yolov7_raw_equiv_ep.pt2"
+    raw_exported_program = torch.export.export(model, example_inputs)
+    torch.export.save(raw_exported_program, str(raw_exported_program_path))
+    helper_exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert helper_exported_program_path is not None
+    assert _exported_program_structural_signature(torch.export.load(str(raw_exported_program_path))) == _exported_program_structural_signature(
+        torch.export.load(str(helper_exported_program_path))
+    )
+
+
+def test_export_pytorch_package_helper_and_raw_exports_are_structurally_equivalent_for_yolox_when_model_is_available(tmp_path) -> None:
+    model_path = Path("yolox_s.onnx")
+    if not model_path.exists():
+        pytest.skip("yolox_s.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = lower_onnx_to_ir(
+        model_proto,
+        output_file_name="yolox_raw_helper_equivalence_test",
+        show_progress=False,
+    )
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "yolox_equivalence_pkg"),
+        fallback_saved_model_path=str(tmp_path / "yolox_equivalence_saved_model"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model(device="cpu", eval_mode=True)
+    example_inputs = (torch.randn(1, 3, 640, 640),)
+
+    raw_dynamo_onnx_path = tmp_path / "yolox_raw_equiv_dynamo.onnx"
+    with torch.no_grad():
+        torch.onnx.export(
+            model,
+            example_inputs,
+            str(raw_dynamo_onnx_path),
+            dynamo=True,
+            input_names=model.input_names,
+            output_names=model.output_names,
+        )
+    helper_dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    assert helper_dynamo_onnx_path is not None
+    assert _onnx_model_structural_signature(onnx.load(str(raw_dynamo_onnx_path))) == _onnx_model_structural_signature(
+        onnx.load(str(helper_dynamo_onnx_path))
+    )
+
+    raw_exported_program_path = tmp_path / "yolox_raw_equiv_ep.pt2"
+    raw_exported_program = torch.export.export(model, example_inputs)
+    torch.export.save(raw_exported_program, str(raw_exported_program_path))
+    helper_exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert helper_exported_program_path is not None
+    assert _exported_program_structural_signature(torch.export.load(str(raw_exported_program_path))) == _exported_program_structural_signature(
+        torch.export.load(str(helper_exported_program_path))
+    )
 
 
 def test_export_pytorch_package_avoids_early_permute_chain_for_human_segmentation_when_model_is_available(tmp_path) -> None:
