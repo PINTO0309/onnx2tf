@@ -668,7 +668,7 @@ wheels = [
 
 [[package]]
 name = "onnx2tf"
-version = "2.3.7"
+version = "2.3.9"
 source = { editable = "." }
 dependencies = [
     { name = "ai-edge-litert" },

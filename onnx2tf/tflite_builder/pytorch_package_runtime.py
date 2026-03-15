@@ -1608,6 +1608,7 @@ def _kernel_pool2d(is_max_pool: bool) -> Callable[[_GraphExecutor, Dict[str, Any
     def _impl(executor: _GraphExecutor, op: Dict[str, Any], env: Dict[str, torch.Tensor]) -> None:
         options = dict(op.get("options", {}))
         x = executor._resolve_tensor(str(op["inputs"][0]), env)
+        target_shape = _target_output_shape(executor, op)
         kernel_size = (int(options.get("filterHeight", 1)), int(options.get("filterWidth", 1)))
         stride = (int(options.get("strideH", 1)), int(options.get("strideW", 1)))
         padding_mode = str(options.get("padding", "SAME"))
@@ -1615,10 +1616,18 @@ def _kernel_pool2d(is_max_pool: bool) -> Callable[[_GraphExecutor, Dict[str, Any
             int((kernel_size[0] - 1) // 2) if padding_mode.upper() == "SAME" else 0,
             int((kernel_size[1] - 1) // 2) if padding_mode.upper() == "SAME" else 0,
         )
+        channel_last = False
+        pool_input = x
+        if x.ndim == 4 and _should_resize_as_channel_last(executor, op, x, target_shape):
+            channel_last = True
+            pool_input = x.permute(0, 3, 1, 2).contiguous()
         if is_max_pool:
-            y = F.max_pool2d(x, kernel_size=kernel_size, stride=stride, padding=padding)
+            y = F.max_pool2d(pool_input, kernel_size=kernel_size, stride=stride, padding=padding)
         else:
-            y = F.avg_pool2d(x, kernel_size=kernel_size, stride=stride, padding=padding)
+            y = F.avg_pool2d(pool_input, kernel_size=kernel_size, stride=stride, padding=padding)
+        if channel_last:
+            y = y.permute(0, 2, 3, 1).contiguous()
+        y = _align_tensor_to_target_shape(y, target_shape)
         executor._assign_outputs(op, [_apply_fused_activation(y, str(options.get("fusedActivationFunction", "NONE")))], env)
     return _impl
 

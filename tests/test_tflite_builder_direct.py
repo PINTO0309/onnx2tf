@@ -57,6 +57,8 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains,
     _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks,
     _optimize_center_size_offset_terminal_transpose_chains,
+    _optimize_constant_input_pad_chains,
+    _optimize_constant_input_pool_chains,
     _optimize_duplicate_reshape_fanout,
     _optimize_duplicate_transpose_fanout,
     _optimize_fuse_conv_activation_chains,
@@ -77,6 +79,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_squeeze_reshape_identity_chains,
     _optimize_singleton_spatial_nhwc_transpose_reshape_flatten,
     _optimize_singleton_reshape_concat_post_transpose_nhwc_chains,
+    _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks,
     _optimize_transpose_csp_attention_nhwc_chains,
     _optimize_transpose_conv_attention_nhwc_propagation_chains,
     _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains,
@@ -113,6 +116,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_input_chains_pre_concat_to_single_post_adapter,
     _optimize_transpose_relu_split_all_outputs_to_nhwc_chains,
     _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains,
+    _optimize_transpose_unary_split_concat_single_post_nchw,
     _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains,
     _optimize_transpose_logistic_muladd_prepost_nhwc_chains,
     _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains,
@@ -1754,6 +1758,40 @@ def _make_conv1d_model() -> onnx.ModelProto:
         dilations=[1],
     )
     graph = helper.make_graph([node], "conv1d_graph", [x], [y], initializer=[w, b])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_conv1d_with_input_reshape_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 8])
+    reshape_shape = numpy_helper.from_array(
+        np.asarray([-1, 1, 8], dtype=np.int64),
+        name="reshape_shape",
+    )
+    w = numpy_helper.from_array(np.ones((2, 1, 3), dtype=np.float32), name="W")
+    b = numpy_helper.from_array(np.zeros((2,), dtype=np.float32), name="B")
+    reshape = helper.make_node(
+        "Reshape",
+        ["x", "reshape_shape"],
+        ["x3"],
+        name="Conv1DInputReshape",
+    )
+    conv = helper.make_node(
+        "Conv",
+        ["x3", "W", "B"],
+        ["y"],
+        name="Conv1DNode",
+        pads=[1, 1],
+        strides=[1],
+        dilations=[1],
+    )
+    graph = helper.make_graph(
+        [reshape, conv],
+        "conv1d_input_reshape_graph",
+        [x],
+        [y],
+        initializer=[reshape_shape, w, b],
+    )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
@@ -11409,6 +11447,32 @@ def test_flatbuffer_direct_reshape_minus_one_resolved_to_static_shape() -> None:
     assert list(output_tensor.shape_signature) == [3, 2]
 
 
+def test_flatbuffer_direct_conv1d_input_reshape_chain_collapses_to_single_nhwc_reshape() -> None:
+    model = _make_conv1d_with_input_reshape_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="conv1d_input_reshape_chain_test",
+        transpose_inputs_to_nhwc=True,
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators[:4]]
+    assert op_types[:3] == ["RESHAPE", "CONV_2D", "TRANSPOSE"]
+
+    reshape_op = model_ir.operators[0]
+    assert list(reshape_op.inputs)[0] == "x"
+    assert str(reshape_op.inputs[1]).endswith("_input_nhwc_reshape_shape")
+    assert str(reshape_op.outputs[0]).endswith("_input_nhwc")
+    assert list(reshape_op.options.get("newShape", [])) == [1, 1, 8, 1]
+
+    reshape_ops = [op for op in model_ir.operators if str(op.op_type) == "RESHAPE"]
+    assert len(reshape_ops) == 2
+    conv_op = model_ir.operators[1]
+    assert list(conv_op.inputs)[0] == str(reshape_op.outputs[0])
+    assert list(reshape_ops[1].outputs) == ["y"]
+
+
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_pass() -> None:
     model_ir = ModelIR(name="reshape_fixup_test")
     model_ir.inputs = ["x"]
@@ -11589,7 +11653,7 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_prefers_runtime_minus_
         name="x",
         dtype="FLOAT32",
         shape=[1, 10, 4096, 2],
-        shape_signature=[1, 10, 4096, 2],
+        shape_signature=[1, -1, 4096, 2],
     )
     model_ir.tensors["reshape_shape"] = TensorIR(
         name="reshape_shape",
@@ -11626,6 +11690,140 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_prefers_runtime_minus_
     assert list(model_ir.tensors["y"].shape) == [1, 1, 64, 64, 2]
     assert list(model_ir.tensors["y"].shape_signature) == [1, -1, 64, 64, 2]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [1, -1, 64, 64, 2]
+
+
+def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_concretizes_static_onnx_raw_minus_one() -> None:
+    model_ir = ModelIR(name="reshape_fixup_static_onnx_raw_minus_one_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[64, 64, 540],
+        shape_signature=[64, 64, 540],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[5],
+        shape_signature=[5],
+        data=np.asarray([-1, 64, 3, 6, 30], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[64, 64, 3, 6, 30],
+        shape_signature=[-1, 64, 3, 6, 30],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "reshape_shape"],
+            outputs=["y"],
+            options={
+                "newShape": [-1, 64, 3, 6, 30],
+                "onnxRawNewShape": [-1, 64, 3, 6, 30],
+                "allowZero": False,
+            },
+        )
+    )
+
+    stats = _resolve_dynamic_reshape_shapes(
+        model_ir,
+        prefer_runtime_inferable_from_onnx_raw=True,
+    )
+    assert stats["resolved_dynamic_reshape_shapes"] == 1
+    assert list(model_ir.operators[0].options["newShape"]) == [64, 64, 3, 6, 30]
+    assert list(model_ir.tensors["y"].shape) == [64, 64, 3, 6, 30]
+    assert list(model_ir.tensors["y"].shape_signature) == [64, 64, 3, 6, 30]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [64, 64, 3, 6, 30]
+
+
+def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_allowzero_true_preserves_zero_and_minus_one() -> None:
+    model_ir = ModelIR(name="reshape_fixup_allowzero_true_preserve_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[2, 5, 3],
+        shape_signature=[2, 5, 3],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([0, -1, 3], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1, 1],
+        shape_signature=[0, -1, 3],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "reshape_shape"],
+            outputs=["y"],
+            options={
+                "newShape": [0, -1, 3],
+                "onnxRawNewShape": [0, -1, 3],
+                "allowZero": True,
+            },
+        )
+    )
+
+    stats = _resolve_dynamic_reshape_shapes(model_ir)
+    assert stats["resolved_dynamic_reshape_shapes"] == 0
+    assert list(model_ir.operators[0].options["newShape"]) == [0, -1, 3]
+    assert list(model_ir.tensors["y"].shape_signature) == [0, -1, 3]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [0, -1, 3]
+
+
+def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_copy_dim_zero_then_infers_minus_one() -> None:
+    model_ir = ModelIR(name="reshape_fixup_copy_dim_zero_then_infer_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[2, 5, 3],
+        shape_signature=[2, 5, 3],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([0, -1, 3], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1, 1],
+        shape_signature=[0, -1, 3],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "reshape_shape"],
+            outputs=["y"],
+            options={
+                "newShape": [0, -1, 3],
+                "onnxRawNewShape": [0, -1, 3],
+                "allowZero": False,
+            },
+        )
+    )
+
+    stats = _resolve_dynamic_reshape_shapes(model_ir)
+    assert stats["resolved_dynamic_reshape_shapes"] == 1
+    assert list(model_ir.operators[0].options["newShape"]) == [2, 5, 3]
+    assert list(model_ir.tensors["y"].shape) == [2, 5, 3]
+    assert list(model_ir.tensors["y"].shape_signature) == [2, 5, 3]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [2, 5, 3]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_keeps_runtime_minus_one_from_shape_tensor() -> None:
@@ -14081,11 +14279,10 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_sanitizes_multi_minus_one() -
     )
 
     stats = _resolve_dynamic_reshape_shapes(model_ir)
-    assert stats["resolved_dynamic_reshape_shapes"] == 1
+    assert stats["resolved_dynamic_reshape_shapes"] == 0
     resolved = list(model_ir.operators[0].options["newShape"])
-    assert resolved == [2, 3, 4]
-    assert resolved.count(-1) <= 1
-    assert all(int(v) != 0 for v in resolved)
+    assert resolved == [0, -1, -1]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [0, -1, -1]
 
 
 def test_flatbuffer_direct_reconcile_slice_preserves_static_size_on_dynamic_axes() -> None:
@@ -27680,6 +27877,68 @@ def test_flatbuffer_direct_singleton_moved_axis_transpose_rewritten_to_reshape()
     assert model_ir.operators[0].options.get("newShape") == [1, 64, 1, 97]
 
 
+def test_flatbuffer_direct_dynamic_batch_singleton_reshape_transpose_collapses_to_single_reshape() -> None:
+    model_ir = ModelIR(name="dynamic_batch_singleton_reshape_transpose_collapse_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 288],
+        shape_signature=[-1, 288],
+    )
+    model_ir.tensors["mid"] = TensorIR(
+        name="mid",
+        dtype="FLOAT32",
+        shape=[1, 288, 1, 1],
+        shape_signature=[-1, 288, 1, 1],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 288],
+        shape_signature=[-1, 1, 1, 288],
+    )
+    model_ir.tensors["shape_mid"] = TensorIR(
+        name="shape_mid",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([-1, 288, 1, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["perm_nchw_to_nhwc"] = TensorIR(
+        name="perm_nchw_to_nhwc",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "shape_mid"],
+            outputs=["mid"],
+            options={"newShape": [-1, 288, 1, 1]},
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["mid", "perm_nchw_to_nhwc"],
+            outputs=["y"],
+        ),
+    ]
+
+    transpose_stats = _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
+    reshape_stats = _optimize_consecutive_reshape_passthrough_chains(model_ir)
+
+    assert transpose_stats["rewritten_singleton_channel_layout_transpose_to_reshape"] == 1
+    assert reshape_stats["rewritten_consecutive_reshape_passthrough_chains"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["RESHAPE"]
+    assert list(model_ir.operators[0].inputs) == ["x", "y_reshape_shape"]
+    assert model_ir.operators[0].options.get("newShape") == [1, 1, 1, 288]
+
+
 def test_flatbuffer_direct_non_singleton_order_change_transpose_not_rewritten_to_reshape() -> None:
     model_ir = ModelIR(name="non_singleton_order_change_transpose_test")
     model_ir.inputs = ["x"]
@@ -28051,6 +28310,67 @@ def test_flatbuffer_direct_consecutive_reshape_passthrough_chains_fanout_bypass(
     assert stats["rewritten_fanout_bypass_reshape_passthrough_chains"] == 1
     assert [str(op.op_type) for op in model_ir.operators] == ["RESHAPE", "RELU", "RESHAPE"]
     assert list(model_ir.operators[2].inputs) == ["x", "shape_y"]
+
+
+def test_flatbuffer_direct_consecutive_reshape_passthrough_chains_removed_after_static_minus_one_resolution() -> None:
+    model_ir = ModelIR(name="consecutive_reshape_passthrough_static_minus_one_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 180, 320, 16],
+        shape_signature=[1, 180, 320, 16],
+    )
+    model_ir.tensors["mid"] = TensorIR(
+        name="mid",
+        dtype="FLOAT32",
+        shape=[1, 57600, 16],
+        shape_signature=[1, 57600, 16],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[57600, 16],
+        shape_signature=[57600, 16],
+    )
+    model_ir.tensors["shape_mid"] = TensorIR(
+        name="shape_mid",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([1, 57600, 16], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["shape_y"] = TensorIR(
+        name="shape_y",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([57600, 16], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "shape_mid"],
+            outputs=["mid"],
+            options={"newShape": [1, 57600, 16], "onnxRawNewShape": [1, -1, 16]},
+        ),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["mid", "shape_y"],
+            outputs=["y"],
+            options={"newShape": [57600, 16], "onnxRawNewShape": [-1, 16]},
+        ),
+    ]
+
+    stats = _optimize_consecutive_reshape_passthrough_chains(model_ir)
+    assert stats["rewritten_consecutive_reshape_passthrough_chains"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["RESHAPE"]
+    assert list(model_ir.operators[0].inputs) == ["x", "shape_y"]
+    assert list(model_ir.operators[0].outputs) == ["y"]
 
 
 def test_flatbuffer_direct_flatten_concat_expanddims_to_nhwc_concat_rewritten() -> None:
@@ -29921,8 +30241,16 @@ def test_flatbuffer_direct_average_pool_exclude_pad_uses_divisor_correction() ->
         output_file_name="average_pool_exclude_pad_correction_test",
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
-    assert op_types.count("AVERAGE_POOL_2D") == 2
-    assert op_types.count("DIV") == 1
+    assert op_types.count("AVERAGE_POOL_2D") == 1
+    assert op_types.count("DIV") == 0
+    assert op_types.count("MUL") >= 1
+    reciprocal_tensors = [
+        tensor
+        for tensor_name, tensor in model_ir.tensors.items()
+        if "div_reciprocal" in str(tensor_name)
+    ]
+    assert len(reciprocal_tensors) >= 1
+    assert all(tensor.data is not None for tensor in reciprocal_tensors)
 
 
 def test_flatbuffer_direct_average_pool_include_pad_materializes_zero_padding() -> None:
@@ -29949,8 +30277,16 @@ def test_flatbuffer_direct_average_pool_ceil_mode_exclude_pad_uses_builtin_ops()
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert "CUSTOM" not in op_types
-    assert op_types.count("AVERAGE_POOL_2D") == 2
-    assert op_types.count("DIV") == 1
+    assert op_types.count("AVERAGE_POOL_2D") == 1
+    assert op_types.count("DIV") == 0
+    assert op_types.count("MUL") >= 1
+    reciprocal_tensors = [
+        tensor
+        for tensor_name, tensor in model_ir.tensors.items()
+        if "div_reciprocal" in str(tensor_name)
+    ]
+    assert len(reciprocal_tensors) >= 1
+    assert all(tensor.data is not None for tensor in reciprocal_tensors)
 
 
 def test_flatbuffer_direct_rank6_slice_decomposed_to_rank5_by_default() -> None:
@@ -30978,7 +31314,7 @@ def test_flatbuffer_direct_integer_div_const_keeps_exact_division_path() -> None
     )
 
 
-def test_flatbuffer_direct_float_div_const_with_integer_cast_descendant_keeps_div() -> None:
+def test_flatbuffer_direct_float_div_const_with_integer_cast_descendant_uses_mul_reciprocal() -> None:
     x = helper.make_tensor_value_info("x", TensorProto.INT32, [1, 2])
     y = helper.make_tensor_value_info("y", TensorProto.INT32, [1, 2])
     div_const = numpy_helper.from_array(np.asarray([319.0, 191.0], dtype=np.float32), name="float_div_const")
@@ -31005,15 +31341,54 @@ def test_flatbuffer_direct_float_div_const_with_integer_cast_descendant_keeps_di
     )
 
     op_types = [str(op.op_type) for op in model_ir.operators]
-    assert op_types.count("DIV") >= 1
-    assert any(str(op.op_type) == "DIV" and "div_out" in list(op.outputs) for op in model_ir.operators)
+    assert op_types.count("DIV") == 0
+    assert op_types.count("MUL") >= 1
 
     reciprocal_tensor_names = {
         str(name)
         for name in model_ir.tensors.keys()
         if "div_reciprocal" in str(name)
     }
-    assert reciprocal_tensor_names == set()
+    assert len(reciprocal_tensor_names) == 1
+
+
+def test_flatbuffer_direct_consecutive_variable_const_mul_chain_is_folded_after_div_rewrite() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2])
+    div_const = numpy_helper.from_array(np.asarray([2.0, 4.0], dtype=np.float32), name="div_const")
+    mul_const = numpy_helper.from_array(np.asarray([3.0, 5.0], dtype=np.float32), name="mul_const")
+    nodes = [
+        helper.make_node("Div", ["x", "div_const"], ["div_out"], name="DivToMulNode"),
+        helper.make_node("Mul", ["div_out", "mul_const"], ["y"], name="MulFoldNode"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "div_then_mul_fold_graph",
+        [x],
+        [y],
+        initializer=[div_const, mul_const],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="div_then_mul_fold_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("DIV") == 0
+    assert op_types.count("MUL") == 1
+    fused_tensors = [
+        tensor
+        for tensor_name, tensor in model_ir.tensors.items()
+        if "mulfused" in str(tensor_name)
+    ]
+    assert len(fused_tensors) == 1
+    np.testing.assert_allclose(
+        np.asarray(fused_tensors[0].data, dtype=np.float32),
+        np.asarray([1.5, 1.25], dtype=np.float32),
+    )
 
 
 def test_flatbuffer_direct_constant_input_cast_is_embedded_into_output_tensor() -> None:
@@ -37576,6 +37951,271 @@ def test_flatbuffer_direct_gaze_keep_shape_inputs_fuses_late_conv_relu_chain() -
     assert "Conv__58_output_nhwc" not in model_ir.tensors
 
 
+def test_flatbuffer_direct_pidnet_dfm_transpose_logistic_sub_mul_postadd_optimization() -> None:
+    model_path = os.path.join(os.getcwd(), "pidnet_S_cityscapes_192x320.onnx")
+    if not os.path.isfile(model_path):
+        pytest.skip("pidnet_S_cityscapes_192x320.onnx not found")
+
+    model = onnx.load(model_path)
+    model_ir_raw = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="pidnet_dfm_postadd_raw_test",
+        optimize_layout_transpose_chains=False,
+        show_progress=False,
+    )
+    model_ir_opt = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="pidnet_dfm_postadd_opt_test",
+        show_progress=False,
+    )
+
+    raw_transpose_outputs = {
+        str(output_name)
+        for op in model_ir_raw.operators
+        if str(op.op_type) == "TRANSPOSE"
+        for output_name in list(op.outputs)
+    }
+    opt_transpose_outputs = {
+        str(output_name)
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "TRANSPOSE"
+        for output_name in list(op.outputs)
+    }
+    assert "/dfm/Mul_1_output_0_nhwc_bridge" in raw_transpose_outputs
+
+    assert "/dfm/Mul_1_output_0_nhwc_bridge" not in opt_transpose_outputs
+    assert "/dfm/Mul_output_0_nhwc_bridge" not in opt_transpose_outputs
+    assert len(opt_transpose_outputs) < len(raw_transpose_outputs)
+
+    sigmoid_op = next(
+        op
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "LOGISTIC" and "/dfm/Sigmoid_output_0" in [str(v) for v in list(op.outputs)]
+    )
+    assert [str(v) for v in list(sigmoid_op.inputs)] == ["/layer5_d/layer5_d.0/Add_output_0__raw"]
+
+    mul1_op = next(
+        op
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "MUL" and "/dfm/Mul_1_output_0_nhwc_bridge" in [str(v) for v in list(op.outputs)]
+    )
+    assert "/layer5_/layer5_.0/Add_output_0__raw" in [str(v) for v in list(mul1_op.inputs)]
+
+    mul0_op = next(
+        op
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "MUL" and "/dfm/Mul_output_0_nhwc_bridge" in [str(v) for v in list(op.outputs)]
+    )
+    assert "/Resize_2_output_nhwc" in [str(v) for v in list(mul0_op.inputs)]
+
+
+def test_flatbuffer_direct_pidnet_spp_transpose_bridges_are_folded() -> None:
+    model_path = os.path.join(os.getcwd(), "pidnet_S_cityscapes_192x320.onnx")
+    if not os.path.isfile(model_path):
+        pytest.skip("pidnet_S_cityscapes_192x320.onnx not found")
+
+    model = onnx.load(model_path)
+    model_ir_opt = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="pidnet_spp_opt_test",
+        show_progress=False,
+    )
+
+    opt_transpose_outputs = {
+        str(output_name)
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "TRANSPOSE"
+        for output_name in list(op.outputs)
+    }
+    target_outputs = {
+        "/layer5/layer5.1/Add_output_0",
+        "/spp/scale0/scale0.2/Conv_output_0",
+        "/spp/Resize_output_0",
+        "/spp/Resize_1_output_0",
+        "/spp/Resize_2_output_0",
+        "/spp/Resize_3_output_0",
+        "/spp/scale_process/scale_process.0/BatchNormalization_mul_out_nhwc_bridge",
+        "/spp/compression/compression.0/BatchNormalization_mul_out_nhwc_bridge",
+    }
+    assert target_outputs.isdisjoint(opt_transpose_outputs)
+
+    concat4_op = next(
+        op
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "CONCATENATION" and "/spp/Concat_4_output_0" in [str(v) for v in list(op.outputs)]
+    )
+    concat5_op = next(
+        op
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "CONCATENATION" and "/spp/Concat_5_output_0" in [str(v) for v in list(op.outputs)]
+    )
+    assert int(concat4_op.options.get("axis", -1)) == 3
+    assert int(concat5_op.options.get("axis", -1)) == 3
+
+    mean_op = next(
+        op
+        for op in model_ir_opt.operators
+        if str(op.op_type) == "MEAN" and "/spp/scale4/scale4.0/GlobalAveragePool_output_0" in [str(v) for v in list(op.outputs)]
+    )
+    assert [str(v) for v in list(mean_op.inputs)][0] == "/spp/scale1/scale1.0/AveragePool_input_nhwc"
+
+
+def test_constant_input_average_pool_is_folded_into_div_denominator() -> None:
+    model_ir = ModelIR(name="constant_pool_div_fold")
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 1],
+        shape_signature=[1, 2, 3, 1],
+    )
+    model_ir.tensors["mask"] = TensorIR(
+        name="mask",
+        dtype="FLOAT32",
+        shape=[1, 3, 5, 1],
+        shape_signature=[1, 3, 5, 1],
+        data=np.ones((1, 3, 5, 1), dtype=np.float32),
+    )
+    model_ir.tensors["mask_pool"] = TensorIR(
+        name="mask_pool",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 1],
+        shape_signature=[1, 2, 3, 1],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 2, 3, 1],
+        shape_signature=[1, 2, 3, 1],
+    )
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.operators = [
+        OperatorIR(
+            op_type="AVERAGE_POOL_2D",
+            inputs=["mask"],
+            outputs=["mask_pool"],
+            options={
+                "padding": "SAME",
+                "strideH": 2,
+                "strideW": 2,
+                "filterHeight": 5,
+                "filterWidth": 5,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+        OperatorIR(
+            op_type="DIV",
+            inputs=["x", "mask_pool"],
+            outputs=["y"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    result = _optimize_constant_input_pool_chains(model_ir)
+
+    assert result["optimized_constant_input_pool_chains"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["DIV"]
+    assert model_ir.tensors["mask_pool"].data is not None
+    np.testing.assert_allclose(
+        np.asarray(model_ir.tensors["mask_pool"].data),
+        np.asarray([[[[0.36], [0.6], [0.36]], [[0.36], [0.6], [0.36]]]], dtype=np.float32),
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
+def test_constant_input_padv2_and_average_pool_are_folded_into_div_denominator() -> None:
+    model_ir = ModelIR(name="constant_pad_pool_div_fold")
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 1, 2, 1],
+        shape_signature=[1, 1, 2, 1],
+    )
+    model_ir.tensors["mask"] = TensorIR(
+        name="mask",
+        dtype="FLOAT32",
+        shape=[1, 3, 5, 1],
+        shape_signature=[1, 3, 5, 1],
+        data=np.ones((1, 3, 5, 1), dtype=np.float32),
+    )
+    model_ir.tensors["pads"] = TensorIR(
+        name="pads",
+        dtype="INT32",
+        shape=[4, 2],
+        shape_signature=[4, 2],
+        data=np.asarray([[0, 0], [4, 4], [4, 4], [0, 0]], dtype=np.int32),
+    )
+    model_ir.tensors["pad_zero"] = TensorIR(
+        name="pad_zero",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([0.0], dtype=np.float32),
+    )
+    model_ir.tensors["mask_padded"] = TensorIR(
+        name="mask_padded",
+        dtype="FLOAT32",
+        shape=[1, 11, 13, 1],
+        shape_signature=[1, 11, 13, 1],
+    )
+    model_ir.tensors["mask_pool"] = TensorIR(
+        name="mask_pool",
+        dtype="FLOAT32",
+        shape=[1, 1, 2, 1],
+        shape_signature=[1, 1, 2, 1],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1, 2, 1],
+        shape_signature=[1, 1, 2, 1],
+    )
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.operators = [
+        OperatorIR(
+            op_type="PADV2",
+            inputs=["mask", "pads", "pad_zero"],
+            outputs=["mask_padded"],
+            options={},
+        ),
+        OperatorIR(
+            op_type="AVERAGE_POOL_2D",
+            inputs=["mask_padded"],
+            outputs=["mask_pool"],
+            options={
+                "padding": "VALID",
+                "strideH": 4,
+                "strideW": 4,
+                "filterHeight": 9,
+                "filterWidth": 9,
+                "fusedActivationFunction": "NONE",
+            },
+        ),
+        OperatorIR(
+            op_type="DIV",
+            inputs=["x", "mask_pool"],
+            outputs=["y"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    pad_result = _optimize_constant_input_pad_chains(model_ir)
+    pool_result = _optimize_constant_input_pool_chains(model_ir)
+
+    assert pad_result["optimized_constant_input_pad_chains"] == 1
+    assert pool_result["optimized_constant_input_pool_chains"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["DIV"]
+    assert model_ir.tensors["mask_pool"].data is not None
+    np.testing.assert_allclose(
+        np.asarray(model_ir.tensors["mask_pool"].data),
+        np.asarray([[[[15.0 / 81.0], [15.0 / 81.0]]]], dtype=np.float32),
+        rtol=0.0,
+        atol=1e-7,
+    )
+
+
 def _make_wave1_unary_builtin_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3])
@@ -38292,6 +38932,105 @@ def test_flatbuffer_direct_reverse_sequence_and_scatter_builtin_parity() -> None
                     rtol=1e-4,
                     atol=1e-4,
                 )
+
+
+def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks() -> None:
+    model_ir = ModelIR(name="singleton_gate_conv_concat_nhwc_bridge_blocks_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["y_nhwc"]
+    model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 3], shape_signature=[1, 5, 7, 3])
+    model_ir.tensors["x_nchw"] = TensorIR(name="x_nchw", dtype="FLOAT32", shape=[1, 3, 5, 7], shape_signature=[1, 3, 5, 7])
+    model_ir.tensors["to_nchw_perm"] = TensorIR(name="to_nchw_perm", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([0, 3, 1, 2], dtype=np.int32), is_variable=False)
+    model_ir.tensors["split0_nchw"] = TensorIR(name="split0_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["split0_nhwc"] = TensorIR(name="split0_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
+    model_ir.tensors["split0_shape"] = TensorIR(name="split0_shape", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([1, 5, 7, 1], dtype=np.int32), is_variable=False)
+    model_ir.tensors["clip_nhwc"] = TensorIR(name="clip_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
+    model_ir.tensors["clip_nchw"] = TensorIR(name="clip_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["clip_shape"] = TensorIR(name="clip_shape", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([1, 1, 5, 7], dtype=np.int32), is_variable=False)
+    model_ir.tensors["c1"] = TensorIR(name="c1", dtype="FLOAT32", shape=[1], shape_signature=[1], data=np.asarray([1.0], dtype=np.float32), is_variable=False)
+    model_ir.tensors["mul_gate"] = TensorIR(name="mul_gate", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["sub_gate"] = TensorIR(name="sub_gate", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["mul_rgb"] = TensorIR(name="mul_rgb", dtype="FLOAT32", shape=[1, 3, 5, 7], shape_signature=[1, 3, 5, 7])
+    model_ir.tensors["conv_nhwc"] = TensorIR(name="conv_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
+    model_ir.tensors["conv_nchw"] = TensorIR(name="conv_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["conv_shape"] = TensorIR(name="conv_shape", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([1, 1, 5, 7], dtype=np.int32), is_variable=False)
+    model_ir.tensors["sig"] = TensorIR(name="sig", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["gated"] = TensorIR(name="gated", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["fused"] = TensorIR(name="fused", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["clip3_nchw"] = TensorIR(name="clip3_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["clip3_nhwc"] = TensorIR(name="clip3_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
+    model_ir.tensors["clip3_shape"] = TensorIR(name="clip3_shape", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([1, 5, 7, 1], dtype=np.int32), is_variable=False)
+    model_ir.tensors["keep1_nhwc"] = TensorIR(name="keep1_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
+    model_ir.tensors["keep2_nhwc"] = TensorIR(name="keep2_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
+    model_ir.tensors["div_out"] = TensorIR(name="div_out", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
+    model_ir.tensors["y_nhwc"] = TensorIR(name="y_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 4], shape_signature=[1, 5, 7, 4])
+
+    model_ir.operators = [
+        OperatorIR(op_type="RESHAPE", inputs=["split0_nchw", "split0_shape"], outputs=["split0_nhwc"], options={"newShape": [1, 5, 7, 1]}),
+        OperatorIR(op_type="RESHAPE", inputs=["clip_nhwc", "clip_shape"], outputs=["clip_nchw"], options={"newShape": [1, 1, 5, 7]}),
+        OperatorIR(op_type="MUL", inputs=["clip_nchw", "split0_nchw"], outputs=["mul_gate"]),
+        OperatorIR(op_type="SUB", inputs=["c1", "clip_nchw"], outputs=["sub_gate"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "to_nchw_perm"], outputs=["x_nchw"]),
+        OperatorIR(op_type="MUL", inputs=["clip_nchw", "x_nchw"], outputs=["mul_rgb"]),
+        OperatorIR(op_type="RESHAPE", inputs=["conv_nhwc", "conv_shape"], outputs=["conv_nchw"], options={"newShape": [1, 1, 5, 7]}),
+        OperatorIR(op_type="LOGISTIC", inputs=["conv_nchw"], outputs=["sig"]),
+        OperatorIR(op_type="MUL", inputs=["sub_gate", "sig"], outputs=["gated"]),
+        OperatorIR(op_type="ADD", inputs=["mul_gate", "gated"], outputs=["fused"]),
+        OperatorIR(op_type="RELU_0_TO_1", inputs=["fused"], outputs=["clip3_nchw"]),
+        OperatorIR(op_type="RESHAPE", inputs=["clip3_nchw", "clip3_shape"], outputs=["clip3_nhwc"], options={"newShape": [1, 5, 7, 1]}),
+        OperatorIR(op_type="DIV", inputs=["split0_nhwc", "keep1_nhwc"], outputs=["div_out"]),
+        OperatorIR(op_type="CONCATENATION", inputs=["split0_nhwc", "keep1_nhwc", "keep2_nhwc", "clip3_nhwc"], outputs=["y_nhwc"], options={"axis": 3}),
+    ]
+
+    stats = _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir)
+    assert stats["optimized_singleton_gate_conv_concat_nhwc_bridge_blocks"] == 1
+    assert [str(op.op_type) for op in model_ir.operators].count("RESHAPE") == 0
+    assert not any(str(op.op_type) == "TRANSPOSE" and list(op.outputs) == ["x_nchw"] for op in model_ir.operators)
+    div_op = next(op for op in model_ir.operators if str(op.op_type) == "DIV")
+    assert [str(v) for v in list(div_op.inputs)] == ["split0_nchw", "keep1_nhwc"]
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert [str(v) for v in list(concat_op.inputs)] == ["split0_nchw", "keep1_nhwc", "keep2_nhwc", "clip3_nchw"]
+    assert list(model_ir.tensors["split0_nchw"].shape) == [1, 5, 7, 1]
+    assert list(model_ir.tensors["clip3_nchw"].shape) == [1, 5, 7, 1]
+
+
+def test_flatbuffer_direct_transpose_unary_split_concat_single_post_nchw() -> None:
+    model_ir = ModelIR(name="transpose_unary_split_concat_single_post_nchw_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["cat_nchw"]
+    model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 2], shape_signature=[1, 5, 7, 2])
+    model_ir.tensors["x_nchw"] = TensorIR(name="x_nchw", dtype="FLOAT32", shape=[1, 2, 5, 7], shape_signature=[1, 2, 5, 7])
+    model_ir.tensors["to_nchw_perm"] = TensorIR(name="to_nchw_perm", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([0, 3, 1, 2], dtype=np.int32), is_variable=False)
+    model_ir.tensors["logit_nchw"] = TensorIR(name="logit_nchw", dtype="FLOAT32", shape=[1, 2, 5, 7], shape_signature=[1, 2, 5, 7])
+    model_ir.tensors["split_axis"] = TensorIR(name="split_axis", dtype="INT32", shape=[1], shape_signature=[1], data=np.asarray([1], dtype=np.int32), is_variable=False)
+    model_ir.tensors["s0"] = TensorIR(name="s0", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["s1"] = TensorIR(name="s1", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["u0"] = TensorIR(name="u0", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["u1"] = TensorIR(name="u1", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["clip3_nhwc"] = TensorIR(name="clip3_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 1], shape_signature=[1, 5, 7, 1])
+    model_ir.tensors["clip3_nchw"] = TensorIR(name="clip3_nchw", dtype="FLOAT32", shape=[1, 1, 5, 7], shape_signature=[1, 1, 5, 7])
+    model_ir.tensors["clip3_shape"] = TensorIR(name="clip3_shape", dtype="INT32", shape=[4], shape_signature=[4], data=np.asarray([1, 1, 5, 7], dtype=np.int32), is_variable=False)
+    model_ir.tensors["cat_nchw"] = TensorIR(name="cat_nchw", dtype="FLOAT32", shape=[1, 3, 5, 7], shape_signature=[1, 3, 5, 7])
+
+    model_ir.operators = [
+        OperatorIR(op_type="RESHAPE", inputs=["clip3_nhwc", "clip3_shape"], outputs=["clip3_nchw"], options={"newShape": [1, 1, 5, 7]}),
+        OperatorIR(op_type="TRANSPOSE", inputs=["x_nhwc", "to_nchw_perm"], outputs=["x_nchw"]),
+        OperatorIR(op_type="LOGISTIC", inputs=["x_nchw"], outputs=["logit_nchw"]),
+        OperatorIR(op_type="SPLIT", inputs=["split_axis", "logit_nchw"], outputs=["s0", "s1"], options={"numSplits": 2}),
+        OperatorIR(op_type="RELU_0_TO_1", inputs=["s0"], outputs=["u0"]),
+        OperatorIR(op_type="RELU_0_TO_1", inputs=["s1"], outputs=["u1"]),
+        OperatorIR(op_type="CONCATENATION", inputs=["clip3_nchw", "u0", "u1"], outputs=["cat_nchw"], options={"axis": 1}),
+    ]
+
+    stats = _optimize_transpose_unary_split_concat_single_post_nchw(model_ir)
+    assert stats["optimized_transpose_unary_split_concat_single_post_nchw"] == 1
+    assert not any(str(op.op_type) == "TRANSPOSE" and list(op.outputs) == ["x_nchw"] for op in model_ir.operators)
+    split_op = next(op for op in model_ir.operators if str(op.op_type) == "SPLIT")
+    assert np.array_equal(model_ir.tensors[str(split_op.inputs[0])].data, np.asarray([3], dtype=np.int32))
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert int(concat_op.options.get("axis", -1)) == 3
+    assert [str(v) for v in list(concat_op.inputs)] == ["clip3_nhwc", "u0", "u1"]
+    assert any(str(op.op_type) == "TRANSPOSE" and list(op.outputs) == ["cat_nchw"] for op in model_ir.operators)
 
 
 def test_flatbuffer_direct_group_normalization_builtin_conversion() -> None:
