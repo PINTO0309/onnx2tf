@@ -28,6 +28,7 @@ class _NativeModelFileWriterContext:
 class _NativeCodegenBindings:
     module_globals: Dict[str, Any] = field(default_factory=dict)
     compiled_impl: Optional[Callable[..., Any]] = None
+    canonicalize_generated_model_source_fn: Optional[Callable[[Path], None]] = None
 
 
 @dataclass

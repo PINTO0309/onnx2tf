@@ -173,6 +173,24 @@ def _rewrite_split_axes_from_static_shapes(
     if len(desired_axis_by_first_output_var) == 0:
         return
     lines = model_file.read_text(encoding="utf-8").splitlines()
+    cf_concat_pattern = re.compile(
+        r"^(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.cat\(\[[A-Za-z0-9_, ]+\], dim=1\)\s*$"
+    )
+    generic_alias_pattern = re.compile(
+        r"^(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<rhs>[A-Za-z0-9_]+)\s*$"
+    )
+    cf_aliases: set[str] = set()
+    for line in lines:
+        cf_concat_match = cf_concat_pattern.match(str(line).strip())
+        if cf_concat_match is not None:
+            cf_aliases.add(str(cf_concat_match.group("lhs")))
+            continue
+        generic_alias_match = generic_alias_pattern.match(str(line).strip())
+        if (
+            generic_alias_match is not None
+            and str(generic_alias_match.group("rhs")) in cf_aliases
+        ):
+            cf_aliases.add(str(generic_alias_match.group("lhs")))
     split_pattern = re.compile(
         r"^(?P<indent>\s*)(?P<outputs>[A-Za-z0-9_, ]+)\s*=\s*list\(torch\.tensor_split\("
         r"(?P<input>[A-Za-z0-9_]+),\s*(?P<sections>\d+),\s*dim=_normalize_dim\((?P<axis>-?\d+),\s*"
@@ -185,6 +203,25 @@ def _rewrite_split_axes_from_static_shapes(
             continue
         output_vars = [token.strip() for token in str(match.group("outputs")).split(",") if token.strip() != ""]
         if len(output_vars) == 0:
+            continue
+        input_var = str(match.group("input"))
+        if input_var in cf_aliases:
+            if int(match.group("axis")) != 1:
+                lines[index] = (
+                    f"{match.group('indent')}{match.group('outputs')} = list(torch.tensor_split("
+                    f"{match.group('input')}, {match.group('sections')}, "
+                    f"dim=_normalize_dim(1, {match.group('input')}.ndim)))"
+                )
+                rewritten = True
+            continue
+        if re.fullmatch(r"(?:[A-Za-z0-9_]+_public_layout_bridge|in_public_layout_bridge)", input_var):
+            if int(match.group("axis")) != 1:
+                lines[index] = (
+                    f"{match.group('indent')}{match.group('outputs')} = list(torch.tensor_split("
+                    f"{match.group('input')}, {match.group('sections')}, "
+                    f"dim=_normalize_dim(1, {match.group('input')}.ndim)))"
+                )
+                rewritten = True
             continue
         desired_axis = desired_axis_by_first_output_var.get(str(output_vars[0]), None)
         if desired_axis is None:
@@ -284,6 +321,10 @@ def assemble_and_write_model_phase(
 ) -> None:
     impl = _load_native_codegen_impl(bindings)
     load_specs_result = impl(state.context)
+    if bindings.canonicalize_generated_model_source_fn is not None:
+        bindings.canonicalize_generated_model_source_fn(
+            state.context.package_dir
+        )
     _rewrite_public_layout_bridge_binary_align_calls(
         state.context.package_dir / "model.py"
     )

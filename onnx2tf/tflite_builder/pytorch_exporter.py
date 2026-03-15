@@ -79,7 +79,10 @@ def _build_native_codegen_bindings(
     state: _NativeCodegenState,
 ) -> _NativeCodegenBindings:
     _ = state
-    return _NativeCodegenBindings(module_globals=dict(globals()))
+    return _NativeCodegenBindings(
+        module_globals=dict(globals()),
+        canonicalize_generated_model_source_fn=_canonicalize_generated_model_source_for_raw_export,
+    )
 
 
 def _build_native_constant_aliases(
@@ -13985,7 +13988,6 @@ def export_exported_program_from_generated_package(
             },
         )
         return None
-    _rewrite_generated_model_source_for_exported_program(package_path)
     try:
         example_inputs, example_input_shapes, dynamic_inputs_present = _build_pytorch_export_example_inputs(
             package_dir=package_dir,
@@ -17501,7 +17503,7 @@ def _fold_inverse_permute_round_trips_in_exported_program_archive(
         raise
 
 
-def _rewrite_generated_model_source_for_exported_program(
+def _canonicalize_generated_model_source_for_raw_export(
     package_path: Path,
 ) -> None:
     def _convert_nhwc_pad_to_nchw_pad_for_source(pad_values: list[int]) -> list[int] | None:
@@ -17535,8 +17537,17 @@ def _rewrite_generated_model_source_for_exported_program(
     assign_re = re.compile(
         r"^(?P<indent>\s*)(?P<alias>(?:[A-Za-z0-9_]+_public_layout_bridge|in_public_layout_bridge)) = _torch_permute\((?P<input>[A-Za-z0-9_]+), \[0, 2, 3, 1\]\)$"
     )
+    trivial_assign_re = re.compile(
+        r"^(?P<indent>\s*)(?P<alias>(?:[A-Za-z0-9_]+_public_layout_bridge|in_public_layout_bridge)) = (?P<input>[A-Za-z0-9_]+)$"
+    )
+    generic_alias_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P<rhs>[A-Za-z0-9_]+)$"
+    )
     split_re = re.compile(
         r"^(?P<indent>\s*)(?P<outputs>[A-Za-z0-9_, ]+) = list\(torch\.tensor_split\((?P<alias>[A-Za-z0-9_]+), (?P<sections>\d+), dim=_normalize_dim\(3, (?P=alias)\.ndim\)\)\)$"
+    )
+    generic_split_re = re.compile(
+        r"^(?P<indent>\s*)(?P<outputs>[A-Za-z0-9_, ]+) = list\(torch\.tensor_split\((?P<input>[A-Za-z0-9_]+), (?P<sections>\d+), dim=_normalize_dim\((?P<axis>-?\d+), (?P=input)\.ndim\)\)\)$"
     )
     concat_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _apply_concat\(\[(?P<inputs>[A-Za-z0-9_, ]+)\], axis=3, target_shape=\[(?P<shape>[0-9, ]+)\], fused='NONE'\)$"
@@ -17552,6 +17563,18 @@ def _rewrite_generated_model_source_for_exported_program(
     )
     singleton_cf_align_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\((?P<expr>.+), \[(?P<n>\d+), 1, (?P<h>\d+), (?P<w>\d+)\]\)$"
+    )
+    cf_concat_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = torch\.cat\(\[(?P<inputs>[A-Za-z0-9_, ]+)\], dim=1\)$"
+    )
+    binary_anchor_align_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs0>[A-Za-z0-9_]+), (?P<lhs1>[A-Za-z0-9_]+) = _align_binary_inputs_to_anchor\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+), \[(?P<n>\d+), 1, (?P<h>\d+), (?P<w>\d+)\]\)$"
+    )
+    same_shape_singleton_reshape_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = torch\.reshape\((?P<expr>.+), \[(?P<n>\d+), 1, (?P<h>\d+), (?P<w>\d+)\]\)$"
+    )
+    unary_assign_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P<expr>torch\.(?:clamp|relu|neg|sigmoid|exp)\(.+\))$"
     )
     changed = False
     cf_pad_aliases: set[str] = set()
@@ -17583,6 +17606,15 @@ def _rewrite_generated_model_source_for_exported_program(
                     cf_aliases.add(alias)
                     changed = True
                     break
+        cf_concat_match = cf_concat_re.match(lines[index])
+        if cf_concat_match is not None:
+            cf_aliases.add(str(cf_concat_match.group("lhs")))
+        generic_alias_match = generic_alias_re.match(lines[index])
+        if (
+            generic_alias_match is not None
+            and str(generic_alias_match.group("rhs")) in cf_aliases
+        ):
+            cf_aliases.add(str(generic_alias_match.group("lhs")))
         singleton_cf_align_match = singleton_cf_align_re.match(lines[index])
         if singleton_cf_align_match is not None:
             expr = str(singleton_cf_align_match.group("expr"))
@@ -17627,14 +17659,18 @@ def _rewrite_generated_model_source_for_exported_program(
                 changed = True
     for index in range(len(lines) - 1):
         assign_match = assign_re.match(lines[index])
-        if assign_match is None:
+        trivial_assign_match = trivial_assign_re.match(lines[index]) if assign_match is None else None
+        if assign_match is None and trivial_assign_match is None:
             continue
         split_match = split_re.match(lines[index + 1])
-        if split_match is None or str(split_match.group("alias")) != str(assign_match.group("alias")):
+        resolved_assign_match = assign_match if assign_match is not None else trivial_assign_match
+        if resolved_assign_match is None:
             continue
-        indent = str(assign_match.group("indent"))
-        alias = str(assign_match.group("alias"))
-        input_name = str(assign_match.group("input"))
+        if split_match is None or str(split_match.group("alias")) != str(resolved_assign_match.group("alias")):
+            continue
+        indent = str(resolved_assign_match.group("indent"))
+        alias = str(resolved_assign_match.group("alias"))
+        input_name = str(resolved_assign_match.group("input"))
         outputs = str(split_match.group("outputs"))
         sections = int(split_match.group("sections"))
         if sections <= 1:
@@ -17645,8 +17681,165 @@ def _rewrite_generated_model_source_for_exported_program(
             f"{alias}, {sections}, dim=_normalize_dim(1, {alias}.ndim)))"
         )
         changed = True
+    for index, line in enumerate(lines):
+        split_match = split_re.match(line)
+        if split_match is None:
+            continue
+        alias = str(split_match.group("alias"))
+        if not re.fullmatch(r"(?:[A-Za-z0-9_]+_public_layout_bridge|in_public_layout_bridge)", alias):
+            continue
+        indent = str(split_match.group("indent"))
+        outputs = str(split_match.group("outputs"))
+        sections = int(split_match.group("sections"))
+        lines[index] = (
+            f"{indent}{outputs} = list(torch.tensor_split("
+            f"{alias}, {sections}, dim=_normalize_dim(1, {alias}.ndim)))"
+        )
+        changed = True
+    singleton_cf_vars: set[str] = set()
+    index = 0
+    while index < len(lines):
+        cf_concat_match = cf_concat_re.match(lines[index])
+        cf_materialize_match = (
+            cf_nhwc_materialize_re.match(lines[index + 1])
+            if index + 1 < len(lines)
+            else None
+        )
+        split_match = split_re.match(lines[index + 2]) if index + 2 < len(lines) else None
+        if (
+            cf_concat_match is not None
+            and cf_materialize_match is not None
+            and split_match is not None
+            and str(cf_materialize_match.group("src")) == str(cf_concat_match.group("lhs"))
+            and str(split_match.group("alias")) == str(cf_materialize_match.group("lhs"))
+        ):
+            indent = str(cf_materialize_match.group("indent"))
+            alias = str(cf_materialize_match.group("lhs"))
+            sections = int(split_match.group("sections"))
+            outputs = str(split_match.group("outputs"))
+            lines[index + 1] = f"{indent}{alias} = {cf_concat_match.group('lhs')}"
+            lines[index + 2] = (
+                f"{indent}{outputs} = list(torch.tensor_split("
+                f"{alias}, {sections}, dim=_normalize_dim(1, {alias}.ndim)))"
+            )
+            for output_name in [token.strip() for token in outputs.split(",") if token.strip()]:
+                singleton_cf_vars.add(output_name)
+            cf_aliases.add(alias)
+            changed = True
+            index += 3
+            continue
+        split_match = generic_split_re.match(lines[index])
+        if split_match is not None and int(split_match.group("sections")) > 1:
+            if int(split_match.group("axis")) == 1:
+                for output_name in [token.strip() for token in str(split_match.group("outputs")).split(",") if token.strip()]:
+                    singleton_cf_vars.add(output_name)
+            elif int(split_match.group("axis")) == 3 and str(split_match.group("input")) in cf_aliases:
+                indent = str(split_match.group("indent"))
+                outputs = str(split_match.group("outputs"))
+                input_name = str(split_match.group("input"))
+                sections = int(split_match.group("sections"))
+                lines[index] = (
+                    f"{indent}{outputs} = list(torch.tensor_split("
+                    f"{input_name}, {sections}, dim=_normalize_dim(1, {input_name}.ndim)))"
+                )
+                for output_name in [token.strip() for token in outputs.split(",") if token.strip()]:
+                    singleton_cf_vars.add(output_name)
+                changed = True
+        reshape_match = same_shape_singleton_reshape_re.match(lines[index])
+        unary_assign_match = unary_assign_re.match(lines[index])
+        if unary_assign_match is not None:
+            lhs = str(unary_assign_match.group("lhs"))
+            indent = str(unary_assign_match.group("indent"))
+            expr = str(unary_assign_match.group("expr"))
+            if lhs not in singleton_cf_vars:
+                for lookahead in range(index + 1, min(index + 6, len(lines))):
+                    later_reshape_match = same_shape_singleton_reshape_re.match(lines[lookahead])
+                    if later_reshape_match is None:
+                        continue
+                    later_expr = str(later_reshape_match.group("expr"))
+                    if re.search(rf"\b{re.escape(lhs)}\b", later_expr) is None:
+                        continue
+                    n = int(later_reshape_match.group("n"))
+                    h = int(later_reshape_match.group("h"))
+                    w = int(later_reshape_match.group("w"))
+                    lines[index] = (
+                        f"{indent}{lhs} = torch.reshape({expr}, [{n}, 1, {h}, {w}])"
+                    )
+                    singleton_cf_vars.add(lhs)
+                    changed = True
+                    break
+        if reshape_match is not None:
+            expr = str(reshape_match.group("expr"))
+            indent = str(reshape_match.group("indent"))
+            lhs = str(reshape_match.group("lhs"))
+            if expr in singleton_cf_vars:
+                lines[index] = f"{indent}{lhs} = {expr}"
+                singleton_cf_vars.add(lhs)
+                changed = True
+                index += 1
+                continue
+            previous_line = lines[index - 1] if index > 0 else ""
+            anchor_match = binary_anchor_align_re.match(previous_line)
+            if (
+                anchor_match is not None
+                and (
+                    expr == f"torch.sub({anchor_match.group('lhs1')}, {anchor_match.group('lhs0')})"
+                    or expr == f"torch.sub({anchor_match.group('lhs0')}, {anchor_match.group('lhs1')})"
+                    or expr == f"torch.add({anchor_match.group('lhs1')}, {anchor_match.group('lhs0')})"
+                    or expr == f"torch.add({anchor_match.group('lhs0')}, {anchor_match.group('lhs1')})"
+                    or expr == f"torch.mul({anchor_match.group('lhs1')}, {anchor_match.group('lhs0')})"
+                    or expr == f"torch.mul({anchor_match.group('lhs0')}, {anchor_match.group('lhs1')})"
+                    or expr == f"torch.div({anchor_match.group('lhs1')}, {anchor_match.group('lhs0')})"
+                    or expr == f"torch.div({anchor_match.group('lhs0')}, {anchor_match.group('lhs1')})"
+                )
+            ):
+                lines[index] = f"{indent}{lhs} = {expr}"
+                singleton_cf_vars.add(lhs)
+                changed = True
+                index += 1
+                continue
+            unary_match = re.match(
+                r"torch\.(?:mul|add|sub|div)\((?P<arg0>[A-Za-z0-9_]+), (?P<arg1>.+)\)$",
+                expr,
+            )
+            arg1_uses_singleton_cf = False
+            if unary_match is not None and len(singleton_cf_vars) > 0:
+                arg1_uses_singleton_cf = (
+                    re.search(
+                        rf"\b(?:{'|'.join(re.escape(name) for name in sorted(singleton_cf_vars))})\b",
+                        str(unary_match.group("arg1")),
+                    )
+                    is not None
+                )
+            if unary_match is not None and (
+                str(unary_match.group("arg0")) in singleton_cf_vars
+                or arg1_uses_singleton_cf
+            ):
+                lines[index] = f"{indent}{lhs} = {expr}"
+                singleton_cf_vars.add(lhs)
+                changed = True
+                index += 1
+                continue
+            unary_passthrough_match = re.match(
+                r"torch\.(?:relu|neg|sigmoid|exp|clamp)\((?P<arg0>[A-Za-z0-9_]+).*\)$",
+                expr,
+            )
+            if (
+                unary_passthrough_match is not None
+                and str(unary_passthrough_match.group("arg0")) in singleton_cf_vars
+            ):
+                lines[index] = f"{indent}{lhs} = {expr}"
+                singleton_cf_vars.add(lhs)
+                changed = True
+        index += 1
     if changed:
         model_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _rewrite_generated_model_source_for_exported_program(
+    package_path: Path,
+) -> None:
+    _canonicalize_generated_model_source_for_raw_export(package_path)
 
 
 def _build_tflite_backed_metadata_payload(
