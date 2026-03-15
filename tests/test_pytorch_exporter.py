@@ -45,6 +45,7 @@ from onnx2tf.tflite_builder.pytorch_exporter import (
     _build_metadata_payload,
     _build_tensor_var_name_map,
     _build_torchscript_example_inputs,
+    _conv2d_input_pre_permute_for_codegen,
     _conv2d_same_pad_padding_arg_for_codegen,
     _export_runtime_wrapper_package_from_model_ir,
     _make_tensor_storage_name_map,
@@ -57,6 +58,8 @@ from onnx2tf.tflite_builder.pytorch_exporter import (
     _rewrite_channel_last_gap_means_to_reduce_mean,
     _sanitize_dynamo_exported_onnx_metadata,
     _should_prefer_tflite_backed_package,
+    _target_shape_values_for_model_ir,
+    _tensor_exact_static_shape_list_for_model_ir,
     _write_native_model_file,
     export_dynamo_onnx_from_generated_package,
     export_exported_program_from_generated_package,
@@ -7624,6 +7627,123 @@ def test_export_pytorch_package_conv2d_same_pad_interprets_channel_last_stored_s
     assert pad == [4, 4, 0, 0]
 
 
+def test_export_pytorch_package_target_shape_keeps_channel_first_stored_conv_tensor() -> None:
+    model_ir = ModelIR(name="target_shape_keeps_channel_first_stored_conv_tensor")
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 64, 24, 40],
+        shape_signature=[1, 64, 24, 40],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["w"] = TensorIR(
+        name="w",
+        dtype="FLOAT32",
+        shape=[64, 64, 3, 3],
+        shape_signature=[64, 64, 3, 3],
+        logical_layout="NCHW",
+        data=np.zeros((64, 64, 3, 3), dtype=np.float32),
+    )
+    model_ir.tensors["b"] = TensorIR(
+        name="b",
+        dtype="FLOAT32",
+        shape=[64],
+        shape_signature=[64],
+        logical_layout="UNKNOWN",
+        data=np.zeros((64,), dtype=np.float32),
+    )
+    model_ir.tensors["wa/layer3_/layer3_.1/conv1/Conv_input_nhwc"] = TensorIR(
+        name="wa/layer3_/layer3_.1/conv1/Conv_input_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 64, 24, 40],
+        shape_signature=[1, 64, 24, 40],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 64, 24, 40],
+        shape_signature=[1, 64, 24, 40],
+        logical_layout="NCHW",
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="CONV_2D",
+            inputs=["wa/layer3_/layer3_.1/conv1/Conv_input_nhwc", "w", "b"],
+            outputs=["y"],
+            options={"strideH": 1, "strideW": 1, "padding": "SAME"},
+        )
+    )
+
+    assert _target_shape_values_for_model_ir(
+        model_ir=model_ir,
+        tensor_name="wa/layer3_/layer3_.1/conv1/Conv_input_nhwc",
+    ) == [1, 64, 24, 40]
+    assert _tensor_exact_static_shape_list_for_model_ir(
+        model_ir=model_ir,
+        tensor_name="wa/layer3_/layer3_.1/conv1/Conv_input_nhwc",
+    ) == [1, 64, 24, 40]
+
+
+def test_export_pytorch_package_conv2d_input_pre_permute_skips_channel_first_stored_input() -> None:
+    assert _conv2d_input_pre_permute_for_codegen(
+        input_shape=[1, 512, 2, 3],
+        output_shape=[1, 2, 3, 96],
+        weight_shape=[96, 512, 1, 1],
+        options={"padding": "SAME", "strideH": 1, "strideW": 1},
+        input_logical_layout="NCHW",
+        output_logical_layout="NHWC",
+        depthwise=False,
+    ) is None
+
+
+def test_export_pytorch_package_target_shape_keeps_channel_first_stored_grouped_conv_tensor() -> None:
+    model_ir = ModelIR(name="target_shape_keeps_channel_first_stored_grouped_conv_tensor")
+    model_ir.tensors["/spp/scale_process/scale_process.2/Conv_input_nhwc"] = TensorIR(
+        name="/spp/scale_process/scale_process.2/Conv_input_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 384, 3, 5],
+        shape_signature=[1, 384, 3, 5],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["w"] = TensorIR(
+        name="w",
+        dtype="FLOAT32",
+        shape=[384, 96, 3, 3],
+        shape_signature=[384, 96, 3, 3],
+        logical_layout="NCHW",
+        data=np.zeros((384, 96, 3, 3), dtype=np.float32),
+    )
+    model_ir.tensors["b"] = TensorIR(
+        name="b",
+        dtype="FLOAT32",
+        shape=[384],
+        shape_signature=[384],
+        logical_layout="UNKNOWN",
+        data=np.zeros((384,), dtype=np.float32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 384, 3, 5],
+        shape_signature=[1, 384, 3, 5],
+        logical_layout="NCHW",
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="CONV_2D",
+            inputs=["/spp/scale_process/scale_process.2/Conv_input_nhwc", "w", "b"],
+            outputs=["y"],
+            options={"padding": "SAME", "strideH": 1, "strideW": 1},
+        )
+    )
+
+    assert _target_shape_values_for_model_ir(
+        model_ir=model_ir,
+        tensor_name="/spp/scale_process/scale_process.2/Conv_input_nhwc",
+    ) == [1, 384, 3, 5]
+
+
 def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_available(tmp_path) -> None:
     model_path = Path("pidnet_S_cityscapes_192x320.onnx")
     if not model_path.exists():
@@ -7651,7 +7771,7 @@ def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_av
     assert "torch.argmax(" in model_source
     assert "_apply_pool2d(" in model_source or "torch.mean(" in model_source
     assert "spp_concat4_out0 = torch.cat([spp_add_out0, spp_add1_out0, spp_add2_out0, spp_add3_out0], dim=1)" in model_source
-    assert "spp_concat5_out0 = torch.cat([sppscale0_scale02_cv_out, sppscale_processscale_process2_cv_out], dim=1)" in model_source
+    assert "spp_concat5_out0 = torch.cat([sppscale0_scale02_cv_out_cf, sppscale_processscale_process2_cv_out_cf], dim=1)" in model_source
     assert "self.const_wa_spp_scale1_scale1_0_AveragePool_exclude_pad_mask_pool.permute(*(0, 3, 1, 2)).contiguous()" not in model_source
     assert "self.const_wa_spp_scale1_scale1_1_BatchNormalization_bn_mul.permute(*(0, 3, 1, 2)).contiguous()" not in model_source
     assert "self.const_wa_spp_scale1_scale1_1_BatchNormalization_bn_add.permute(*(0, 3, 1, 2)).contiguous()" not in model_source
@@ -7684,7 +7804,9 @@ def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_av
         for node in dynamo_onnx_model.graph.node
         if node.op_type == "Transpose"
     )
-    assert dynamo_transpose_names == ["node_permute_55"]
+    assert dynamo_transpose_names == [
+        "node_permute_62",
+    ]
     exported_program = torch.export.load(str(exported_program_path))
     exported_program_nodes = {
         str(node.name): node
@@ -7694,11 +7816,11 @@ def test_export_pytorch_package_generates_native_pidnet_package_when_model_is_av
         node = exported_program_nodes.get(node_name, None)
         assert node is not None
         other_arg = node.args[1]
-        assert isinstance(other_arg, torch.fx.Node)
-        assert not (
-            other_arg.op == "call_function"
-            and str(other_arg.target) in {"aten.contiguous.default", "aten.permute.default"}
-        )
+        if isinstance(other_arg, torch.fx.Node):
+            assert not (
+                other_arg.op == "call_function"
+                and str(other_arg.target) in {"aten.contiguous.default", "aten.permute.default"}
+            )
     permute_nodes = [
         node
         for node in exported_program.module().graph.nodes

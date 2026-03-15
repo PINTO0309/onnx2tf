@@ -477,17 +477,12 @@ def _target_shape_values_for_model_ir(
             preferred = [int(v) for v in list(tensor.shape)]
     else:
         preferred = [int(v) for v in list(tensor.shape)]
-    rank = len(list(preferred))
-    perm_to_cf = _perm_cl_to_cf(rank)
-    if (
-        perm_to_cf is not None
-        and is_channel_first_logical_layout(normalize_logical_layout(tensor.logical_layout))
-        and _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor_name))
-    ):
-        permuted = _permute_shape(preferred, perm_to_cf)
-        if permuted is not None:
-            return [int(v) for v in list(permuted)]
-    return [int(v) for v in list(preferred)]
+    return _resolve_channel_first_named_tensor_shape_for_codegen(
+        model_ir=model_ir,
+        tensor_name=str(tensor_name),
+        preferred=preferred,
+        logical_layout=str(tensor.logical_layout),
+    )
 
 
 def _target_shape_literal_for_model_ir(
@@ -548,6 +543,79 @@ def _tensor_shape_list_for_model_ir(
 
 def _tensor_name_suggests_channel_last_layout_for_codegen(tensor_name: str) -> bool:
     return str(tensor_name).lower().endswith(("_nhwc", "_nwc", "_ndhwc"))
+
+
+def _expected_channel_dim_for_channel_last_named_tensor_for_codegen(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> Optional[int]:
+    current_name = str(tensor_name)
+    candidates: List[int] = []
+    for op in model_ir.operators:
+        if str(op.op_type) != "CONV_2D" or len(op.inputs) < 2:
+            continue
+        weight_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+        if weight_tensor is None or len(list(weight_tensor.shape)) != 4:
+            continue
+        weight_shape = [int(v) for v in list(weight_tensor.shape)]
+        candidate: Optional[int] = None
+        if current_name == str(op.inputs[0]):
+            input_tensor = model_ir.tensors.get(current_name, None)
+            output_tensor = model_ir.tensors.get(str(op.outputs[0]), None) if len(op.outputs) >= 1 else None
+            inferred_input_channels, _ = _infer_conv2d_ctor_params_for_codegen(
+                input_shape=None if input_tensor is None else list(input_tensor.shape),
+                output_shape=None if output_tensor is None else list(output_tensor.shape),
+                weight_shape=weight_shape,
+                options=op.options,
+                input_logical_layout=None if input_tensor is None else str(input_tensor.logical_layout),
+                output_logical_layout=None if output_tensor is None else str(output_tensor.logical_layout),
+                depthwise=False,
+            )
+            candidate = int(inferred_input_channels)
+        elif current_name in {str(v) for v in list(op.outputs)}:
+            candidate = int(weight_shape[0])
+        if candidate is not None and int(candidate) > 0 and int(candidate) not in candidates:
+            candidates.append(int(candidate))
+    if len(candidates) == 1:
+        return int(candidates[0])
+    return None
+
+
+def _resolve_channel_first_named_tensor_shape_for_codegen(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+    preferred: Sequence[int],
+    logical_layout: str,
+) -> List[int]:
+    resolved = [int(v) for v in list(preferred)]
+    rank = len(list(resolved))
+    perm_to_cf = _perm_cl_to_cf(rank)
+    if (
+        perm_to_cf is None
+        or not is_channel_first_logical_layout(normalize_logical_layout(logical_layout))
+        or not _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor_name))
+    ):
+        return resolved
+    expected_channels = _expected_channel_dim_for_channel_last_named_tensor_for_codegen(
+        model_ir=model_ir,
+        tensor_name=str(tensor_name),
+    )
+    if expected_channels is not None and len(resolved) >= 3:
+        second_axis_matches = int(resolved[1]) == int(expected_channels)
+        last_axis_matches = int(resolved[-1]) == int(expected_channels)
+        if second_axis_matches and not last_axis_matches:
+            return resolved
+        if last_axis_matches and not second_axis_matches:
+            permuted = _permute_shape(resolved, perm_to_cf)
+            if permuted is not None:
+                return [int(v) for v in list(permuted)]
+            return resolved
+    permuted = _permute_shape(resolved, perm_to_cf)
+    if permuted is not None:
+        return [int(v) for v in list(permuted)]
+    return resolved
 
 
 def _rank4_channel_first_shape_for_tensor_for_codegen(
@@ -899,17 +967,12 @@ def _tensor_exact_static_shape_list_for_model_ir(
     ):
         signature = [int(v) for v in list(tensor.shape_signature)]
         if all(int(v) > 0 for v in signature):
-            rank = len(list(signature))
-            perm_to_cf = _perm_cl_to_cf(rank)
-            if (
-                perm_to_cf is not None
-                and is_channel_first_logical_layout(normalize_logical_layout(tensor.logical_layout))
-                and _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor_name))
-            ):
-                permuted = _permute_shape(signature, perm_to_cf)
-                if permuted is not None:
-                    return [int(v) for v in list(permuted)]
-            return signature
+            return _resolve_channel_first_named_tensor_shape_for_codegen(
+                model_ir=model_ir,
+                tensor_name=str(tensor_name),
+                preferred=signature,
+                logical_layout=str(tensor.logical_layout),
+            )
     return None
 
 
@@ -2367,8 +2430,6 @@ def _conv2d_input_pre_permute_for_codegen(
     normalized_output_layout = normalize_logical_layout(output_logical_layout)
     if is_channel_last_logical_layout(normalized_input_layout):
         return [0, 3, 1, 2]
-    if is_channel_last_logical_layout(normalized_output_layout):
-        return [0, 3, 1, 2]
     if depthwise:
         depthwise_channels = int(kernel_shape[0])
         if (
@@ -2407,6 +2468,11 @@ def _conv2d_input_pre_permute_for_codegen(
             best_groups = int(inferred_groups)
     if expected_in_channels is None:
         expected_in_channels = int(kernel_shape[1])
+    if is_channel_last_logical_layout(normalized_output_layout):
+        if int(in_shape[1]) == int(expected_in_channels) and int(in_shape[3]) != int(expected_in_channels):
+            return None
+        if int(in_shape[3]) == int(expected_in_channels) and int(in_shape[1]) != int(expected_in_channels):
+            return [0, 3, 1, 2]
     if int(in_shape[1]) != expected_in_channels and int(in_shape[3]) == expected_in_channels:
         return [0, 3, 1, 2]
     if (
@@ -11679,6 +11745,69 @@ def _onnx_fold_reducesum_sigmoid_layout_bridges_in_place(graph: onnx.GraphProto)
     _onnx_remove_nodes_by_name(graph, remove_node_names)
 
 
+def _onnx_fold_mul_reducesum_sigmoid_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
+    producer_map, consumer_map = _onnx_node_maps(graph)
+    remove_node_names: List[str] = []
+    for inverse_node in list(graph.node):
+        if str(inverse_node.op_type) != "Transpose":
+            continue
+        if list(_onnx_node_attr(inverse_node, "perm") or []) != [0, 3, 1, 2]:
+            continue
+        if not inverse_node.input:
+            continue
+        sigmoid_node = producer_map.get(str(inverse_node.input[0]))
+        if sigmoid_node is None or str(sigmoid_node.op_type) != "Sigmoid":
+            continue
+        if len(consumer_map.get(str(sigmoid_node.output[0]), [])) != 1:
+            continue
+        if not sigmoid_node.input:
+            continue
+        reduce_node = producer_map.get(str(sigmoid_node.input[0]))
+        if reduce_node is None or str(reduce_node.op_type) != "ReduceSum":
+            continue
+        if len(consumer_map.get(str(reduce_node.output[0]), [])) != 1:
+            continue
+        axes_name = str(reduce_node.input[1]) if len(reduce_node.input) >= 2 else ""
+        axes_array = _onnx_get_initializer_array(graph, axes_name)
+        if axes_array is None or [int(v) for v in axes_array.reshape(-1)] != [3]:
+            continue
+        if int(_onnx_node_attr(reduce_node, "keepdims") or 0) != 1:
+            continue
+        if not reduce_node.input:
+            continue
+        mul_node = producer_map.get(str(reduce_node.input[0]))
+        if mul_node is None or str(mul_node.op_type) != "Mul" or len(mul_node.input) != 2:
+            continue
+        if len(consumer_map.get(str(mul_node.output[0]), [])) != 1:
+            continue
+        input_transpose_nodes: List[onnx.NodeProto] = []
+        for input_name in mul_node.input:
+            transpose_node = producer_map.get(str(input_name))
+            if transpose_node is None or str(transpose_node.op_type) != "Transpose":
+                input_transpose_nodes = []
+                break
+            input_transpose_nodes.append(transpose_node)
+        if len(input_transpose_nodes) != 2:
+            continue
+        if any(list(_onnx_node_attr(node, "perm") or []) != [0, 2, 3, 1] for node in input_transpose_nodes):
+            continue
+        if any(len(consumer_map.get(str(node.output[0]), [])) != 1 for node in input_transpose_nodes):
+            continue
+
+        for input_index, transpose_node in enumerate(input_transpose_nodes):
+            mul_node.input[input_index] = str(transpose_node.input[0])
+        new_axes_name = _onnx_make_unique_initializer_name(graph, f"{axes_name}_nchw")
+        _onnx_set_initializer_array(graph, name=new_axes_name, array=np.asarray([1], dtype=np.int64))
+        reduce_node.input[1] = str(new_axes_name)
+        _onnx_replace_all_node_inputs(
+            graph,
+            old_name=str(inverse_node.output[0]),
+            new_name=str(sigmoid_node.output[0]),
+        )
+        remove_node_names.extend([str(node.name) for node in input_transpose_nodes] + [str(inverse_node.name)])
+    _onnx_remove_nodes_by_name(graph, remove_node_names)
+
+
 def _onnx_fold_inverse_transpose_pairs_in_place(graph: onnx.GraphProto) -> None:
     _, consumer_map = _onnx_node_maps(graph)
     remove_node_names: List[str] = []
@@ -11730,103 +11859,171 @@ def _onnx_remove_passthrough_identity_nodes_in_place(graph: onnx.GraphProto) -> 
 
 
 def _onnx_optimize_pidnet_spp_transpose_bridges_in_place(graph: onnx.GraphProto) -> None:
-    node_by_name = {str(node.name): node for node in graph.node}
-    required_node_names = {
-        "node_permute_27",
-        "node_permute_28",
-        "node_pad_38",
-        "node_pad_39",
-        "node_pad_40",
-        "node_permute_33",
-        "node_permute_36",
-        "node_avg_pool2d_1",
-        "node_avg_pool2d_2",
-        "node_mean",
-        "node_mul_6",
-        "node_mul_7",
-        "node_mul_11",
-        "node_permute_41",
-        "node_add_28",
-    }
-    if any(node_name not in node_by_name for node_name in required_node_names):
-        return
+    while True:
+        producer_map, consumer_map = _onnx_node_maps(graph)
+        optimized = False
+        for layout_bridge_node in list(graph.node):
+            if str(layout_bridge_node.op_type) != "Transpose":
+                continue
+            if list(_onnx_node_attr(layout_bridge_node, "perm") or []) != [0, 2, 3, 1]:
+                continue
+            if not layout_bridge_node.input or not layout_bridge_node.output:
+                continue
+            base_input_name = str(layout_bridge_node.input[0])
+            layout_bridge_output_name = str(layout_bridge_node.output[0])
+            layout_bridge_consumers = consumer_map.get(layout_bridge_output_name, [])
+            if len(layout_bridge_consumers) < 4:
+                continue
 
-    node_permute_27 = node_by_name["node_permute_27"]
-    node_permute_28 = node_by_name["node_permute_28"]
-    node_pad_38 = node_by_name["node_pad_38"]
-    node_pad_39 = node_by_name["node_pad_39"]
-    node_pad_40 = node_by_name["node_pad_40"]
-    node_permute_33 = node_by_name["node_permute_33"]
-    node_permute_36 = node_by_name["node_permute_36"]
-    node_avg_pool2d_1 = node_by_name["node_avg_pool2d_1"]
-    node_avg_pool2d_2 = node_by_name["node_avg_pool2d_2"]
-    node_mean = node_by_name["node_mean"]
-    node_mul_6 = node_by_name["node_mul_6"]
-    node_mul_7 = node_by_name["node_mul_7"]
-    node_mul_11 = node_by_name["node_mul_11"]
-    node_permute_41 = node_by_name["node_permute_41"]
-    node_add_28 = node_by_name["node_add_28"]
+            inverse_bridge_node: Optional[onnx.NodeProto] = None
+            reduce_mean_node: Optional[onnx.NodeProto] = None
+            pad_bridge_nodes: List[onnx.NodeProto] = []
+            unsupported_consumer = False
+            for consumer_node in layout_bridge_consumers:
+                if (
+                    str(consumer_node.op_type) == "Transpose"
+                    and list(_onnx_node_attr(consumer_node, "perm") or []) == [0, 3, 1, 2]
+                ):
+                    if inverse_bridge_node is not None:
+                        unsupported_consumer = True
+                        break
+                    inverse_bridge_node = consumer_node
+                    continue
+                if str(consumer_node.op_type) == "ReduceMean":
+                    if reduce_mean_node is not None:
+                        unsupported_consumer = True
+                        break
+                    reduce_mean_node = consumer_node
+                    continue
+                if str(consumer_node.op_type) == "Pad":
+                    pad_bridge_nodes.append(consumer_node)
+                    continue
+                unsupported_consumer = True
+                break
+            if unsupported_consumer:
+                continue
+            if inverse_bridge_node is None or reduce_mean_node is None or len(pad_bridge_nodes) < 2:
+                continue
 
-    if list(_onnx_node_attr(node_permute_27, "perm") or []) != [0, 2, 3, 1]:
-        return
-    if list(_onnx_node_attr(node_permute_28, "perm") or []) != [0, 3, 1, 2]:
-        return
-    if list(_onnx_node_attr(node_permute_33, "perm") or []) != [0, 3, 1, 2]:
-        return
-    if list(_onnx_node_attr(node_permute_36, "perm") or []) != [0, 3, 1, 2]:
-        return
-    if list(_onnx_node_attr(node_permute_41, "perm") or []) != [0, 3, 1, 2]:
-        return
+            inverse_bridge_consumers = consumer_map.get(str(inverse_bridge_node.output[0]), [])
+            if not inverse_bridge_consumers:
+                continue
 
-    base_input_name = str(node_permute_27.input[0])
-    node_mul_6.input[0] = base_input_name
-    node_pad_38.input[0] = base_input_name
-    node_mul_7.input[0] = base_input_name
-    node_pad_39.input[0] = base_input_name
-    node_pad_40.input[0] = base_input_name
-    node_mean.input[0] = base_input_name
-    node_avg_pool2d_1.input[0] = str(node_pad_39.output[0])
-    node_avg_pool2d_2.input[0] = str(node_pad_40.output[0])
-    node_add_28.input[0] = str(node_mul_11.output[0])
+            mean_axes_name = str(reduce_mean_node.input[1]) if len(reduce_mean_node.input) >= 2 else ""
+            mean_axes_array = _onnx_get_initializer_array(graph, mean_axes_name)
+            if mean_axes_array is None or [int(v) for v in mean_axes_array.reshape(-1)] != [1, 2]:
+                continue
+            if int(_onnx_node_attr(reduce_mean_node, "keepdims") or 0) != 1:
+                continue
+            reduce_mean_consumers = consumer_map.get(str(reduce_mean_node.output[0]), [])
+            if len(reduce_mean_consumers) != 1:
+                continue
+            reduce_mean_mul_node = reduce_mean_consumers[0]
+            if str(reduce_mean_mul_node.op_type) != "Mul" or len(reduce_mean_mul_node.input) != 2:
+                continue
+            reduce_mean_mul_consumers = consumer_map.get(str(reduce_mean_mul_node.output[0]), [])
+            if len(reduce_mean_mul_consumers) != 1:
+                continue
+            reduce_mean_inverse_node = reduce_mean_mul_consumers[0]
+            if str(reduce_mean_inverse_node.op_type) != "Transpose":
+                continue
+            if list(_onnx_node_attr(reduce_mean_inverse_node, "perm") or []) != [0, 3, 1, 2]:
+                continue
 
-    mean_axes_name = str(node_mean.input[1]) if len(node_mean.input) >= 2 else ""
-    if mean_axes_name:
-        new_mean_axes_name = _onnx_make_unique_initializer_name(graph, f"{mean_axes_name}_nchw")
-        _onnx_set_initializer_array(graph, name=new_mean_axes_name, array=np.asarray([2, 3], dtype=np.int64))
-        node_mean.input[1] = str(new_mean_axes_name)
+            pad_rewrites: List[Tuple[onnx.NodeProto, str, onnx.NodeProto]] = []
+            pad_pattern_valid = True
+            for pad_node in pad_bridge_nodes:
+                pad_name = str(pad_node.input[1]) if len(pad_node.input) >= 2 else ""
+                pad_values = _onnx_get_initializer_array(graph, pad_name)
+                nchw_pad_values = (
+                    _onnx_convert_pads_nhwc_to_nchw(pad_values)
+                    if pad_values is not None
+                    else None
+                )
+                if not pad_name or nchw_pad_values is None:
+                    pad_pattern_valid = False
+                    break
+                pad_consumers = consumer_map.get(str(pad_node.output[0]), [])
+                if len(pad_consumers) != 1:
+                    pad_pattern_valid = False
+                    break
+                pad_inverse_node = pad_consumers[0]
+                if str(pad_inverse_node.op_type) != "Transpose":
+                    pad_pattern_valid = False
+                    break
+                if list(_onnx_node_attr(pad_inverse_node, "perm") or []) != [0, 3, 1, 2]:
+                    pad_pattern_valid = False
+                    break
+                pad_inverse_consumers = consumer_map.get(str(pad_inverse_node.output[0]), [])
+                if len(pad_inverse_consumers) != 1:
+                    pad_pattern_valid = False
+                    break
+                if str(pad_inverse_consumers[0].op_type) != "AveragePool":
+                    pad_pattern_valid = False
+                    break
+                pad_rewrites.append((pad_node, pad_name, pad_inverse_node))
+            if not pad_pattern_valid:
+                continue
 
-    for pad_node in [node_pad_39, node_pad_40]:
-        pad_name = str(pad_node.input[1]) if len(pad_node.input) >= 2 else ""
-        pad_values = _onnx_get_initializer_array(graph, pad_name)
-        nchw_pad_values = (
-            _onnx_convert_pads_nhwc_to_nchw(pad_values)
-            if pad_values is not None
-            else None
-        )
-        if pad_name and nchw_pad_values is not None:
-            new_pad_name = _onnx_make_unique_initializer_name(graph, f"{pad_name}_nchw")
-            _onnx_set_initializer_array(graph, name=new_pad_name, array=nchw_pad_values)
-            pad_node.input[1] = str(new_pad_name)
+            for consumer_node in inverse_bridge_consumers:
+                for input_index, input_name in enumerate(consumer_node.input):
+                    if str(input_name) == str(inverse_bridge_node.output[0]):
+                        consumer_node.input[input_index] = base_input_name
 
-    mul_const_name = str(node_mul_11.input[1]) if len(node_mul_11.input) >= 2 else ""
-    mul_const_array = _onnx_get_initializer_array(graph, mul_const_name)
-    if mul_const_name and mul_const_array is not None and len(mul_const_array.shape) == 4:
-        _onnx_set_initializer_array(
-            graph,
-            name=mul_const_name,
-            array=np.transpose(mul_const_array, (0, 3, 1, 2)),
-        )
+            new_mean_axes_name = _onnx_make_unique_initializer_name(graph, f"{mean_axes_name}_nchw")
+            _onnx_set_initializer_array(
+                graph,
+                name=new_mean_axes_name,
+                array=np.asarray([2, 3], dtype=np.int64),
+            )
+            reduce_mean_node.input[0] = base_input_name
+            reduce_mean_node.input[1] = str(new_mean_axes_name)
 
-    _onnx_remove_nodes_by_name(
-        graph,
-        [
-            str(node_permute_27.name),
-            str(node_permute_28.name),
-            str(node_permute_33.name),
-            str(node_permute_36.name),
-            str(node_permute_41.name),
-        ],
-    )
+            mul_const_name = str(reduce_mean_mul_node.input[1]) if len(reduce_mean_mul_node.input) >= 2 else ""
+            mul_const_array = _onnx_get_initializer_array(graph, mul_const_name)
+            if mul_const_name and mul_const_array is not None and len(mul_const_array.shape) == 4:
+                _onnx_set_initializer_array(
+                    graph,
+                    name=mul_const_name,
+                    array=np.transpose(mul_const_array, (0, 3, 1, 2)),
+                )
+
+            _onnx_replace_all_node_inputs(
+                graph,
+                old_name=str(reduce_mean_inverse_node.output[0]),
+                new_name=str(reduce_mean_mul_node.output[0]),
+            )
+
+            for pad_node, pad_name, pad_inverse_node in pad_rewrites:
+                pad_values = _onnx_get_initializer_array(graph, pad_name)
+                nchw_pad_values = (
+                    _onnx_convert_pads_nhwc_to_nchw(pad_values)
+                    if pad_values is not None
+                    else None
+                )
+                if nchw_pad_values is None:
+                    continue
+                new_pad_name = _onnx_make_unique_initializer_name(graph, f"{pad_name}_nchw")
+                _onnx_set_initializer_array(graph, name=new_pad_name, array=nchw_pad_values)
+                pad_node.input[0] = base_input_name
+                pad_node.input[1] = str(new_pad_name)
+                pad_inverse_consumers = consumer_map.get(str(pad_inverse_node.output[0]), [])
+                if len(pad_inverse_consumers) == 1:
+                    pad_inverse_consumers[0].input[0] = str(pad_node.output[0])
+
+            _onnx_remove_nodes_by_name(
+                graph,
+                [
+                    str(layout_bridge_node.name),
+                    str(inverse_bridge_node.name),
+                    str(reduce_mean_inverse_node.name),
+                    *[str(pad_inverse_node.name) for _, _, pad_inverse_node in pad_rewrites],
+                ],
+            )
+            optimized = True
+            break
+        if not optimized:
+            break
 
 
 def _onnx_optimize_pphumanseg_add_resize_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
@@ -11987,6 +12184,7 @@ def _onnx_fold_softmax_layout_bridges_in_place(graph: onnx.GraphProto) -> None:
 def _optimize_dynamo_exported_onnx_in_place(model: onnx.ModelProto) -> None:
     _onnx_remove_passthrough_identity_nodes_in_place(model.graph)
     _onnx_fold_relu_layout_bridges_in_place(model.graph)
+    _onnx_fold_mul_reducesum_sigmoid_layout_bridges_in_place(model.graph)
     _onnx_fold_reducesum_sigmoid_layout_bridges_in_place(model.graph)
     _onnx_fold_inverse_transpose_pairs_in_place(model.graph)
     _onnx_optimize_pidnet_spp_transpose_bridges_in_place(model.graph)
