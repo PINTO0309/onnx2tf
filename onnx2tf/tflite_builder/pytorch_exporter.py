@@ -13438,11 +13438,250 @@ def _fold_layout_preserving_permute_chains(exported_program):
         graph_module.recompile()
     return exported_program
 
+
+def _fold_nhwc_binary_expr_trees_in_exported_program(exported_program):
+    graph_module = getattr(exported_program, "graph_module", None)
+    if graph_module is None:
+        return exported_program
+    graph = graph_module.graph
+    changed = False
+    binary_targets = {
+        "aten.add.Tensor",
+        "aten.mul.Tensor",
+        "aten.sub.Tensor",
+        "aten.div.Tensor",
+    }
+
+    def _normalize_perm(arg):
+        if not isinstance(arg, (list, tuple)):
+            return None
+        return [int(v) for v in arg]
+
+    def _rank4_shape(node):
+        if not isinstance(node, torch.fx.Node):
+            return None
+        meta_val = getattr(node, "meta", {}).get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            shape = [int(v) for v in list(meta_val.shape)]
+            return shape if len(shape) == 4 else None
+        if node.op == "get_attr" and isinstance(node.target, str):
+            tensor = getattr(graph_module, node.target, None)
+            if isinstance(tensor, torch.Tensor):
+                shape = [int(v) for v in list(tensor.shape)]
+                return shape if len(shape) == 4 else None
+            return None
+
+    def _shape_meta_from_node(node, shape):
+        meta = dict(getattr(node, "meta", {}))
+        meta_val = meta.get("val", None)
+        if isinstance(meta_val, torch.Tensor):
+            try:
+                meta["val"] = torch.empty(
+                    tuple(int(v) for v in shape),
+                    dtype=meta_val.dtype,
+                    device="meta",
+                )
+            except Exception:
+                pass
+        return meta
+
+    def _match_nhwc_materialize_source(node):
+        if not isinstance(node, torch.fx.Node):
+            return None
+        if (
+            node.op == "call_function"
+            and str(node.target) in binary_targets
+            and len(node.args) == 2
+            and _rank4_shape(node) is not None
+            and all(isinstance(arg, torch.fx.Node) and _rank4_shape(arg) is not None for arg in node.args)
+        ):
+            lhs_from_nhwc = _match_nhwc_materialize_source(node.args[0])
+            rhs_from_nhwc = _match_nhwc_materialize_source(node.args[1])
+            if lhs_from_nhwc is None and rhs_from_nhwc is None:
+                return node
+        if (
+            node.op == "call_function"
+            and str(node.target) == "aten.permute.default"
+            and len(node.args) >= 2
+            and _normalize_perm(node.args[1]) == [0, 2, 3, 1]
+            and isinstance(node.args[0], torch.fx.Node)
+            and _rank4_shape(node.args[0]) is not None
+        ):
+            return node.args[0]
+        if (
+            node.op == "call_function"
+            and str(node.target) == "aten.contiguous.default"
+            and len(node.args) >= 1
+        ):
+            return _match_nhwc_materialize_source(node.args[0])
+        return None
+
+    folded_expr_cache = {}
+
+    def _build_folded_nchw_expr(node):
+        if not isinstance(node, torch.fx.Node):
+            return None
+        cached = folded_expr_cache.get(node, None)
+        if cached is not None:
+            return cached
+        source = _match_nhwc_materialize_source(node)
+        if source is not None:
+            folded_expr_cache[node] = source
+            return source
+        if (
+            node.op == "call_function"
+            and str(node.target) in binary_targets
+            and len(node.args) == 2
+        ):
+            lhs = _build_folded_nchw_expr(node.args[0])
+            rhs = _build_folded_nchw_expr(node.args[1])
+            if lhs is None or rhs is None:
+                return None
+            if _rank4_shape(lhs) is None or _rank4_shape(rhs) is None:
+                return None
+                with graph.inserting_before(node):
+                    folded_binary = graph.call_function(
+                        node.target,
+                        args=(lhs, rhs),
+                        kwargs=dict(node.kwargs),
+                    )
+                lhs_shape = _rank4_shape(lhs)
+                folded_binary.meta = (
+                    _shape_meta_from_node(lhs, lhs_shape)
+                    if lhs_shape is not None
+                    else dict(getattr(lhs, "meta", {}))
+                )
+                folded_expr_cache[node] = folded_binary
+                return folded_binary
+            return None
+
+    def _materialize_nhwc(node, insert_before_node):
+        source_shape = _rank4_shape(node)
+        nhwc_shape = (
+            [int(source_shape[0]), int(source_shape[2]), int(source_shape[3]), int(source_shape[1])]
+            if source_shape is not None
+            else None
+        )
+        with graph.inserting_before(insert_before_node):
+            permute_node = graph.call_function(
+                torch.ops.aten.permute.default,
+                args=(node, [0, 2, 3, 1]),
+                kwargs={},
+            )
+            contiguous_node = graph.call_function(
+                torch.ops.aten.contiguous.default,
+                args=(permute_node,),
+                kwargs={},
+            )
+        permute_node.meta = (
+            _shape_meta_from_node(node, nhwc_shape)
+            if nhwc_shape is not None
+            else dict(getattr(insert_before_node, "meta", {}))
+        )
+        contiguous_node.meta = (
+            _shape_meta_from_node(node, nhwc_shape)
+            if nhwc_shape is not None
+            else dict(getattr(insert_before_node, "meta", {}))
+        )
+        return contiguous_node
+
+    while True:
+        local_changed = False
+        for node in list(graph.nodes):
+            if (
+                node.op != "call_function"
+                or str(node.target) not in binary_targets
+                or len(node.args) != 2
+            ):
+                continue
+            lhs_source = _match_nhwc_materialize_source(node.args[0])
+            rhs_source = _match_nhwc_materialize_source(node.args[1])
+            if lhs_source is None or rhs_source is None:
+                continue
+            lhs_shape = _rank4_shape(lhs_source)
+            rhs_shape = _rank4_shape(rhs_source)
+            if lhs_shape is None or rhs_shape is None or lhs_shape != rhs_shape:
+                continue
+            supported = True
+            for user in list(node.users):
+                if user.op == "call_function" and str(user.target) in binary_targets:
+                    continue
+                if (
+                    user.op == "call_function"
+                    and str(user.target) == "aten.reshape.default"
+                    and len(user.args) >= 1
+                    and user.args[0] is node
+                ):
+                    continue
+                if (
+                    user.op == "call_function"
+                    and str(user.target) == "aten.permute.default"
+                    and len(user.args) >= 2
+                    and user.args[0] is node
+                    and _normalize_perm(user.args[1]) == [0, 3, 1, 2]
+                ):
+                    continue
+                supported = False
+                break
+            if not supported:
+                continue
+            node.args = (lhs_source, rhs_source)
+            node.meta = _shape_meta_from_node(lhs_source, lhs_shape)
+            local_changed = True
+            changed = True
+        if not local_changed:
+            break
+
+    for node in list(graph.nodes):
+        if (
+            node.op == "call_function"
+            and str(node.target) == "aten.reshape.default"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], torch.fx.Node)
+        ):
+            folded_source = _build_folded_nchw_expr(node.args[0])
+            if folded_source is None:
+                continue
+            if _rank4_shape(folded_source) is None:
+                continue
+            node.args = (_materialize_nhwc(folded_source, node),) + tuple(node.args[1:])
+            changed = True
+            continue
+        if (
+            node.op == "call_function"
+            and str(node.target) == "aten.permute.default"
+            and len(node.args) >= 2
+            and _normalize_perm(node.args[1]) == [0, 3, 1, 2]
+            and isinstance(node.args[0], torch.fx.Node)
+        ):
+            folded_source = _build_folded_nchw_expr(node.args[0])
+            if folded_source is None:
+                continue
+            if _rank4_shape(folded_source) is None:
+                continue
+            node_users = list(node.users)
+            if (
+                len(node_users) == 1
+                and node_users[0].op == "call_function"
+                and str(node_users[0].target) == "aten.contiguous.default"
+            ):
+                node_users[0].replace_all_uses_with(folded_source)
+            else:
+                node.replace_all_uses_with(folded_source)
+            changed = True
+
+    if changed:
+        graph.eliminate_dead_code()
+        graph.lint()
+        graph_module.recompile()
+    return exported_program
+
 with torch.no_grad():
     exported = torch.export.export(model, example_inputs)
 exported = _prune_alias_nodes(exported)
 exported = _fold_inverse_permute_round_trips(exported)
 exported = _fold_layout_preserving_permute_chains(exported)
+exported = _fold_nhwc_binary_expr_trees_in_exported_program(exported)
 torch.export.save(exported, str(exported_program_path))
 print(json.dumps({"file_name": exported_program_path.name}))
 """
