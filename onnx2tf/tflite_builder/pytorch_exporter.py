@@ -13371,48 +13371,11 @@ def _inspect_onnx_uses_external_data(onnx_path: Path) -> bool:
 
 
 def _sanitize_dynamo_exported_onnx_metadata(onnx_path: Path) -> None:
-    def _sanitize_signature(model: onnx.ModelProto) -> Tuple[Any, ...]:
-        node_signature = tuple(
-            (
-                str(node.name),
-                str(node.op_type),
-                tuple(str(v) for v in node.input),
-                tuple(str(v) for v in node.output),
-                tuple(
-                    (
-                        str(attr.name),
-                        repr(onnx.helper.get_attribute_value(attr)),
-                    )
-                    for attr in node.attribute
-                ),
-            )
-            for node in model.graph.node
-        )
-        value_info_signature = tuple(
-            (
-                str(value_info.name),
-                tuple(
-                    int(dim.dim_value)
-                    if dim.HasField("dim_value")
-                    else (str(dim.dim_param) if dim.HasField("dim_param") else "?")
-                    for dim in value_info.type.tensor_type.shape.dim
-                ),
-            )
-            for value_info in list(model.graph.value_info) + list(model.graph.input) + list(model.graph.output)
-        )
-        return node_signature, value_info_signature
-
     external_data_sidecar_path = onnx_path.with_name(f"{onnx_path.name}.data")
     original_uses_external_data = _inspect_onnx_uses_external_data(onnx_path)
     model = onnx.load(str(onnx_path))
     del model.metadata_props[:]
     _clear_onnx_graph_and_node_metadata_in_place(model.graph)
-    for _ in range(4):
-        before_signature = _sanitize_signature(model)
-        _optimize_dynamo_exported_onnx_in_place(model)
-        _onnx_repair_inferred_shapes_in_place(model)
-        if _sanitize_signature(model) == before_signature:
-            break
     onnx.checker.check_model(model)
     if original_uses_external_data:
         onnx.save_model(
@@ -13694,8 +13657,6 @@ if spec is None or spec.loader is None:
 module = importlib.util.module_from_spec(spec)
 sys.modules[module_name] = module
 spec.loader.exec_module(module)
-runtime_module = importlib.import_module(f"{module_name}.runtime")
-setattr(runtime_module, "_ONNX2TF_DISABLE_SYMBOLIC_SHAPE_TENSORS", True)
 if not hasattr(module, "load_model"):
     raise RuntimeError(
         "Generated native PyTorch package does not expose load_model(). "
@@ -13875,8 +13836,6 @@ if spec is None or spec.loader is None:
 module = importlib.util.module_from_spec(spec)
 sys.modules[module_name] = module
 spec.loader.exec_module(module)
-runtime_module = importlib.import_module(f"{module_name}.runtime")
-setattr(runtime_module, "_ONNX2TF_DISABLE_SYMBOLIC_SHAPE_TENSORS", True)
 if not hasattr(module, "load_model"):
     raise RuntimeError(
         "Generated native PyTorch package does not expose load_model(). "
@@ -13889,7 +13848,6 @@ output_names = [str(v) for v in list(payload.get("output_names", []))]
 model = module.load_model(device="cpu", eval_mode=True)
 if hasattr(model, "cpu"):
     model = model.cpu()
-setattr(model, "_onnx2tf_torch_export_mode", True)
 with torch.no_grad():
     torch.onnx.export(
         model,
@@ -13929,7 +13887,6 @@ print(json.dumps({"file_name": dynamo_onnx_path.name}))
                 f"package_dir={package_dir} details={last_error_message}"
             )
         return None
-    _sanitize_dynamo_exported_onnx_metadata(dynamo_onnx_path)
     _write_generated_package_export_metadata(
         metadata_path=metadata_path,
         metadata=metadata,
@@ -14058,7 +14015,6 @@ example_inputs = tuple(payload["inputs"])
 model = module.load_model(device="cpu", eval_mode=True)
 if hasattr(model, "cpu"):
     model = model.cpu()
-setattr(model, "_onnx2tf_torch_export_mode", True)
 
 def _prune_alias_nodes(exported_program):
     graph_module = getattr(exported_program, "graph_module", None)
@@ -15827,24 +15783,7 @@ def _postprocess_saved_exported_program(exported_program):
 
 with torch.no_grad():
     exported = torch.export.export(model, example_inputs)
-try:
-    torch.export.save(_optimize_exported_program(exported), str(exported_program_path))
-except Exception:
-    with torch.no_grad():
-        exported = torch.export.export(model, example_inputs)
-    torch.export.save(exported, str(exported_program_path))
-postprocessed_exported_program_path = exported_program_path.with_name(
-    exported_program_path.stem + "_postprocess.pt2"
-)
-try:
-    postprocessed_exported = _postprocess_saved_exported_program(torch.export.load(str(exported_program_path)))
-    torch.export.save(postprocessed_exported, str(postprocessed_exported_program_path))
-    postprocessed_exported_program_path.replace(exported_program_path)
-except Exception:
-    try:
-        postprocessed_exported_program_path.unlink(missing_ok=True)
-    except Exception:
-        pass
+torch.export.save(exported, str(exported_program_path))
 print(json.dumps({"file_name": exported_program_path.name}))
 """
     child_payload, last_error_message = _run_generated_package_export_child(
@@ -15872,15 +15811,6 @@ print(json.dumps({"file_name": exported_program_path.name}))
                 f"package_dir={package_dir} details={last_error_message}"
             )
         return None
-    try:
-        _fold_inverse_permute_round_trips_in_exported_program_archive(exported_program_path)
-    except Exception as ex:
-        if raise_on_failure:
-            raise ModelIRPyTorchExportError(
-                "ExportedProgram archive inverse-permute cleanup failed for the generated native PyTorch package. "
-                f"package_dir={package_dir} artifact={exported_program_path} details={ex}"
-            ) from ex
-        last_error_message = str(ex)
     try:
         _strip_stack_traces_from_exported_program_archive(exported_program_path)
     except Exception as ex:
@@ -15955,6 +15885,7 @@ def _fold_inverse_permute_round_trips_in_exported_program_archive(
     archive_path = Path(exported_program_path)
     if not archive_path.exists():
         raise FileNotFoundError(f"ExportedProgram archive not found. path={archive_path}")
+    return
 
     exported_program = torch.export.load(str(archive_path))
     graph_module = getattr(exported_program, "graph_module", None)
@@ -17543,11 +17474,14 @@ def _canonicalize_generated_model_source_for_raw_export(
     generic_alias_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P<rhs>[A-Za-z0-9_]+)$"
     )
+    generic_expr_assign_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P<rhs>.+)$"
+    )
     split_re = re.compile(
-        r"^(?P<indent>\s*)(?P<outputs>[A-Za-z0-9_, ]+) = list\(torch\.tensor_split\((?P<alias>[A-Za-z0-9_]+), (?P<sections>\d+), dim=_normalize_dim\(3, (?P=alias)\.ndim\)\)\)$"
+        r"^(?P<indent>\s*)(?P<outputs>[A-Za-z0-9_, ]+)\s*=\s*list\(torch\.tensor_split\((?P<alias>[A-Za-z0-9_]+), (?P<sections>\d+), dim=_normalize_dim\(3, (?P=alias)\.ndim\)\)\)$"
     )
     generic_split_re = re.compile(
-        r"^(?P<indent>\s*)(?P<outputs>[A-Za-z0-9_, ]+) = list\(torch\.tensor_split\((?P<input>[A-Za-z0-9_]+), (?P<sections>\d+), dim=_normalize_dim\((?P<axis>-?\d+), (?P=input)\.ndim\)\)\)$"
+        r"^(?P<indent>\s*)(?P<outputs>[A-Za-z0-9_, ]+)\s*=\s*list\(torch\.tensor_split\((?P<input>[A-Za-z0-9_]+), (?P<sections>\d+), dim=_normalize_dim\((?P<axis>-?\d+), (?P=input)\.ndim\)\)\)$"
     )
     concat_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _apply_concat\(\[(?P<inputs>[A-Za-z0-9_, ]+)\], axis=3, target_shape=\[(?P<shape>[0-9, ]+)\], fused='NONE'\)$"
@@ -17576,9 +17510,72 @@ def _canonicalize_generated_model_source_for_raw_export(
     unary_assign_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P<expr>torch\.(?:clamp|relu|neg|sigmoid|exp)\(.+\))$"
     )
+    binary_assign_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P<expr>torch\.(?:mul|add|sub|div|minimum|maximum)\(.+\))$"
+    )
+    transpose_conv_input_bridge_re = re.compile(
+        r"^(?P<indent>\s*)(?P<alias>[A-Za-z0-9_]+) = _torch_permute\((?P<src>[A-Za-z0-9_]+), \[0, 2, 3, 1\]\)$"
+    )
+    transpose_conv_apply_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _apply_module_transpose_conv2d\((?P<input>[A-Za-z0-9_]+), (?P<prefix>.+), target_shape=\[(?P<target>[0-9, ]+)\], fallback_shape=\[(?P<fallback>[0-9, ]+)\], target_logical_layout='NHWC', fused='(?P<fused>[^']+)'\)$"
+    )
+    transpose_conv_crop_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P<src>[A-Za-z0-9_]+)\[0:1, 0:1, (?P<start>\d+):(?P<end>\d+), 0:(?P<width>\d+)\]$"
+    )
+    transpose_conv_output_permute_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _torch_permute\((?P<src>[A-Za-z0-9_]+), \[0, 3, 1, 2\]\)$"
+    )
+    self_permute_assign_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P=lhs)\.permute\(0, 3, 1, 2\)\.contiguous\(\)$"
+    )
+    transpose_conv_bias_fix_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = torch\.reshape\((?P<expr>self\.[A-Za-z0-9_]+)\.permute\(0, 2, 3, 1\)\.contiguous\(\), \[(?P<n>\d+), 1, (?P<w>\d+), 1\]\)$"
+    )
+    transpose_conv_bias_add_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\(torch\.add\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<c>\d+), (?P<h>\d+), (?P<w>\d+)\]\)$"
+    )
+    binary_anchor_align_nhwc_singleton_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs0>[A-Za-z0-9_]+), (?P<lhs1>[A-Za-z0-9_]+) = _align_binary_inputs_to_anchor\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), 1\]\)$"
+    )
+    aligned_nhwc_singleton_binary_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\((?P<expr>torch\.(?:add|sub|mul|div|minimum|maximum)\(.+\)), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), 1\]\)$"
+    )
+    aligned_nhwc_rank4_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\((?P<expr>.+), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
+    )
+    permuted_cf_module_input_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P<module>self\.[A-Za-z0-9_]+)\((?P<src>[A-Za-z0-9_]+)\.permute\(0, 3, 1, 2\)\.contiguous\(\)\)$"
+    )
+    output_back_permute_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _torch_permute\((?P<src>[A-Za-z0-9_]+), \[0, 3, 1, 2\]\)$"
+    )
+    rank3_resize_input_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = torch\.reshape\((?P<src>[A-Za-z0-9_]+), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+)\]\)$"
+    )
+    rank3_matmul_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\(torch\.matmul\((?P<x>[A-Za-z0-9_]+), (?P<y>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+)\]\)$"
+    )
+    rank4_singleton_reshape_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = torch\.reshape\((?P<src>[A-Za-z0-9_]+), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), 1\]\)$"
+    )
+    rank4_singleton_matmul_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\(torch\.matmul\((?P<x>[A-Za-z0-9_]+), (?P<y>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), 1\]\)$"
+    )
+    apply_resize_nhwc_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = _apply_resize\((?P<input>[A-Za-z0-9_]+), \[(?P<out_h>\d+), (?P<out_w>\d+)\], method='(?P<method>[^']+)', target_shape=\[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\], align_corners=(?P<align>True|False), half_pixel_centers=(?P<hpc>True|False), channel_last=True\)$"
+    )
     changed = False
     cf_pad_aliases: set[str] = set()
     cf_aliases: set[str] = set()
+    singleton_cf_seeds: set[str] = set()
+
+    def _is_known_cf_name(name: str, singleton_names: set[str]) -> bool:
+        return (
+            name in cf_aliases
+            or name in singleton_names
+            or name.endswith("_cf")
+            or name.endswith("_out_cf")
+        )
     for index in range(len(lines)):
         cf_nhwc_materialize_match = cf_nhwc_materialize_re.match(lines[index])
         if cf_nhwc_materialize_match is not None:
@@ -17609,6 +17606,10 @@ def _canonicalize_generated_model_source_for_raw_export(
         cf_concat_match = cf_concat_re.match(lines[index])
         if cf_concat_match is not None:
             cf_aliases.add(str(cf_concat_match.group("lhs")))
+        binary_align_match = binary_align_re.match(lines[index])
+        if binary_align_match is not None:
+            cf_aliases.add(str(binary_align_match.group("lhs0")))
+            cf_aliases.add(str(binary_align_match.group("lhs1")))
         generic_alias_match = generic_alias_re.match(lines[index])
         if (
             generic_alias_match is not None
@@ -17618,9 +17619,11 @@ def _canonicalize_generated_model_source_for_raw_export(
         singleton_cf_align_match = singleton_cf_align_re.match(lines[index])
         if singleton_cf_align_match is not None:
             expr = str(singleton_cf_align_match.group("expr"))
+            lhs = str(singleton_cf_align_match.group("lhs"))
+            singleton_cf_seeds.add(lhs)
+            cf_aliases.add(lhs)
             if "_torch_permute(" not in expr and ".permute(" not in expr and ("_nhwc" in expr or "torch." in expr):
                 indent = str(singleton_cf_align_match.group("indent"))
-                lhs = str(singleton_cf_align_match.group("lhs"))
                 n = int(singleton_cf_align_match.group("n"))
                 h = int(singleton_cf_align_match.group("h"))
                 w = int(singleton_cf_align_match.group("w"))
@@ -17696,7 +17699,7 @@ def _canonicalize_generated_model_source_for_raw_export(
             f"{alias}, {sections}, dim=_normalize_dim(1, {alias}.ndim)))"
         )
         changed = True
-    singleton_cf_vars: set[str] = set()
+    singleton_cf_vars: set[str] = set(singleton_cf_seeds)
     index = 0
     while index < len(lines):
         cf_concat_match = cf_concat_re.match(lines[index])
@@ -17733,7 +17736,10 @@ def _canonicalize_generated_model_source_for_raw_export(
             if int(split_match.group("axis")) == 1:
                 for output_name in [token.strip() for token in str(split_match.group("outputs")).split(",") if token.strip()]:
                     singleton_cf_vars.add(output_name)
-            elif int(split_match.group("axis")) == 3 and str(split_match.group("input")) in cf_aliases:
+            elif (
+                int(split_match.group("axis")) == 3
+                and _is_known_cf_name(str(split_match.group("input")), singleton_cf_vars)
+            ):
                 indent = str(split_match.group("indent"))
                 outputs = str(split_match.group("outputs"))
                 input_name = str(split_match.group("input"))
@@ -17751,6 +17757,15 @@ def _canonicalize_generated_model_source_for_raw_export(
             lhs = str(unary_assign_match.group("lhs"))
             indent = str(unary_assign_match.group("indent"))
             expr = str(unary_assign_match.group("expr"))
+            unary_passthrough_match = re.match(
+                r"torch\.(?:relu|neg|sigmoid|exp|clamp)\((?P<arg0>[A-Za-z0-9_]+).*\)$",
+                expr,
+            )
+            if (
+                unary_passthrough_match is not None
+                and str(unary_passthrough_match.group("arg0")) in singleton_cf_vars
+            ):
+                singleton_cf_vars.add(lhs)
             if lhs not in singleton_cf_vars:
                 for lookahead in range(index + 1, min(index + 6, len(lines))):
                     later_reshape_match = same_shape_singleton_reshape_re.match(lines[lookahead])
@@ -17768,6 +17783,23 @@ def _canonicalize_generated_model_source_for_raw_export(
                     singleton_cf_vars.add(lhs)
                     changed = True
                     break
+        binary_assign_match = binary_assign_re.match(lines[index])
+        if binary_assign_match is not None:
+            lhs = str(binary_assign_match.group("lhs"))
+            expr = str(binary_assign_match.group("expr"))
+            if any(
+                re.search(rf"\b{re.escape(name)}\b", expr) is not None
+                for name in sorted(singleton_cf_vars)
+            ):
+                singleton_cf_vars.add(lhs)
+        anchor_match_current = binary_anchor_align_re.match(lines[index])
+        if anchor_match_current is not None:
+            lhs0 = str(anchor_match_current.group("lhs0"))
+            lhs1 = str(anchor_match_current.group("lhs1"))
+            singleton_cf_vars.add(lhs0)
+            singleton_cf_vars.add(lhs1)
+            cf_aliases.add(lhs0)
+            cf_aliases.add(lhs1)
         if reshape_match is not None:
             expr = str(reshape_match.group("expr"))
             indent = str(reshape_match.group("indent"))
@@ -17831,7 +17863,467 @@ def _canonicalize_generated_model_source_for_raw_export(
                 lines[index] = f"{indent}{lhs} = {expr}"
                 singleton_cf_vars.add(lhs)
                 changed = True
+        binary_anchor_nhwc_match = binary_anchor_align_nhwc_singleton_re.match(lines[index])
+        if binary_anchor_nhwc_match is not None:
+            lhs0 = str(binary_anchor_nhwc_match.group("lhs0"))
+            lhs1 = str(binary_anchor_nhwc_match.group("lhs1"))
+            input_a = str(binary_anchor_nhwc_match.group("a"))
+            input_b = str(binary_anchor_nhwc_match.group("b"))
+            if (
+                _is_known_cf_name(input_a, singleton_cf_vars)
+                and _is_known_cf_name(input_b, singleton_cf_vars)
+            ):
+                indent = str(binary_anchor_nhwc_match.group("indent"))
+                n = int(binary_anchor_nhwc_match.group("n"))
+                h = int(binary_anchor_nhwc_match.group("h"))
+                w = int(binary_anchor_nhwc_match.group("w"))
+                lines[index] = (
+                    f"{indent}{lhs0}, {lhs1} = _align_binary_inputs_to_anchor("
+                    f"{input_a}, {input_b}, [{n}, 1, {h}, {w}])"
+                )
+                singleton_cf_vars.add(lhs0)
+                singleton_cf_vars.add(lhs1)
+                changed = True
+        aligned_nhwc_singleton_binary_match = aligned_nhwc_singleton_binary_re.match(lines[index])
+        if aligned_nhwc_singleton_binary_match is not None:
+            expr = str(aligned_nhwc_singleton_binary_match.group("expr"))
+            if any(
+                re.search(rf"\b{re.escape(name)}\b", expr) is not None
+                for name in sorted(singleton_cf_vars | cf_aliases)
+            ):
+                indent = str(aligned_nhwc_singleton_binary_match.group("indent"))
+                lhs = str(aligned_nhwc_singleton_binary_match.group("lhs"))
+                n = int(aligned_nhwc_singleton_binary_match.group("n"))
+                h = int(aligned_nhwc_singleton_binary_match.group("h"))
+                w = int(aligned_nhwc_singleton_binary_match.group("w"))
+                lines[index] = (
+                    f"{indent}{lhs} = _align_tensor_to_target_shape({expr}, [{n}, 1, {h}, {w}])"
+                )
+                singleton_cf_vars.add(lhs)
+                changed = True
         index += 1
+    index = 0
+    while index + 7 < len(lines):
+        rank3_input_match = rank3_resize_input_re.match(lines[index])
+        tmp_x0_match = generic_expr_assign_re.match(lines[index + 1])
+        tmp_y0_match = generic_alias_re.match(lines[index + 2])
+        rank3_matmul_match = rank3_matmul_re.match(lines[index + 3])
+        rank4_reshape_match = rank4_singleton_reshape_re.match(lines[index + 4])
+        tmp_x1_match = generic_expr_assign_re.match(lines[index + 5])
+        tmp_y1_match = generic_alias_re.match(lines[index + 6])
+        rank4_matmul_match = rank4_singleton_matmul_re.match(lines[index + 7])
+        if (
+            rank3_input_match is None
+            or tmp_x0_match is None
+            or tmp_y0_match is None
+            or rank3_matmul_match is None
+            or rank4_reshape_match is None
+            or tmp_x1_match is None
+            or tmp_y1_match is None
+            or rank4_matmul_match is None
+        ):
+            index += 1
+            continue
+        rank3_input_lhs = str(rank3_input_match.group("lhs"))
+        rank3_input_src = str(rank3_input_match.group("src"))
+        if (
+            str(tmp_y0_match.group("rhs")) != rank3_input_lhs
+            or str(rank3_matmul_match.group("x")) != str(tmp_x0_match.group("lhs"))
+            or str(rank3_matmul_match.group("y")) != str(tmp_y0_match.group("lhs"))
+            or str(rank4_reshape_match.group("src")) != str(rank3_matmul_match.group("lhs"))
+            or str(tmp_y1_match.group("rhs")) != str(rank4_reshape_match.group("lhs"))
+            or str(rank4_matmul_match.group("x")) != str(tmp_x1_match.group("lhs"))
+            or str(rank4_matmul_match.group("y")) != str(tmp_y1_match.group("lhs"))
+        ):
+            index += 1
+            continue
+        indent = str(rank3_input_match.group("indent"))
+        rank3_input_n = int(rank3_input_match.group("n"))
+        rank3_matmul_h = int(rank3_matmul_match.group("h"))
+        rank3_matmul_w = int(rank3_matmul_match.group("w"))
+        rank4_matmul_w = int(rank4_matmul_match.group("w"))
+        rank3_matmul_lhs = str(rank3_matmul_match.group("lhs"))
+        rank4_reshape_lhs = str(rank4_reshape_match.group("lhs"))
+        rank4_matmul_lhs = str(rank4_matmul_match.group("lhs"))
+        tmp_x1_name = str(tmp_x1_match.group("lhs"))
+        lines[index] = f"{indent}{rank3_input_lhs} = {rank3_input_src}"
+        lines[index + 3] = (
+            f"{indent}{rank3_matmul_lhs} = _align_tensor_to_target_shape("
+            f"torch.matmul({tmp_x0_match.group('lhs')}, {tmp_y0_match.group('lhs')}), "
+            f"[{rank3_input_n}, 1, {rank3_matmul_h}, {rank3_matmul_w}])"
+        )
+        lines[index + 4] = f"{indent}{rank4_reshape_lhs} = {rank3_matmul_lhs}"
+        lines[index + 7] = (
+            f"{indent}{rank4_matmul_lhs} = _align_tensor_to_target_shape("
+            f"torch.matmul({tmp_y1_match.group('lhs')}, {tmp_x1_name}.transpose(-1, -2)), "
+            f"[{rank3_input_n}, 1, {rank3_matmul_h}, {rank4_matmul_w}])"
+        )
+        singleton_cf_vars.add(rank4_matmul_lhs)
+        cf_aliases.add(rank4_matmul_lhs)
+        changed = True
+        index += 8
+    index = 0
+    while index < len(lines):
+        concat_match = concat_re.match(lines[index])
+        next_split_match = generic_split_re.match(lines[index + 1]) if index + 1 < len(lines) else None
+        aligned_rank4_seed_match = aligned_nhwc_rank4_re.match(lines[index])
+        if aligned_rank4_seed_match is not None:
+            lhs = str(aligned_rank4_seed_match.group("lhs"))
+            expr = str(aligned_rank4_seed_match.group("expr"))
+            if (
+                "_nhwc" not in lhs
+                and (
+                    any(
+                        re.search(rf"\b{re.escape(name)}\b", expr) is not None
+                        for name in sorted(singleton_cf_vars | cf_aliases)
+                    )
+                    or "_cf" in expr
+                )
+            ):
+                cf_aliases.add(lhs)
+                if int(aligned_rank4_seed_match.group("h")) == 1:
+                    singleton_cf_vars.add(lhs)
+        if concat_match is not None:
+            input_names = [name.strip() for name in str(concat_match.group("inputs")).split(",") if name.strip()]
+            lhs = str(concat_match.group("lhs"))
+            target_shape_values = [
+                int(value.strip())
+                for value in str(concat_match.group("shape")).split(",")
+                if value.strip()
+            ]
+            should_rewrite_concat = (
+                len(input_names) >= 2
+                and all(_is_known_cf_name(name, singleton_cf_vars) for name in input_names)
+            )
+            if (
+                not should_rewrite_concat
+                and next_split_match is not None
+                and len(target_shape_values) == 4
+                and int(next_split_match.group("axis")) == 3
+                and int(next_split_match.group("sections")) == target_shape_values[-1]
+                and all("_nhwc" not in input_name for input_name in input_names)
+            ):
+                should_rewrite_concat = True
+            if (
+                not should_rewrite_concat
+                and len(target_shape_values) == 4
+                and target_shape_values[1] < target_shape_values[2]
+                and target_shape_values[1] < target_shape_values[3]
+                and any(_is_known_cf_name(name, singleton_cf_vars) or "_nhwc" in name for name in input_names)
+            ):
+                should_rewrite_concat = True
+            if should_rewrite_concat:
+                indent = str(concat_match.group("indent"))
+                lines[index] = f"{indent}{lhs} = torch.cat([{', '.join(input_names)}], dim=1)"
+                cf_aliases.add(lhs)
+                if next_split_match is not None and str(next_split_match.group("input")) == lhs and int(next_split_match.group("axis")) == 3:
+                    lines[index + 1] = (
+                        f"{next_split_match.group('indent')}{next_split_match.group('outputs')} = list(torch.tensor_split("
+                        f"{lhs}, {next_split_match.group('sections')}, dim=_normalize_dim(1, {lhs}.ndim)))"
+                    )
+                    for output_name in [token.strip() for token in str(next_split_match.group("outputs")).split(",") if token.strip()]:
+                        singleton_cf_vars.add(output_name)
+                changed = True
+        aligned_then_split_match = aligned_nhwc_rank4_re.match(lines[index])
+        next_split_match = generic_split_re.match(lines[index + 1]) if index + 1 < len(lines) else None
+        if (
+            aligned_then_split_match is not None
+            and next_split_match is not None
+            and str(next_split_match.group("input")) == str(aligned_then_split_match.group("lhs"))
+            and int(next_split_match.group("axis")) == 3
+        ):
+            expr = str(aligned_then_split_match.group("expr"))
+            lhs = str(aligned_then_split_match.group("lhs"))
+            sections = int(next_split_match.group("sections"))
+            d1 = int(aligned_then_split_match.group("h"))
+            d2 = int(aligned_then_split_match.group("w"))
+            d3 = int(aligned_then_split_match.group("c"))
+            expr_uses_cf = any(
+                re.search(rf"\b{re.escape(name)}\b", expr) is not None
+                for name in sorted(singleton_cf_vars | cf_aliases)
+            ) or "_cf" in expr or _is_known_cf_name(lhs, singleton_cf_vars)
+            if (sections == d1 and sections != d3 and "_nhwc" not in lhs) or expr_uses_cf:
+                if sections == d1 and sections != d3 and "_nhwc" not in lhs:
+                    lines[index + 1] = (
+                        f"{next_split_match.group('indent')}{next_split_match.group('outputs')} = list(torch.tensor_split("
+                        f"{lhs}, {sections}, dim=_normalize_dim(1, {lhs}.ndim)))"
+                    )
+                    cf_aliases.add(lhs)
+                    for output_name in [token.strip() for token in str(next_split_match.group("outputs")).split(",") if token.strip()]:
+                        singleton_cf_vars.add(output_name)
+                    changed = True
+                elif sections == d3:
+                    indent = str(aligned_then_split_match.group("indent"))
+                    n = int(aligned_then_split_match.group("n"))
+                    lines[index] = (
+                        f"{indent}{lhs} = _align_tensor_to_target_shape({expr}, [{n}, {d3}, {d1}, {d2}])"
+                    )
+                    lines[index + 1] = (
+                        f"{next_split_match.group('indent')}{next_split_match.group('outputs')} = list(torch.tensor_split("
+                        f"{lhs}, {sections}, dim=_normalize_dim(1, {lhs}.ndim)))"
+                    )
+                    cf_aliases.add(lhs)
+                    for output_name in [token.strip() for token in str(next_split_match.group("outputs")).split(",") if token.strip()]:
+                        singleton_cf_vars.add(output_name)
+                    changed = True
+        aligned_cf_resize_match = aligned_nhwc_rank4_re.match(lines[index])
+        resize_match = apply_resize_nhwc_re.match(lines[index + 1]) if index + 1 < len(lines) else None
+        concat_after_resize_match = concat_re.match(lines[index + 2]) if index + 2 < len(lines) else None
+        if (
+            aligned_cf_resize_match is not None
+            and resize_match is not None
+            and str(resize_match.group("input")) == str(aligned_cf_resize_match.group("lhs"))
+        ):
+            expr = str(aligned_cf_resize_match.group("expr"))
+            resize_lhs = str(resize_match.group("lhs"))
+            if (
+                "torch.mul(" in expr
+                and any(
+                    re.search(rf"\b{re.escape(name)}\b", expr) is not None
+                    for name in sorted(singleton_cf_vars | cf_aliases)
+                )
+            ):
+                indent = str(aligned_cf_resize_match.group("indent"))
+                lhs = str(aligned_cf_resize_match.group("lhs"))
+                n = int(aligned_cf_resize_match.group("n"))
+                h = int(aligned_cf_resize_match.group("h"))
+                w = int(aligned_cf_resize_match.group("w"))
+                c = int(aligned_cf_resize_match.group("c"))
+                out_h = int(resize_match.group("out_h"))
+                out_w = int(resize_match.group("out_w"))
+                lines[index] = (
+                    f"{indent}{lhs} = _align_tensor_to_target_shape({expr}, [{n}, {c}, {h}, {w}])"
+                )
+                lines[index + 1] = (
+                    f"{resize_match.group('indent')}{resize_lhs} = _apply_resize("
+                    f"{lhs}, [{out_h}, {out_w}], method='{resize_match.group('method')}', "
+                    f"target_shape=[{n}, {c}, {out_h}, {out_w}], "
+                    f"align_corners={resize_match.group('align')}, "
+                    f"half_pixel_centers={resize_match.group('hpc')}, channel_last=False)"
+                )
+                cf_aliases.add(lhs)
+                cf_aliases.add(resize_lhs)
+                if (
+                    concat_after_resize_match is not None
+                    and resize_lhs in str(concat_after_resize_match.group("inputs"))
+                ):
+                    concat_inputs = [
+                        name.strip()
+                        for name in str(concat_after_resize_match.group("inputs")).split(",")
+                        if name.strip()
+                    ]
+                    lines[index + 2] = (
+                        f"{concat_after_resize_match.group('indent')}{concat_after_resize_match.group('lhs')} = "
+                        f"torch.cat([{', '.join(concat_inputs)}], dim=1)"
+                    )
+                    cf_aliases.add(str(concat_after_resize_match.group("lhs")))
+                changed = True
+        aligned_nhwc_rank4_match = aligned_nhwc_rank4_re.match(lines[index])
+        if aligned_nhwc_rank4_match is not None:
+            lhs = str(aligned_nhwc_rank4_match.group("lhs"))
+            expr = str(aligned_nhwc_rank4_match.group("expr"))
+            n = int(aligned_nhwc_rank4_match.group("n"))
+            h = int(aligned_nhwc_rank4_match.group("h"))
+            w = int(aligned_nhwc_rank4_match.group("w"))
+            c = int(aligned_nhwc_rank4_match.group("c"))
+            if any(
+                re.search(rf"\b{re.escape(name)}\b", expr) is not None
+                for name in sorted(singleton_cf_vars | cf_aliases)
+            ) or "_cf" in expr:
+                next_line = lines[index + 1] if index + 1 < len(lines) else ""
+                next_permute_match = output_back_permute_re.match(next_line)
+                if (
+                    next_permute_match is not None
+                    and str(next_permute_match.group("src")) == lhs
+                ):
+                    indent = str(aligned_nhwc_rank4_match.group("indent"))
+                    lines[index] = (
+                        f"{indent}{lhs} = _align_tensor_to_target_shape({expr}, [{n}, {c}, {h}, {w}])"
+                    )
+                    cf_aliases.add(lhs)
+                    if c == 1:
+                        singleton_cf_vars.add(lhs)
+                    changed = True
+        permuted_cf_module_input_match = permuted_cf_module_input_re.match(lines[index])
+        if permuted_cf_module_input_match is not None:
+            src = str(permuted_cf_module_input_match.group("src"))
+            if _is_known_cf_name(src, singleton_cf_vars):
+                indent = str(permuted_cf_module_input_match.group("indent"))
+                lhs = str(permuted_cf_module_input_match.group("lhs"))
+                module = str(permuted_cf_module_input_match.group("module"))
+                lines[index] = f"{indent}{lhs} = {module}({src})"
+                changed = True
+        output_back_permute_match = output_back_permute_re.match(lines[index])
+        if output_back_permute_match is not None:
+            src = str(output_back_permute_match.group("src"))
+            if _is_known_cf_name(src, singleton_cf_vars):
+                indent = str(output_back_permute_match.group("indent"))
+                lhs = str(output_back_permute_match.group("lhs"))
+                lines[index] = f"{indent}{lhs} = {src}"
+                cf_aliases.add(lhs)
+                changed = True
+        cf_nhwc_materialize_match = cf_nhwc_materialize_re.match(lines[index])
+        if cf_nhwc_materialize_match is not None:
+            source = str(cf_nhwc_materialize_match.group("src"))
+            alias = str(cf_nhwc_materialize_match.group("lhs"))
+            if _is_known_cf_name(source, singleton_cf_vars):
+                immediate_uses = "\n".join(lines[index + 1:index + 4])
+                if (
+                    f"{alias}" in immediate_uses
+                    and ("_apply_concat(" in immediate_uses or "_torch_permute(" in immediate_uses or "torch.mul(" in immediate_uses)
+                ):
+                    indent = str(cf_nhwc_materialize_match.group("indent"))
+                    lines[index] = f"{indent}{alias} = {source}"
+                    cf_aliases.add(alias)
+                    if int(cf_nhwc_materialize_match.group("c")) == 1:
+                        singleton_cf_vars.add(alias)
+                    changed = True
+        index += 1
+    for index, line in enumerate(lines):
+        split_match = generic_split_re.match(line)
+        if split_match is None or int(split_match.group("axis")) != 3:
+            continue
+        input_name = str(split_match.group("input"))
+        sections = int(split_match.group("sections"))
+        previous_match = aligned_nhwc_rank4_re.match(lines[index - 1]) if index > 0 else None
+        should_rewrite_split = _is_known_cf_name(input_name, singleton_cf_vars)
+        if (
+            not should_rewrite_split
+            and previous_match is not None
+            and str(previous_match.group("lhs")) == input_name
+            and "_nhwc" not in input_name
+            and int(previous_match.group("h")) == sections
+            and int(previous_match.group("c")) != sections
+        ):
+            should_rewrite_split = True
+            cf_aliases.add(input_name)
+        if not should_rewrite_split:
+            continue
+        outputs = str(split_match.group("outputs"))
+        lines[index] = (
+            f"{split_match.group('indent')}{outputs} = list(torch.tensor_split("
+            f"{input_name}, {sections}, dim=_normalize_dim(1, {input_name}.ndim)))"
+        )
+        for output_name in [token.strip() for token in outputs.split(",") if token.strip()]:
+            singleton_cf_vars.add(output_name)
+        changed = True
+    index = 0
+    while index + 3 < len(lines):
+        input_bridge_match = transpose_conv_input_bridge_re.match(lines[index])
+        apply_match = transpose_conv_apply_re.match(lines[index + 1])
+        crop_match = transpose_conv_crop_re.match(lines[index + 2])
+        output_permute_match = transpose_conv_output_permute_re.match(lines[index + 3])
+        if (
+            input_bridge_match is None
+            or apply_match is None
+            or crop_match is None
+            or output_permute_match is None
+            or str(apply_match.group("input")) != str(input_bridge_match.group("alias"))
+            or str(crop_match.group("src")) != str(apply_match.group("lhs"))
+            or str(output_permute_match.group("src")) != str(crop_match.group("lhs"))
+        ):
+            index += 1
+            continue
+        try:
+            target_values = [int(value.strip()) for value in str(apply_match.group("target")).split(",")]
+            fallback_values = [int(value.strip()) for value in str(apply_match.group("fallback")).split(",")]
+        except Exception:
+            index += 1
+            continue
+        if (
+            len(target_values) != 4
+            or len(fallback_values) != 4
+            or target_values[0] != fallback_values[0]
+            or target_values[-1] != 1
+            or fallback_values[1] != 1
+            or target_values[1] != fallback_values[2]
+            or target_values[2] != fallback_values[3]
+        ):
+            index += 1
+            continue
+        indent = str(apply_match.group("indent"))
+        input_alias = str(input_bridge_match.group("alias"))
+        input_source = str(input_bridge_match.group("src"))
+        apply_lhs = str(apply_match.group("lhs"))
+        cropped_lhs = str(crop_match.group("lhs"))
+        permuted_lhs = str(output_permute_match.group("lhs"))
+        fallback_text = ", ".join(str(v) for v in fallback_values)
+        lines[index] = f"{indent}{input_alias} = {input_source}"
+        lines[index + 1] = (
+            f"{indent}{apply_lhs} = _apply_module_transpose_conv2d("
+            f"{input_alias}, {apply_match.group('prefix')}, "
+            f"target_shape=[{fallback_text}], fallback_shape=[{fallback_text}], "
+            f"target_logical_layout='NCHW', fused='{apply_match.group('fused')}')"
+        )
+        lines[index + 3] = f"{indent}{permuted_lhs} = {cropped_lhs}"
+        changed = True
+        index += 4
+    index = 0
+    while index + 5 < len(lines):
+        self_permute_match = self_permute_assign_re.match(lines[index])
+        input_bridge_match = transpose_conv_input_bridge_re.match(lines[index + 1])
+        apply_match = transpose_conv_apply_re.match(lines[index + 2])
+        crop_match = transpose_conv_crop_re.match(lines[index + 3])
+        bias_fix_match = transpose_conv_bias_fix_re.match(lines[index + 4])
+        bias_add_match = transpose_conv_bias_add_re.match(lines[index + 5])
+        if (
+            self_permute_match is None
+            or input_bridge_match is None
+            or apply_match is None
+            or crop_match is None
+            or bias_fix_match is None
+            or bias_add_match is None
+            or str(input_bridge_match.group("src")) != str(self_permute_match.group("lhs"))
+            or str(apply_match.group("input")) != str(input_bridge_match.group("alias"))
+            or str(crop_match.group("src")) != str(apply_match.group("lhs"))
+        ):
+            index += 1
+            continue
+        try:
+            target_values = [int(value.strip()) for value in str(apply_match.group("target")).split(",")]
+            fallback_values = [int(value.strip()) for value in str(apply_match.group("fallback")).split(",")]
+        except Exception:
+            index += 1
+            continue
+        if (
+            len(target_values) != 4
+            or len(fallback_values) != 4
+            or target_values[0] != fallback_values[0]
+            or target_values[-1] != 1
+            or fallback_values[1] != 1
+            or target_values[1] != fallback_values[2]
+            or target_values[2] != fallback_values[3]
+            or str(bias_add_match.group("a")) != str(crop_match.group("lhs"))
+            or str(bias_add_match.group("b")) != str(bias_fix_match.group("lhs"))
+        ):
+            index += 1
+            continue
+        indent = str(apply_match.group("indent"))
+        input_source = str(self_permute_match.group("lhs"))
+        input_alias = str(input_bridge_match.group("alias"))
+        apply_lhs = str(apply_match.group("lhs"))
+        bias_expr = str(bias_fix_match.group("expr"))
+        bias_lhs = str(bias_fix_match.group("lhs"))
+        bias_add_lhs = str(bias_add_match.group("lhs"))
+        fallback_text = ", ".join(str(v) for v in fallback_values)
+        cropped_h = int(crop_match.group("end")) - int(crop_match.group("start"))
+        cropped_w = int(crop_match.group("width"))
+        lines[index] = f"{indent}{input_source} = {input_source}"
+        lines[index + 1] = f"{indent}{input_alias} = {input_source}"
+        lines[index + 2] = (
+            f"{indent}{apply_lhs} = _apply_module_transpose_conv2d("
+            f"{input_alias}, {apply_match.group('prefix')}, "
+            f"target_shape=[{fallback_text}], fallback_shape=[{fallback_text}], "
+            f"target_logical_layout='NCHW', fused='{apply_match.group('fused')}')"
+        )
+        lines[index + 4] = f"{indent}{bias_lhs} = {bias_expr}"
+        lines[index + 5] = (
+            f"{indent}{bias_add_lhs} = _align_tensor_to_target_shape("
+            f"torch.add({bias_add_match.group('a')}, {bias_lhs}), "
+            f"[{fallback_values[0]}, 1, {cropped_h}, {cropped_w}])"
+        )
+        changed = True
+        index += 6
     if changed:
         model_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -20014,6 +20506,7 @@ def export_pytorch_package_from_model_ir(
                 metadata=metadata,
                 tensor_storage_name_map=tensor_storage_name_map,
             )
+            _canonicalize_generated_model_source_for_raw_export(Path(output_folder_path))
         except ModelIRPyTorchExportError as ex:
             if not _is_direct_codegen_unsupported_error(ex):
                 raise

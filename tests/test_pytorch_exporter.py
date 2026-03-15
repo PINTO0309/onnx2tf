@@ -48,6 +48,7 @@ from onnx2tf.tflite_builder.pytorch_exporter import (
     _conv2d_input_pre_permute_for_codegen,
     _conv2d_same_pad_padding_arg_for_codegen,
     _export_runtime_wrapper_package_from_model_ir,
+    _fold_inverse_permute_round_trips_in_exported_program_archive,
     _make_tensor_storage_name_map,
     _merge_reference_public_boundary_metadata,
     _preferred_reshape_target_values,
@@ -84,6 +85,50 @@ def _import_generated_package(package_path: str):
     finally:
         if sys.path[0] == parent:
             sys.path.pop(0)
+
+
+def _onnx_value_shape_signature(value_info: onnx.ValueInfoProto) -> tuple[Any, ...]:
+    dims = []
+    for dim in value_info.type.tensor_type.shape.dim:
+        if dim.HasField("dim_value"):
+            dims.append(int(dim.dim_value))
+        elif dim.HasField("dim_param"):
+            dims.append(str(dim.dim_param))
+        else:
+            dims.append("?")
+    return tuple(dims)
+
+
+def _onnx_model_structural_signature(model: onnx.ModelProto) -> dict[str, Any]:
+    return {
+        "ops": tuple(str(node.op_type) for node in model.graph.node),
+        "inputs": tuple(
+            (str(value_info.name), _onnx_value_shape_signature(value_info))
+            for value_info in model.graph.input
+        ),
+        "outputs": tuple(
+            (str(value_info.name), _onnx_value_shape_signature(value_info))
+            for value_info in model.graph.output
+        ),
+        "op_counts": tuple(sorted(Counter(str(node.op_type) for node in model.graph.node).items())),
+    }
+
+
+def _exported_program_structural_signature(exported_program: Any) -> dict[str, Any]:
+    graph_module = exported_program.module()
+    nodes = []
+    for node in graph_module.graph.nodes:
+        if node.op != "call_function":
+            continue
+        meta_val = getattr(node, "meta", {}).get("val", None)
+        shape = None
+        if isinstance(meta_val, torch.Tensor):
+            shape = tuple(int(v) for v in meta_val.shape)
+        nodes.append((str(node.target), shape))
+    return {
+        "nodes": tuple(nodes),
+        "node_counts": tuple(sorted(Counter(target for target, _ in nodes).items())),
+    }
 
 
 def test_native_codegen_legacy_impl_is_not_defined_in_pytorch_exporter_module() -> None:
@@ -7615,18 +7660,16 @@ def test_export_pytorch_package_avoids_early_permute_chain_for_bread_nonfm_when_
         model_ir=model_ir,
         output_folder_path=str(tmp_path / "bread_nonfm_pytorch"),
     )
-    exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
-    assert exported_program_path is not None
-    exported_program = torch.export.load(str(exported_program_path))
-    graph_names = {
-        str(node.name)
-        for node in exported_program.module().graph.nodes
-        if node.op == "call_function"
-    }
-    assert "permute_3" not in graph_names
-    assert "permute_4" not in graph_names
-    assert "permute_5" not in graph_names
-    assert "permute_1" not in graph_names
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model(device="cpu", eval_mode=True)
+    example_inputs = (torch.randn(1, 3, 180, 320),)
+    raw_exported_program_path = tmp_path / "bread_nonfm_early_raw_ep.pt2"
+    torch.export.save(torch.export.export(model, example_inputs), str(raw_exported_program_path))
+    helper_exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert helper_exported_program_path is not None
+    assert _exported_program_structural_signature(torch.export.load(str(raw_exported_program_path))) == _exported_program_structural_signature(
+        torch.export.load(str(helper_exported_program_path))
+    )
 
 
 def test_export_pytorch_package_canonicalizes_bread_nonfm_source_for_raw_export_when_model_is_available(tmp_path) -> None:
@@ -7650,19 +7693,31 @@ def test_export_pytorch_package_canonicalizes_bread_nonfm_source_for_raw_export_
     )
     model_source = (Path(package_path) / "model.py").read_text(encoding="utf-8")
 
-    assert (
-        "slice_out0, slice1_out0, slice2_out0 = list(torch.tensor_split("
-        "in_public_layout_bridge, 3, dim=_normalize_dim(1, in_public_layout_bridge.ndim)))"
-        in model_source
-    )
+    assert "torch.tensor_split(in_public_layout_bridge, 3, dim=_normalize_dim(1, in_public_layout_bridge.ndim))" in model_source
     assert "mul_out0 = torch.mul(slice_out0, 0.29899999499320984)" in model_source
     assert "concat_out0 = concat_out0_cf" in model_source
+    assert "torch.tensor_split(concat_out0, 3, dim=_normalize_dim(1, concat_out0.ndim))" in model_source
+    assert "mul6_out0 = torch.mul(clip_out0, split_out0)" in model_source
+    assert "resize_cubic_h_in = split_out0" in model_source
+    assert "torch.matmul(_tmp_y_18, _tmp_x_18.transpose(-1, -2)), [1, 1, 90, 160])" in model_source
+    assert "ianetincconvconv3_cv_in_cf = self.conv_block_0(resize_out_nhwc)" in model_source
     assert (
-        "split_out0, split_out1, split_out2 = list(torch.tensor_split("
-        "concat_out0, 3, dim=_normalize_dim(1, concat_out0.ndim)))"
+        "canetup2_upup_resize_out_nhwc = _apply_resize("
+        "canetup2_upup_resize_in_nhwc, [180, 320], method='bilinear', "
+        "target_shape=[1, 32, 180, 320], align_corners=True, "
+        "half_pixel_centers=False, channel_last=False)"
         in model_source
     )
-    assert "mul6_out0 = torch.mul(clip_out0, split_out0)" in model_source
+    assert (
+        "canetup2_upconvconvconv0_cv_in = torch.cat([canetdow_downmaxp_convmaxp_p4859_cf_8dba, "
+        "canetup2_upup_resize_out_nhwc], dim=1)"
+        in model_source
+    )
+    assert "concat3_out0_nhwc = torch.cat([clip3_out0, clip4_out0, clip5_out0], dim=1)" in model_source
+    assert "torch.tensor_split(canetoutcconvconv1_sig_out0_cf, 2, dim=_normalize_dim(1, canetoutcconvconv1_sig_out0_cf.ndim))" in model_source
+    assert "torch.tensor_split(add8_out0, 3, dim=_normalize_dim(1, add8_out0.ndim))" in model_source
+    assert "out = out_nhwc" in model_source
+    assert "out = _torch_permute(out_nhwc, [0, 3, 1, 2])" not in model_source
 
 
 def test_export_pytorch_package_raw_exports_bread_nonfm_package_when_model_is_available(tmp_path) -> None:
@@ -7695,13 +7750,15 @@ def test_export_pytorch_package_raw_exports_bread_nonfm_package_when_model_is_av
             example_inputs,
             str(raw_dynamo_onnx_path),
             dynamo=True,
-            input_names=["input"],
-            output_names=["output"],
+            input_names=model.input_names,
+            output_names=model.output_names,
         )
     assert raw_dynamo_onnx_path.exists()
     raw_dynamo_model = onnx.load(str(raw_dynamo_onnx_path))
     assert len(raw_dynamo_model.graph.input) == 1
     assert len(raw_dynamo_model.graph.output) == 1
+    transpose_nodes = [node for node in raw_dynamo_model.graph.node if node.op_type == "Transpose"]
+    assert len(transpose_nodes) == 0
 
     raw_exported_program_path = tmp_path / "bread_nonfm_raw_ep.pt2"
     raw_exported_program = torch.export.export(model, example_inputs)
@@ -7709,6 +7766,178 @@ def test_export_pytorch_package_raw_exports_bread_nonfm_package_when_model_is_av
     assert raw_exported_program_path.exists()
     reloaded = torch.export.load(str(raw_exported_program_path))
     assert reloaded is not None
+
+
+def test_export_pytorch_package_helper_and_raw_exports_are_structurally_equivalent_for_bread_nonfm_when_model_is_available(tmp_path) -> None:
+    model_path = Path("bread_nonfm_180x320.onnx")
+    if not model_path.exists():
+        pytest.skip("bread_nonfm_180x320.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = clone_model_ir_with_float32(
+        lower_onnx_to_ir(
+            model_proto,
+            output_file_name="bread_nonfm_raw_helper_equivalence_test",
+            show_progress=False,
+            transpose_inputs_to_nhwc=True,
+        )
+    )
+    prune_identity_cast_operators(model_ir, preserve_model_outputs=True)
+    optimize_redundant_transpose_operators(model_ir, preserve_model_outputs=True)
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "bread_nonfm_equivalence_pkg"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model(device="cpu", eval_mode=True)
+    example_inputs = (torch.randn(1, 3, 180, 320),)
+
+    raw_dynamo_onnx_path = tmp_path / "bread_nonfm_raw_equiv_dynamo.onnx"
+    with torch.no_grad():
+        torch.onnx.export(
+            model,
+            example_inputs,
+            str(raw_dynamo_onnx_path),
+            dynamo=True,
+            input_names=model.input_names,
+            output_names=model.output_names,
+        )
+    helper_dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    assert helper_dynamo_onnx_path is not None
+    assert _onnx_model_structural_signature(onnx.load(str(raw_dynamo_onnx_path))) == _onnx_model_structural_signature(
+        onnx.load(str(helper_dynamo_onnx_path))
+    )
+
+    raw_exported_program_path = tmp_path / "bread_nonfm_raw_equiv_ep.pt2"
+    raw_exported_program = torch.export.export(model, example_inputs)
+    torch.export.save(raw_exported_program, str(raw_exported_program_path))
+    helper_exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert helper_exported_program_path is not None
+    assert _exported_program_structural_signature(torch.export.load(str(raw_exported_program_path))) == _exported_program_structural_signature(
+        torch.export.load(str(helper_exported_program_path))
+    )
+
+
+def test_export_pytorch_package_helper_postprocess_is_noop_for_bread_nonfm_when_model_is_available(tmp_path) -> None:
+    model_path = Path("bread_nonfm_180x320.onnx")
+    if not model_path.exists():
+        pytest.skip("bread_nonfm_180x320.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = clone_model_ir_with_float32(
+        lower_onnx_to_ir(
+            model_proto,
+            output_file_name="bread_nonfm_helper_noop_test",
+            show_progress=False,
+            transpose_inputs_to_nhwc=True,
+        )
+    )
+    prune_identity_cast_operators(model_ir, preserve_model_outputs=True)
+    optimize_redundant_transpose_operators(model_ir, preserve_model_outputs=True)
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "bread_nonfm_helper_noop_pkg"),
+    )
+
+    helper_dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    assert helper_dynamo_onnx_path is not None
+    onnx_before = _onnx_model_structural_signature(onnx.load(str(helper_dynamo_onnx_path)))
+    _sanitize_dynamo_exported_onnx_metadata(Path(helper_dynamo_onnx_path))
+    onnx_after = _onnx_model_structural_signature(onnx.load(str(helper_dynamo_onnx_path)))
+    assert onnx_after == onnx_before
+
+    helper_exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert helper_exported_program_path is not None
+    exported_before = torch.export.load(str(helper_exported_program_path))
+    exported_before_signature = _exported_program_structural_signature(exported_before)
+    archive_copy_path = tmp_path / "bread_nonfm_helper_noop_copy.pt2"
+    archive_copy_path.write_bytes(Path(helper_exported_program_path).read_bytes())
+    _fold_inverse_permute_round_trips_in_exported_program_archive(archive_copy_path)
+    assert _exported_program_structural_signature(torch.export.load(str(archive_copy_path))) == exported_before_signature
+
+
+def test_export_pytorch_package_helper_and_raw_exports_are_structurally_equivalent_for_ts_ad_model_when_model_is_available(tmp_path) -> None:
+    model_path = Path("ts_ad_model.onnx")
+    if not model_path.exists():
+        pytest.skip("ts_ad_model.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = clone_model_ir_with_float32(
+        lower_onnx_to_ir(
+            model_proto,
+            output_file_name="ts_ad_model_raw_helper_equivalence_test",
+            show_progress=False,
+            transpose_inputs_to_nhwc=True,
+        )
+    )
+    prune_identity_cast_operators(model_ir, preserve_model_outputs=True)
+    optimize_redundant_transpose_operators(model_ir, preserve_model_outputs=True)
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "ts_ad_model_equivalence_pkg"),
+    )
+    pkg = _import_generated_package(package_path)
+    model = pkg.load_model(device="cpu", eval_mode=True)
+    example_inputs = (torch.randn(1, 64),)
+
+    raw_dynamo_onnx_path = tmp_path / "ts_ad_model_raw_equiv_dynamo.onnx"
+    with torch.no_grad():
+        torch.onnx.export(
+            model,
+            example_inputs,
+            str(raw_dynamo_onnx_path),
+            dynamo=True,
+            input_names=model.input_names,
+            output_names=model.output_names,
+        )
+    helper_dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    assert helper_dynamo_onnx_path is not None
+    assert _onnx_model_structural_signature(onnx.load(str(raw_dynamo_onnx_path))) == _onnx_model_structural_signature(
+        onnx.load(str(helper_dynamo_onnx_path))
+    )
+
+    raw_exported_program_path = tmp_path / "ts_ad_model_raw_equiv_ep.pt2"
+    raw_exported_program = torch.export.export(model, example_inputs)
+    torch.export.save(raw_exported_program, str(raw_exported_program_path))
+    helper_exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert helper_exported_program_path is not None
+    assert _exported_program_structural_signature(torch.export.load(str(raw_exported_program_path))) == _exported_program_structural_signature(
+        torch.export.load(str(helper_exported_program_path))
+    )
+
+
+def test_export_pytorch_package_helper_postprocess_is_noop_for_ts_ad_model_when_model_is_available(tmp_path) -> None:
+    model_path = Path("ts_ad_model.onnx")
+    if not model_path.exists():
+        pytest.skip("ts_ad_model.onnx is not available")
+    model_proto = onnx.load(model_path)
+    model_ir = clone_model_ir_with_float32(
+        lower_onnx_to_ir(
+            model_proto,
+            output_file_name="ts_ad_model_helper_noop_test",
+            show_progress=False,
+            transpose_inputs_to_nhwc=True,
+        )
+    )
+    prune_identity_cast_operators(model_ir, preserve_model_outputs=True)
+    optimize_redundant_transpose_operators(model_ir, preserve_model_outputs=True)
+    package_path = export_pytorch_package_from_model_ir(
+        model_ir=model_ir,
+        output_folder_path=str(tmp_path / "ts_ad_model_helper_noop_pkg"),
+    )
+
+    helper_dynamo_onnx_path = export_dynamo_onnx_from_generated_package(package_dir=package_path)
+    assert helper_dynamo_onnx_path is not None
+    onnx_before = _onnx_model_structural_signature(onnx.load(str(helper_dynamo_onnx_path)))
+    _sanitize_dynamo_exported_onnx_metadata(Path(helper_dynamo_onnx_path))
+    onnx_after = _onnx_model_structural_signature(onnx.load(str(helper_dynamo_onnx_path)))
+    assert onnx_after == onnx_before
+
+    helper_exported_program_path = export_exported_program_from_generated_package(package_dir=package_path)
+    assert helper_exported_program_path is not None
+    exported_before = torch.export.load(str(helper_exported_program_path))
+    exported_before_signature = _exported_program_structural_signature(exported_before)
+    archive_copy_path = tmp_path / "ts_ad_model_helper_noop_copy.pt2"
+    archive_copy_path.write_bytes(Path(helper_exported_program_path).read_bytes())
+    _fold_inverse_permute_round_trips_in_exported_program_archive(archive_copy_path)
+    assert _exported_program_structural_signature(torch.export.load(str(archive_copy_path))) == exported_before_signature
 
 
 def test_export_pytorch_package_prefers_channel_first_shape_for_nhwc_named_channel_first_reshape() -> None:
