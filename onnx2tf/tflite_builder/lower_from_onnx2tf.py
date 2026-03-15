@@ -2040,33 +2040,23 @@ def _resolve_dynamic_reshape_shapes(
         *,
         template: List[int],
         input_dims: List[int],
+        allow_zero: Optional[bool] = None,
     ) -> List[int]:
         sanitized = [int(v) for v in list(template)]
         for idx, dim in enumerate(list(sanitized)):
             if int(dim) == 0:
-                copied = (
-                    int(input_dims[idx])
-                    if idx < len(input_dims) and int(input_dims[idx]) > 0
-                    else None
-                )
-                if copied is not None:
-                    sanitized[idx] = int(copied)
-                else:
-                    sanitized[idx] = -1
+                if allow_zero is False:
+                    copied = (
+                        int(input_dims[idx])
+                        if idx < len(input_dims) and int(input_dims[idx]) > 0
+                        else None
+                    )
+                    if copied is not None:
+                        sanitized[idx] = int(copied)
+                    else:
+                        sanitized[idx] = -1
             elif int(dim) < -1:
                 sanitized[idx] = 1
-
-        minus_one_indices = [idx for idx, dim in enumerate(sanitized) if int(dim) == -1]
-        if len(minus_one_indices) > 1:
-            keep_idx = int(minus_one_indices[0])
-            for idx in minus_one_indices[1:]:
-                copied = (
-                    int(input_dims[idx])
-                    if idx < len(input_dims) and int(input_dims[idx]) > 0
-                    else 1
-                )
-                sanitized[idx] = int(copied)
-            sanitized[keep_idx] = -1
 
         return [int(v) for v in list(sanitized)]
 
@@ -2153,12 +2143,18 @@ def _resolve_dynamic_reshape_shapes(
                 and raw_has_minus_one
                 and not raw_has_zero_dim
                 and len(new_shape) >= 5
+                and any(int(dim) <= 0 for dim in input_signature)
             ):
                 # Final-stage safety mode:
                 # keep ONNX's runtime-inferable `-1` instead of stale concretized values.
                 resolved_shape = _sanitize_reshape_template(
                     template=new_shape,
                     input_dims=signature_for_resolve,
+                    allow_zero=(
+                        bool(op.options.get("allowZero"))
+                        if "allowZero" in op.options
+                        else None
+                    ),
                 )
             elif (
                 len(existing_new_shape_list) > 0
@@ -2179,6 +2175,11 @@ def _resolve_dynamic_reshape_shapes(
                     new_shape=_sanitize_reshape_template(
                         template=new_shape,
                         input_dims=signature_for_resolve,
+                        allow_zero=(
+                            bool(op.options.get("allowZero"))
+                            if "allowZero" in op.options
+                            else None
+                        ),
                     ),
                     input_signature=signature_for_resolve,
                     allow_zero=(
@@ -2203,6 +2204,11 @@ def _resolve_dynamic_reshape_shapes(
                     new_shape=_sanitize_reshape_template(
                         template=new_shape,
                         input_dims=signature_for_resolve,
+                        allow_zero=(
+                            bool(op.options.get("allowZero"))
+                            if "allowZero" in op.options
+                            else None
+                        ),
                     ),
                     input_signature=signature_for_resolve,
                     allow_zero=(
@@ -2215,10 +2221,16 @@ def _resolve_dynamic_reshape_shapes(
             fallback_shape = _sanitize_reshape_template(
                 template=new_shape,
                 input_dims=signature_for_resolve,
+                allow_zero=(
+                    bool(op.options.get("allowZero"))
+                    if "allowZero" in op.options
+                    else None
+                ),
             )
             if (
                 sum(1 for dim in fallback_shape if int(dim) == -1) <= 1
                 and all(int(dim) >= -1 for dim in fallback_shape)
+                and not any(int(dim) == 0 for dim in fallback_shape)
             ):
                 resolved_shape = [int(v) for v in list(fallback_shape)]
         if resolved_shape is None:

@@ -11591,7 +11591,7 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_prefers_runtime_minus_
         name="x",
         dtype="FLOAT32",
         shape=[1, 10, 4096, 2],
-        shape_signature=[1, 10, 4096, 2],
+        shape_signature=[1, -1, 4096, 2],
     )
     model_ir.tensors["reshape_shape"] = TensorIR(
         name="reshape_shape",
@@ -11628,6 +11628,140 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_prefers_runtime_minus_
     assert list(model_ir.tensors["y"].shape) == [1, 1, 64, 64, 2]
     assert list(model_ir.tensors["y"].shape_signature) == [1, -1, 64, 64, 2]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [1, -1, 64, 64, 2]
+
+
+def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_concretizes_static_onnx_raw_minus_one() -> None:
+    model_ir = ModelIR(name="reshape_fixup_static_onnx_raw_minus_one_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[64, 64, 540],
+        shape_signature=[64, 64, 540],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[5],
+        shape_signature=[5],
+        data=np.asarray([-1, 64, 3, 6, 30], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[64, 64, 3, 6, 30],
+        shape_signature=[-1, 64, 3, 6, 30],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "reshape_shape"],
+            outputs=["y"],
+            options={
+                "newShape": [-1, 64, 3, 6, 30],
+                "onnxRawNewShape": [-1, 64, 3, 6, 30],
+                "allowZero": False,
+            },
+        )
+    )
+
+    stats = _resolve_dynamic_reshape_shapes(
+        model_ir,
+        prefer_runtime_inferable_from_onnx_raw=True,
+    )
+    assert stats["resolved_dynamic_reshape_shapes"] == 1
+    assert list(model_ir.operators[0].options["newShape"]) == [64, 64, 3, 6, 30]
+    assert list(model_ir.tensors["y"].shape) == [64, 64, 3, 6, 30]
+    assert list(model_ir.tensors["y"].shape_signature) == [64, 64, 3, 6, 30]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [64, 64, 3, 6, 30]
+
+
+def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_allowzero_true_preserves_zero_and_minus_one() -> None:
+    model_ir = ModelIR(name="reshape_fixup_allowzero_true_preserve_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[2, 5, 3],
+        shape_signature=[2, 5, 3],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([0, -1, 3], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1, 1],
+        shape_signature=[0, -1, 3],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "reshape_shape"],
+            outputs=["y"],
+            options={
+                "newShape": [0, -1, 3],
+                "onnxRawNewShape": [0, -1, 3],
+                "allowZero": True,
+            },
+        )
+    )
+
+    stats = _resolve_dynamic_reshape_shapes(model_ir)
+    assert stats["resolved_dynamic_reshape_shapes"] == 0
+    assert list(model_ir.operators[0].options["newShape"]) == [0, -1, 3]
+    assert list(model_ir.tensors["y"].shape_signature) == [0, -1, 3]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [0, -1, 3]
+
+
+def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_copy_dim_zero_then_infers_minus_one() -> None:
+    model_ir = ModelIR(name="reshape_fixup_copy_dim_zero_then_infer_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[2, 5, 3],
+        shape_signature=[2, 5, 3],
+    )
+    model_ir.tensors["reshape_shape"] = TensorIR(
+        name="reshape_shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+        data=np.asarray([0, -1, 3], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1, 1],
+        shape_signature=[0, -1, 3],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "reshape_shape"],
+            outputs=["y"],
+            options={
+                "newShape": [0, -1, 3],
+                "onnxRawNewShape": [0, -1, 3],
+                "allowZero": False,
+            },
+        )
+    )
+
+    stats = _resolve_dynamic_reshape_shapes(model_ir)
+    assert stats["resolved_dynamic_reshape_shapes"] == 1
+    assert list(model_ir.operators[0].options["newShape"]) == [2, 5, 3]
+    assert list(model_ir.tensors["y"].shape) == [2, 5, 3]
+    assert list(model_ir.tensors["y"].shape_signature) == [2, 5, 3]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [2, 5, 3]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_keeps_runtime_minus_one_from_shape_tensor() -> None:
@@ -14083,11 +14217,10 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_sanitizes_multi_minus_one() -
     )
 
     stats = _resolve_dynamic_reshape_shapes(model_ir)
-    assert stats["resolved_dynamic_reshape_shapes"] == 1
+    assert stats["resolved_dynamic_reshape_shapes"] == 0
     resolved = list(model_ir.operators[0].options["newShape"])
-    assert resolved == [2, 3, 4]
-    assert resolved.count(-1) <= 1
-    assert all(int(v) != 0 for v in resolved)
+    assert resolved == [0, -1, -1]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [0, -1, -1]
 
 
 def test_flatbuffer_direct_reconcile_slice_preserves_static_size_on_dynamic_axes() -> None:
