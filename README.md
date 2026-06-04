@@ -936,7 +936,7 @@ Video speed is adjusted approximately 50 times slower than actual speed.
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.4.0 \
+  docker.io/pinto0309/onnx2tf:2.4.1 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or
