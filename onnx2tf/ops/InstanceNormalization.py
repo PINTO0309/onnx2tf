@@ -214,7 +214,12 @@ def make_node(
     # Automatic correction of accuracy degradation
     min_abs_err = sys.maxsize
     min_abs_err_perm_1: list[int] = [idx for idx in range(input_tensor_rank)]
+    identity_permutation = [idx for idx in range(input_tensor_rank)]
+    layout_preserving_tolerance = 1e-2
+    identity_candidate_err = None
     axes = [idx for idx in range(1, input_tensor_rank - 1)]
+    input_nhwc = tf_layers_dict.get(graph_node_input.name, {}).get('nhwc', False) \
+        if isinstance(graph_node_input, gs.Variable) else False
 
     if not disable_strict_mode:
         if onnx_tensor_infos is not None and validation_data is not None:
@@ -285,11 +290,20 @@ def make_node(
                         atol=0.0,
                     )
                     result_err = sum([val[2] for val in check_results.values()])
-                    if result_err < min_abs_err:
-                        min_abs_err = result_err
-                        min_abs_err_perm_1 = list(tensor_1_candidate_for_transposition)
-                        if min_abs_err < 1e-2:
-                            break
+                    tensor_1_candidate_for_transposition_list = list(tensor_1_candidate_for_transposition)
+                    is_identity_candidate = tensor_1_candidate_for_transposition_list == identity_permutation
+                    if is_identity_candidate:
+                        identity_candidate_err = result_err
+
+                    if is_identity_candidate \
+                        or (not input_nhwc) \
+                        or identity_candidate_err is None \
+                        or result_err < identity_candidate_err - layout_preserving_tolerance:
+                        if result_err < min_abs_err:
+                            min_abs_err = result_err
+                            min_abs_err_perm_1 = tensor_1_candidate_for_transposition_list
+                            if min_abs_err < 1e-2:
+                                break
                 except Exception as ex:
                     pass
 
