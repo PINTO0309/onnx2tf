@@ -4889,11 +4889,11 @@ def _validate_unique(node: Any, ctx: Any) -> None:
 
 def _validate_scatter_elements(node: Any, ctx: Any) -> None:
     reduction = str(node.attrs.get("reduction", "none")).lower()
-    if reduction != "none":
+    if reduction not in {"none", "add"}:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
             message=(
-                "ScatterElements reduction attribute supports 'none' only in flatbuffer_direct. "
+                "ScatterElements reduction attribute supports 'none' and 'add' only in flatbuffer_direct. "
                 f"reduction={reduction}"
             ),
             node_name=node.name,
