@@ -2283,6 +2283,7 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
         axis=int(node.attrs.get("axis", 0)),
         rank=rank,
     )
+    reduction = str(node.attrs.get("reduction", "none")).lower()
 
     data_dtype = str(ctx.get_tensor_dtype(data_name)).upper()
     output_tensor = ctx.model_ir.tensors[output_name]
@@ -2745,6 +2746,30 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
             )
         )
 
+    data_meta_shape = _tensor_shape_with_signature(ctx, data_name)
+    scattered_updates_name = ctx.add_intermediate_tensor(
+        f"{output_name}_scatter_elements_updates_scattered",
+        dtype=data_dtype,
+        shape=data_meta_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SCATTER_ND",
+            inputs=[indices_flat_name, updates_flat_name, shape_for_scatter],
+            outputs=[scattered_updates_name],
+        )
+    )
+
+    if reduction == "add":
+        _add_binary_op(
+            ctx=ctx,
+            op_type="ADD",
+            lhs_name=data_name,
+            rhs_name=scattered_updates_name,
+            output_name=output_name,
+        )
+        return
+
     one_name = ctx.add_const_tensor(
         f"{output_name}_scatter_elements_one",
         np.asarray(1, dtype=_DTYPE_TO_NP[data_dtype]),
@@ -2779,7 +2804,6 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
         )
     )
 
-    data_meta_shape = _tensor_shape_with_signature(ctx, data_name)
     mask_scatter_name = ctx.add_intermediate_tensor(
         f"{output_name}_scatter_elements_mask",
         dtype=data_dtype,
@@ -2792,11 +2816,6 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
     )
     retained_name = ctx.add_intermediate_tensor(
         f"{output_name}_scatter_elements_retained",
-        dtype=data_dtype,
-        shape=data_meta_shape,
-    )
-    scattered_updates_name = ctx.add_intermediate_tensor(
-        f"{output_name}_scatter_elements_updates_scattered",
         dtype=data_dtype,
         shape=data_meta_shape,
     )
@@ -2820,13 +2839,6 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
         lhs_name=data_name,
         rhs_name=inverse_mask_name,
         output_name=retained_name,
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="SCATTER_ND",
-            inputs=[indices_flat_name, updates_flat_name, shape_for_scatter],
-            outputs=[scattered_updates_name],
-        )
     )
     _add_binary_op(
         ctx=ctx,

@@ -125,7 +125,7 @@ def make_node(
         before_op_output_shape_trans=before_op_output_shape_trans,
     )
     reduction = graph_node.attrs.get('reduction', 'none')
-    enable_reductions = ['none']
+    enable_reductions = ['none', 'add']
     if reduction not in enable_reductions:
         error(
             f'ScatterElements currently supports only reduction={enable_reductions}. '+
@@ -246,7 +246,13 @@ def make_node(
 
     indices = tf.reshape(coordinate, [-1, input_tensor_rank])
     updates = tf.reshape(updates_tensor_for_scatter, [-1])
-    output = tf.tensor_scatter_nd_update(
+
+    if reduction == 'none':
+        scatter_op = tf.tensor_scatter_nd_update
+    elif reduction == 'add':
+        scatter_op = tf.tensor_scatter_nd_add
+
+    output = scatter_op(
         tensor=input_tensor,
         indices=indices,
         updates=updates,
@@ -269,7 +275,7 @@ def make_node(
     tf_layers_dict[graph_node_output.name]['tf_node_info'] = \
         make_tf_node_info(
             node_info={
-                'tf_op_type': tf.tensor_scatter_nd_update,
+                'tf_op_type': scatter_op,
                 'tf_inputs': {
                     'tensor': input_tensor,
                     'indices': indices_tensor,
