@@ -491,7 +491,7 @@ def make_node(
             cliped_values = tf.cast(
                 tf.subtract(
                     1,
-                    tf.clip_by_value(t=begin_, clip_value_min=0, clip_value_max=1),
+                    tf.clip_by_value(t=tf.cast(begin_, tf.int32), clip_value_min=0, clip_value_max=1),
                 ),
                 dtype=tf.int32,
             )
@@ -529,7 +529,7 @@ def make_node(
             cliped_values = tf.cast(
                 tf.subtract(
                     1,
-                    tf.clip_by_value(t=end_, clip_value_min=0, clip_value_max=1),
+                    tf.clip_by_value(t=tf.cast(end_, tf.int32), clip_value_min=0, clip_value_max=1),
                 ),
                 dtype=tf.int32,
             )
