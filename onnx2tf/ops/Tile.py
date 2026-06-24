@@ -119,7 +119,7 @@ def make_node(
     # Search for and transpose shapes that do not cause shape unmatch errors
     min_abs_err = sys.maxsize
     min_abs_err_perm_1: List[int] = [idx for idx in range(len(input_tensor_1.shape))]
-    min_abs_err_perm_2: List[int] = [idx for idx in range(len(input_tensor_2.shape))]
+    min_abs_err_perm_2: List[int] = [idx for idx in range(len(input_tensor_2) if isinstance(input_tensor_2, np.ndarray) else len(input_tensor_2.shape))]
 
     def define_tile(
         *,
