@@ -931,6 +931,113 @@ def _make_grouped_conv_model_ir() -> ModelIR:
     return model_ir
 
 
+def _make_conv3d_model_ir() -> ModelIR:
+    rng = np.random.default_rng(14)
+    model_ir = ModelIR(name="conv3d_saved_model")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 4, 5, 6, 4],
+        shape_signature=[1, 4, 5, 6, 4],
+    )
+    model_ir.tensors["w"] = TensorIR(
+        name="w",
+        dtype="FLOAT32",
+        shape=[3, 3, 3, 4, 32],
+        shape_signature=[3, 3, 3, 4, 32],
+        data=rng.standard_normal((3, 3, 3, 4, 32)).astype(np.float32),
+    )
+    model_ir.tensors["b"] = TensorIR(
+        name="b",
+        dtype="FLOAT32",
+        shape=[32],
+        shape_signature=[32],
+        data=rng.standard_normal((32,)).astype(np.float32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 4, 5, 6, 32],
+        shape_signature=[1, 4, 5, 6, 32],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="CONV_3D",
+            inputs=["x", "w", "b"],
+            outputs=["y"],
+            options={
+                "padding": "SAME",
+                "strideD": 1,
+                "strideH": 1,
+                "strideW": 1,
+                "dilationDFactor": 1,
+                "dilationHFactor": 1,
+                "dilationWFactor": 1,
+                "fusedActivationFunction": "NONE",
+            },
+        )
+    )
+    return model_ir
+
+
+def _make_conv3d_transpose_model_ir() -> ModelIR:
+    rng = np.random.default_rng(15)
+    model_ir = ModelIR(name="conv3d_transpose_saved_model")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    output_shape = [1, 4, 5, 6, 3]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 4, 5, 6, 4],
+        shape_signature=[1, 4, 5, 6, 4],
+    )
+    model_ir.tensors["output_shape"] = TensorIR(
+        name="output_shape",
+        dtype="INT32",
+        shape=[5],
+        shape_signature=[5],
+        data=np.asarray(output_shape, dtype=np.int32),
+    )
+    model_ir.tensors["w"] = TensorIR(
+        name="w",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 3, 4],
+        shape_signature=[1, 1, 1, 3, 4],
+        data=rng.standard_normal((1, 1, 1, 3, 4)).astype(np.float32),
+    )
+    model_ir.tensors["b"] = TensorIR(
+        name="b",
+        dtype="FLOAT32",
+        shape=[3],
+        shape_signature=[3],
+        data=rng.standard_normal((3,)).astype(np.float32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=output_shape,
+        shape_signature=output_shape,
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="CONV_3D_TRANSPOSE",
+            inputs=["output_shape", "w", "x", "b"],
+            outputs=["y"],
+            options={
+                "padding": "SAME",
+                "strideD": 1,
+                "strideH": 1,
+                "strideW": 1,
+                "fusedActivationFunction": "NONE",
+            },
+        )
+    )
+    return model_ir
+
+
 def _make_batched_matmul_model_ir() -> ModelIR:
     model_ir = ModelIR(name="batched_matmul")
     model_ir.inputs = ["lhs", "rhs"]
@@ -1003,6 +1110,49 @@ def test_saved_model_exporter_recurrent_smoke(
         expected_shape = tuple(int(v) for v in model_ir.tensors["y"].shape)
         assert tuple(sm_out.shape) == expected_shape
         assert np.isfinite(sm_out).all()
+
+
+def test_saved_model_exporter_conv3d_uses_tflite_filter_layout() -> None:
+    model_ir = _make_conv3d_model_ir()
+    rng = np.random.default_rng(16)
+    input_data = rng.standard_normal(model_ir.tensors["x"].shape).astype(np.float32)
+    expected = tf.nn.conv3d(
+        input_data,
+        filters=model_ir.tensors["w"].data,
+        strides=[1, 1, 1, 1, 1],
+        padding="SAME",
+    )
+    expected = expected + tf.reshape(model_ir.tensors["b"].data, [1, 1, 1, 1, -1])
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        saved_model_path = export_saved_model_from_model_ir(
+            model_ir=model_ir,
+            output_folder_path=os.path.join(tmpdir, "sm"),
+        )
+        sm_out = _run_saved_model_single_output(saved_model_path, "x", input_data, "y")
+        np.testing.assert_allclose(sm_out, expected.numpy(), rtol=1e-5, atol=1e-5)
+
+
+def test_saved_model_exporter_conv3d_transpose_uses_tflite_filter_layout() -> None:
+    model_ir = _make_conv3d_transpose_model_ir()
+    rng = np.random.default_rng(17)
+    input_data = rng.standard_normal(model_ir.tensors["x"].shape).astype(np.float32)
+    expected = tf.nn.conv3d_transpose(
+        input_data,
+        filters=model_ir.tensors["w"].data,
+        output_shape=model_ir.tensors["y"].shape,
+        strides=[1, 1, 1, 1, 1],
+        padding="SAME",
+    )
+    expected = expected + tf.reshape(model_ir.tensors["b"].data, [1, 1, 1, 1, -1])
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        saved_model_path = export_saved_model_from_model_ir(
+            model_ir=model_ir,
+            output_folder_path=os.path.join(tmpdir, "sm"),
+        )
+        sm_out = _run_saved_model_single_output(saved_model_path, "x", input_data, "y")
+        np.testing.assert_allclose(sm_out, expected.numpy(), rtol=1e-5, atol=1e-5)
 
 
 def test_rewrite_model_ir_disable_group_convolution_smoke() -> None:
