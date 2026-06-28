@@ -35,7 +35,7 @@ np.random.seed(0)
 
 import onnx
 import onnx2tf.gs as gs
-from typing import Optional, List, Any, Dict, cast
+from typing import Optional, List, Any, Dict, TypeAlias, cast
 from argparse import ArgumentParser, SUPPRESS
 
 import importlib
@@ -92,6 +92,12 @@ class _TensorFlowModuleProxy:
 
 tf = _TensorFlowModuleProxy('tf')
 tf_keras = _TensorFlowModuleProxy('tf_keras')
+KerasModel: TypeAlias = Any
+Tensor: TypeAlias = Any
+TensorSpec: TypeAlias = Any
+TensorShape: TypeAlias = Any
+TensorDType: TypeAlias = Any
+WrapperFunction: TypeAlias = Any
 
 
 def _load_common_functions():
@@ -1368,7 +1374,7 @@ def convert(
     disable_model_save: Optional[bool] = False,
     non_verbose: Optional[bool] = False,
     verbosity: Optional[str] = 'debug',
-) -> tf_keras.Model:
+) -> KerasModel:
     """Convert ONNX to TensorFlow models.
 
     Parameters
@@ -2821,7 +2827,7 @@ def convert(
                 normalized = normalized[len('serving_default_'):]
             return normalized
 
-        def _fallback_shape_from_spec(spec: tf.TensorSpec) -> List[int]:
+        def _fallback_shape_from_spec(spec: TensorSpec) -> List[int]:
             shape: List[int] = []
             for dim_index, dim in enumerate(spec.shape.as_list()):
                 if dim is None or int(dim) <= 0:
@@ -2913,7 +2919,7 @@ def convert(
                 if detail_name not in detail_by_normalized_name:
                     detail_by_normalized_name[detail_name] = detail
 
-            serving_inputs: Dict[str, tf.Tensor] = {}
+            serving_inputs: Dict[str, Tensor] = {}
             tflite_inputs: Dict[int, np.ndarray] = {}
             ordered_details = list(tflite_input_details)
             for input_position, (saved_input_name, tensor_spec) in enumerate(signature_inputs.items()):
@@ -3193,7 +3199,7 @@ def convert(
         def _candidate_signature_input_names(
             *,
             input_key: str,
-            tensor_spec: tf.TensorSpec,
+            tensor_spec: TensorSpec,
         ) -> List[str]:
             candidates: List[str] = []
             for candidate in [str(input_key), str(getattr(tensor_spec, 'name', ''))]:
@@ -3205,7 +3211,7 @@ def convert(
             return candidates
 
         def _fallback_shape_from_tensor_spec(
-            tensor_spec: tf.TensorSpec,
+            tensor_spec: TensorSpec,
         ) -> List[int]:
             shape_list = tensor_spec.shape.as_list()
             fallback_shape: List[int] = []
@@ -3218,7 +3224,7 @@ def convert(
 
         def _cast_array_for_tensor_spec(
             value: np.ndarray,
-            tensor_spec: tf.TensorSpec,
+            tensor_spec: TensorSpec,
         ) -> np.ndarray:
             casted = np.asarray(value)
             target_dtype = np.dtype(tensor_spec.dtype.as_numpy_dtype)
@@ -3242,7 +3248,7 @@ def convert(
 
         def _adapt_input_layout_for_saved_model_spec(
             value: np.ndarray,
-            tensor_spec: tf.TensorSpec,
+            tensor_spec: TensorSpec,
         ) -> np.ndarray:
             shape_signature = []
             for dim in tensor_spec.shape.as_list():
@@ -3331,7 +3337,7 @@ def convert(
                     if normalized_name not in prepared_inputs_by_normalized:
                         prepared_inputs_by_normalized[normalized_name] = input_value
 
-            serving_inputs: Dict[str, tf.Tensor] = {}
+            serving_inputs: Dict[str, Tensor] = {}
             selected_inputs_by_normalized: Dict[str, np.ndarray] = {}
             for input_name, tensor_spec in signature_inputs.items():
                 signature_input_candidates = _candidate_signature_input_names(
@@ -4033,7 +4039,7 @@ def convert(
     def _build_keras_model_from_saved_model(
         *,
         saved_model_path: str,
-    ) -> tf_keras.Model:
+    ) -> KerasModel:
         signature_fn = _get_saved_model_bridge_signature(
             saved_model_path=saved_model_path,
             endpoint='serving_default',
@@ -4050,7 +4056,7 @@ def convert(
             if isinstance(structured_outputs, dict) and len(structured_outputs) > 0
             else None
         )
-        keras_inputs: List[tf.Tensor] = []
+        keras_inputs: List[Tensor] = []
         input_names: List[str] = []
         for input_name, tensor_spec in signature_inputs.items():
             keras_inputs.append(
@@ -4179,7 +4185,7 @@ def convert(
         if output_tfv1_pb:
             try:
                 info(Color.REVERSE(f'TFv1 v1 .pb output started'), '=' * 58)
-                from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
+                from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2  # pyright: ignore[reportMissingImports]
 
                 imported = tf.saved_model.load(saved_model_path)
                 signature_fn = _get_trackable_signatures(imported)['serving_default']
@@ -5116,13 +5122,13 @@ def convert(
                 def _build_onnx_tf_output_map(
                     *,
                     onnx_output_names: List[str],
-                    tf_output_tensors: List[tf.Tensor],
+                    tf_output_tensors: List[Tensor],
                     onnx_output_values: Optional[Dict[str, np.ndarray]] = None,
                     tf_output_values: Optional[Dict[str, np.ndarray]] = None,
-                ) -> Dict[str, tf.Tensor]:
+                ) -> Dict[str, Tensor]:
                     tf_by_base = {t.name.split(':')[0]: t for t in tf_output_tensors}
                     tf_by_full = {t.name: t for t in tf_output_tensors}
-                    mapping: Dict[str, tf.Tensor] = {}
+                    mapping: Dict[str, Tensor] = {}
                     used_tf: set = set()
                     missing: List[str] = []
                     for onnx_name in onnx_output_names:
@@ -7168,7 +7174,7 @@ def convert(
         if output_tfv1_pb:
             try:
                 info(Color.REVERSE(f'TFv1 v1 .pb output started'), '=' * 58)
-                from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
+                from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2  # pyright: ignore[reportMissingImports]
                 imported = tf.saved_model.load(output_folder_path)
                 f = _get_trackable_signatures(imported)[SIGNATURE_KEY]
                 frozen_func = convert_variables_to_constants_v2(f)
@@ -7639,17 +7645,17 @@ def convert(
                 tf.saved_model.load(
                     output_folder_path
                 )
-            loaded_saved_model: _WrapperFunction = _get_trackable_signatures(trackable_obj)[SIGNATURE_KEY]
-            structured_input_signature: Dict[str, tf.TensorSpec] = loaded_saved_model.structured_input_signature[1]
-            structured_outputs: Dict[str, tf.TensorSpec] = loaded_saved_model.structured_outputs
+            loaded_saved_model: WrapperFunction = _get_trackable_signatures(trackable_obj)[SIGNATURE_KEY]
+            structured_input_signature: Dict[str, TensorSpec] = loaded_saved_model.structured_input_signature[1]
+            structured_outputs: Dict[str, TensorSpec] = loaded_saved_model.structured_outputs
 
             input_keys: List[str] = list(structured_input_signature.keys())
-            input_shapes: List[tf.TensorShape] = [v.shape for v in structured_input_signature.values()]
-            input_dtypes: List[tf.dtypes.DType] = [v.dtype for v in structured_input_signature.values()]
+            input_shapes: List[TensorShape] = [v.shape for v in structured_input_signature.values()]
+            input_dtypes: List[TensorDType] = [v.dtype for v in structured_input_signature.values()]
 
             output_keys: List[str] = list(structured_outputs.keys())
-            output_shapes: List[tf.TensorShape] = [v.shape for v in structured_outputs.values()]
-            output_dtypes: List[tf.dtypes.DType] = [v.dtype for v in structured_outputs.values()]
+            output_shapes: List[TensorShape] = [v.shape for v in structured_outputs.values()]
+            output_dtypes: List[TensorDType] = [v.dtype for v in structured_outputs.values()]
 
             print('')
             info(Color.BLUE(f'Signature information for quantization'))
