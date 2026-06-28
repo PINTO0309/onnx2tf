@@ -1242,8 +1242,8 @@ def _kernel_conv3d(
     x = executor._resolve_tensor(op.inputs[0], env)
     w = executor._resolve_tensor(op.inputs[1], env)
     b = executor._resolve_optional_tensor(op.inputs[2], env) if len(op.inputs) >= 3 else None
-    # TFLite conv3d filter: [out, d, h, w, in] -> TF: [d, h, w, in, out]
-    w_tf = tf.transpose(w, perm=[1, 2, 3, 4, 0])
+    # TFLite CONV_3D and tf.nn.conv3d both use [d, h, w, in, out].
+    w_tf = w
     strides = [
         1,
         int(op.options.get("strideD", 1)),
@@ -1280,8 +1280,8 @@ def _kernel_conv3d_transpose(
     w = executor._resolve_tensor(op.inputs[1], env)
     x = executor._resolve_tensor(op.inputs[2], env)
     b = executor._resolve_optional_tensor(op.inputs[3], env) if len(op.inputs) >= 4 else None
-    # TFLite conv3d-transpose filter: [out, d, h, w, in] -> TF: [d, h, w, out, in]
-    w_tf = tf.transpose(w, perm=[1, 2, 3, 0, 4])
+    # TFLite CONV_3D_TRANSPOSE and tf.nn.conv3d_transpose both use [d, h, w, out, in].
+    w_tf = w
     strides = [
         1,
         int(op.options.get("strideD", 1)),
