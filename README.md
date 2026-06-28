@@ -875,20 +875,31 @@ Video speed is adjusted approximately 50 times slower than actual speed.
 
 ## Environment
 - Linux / Windows
+- Python>=3.12
+- numpy==2.2.6
 - onnx==1.20.1
-- onnxruntime==1.24.3
-- onnxsim-prebuilt==0.4.39.post2
+- onnxruntime==1.26.0
+- opencv-python==4.13.0.92
+- onnxsim==0.6.5
 - onnxoptimizer==0.4.2
-- sne4onnx>=2.0.1
-- sng4onnx>=2.0.1
-- tensorflow==2.19.0 (optional: TensorFlow-backed export / tf_converter only)
-- tf-keras==2.19.0 (optional: TensorFlow-backed export / tf_converter only)
-- torch==2.11.0 (optional: PyTorch-backed export / validation only)
+- onnxscript==0.6.2
 - ai-edge-litert==2.1.2
-- h5py==3.12.1
+- sne4onnx==2.0.1
+- sng4onnx==2.0.1
 - psutil==5.9.5
-- ml_dtypes==0.5.1
+- protobuf==7.35.1
+- h5py==3.14.0
+- ml_dtypes==0.5.4
+- setuptools==81.0.0
 - flatbuffers==25.12.19
+- tqdm==4.67.1
+- pytest==9.0.2
+
+Optional:
+- tensorflow==2.21.0 (TensorFlow-backed export / tf_converter only)
+- tf-keras==2.21.0 (TensorFlow-backed export / tf_converter only)
+- keras==3.15.0 (TensorFlow-backed export / tf_converter only)
+- torch==2.11.0 (PyTorch-backed export / validation only)
 
 ## Sample Usage
 ### 1. Install
