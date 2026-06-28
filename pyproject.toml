@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "onnx2tf"
-version = "2.4.3"
+version = "2.5.0"
 description = "A tool for converting ONNX files to LiteRT/TFLite/TensorFlow, PyTorch native code (nn.Module), TorchScript (.pt), state_dict (.pt), Exported Program (.pt2), and Dynamo ONNX. It also supports direct conversion from LiteRT to PyTorch."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -28,18 +28,19 @@ classifiers = [
 dependencies = [
     "numpy==2.2.6",
     "onnx==1.20.1",
-    "onnxruntime==1.24.3",
-    "opencv-python==4.11.0.86",
-    "onnxsim-prebuilt==0.4.39.post2",
+    "onnxruntime==1.26.0",
+    "opencv-python==4.13.0.92",
+    "onnxsim==0.6.5",
     "onnxoptimizer==0.4.2",
     "onnxscript==0.6.2",
     "ai-edge-litert==2.1.2",
     "sne4onnx==2.0.1",
     "sng4onnx==2.0.1",
     "psutil==5.9.5",
-    "protobuf==4.25.5",
-    "h5py==3.12.1",
-    "ml_dtypes==0.5.1",
+    "protobuf==7.35.1",
+    "h5py==3.14.0",
+    "ml_dtypes==0.5.4",
+    "setuptools==81.0.0",
     "flatbuffers==25.12.19",
     "tqdm==4.67.1",
     "pytest==9.0.2",
@@ -47,8 +48,9 @@ dependencies = [
 
 [project.optional-dependencies]
 tensorflow = [
-    "tensorflow==2.19.0",
-    "tf-keras==2.19.0",
+    "tensorflow==2.21.0",
+    "tf-keras==2.21.0",
+    "keras==3.15.0",
 ]
 torch = [
     "torch==2.11.0",
@@ -67,10 +69,6 @@ Issues = "https://github.com/PINTO0309/onnx2tf/issues"
 
 [tool.uv]
 override-dependencies = [
-    "onnx==1.20.1",
-    "onnxsim-prebuilt==0.4.39.post2",
-    "ml-dtypes==0.5.1",
-    "numpy==2.2.6",
 ]
 
 [tool.uv.build-backend]
