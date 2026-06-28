@@ -119,13 +119,28 @@ def make_node(
     # Generation of TF OP
     gamma_init: Any = tf_keras.initializers.constant(cast(Any, scale)) if scale is not None else 'ones'
     beta_init: Any = tf_keras.initializers.constant(cast(Any, bias)) if bias is not None else 'zeros'
-    tf_layers_dict[graph_node_output_1.name]['tf_node'] = \
-        tf_keras.layers.LayerNormalization(
-            axis=axis,
-            epsilon=epsilon,
-            gamma_initializer=cast(Any, gamma_init),
-            beta_initializer=cast(Any, beta_init),
-        )(input_tensor)
+    try:
+        tf_layers_dict[graph_node_output_1.name]['tf_node'] = \
+            tf_keras.layers.LayerNormalization(
+                axis=axis,
+                epsilon=epsilon,
+                gamma_initializer=cast(Any, gamma_init),
+                beta_initializer=cast(Any, beta_init),
+            )(input_tensor)
+    except (TypeError, ValueError):
+        # Fallback for dynamic-shape inputs: tf_keras.layers.LayerNormalization
+        # requires the normalised axis to be statically known at build time.
+        # When axis is None or dynamic (e.g. DINOv2 windowed attention), use
+        # tf.nn.moments directly instead.
+        _gamma = tf.constant(scale, dtype=input_tensor.dtype) if scale is not None else None
+        _beta  = tf.constant(bias,  dtype=input_tensor.dtype) if bias  is not None else None
+        _mean, _var = tf.nn.moments(input_tensor, axes=[axis], keepdims=True)
+        _norm = (input_tensor - _mean) / tf.sqrt(_var + epsilon)
+        if _gamma is not None:
+            _norm = _norm * _gamma
+        if _beta is not None:
+            _norm = _norm + _beta
+        tf_layers_dict[graph_node_output_1.name]['tf_node'] = _norm
 
     # Detect conversion errors in axis and identify the axis
     # with the smallest possible error and replace it.
