@@ -169,7 +169,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_rank4_channelwise_broadcast_constants_to_runtime_layout,
     lower_onnx_to_ir,
 )
-from onnx2tf.utils.common_functions import check_model_has_external_data
+from onnx2tf.utils.onnx_litert_runtime import check_model_has_external_data
 from onnx2tf.tflite_builder.model_writer import serialize_model
 from onnx2tf.tflite_builder.preprocess import (
     configure_pseudo_ops_wave1_targets,
@@ -190,6 +190,24 @@ def _save_model(tmpdir: str, name: str, model: onnx.ModelProto) -> str:
     model_path = os.path.join(tmpdir, f"{name}.onnx")
     onnx.save(model, model_path)
     return model_path
+
+
+def _write_x_calibration_data(
+    tmpdir: str,
+    name: str,
+    values: np.ndarray | None = None,
+) -> list[list[Any]]:
+    if values is None:
+        values = np.asarray(
+            [
+                [0.0, 1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0, 7.0],
+            ],
+            dtype=np.float32,
+        )
+    path = os.path.join(tmpdir, f"{name}.npy")
+    np.save(path, np.asarray(values, dtype=np.float32))
+    return [["x", path, np.asarray(0.0, dtype=np.float32), np.asarray(1.0, dtype=np.float32)]]
 
 
 def _convert(
@@ -35183,6 +35201,7 @@ def test_flatbuffer_direct_integration_quant_eval_coverage_smoke() -> None:
             "flatbuffer_direct",
             output_dynamic_range_quantized_tflite=True,
             output_integer_quantized_tflite=True,
+            custom_input_op_name_np_data_path=_write_x_calibration_data(tmpdir, "gemm_integ_calib"),
             eval_with_onnx=True,
             eval_num_samples=2,
             eval_target_tflite="full_integer_quant",
@@ -35389,6 +35408,7 @@ def test_flatbuffer_direct_integer_quantized_smoke() -> None:
             quant_type="per-channel",
             input_quant_dtype="int8",
             output_quant_dtype="int8",
+            custom_input_op_name_np_data_path=_write_x_calibration_data(tmpdir, "gemm_iq_calib"),
         )
 
         integer_tflite = os.path.join(out_dir, "gemm_iq_integer_quant.tflite")
@@ -35461,6 +35481,7 @@ def test_flatbuffer_direct_integer_quantized_reduce_compatibility() -> None:
             "flatbuffer_direct",
             output_integer_quantized_tflite=True,
             quant_type="per-channel",
+            custom_input_op_name_np_data_path=_write_x_calibration_data(tmpdir, "gemm_reduce_iq_calib"),
         )
         tflite_path = os.path.join(out_dir, "gemm_reduce_iq_integer_quant.tflite")
         assert os.path.isfile(tflite_path)
@@ -35562,6 +35583,7 @@ def test_flatbuffer_direct_accuracy_report_quant_dequant_mode() -> None:
             out_dir,
             "flatbuffer_direct",
             output_integer_quantized_tflite=True,
+            custom_input_op_name_np_data_path=_write_x_calibration_data(tmpdir, "gemm_eval_q_calib"),
             eval_with_onnx=True,
             eval_num_samples=3,
             eval_target_tflite="full_integer_quant",
@@ -35645,6 +35667,7 @@ def test_flatbuffer_direct_accuracy_report_fail_on_threshold() -> None:
                 out_dir,
                 "flatbuffer_direct",
                 output_integer_quantized_tflite=True,
+                custom_input_op_name_np_data_path=_write_x_calibration_data(tmpdir, "gemm_eval_fail_calib"),
                 eval_with_onnx=True,
                 eval_num_samples=2,
                 eval_target_tflite="full_integer_quant",

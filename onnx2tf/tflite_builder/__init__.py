@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 from typing import Any, Dict, List, Optional
@@ -24,11 +25,14 @@ from onnx2tf.tflite_builder.model_writer import (
     write_model_file,
 )
 from onnx2tf.tflite_builder.quantization import (
+    StrictFullIntegerQuantizationError,
     build_dynamic_range_quantized_model_ir,
     build_full_integer_quantized_model_ir,
     build_full_integer_quantized_with_int16_act_model_ir,
     build_integer_quantized_model_ir,
     build_integer_quantized_with_int16_act_model_ir,
+    collect_calibration_ranges_from_tflite,
+    load_calibration_samples,
 )
 from onnx2tf.tflite_builder.preprocess import (
     configure_pseudo_ops_wave1_targets,
@@ -755,6 +759,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         split_pytorch_torchscript_paths = None
         split_pytorch_dynamo_onnx_paths = None
         split_pytorch_exported_program_paths = None
+        calibration_report_path = None
         if split_plan_requested:
             _set_export_progress_desc("split planning")
             split_plan_report = plan_contiguous_partitions_by_size(
@@ -829,6 +834,66 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             enabled=bool(flatbuffer_direct_show_progress),
         )
         _advance_export_progress()
+
+        calibration_ranges = None
+        calibration_report: Dict[str, Any] = {}
+        if output_integer_quantized_tflite:
+            calibration_samples = load_calibration_samples(
+                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                input_names=[str(v) for v in model_ir.inputs],
+            )
+            calibration_ranges = collect_calibration_ranges_from_tflite(
+                tflite_path=float32_path,
+                calibration_samples=calibration_samples,
+            )
+            calibration_report = {
+                "sample_count": int(len(calibration_samples)),
+                "tensor_ranges": {
+                    str(name): {
+                        "min": float(value.min_value),
+                        "max": float(value.max_value),
+                        "num_samples": int(value.num_samples),
+                    }
+                    for name, value in calibration_ranges.items()
+                },
+                "variants": {},
+            }
+
+        def _write_validated_quantized_model_file(
+            *,
+            model_ir: Any,
+            output_tflite_path: str,
+            timing: Dict[str, Any],
+        ) -> None:
+            tmp_path = f"{output_tflite_path}.tmp"
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            write_model_file(
+                schema_tflite=schema_tflite,
+                model_ir=model_ir,
+                output_tflite_path=tmp_path,
+                timing=timing,
+            )
+            try:
+                from ai_edge_litert.interpreter import Interpreter, OpResolverType
+
+                try:
+                    interpreter = Interpreter(
+                        model_path=tmp_path,
+                        experimental_op_resolver_type=OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES,
+                    )
+                except TypeError:
+                    interpreter = Interpreter(model_path=tmp_path)
+                interpreter.allocate_tensors()
+            except Exception as ex:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                raise StrictFullIntegerQuantizationError(
+                    f"Strict integer quantized TFLite validation failed: {output_tflite_path}: {ex}"
+                ) from ex
+            os.replace(tmp_path, output_tflite_path)
 
         if output_saved_model_from_model_ir:
             require_tensorflow("flatbuffer_direct SavedModel export")
@@ -1037,7 +1102,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         full_integer_quant_path = None
         if output_integer_quantized_tflite:
             _set_export_progress_desc("write integer quant tflite")
-            integer_model_ir = build_integer_quantized_model_ir(
+            integer_result = build_integer_quantized_model_ir(
                 model_ir,
                 quant_type=str(quant_type),
                 calibration_method=quant_controls["calibration_method"],
@@ -1045,14 +1110,17 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 min_numel=quant_controls["min_numel"],
                 min_abs_max=quant_controls["min_abs_max"],
                 scale_floor=quant_controls["scale_floor"],
+                calibration_ranges=calibration_ranges,
+                return_report=True,
             )
+            integer_model_ir = integer_result.model_ir
+            calibration_report["variants"]["integer_quant"] = integer_result.report
             integer_quant_path = os.path.join(
                 output_folder_path,
                 f"{output_file_name}_integer_quant.tflite",
             )
             integer_quant_write_timing: Dict[str, Any] = {}
-            write_model_file(
-                schema_tflite=schema_tflite,
+            _write_validated_quantized_model_file(
                 model_ir=integer_model_ir,
                 output_tflite_path=integer_quant_path,
                 timing=integer_quant_write_timing,
@@ -1068,7 +1136,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             _advance_export_progress()
 
             _set_export_progress_desc("write full integer quant tflite")
-            full_integer_model_ir = build_full_integer_quantized_model_ir(
+            full_integer_result = build_full_integer_quantized_model_ir(
                 model_ir,
                 quant_type=str(quant_type),
                 input_quant_dtype=str(input_quant_dtype),
@@ -1078,14 +1146,17 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 min_numel=quant_controls["min_numel"],
                 min_abs_max=quant_controls["min_abs_max"],
                 scale_floor=quant_controls["scale_floor"],
+                calibration_ranges=calibration_ranges,
+                return_report=True,
             )
+            full_integer_model_ir = full_integer_result.model_ir
+            calibration_report["variants"]["full_integer_quant"] = full_integer_result.report
             full_integer_quant_path = os.path.join(
                 output_folder_path,
                 f"{output_file_name}_full_integer_quant.tflite",
             )
             full_integer_quant_write_timing: Dict[str, Any] = {}
-            write_model_file(
-                schema_tflite=schema_tflite,
+            _write_validated_quantized_model_file(
                 model_ir=full_integer_model_ir,
                 output_tflite_path=full_integer_quant_path,
                 timing=full_integer_quant_write_timing,
@@ -1109,14 +1180,14 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 min_numel=quant_controls["min_numel"],
                 min_abs_max=quant_controls["min_abs_max"],
                 scale_floor=quant_controls["scale_floor"],
+                calibration_ranges=calibration_ranges,
             )
             integer_quant_with_int16_act_path = os.path.join(
                 output_folder_path,
                 f"{output_file_name}_integer_quant_with_int16_act.tflite",
             )
             integer_quant_int16_write_timing: Dict[str, Any] = {}
-            write_model_file(
-                schema_tflite=schema_tflite,
+            _write_validated_quantized_model_file(
                 model_ir=integer_quant_with_int16_act_model_ir,
                 output_tflite_path=integer_quant_with_int16_act_path,
                 timing=integer_quant_int16_write_timing,
@@ -1140,14 +1211,14 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 min_numel=quant_controls["min_numel"],
                 min_abs_max=quant_controls["min_abs_max"],
                 scale_floor=quant_controls["scale_floor"],
+                calibration_ranges=calibration_ranges,
             )
             full_integer_quant_with_int16_act_path = os.path.join(
                 output_folder_path,
                 f"{output_file_name}_full_integer_quant_with_int16_act.tflite",
             )
             full_integer_quant_int16_write_timing: Dict[str, Any] = {}
-            write_model_file(
-                schema_tflite=schema_tflite,
+            _write_validated_quantized_model_file(
                 model_ir=full_integer_quant_with_int16_act_model_ir,
                 output_tflite_path=full_integer_quant_with_int16_act_path,
                 timing=full_integer_quant_int16_write_timing,
@@ -1161,6 +1232,12 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 enabled=bool(flatbuffer_direct_show_progress),
             )
             _advance_export_progress()
+            calibration_report_path = os.path.join(
+                output_folder_path,
+                f"{output_file_name}_strict_integer_quant_calibration_report.json",
+            )
+            with open(calibration_report_path, "w", encoding="utf-8") as f:
+                json.dump(calibration_report, f, indent=2)
         else:
             integer_quant_with_int16_act_path = None
             full_integer_quant_with_int16_act_path = None
@@ -1272,6 +1349,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         outputs["integer_quant_with_int16_act_tflite_path"] = integer_quant_with_int16_act_path
     if full_integer_quant_with_int16_act_path is not None:
         outputs["full_integer_quant_with_int16_act_tflite_path"] = full_integer_quant_with_int16_act_path
+    if calibration_report_path is not None:
+        outputs["strict_integer_quant_calibration_report_path"] = calibration_report_path
     if split_plan_report_path is not None:
         outputs["split_plan_report_path"] = split_plan_report_path
         outputs["split_required_by_estimate"] = bool(split_required_by_estimate)
