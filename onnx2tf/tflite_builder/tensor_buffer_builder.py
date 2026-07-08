@@ -125,9 +125,9 @@ def build_tensors_and_buffers(
 
         if tensor.data is not None:
             b = schema_tflite["BufferT"]()
-            if isinstance(tensor.data, np.ndarray):
+            if isinstance(tensor.data, (np.ndarray, np.generic)):
                 if str(tensor.dtype).upper() == "STRING":
-                    b.data = _serialize_tflite_string_buffer(tensor.data)
+                    b.data = _serialize_tflite_string_buffer(np.asarray(tensor.data))
                 else:
                     b.data = tensor.data.tobytes()
             else:

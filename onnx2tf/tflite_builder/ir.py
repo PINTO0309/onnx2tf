@@ -41,7 +41,7 @@ class TensorIR:
     dtype: str
     shape: List[int]
     shape_signature: Optional[List[int]] = None
-    data: Optional[np.ndarray] = None
+    data: Optional[Union[np.ndarray, np.generic, bytes]] = None
     is_variable: bool = False
     quantization: Optional[Union[Dict[str, Any], QuantParamIR]] = None
     logical_layout: str = LOGICAL_LAYOUT_UNKNOWN
@@ -245,7 +245,7 @@ def clone_model_ir_with_float16(model_ir: ModelIR) -> ModelIR:
         new_dtype = tensor.dtype
         if tensor.dtype == "FLOAT32":
             new_dtype = "FLOAT16"
-            if tensor.data is not None:
+            if isinstance(tensor.data, (np.ndarray, np.generic)):
                 new_data = tensor.data.astype(np.float16)
         clone.tensors[name] = TensorIR(
             name=tensor.name,
@@ -315,7 +315,7 @@ def clone_model_ir_with_float32(model_ir: ModelIR) -> ModelIR:
         new_dtype = str(tensor.dtype).upper()
         if new_dtype == "FLOAT16":
             new_dtype = "FLOAT32"
-            if tensor.data is not None:
+            if isinstance(tensor.data, (np.ndarray, np.generic)):
                 new_data = tensor.data.astype(np.float32)
         clone.tensors[name] = TensorIR(
             name=tensor.name,
