@@ -46,8 +46,13 @@ _STRICT_FULL_INTEGER_SUPPORTED_OPS = {
     "DIV",
     "MAXIMUM",
     "MINIMUM",
+    "LESS",
+    "LOGICAL_NOT",
+    "WHERE",
+    "SHAPE",
     "SELECT",
     "SELECT_V2",
+    "CAST",
     "CONCATENATION",
     "RESHAPE",
     "TRANSPOSE",
@@ -57,6 +62,7 @@ _STRICT_FULL_INTEGER_SUPPORTED_OPS = {
     "STRIDED_SLICE",
     "SPLIT",
     "GATHER",
+    "GATHER_ND",
     "TILE",
     "SPACE_TO_DEPTH",
     "DEPTH_TO_SPACE",
@@ -70,6 +76,7 @@ _STRICT_FULL_INTEGER_SUPPORTED_OPS = {
     "MAX_POOL_2D",
     "ABS",
     "NEG",
+    "EXP",
     "RELU",
     "RELU6",
     "RELU_N1_TO_1",
@@ -81,6 +88,9 @@ _STRICT_FULL_INTEGER_SUPPORTED_OPS = {
     "LOGISTIC",
     "RESIZE_NEAREST_NEIGHBOR",
     "RESIZE_BILINEAR",
+    "SCATTER_ND",
+    "TOPK_V2",
+    "ARG_MAX",
     "CONV_2D",
     "DEPTHWISE_CONV_2D",
     "TRANSPOSE_CONV",
@@ -95,21 +105,30 @@ _STRICT_FULL_INTEGER_PASSTHROUGH_OPS = {
     "EXPAND_DIMS",
 }
 
-_STRICT_FULL_INTEGER_SAME_QPARAM_INPUT_INDICES: Dict[str, Optional[Set[int]]] = {
-    "CONCATENATION": None,
-    "MEAN": {0},
-    "AVERAGE_POOL_2D": {0},
-    "MAX_POOL_2D": {0},
-    "SLICE": {0},
-    "STRIDED_SLICE": {0},
-    "SPLIT": {1},
-    "GATHER": {0},
-    "TILE": {0},
-    "SPACE_TO_DEPTH": {0},
-    "DEPTH_TO_SPACE": {0},
-    "PAD": {0},
-    "SELECT": {1, 2},
-    "SELECT_V2": {1, 2},
+_STRICT_FULL_INTEGER_SAME_QPARAM_INDICES: Dict[
+    str,
+    Tuple[Optional[Set[int]], Optional[Set[int]]],
+] = {
+    "CONCATENATION": (None, None),
+    "MEAN": ({0}, None),
+    "AVERAGE_POOL_2D": ({0}, None),
+    "MAX_POOL_2D": ({0}, None),
+    "SLICE": ({0}, None),
+    "STRIDED_SLICE": ({0}, None),
+    "SPLIT": ({1}, None),
+    "GATHER": ({0}, None),
+    "GATHER_ND": ({0}, {0}),
+    "TILE": ({0}, None),
+    "SPACE_TO_DEPTH": ({0}, None),
+    "DEPTH_TO_SPACE": ({0}, None),
+    "PAD": ({0}, None),
+    "SCATTER_ND": ({1}, {0}),
+    "SELECT": ({1, 2}, None),
+    "SELECT_V2": ({1, 2}, None),
+}
+
+_STRICT_FULL_INTEGER_INT16_ACT_UNSUPPORTED_OPS = {
+    "SCATTER_ND": "LiteRT SCATTER_ND does not support INT16 updates.",
 }
 
 
@@ -119,6 +138,22 @@ class _QuantizationControls(TypedDict):
     min_numel: int
     min_abs_max: float
     scale_floor: float
+
+
+def strict_int16_activation_skip_reasons(model_ir: ModelIR) -> List[str]:
+    reasons: List[str] = []
+    seen: Set[str] = set()
+    for op_idx, op in enumerate(model_ir.operators):
+        op_type = str(op.op_type)
+        reason = _STRICT_FULL_INTEGER_INT16_ACT_UNSUPPORTED_OPS.get(op_type, None)
+        if reason is None:
+            continue
+        key = f"{op_type}:{reason}"
+        if key in seen:
+            continue
+        seen.add(key)
+        reasons.append(f"index={op_idx} op_type={op_type}: {reason}")
+    return reasons
 
 
 def _clone_model_ir(model_ir: ModelIR) -> ModelIR:
@@ -715,18 +750,70 @@ def _elide_identity_operators(model_ir: ModelIR) -> None:
 
 
 def _same_qparam_tensor_names_for_op(op: OperatorIR) -> List[str]:
-    input_indices = _STRICT_FULL_INTEGER_SAME_QPARAM_INPUT_INDICES.get(str(op.op_type), None)
+    policy = _STRICT_FULL_INTEGER_SAME_QPARAM_INDICES.get(str(op.op_type), None)
+    if policy is None:
+        return []
+    input_indices, output_indices = policy
     names: List[str] = []
-    if input_indices is None and str(op.op_type) in _STRICT_FULL_INTEGER_SAME_QPARAM_INPUT_INDICES:
+    if input_indices is None:
         names.extend(str(v) for v in op.inputs if str(v) != "")
-    elif input_indices is not None:
+    else:
         names.extend(
             str(input_name)
             for idx, input_name in enumerate(op.inputs)
             if int(idx) in input_indices and str(input_name) != ""
         )
-    names.extend(str(v) for v in op.outputs if str(v) != "")
+    if output_indices is None:
+        names.extend(str(v) for v in op.outputs if str(v) != "")
+    else:
+        names.extend(
+            str(output_name)
+            for idx, output_name in enumerate(op.outputs)
+            if int(idx) in output_indices and str(output_name) != ""
+        )
     return names
+
+
+def _derive_same_qparams_from_available_tensor(
+    *,
+    model_ir: ModelIR,
+    tensor_names: Iterable[str],
+    calibration_ranges: Dict[str, TensorCalibrationRange],
+    dtype: str,
+    scale_floor: float,
+) -> Optional[QuantParamIR]:
+    names = [str(name) for name in tensor_names if str(name) != ""]
+    dtype_u = str(dtype).upper()
+    for tensor_name in names:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            continue
+        if tensor.dtype == dtype_u and isinstance(tensor.quantization, QuantParamIR):
+            return _clone_quant_param(tensor.quantization)
+    for tensor_name in names:
+        if tensor_name not in calibration_ranges:
+            continue
+        rng = calibration_ranges[tensor_name]
+        return activation_qparams_from_range(
+            min_value=float(rng.min_value),
+            max_value=float(rng.max_value),
+            dtype=dtype_u,
+            scale_floor=float(scale_floor),
+        )
+    for tensor_name in names:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None or tensor.dtype != "FLOAT32" or not isinstance(tensor.data, np.ndarray):
+            continue
+        data = np.asarray(tensor.data, dtype=np.float32)
+        if data.size == 0:
+            continue
+        return activation_qparams_from_range(
+            min_value=float(np.min(data)),
+            max_value=float(np.max(data)),
+            dtype=dtype_u,
+            scale_floor=float(scale_floor),
+        )
+    return None
 
 
 def _is_float_activation_tensor(
@@ -1412,15 +1499,38 @@ def _build_strict_full_integer_model_ir(
                         "qparams": _quant_param_to_report(out_tensor.quantization),
                     }
                 else:
-                    _ensure_activation_quantized(
-                        model_ir=clone,
-                        tensor_name=str(output_name),
-                        calibration_ranges=calibration_ranges,
-                        dtype=activation_dtype(str(output_name)),
-                        scale_floor=float(controls["scale_floor"]),
-                        report=report,
-                        fixed_qparams=output_fixed,
+                    same_qparam_names = (
+                        _same_qparam_tensor_names_for_op(op)
+                        if op_type in _STRICT_FULL_INTEGER_SAME_QPARAM_INDICES
+                        else []
                     )
+                    fallback_qparams = None
+                    if output_fixed is None and str(output_name) not in calibration_ranges:
+                        fallback_qparams = _derive_same_qparams_from_available_tensor(
+                            model_ir=clone,
+                            tensor_names=same_qparam_names or [str(v) for v in op.inputs],
+                            calibration_ranges=calibration_ranges,
+                            dtype=activation_dtype(str(output_name)),
+                            scale_floor=float(controls["scale_floor"]),
+                        )
+                    if fallback_qparams is not None and same_qparam_names:
+                        _force_same_qparams(
+                            model_ir=clone,
+                            tensor_names=same_qparam_names,
+                            qparams=fallback_qparams,
+                            dtype=activation_dtype(str(output_name)),
+                            report=report,
+                        )
+                    else:
+                        _ensure_activation_quantized(
+                            model_ir=clone,
+                            tensor_name=str(output_name),
+                            calibration_ranges=calibration_ranges,
+                            dtype=activation_dtype(str(output_name)),
+                            scale_floor=float(controls["scale_floor"]),
+                            report=report,
+                            fixed_qparams=output_fixed or fallback_qparams,
+                        )
 
         if op_type in {"FULLY_CONNECTED", "CONV_2D", "DEPTHWISE_CONV_2D", "BATCH_MATMUL", "TRANSPOSE_CONV"}:
             activation_input_idx = 2 if op_type == "TRANSPOSE_CONV" else 0
@@ -1452,19 +1562,21 @@ def _build_strict_full_integer_model_ir(
                         weight_qparams=weight_qparams,
                         report=report,
                     )
-        elif op_type in _STRICT_FULL_INTEGER_SAME_QPARAM_INPUT_INDICES and len(op.outputs) > 0:
+        elif op_type in _STRICT_FULL_INTEGER_SAME_QPARAM_INDICES and len(op.outputs) > 0:
             out_tensor = clone.tensors[str(op.outputs[0])]
             if not isinstance(out_tensor.quantization, QuantParamIR):
-                raise StrictFullIntegerQuantizationError(
-                    f"{op_type} output tensor is missing qparams: {op.outputs[0]}"
+                if out_tensor.dtype == "FLOAT32":
+                    raise StrictFullIntegerQuantizationError(
+                        f"{op_type} output tensor is missing qparams: {op.outputs[0]}"
+                    )
+            else:
+                _force_same_qparams(
+                    model_ir=clone,
+                    tensor_names=_same_qparam_tensor_names_for_op(op),
+                    qparams=out_tensor.quantization,
+                    dtype=out_tensor.dtype,
+                    report=report,
                 )
-            _force_same_qparams(
-                model_ir=clone,
-                tensor_names=_same_qparam_tensor_names_for_op(op),
-                qparams=out_tensor.quantization,
-                dtype=out_tensor.dtype,
-                report=report,
-            )
         else:
             for input_name in list(op.inputs):
                 tensor = clone.tensors.get(str(input_name), None)

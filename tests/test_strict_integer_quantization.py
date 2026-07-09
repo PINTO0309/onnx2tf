@@ -13,6 +13,7 @@ from onnx2tf.tflite_builder.quantization import (
     build_full_integer_quantized_model_ir,
     fixed_activation_qparams_for_op,
     load_calibration_samples,
+    strict_int16_activation_skip_reasons,
 )
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 
@@ -40,6 +41,21 @@ def _assert_litert_allocates(model_ir: ModelIR) -> None:
         )
         interpreter = Interpreter(model_path=tflite_path)
         interpreter.allocate_tensors()
+
+
+def _quantize_input_array(values: np.ndarray, detail: dict) -> np.ndarray:
+    scale, zero_point = detail["quantization"]
+    dtype = np.dtype(detail["dtype"])
+    if dtype == np.dtype(np.int8):
+        qmin, qmax = -128, 127
+    elif dtype == np.dtype(np.uint8):
+        qmin, qmax = 0, 255
+    elif dtype == np.dtype(np.int16):
+        qmin, qmax = -32768, 32767
+    else:
+        raise AssertionError(f"Unexpected quantized input dtype: {dtype}")
+    quantized = np.round(np.asarray(values, dtype=np.float32) / float(scale)) + int(zero_point)
+    return np.clip(quantized, qmin, qmax).astype(dtype)
 
 
 def test_activation_qparams_from_range_uint8_uses_calibrated_range() -> None:
@@ -136,7 +152,7 @@ def test_strict_full_integer_builder_rejects_unsupported_float_op() -> None:
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 3])
     model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 3])
     model_ir.operators = [
-        OperatorIR(op_type="EXP", inputs=["x"], outputs=["y"]),
+        OperatorIR(op_type="SIN", inputs=["x"], outputs=["y"]),
     ]
 
     with pytest.raises(StrictFullIntegerQuantizationError, match="Unsupported op"):
@@ -454,6 +470,7 @@ def _make_shape_op_model(op_type: str) -> ModelIR:
         "MAXIMUM",
         "MINIMUM",
         "DIV",
+        "EXP",
         "PRELU",
     ],
 )
@@ -546,4 +563,284 @@ def test_additional_resize_ops_allocate_as_strict_full_integer(op_type: str) -> 
         calibration_ranges=_calibration_ranges_for_float_activations(model_ir),
     )
 
+    _assert_litert_allocates(quantized)
+
+
+def test_gather_nd_keeps_indices_int32_and_aligns_data_qparams() -> None:
+    model_ir = ModelIR(name="gather_nd_quantized")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[2, 3], shape_signature=[2, 3])
+    model_ir.tensors["idx"] = TensorIR(
+        name="idx",
+        dtype="INT32",
+        shape=[2, 1],
+        shape_signature=[2, 1],
+        data=np.asarray([[0], [1]], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[2, 3], shape_signature=[2, 3])
+    model_ir.operators = [OperatorIR(op_type="GATHER_ND", inputs=["x", "idx"], outputs=["y"])]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges=_calibration_ranges_for_float_activations(model_ir),
+    )
+
+    assert quantized.tensors["idx"].dtype == "INT32"
+    assert quantized.tensors["idx"].quantization is None
+    assert quantized.tensors["x"].dtype == "INT8"
+    assert quantized.tensors["y"].dtype == "INT8"
+    assert quantized.tensors["x"].quantization is not None
+    assert quantized.tensors["y"].quantization is not None
+    assert quantized.tensors["x"].quantization.scale == quantized.tensors["y"].quantization.scale
+    assert quantized.tensors["x"].quantization.zero_point == quantized.tensors["y"].quantization.zero_point
+    _assert_litert_allocates(quantized)
+
+
+def test_scatter_nd_keeps_indices_shape_int32_and_aligns_update_qparams() -> None:
+    model_ir = ModelIR(name="scatter_nd_quantized")
+    model_ir.inputs = ["updates"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["idx"] = TensorIR(
+        name="idx",
+        dtype="INT32",
+        shape=[2, 1],
+        shape_signature=[2, 1],
+        data=np.asarray([[0], [2]], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["updates"] = TensorIR(
+        name="updates",
+        dtype="FLOAT32",
+        shape=[2],
+        shape_signature=[2],
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([4], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[4], shape_signature=[4])
+    model_ir.operators = [OperatorIR(op_type="SCATTER_ND", inputs=["idx", "updates", "shape"], outputs=["y"])]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges=_calibration_ranges_for_float_activations(model_ir),
+    )
+
+    assert quantized.tensors["idx"].dtype == "INT32"
+    assert quantized.tensors["shape"].dtype == "INT32"
+    assert quantized.tensors["idx"].quantization is None
+    assert quantized.tensors["shape"].quantization is None
+    assert quantized.tensors["updates"].dtype == "INT8"
+    assert quantized.tensors["y"].dtype == "INT8"
+    assert quantized.tensors["updates"].quantization is not None
+    assert quantized.tensors["y"].quantization is not None
+    assert quantized.tensors["updates"].quantization.scale == quantized.tensors["y"].quantization.scale
+    assert quantized.tensors["updates"].quantization.zero_point == quantized.tensors["y"].quantization.zero_point
+    _assert_litert_allocates(quantized)
+
+
+def test_scatter_nd_reports_int16_activation_skip_reason() -> None:
+    model_ir = ModelIR(name="scatter_nd_int16_skip")
+    model_ir.tensors["idx"] = TensorIR(
+        name="idx",
+        dtype="INT32",
+        shape=[1, 1],
+        data=np.asarray([[0]], dtype=np.int32),
+    )
+    model_ir.tensors["updates"] = TensorIR(name="updates", dtype="FLOAT32", shape=[1])
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[1],
+        data=np.asarray([1], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1])
+    model_ir.operators = [OperatorIR(op_type="SCATTER_ND", inputs=["idx", "updates", "shape"], outputs=["y"])]
+
+    reasons = strict_int16_activation_skip_reasons(model_ir)
+
+    assert len(reasons) == 1
+    assert "SCATTER_ND" in reasons[0]
+    assert "INT16 updates" in reasons[0]
+
+
+def test_topk_v2_quantizes_values_and_keeps_indices_int32() -> None:
+    model_ir = ModelIR(name="topk_v2_quantized")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["values", "indices"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+    model_ir.tensors["k"] = TensorIR(
+        name="k",
+        dtype="INT32",
+        shape=[],
+        shape_signature=[],
+        data=np.asarray(2, dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["values"] = TensorIR(
+        name="values",
+        dtype="FLOAT32",
+        shape=[1, 2],
+        shape_signature=[1, 2],
+    )
+    model_ir.tensors["indices"] = TensorIR(
+        name="indices",
+        dtype="INT32",
+        shape=[1, 2],
+        shape_signature=[1, 2],
+    )
+    model_ir.operators = [OperatorIR(op_type="TOPK_V2", inputs=["x", "k"], outputs=["values", "indices"])]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges={
+            "x": TensorCalibrationRange(-1.0, 1.0, 1),
+            "values": TensorCalibrationRange(-1.0, 1.0, 1),
+        },
+    )
+
+    assert quantized.tensors["x"].dtype == "INT8"
+    assert quantized.tensors["values"].dtype == "INT8"
+    assert quantized.tensors["k"].dtype == "INT32"
+    assert quantized.tensors["indices"].dtype == "INT32"
+    assert quantized.tensors["indices"].quantization is None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        schema = load_schema_module(output_folder_path=tmpdir)
+        tflite_path = os.path.join(tmpdir, "topk_v2_quantized.tflite")
+        write_model_file(schema_tflite=schema, model_ir=quantized, output_tflite_path=tflite_path, timing={})
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        input_detail = interpreter.get_input_details()[0]
+        interpreter.set_tensor(
+            int(input_detail["index"]),
+            _quantize_input_array(np.asarray([[0.1, 0.8, -0.2, 0.5]], dtype=np.float32), input_detail),
+        )
+        interpreter.invoke()
+        indices_detail = next(
+            detail
+            for detail in interpreter.get_output_details()
+            if np.dtype(detail["dtype"]) == np.dtype(np.int32)
+        )
+        indices = interpreter.get_tensor(int(indices_detail["index"]))
+
+    np.testing.assert_array_equal(indices, np.asarray([[1, 3]], dtype=np.int32))
+
+
+def test_arg_max_quantizes_data_and_keeps_axis_output_integer() -> None:
+    model_ir = ModelIR(name="arg_max_quantized")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+    model_ir.tensors["axis"] = TensorIR(
+        name="axis",
+        dtype="INT32",
+        shape=[],
+        shape_signature=[],
+        data=np.asarray(1, dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="INT64", shape=[1], shape_signature=[1])
+    model_ir.operators = [
+        OperatorIR(op_type="ARG_MAX", inputs=["x", "axis"], outputs=["y"], options={"outputType": "INT64"})
+    ]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges={"x": TensorCalibrationRange(-1.0, 1.0, 1)},
+    )
+
+    assert quantized.tensors["x"].dtype == "INT8"
+    assert quantized.tensors["axis"].dtype == "INT32"
+    assert quantized.tensors["y"].dtype == "INT64"
+    assert quantized.tensors["axis"].quantization is None
+    assert quantized.tensors["y"].quantization is None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        schema = load_schema_module(output_folder_path=tmpdir)
+        tflite_path = os.path.join(tmpdir, "arg_max_quantized.tflite")
+        write_model_file(schema_tflite=schema, model_ir=quantized, output_tflite_path=tflite_path, timing={})
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        input_detail = interpreter.get_input_details()[0]
+        interpreter.set_tensor(
+            int(input_detail["index"]),
+            _quantize_input_array(np.asarray([[0.1, 0.9, -0.2, 0.5]], dtype=np.float32), input_detail),
+        )
+        interpreter.invoke()
+        output_detail = interpreter.get_output_details()[0]
+        output = interpreter.get_tensor(int(output_detail["index"]))
+
+    np.testing.assert_array_equal(output, np.asarray([1], dtype=np.int64))
+
+
+def test_logical_where_and_shape_keep_non_activation_outputs() -> None:
+    model_ir = ModelIR(name="logical_where_shape_quantized")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["where_out", "shape_out"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[4], shape_signature=[4])
+    model_ir.tensors["threshold"] = TensorIR(
+        name="threshold",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([0.5], dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["less"] = TensorIR(name="less", dtype="BOOL", shape=[4], shape_signature=[4])
+    model_ir.tensors["not_out"] = TensorIR(name="not_out", dtype="BOOL", shape=[4], shape_signature=[4])
+    model_ir.tensors["where_out"] = TensorIR(name="where_out", dtype="INT64", shape=[-1, 1], shape_signature=[-1, 1])
+    model_ir.tensors["shape_out"] = TensorIR(name="shape_out", dtype="INT32", shape=[1], shape_signature=[1])
+    model_ir.operators = [
+        OperatorIR(op_type="LESS", inputs=["x", "threshold"], outputs=["less"]),
+        OperatorIR(op_type="LOGICAL_NOT", inputs=["less"], outputs=["not_out"]),
+        OperatorIR(op_type="WHERE", inputs=["not_out"], outputs=["where_out"]),
+        OperatorIR(op_type="SHAPE", inputs=["x"], outputs=["shape_out"], options={"outType": "INT32"}),
+    ]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges={"x": TensorCalibrationRange(-1.0, 1.0, 1)},
+    )
+
+    assert quantized.tensors["x"].dtype == "INT8"
+    assert quantized.tensors["threshold"].dtype == "INT8"
+    assert quantized.tensors["less"].dtype == "BOOL"
+    assert quantized.tensors["not_out"].dtype == "BOOL"
+    assert quantized.tensors["where_out"].dtype == "INT64"
+    assert quantized.tensors["shape_out"].dtype == "INT32"
+    assert quantized.tensors["where_out"].quantization is None
+    assert quantized.tensors["shape_out"].quantization is None
+    _assert_litert_allocates(quantized)
+
+
+def test_cast_integer_output_remains_unquantized() -> None:
+    model_ir = ModelIR(name="cast_integer_quantized")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="INT64", shape=[3], shape_signature=[3])
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="INT32", shape=[3], shape_signature=[3])
+    model_ir.operators = [
+        OperatorIR(
+            op_type="CAST",
+            inputs=["x"],
+            outputs=["y"],
+            options={"inDataType": "INT64", "outDataType": "INT32"},
+        )
+    ]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges={"unused": TensorCalibrationRange(0.0, 1.0, 1)},
+    )
+
+    assert quantized.tensors["x"].dtype == "INT64"
+    assert quantized.tensors["y"].dtype == "INT32"
+    assert quantized.tensors["y"].quantization is None
     _assert_litert_allocates(quantized)
