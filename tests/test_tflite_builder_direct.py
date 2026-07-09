@@ -2,14 +2,13 @@ import glob
 import json
 import math
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
 import types
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import onnx
@@ -19,7 +18,6 @@ import pytest
 from onnx import TensorProto, helper, numpy_helper
 from onnx2tf.tflite_builder.accuracy_evaluator import (
     _adapt_input_layout_for_tflite_input,
-    _align_output_layout_for_compare,
     _build_tflite_detail_map,
     _collect_onnx_input_specs,
     _create_tflite_interpreter,
@@ -169,7 +167,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_rank4_channelwise_broadcast_constants_to_runtime_layout,
     lower_onnx_to_ir,
 )
-from onnx2tf.utils.common_functions import check_model_has_external_data
+from onnx2tf.utils.onnx_litert_runtime import check_model_has_external_data
 from onnx2tf.tflite_builder.model_writer import serialize_model
 from onnx2tf.tflite_builder.preprocess import (
     configure_pseudo_ops_wave1_targets,
@@ -190,6 +188,29 @@ def _save_model(tmpdir: str, name: str, model: onnx.ModelProto) -> str:
     model_path = os.path.join(tmpdir, f"{name}.onnx")
     onnx.save(model, model_path)
     return model_path
+
+
+def _write_x_calibration_data(
+    tmpdir: str,
+    name: str,
+    values: np.ndarray | None = None,
+) -> list[list[Any]]:
+    if values is None:
+        values = np.asarray(
+            [
+                [0.0, 1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0, 7.0],
+            ],
+            dtype=np.float32,
+        )
+    path = os.path.join(tmpdir, f"{name}.npy")
+    np.save(path, np.asarray(values, dtype=np.float32))
+    return [["x", path, np.asarray(0.0, dtype=np.float32), np.asarray(1.0, dtype=np.float32)]]
+
+
+def _shape_signature(tensor: TensorIR) -> list[int]:
+    assert tensor.shape_signature is not None
+    return list(tensor.shape_signature)
 
 
 def _convert(
@@ -590,7 +611,7 @@ def test_infer_shapes_with_fallback_skips_external_data_models(
         def infer_shapes(*args: Any, **kwargs: Any) -> onnx.ModelProto:
             raise AssertionError("symbolic shape inference must not run for external_data models")
 
-    fake_symbolic_module.SymbolicShapeInference = _UnexpectedSymbolicShapeInference
+    setattr(fake_symbolic_module, "SymbolicShapeInference", _UnexpectedSymbolicShapeInference)
     monkeypatch.setattr(onnx.shape_inference, "infer_shapes", _unexpected_infer_shapes)
     monkeypatch.setitem(
         sys.modules,
@@ -662,7 +683,7 @@ def test_run_onnx_and_collect_outputs_skips_infer_shapes_for_external_data(
 
 
 def test_flatbuffer_direct_topological_sort_reorders_producer_before_consumer() -> None:
-    model_ir = ModelIR(name="topological_sort_test")
+    model_ir = ModelIR("topological_sort_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -721,7 +742,7 @@ def test_flatbuffer_direct_topological_sort_reorders_producer_before_consumer() 
 
 
 def test_flatbuffer_direct_transpose_layernorm_stats_nhwc_propagation() -> None:
-    model_ir = ModelIR(name="transpose_layernorm_stats_nhwc_propagation_test")
+    model_ir = ModelIR("transpose_layernorm_stats_nhwc_propagation_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y"]
 
@@ -863,7 +884,7 @@ def test_flatbuffer_direct_transpose_layernorm_stats_nhwc_propagation() -> None:
 
 
 def test_flatbuffer_direct_layernorm_stats_via_existing_post_transpose_nhwc() -> None:
-    model_ir = ModelIR(name="layernorm_stats_via_post_transpose_nhwc_test")
+    model_ir = ModelIR("layernorm_stats_via_post_transpose_nhwc_test")
     model_ir.inputs = ["x_nchw"]
     model_ir.outputs = ["y"]
 
@@ -1043,7 +1064,7 @@ def _make_string_normalizer_constant_input_model(
         name="input_const",
         data_type=TensorProto.STRING,
         dims=[len(values)],
-        vals=[str(v) for v in values],
+        vals=cast(Any, [str(v) for v in values]),
     )
     graph = helper.make_graph([node], "string_normalizer_const_graph", [], [y], initializer=[init])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 18)])
@@ -1596,23 +1617,36 @@ def _make_fused_conv_model(
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 8, 8])
     w = numpy_helper.from_array(np.ones((4, 3, 3, 3), dtype=np.float32), name="W")
     b = numpy_helper.from_array(np.zeros((4,), dtype=np.float32), name="B")
-    attrs: dict[str, object] = {
-        "pads": [1, 1, 1, 1],
-        "strides": [1, 1],
-        "dilations": [1, 1],
-        "group": 1,
-        "activation": str(activation),
-    }
+    fused_activation_params = None
     if activation_params is not None:
-        attrs["activation_params"] = [float(v) for v in list(activation_params)]
-    node = helper.make_node(
-        "FusedConv",
-        ["x", "W", "B"],
-        ["y"],
-        name=f"FusedConv{activation}Node",
-        domain="com.microsoft",
-        **attrs,
-    )
+        fused_activation_params = [float(v) for v in list(activation_params)]
+    if fused_activation_params is None:
+        node = helper.make_node(
+            "FusedConv",
+            ["x", "W", "B"],
+            ["y"],
+            name=f"FusedConv{activation}Node",
+            domain="com.microsoft",
+            pads=[1, 1, 1, 1],
+            strides=[1, 1],
+            dilations=[1, 1],
+            group=1,
+            activation=str(activation),
+        )
+    else:
+        node = helper.make_node(
+            "FusedConv",
+            ["x", "W", "B"],
+            ["y"],
+            name=f"FusedConv{activation}Node",
+            domain="com.microsoft",
+            pads=[1, 1, 1, 1],
+            strides=[1, 1],
+            dilations=[1, 1],
+            group=1,
+            activation=str(activation),
+            activation_params=fused_activation_params,
+        )
     graph = helper.make_graph([node], f"fused_conv_{activation.lower()}_graph", [x], [y], initializer=[w, b])
     return helper.make_model(
         graph,
@@ -2448,7 +2482,7 @@ def _make_gridsample_dynamic_sparse_width_model() -> onnx.ModelProto:
 
 
 def test_clone_model_ir_with_float32_promotes_float16_tensors_and_cast_options() -> None:
-    model_ir = ModelIR(name="clone_fp16_to_fp32_test")
+    model_ir = ModelIR("clone_fp16_to_fp32_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -2489,7 +2523,7 @@ def test_clone_model_ir_with_float32_promotes_float16_tensors_and_cast_options()
 
 
 def test_prune_identity_cast_operators_rewires_consumers() -> None:
-    model_ir = ModelIR(name="prune_identity_cast_test")
+    model_ir = ModelIR("prune_identity_cast_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
@@ -2517,7 +2551,7 @@ def test_prune_identity_cast_operators_rewires_consumers() -> None:
 
 
 def test_prune_identity_cast_operators_preserves_model_output_boundary() -> None:
-    model_ir = ModelIR(name="prune_identity_cast_keep_output_test")
+    model_ir = ModelIR("prune_identity_cast_keep_output_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
@@ -2537,7 +2571,7 @@ def test_prune_identity_cast_operators_preserves_model_output_boundary() -> None
 
 
 def test_optimize_redundant_transpose_operators_removes_inverse_pair() -> None:
-    model_ir = ModelIR(name="optimize_inverse_transpose_pair_test")
+    model_ir = ModelIR("optimize_inverse_transpose_pair_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 3, 4, 5], shape_signature=[1, 3, 4, 5])
@@ -2577,7 +2611,7 @@ def test_optimize_redundant_transpose_operators_removes_inverse_pair() -> None:
 
 
 def test_optimize_redundant_transpose_operators_keeps_output_name_boundary() -> None:
-    model_ir = ModelIR(name="optimize_transpose_output_boundary_test")
+    model_ir = ModelIR("optimize_transpose_output_boundary_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 3, 4, 5], shape_signature=[1, 3, 4, 5])
@@ -2617,7 +2651,7 @@ def test_optimize_redundant_transpose_operators_keeps_output_name_boundary() -> 
 
 
 def test_optimize_redundant_transpose_operators_composes_consecutive_pair() -> None:
-    model_ir = ModelIR(name="optimize_transpose_compose_test")
+    model_ir = ModelIR("optimize_transpose_compose_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[2, 3, 5], shape_signature=[2, 3, 5])
@@ -8034,11 +8068,11 @@ def test_flatbuffer_direct_selu_exp_preserves_dynamic_shape_signature() -> None:
     exp_out_name = str(exp_ops[0].outputs[0])
     exp_out_tensor = model_ir.tensors[exp_out_name]
     assert exp_out_tensor.shape_signature is not None
-    assert [int(v) for v in list(exp_out_tensor.shape_signature)] == [-1, 25]
+    assert [int(v) for v in _shape_signature(exp_out_tensor)] == [-1, 25]
 
 
 def test_flatbuffer_direct_layout_transpose_chain_removes_inverse_fanout_branch() -> None:
-    model_ir = ModelIR(name="layout_transpose_inverse_fanout_branch_test")
+    model_ir = ModelIR("layout_transpose_inverse_fanout_branch_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y_nchw", "z"]
     model_ir.tensors["x"] = TensorIR(
@@ -8150,7 +8184,7 @@ def test_flatbuffer_direct_keeps_input_layout_contract_for_boundary_transpose() 
 
 
 def test_flatbuffer_direct_keeps_boundary_input_layout_transpose_for_gather_nd() -> None:
-    model_ir = ModelIR(name="boundary_input_gather_nd_layout_transpose_test")
+    model_ir = ModelIR("boundary_input_gather_nd_layout_transpose_test")
     model_ir.inputs = ["x", "indices"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -8210,7 +8244,7 @@ def test_flatbuffer_direct_keeps_boundary_input_layout_transpose_for_gather_nd()
 
 
 def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_op0() -> None:
-    model_ir = ModelIR(name="boundary_input_transpose_channel_slice_block_test")
+    model_ir = ModelIR("boundary_input_transpose_channel_slice_block_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y", "z"]
     model_ir.tensors["x"] = TensorIR(
@@ -8356,7 +8390,7 @@ def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_o
 
 
 def test_flatbuffer_direct_internal_transpose_channel_slice_nhwc_propagation() -> None:
-    model_ir = ModelIR(name="internal_transpose_channel_slice_nhwc_propagation_test")
+    model_ir = ModelIR("internal_transpose_channel_slice_nhwc_propagation_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nchw"]
 
@@ -8595,7 +8629,7 @@ def test_flatbuffer_direct_internal_transpose_channel_slice_nhwc_propagation() -
 
 
 def test_flatbuffer_direct_transpose_channel_slice_muladd_nhwc_bridge_chain() -> None:
-    model_ir = ModelIR(name="transpose_channel_slice_muladd_nhwc_bridge_chain_test")
+    model_ir = ModelIR("transpose_channel_slice_muladd_nhwc_bridge_chain_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -8772,7 +8806,7 @@ def test_flatbuffer_direct_transpose_channel_slice_muladd_nhwc_bridge_chain() ->
 
 
 def test_flatbuffer_direct_transpose_channel_slice_dual_add_bridges_strict() -> None:
-    model_ir = ModelIR(name="transpose_channel_slice_dual_add_bridges_strict_test")
+    model_ir = ModelIR("transpose_channel_slice_dual_add_bridges_strict_test")
     model_ir.inputs = ["x_nhwc", "rhs_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -8940,7 +8974,7 @@ def test_flatbuffer_direct_transpose_channel_slice_dual_add_bridges_strict() -> 
 
 
 def test_flatbuffer_direct_transpose_slice_muladd_conv_mergeadd_strict() -> None:
-    model_ir = ModelIR(name="transpose_slice_muladd_conv_mergeadd_strict_test")
+    model_ir = ModelIR("transpose_slice_muladd_conv_mergeadd_strict_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -9138,7 +9172,7 @@ def test_flatbuffer_direct_transpose_slice_muladd_conv_mergeadd_strict() -> None
 
 
 def test_flatbuffer_direct_transpose_slice_muladd_conv_mergeadd_strict_conv_expand_channels() -> None:
-    model_ir = ModelIR(name="transpose_slice_muladd_conv_mergeadd_strict_expand_channels_test")
+    model_ir = ModelIR("transpose_slice_muladd_conv_mergeadd_strict_expand_channels_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -9215,7 +9249,7 @@ def test_flatbuffer_direct_transpose_slice_muladd_conv_mergeadd_strict_conv_expa
 
 
 def test_flatbuffer_direct_transpose_slice_muladd_mergeadd_posttranspose_strict() -> None:
-    model_ir = ModelIR(name="transpose_slice_muladd_mergeadd_posttranspose_strict_test")
+    model_ir = ModelIR("transpose_slice_muladd_mergeadd_posttranspose_strict_test")
     model_ir.inputs = ["x_nhwc", "legacy_lhs"]
     model_ir.outputs = ["avg_out", "legacy_out"]
 
@@ -9411,7 +9445,7 @@ def test_flatbuffer_direct_transpose_slice_muladd_mergeadd_posttranspose_strict(
 
 
 def test_flatbuffer_direct_transpose_slice_muladd_mergeadd_posttranspose_signature_regression() -> None:
-    model_ir = ModelIR(name="transpose_slice_muladd_mergeadd_posttranspose_signature_regression_test")
+    model_ir = ModelIR("transpose_slice_muladd_mergeadd_posttranspose_signature_regression_test")
     model_ir.inputs = ["x_nhwc", "legacy_lhs"]
     model_ir.outputs = ["avg_out", "legacy_out"]
 
@@ -9454,11 +9488,11 @@ def test_flatbuffer_direct_transpose_slice_muladd_mergeadd_posttranspose_signatu
     stats = _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(model_ir)
     assert stats["optimized_transpose_slice_muladd_mergeadd_posttranspose_strict"] == 1
     assert list(model_ir.tensors["merge_nhwc"].shape) == [1, 2, 3, 2]
-    assert list(model_ir.tensors["merge_nhwc"].shape_signature) == [1, 2, 3, 2]
+    assert _shape_signature(model_ir.tensors["merge_nhwc"]) == [1, 2, 3, 2]
 
 
 def test_flatbuffer_direct_transpose_slice_muladd_mergeadd_legacy_only_tail_strict() -> None:
-    model_ir = ModelIR(name="transpose_slice_muladd_mergeadd_legacy_only_tail_strict_test")
+    model_ir = ModelIR("transpose_slice_muladd_mergeadd_legacy_only_tail_strict_test")
     model_ir.inputs = ["x_nhwc", "legacy_lhs"]
     model_ir.outputs = ["legacy_out"]
 
@@ -9510,7 +9544,7 @@ def test_flatbuffer_direct_transpose_slice_muladd_mergeadd_legacy_only_tail_stri
 
 
 def test_flatbuffer_direct_transpose_slice_muladd_mergeadd_postmultranspose_tail_strict() -> None:
-    model_ir = ModelIR(name="transpose_slice_muladd_mergeadd_postmultranspose_tail_strict_test")
+    model_ir = ModelIR("transpose_slice_muladd_mergeadd_postmultranspose_tail_strict_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -9565,7 +9599,7 @@ def test_flatbuffer_direct_transpose_slice_muladd_mergeadd_postmultranspose_tail
 
 
 def test_flatbuffer_direct_concat_mul_add_transpose_nhwc_bridge_chain() -> None:
-    model_ir = ModelIR(name="concat_mul_add_transpose_nhwc_bridge_chain_test")
+    model_ir = ModelIR("concat_mul_add_transpose_nhwc_bridge_chain_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
     model_ir.outputs = ["y"]
 
@@ -9687,7 +9721,7 @@ def test_flatbuffer_direct_concat_mul_add_transpose_nhwc_bridge_chain() -> None:
 
 
 def test_flatbuffer_direct_concat_mul_add_transpose_nhwc_bridge_chain_with_legacy_consumer() -> None:
-    model_ir = ModelIR(name="concat_mul_add_transpose_nhwc_bridge_chain_with_legacy_consumer_test")
+    model_ir = ModelIR("concat_mul_add_transpose_nhwc_bridge_chain_with_legacy_consumer_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
     model_ir.outputs = ["y", "legacy_out"]
 
@@ -9779,7 +9813,7 @@ def test_flatbuffer_direct_concat_mul_add_transpose_nhwc_bridge_chain_with_legac
 
 
 def test_flatbuffer_direct_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chain() -> None:
-    model_ir = ModelIR(name="concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chain_test")
+    model_ir = ModelIR("concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chain_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
     model_ir.outputs = ["y"]
 
@@ -9874,7 +9908,7 @@ def test_flatbuffer_direct_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chai
 
 
 def test_flatbuffer_direct_fold_mul_add_mul_affine_chain() -> None:
-    model_ir = ModelIR(name="fold_mul_add_mul_affine_chain_test")
+    model_ir = ModelIR("fold_mul_add_mul_affine_chain_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
 
@@ -9940,7 +9974,7 @@ def test_flatbuffer_direct_fold_mul_add_mul_affine_chain() -> None:
 
 
 def test_flatbuffer_direct_concat_mul_add_transpose_add_nhwc_bridge_chain_with_legacy_consumer() -> None:
-    model_ir = ModelIR(name="concat_mul_add_transpose_add_nhwc_bridge_chain_with_legacy_consumer_test")
+    model_ir = ModelIR("concat_mul_add_transpose_add_nhwc_bridge_chain_with_legacy_consumer_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
     model_ir.outputs = ["y", "legacy_out"]
 
@@ -10043,7 +10077,7 @@ def test_flatbuffer_direct_concat_mul_add_transpose_add_nhwc_bridge_chain_with_l
 
 
 def test_flatbuffer_direct_concat_tree_mul_add_transpose_nhwc_bridge_mixed_axes() -> None:
-    model_ir = ModelIR(name="concat_tree_mul_add_transpose_nhwc_bridge_mixed_axes_test")
+    model_ir = ModelIR("concat_tree_mul_add_transpose_nhwc_bridge_mixed_axes_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc", "x2_nhwc"]
     model_ir.outputs = ["y"]
 
@@ -10130,7 +10164,7 @@ def test_flatbuffer_direct_concat_tree_mul_add_transpose_nhwc_bridge_mixed_axes(
 
 
 def test_flatbuffer_direct_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chain() -> None:
-    model_ir = ModelIR(name="transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chain_test")
+    model_ir = ModelIR("transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chain_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
     model_ir.outputs = ["y"]
 
@@ -10249,7 +10283,7 @@ def test_flatbuffer_direct_transpose_stridedslice_pad_concat_mul_add_posttranspo
 
 
 def test_flatbuffer_direct_boundary_input_transpose_stridedslice_qdq_concat_elides_roundtrip() -> None:
-    model_ir = ModelIR(name="boundary_input_transpose_stridedslice_qdq_concat_test")
+    model_ir = ModelIR("boundary_input_transpose_stridedslice_qdq_concat_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y", "z"]
     model_ir.tensors["x"] = TensorIR(
@@ -10526,7 +10560,7 @@ def test_flatbuffer_direct_boundary_input_transpose_stridedslice_qdq_concat_elid
 
 
 def test_flatbuffer_direct_transpose_dequant_logistic_mul_quantize_bridges_elide_roundtrip() -> None:
-    model_ir = ModelIR(name="transpose_dequant_logistic_mul_quantize_bridge_test")
+    model_ir = ModelIR("transpose_dequant_logistic_mul_quantize_bridge_test")
     model_ir.inputs = ["x_q"]
     model_ir.outputs = ["y", "z"]
 
@@ -10657,7 +10691,7 @@ def test_flatbuffer_direct_transpose_dequant_logistic_mul_quantize_bridges_elide
 
 
 def test_flatbuffer_direct_dequant_logistic_quantize_chain_folded_to_quantized_logistic() -> None:
-    model_ir = ModelIR(name="dequant_logistic_quantize_fold_test")
+    model_ir = ModelIR("dequant_logistic_quantize_fold_test")
     model_ir.inputs = ["x_q"]
     model_ir.outputs = ["y_q"]
 
@@ -10706,7 +10740,7 @@ def test_flatbuffer_direct_dequant_logistic_quantize_chain_folded_to_quantized_l
 
 
 def test_flatbuffer_direct_dequant_logistic_quantize_chain_noncanonical_output_not_folded() -> None:
-    model_ir = ModelIR(name="dequant_logistic_quantize_no_fold_test")
+    model_ir = ModelIR("dequant_logistic_quantize_no_fold_test")
     model_ir.inputs = ["x_q"]
     model_ir.outputs = ["y_q"]
 
@@ -10748,7 +10782,7 @@ def test_flatbuffer_direct_dequant_logistic_quantize_chain_noncanonical_output_n
 
 
 def test_flatbuffer_direct_transpose_swish_qdq_nhwc_islands_elide_prepost_chain() -> None:
-    model_ir = ModelIR(name="transpose_swish_qdq_nhwc_island_test")
+    model_ir = ModelIR("transpose_swish_qdq_nhwc_island_test")
     model_ir.inputs = ["a_q", "b_q"]
     model_ir.outputs = ["y"]
 
@@ -10862,7 +10896,7 @@ def test_flatbuffer_direct_transpose_swish_qdq_nhwc_islands_elide_prepost_chain(
 
 
 def test_flatbuffer_direct_transpose_swish_residual_concat_closure_nhwc_is_spatial_agnostic() -> None:
-    model_ir = ModelIR(name="transpose_swish_residual_concat_closure_spatial_agnostic_test")
+    model_ir = ModelIR("transpose_swish_residual_concat_closure_spatial_agnostic_test")
     model_ir.inputs = ["a_q", "b_q"]
     model_ir.outputs = ["y"]
 
@@ -10972,7 +11006,7 @@ def test_flatbuffer_direct_transpose_swish_residual_concat_closure_nhwc_is_spati
 
 
 def test_flatbuffer_direct_boundary_input_slice_depthwise_nhwc_propagation_avoids_bridge_transpose() -> None:
-    model_ir = ModelIR(name="boundary_input_slice_depthwise_nhwc_propagation_test")
+    model_ir = ModelIR("boundary_input_slice_depthwise_nhwc_propagation_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -11112,7 +11146,7 @@ def test_flatbuffer_direct_input_layout_respects_keep_shape_absolute() -> None:
 
 
 def test_flatbuffer_direct_depthwise_output_transpose_cast_transpose_chain_elides() -> None:
-    model_ir = ModelIR(name="depthwise_output_transpose_cast_transpose_chain_test")
+    model_ir = ModelIR("depthwise_output_transpose_cast_transpose_chain_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -11236,7 +11270,7 @@ def test_flatbuffer_direct_depthwise_output_transpose_cast_transpose_chain_elide
 
 
 def test_flatbuffer_direct_depthwise_output_transpose_hardswish_transpose_chain_elides() -> None:
-    model_ir = ModelIR(name="depthwise_output_transpose_hardswish_transpose_chain_test")
+    model_ir = ModelIR("depthwise_output_transpose_hardswish_transpose_chain_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -11449,7 +11483,7 @@ def test_flatbuffer_direct_reshape_minus_one_resolved_to_static_shape() -> None:
     assert np.asarray(shape_tensor.data).reshape(-1).tolist() == [3, 2]
     output_tensor = model_ir.tensors["y"]
     assert list(output_tensor.shape) == [3, 2]
-    assert list(output_tensor.shape_signature) == [3, 2]
+    assert _shape_signature(output_tensor) == [3, 2]
 
 
 def test_flatbuffer_direct_conv1d_input_reshape_chain_collapses_to_single_nhwc_reshape() -> None:
@@ -11479,7 +11513,7 @@ def test_flatbuffer_direct_conv1d_input_reshape_chain_collapses_to_single_nhwc_r
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_pass() -> None:
-    model_ir = ModelIR(name="reshape_fixup_test")
+    model_ir = ModelIR("reshape_fixup_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -11514,12 +11548,12 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_pass() -> None:
     assert stats["resolved_dynamic_reshape_shapes"] == 1
     assert list(model_ir.operators[0].options["newShape"]) == [1, 1600, 1]
     assert list(model_ir.tensors["y"].shape) == [1, 1600, 1]
-    assert list(model_ir.tensors["y"].shape_signature) == [1, 1600, 1]
+    assert _shape_signature(model_ir.tensors["y"]) == [1, 1600, 1]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [1, 1600, 1]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_zero_copy_dims_pass() -> None:
-    model_ir = ModelIR(name="reshape_fixup_zero_copy_test")
+    model_ir = ModelIR("reshape_fixup_zero_copy_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -11558,12 +11592,12 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_zero_copy_dims_pass() 
     assert stats["resolved_dynamic_reshape_shapes"] == 1
     assert list(model_ir.operators[0].options["newShape"]) == [10, 1, 3]
     assert list(model_ir.tensors["y"].shape) == [10, 1, 3]
-    assert list(model_ir.tensors["y"].shape_signature) == [10, 1, 3]
+    assert _shape_signature(model_ir.tensors["y"]) == [10, 1, 3]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [10, 1, 3]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_populates_empty_newshape_from_shape_tensor() -> None:
-    model_ir = ModelIR(name="reshape_fixup_from_shape_tensor_test")
+    model_ir = ModelIR("reshape_fixup_from_shape_tensor_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -11598,16 +11632,16 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_populates_empty_newsha
     assert stats["resolved_dynamic_reshape_shapes"] == 1
     assert list(model_ir.operators[0].options["newShape"]) == [20, 1]
     assert list(model_ir.tensors["y"].shape) == [20, 1]
-    assert list(model_ir.tensors["y"].shape_signature) == [20, 1]
+    assert _shape_signature(model_ir.tensors["y"]) == [20, 1]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [20, 1]
 
     sanitize_stats = _sanitize_static_shape_signature_consistency(model_ir)
     assert int(sanitize_stats["sanitized_static_shape_signature_consistency"]) == 0
-    assert list(model_ir.tensors["y"].shape_signature) == [20, 1]
+    assert _shape_signature(model_ir.tensors["y"]) == [20, 1]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_keeps_existing_concrete_shape_with_onnx_raw_minus_one() -> None:
-    model_ir = ModelIR(name="reshape_fixup_keep_concrete_shape_test")
+    model_ir = ModelIR("reshape_fixup_keep_concrete_shape_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -11646,12 +11680,12 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_keeps_existing_concret
     assert stats["resolved_dynamic_reshape_shapes"] == 0
     assert list(model_ir.operators[0].options["newShape"]) == [1, 1, 20, 2]
     assert list(model_ir.tensors["y"].shape) == [1, 1, 20, 2]
-    assert list(model_ir.tensors["y"].shape_signature) == [1, 1, 20, 2]
+    assert _shape_signature(model_ir.tensors["y"]) == [1, 1, 20, 2]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [1, 1, 20, 2]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_prefers_runtime_minus_one_from_onnx_raw() -> None:
-    model_ir = ModelIR(name="reshape_fixup_runtime_minus_one_preference_test")
+    model_ir = ModelIR("reshape_fixup_runtime_minus_one_preference_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -11693,12 +11727,12 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_prefers_runtime_minus_
     assert stats["resolved_dynamic_reshape_shapes"] == 1
     assert list(model_ir.operators[0].options["newShape"]) == [1, -1, 64, 64, 2]
     assert list(model_ir.tensors["y"].shape) == [1, 1, 64, 64, 2]
-    assert list(model_ir.tensors["y"].shape_signature) == [1, -1, 64, 64, 2]
+    assert _shape_signature(model_ir.tensors["y"]) == [1, -1, 64, 64, 2]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [1, -1, 64, 64, 2]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_concretizes_static_onnx_raw_minus_one() -> None:
-    model_ir = ModelIR(name="reshape_fixup_static_onnx_raw_minus_one_test")
+    model_ir = ModelIR("reshape_fixup_static_onnx_raw_minus_one_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -11740,12 +11774,12 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_concretizes_static_onn
     assert stats["resolved_dynamic_reshape_shapes"] == 1
     assert list(model_ir.operators[0].options["newShape"]) == [64, 64, 3, 6, 30]
     assert list(model_ir.tensors["y"].shape) == [64, 64, 3, 6, 30]
-    assert list(model_ir.tensors["y"].shape_signature) == [64, 64, 3, 6, 30]
+    assert _shape_signature(model_ir.tensors["y"]) == [64, 64, 3, 6, 30]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [64, 64, 3, 6, 30]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_allowzero_true_preserves_zero_and_minus_one() -> None:
-    model_ir = ModelIR(name="reshape_fixup_allowzero_true_preserve_test")
+    model_ir = ModelIR("reshape_fixup_allowzero_true_preserve_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -11783,12 +11817,12 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_allowzero_true_preserv
     stats = _resolve_dynamic_reshape_shapes(model_ir)
     assert stats["resolved_dynamic_reshape_shapes"] == 0
     assert list(model_ir.operators[0].options["newShape"]) == [0, -1, 3]
-    assert list(model_ir.tensors["y"].shape_signature) == [0, -1, 3]
+    assert _shape_signature(model_ir.tensors["y"]) == [0, -1, 3]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [0, -1, 3]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_copy_dim_zero_then_infers_minus_one() -> None:
-    model_ir = ModelIR(name="reshape_fixup_copy_dim_zero_then_infer_test")
+    model_ir = ModelIR("reshape_fixup_copy_dim_zero_then_infer_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -11827,12 +11861,12 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_copy_dim_zero_then_inf
     assert stats["resolved_dynamic_reshape_shapes"] == 1
     assert list(model_ir.operators[0].options["newShape"]) == [2, 5, 3]
     assert list(model_ir.tensors["y"].shape) == [2, 5, 3]
-    assert list(model_ir.tensors["y"].shape_signature) == [2, 5, 3]
+    assert _shape_signature(model_ir.tensors["y"]) == [2, 5, 3]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [2, 5, 3]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_keeps_runtime_minus_one_from_shape_tensor() -> None:
-    model_ir = ModelIR(name="reshape_fixup_runtime_minus_one_from_shape_tensor_test")
+    model_ir = ModelIR("reshape_fixup_runtime_minus_one_from_shape_tensor_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -11867,12 +11901,12 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_shapes_keeps_runtime_minus_on
     assert stats["resolved_dynamic_reshape_shapes"] == 0
     assert list(model_ir.operators[0].options["newShape"]) == []
     assert list(model_ir.tensors["y"].shape) == [1, 1]
-    assert list(model_ir.tensors["y"].shape_signature) == [-1, 1]
+    assert _shape_signature(model_ir.tensors["y"]) == [-1, 1]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [-1, 1]
 
 
 def test_flatbuffer_direct_replace_squeeze_with_reshape_skips_all_ones_outputs() -> None:
-    model_ir = ModelIR(name="squeeze_rewrite_all_ones_guard_test")
+    model_ir = ModelIR("squeeze_rewrite_all_ones_guard_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -11961,11 +11995,11 @@ def test_flatbuffer_direct_unsqueeze_dynamic_rank1_uses_runtime_shape_pipeline()
     assert len(list(reshape_op.inputs)) == 2
     shape_tensor = model_ir.tensors[str(reshape_op.inputs[1])]
     assert shape_tensor.data is None
-    assert list(model_ir.tensors["y"].shape_signature) == [-1, 1]
+    assert _shape_signature(model_ir.tensors["y"]) == [-1, 1]
 
 
 def test_flatbuffer_direct_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs() -> None:
-    model_ir = ModelIR(name="rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs")
+    model_ir = ModelIR("rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -12006,7 +12040,7 @@ def test_flatbuffer_direct_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
 
 
 def test_flatbuffer_direct_replace_squeeze_with_reshape_rewrites_dynamic_axes() -> None:
-    model_ir = ModelIR(name="squeeze_rewrite_dynamic_axes_test")
+    model_ir = ModelIR("squeeze_rewrite_dynamic_axes_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -12039,7 +12073,7 @@ def test_flatbuffer_direct_replace_squeeze_with_reshape_rewrites_dynamic_axes() 
 
 
 def test_flatbuffer_direct_replace_expand_dims_with_reshape_skips_dynamic_axes() -> None:
-    model_ir = ModelIR(name="expand_dims_rewrite_dynamic_axes_guard_test")
+    model_ir = ModelIR("expand_dims_rewrite_dynamic_axes_guard_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -12076,7 +12110,7 @@ def test_flatbuffer_direct_replace_expand_dims_with_reshape_skips_dynamic_axes()
 
 
 def test_flatbuffer_direct_repair_unbound_shape_input_with_layout_transpose() -> None:
-    model_ir = ModelIR(name="repair_unbound_shape_input_test")
+    model_ir = ModelIR("repair_unbound_shape_input_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["shape_out"]
     model_ir.tensors["x"] = TensorIR(
@@ -12149,7 +12183,7 @@ def test_flatbuffer_direct_repair_unbound_shape_input_with_layout_transpose() ->
 
 
 def test_flatbuffer_direct_repair_unbound_split_data_input_with_layout_transpose() -> None:
-    model_ir = ModelIR(name="repair_unbound_split_data_input_test")
+    model_ir = ModelIR("repair_unbound_split_data_input_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["split0", "split1"]
     model_ir.tensors["x"] = TensorIR(
@@ -12236,7 +12270,7 @@ def test_flatbuffer_direct_repair_unbound_split_data_input_with_layout_transpose
 
 
 def test_flatbuffer_direct_repair_orphan_recurrent_step_tensors() -> None:
-    model_ir = ModelIR(name="repair_orphan_recurrent_step_tensors_test")
+    model_ir = ModelIR("repair_orphan_recurrent_step_tensors_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["hidden_out", "seq"]
     model_ir.tensors["x"] = TensorIR(
@@ -12394,7 +12428,7 @@ def test_flatbuffer_direct_lower_gru_keeps_final_step_alias_bound() -> None:
 
 
 def test_flatbuffer_direct_replace_unsupported_split_with_slice_inserts_cast_on_dtype_mismatch() -> None:
-    model_ir = ModelIR(name="unsupported_split_cast_fallback_test")
+    model_ir = ModelIR("unsupported_split_cast_fallback_test")
     model_ir.inputs = ["state_in"]
     model_ir.outputs = ["state_fw", "state_bw"]
     model_ir.tensors["state_in"] = TensorIR(
@@ -12449,7 +12483,7 @@ def test_flatbuffer_direct_replace_unsupported_split_with_slice_inserts_cast_on_
 
 
 def test_flatbuffer_direct_replace_unsupported_split_with_slice_without_cast_when_dtype_matches() -> None:
-    model_ir = ModelIR(name="unsupported_split_slice_fallback_test")
+    model_ir = ModelIR("unsupported_split_slice_fallback_test")
     model_ir.inputs = ["split_in"]
     model_ir.outputs = ["split0", "split1"]
     model_ir.tensors["split_in"] = TensorIR(
@@ -12632,7 +12666,7 @@ def test_flatbuffer_direct_instance_normalization_lowering() -> None:
 def test_flatbuffer_direct_instance_normalization_lowering_with_nhwc_internal_layout() -> None:
     class _FakeBuilderCtx:
         def __init__(self) -> None:
-            self.model_ir = ModelIR(name="instance_norm_builder_nhwc")
+            self.model_ir = ModelIR("instance_norm_builder_nhwc")
             self.model_ir.tensors["x"] = TensorIR(
                 name="x",
                 dtype="FLOAT32",
@@ -12740,7 +12774,7 @@ def test_flatbuffer_direct_square_conv_instance_normalization_keeps_nchw_axes_af
 def test_flatbuffer_direct_instance_normalization_prefers_nchw_axis_from_transpose_producer() -> None:
     class _FakeBuilderCtx:
         def __init__(self) -> None:
-            self.model_ir = ModelIR(name="instance_norm_builder_transpose_producer")
+            self.model_ir = ModelIR("instance_norm_builder_transpose_producer")
             self.model_ir.tensors["x_nhwc"] = TensorIR(
                 name="x_nhwc",
                 dtype="FLOAT32",
@@ -12977,7 +13011,7 @@ def test_flatbuffer_direct_unsqueeze_dynamic_axis2_preserves_dynamic_signature()
     )
 
     y_tensor = model_ir.tensors["y"]
-    assert list(y_tensor.shape_signature) == [1, -1, 1]
+    assert _shape_signature(y_tensor) == [1, -1, 1]
 
     y_prod = next(op for op in model_ir.operators if str(op.outputs[0]) == "y")
     assert str(y_prod.op_type) == "RESHAPE"
@@ -13126,14 +13160,14 @@ def test_flatbuffer_direct_topk_const_k_repairs_stale_output_shape_metadata() ->
     )
 
     assert list(model_ir.tensors["values"].shape) == [1, 3]
-    assert list(model_ir.tensors["values"].shape_signature) == [1, 3]
+    assert _shape_signature(model_ir.tensors["values"]) == [1, 3]
     assert list(model_ir.tensors["indices"].shape) == [1, 3]
-    assert list(model_ir.tensors["indices"].shape_signature) == [1, 3]
+    assert _shape_signature(model_ir.tensors["indices"]) == [1, 3]
     topk_op = next(op for op in model_ir.operators if str(op.op_type) == "TOPK_V2")
     for output_name in list(topk_op.outputs):
         tensor = model_ir.tensors[str(output_name)]
         assert list(tensor.shape) == [1, 3]
-        assert list(tensor.shape_signature) == [1, 3]
+        assert _shape_signature(tensor) == [1, 3]
 
 
 def test_flatbuffer_direct_topk_dynamic_k_followed_by_reshape_flat_preserves_dynamic_extent() -> None:
@@ -13155,7 +13189,7 @@ def test_flatbuffer_direct_topk_dynamic_k_followed_by_reshape_flat_preserves_dyn
     reshape_shape = np.asarray(model_ir.tensors[reshape_shape_name].data, dtype=np.int32).reshape(-1).tolist()
     assert reshape_shape == [-1]
     assert list(reshape_op.options.get("newShape", [])) == [-1]
-    assert list(model_ir.tensors["indices"].shape_signature) == [1, -1]
+    assert _shape_signature(model_ir.tensors["indices"]) == [1, -1]
 
 
 def test_flatbuffer_direct_pad_dynamic_pads_lowering() -> None:
@@ -13579,7 +13613,7 @@ def test_flatbuffer_direct_expand_dynamic_shape_uses_fill() -> None:
     assert value_tensor.data is not None
 
     output_tensor = model_ir.tensors["y"]
-    assert list(output_tensor.shape_signature) == [-1]
+    assert _shape_signature(output_tensor) == [-1]
 
 
 def test_flatbuffer_direct_matmul_integer_defaults_to_float_compute_path() -> None:
@@ -13612,7 +13646,7 @@ def test_flatbuffer_direct_unsqueeze_scalar_multi_axis_shape() -> None:
 
     y_tensor = model_ir.tensors["y"]
     assert list(y_tensor.shape) == [1, 1]
-    assert list(y_tensor.shape_signature) == [1, 1]
+    assert _shape_signature(y_tensor) == [1, 1]
 
     producer = next(op for op in model_ir.operators if "y" in list(op.outputs))
     assert str(producer.op_type) == "RESHAPE"
@@ -13770,7 +13804,7 @@ def test_flatbuffer_direct_resize_cubic_preserves_batch_dim() -> None:
     y_tensor = model_ir.tensors.get("y")
     assert y_tensor is not None
     assert int(y_tensor.shape[0]) == 2
-    assert int(y_tensor.shape_signature[0]) == 2
+    assert int(_shape_signature(y_tensor)[0]) == 2
 
     cubic_h_in_reshape = next(
         (
@@ -13974,7 +14008,7 @@ def test_flatbuffer_direct_reduce_l2_avoids_redundant_shape_reshape_identity() -
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_zero_copy_dims_pass() -> None:
-    model_ir = ModelIR(name="reshape_zero_copy_fixup_test")
+    model_ir = ModelIR("reshape_zero_copy_fixup_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14013,12 +14047,12 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_zero_copy_dims_pass() -> None
     assert stats["resolved_dynamic_reshape_shapes"] == 1
     assert list(model_ir.operators[0].options["newShape"]) == [1, 1, 512]
     assert list(model_ir.tensors["y"].shape) == [1, 1, 512]
-    assert list(model_ir.tensors["y"].shape_signature) == [1, 1, 512]
+    assert _shape_signature(model_ir.tensors["y"]) == [1, 1, 512]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [1, 1, 512]
 
 
 def test_flatbuffer_direct_reconcile_bilstm_chain_and_resolve_reshape_zero_copy_dims() -> None:
-    model_ir = ModelIR(name="reshape_zero_copy_bilstm_chain_fixup_test")
+    model_ir = ModelIR("reshape_zero_copy_bilstm_chain_fixup_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14161,7 +14195,7 @@ def test_flatbuffer_direct_reconcile_bilstm_chain_and_resolve_reshape_zero_copy_
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_zero_copy_dims_with_dynamic_signature() -> None:
-    model_ir = ModelIR(name="reshape_zero_copy_dynamic_signature_fixup_test")
+    model_ir = ModelIR("reshape_zero_copy_dynamic_signature_fixup_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14200,12 +14234,12 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_zero_copy_dims_with_dynamic_s
     assert stats["resolved_dynamic_reshape_shapes"] == 1
     assert list(model_ir.operators[0].options["newShape"]) == [-1, 1, 96]
     assert list(model_ir.tensors["y"].shape) == [1, 1, 96]
-    assert list(model_ir.tensors["y"].shape_signature) == [-1, 1, 96]
+    assert _shape_signature(model_ir.tensors["y"]) == [-1, 1, 96]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [-1, 1, 96]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_relaxes_zero_copy_axis_to_dynamic() -> None:
-    model_ir = ModelIR(name="reshape_zero_copy_relax_dynamic_axis_test")
+    model_ir = ModelIR("reshape_zero_copy_relax_dynamic_axis_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14243,12 +14277,12 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_relaxes_zero_copy_axis_to_dyn
     stats = _resolve_dynamic_reshape_shapes(model_ir)
     assert stats["resolved_dynamic_reshape_shapes"] == 1
     assert list(model_ir.operators[0].options["newShape"]) == [-1, 1, 96]
-    assert list(model_ir.tensors["y"].shape_signature) == [-1, 1, 96]
+    assert _shape_signature(model_ir.tensors["y"]) == [-1, 1, 96]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [-1, 1, 96]
 
 
 def test_flatbuffer_direct_resolve_dynamic_reshape_sanitizes_multi_minus_one() -> None:
-    model_ir = ModelIR(name="reshape_multi_minus_one_sanitize_test")
+    model_ir = ModelIR("reshape_multi_minus_one_sanitize_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14291,7 +14325,7 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_sanitizes_multi_minus_one() -
 
 
 def test_flatbuffer_direct_reconcile_slice_preserves_static_size_on_dynamic_axes() -> None:
-    model_ir = ModelIR(name="reconcile_slice_dynamic_axis_size_test")
+    model_ir = ModelIR("reconcile_slice_dynamic_axis_size_test")
     model_ir.inputs = ["state_in"]
     model_ir.outputs = ["state_slice"]
     model_ir.tensors["state_in"] = TensorIR(
@@ -14331,12 +14365,12 @@ def test_flatbuffer_direct_reconcile_slice_preserves_static_size_on_dynamic_axes
     stats = _reconcile_static_tensor_shapes(model_ir)
     assert stats["reconciled_static_tensor_shapes"] >= 0
     assert list(model_ir.tensors["state_slice"].shape) == [1, 1, 48]
-    assert list(model_ir.tensors["state_slice"].shape_signature) == [1, 1, 48]
+    assert _shape_signature(model_ir.tensors["state_slice"]) == [1, 1, 48]
     assert np.asarray(model_ir.tensors["slice_size"].data).reshape(-1).tolist() == [1, 1, 48]
 
 
 def test_flatbuffer_direct_reconcile_cast_propagates_output_shape_signature() -> None:
-    model_ir = ModelIR(name="reconcile_cast_shape_signature_test")
+    model_ir = ModelIR("reconcile_cast_shape_signature_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14363,11 +14397,11 @@ def test_flatbuffer_direct_reconcile_cast_propagates_output_shape_signature() ->
     stats = _reconcile_static_tensor_shapes(model_ir)
     assert stats["reconciled_static_tensor_shapes"] >= 1
     assert list(model_ir.tensors["y"].shape) == [1, 2]
-    assert list(model_ir.tensors["y"].shape_signature) == [-1, 2]
+    assert _shape_signature(model_ir.tensors["y"]) == [-1, 2]
 
 
 def test_flatbuffer_direct_reconcile_neg_propagates_output_shape_signature() -> None:
-    model_ir = ModelIR(name="reconcile_neg_shape_signature_test")
+    model_ir = ModelIR("reconcile_neg_shape_signature_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14393,11 +14427,11 @@ def test_flatbuffer_direct_reconcile_neg_propagates_output_shape_signature() -> 
     stats = _reconcile_static_tensor_shapes(model_ir)
     assert stats["reconciled_static_tensor_shapes"] >= 1
     assert list(model_ir.tensors["y"].shape) == [1, 2]
-    assert list(model_ir.tensors["y"].shape_signature) == [-1, 2]
+    assert _shape_signature(model_ir.tensors["y"]) == [-1, 2]
 
 
 def test_flatbuffer_direct_reconcile_floor_mod_propagates_output_shape_signature() -> None:
-    model_ir = ModelIR(name="reconcile_floor_mod_shape_signature_test")
+    model_ir = ModelIR("reconcile_floor_mod_shape_signature_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14430,11 +14464,11 @@ def test_flatbuffer_direct_reconcile_floor_mod_propagates_output_shape_signature
     stats = _reconcile_static_tensor_shapes(model_ir)
     assert stats["reconciled_static_tensor_shapes"] >= 1
     assert list(model_ir.tensors["y"].shape) == [1]
-    assert list(model_ir.tensors["y"].shape_signature) == [-1]
+    assert _shape_signature(model_ir.tensors["y"]) == [-1]
 
 
 def test_flatbuffer_direct_reconcile_maximum_propagates_output_shape_signature() -> None:
-    model_ir = ModelIR(name="reconcile_maximum_shape_signature_test")
+    model_ir = ModelIR("reconcile_maximum_shape_signature_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14467,11 +14501,11 @@ def test_flatbuffer_direct_reconcile_maximum_propagates_output_shape_signature()
     stats = _reconcile_static_tensor_shapes(model_ir)
     assert stats["reconciled_static_tensor_shapes"] >= 1
     assert list(model_ir.tensors["y"].shape) == [1, 3, 4]
-    assert list(model_ir.tensors["y"].shape_signature) == [-1, 3, 4]
+    assert _shape_signature(model_ir.tensors["y"]) == [-1, 3, 4]
 
 
 def test_flatbuffer_direct_reconcile_minimum_propagates_output_shape_signature() -> None:
-    model_ir = ModelIR(name="reconcile_minimum_shape_signature_test")
+    model_ir = ModelIR("reconcile_minimum_shape_signature_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14504,11 +14538,11 @@ def test_flatbuffer_direct_reconcile_minimum_propagates_output_shape_signature()
     stats = _reconcile_static_tensor_shapes(model_ir)
     assert stats["reconciled_static_tensor_shapes"] >= 1
     assert list(model_ir.tensors["y"].shape) == [1, 3, 4]
-    assert list(model_ir.tensors["y"].shape_signature) == [-1, 3, 4]
+    assert _shape_signature(model_ir.tensors["y"]) == [-1, 3, 4]
 
 
 def test_flatbuffer_direct_reconcile_batch_matmul_propagates_output_shape_signature() -> None:
-    model_ir = ModelIR(name="reconcile_batch_matmul_shape_signature_test")
+    model_ir = ModelIR("reconcile_batch_matmul_shape_signature_test")
     model_ir.inputs = ["a", "b"]
     model_ir.outputs = ["y"]
     model_ir.tensors["a"] = TensorIR(
@@ -14541,11 +14575,11 @@ def test_flatbuffer_direct_reconcile_batch_matmul_propagates_output_shape_signat
     stats = _reconcile_static_tensor_shapes(model_ir)
     assert stats["reconciled_static_tensor_shapes"] >= 1
     assert list(model_ir.tensors["y"].shape) == [1, 2, 3]
-    assert list(model_ir.tensors["y"].shape_signature) == [-1, 2, 3]
+    assert _shape_signature(model_ir.tensors["y"]) == [-1, 2, 3]
 
 
 def test_flatbuffer_direct_reconcile_slice_preserves_dynamic_full_extent_size() -> None:
-    model_ir = ModelIR(name="reconcile_slice_dynamic_full_extent_test")
+    model_ir = ModelIR("reconcile_slice_dynamic_full_extent_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14587,11 +14621,11 @@ def test_flatbuffer_direct_reconcile_slice_preserves_dynamic_full_extent_size() 
     _ = _reconcile_static_tensor_shapes(model_ir)
     slice_size_values = np.asarray(model_ir.tensors["slice_size"].data, dtype=np.int32).reshape(-1).tolist()
     assert slice_size_values == [-1, -1, -1, 1]
-    assert list(model_ir.tensors["y"].shape_signature) == [1, 1, -1, 1]
+    assert _shape_signature(model_ir.tensors["y"]) == [1, 1, -1, 1]
 
 
 def test_flatbuffer_direct_reconcile_slice_fixed_size_overrides_stale_dynamic_signature() -> None:
-    model_ir = ModelIR(name="reconcile_slice_fixed_size_signature_test")
+    model_ir = ModelIR("reconcile_slice_fixed_size_signature_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14632,11 +14666,11 @@ def test_flatbuffer_direct_reconcile_slice_fixed_size_overrides_stale_dynamic_si
 
     _ = _reconcile_static_tensor_shapes(model_ir)
     assert list(model_ir.tensors["y"].shape) == [2]
-    assert list(model_ir.tensors["y"].shape_signature) == [2]
+    assert _shape_signature(model_ir.tensors["y"]) == [2]
 
 
 def test_flatbuffer_direct_reconcile_pad_updates_output_shape_signature() -> None:
-    model_ir = ModelIR(name="reconcile_pad_shape_signature_test")
+    model_ir = ModelIR("reconcile_pad_shape_signature_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14678,11 +14712,11 @@ def test_flatbuffer_direct_reconcile_pad_updates_output_shape_signature() -> Non
     stats = _reconcile_static_tensor_shapes(model_ir)
     assert int(stats["reconciled_static_tensor_shapes"]) >= 1
     assert list(model_ir.tensors["y"].shape) == [1, 59, 59, 192]
-    assert list(model_ir.tensors["y"].shape_signature) == [1, 59, 59, 192]
+    assert _shape_signature(model_ir.tensors["y"]) == [1, 59, 59, 192]
 
 
 def test_flatbuffer_direct_reconcile_pad_preserves_dynamic_spatial_signature() -> None:
-    model_ir = ModelIR(name="reconcile_pad_dynamic_signature_test")
+    model_ir = ModelIR("reconcile_pad_dynamic_signature_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14723,11 +14757,11 @@ def test_flatbuffer_direct_reconcile_pad_preserves_dynamic_spatial_signature() -
 
     _ = _reconcile_static_tensor_shapes(model_ir)
     assert list(model_ir.tensors["y"].shape) == [1, 59, 59, 192]
-    assert list(model_ir.tensors["y"].shape_signature) == [1, -1, -1, 192]
+    assert _shape_signature(model_ir.tensors["y"]) == [1, -1, -1, 192]
 
 
 def test_flatbuffer_direct_reconcile_conv2d_complements_static_output_channel_from_filter() -> None:
-    model_ir = ModelIR(name="reconcile_conv2d_static_output_channel_signature_test")
+    model_ir = ModelIR("reconcile_conv2d_static_output_channel_signature_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14777,7 +14811,7 @@ def test_flatbuffer_direct_reconcile_conv2d_complements_static_output_channel_fr
     stats = _reconcile_static_tensor_shapes(model_ir)
     assert stats["reconciled_static_tensor_shapes"] >= 1
     assert list(model_ir.tensors["y"].shape) == [1, 1, 1, 64]
-    assert list(model_ir.tensors["y"].shape_signature) == [-1, -1, -1, 64]
+    assert _shape_signature(model_ir.tensors["y"]) == [-1, -1, -1, 64]
 
 
 def test_flatbuffer_direct_rank4_signature_inference_ignores_stale_unrelated_unknown_axes() -> None:
@@ -14801,7 +14835,7 @@ def test_flatbuffer_direct_align_boundary_signature_to_current_shape_recovers_st
 
 
 def test_flatbuffer_direct_realign_dynamic_boundary_shape_signature_map_tracks_layout_change() -> None:
-    model_ir = ModelIR(name="realign_dynamic_boundary_signature_map_test")
+    model_ir = ModelIR("realign_dynamic_boundary_signature_map_test")
     model_ir.tensors["out"] = TensorIR(
         name="out",
         dtype="FLOAT32",
@@ -14818,7 +14852,7 @@ def test_flatbuffer_direct_realign_dynamic_boundary_shape_signature_map_tracks_l
 
 
 def test_flatbuffer_direct_sanitize_static_shape_signature_preserves_dynamic_lineage() -> None:
-    model_ir = ModelIR(name="sanitize_dynamic_lineage_test")
+    model_ir = ModelIR("sanitize_dynamic_lineage_test")
     model_ir.inputs = ["input"]
     model_ir.outputs = ["q_out"]
     model_ir.metadata["onnx_dynamic_input_tensor_names"] = ["input"]
@@ -14855,13 +14889,13 @@ def test_flatbuffer_direct_sanitize_static_shape_signature_preserves_dynamic_lin
 
     stats = _sanitize_static_shape_signature_consistency(model_ir)
     assert int(stats["preserved_dynamic_lineage_shape_signature"]) >= 1
-    assert list(model_ir.tensors["input"].shape_signature) == [-1, -1, -1, 3]
-    assert list(model_ir.tensors["q_out"].shape_signature) == [-1, -1, -1, 3]
-    assert list(model_ir.tensors["dead_internal"].shape_signature) == [1, 1, 1, 3]
+    assert _shape_signature(model_ir.tensors["input"]) == [-1, -1, -1, 3]
+    assert _shape_signature(model_ir.tensors["q_out"]) == [-1, -1, -1, 3]
+    assert _shape_signature(model_ir.tensors["dead_internal"]) == [1, 1, 1, 3]
 
 
 def test_flatbuffer_direct_sanitize_static_shape_signature_fixes_stale_batch_dynamic_without_lineage() -> None:
-    model_ir = ModelIR(name="sanitize_stale_batch_dynamic_without_lineage_test")
+    model_ir = ModelIR("sanitize_stale_batch_dynamic_without_lineage_test")
     model_ir.inputs = ["a", "b"]
     model_ir.outputs = []
 
@@ -14894,11 +14928,11 @@ def test_flatbuffer_direct_sanitize_static_shape_signature_fixes_stale_batch_dyn
     stats = _sanitize_static_shape_signature_consistency(model_ir)
     assert int(stats["sanitized_static_shape_signature_consistency"]) >= 1
     assert int(stats["preserved_dynamic_leading_axis_shape_signature"]) == 0
-    assert list(model_ir.tensors["y"].shape_signature) == [1, 4420, 2]
+    assert _shape_signature(model_ir.tensors["y"]) == [1, 4420, 2]
 
 
 def test_flatbuffer_direct_sanitize_static_shape_signature_preserves_topk_dynamic_extent_lineage() -> None:
-    model_ir = ModelIR(name="sanitize_topk_dynamic_extent_lineage_test")
+    model_ir = ModelIR("sanitize_topk_dynamic_extent_lineage_test")
     model_ir.inputs = ["x", "k"]
     model_ir.outputs = ["flat_indices"]
 
@@ -14961,12 +14995,12 @@ def test_flatbuffer_direct_sanitize_static_shape_signature_preserves_topk_dynami
         + int(stats["preserved_dynamic_lineage_shape_signature"])
     )
     assert preserved_total >= 1
-    assert list(model_ir.tensors["topk_indices"].shape_signature) == [1, -1]
-    assert list(model_ir.tensors["flat_indices"].shape_signature) == [-1]
+    assert _shape_signature(model_ir.tensors["topk_indices"]) == [1, -1]
+    assert _shape_signature(model_ir.tensors["flat_indices"]) == [-1]
 
 
 def test_flatbuffer_direct_sanitize_squeeze_axes_repairs_non_singleton_dynamic_input() -> None:
-    model_ir = ModelIR(name="sanitize_squeeze_axes_dynamic_input_test")
+    model_ir = ModelIR("sanitize_squeeze_axes_dynamic_input_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -14994,14 +15028,14 @@ def test_flatbuffer_direct_sanitize_squeeze_axes_repairs_non_singleton_dynamic_i
     assert int(stats["sanitized_squeeze_axes_with_static_input_shapes"]) >= 0
     assert int(stats["repaired_squeeze_input_singleton_dims"]) == 1
     assert list(model_ir.tensors["x"].shape) == [1, 1, 8, 3]
-    assert list(model_ir.tensors["x"].shape_signature) == [1, 1, 8, 3]
+    assert _shape_signature(model_ir.tensors["x"]) == [1, 1, 8, 3]
     assert list(model_ir.tensors["y"].shape) == [1, 8, 3]
-    assert list(model_ir.tensors["y"].shape_signature) == [1, 8, 3]
+    assert _shape_signature(model_ir.tensors["y"]) == [1, 8, 3]
     assert list(model_ir.operators[0].options.get("squeezeDims", [])) == [0]
 
 
 def test_flatbuffer_direct_sanitize_squeeze_axes_drops_const_invalid_axis() -> None:
-    model_ir = ModelIR(name="sanitize_squeeze_axes_const_input_test")
+    model_ir = ModelIR("sanitize_squeeze_axes_const_input_test")
     model_ir.inputs = []
     model_ir.outputs = ["y"]
     model_ir.tensors["x_const"] = TensorIR(
@@ -15033,11 +15067,11 @@ def test_flatbuffer_direct_sanitize_squeeze_axes_drops_const_invalid_axis() -> N
     assert list(model_ir.operators[0].options.get("squeezeDims", [])) == []
     assert list(model_ir.tensors["x_const"].shape) == [2, 3]
     assert list(model_ir.tensors["y"].shape) == [2, 3]
-    assert list(model_ir.tensors["y"].shape_signature) == [2, 3]
+    assert _shape_signature(model_ir.tensors["y"]) == [2, 3]
 
 
 def test_flatbuffer_direct_transpose_mul_add_const_rewrite_keeps_nhwc_consts_stable() -> None:
-    model_ir = ModelIR(name="transpose_mul_add_const_rewrite_idempotent_const_shape_test")
+    model_ir = ModelIR("transpose_mul_add_const_rewrite_idempotent_const_shape_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -15138,7 +15172,7 @@ def test_flatbuffer_direct_transpose_mul_add_const_rewrite_keeps_nhwc_consts_sta
 
 
 def test_flatbuffer_direct_transpose_mul_add_const_rewrite_does_not_mutate_on_partial_match() -> None:
-    model_ir = ModelIR(name="transpose_mul_add_const_partial_match_no_mutation_test")
+    model_ir = ModelIR("transpose_mul_add_const_partial_match_no_mutation_test")
     model_ir.inputs = ["x_nhwc", "residual_nchw"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -15231,7 +15265,7 @@ def test_flatbuffer_direct_transpose_mul_add_const_rewrite_does_not_mutate_on_pa
 
 
 def test_flatbuffer_direct_transpose_mul_posttranspose_add_nhwc_chain() -> None:
-    model_ir = ModelIR(name="transpose_mul_posttranspose_add_nhwc_chain_test")
+    model_ir = ModelIR("transpose_mul_posttranspose_add_nhwc_chain_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -15330,7 +15364,7 @@ def test_flatbuffer_direct_transpose_mul_posttranspose_add_nhwc_chain() -> None:
 
 
 def test_flatbuffer_direct_transpose_pad_mul_posttranspose_add_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_pad_mul_posttranspose_add_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_pad_mul_posttranspose_add_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -15445,11 +15479,11 @@ def test_flatbuffer_direct_transpose_pad_mul_posttranspose_add_nhwc_chain_optimi
     )
     assert list(model_ir.tensors["mul_scale"].shape) == [1, 1, 1, 18]
     assert list(model_ir.tensors["mul_out_nhwc"].shape) == [1, 24, 12, 18]
-    assert list(model_ir.tensors["mul_out_nhwc"].shape_signature) == [1, 24, 12, 18]
+    assert _shape_signature(model_ir.tensors["mul_out_nhwc"]) == [1, 24, 12, 18]
 
 
 def test_flatbuffer_direct_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_elementwise_roundtrip_nhwc_nchw_fanout_chain_opt_test")
+    model_ir = ModelIR("transpose_elementwise_roundtrip_nhwc_nchw_fanout_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z0", "z1"]
 
@@ -15592,7 +15626,7 @@ def test_flatbuffer_direct_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chai
 
 
 def test_flatbuffer_direct_conv_output_transpose_nhwc_passthrough_chain_optimized() -> None:
-    model_ir = ModelIR(name="conv_output_transpose_nhwc_passthrough_opt_test")
+    model_ir = ModelIR("conv_output_transpose_nhwc_passthrough_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -15691,7 +15725,7 @@ def test_flatbuffer_direct_conv_output_transpose_nhwc_passthrough_chain_optimize
 
 
 def test_flatbuffer_direct_transpose_pre_add_mul_add_prelu_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_pre_add_mul_add_prelu_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_pre_add_mul_add_prelu_nhwc_chain_opt_test")
     model_ir.inputs = ["a_nhwc", "b_nhwc", "legacy_ref_nchw"]
     model_ir.outputs = ["z", "legacy_cat"]
     model_ir.tensors["a_nhwc"] = TensorIR(
@@ -15855,7 +15889,7 @@ def test_flatbuffer_direct_transpose_pre_add_mul_add_prelu_nhwc_chain_optimized(
 
 
 def test_flatbuffer_direct_transpose_logistic_muladd_prepost_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_logistic_muladd_prepost_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_logistic_muladd_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["skip_nhwc", "data_nhwc", "gate_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["skip_nhwc"] = TensorIR(
@@ -15983,7 +16017,7 @@ def test_flatbuffer_direct_transpose_logistic_muladd_prepost_nhwc_chain_optimize
 
 
 def test_flatbuffer_direct_transpose_logistic_muladd_prepost_nhwc_chain_optimized_with_legacy_users() -> None:
-    model_ir = ModelIR(name="transpose_logistic_muladd_prepost_nhwc_chain_opt_legacy_test")
+    model_ir = ModelIR("transpose_logistic_muladd_prepost_nhwc_chain_opt_legacy_test")
     model_ir.inputs = ["skip_nhwc", "data_nhwc", "gate_nhwc"]
     model_ir.outputs = ["z", "legacy_z"]
     model_ir.tensors["skip_nhwc"] = TensorIR(
@@ -16163,7 +16197,7 @@ def test_flatbuffer_direct_transpose_logistic_muladd_prepost_nhwc_chain_optimize
 
 
 def test_flatbuffer_direct_transpose_weighted_add_swish_prepost_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_weighted_add_swish_prepost_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_weighted_add_swish_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["a_nhwc", "b_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -16302,7 +16336,7 @@ def test_flatbuffer_direct_transpose_weighted_add_swish_prepost_nhwc_chain_optim
 
 
 def test_flatbuffer_direct_transpose_nested_weighted_add_swish_prepost_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_nested_weighted_add_swish_prepost_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_nested_weighted_add_swish_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["a_nhwc", "b_nhwc", "c_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -16410,7 +16444,7 @@ def test_flatbuffer_direct_transpose_nested_weighted_add_swish_prepost_nhwc_chai
 
 
 def test_flatbuffer_direct_transpose_pad_prepost_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_pad_prepost_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_pad_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -16496,7 +16530,7 @@ def test_flatbuffer_direct_transpose_pad_prepost_nhwc_chain_optimized() -> None:
 
 
 def test_flatbuffer_direct_transpose_mirror_pad_prepost_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_mirror_pad_prepost_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_mirror_pad_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -16582,7 +16616,7 @@ def test_flatbuffer_direct_transpose_mirror_pad_prepost_nhwc_chain_optimized() -
 
 
 def test_flatbuffer_direct_transpose_unary_mirror_pad_prepost_nhwc_with_legacy_side_consumers() -> None:
-    model_ir = ModelIR(name="transpose_unary_mirror_pad_prepost_nhwc_side_consumer_opt_test")
+    model_ir = ModelIR("transpose_unary_mirror_pad_prepost_nhwc_side_consumer_opt_test")
     model_ir.inputs = ["x_nhwc", "skip_nchw"]
     model_ir.outputs = ["z", "mean_nchw", "side_out"]
 
@@ -16725,7 +16759,7 @@ def test_flatbuffer_direct_transpose_unary_mirror_pad_prepost_nhwc_with_legacy_s
 
 
 def test_flatbuffer_direct_transpose_unary_mirror_pad_prepost_nhwc_mean_reshape_side_consumer_no_adapter() -> None:
-    model_ir = ModelIR(name="transpose_unary_mirror_pad_prepost_nhwc_mean_side_opt_test")
+    model_ir = ModelIR("transpose_unary_mirror_pad_prepost_nhwc_mean_side_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z", "flat"]
 
@@ -16859,7 +16893,7 @@ def test_flatbuffer_direct_transpose_unary_mirror_pad_prepost_nhwc_mean_reshape_
 
 
 def test_flatbuffer_direct_transpose_norm_subgraph_pad_prepost_nhwc_chain_with_bypass_adapter() -> None:
-    model_ir = ModelIR(name="transpose_norm_subgraph_pad_prepost_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_norm_subgraph_pad_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc", "skip_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -17008,7 +17042,7 @@ def test_flatbuffer_direct_transpose_norm_subgraph_pad_prepost_nhwc_chain_with_b
 
 
 def test_flatbuffer_direct_transpose_norm_subgraph_pad_prepost_nhwc_chain_with_shared_bypass_source() -> None:
-    model_ir = ModelIR(name="transpose_norm_subgraph_pad_prepost_nhwc_shared_bypass_source_test")
+    model_ir = ModelIR("transpose_norm_subgraph_pad_prepost_nhwc_shared_bypass_source_test")
     model_ir.inputs = ["x_nhwc", "skip_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -17166,7 +17200,7 @@ def test_flatbuffer_direct_transpose_norm_subgraph_pad_prepost_nhwc_chain_with_s
 
 
 def test_flatbuffer_direct_transpose_norm_subgraph_pad_prepost_nhwc_chain_with_external_nhwc_residual_source() -> None:
-    model_ir = ModelIR(name="transpose_norm_subgraph_pad_prepost_nhwc_external_nhwc_residual_test")
+    model_ir = ModelIR("transpose_norm_subgraph_pad_prepost_nhwc_external_nhwc_residual_test")
     model_ir.inputs = ["x_nhwc", "skip_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -17314,7 +17348,7 @@ def test_flatbuffer_direct_transpose_norm_subgraph_pad_prepost_nhwc_chain_with_e
 
 
 def test_flatbuffer_direct_transpose_norm_subgraph_pad_prepost_nhwc_chain_with_external_dynamic_channelwise_rank4() -> None:
-    model_ir = ModelIR(name="transpose_norm_subgraph_pad_prepost_nhwc_external_channelwise_rank4_opt_test")
+    model_ir = ModelIR("transpose_norm_subgraph_pad_prepost_nhwc_external_channelwise_rank4_opt_test")
     model_ir.inputs = ["x_nhwc", "gamma_vec", "bias_vec"]
     model_ir.outputs = ["z"]
 
@@ -17448,7 +17482,7 @@ def test_flatbuffer_direct_transpose_norm_subgraph_pad_prepost_nhwc_chain_with_e
 
 
 def test_flatbuffer_direct_transpose_instancenorm_mirror_pad_prepost_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_instancenorm_mirror_pad_prepost_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_instancenorm_mirror_pad_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -17657,7 +17691,7 @@ def test_flatbuffer_direct_transpose_instancenorm_mirror_pad_prepost_nhwc_chain_
 
 
 def test_flatbuffer_direct_transpose_instancenorm_posttranspose_bias_add_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_instancenorm_posttranspose_bias_add_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_instancenorm_posttranspose_bias_add_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc", "skip_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -17847,7 +17881,7 @@ def test_flatbuffer_direct_transpose_instancenorm_posttranspose_bias_add_nhwc_ch
 
 
 def test_flatbuffer_direct_transpose_flatten_globalnorm_pad_prepost_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_flatten_globalnorm_pad_prepost_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_flatten_globalnorm_pad_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -18117,7 +18151,7 @@ def test_flatbuffer_direct_transpose_flatten_globalnorm_pad_prepost_nhwc_chain_o
 
 
 def test_flatbuffer_direct_transpose_instancenorm_mirror_pad_prepost_nhwc_with_side_consumer() -> None:
-    model_ir = ModelIR(name="transpose_instancenorm_mirror_pad_prepost_nhwc_side_consumer_opt_test")
+    model_ir = ModelIR("transpose_instancenorm_mirror_pad_prepost_nhwc_side_consumer_opt_test")
     model_ir.inputs = ["x_nhwc", "skip_nchw"]
     model_ir.outputs = ["z", "side_out"]
 
@@ -18334,7 +18368,7 @@ def test_flatbuffer_direct_transpose_instancenorm_mirror_pad_prepost_nhwc_with_s
 
 
 def test_flatbuffer_direct_transpose_instancenorm_residual_add_pad_prepost_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_instancenorm_residual_add_pad_prepost_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_instancenorm_residual_add_pad_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc", "skip_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -18565,7 +18599,7 @@ def test_flatbuffer_direct_transpose_instancenorm_residual_add_pad_prepost_nhwc_
 
 
 def test_flatbuffer_direct_transpose_instancenorm_residual_add_single_post_adapter_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_instancenorm_residual_add_single_post_adapter_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_instancenorm_residual_add_single_post_adapter_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc", "res_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -18772,7 +18806,7 @@ def test_flatbuffer_direct_transpose_instancenorm_residual_add_single_post_adapt
 
 
 def test_flatbuffer_direct_transpose_dual_mul_concat_prepost_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_dual_mul_concat_prepost_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_dual_mul_concat_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc", "aux_nchw"]
     model_ir.outputs = ["z", "aux_out"]
 
@@ -18902,7 +18936,7 @@ def test_flatbuffer_direct_transpose_dual_mul_concat_prepost_nhwc_chain_optimize
 
 
 def test_flatbuffer_direct_transpose_instancenorm_residual_mul_concat_conv_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_instancenorm_residual_mul_concat_conv_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_instancenorm_residual_mul_concat_conv_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc", "res_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -19169,7 +19203,7 @@ def test_flatbuffer_direct_transpose_instancenorm_residual_mul_concat_conv_nhwc_
 
 
 def test_flatbuffer_direct_transpose_3d_leaky_logistic_muladd_ndhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_3d_leaky_logistic_muladd_ndhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_3d_leaky_logistic_muladd_ndhwc_chain_opt_test")
     model_ir.inputs = ["base_nhwc", "skip_ndhwc", "gate_ndhwc"]
     model_ir.outputs = ["y0", "y1"]
 
@@ -19345,7 +19379,7 @@ def test_flatbuffer_direct_transpose_3d_leaky_logistic_muladd_ndhwc_chain_optimi
 
 
 def test_flatbuffer_direct_transpose_pre_unary_reshape_transpose_suffix_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_pre_unary_reshape_transpose_suffix_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_pre_unary_reshape_transpose_suffix_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -19435,7 +19469,7 @@ def test_flatbuffer_direct_transpose_pre_unary_reshape_transpose_suffix_nhwc_cha
 
 
 def test_flatbuffer_direct_transpose_reshape_transpose_to_expanddims_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_reshape_transpose_to_expanddims_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_reshape_transpose_to_expanddims_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -19511,7 +19545,7 @@ def test_flatbuffer_direct_transpose_reshape_transpose_to_expanddims_nhwc_chain_
 
 
 def test_flatbuffer_direct_transpose_reshape_transpose_to_expanddims_nhwc_channel_tail_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_reshape_transpose_to_expanddims_nhwc_channel_tail_chain_opt_test")
+    model_ir = ModelIR("transpose_reshape_transpose_to_expanddims_nhwc_channel_tail_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -19587,7 +19621,7 @@ def test_flatbuffer_direct_transpose_reshape_transpose_to_expanddims_nhwc_channe
 
 
 def test_flatbuffer_direct_transpose_mul_add_const_prelu_prepost_terminal_optimized() -> None:
-    model_ir = ModelIR(name="transpose_mul_add_const_prelu_prepost_terminal_opt_test")
+    model_ir = ModelIR("transpose_mul_add_const_prelu_prepost_terminal_opt_test")
     model_ir.inputs = ["x_nhwc", "legacy_nchw"]
     model_ir.outputs = ["z", "legacy_cat"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -19721,7 +19755,7 @@ def test_flatbuffer_direct_transpose_mul_add_const_prelu_prepost_terminal_optimi
 
 
 def test_flatbuffer_direct_singleton_spatial_transpose_before_flatten_reshape_removed() -> None:
-    model_ir = ModelIR(name="singleton_spatial_transpose_flatten_test")
+    model_ir = ModelIR("singleton_spatial_transpose_flatten_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -19783,7 +19817,7 @@ def test_flatbuffer_direct_singleton_spatial_transpose_before_flatten_reshape_re
 
 
 def test_flatbuffer_direct_singleton_spatial_transpose_identity_reshape_flatten_removed() -> None:
-    model_ir = ModelIR(name="singleton_spatial_transpose_identity_reshape_flatten_test")
+    model_ir = ModelIR("singleton_spatial_transpose_identity_reshape_flatten_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -19866,7 +19900,7 @@ def test_flatbuffer_direct_singleton_spatial_transpose_identity_reshape_flatten_
 
 
 def test_flatbuffer_direct_sinet_concat_resize_affine_transpose_chain_optimized() -> None:
-    model_ir = ModelIR(name="sinet_concat_resize_affine_transpose_opt_test")
+    model_ir = ModelIR("sinet_concat_resize_affine_transpose_opt_test")
     model_ir.inputs = ["pre_nhwc", "b0_nhwc", "rz_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["pre_nhwc"] = TensorIR(
@@ -20025,7 +20059,7 @@ def test_flatbuffer_direct_sinet_concat_resize_affine_transpose_chain_optimized(
 
 
 def test_flatbuffer_direct_sinet_dual_resize_affine_transpose_chain_optimized() -> None:
-    model_ir = ModelIR(name="sinet_dual_resize_affine_transpose_opt_test")
+    model_ir = ModelIR("sinet_dual_resize_affine_transpose_opt_test")
     model_ir.inputs = ["pre_nhwc", "r0_nhwc", "r1_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -20195,7 +20229,7 @@ def test_flatbuffer_direct_sinet_dual_resize_affine_transpose_chain_optimized() 
 
 
 def test_flatbuffer_direct_transpose_pre_concat_nhwc_partial_match_does_not_mutate_swish_input() -> None:
-    model_ir = ModelIR(name="transpose_pre_concat_nhwc_partial_match_no_mutation_test")
+    model_ir = ModelIR("transpose_pre_concat_nhwc_partial_match_no_mutation_test")
     model_ir.inputs = ["x_nhwc", "residual_nchw"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -20284,7 +20318,7 @@ def test_flatbuffer_direct_transpose_pre_concat_nhwc_partial_match_does_not_muta
     stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
     assert stats["optimized_transpose_pre_concat_nhwc_chains"] == 0
     assert list(model_ir.tensors["swish_out"].shape) == [1, 384, 6, 6]
-    assert list(model_ir.tensors["swish_out"].shape_signature) == [1, 384, 6, 6]
+    assert _shape_signature(model_ir.tensors["swish_out"]) == [1, 384, 6, 6]
     assert [str(op.op_type) for op in model_ir.operators] == [
         "TRANSPOSE",
         "LOGISTIC",
@@ -20296,7 +20330,7 @@ def test_flatbuffer_direct_transpose_pre_concat_nhwc_partial_match_does_not_muta
 
 
 def test_flatbuffer_direct_transpose_pre_concat_nhwc_relu_and_swish_inputs_optimized() -> None:
-    model_ir = ModelIR(name="transpose_pre_concat_nhwc_relu_swish_opt_test")
+    model_ir = ModelIR("transpose_pre_concat_nhwc_relu_swish_opt_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x0_nhwc"] = TensorIR(
@@ -20407,7 +20441,7 @@ def test_flatbuffer_direct_transpose_pre_concat_nhwc_relu_and_swish_inputs_optim
 
 
 def test_flatbuffer_direct_transpose_pre_concat_ndhwc_unary_inputs_optimized() -> None:
-    model_ir = ModelIR(name="transpose_pre_concat_ndhwc_unary_opt_test")
+    model_ir = ModelIR("transpose_pre_concat_ndhwc_unary_opt_test")
     model_ir.inputs = ["x0_ndhwc", "x1_ndhwc"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x0_ndhwc"] = TensorIR(
@@ -20504,7 +20538,7 @@ def test_flatbuffer_direct_transpose_pre_concat_ndhwc_unary_inputs_optimized() -
 
 
 def test_flatbuffer_direct_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_conv3d_leaky_mul_unsqueeze_ndhwc_opt_test")
+    model_ir = ModelIR("transpose_conv3d_leaky_mul_unsqueeze_ndhwc_opt_test")
     model_ir.inputs = ["sem_ndhwc", "conv_ndhwc"]
     model_ir.outputs = ["y"]
 
@@ -20679,7 +20713,7 @@ def test_flatbuffer_direct_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chain_opti
 
 
 def test_flatbuffer_direct_transpose_pre_concat_single_post_adapter_supports_relu_inputs() -> None:
-    model_ir = ModelIR(name="transpose_pre_concat_single_post_adapter_relu_test")
+    model_ir = ModelIR("transpose_pre_concat_single_post_adapter_relu_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x0_nhwc"] = TensorIR(
@@ -20780,7 +20814,7 @@ def test_flatbuffer_direct_transpose_pre_concat_single_post_adapter_supports_rel
 
 
 def test_flatbuffer_direct_transpose_pre_concat_single_post_adapter_supports_unary_after_singleton_reshape() -> None:
-    model_ir = ModelIR(name="transpose_pre_concat_single_post_adapter_unary_singleton_reshape_test")
+    model_ir = ModelIR("transpose_pre_concat_single_post_adapter_unary_singleton_reshape_test")
     model_ir.inputs = ["b0_nhwc", "b1_nhwc", "b2_nhwc"]
     model_ir.outputs = ["out_nchw"]
     model_ir.tensors["b0_nhwc"] = TensorIR(
@@ -20878,7 +20912,7 @@ def test_flatbuffer_direct_transpose_pre_concat_single_post_adapter_supports_una
 
 
 def test_flatbuffer_direct_transpose_split_mixed_pre_concat_single_post_adapter_optimized() -> None:
-    model_ir = ModelIR(name="transpose_split_mixed_pre_concat_single_post_adapter_test")
+    model_ir = ModelIR("transpose_split_mixed_pre_concat_single_post_adapter_test")
     model_ir.inputs = ["split_in_nchw", "b0_nhwc", "b1_nhwc", "b2_nhwc"]
     model_ir.outputs = ["out_nchw", "gate"]
     model_ir.tensors["split_axis"] = TensorIR(
@@ -21026,7 +21060,7 @@ def test_flatbuffer_direct_transpose_split_mixed_pre_concat_single_post_adapter_
 
 
 def test_flatbuffer_direct_transpose_relu_split_all_outputs_to_nhwc_chains_optimized() -> None:
-    model_ir = ModelIR(name="transpose_relu_split_all_outputs_to_nhwc_test")
+    model_ir = ModelIR("transpose_relu_split_all_outputs_to_nhwc_test")
     model_ir.inputs = ["src_nhwc"]
     model_ir.outputs = ["out0", "out1"]
     model_ir.tensors["to_nchw_perm"] = TensorIR(
@@ -21144,7 +21178,7 @@ def test_flatbuffer_direct_transpose_relu_split_all_outputs_to_nhwc_chains_optim
 
 
 def test_flatbuffer_direct_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains_optimized() -> None:
-    model_ir = ModelIR(name="transpose_relu_split_conv_relu_concat_posttranspose_test")
+    model_ir = ModelIR("transpose_relu_split_conv_relu_concat_posttranspose_test")
     model_ir.inputs = ["src_nhwc"]
     model_ir.outputs = ["sink"]
     model_ir.tensors["to_nchw_perm"] = TensorIR(
@@ -21306,7 +21340,7 @@ def test_flatbuffer_direct_transpose_relu_split_conv_relu_concat_posttranspose_t
 
 
 def test_flatbuffer_direct_shufflenet_transpose_shuffle_chain_optimized() -> None:
-    model_ir = ModelIR(name="shufflenet_transpose_shuffle_chain_opt_test")
+    model_ir = ModelIR("shufflenet_transpose_shuffle_chain_opt_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
     model_ir.outputs = ["out_nchw"]
 
@@ -21511,7 +21545,7 @@ def test_flatbuffer_direct_shufflenet_transpose_shuffle_chain_optimized() -> Non
 
 
 def test_flatbuffer_direct_shufflenet_transpose_slice_shuffle_chain_optimized() -> None:
-    model_ir = ModelIR(name="shufflenet_transpose_slice_shuffle_chain_opt_test")
+    model_ir = ModelIR("shufflenet_transpose_slice_shuffle_chain_opt_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
     model_ir.outputs = ["out_nchw"]
 
@@ -21735,7 +21769,7 @@ def test_flatbuffer_direct_shufflenet_transpose_slice_shuffle_chain_optimized() 
 
 
 def test_flatbuffer_direct_transpose_slice_logistic_concat_reshape_tail_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_slice_logistic_concat_reshape_tail_nhwc_opt_test")
+    model_ir = ModelIR("transpose_slice_logistic_concat_reshape_tail_nhwc_opt_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc", "x2_nhwc", "x3_nhwc"]
     model_ir.outputs = ["out_nchw"]
 
@@ -21907,7 +21941,7 @@ def test_flatbuffer_direct_transpose_slice_logistic_concat_reshape_tail_nhwc_cha
 
 
 def test_flatbuffer_direct_transpose_cost_volume_scatter_ndhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_cost_volume_scatter_ndhwc_opt_test")
+    model_ir = ModelIR("transpose_cost_volume_scatter_ndhwc_opt_test")
     model_ir.inputs = ["desc0_nhwc", "desc1_nhwc"]
     model_ir.outputs = ["conv_out"]
 
@@ -22085,7 +22119,7 @@ def test_flatbuffer_direct_transpose_cost_volume_scatter_ndhwc_chain_optimized()
 
 
 def test_flatbuffer_direct_shufflenet_reshape_transpose_shuffle_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="shufflenet_reshape_transpose_shuffle_nhwc_opt_test")
+    model_ir = ModelIR("shufflenet_reshape_transpose_shuffle_nhwc_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y0", "y1"]
 
@@ -22212,7 +22246,7 @@ def test_flatbuffer_direct_shufflenet_reshape_transpose_shuffle_nhwc_chain_optim
 
 
 def test_flatbuffer_direct_nchw_channel_shuffle_reshape_transpose_reshape_to_gather_optimized() -> None:
-    model_ir = ModelIR(name="nchw_channel_shuffle_reshape_transpose_reshape_to_gather_opt_test")
+    model_ir = ModelIR("nchw_channel_shuffle_reshape_transpose_reshape_to_gather_opt_test")
     model_ir.inputs = ["x_nchw"]
     model_ir.outputs = ["y_nchw"]
 
@@ -22285,7 +22319,7 @@ def test_flatbuffer_direct_nchw_channel_shuffle_reshape_transpose_reshape_to_gat
 
 
 def test_flatbuffer_direct_transpose_gather_transpose_axis_remap_nhwc_optimized() -> None:
-    model_ir = ModelIR(name="transpose_gather_transpose_axis_remap_nhwc_opt_test")
+    model_ir = ModelIR("transpose_gather_transpose_axis_remap_nhwc_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nhwc"]
 
@@ -22362,7 +22396,7 @@ def test_flatbuffer_direct_transpose_gather_transpose_axis_remap_nhwc_optimized(
 
 
 def test_flatbuffer_direct_transpose_gather_transpose_axis_remap_nhwc_keeps_shared_pre_transpose() -> None:
-    model_ir = ModelIR(name="transpose_gather_transpose_axis_remap_nhwc_shared_pre_test")
+    model_ir = ModelIR("transpose_gather_transpose_axis_remap_nhwc_shared_pre_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nhwc", "side_nchw"]
 
@@ -22447,7 +22481,7 @@ def test_flatbuffer_direct_transpose_gather_transpose_axis_remap_nhwc_keeps_shar
 
 
 def test_flatbuffer_direct_transpose_pre_add_nhwc_rewrites_gather_input_and_shared_mul_const() -> None:
-    model_ir = ModelIR(name="transpose_pre_add_nhwc_gather_shared_mul_const_test")
+    model_ir = ModelIR("transpose_pre_add_nhwc_gather_shared_mul_const_test")
     model_ir.inputs = ["x_nhwc", "y_nhwc"]
     model_ir.outputs = ["bn_out_nhwc"]
 
@@ -22611,7 +22645,7 @@ def test_flatbuffer_direct_transpose_pre_add_nhwc_rewrites_gather_input_and_shar
 
 
 def test_flatbuffer_direct_transpose_pre_add_nhwc_shared_concat_and_unary_input() -> None:
-    model_ir = ModelIR(name="transpose_pre_add_shared_concat_and_unary_test")
+    model_ir = ModelIR("transpose_pre_add_shared_concat_and_unary_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
     model_ir.outputs = ["legacy_cat"]
     model_ir.tensors["x0_nhwc"] = TensorIR(
@@ -22710,7 +22744,7 @@ def test_flatbuffer_direct_transpose_pre_add_nhwc_shared_concat_and_unary_input(
 
 
 def test_flatbuffer_direct_transpose_pre_add_nhwc_with_leakyrelu_inputs() -> None:
-    model_ir = ModelIR(name="transpose_pre_add_nhwc_with_leakyrelu_inputs_test")
+    model_ir = ModelIR("transpose_pre_add_nhwc_with_leakyrelu_inputs_test")
     model_ir.inputs = ["a_nhwc", "b_nhwc"]
     model_ir.outputs = ["tail"]
     model_ir.tensors["a_nhwc"] = TensorIR(
@@ -22820,7 +22854,7 @@ def test_flatbuffer_direct_transpose_pre_add_nhwc_with_leakyrelu_inputs() -> Non
 
 
 def test_flatbuffer_direct_transpose_pre_add_nhwc_with_nested_add_const_affine() -> None:
-    model_ir = ModelIR(name="transpose_pre_add_nhwc_with_nested_add_const_affine_test")
+    model_ir = ModelIR("transpose_pre_add_nhwc_with_nested_add_const_affine_test")
     model_ir.inputs = ["main_nhwc", "skip_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["main_nhwc"] = TensorIR(
@@ -22958,7 +22992,7 @@ def test_flatbuffer_direct_transpose_pre_add_nhwc_with_nested_add_const_affine()
 
 
 def test_flatbuffer_direct_transpose_pre_concat_nhwc_shared_direct_and_nested_add_optimized() -> None:
-    model_ir = ModelIR(name="transpose_pre_concat_nhwc_shared_direct_nested_add_test")
+    model_ir = ModelIR("transpose_pre_concat_nhwc_shared_direct_nested_add_test")
     model_ir.inputs = ["a_nhwc", "b_nhwc", "c_nhwc", "d_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["a_nhwc"] = TensorIR(
@@ -23101,7 +23135,7 @@ def test_flatbuffer_direct_transpose_pre_concat_nhwc_shared_direct_and_nested_ad
 
 
 def test_flatbuffer_direct_transpose_pre_concat_nhwc_pad_input_optimized() -> None:
-    model_ir = ModelIR(name="transpose_pre_concat_nhwc_pad_input_opt_test")
+    model_ir = ModelIR("transpose_pre_concat_nhwc_pad_input_opt_test")
     model_ir.inputs = ["a_nhwc", "b_nhwc"]
     model_ir.outputs = ["y"]
     model_ir.tensors["a_nhwc"] = TensorIR(
@@ -23227,7 +23261,7 @@ def test_flatbuffer_direct_transpose_pre_concat_nhwc_pad_input_optimized() -> No
 
 
 def test_flatbuffer_direct_transpose_pre_concat_nhwc_dequant_input_optimized() -> None:
-    model_ir = ModelIR(name="transpose_pre_concat_nhwc_dequant_input_opt_test")
+    model_ir = ModelIR("transpose_pre_concat_nhwc_dequant_input_opt_test")
     model_ir.inputs = ["a_q_nhwc", "b_q_nhwc"]
     model_ir.outputs = ["y"]
     model_ir.tensors["a_q_nhwc"] = TensorIR(
@@ -23338,7 +23372,7 @@ def test_flatbuffer_direct_transpose_pre_concat_nhwc_dequant_input_optimized() -
 
 
 def test_flatbuffer_direct_transpose_axis3_const_concat_bridge_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_axis3_const_concat_bridge_nhwc_opt_test")
+    model_ir = ModelIR("transpose_axis3_const_concat_bridge_nhwc_opt_test")
     model_ir.inputs = ["stem_nhwc"]
     model_ir.outputs = ["y_nhwc", "mean_nchw"]
 
@@ -23469,7 +23503,7 @@ def test_flatbuffer_direct_transpose_axis3_const_concat_bridge_nhwc_chain_optimi
 
 
 def test_flatbuffer_direct_transpose_elementwise_concat_conv_nhwc_groups_optimized() -> None:
-    model_ir = ModelIR(name="transpose_elementwise_concat_conv_nhwc_groups_opt_test")
+    model_ir = ModelIR("transpose_elementwise_concat_conv_nhwc_groups_opt_test")
     model_ir.inputs = ["a_nhwc", "b_nhwc", "c_nhwc"]
     model_ir.outputs = ["y0", "y1"]
     model_ir.tensors["a_nhwc"] = TensorIR(
@@ -23669,7 +23703,7 @@ def test_flatbuffer_direct_transpose_elementwise_concat_conv_nhwc_groups_optimiz
 
 
 def test_flatbuffer_direct_transpose_leakyrelu_concat_conv_nhwc_groups_optimized() -> None:
-    model_ir = ModelIR(name="transpose_leakyrelu_concat_conv_nhwc_groups_opt_test")
+    model_ir = ModelIR("transpose_leakyrelu_concat_conv_nhwc_groups_opt_test")
     model_ir.inputs = ["a_nhwc", "b_nhwc"]
     model_ir.outputs = ["y"]
     model_ir.tensors["a_nhwc"] = TensorIR(
@@ -23792,7 +23826,7 @@ def test_flatbuffer_direct_transpose_leakyrelu_concat_conv_nhwc_groups_optimized
 
 
 def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized() -> None:
-    model_ir = ModelIR(name="transpose_conv_attention_nhwc_propagation_opt_test")
+    model_ir = ModelIR("transpose_conv_attention_nhwc_propagation_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -23967,7 +24001,7 @@ def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized()
 
 
 def test_flatbuffer_direct_transpose_conv_attention_hardsigmoid_nhwc_propagation_optimized() -> None:
-    model_ir = ModelIR(name="transpose_conv_attention_hardsigmoid_nhwc_propagation_opt_test")
+    model_ir = ModelIR("transpose_conv_attention_hardsigmoid_nhwc_propagation_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -24180,7 +24214,7 @@ def test_flatbuffer_direct_transpose_conv_attention_hardsigmoid_nhwc_propagation
 
 
 def test_flatbuffer_direct_transpose_conv_attention_hardswish_activation_nhwc_propagation_optimized() -> None:
-    model_ir = ModelIR(name="transpose_conv_attention_hardswish_activation_nhwc_propagation_opt_test")
+    model_ir = ModelIR("transpose_conv_attention_hardswish_activation_nhwc_propagation_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -24433,7 +24467,7 @@ def test_flatbuffer_direct_transpose_conv_attention_hardswish_activation_nhwc_pr
 
 
 def test_flatbuffer_direct_transpose_conv_hardswish_mean_conv_hardswish_mean_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_conv_hardswish_mean_conv_hardswish_mean_chain_opt_test")
+    model_ir = ModelIR("transpose_conv_hardswish_mean_conv_hardswish_mean_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -24658,7 +24692,7 @@ def test_flatbuffer_direct_transpose_conv_hardswish_mean_conv_hardswish_mean_cha
 
 
 def test_flatbuffer_direct_transpose_csp_attention_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_csp_attention_nhwc_chain_opt_test")
+    model_ir = ModelIR("transpose_csp_attention_nhwc_chain_opt_test")
     model_ir.inputs = ["short_nhwc", "main_nhwc", "point_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["short_nhwc"] = TensorIR(
@@ -24915,7 +24949,7 @@ def test_flatbuffer_direct_transpose_csp_attention_nhwc_chain_optimized() -> Non
 
 
 def test_flatbuffer_direct_transpose_csp_attention_nhwc_chain_without_main_add_optimized() -> None:
-    model_ir = ModelIR(name="transpose_csp_attention_nhwc_chain_no_add_opt_test")
+    model_ir = ModelIR("transpose_csp_attention_nhwc_chain_no_add_opt_test")
     model_ir.inputs = ["short_nhwc", "point_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["short_nhwc"] = TensorIR(
@@ -25150,7 +25184,7 @@ def test_flatbuffer_direct_transpose_csp_attention_nhwc_chain_without_main_add_o
 
 
 def test_flatbuffer_direct_hardsigmoid_mul_transpose_passthrough_with_legacy_fanout_keeps_adapter() -> None:
-    model_ir = ModelIR(name="hardsigmoid_mul_transpose_passthrough_legacy_fanout_test")
+    model_ir = ModelIR("hardsigmoid_mul_transpose_passthrough_legacy_fanout_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nhwc", "m_nhwc"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -25296,7 +25330,7 @@ def test_flatbuffer_direct_hardsigmoid_mul_transpose_passthrough_with_legacy_fan
 
 
 def test_flatbuffer_direct_fold_conv_mul_add_affine_chain_single_path() -> None:
-    model_ir = ModelIR(name="fold_conv_mul_add_affine_single_path_test")
+    model_ir = ModelIR("fold_conv_mul_add_affine_single_path_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -25414,7 +25448,7 @@ def test_flatbuffer_direct_fold_conv_mul_add_affine_chain_single_path() -> None:
 
 
 def test_flatbuffer_direct_fold_conv_mul_add_affine_chain_skips_conv_fanout() -> None:
-    model_ir = ModelIR(name="fold_conv_mul_add_affine_conv_fanout_skip_test")
+    model_ir = ModelIR("fold_conv_mul_add_affine_conv_fanout_skip_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y", "branch"]
     model_ir.tensors["x"] = TensorIR(
@@ -25495,7 +25529,7 @@ def test_flatbuffer_direct_fold_conv_mul_add_affine_chain_skips_conv_fanout() ->
 
 
 def test_flatbuffer_direct_fold_conv_mul_affine_chain_single_path() -> None:
-    model_ir = ModelIR(name="fold_conv_mul_affine_single_path_test")
+    model_ir = ModelIR("fold_conv_mul_affine_single_path_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -25594,7 +25628,7 @@ def test_flatbuffer_direct_fold_conv_mul_affine_chain_single_path() -> None:
 
 
 def test_flatbuffer_direct_fold_conv_relu_mul_add_affine_chain_folds_mul_only() -> None:
-    model_ir = ModelIR(name="fold_conv_relu_mul_add_affine_mul_only_test")
+    model_ir = ModelIR("fold_conv_relu_mul_add_affine_mul_only_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -25697,7 +25731,7 @@ def test_flatbuffer_direct_fold_conv_relu_mul_add_affine_chain_folds_mul_only() 
 
 
 def test_flatbuffer_direct_fold_conv_relu_mul_affine_chain_skips_negative_scale() -> None:
-    model_ir = ModelIR(name="fold_conv_relu_mul_affine_negative_scale_skip_test")
+    model_ir = ModelIR("fold_conv_relu_mul_affine_negative_scale_skip_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -25763,7 +25797,7 @@ def test_flatbuffer_direct_fold_conv_relu_mul_affine_chain_skips_negative_scale(
 
 
 def test_flatbuffer_direct_fold_conv_add_affine_chain_single_path() -> None:
-    model_ir = ModelIR(name="fold_conv_add_affine_single_path_test")
+    model_ir = ModelIR("fold_conv_add_affine_single_path_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -25863,7 +25897,7 @@ def test_flatbuffer_direct_fold_conv_add_affine_chain_single_path() -> None:
 
 
 def test_flatbuffer_direct_fold_conv_add_affine_chain_skips_add_fanout() -> None:
-    model_ir = ModelIR(name="fold_conv_add_affine_add_fanout_skip_test")
+    model_ir = ModelIR("fold_conv_add_affine_add_fanout_skip_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y0", "y1"]
     model_ir.tensors["x"] = TensorIR(
@@ -25931,7 +25965,7 @@ def test_flatbuffer_direct_fold_conv_add_affine_chain_skips_add_fanout() -> None
 
 
 def test_flatbuffer_direct_fold_conv_add_affine_chain_skips_leading_channel_coeff_shape() -> None:
-    model_ir = ModelIR(name="fold_conv_add_affine_leading_channel_coeff_skip_test")
+    model_ir = ModelIR("fold_conv_add_affine_leading_channel_coeff_skip_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -26000,7 +26034,7 @@ def test_flatbuffer_direct_fold_conv_add_affine_chain_skips_leading_channel_coef
 
 
 def test_flatbuffer_direct_fold_conv_add_affine_chain_folds_relu6_muldiv_suffix() -> None:
-    model_ir = ModelIR(name="fold_conv_add_affine_relu6_muldiv_suffix_fold_test")
+    model_ir = ModelIR("fold_conv_add_affine_relu6_muldiv_suffix_fold_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -26097,7 +26131,7 @@ def test_flatbuffer_direct_fold_conv_add_affine_chain_folds_relu6_muldiv_suffix(
 
 
 def test_flatbuffer_direct_repair_channelwise_broadcast_constants_rotates_rank3_to_nhwc() -> None:
-    model_ir = ModelIR(name="repair_channelwise_rank3_to_nhwc_test")
+    model_ir = ModelIR("repair_channelwise_rank3_to_nhwc_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -26139,7 +26173,7 @@ def test_flatbuffer_direct_repair_channelwise_broadcast_constants_rotates_rank3_
 
 
 def test_flatbuffer_direct_repair_channelwise_broadcast_constants_keeps_nchw_rank3() -> None:
-    model_ir = ModelIR(name="repair_channelwise_rank3_keep_nchw_test")
+    model_ir = ModelIR("repair_channelwise_rank3_keep_nchw_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -26179,7 +26213,7 @@ def test_flatbuffer_direct_repair_channelwise_broadcast_constants_keeps_nchw_ran
 
 
 def test_flatbuffer_direct_repair_channelwise_broadcast_constants_uses_logical_layout_on_ambiguous_rank4() -> None:
-    model_ir = ModelIR(name="repair_channelwise_rank4_ambiguous_logical_layout_test")
+    model_ir = ModelIR("repair_channelwise_rank4_ambiguous_logical_layout_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -26223,7 +26257,7 @@ def test_flatbuffer_direct_repair_channelwise_broadcast_constants_uses_logical_l
 
 
 def test_flatbuffer_direct_fold_conv_add_affine_chain_folds_fused_add_activation() -> None:
-    model_ir = ModelIR(name="fold_conv_add_affine_fused_add_activation_fold_test")
+    model_ir = ModelIR("fold_conv_add_affine_fused_add_activation_fold_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -26307,7 +26341,7 @@ def test_flatbuffer_direct_fold_conv_add_affine_chain_folds_fused_add_activation
 
 
 def test_flatbuffer_direct_asin_transpose_passthrough_chain() -> None:
-    model_ir = ModelIR(name="asin_transpose_passthrough_test")
+    model_ir = ModelIR("asin_transpose_passthrough_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -26377,7 +26411,7 @@ def test_flatbuffer_direct_asin_transpose_passthrough_chain() -> None:
 
 
 def test_flatbuffer_direct_erf_transpose_passthrough_chain() -> None:
-    model_ir = ModelIR(name="erf_transpose_passthrough_test")
+    model_ir = ModelIR("erf_transpose_passthrough_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -26478,7 +26512,7 @@ def test_flatbuffer_direct_erf_transpose_passthrough_chain() -> None:
 
 
 def test_flatbuffer_direct_transpose_mean_prepost_nhwc_passthrough_chain() -> None:
-    model_ir = ModelIR(name="transpose_mean_prepost_nhwc_passthrough_test")
+    model_ir = ModelIR("transpose_mean_prepost_nhwc_passthrough_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nhwc"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -26545,7 +26579,7 @@ def test_flatbuffer_direct_transpose_mean_prepost_nhwc_passthrough_chain() -> No
 
 
 def test_flatbuffer_direct_transpose_mean_prepost_nhwc_passthrough_keeps_pre_on_fanout() -> None:
-    model_ir = ModelIR(name="transpose_mean_prepost_nhwc_pre_fanout_keep_pre_test")
+    model_ir = ModelIR("transpose_mean_prepost_nhwc_pre_fanout_keep_pre_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nhwc", "side_nchw"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -26612,7 +26646,7 @@ def test_flatbuffer_direct_transpose_mean_prepost_nhwc_passthrough_keeps_pre_on_
 
 
 def test_flatbuffer_direct_mixed_mean_reducemax_concat_mirrorpad_nhwc_chain() -> None:
-    model_ir = ModelIR(name="mixed_mean_reducemax_concat_mirrorpad_nhwc_test")
+    model_ir = ModelIR("mixed_mean_reducemax_concat_mirrorpad_nhwc_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nhwc"]
     for name, shape in [
@@ -26730,7 +26764,7 @@ def test_flatbuffer_direct_mixed_mean_reducemax_concat_mirrorpad_nhwc_chain() ->
 
 
 def test_flatbuffer_direct_transpose_pre_unary_mean_terminal_nhwc_chain() -> None:
-    model_ir = ModelIR(name="transpose_pre_unary_mean_terminal_nhwc_test")
+    model_ir = ModelIR("transpose_pre_unary_mean_terminal_nhwc_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -26810,7 +26844,7 @@ def test_flatbuffer_direct_transpose_pre_unary_mean_terminal_nhwc_chain() -> Non
 
 
 def test_flatbuffer_direct_transpose_pre_mean_terminal_nhwc_chain_without_keepdims_option() -> None:
-    model_ir = ModelIR(name="transpose_pre_mean_terminal_nhwc_missing_keepdims_test")
+    model_ir = ModelIR("transpose_pre_mean_terminal_nhwc_missing_keepdims_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -26881,7 +26915,7 @@ def test_flatbuffer_direct_transpose_pre_mean_terminal_nhwc_chain_without_keepdi
 
 
 def test_flatbuffer_direct_transpose_se_conv_mul_prepost_nhwc_chain() -> None:
-    model_ir = ModelIR(name="transpose_se_conv_mul_prepost_nhwc_test")
+    model_ir = ModelIR("transpose_se_conv_mul_prepost_nhwc_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -26963,7 +26997,7 @@ def test_flatbuffer_direct_transpose_se_conv_mul_prepost_nhwc_chain() -> None:
 
 
 def test_flatbuffer_direct_transpose_se_conv_mul_prepost_nhwc_chain_with_squeeze_reshape_gate() -> None:
-    model_ir = ModelIR(name="transpose_se_conv_mul_prepost_nhwc_squeeze_reshape_gate_test")
+    model_ir = ModelIR("transpose_se_conv_mul_prepost_nhwc_squeeze_reshape_gate_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -27063,7 +27097,7 @@ def test_flatbuffer_direct_transpose_se_conv_mul_prepost_nhwc_chain_with_squeeze
 
 
 def test_flatbuffer_direct_transpose_se_conv_mul_prepost_nhwc_chain_with_affine_gate() -> None:
-    model_ir = ModelIR(name="transpose_se_conv_mul_prepost_nhwc_affine_gate_test")
+    model_ir = ModelIR("transpose_se_conv_mul_prepost_nhwc_affine_gate_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -27157,7 +27191,7 @@ def test_flatbuffer_direct_transpose_se_conv_mul_prepost_nhwc_chain_with_affine_
 
 
 def test_flatbuffer_direct_batchmatmul_affine_transpose_input_chains() -> None:
-    model_ir = ModelIR(name="batchmatmul_affine_transpose_inputs_test")
+    model_ir = ModelIR("batchmatmul_affine_transpose_inputs_test")
     model_ir.inputs = ["lhs_nhwc", "rhs_nhwc"]
     model_ir.outputs = ["bmm_out"]
 
@@ -27233,7 +27267,7 @@ def test_flatbuffer_direct_batchmatmul_affine_transpose_input_chains() -> None:
 
 
 def test_flatbuffer_direct_batchmatmul_reshape_se_nhwc_chains() -> None:
-    model_ir = ModelIR(name="batchmatmul_reshape_se_nhwc_chain_test")
+    model_ir = ModelIR("batchmatmul_reshape_se_nhwc_chain_test")
     model_ir.inputs = ["lhs_mat", "rhs_mat"]
     model_ir.outputs = ["z"]
 
@@ -27320,7 +27354,7 @@ def test_flatbuffer_direct_batchmatmul_reshape_se_nhwc_chains() -> None:
 
 
 def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain() -> None:
-    model_ir = ModelIR(name="transpose_se_fc_mul_prepost_nhwc_test")
+    model_ir = ModelIR("transpose_se_fc_mul_prepost_nhwc_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y"]
 
@@ -27442,7 +27476,7 @@ def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain() -> None:
 
 
 def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain_without_pool_pretranspose() -> None:
-    model_ir = ModelIR(name="transpose_se_fc_mul_prepost_nhwc_no_pool_pretranspose_test")
+    model_ir = ModelIR("transpose_se_fc_mul_prepost_nhwc_no_pool_pretranspose_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y"]
 
@@ -27536,7 +27570,7 @@ def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain_without_pool_p
 
 
 def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain_with_mean_and_post_relu0to1() -> None:
-    model_ir = ModelIR(name="transpose_se_fc_mul_prepost_nhwc_mean_relu0to1_test")
+    model_ir = ModelIR("transpose_se_fc_mul_prepost_nhwc_mean_relu0to1_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y"]
 
@@ -27650,7 +27684,7 @@ def test_flatbuffer_direct_transpose_se_fc_mul_prepost_nhwc_chain_with_mean_and_
 
 
 def test_flatbuffer_direct_safe_transpose_reduction_lite_removes_transpose_quantize_transpose_chain() -> None:
-    model_ir = ModelIR(name="safe_transpose_reduction_lite_tqt_chain_test")
+    model_ir = ModelIR("safe_transpose_reduction_lite_tqt_chain_test")
     model_ir.inputs = ["input"]
     model_ir.outputs = ["output"]
 
@@ -27750,7 +27784,7 @@ def test_flatbuffer_direct_safe_transpose_reduction_lite_removes_transpose_quant
 
 
 def test_flatbuffer_direct_singleton_channel_layout_transpose_rewritten_to_reshape() -> None:
-    model_ir = ModelIR(name="singleton_channel_transpose_to_reshape_test")
+    model_ir = ModelIR("singleton_channel_transpose_to_reshape_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nchw"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -27793,7 +27827,7 @@ def test_flatbuffer_direct_singleton_channel_layout_transpose_rewritten_to_resha
 
 
 def test_flatbuffer_direct_singleton_spatial_layout_transpose_rewritten_to_reshape() -> None:
-    model_ir = ModelIR(name="singleton_spatial_transpose_to_reshape_test")
+    model_ir = ModelIR("singleton_spatial_transpose_to_reshape_test")
     model_ir.inputs = ["x_nhwc", "y_nchw"]
     model_ir.outputs = ["x_nchw", "y_nhwc"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -27849,7 +27883,7 @@ def test_flatbuffer_direct_singleton_spatial_layout_transpose_rewritten_to_resha
 
 
 def test_flatbuffer_direct_singleton_moved_axis_transpose_rewritten_to_reshape() -> None:
-    model_ir = ModelIR(name="singleton_moved_axis_transpose_to_reshape_test")
+    model_ir = ModelIR("singleton_moved_axis_transpose_to_reshape_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -27883,7 +27917,7 @@ def test_flatbuffer_direct_singleton_moved_axis_transpose_rewritten_to_reshape()
 
 
 def test_flatbuffer_direct_dynamic_batch_singleton_reshape_transpose_collapses_to_single_reshape() -> None:
-    model_ir = ModelIR(name="dynamic_batch_singleton_reshape_transpose_collapse_test")
+    model_ir = ModelIR("dynamic_batch_singleton_reshape_transpose_collapse_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -27945,7 +27979,7 @@ def test_flatbuffer_direct_dynamic_batch_singleton_reshape_transpose_collapses_t
 
 
 def test_flatbuffer_direct_non_singleton_order_change_transpose_not_rewritten_to_reshape() -> None:
-    model_ir = ModelIR(name="non_singleton_order_change_transpose_test")
+    model_ir = ModelIR("non_singleton_order_change_transpose_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -27978,7 +28012,7 @@ def test_flatbuffer_direct_non_singleton_order_change_transpose_not_rewritten_to
 
 
 def test_flatbuffer_direct_singleton_layout_reshape_unary_passthrough_rewritten() -> None:
-    model_ir = ModelIR(name="singleton_layout_reshape_unary_passthrough_test")
+    model_ir = ModelIR("singleton_layout_reshape_unary_passthrough_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -28051,7 +28085,7 @@ def test_flatbuffer_direct_singleton_layout_reshape_unary_passthrough_rewritten(
 
 
 def test_flatbuffer_direct_squeeze_reshape_identity_chains_removed() -> None:
-    model_ir = ModelIR(name="squeeze_reshape_identity_chains_test")
+    model_ir = ModelIR("squeeze_reshape_identity_chains_test")
     model_ir.inputs = ["mean_out"]
     model_ir.outputs = ["conv_out"]
     model_ir.tensors["mean_out"] = TensorIR(
@@ -28132,7 +28166,7 @@ def test_flatbuffer_direct_squeeze_reshape_identity_chains_removed() -> None:
 
 
 def test_flatbuffer_direct_consecutive_inverse_singleton_layout_reshapes_removed() -> None:
-    model_ir = ModelIR(name="consecutive_inverse_singleton_layout_reshapes_test")
+    model_ir = ModelIR("consecutive_inverse_singleton_layout_reshapes_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nhwc"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -28189,7 +28223,7 @@ def test_flatbuffer_direct_consecutive_inverse_singleton_layout_reshapes_removed
 
 
 def test_flatbuffer_direct_consecutive_reshape_passthrough_chains_removed() -> None:
-    model_ir = ModelIR(name="consecutive_reshape_passthrough_test")
+    model_ir = ModelIR("consecutive_reshape_passthrough_test")
     model_ir.inputs = ["x0", "x1"]
     model_ir.outputs = ["y0", "y1"]
 
@@ -28246,7 +28280,7 @@ def test_flatbuffer_direct_consecutive_reshape_passthrough_chains_removed() -> N
 
 
 def test_flatbuffer_direct_consecutive_reshape_passthrough_chains_fanout_bypass() -> None:
-    model_ir = ModelIR(name="consecutive_reshape_passthrough_fanout_test")
+    model_ir = ModelIR("consecutive_reshape_passthrough_fanout_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["z", "y"]
 
@@ -28318,7 +28352,7 @@ def test_flatbuffer_direct_consecutive_reshape_passthrough_chains_fanout_bypass(
 
 
 def test_flatbuffer_direct_consecutive_reshape_passthrough_chains_removed_after_static_minus_one_resolution() -> None:
-    model_ir = ModelIR(name="consecutive_reshape_passthrough_static_minus_one_test")
+    model_ir = ModelIR("consecutive_reshape_passthrough_static_minus_one_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
 
@@ -28379,7 +28413,7 @@ def test_flatbuffer_direct_consecutive_reshape_passthrough_chains_removed_after_
 
 
 def test_flatbuffer_direct_flatten_concat_expanddims_to_nhwc_concat_rewritten() -> None:
-    model_ir = ModelIR(name="flatten_concat_expanddims_to_nhwc_concat_test")
+    model_ir = ModelIR("flatten_concat_expanddims_to_nhwc_concat_test")
     model_ir.inputs = ["a4d", "b2d"]
     model_ir.outputs = ["z4d"]
     model_ir.tensors["a4d"] = TensorIR(
@@ -28445,7 +28479,7 @@ def test_flatbuffer_direct_flatten_concat_expanddims_to_nhwc_concat_rewritten() 
 
 
 def test_flatbuffer_direct_non_singleton_channel_transpose_kept() -> None:
-    model_ir = ModelIR(name="non_singleton_channel_transpose_kept_test")
+    model_ir = ModelIR("non_singleton_channel_transpose_kept_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["x_nchw"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -28478,7 +28512,7 @@ def test_flatbuffer_direct_non_singleton_channel_transpose_kept() -> None:
 
 
 def test_flatbuffer_direct_singleton_channel_dynamic_signature_transpose_kept() -> None:
-    model_ir = ModelIR(name="singleton_channel_dynamic_signature_transpose_kept_test")
+    model_ir = ModelIR("singleton_channel_dynamic_signature_transpose_kept_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["x_nchw"]
     model_ir.tensors["x_nhwc"] = TensorIR(
@@ -28511,7 +28545,7 @@ def test_flatbuffer_direct_singleton_channel_dynamic_signature_transpose_kept() 
 
 
 def test_flatbuffer_direct_singleton_reshape_concat_post_transpose_rewritten_to_nhwc() -> None:
-    model_ir = ModelIR(name="singleton_reshape_concat_post_transpose_to_nhwc_test")
+    model_ir = ModelIR("singleton_reshape_concat_post_transpose_to_nhwc_test")
     model_ir.inputs = ["split0_nhwc", "split1_nhwc", "split2_nhwc", "clip_nhwc"]
     model_ir.outputs = ["z"]
 
@@ -28608,7 +28642,7 @@ def test_flatbuffer_direct_singleton_reshape_concat_post_transpose_rewritten_to_
 
 
 def test_flatbuffer_direct_duplicate_transpose_fanout_deduplicates_shared_layout_adapter() -> None:
-    model_ir = ModelIR(name="duplicate_transpose_fanout_dedup_test")
+    model_ir = ModelIR("duplicate_transpose_fanout_dedup_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y0", "y1"]
     model_ir.tensors["x"] = TensorIR(
@@ -28666,7 +28700,7 @@ def test_flatbuffer_direct_duplicate_transpose_fanout_deduplicates_shared_layout
 
 
 def test_flatbuffer_direct_duplicate_reshape_fanout_deduplicates_shared_layout_adapter() -> None:
-    model_ir = ModelIR(name="duplicate_reshape_fanout_dedup_test")
+    model_ir = ModelIR("duplicate_reshape_fanout_dedup_test")
     model_ir.inputs = ["x_nchw"]
     model_ir.outputs = ["y0", "y1"]
     model_ir.tensors["x_nchw"] = TensorIR(
@@ -28726,7 +28760,7 @@ def test_flatbuffer_direct_duplicate_reshape_fanout_deduplicates_shared_layout_a
 
 
 def test_flatbuffer_direct_center_size_offset_terminal_transpose_optimization() -> None:
-    model_ir = ModelIR(name="center_size_offset_terminal_transpose_opt_test")
+    model_ir = ModelIR("center_size_offset_terminal_transpose_opt_test")
     model_ir.inputs = ["center_nhwc", "size_nhwc", "offset_nhwc"]
     model_ir.outputs = ["center_flat", "gather_size", "gather_offset"]
     model_ir.tensors["center_nhwc"] = TensorIR(
@@ -29018,7 +29052,7 @@ def test_flatbuffer_direct_qlinear_global_average_pool_lowering() -> None:
     y = model_ir.tensors.get("y")
     assert y is not None
     assert list(y.shape) == [1, 1, 1, 2]
-    assert list(y.shape_signature) == [1, 1, 1, 2]
+    assert _shape_signature(y) == [1, 1, 1, 2]
 
 
 def test_flatbuffer_direct_qlinear_concat_lowering() -> None:
@@ -29037,7 +29071,7 @@ def test_flatbuffer_direct_qlinear_concat_lowering() -> None:
     y = model_ir.tensors.get("y")
     assert y is not None
     assert list(y.shape) == [1, 2, 2, 2]
-    assert list(y.shape_signature) == [1, 2, 2, 2]
+    assert _shape_signature(y) == [1, 2, 2, 2]
 
 
 def test_flatbuffer_direct_elides_inverse_transpose_chain_at_generation() -> None:
@@ -29300,16 +29334,16 @@ def test_flatbuffer_direct_fused_conv_unknown_rank_io_materializes_rank4_shapes(
     assert len(list(output_tensor.shape)) == 4
     assert input_tensor.shape_signature is not None
     assert output_tensor.shape_signature is not None
-    assert len(list(input_tensor.shape_signature)) == 4
-    assert len(list(output_tensor.shape_signature)) == 4
-    assert int(input_tensor.shape_signature[1]) == 3
-    output_sig = [int(v) for v in list(output_tensor.shape_signature)]
+    assert len(_shape_signature(input_tensor)) == 4
+    assert len(_shape_signature(output_tensor)) == 4
+    assert int(_shape_signature(input_tensor)[1]) == 3
+    output_sig = [int(v) for v in _shape_signature(output_tensor)]
     output_shape = [int(v) for v in list(output_tensor.shape)]
     assert 4 in output_sig or 4 in output_shape
 
 
 def test_flatbuffer_direct_serialize_model_prunes_dead_ops() -> None:
-    model_ir = ModelIR(name="serialize_prune_test")
+    model_ir = ModelIR("serialize_prune_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 3])
@@ -29349,7 +29383,7 @@ def test_flatbuffer_direct_serialize_model_prunes_dead_ops() -> None:
 
 
 def test_flatbuffer_direct_serialize_model_keeps_stateful_variable_side_effect_ops() -> None:
-    model_ir = ModelIR(name="serialize_stateful_keep_test")
+    model_ir = ModelIR("serialize_stateful_keep_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 1, 2])
@@ -29413,7 +29447,7 @@ def test_flatbuffer_direct_serialize_model_keeps_stateful_variable_side_effect_o
 
 
 def test_flatbuffer_direct_serialize_model_supports_one_hot() -> None:
-    model_ir = ModelIR(name="serialize_one_hot_test")
+    model_ir = ModelIR("serialize_one_hot_test")
     model_ir.inputs = ["indices"]
     model_ir.outputs = ["y"]
     model_ir.tensors["indices"] = TensorIR(name="indices", dtype="INT32", shape=[2])
@@ -29454,7 +29488,7 @@ def test_flatbuffer_direct_serialize_model_supports_one_hot() -> None:
 
 
 def test_flatbuffer_direct_serialize_model_supports_pow() -> None:
-    model_ir = ModelIR(name="serialize_pow_test")
+    model_ir = ModelIR("serialize_pow_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 3])
@@ -29482,7 +29516,7 @@ def test_flatbuffer_direct_serialize_model_supports_pow() -> None:
 
 
 def test_flatbuffer_direct_serialize_model_supports_leaky_relu() -> None:
-    model_ir = ModelIR(name="serialize_leaky_relu_test")
+    model_ir = ModelIR("serialize_leaky_relu_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 3])
@@ -29507,7 +29541,7 @@ def test_flatbuffer_direct_serialize_model_supports_leaky_relu() -> None:
 
 
 def test_flatbuffer_direct_serialize_model_supports_mirror_pad() -> None:
-    model_ir = ModelIR(name="serialize_mirror_pad_test")
+    model_ir = ModelIR("serialize_mirror_pad_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4])
@@ -29541,7 +29575,7 @@ def test_flatbuffer_direct_serialize_model_supports_mirror_pad() -> None:
 
 
 def test_flatbuffer_direct_serialize_model_supports_fill() -> None:
-    model_ir = ModelIR(name="serialize_fill_test")
+    model_ir = ModelIR("serialize_fill_test")
     model_ir.outputs = ["y"]
     model_ir.tensors["shape"] = TensorIR(
         name="shape",
@@ -29573,7 +29607,7 @@ def test_flatbuffer_direct_serialize_model_supports_fill() -> None:
 
 
 def test_flatbuffer_direct_serialize_model_sanitizes_negative_tensor_shape() -> None:
-    model_ir = ModelIR(name="serialize_negative_shape_sanitize_test")
+    model_ir = ModelIR("serialize_negative_shape_sanitize_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1], shape_signature=[-1])
@@ -29672,7 +29706,7 @@ def test_flatbuffer_direct_transpose_quantize_transpose_preserves_dynamic_batch_
     out_tensor = model_ir.tensors[out_name]
     assert out_tensor is not None
     assert out_tensor.shape_signature is not None
-    assert int(out_tensor.shape_signature[0]) == -1
+    assert int(_shape_signature(out_tensor)[0]) == -1
 
 
 def test_flatbuffer_direct_transpose_binary_fanout_chain_optimization() -> None:
@@ -29706,7 +29740,7 @@ def test_flatbuffer_direct_gather_singleton_const_indices_scalarized_for_rank_re
     gather_indices_tensor = model_ir.tensors[gather_indices_name]
     assert gather_indices_name != "indices"
     assert list(gather_indices_tensor.shape) == [1]
-    assert list(gather_indices_tensor.shape_signature) == [1]
+    assert _shape_signature(gather_indices_tensor) == [1]
 
     reshape_to_output_ops = [
         op
@@ -29733,7 +29767,7 @@ def test_flatbuffer_direct_gather_singleton_negative_const_indices_wrapped_befor
     gather_indices_tensor = model_ir.tensors[gather_indices_name]
     assert gather_indices_name != "indices"
     assert list(gather_indices_tensor.shape) == [1]
-    assert list(gather_indices_tensor.shape_signature) == [1]
+    assert _shape_signature(gather_indices_tensor) == [1]
     gather_indices = np.asarray(gather_indices_tensor.data, dtype=np.int64).reshape(-1)
     assert gather_indices.tolist() == [3]
 
@@ -29752,7 +29786,7 @@ def test_flatbuffer_direct_gather_runtime_scalar_indices_are_normalized_to_1d() 
     gather_indices_name = str(gather_op.inputs[1])
     gather_indices_tensor = model_ir.tensors[gather_indices_name]
     assert list(gather_indices_tensor.shape) == [1]
-    assert list(gather_indices_tensor.shape_signature) == [1]
+    assert _shape_signature(gather_indices_tensor) == [1]
 
     reshape_to_output_ops = [
         op
@@ -29799,7 +29833,7 @@ def test_flatbuffer_direct_gather_runtime_negative_indices_are_normalized_before
     gather_indices_tensor = model_ir.tensors[gather_indices_name]
     assert gather_indices_name != "indices_runtime"
     assert list(gather_indices_tensor.shape) == [2]
-    assert list(gather_indices_tensor.shape_signature) == [2]
+    assert _shape_signature(gather_indices_tensor) == [2]
 
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert "LESS" in op_types
@@ -29866,7 +29900,7 @@ def test_flatbuffer_direct_flatten_unsqueeze_placeholder_shapes_are_inferred_fro
     )
 
     flatten_tensor = model_ir.tensors["flatten_out"]
-    assert list(flatten_tensor.shape_signature) == [-1, 8]
+    assert _shape_signature(flatten_tensor) == [-1, 8]
     flatten_reshape_op = next(
         op
         for op in model_ir.operators
@@ -29880,7 +29914,7 @@ def test_flatbuffer_direct_flatten_unsqueeze_placeholder_shapes_are_inferred_fro
     assert list(flatten_reshape_op.options.get("newShape", [])) == []
 
     unsqueeze_tensor = model_ir.tensors["y"]
-    assert list(unsqueeze_tensor.shape_signature) == [-1, 8, 1]
+    assert _shape_signature(unsqueeze_tensor) == [-1, 8, 1]
 
 
 def test_flatbuffer_direct_dynamic_reshape_allowzero_copy_dim0_preserves_shape_vector_rank() -> None:
@@ -29893,9 +29927,9 @@ def test_flatbuffer_direct_dynamic_reshape_allowzero_copy_dim0_preserves_shape_v
     )
 
     y_tensor = model_ir.tensors["y"]
-    assert len(list(y_tensor.shape_signature)) == 4
-    assert int(y_tensor.shape_signature[0]) == -1
-    assert all(int(v) == -1 for v in list(y_tensor.shape_signature))
+    assert len(_shape_signature(y_tensor)) == 4
+    assert int(_shape_signature(y_tensor)[0]) == -1
+    assert all(int(v) == -1 for v in _shape_signature(y_tensor))
     reshape_op = next(
         op
         for op in model_ir.operators
@@ -29905,7 +29939,7 @@ def test_flatbuffer_direct_dynamic_reshape_allowzero_copy_dim0_preserves_shape_v
     )
     shape_input_name = str(reshape_op.inputs[1])
     shape_input_tensor = model_ir.tensors[shape_input_name]
-    assert list(shape_input_tensor.shape_signature) == [4]
+    assert _shape_signature(shape_input_tensor) == [4]
 
 
 def test_flatbuffer_direct_slice_shape_outputs_preserve_empty_and_tail_lengths_for_concat() -> None:
@@ -29918,15 +29952,15 @@ def test_flatbuffer_direct_slice_shape_outputs_preserve_empty_and_tail_lengths_f
     )
 
     slice_empty_tensor = model_ir.tensors["slice_empty"]
-    assert list(slice_empty_tensor.shape_signature) == [0]
+    assert _shape_signature(slice_empty_tensor) == [0]
     assert list(slice_empty_tensor.shape) == [0]
 
     slice_tail_tensor = model_ir.tensors["slice_tail"]
-    assert list(slice_tail_tensor.shape_signature) == [3]
+    assert _shape_signature(slice_tail_tensor) == [3]
     assert list(slice_tail_tensor.shape) == [3]
 
     concat_tensor = model_ir.tensors["y"]
-    assert list(concat_tensor.shape_signature) == [4]
+    assert _shape_signature(concat_tensor) == [4]
     assert list(concat_tensor.shape) == [4]
 
 
@@ -29959,7 +29993,7 @@ def test_flatbuffer_direct_binary_broadcast_rhs_preserves_rank_for_matmul_path_s
 
     b_tensor = model_ir.tensors["b"]
     assert list(b_tensor.shape) == [1, 8, 1]
-    assert list(b_tensor.shape_signature) == [1, 8, 1]
+    assert _shape_signature(b_tensor) == [1, 8, 1]
 
     matmul_y_ops = [
         op
@@ -30014,7 +30048,7 @@ def test_flatbuffer_direct_gather_rank1_params_scalar_const_indices_not_scalariz
         gather_indices_name = str(gather_op.inputs[1])
         gather_indices_tensor = model_ir.tensors[gather_indices_name]
         assert list(gather_indices_tensor.shape) == [1]
-        assert list(gather_indices_tensor.shape_signature) == [1]
+        assert _shape_signature(gather_indices_tensor) == [1]
 
     concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
     concat_input_shapes = [list(model_ir.tensors[str(input_name)].shape) for input_name in list(concat_op.inputs)]
@@ -30042,7 +30076,7 @@ def test_flatbuffer_direct_nms_scalar_const_inputs_do_not_emit_squeeze() -> None
     nms_valid_count_tensor = model_ir.tensors.get(nms_valid_count_name, None)
     assert nms_valid_count_tensor is not None
     assert list(nms_valid_count_tensor.shape) == []
-    assert list(nms_valid_count_tensor.shape_signature) == []
+    assert _shape_signature(nms_valid_count_tensor) == []
 
     reshape_from_valid_count_ops = [
         op
@@ -30115,7 +30149,7 @@ def test_flatbuffer_direct_multiclass_nms_without_onwa_matches_default_behavior(
 
     output_tensor = model_ir.tensors.get("selected_indices")
     assert output_tensor is not None
-    assert list(output_tensor.shape_signature) == [-1, 3]
+    assert _shape_signature(output_tensor) == [-1, 3]
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
@@ -30160,7 +30194,7 @@ def test_flatbuffer_direct_conv2d_intermediate_preserves_dynamic_batch_signature
     out_name = conv_ops[0].outputs[0]
     out_tensor = model_ir.tensors[out_name]
     assert out_tensor.shape_signature is not None
-    assert int(out_tensor.shape_signature[0]) == -1
+    assert int(_shape_signature(out_tensor)[0]) == -1
 
 
 def test_flatbuffer_direct_conv_stride2_notset_symmetric_pad_uses_explicit_pad() -> None:
@@ -30206,7 +30240,7 @@ def test_flatbuffer_direct_maxpool2d_intermediate_preserves_dynamic_batch_signat
     out_name = maxpool_ops[0].outputs[0]
     out_tensor = model_ir.tensors[out_name]
     assert out_tensor.shape_signature is not None
-    assert int(out_tensor.shape_signature[0]) == -1
+    assert int(_shape_signature(out_tensor)[0]) == -1
 
 
 def test_flatbuffer_direct_averagepool1d_intermediate_preserves_dynamic_signature() -> None:
@@ -30223,18 +30257,18 @@ def test_flatbuffer_direct_averagepool1d_intermediate_preserves_dynamic_signatur
     avg_pool_outputs = [model_ir.tensors[str(op.outputs[0])] for op in avg_pool_ops if len(op.outputs) == 1]
     assert any(
         tensor.shape_signature is not None
-        and len(list(tensor.shape_signature)) == 4
-        and int(tensor.shape_signature[1]) == 1
-        and int(tensor.shape_signature[2]) == -1
+        and len(_shape_signature(tensor)) == 4
+        and int(_shape_signature(tensor)[1]) == 1
+        and int(_shape_signature(tensor)[2]) == -1
         for tensor in avg_pool_outputs
     )
 
     y_tensor = model_ir.tensors["y"]
     assert y_tensor.shape_signature is not None
-    assert len(list(y_tensor.shape_signature)) == 3
-    assert int(y_tensor.shape_signature[0]) == 1
-    assert int(y_tensor.shape_signature[1]) == 128
-    assert int(y_tensor.shape_signature[2]) == -1
+    assert len(_shape_signature(y_tensor)) == 3
+    assert int(_shape_signature(y_tensor)[0]) == 1
+    assert int(_shape_signature(y_tensor)[1]) == 128
+    assert int(_shape_signature(y_tensor)[2]) == -1
 
 
 def test_flatbuffer_direct_average_pool_exclude_pad_uses_divisor_correction() -> None:
@@ -30391,7 +30425,7 @@ def test_flatbuffer_direct_argmax_reducemax_int64_replaces_builtin_argmax() -> N
     assert op_types.count("REDUCE_MAX") == 2
     assert "CAST" in op_types
     assert str(model_ir.tensors["y"].dtype).upper() == "INT64"
-    assert list(model_ir.tensors["y"].shape_signature) == [2, 1, 4]
+    assert _shape_signature(model_ir.tensors["y"]) == [2, 1, 4]
 
 
 def test_flatbuffer_direct_argmax_reducemax_float32_replaces_builtin_argmax() -> None:
@@ -30408,7 +30442,7 @@ def test_flatbuffer_direct_argmax_reducemax_float32_replaces_builtin_argmax() ->
     assert "ARG_MAX" not in op_types
     assert op_types.count("REDUCE_MAX") == 2
     assert str(model_ir.tensors["y"].dtype).upper() == "FLOAT32"
-    assert list(model_ir.tensors["y"].shape_signature) == [2, 4]
+    assert _shape_signature(model_ir.tensors["y"]) == [2, 4]
 
 
 def test_flatbuffer_direct_argmax_fused_int64_restores_resize_shape() -> None:
@@ -30426,7 +30460,7 @@ def test_flatbuffer_direct_argmax_fused_int64_restores_resize_shape() -> None:
     assert op_types.count("RESIZE_NEAREST_NEIGHBOR") >= 2
     assert "CAST" in op_types
     assert str(model_ir.tensors["y"].dtype).upper() == "INT64"
-    assert list(model_ir.tensors["y"].shape_signature) == [1, 1, 8, 8]
+    assert _shape_signature(model_ir.tensors["y"]) == [1, 1, 8, 8]
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
@@ -30591,7 +30625,7 @@ def test_flatbuffer_direct_qlinear_conv2d_intermediate_preserves_dynamic_batch_s
     out_tensor = model_ir.tensors[out_name]
     assert out_tensor.quantization is not None
     assert out_tensor.shape_signature is not None
-    assert int(out_tensor.shape_signature[0]) == -1
+    assert int(_shape_signature(out_tensor)[0]) == -1
 
 
 def test_flatbuffer_direct_qlinear_conv_unknown_rank_placeholder_is_promoted_to_rank4() -> None:
@@ -30610,7 +30644,7 @@ def test_flatbuffer_direct_qlinear_conv_unknown_rank_placeholder_is_promoted_to_
     assert len(list(conv_out.shape)) == 4
     assert int(conv_out.shape[3]) == 4
     assert conv_out.shape_signature is not None
-    assert len(list(conv_out.shape_signature)) == 4
+    assert len(_shape_signature(conv_out)) == 4
 
 
 def test_flatbuffer_direct_qlinear_global_average_pool_intermediate_preserves_dynamic_batch_signature() -> None:
@@ -30626,11 +30660,11 @@ def test_flatbuffer_direct_qlinear_global_average_pool_intermediate_preserves_dy
     assert len(avg_pool_ops) == 1
     avg_tensor = model_ir.tensors[avg_pool_ops[0].outputs[0]]
     assert avg_tensor.shape_signature is not None
-    assert int(avg_tensor.shape_signature[0]) == -1
+    assert int(_shape_signature(avg_tensor)[0]) == -1
 
     y_tensor = model_ir.tensors["y"]
     assert y_tensor.shape_signature is not None
-    assert int(y_tensor.shape_signature[0]) == -1
+    assert int(_shape_signature(y_tensor)[0]) == -1
 
 
 def test_flatbuffer_direct_transpose_qlinear_global_average_pool_bridge_optimization() -> None:
@@ -30709,7 +30743,7 @@ def test_flatbuffer_direct_qlinear_concat_conv_layout_propagation() -> None:
 
 
 def test_flatbuffer_direct_qlinear_concat_conv_layout_propagation_with_concat_post_transpose() -> None:
-    model_ir = ModelIR(name="qlinear_concat_conv_layout_with_concat_post_transpose_test")
+    model_ir = ModelIR("qlinear_concat_conv_layout_with_concat_post_transpose_test")
     model_ir.inputs = ["a_q_nhwc", "b_q_nhwc"]
     model_ir.outputs = ["y0", "pool_out"]
 
@@ -30826,7 +30860,7 @@ def test_flatbuffer_direct_qlinear_concat_conv_layout_propagation_with_concat_po
     cat_q_tensor = model_ir.tensors["cat_q"]
     assert list(cat_f_tensor.shape) == [1, 3, 5, 4]
     assert list(cat_q_tensor.shape) == [1, 3, 5, 4]
-    assert list(cat_q_tensor.shape_signature) == [1, 3, 5, 4]
+    assert _shape_signature(cat_q_tensor) == [1, 3, 5, 4]
 
 
 def test_flatbuffer_direct_fuse_add_relu_activation_chain() -> None:
@@ -30868,7 +30902,7 @@ def test_flatbuffer_direct_fuse_add_relu_after_transpose_pre_add_rewrite() -> No
 
 
 def test_flatbuffer_direct_fuse_conv_relu_n1_to_1_activation_chain() -> None:
-    model_ir = ModelIR(name="fuse_conv_relu_n1_to_1_activation_chain_test")
+    model_ir = ModelIR("fuse_conv_relu_n1_to_1_activation_chain_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 8, 8, 3], shape_signature=[1, 8, 8, 3])
@@ -30917,7 +30951,7 @@ def test_flatbuffer_direct_fuse_conv_relu_n1_to_1_activation_chain() -> None:
 
 
 def test_flatbuffer_direct_fuse_depthwise_conv_relu_n1_to_1_activation_chain() -> None:
-    model_ir = ModelIR(name="fuse_depthwise_conv_relu_n1_to_1_activation_chain_test")
+    model_ir = ModelIR("fuse_depthwise_conv_relu_n1_to_1_activation_chain_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["z"]
     model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 8, 8, 4], shape_signature=[1, 8, 8, 4])
@@ -31063,7 +31097,7 @@ def test_flatbuffer_direct_lstm_forward_builtin_lowering() -> None:
     y_tensor = model_ir.tensors.get("y")
     assert y_tensor is not None
     assert list(y_tensor.shape) == [3, 1, 1, 2]
-    assert list(y_tensor.shape_signature) == [3, 1, 1, 2]
+    assert _shape_signature(y_tensor) == [3, 1, 1, 2]
 
 
 def test_flatbuffer_direct_lstm_reverse_builtin_lowering() -> None:
@@ -31085,7 +31119,7 @@ def test_flatbuffer_direct_lstm_reverse_builtin_lowering() -> None:
     y_tensor = model_ir.tensors.get("y")
     assert y_tensor is not None
     assert list(y_tensor.shape) == [3, 1, 1, 2]
-    assert list(y_tensor.shape_signature) == [3, 1, 1, 2]
+    assert _shape_signature(y_tensor) == [3, 1, 1, 2]
 
 
 def test_flatbuffer_direct_lstm_forward_state_io_builtin_lowering() -> None:
@@ -31314,7 +31348,7 @@ def test_flatbuffer_direct_div_shape_chain_elides_redundant_int64_to_int32_cast(
         user_indices = [int(v) for v in consumers.get(out_name, [])]
         if len(user_indices) != 1:
             continue
-            user_op = operators[int(user_indices[0])]
+        user_op = operators[int(user_indices[0])]
         if str(user_op.op_type) == "CAST":
             user_out_dtype = str(user_op.options.get("outDataType", "")).upper()
             assert user_out_dtype != "INT32"
@@ -31416,7 +31450,7 @@ def test_flatbuffer_direct_consecutive_variable_const_mul_chain_is_folded_after_
 
 
 def test_flatbuffer_direct_constant_input_cast_is_embedded_into_output_tensor() -> None:
-    model_ir = ModelIR(name="const_cast_embed_test")
+    model_ir = ModelIR("const_cast_embed_test")
     model_ir.outputs = ["y"]
     model_ir.tensors["x_const"] = TensorIR(
         name="x_const",
@@ -31805,7 +31839,7 @@ def test_flatbuffer_direct_transpose_swish_transpose_optimization_no_layout_fall
 
 
 def test_flatbuffer_direct_maximum_minimum_chain_rewrites_to_relu_0_to_1() -> None:
-    model_ir = ModelIR(name="maximum_minimum_relu0to1_opt_test")
+    model_ir = ModelIR("maximum_minimum_relu0to1_opt_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -31856,7 +31890,7 @@ def test_flatbuffer_direct_maximum_minimum_chain_rewrites_to_relu_0_to_1() -> No
 
 
 def test_flatbuffer_direct_maximum_with_zero_input2_rewrites_to_relu() -> None:
-    model_ir = ModelIR(name="maximum_input2_zero_relu_opt_test")
+    model_ir = ModelIR("maximum_input2_zero_relu_opt_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -31892,7 +31926,7 @@ def test_flatbuffer_direct_maximum_with_zero_input2_rewrites_to_relu() -> None:
 
 
 def test_flatbuffer_direct_maximum_with_zero_input1_is_not_rewritten() -> None:
-    model_ir = ModelIR(name="maximum_input1_zero_no_relu_opt_test")
+    model_ir = ModelIR("maximum_input1_zero_no_relu_opt_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
     model_ir.tensors["x"] = TensorIR(
@@ -31982,7 +32016,7 @@ def test_flatbuffer_direct_transpose_prelu_transpose_optimization() -> None:
 
 
 def test_flatbuffer_direct_terminal_transpose_prelu_reshape_batchmatmul_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="terminal_transpose_prelu_reshape_batchmatmul_nhwc_test")
+    model_ir = ModelIR("terminal_transpose_prelu_reshape_batchmatmul_nhwc_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y"]
 
@@ -32107,11 +32141,11 @@ def test_flatbuffer_direct_terminal_transpose_prelu_reshape_batchmatmul_nhwc_cha
 
     prelu_out_tensor = model_ir.tensors["prelu_out"]
     assert list(prelu_out_tensor.shape) == [n, h, w, c]
-    assert list(prelu_out_tensor.shape_signature) == [n, h, w, c]
+    assert _shape_signature(prelu_out_tensor) == [n, h, w, c]
 
 
 def test_flatbuffer_direct_transpose_squeeze_gelu_expanddims_transpose_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_squeeze_gelu_expanddims_transpose_nhwc_test")
+    model_ir = ModelIR("transpose_squeeze_gelu_expanddims_transpose_nhwc_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nhwc"]
 
@@ -32219,7 +32253,7 @@ def test_flatbuffer_direct_transpose_squeeze_gelu_expanddims_transpose_nhwc_chai
 
 
 def test_flatbuffer_direct_transpose_squeeze_gelu_expanddims_transpose_nhwc_fanout_bypass_optimized() -> None:
-    model_ir = ModelIR(name="transpose_squeeze_gelu_expanddims_transpose_nhwc_fanout_test")
+    model_ir = ModelIR("transpose_squeeze_gelu_expanddims_transpose_nhwc_fanout_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["u3_add", "y_nhwc_relu"]
 
@@ -32372,7 +32406,7 @@ def test_flatbuffer_direct_transpose_squeeze_gelu_expanddims_transpose_nhwc_fano
 
 
 def test_flatbuffer_direct_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_test")
+    model_ir = ModelIR("transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_relu"]
 
@@ -32614,7 +32648,7 @@ def test_flatbuffer_direct_transpose_squeeze_instancenorm_unary_expanddims_trans
 
 
 def test_flatbuffer_direct_tencoder_add_expand_transpose_conv_nhwc_chain_optimized() -> None:
-    model_ir = ModelIR(name="tencoder_add_expand_transpose_conv_nhwc_test")
+    model_ir = ModelIR("tencoder_add_expand_transpose_conv_nhwc_test")
     model_ir.inputs = ["lhs4", "rhs4"]
     model_ir.outputs = ["conv_out"]
 
@@ -32861,7 +32895,7 @@ def test_flatbuffer_direct_tencoder_add_expand_transpose_conv_nhwc_chain_optimiz
 
 
 def test_flatbuffer_direct_tencoder_add_expand_transpose_conv_nhwc_chain_multi_consumer_bridge() -> None:
-    model_ir = ModelIR(name="tencoder_add_expand_transpose_conv_nhwc_multi_consumer_test")
+    model_ir = ModelIR("tencoder_add_expand_transpose_conv_nhwc_multi_consumer_test")
     model_ir.inputs = ["lhs4", "rhs4"]
     model_ir.outputs = ["conv_out", "extra_out"]
 
@@ -33115,7 +33149,7 @@ def test_flatbuffer_direct_tencoder_add_expand_transpose_conv_nhwc_chain_multi_c
 
 
 def test_flatbuffer_direct_tencoder_add_expand_transpose_conv_nhwc_chain_legacy_rank3_lhs() -> None:
-    model_ir = ModelIR(name="tencoder_add_expand_transpose_conv_nhwc_legacy_rank3_lhs_test")
+    model_ir = ModelIR("tencoder_add_expand_transpose_conv_nhwc_legacy_rank3_lhs_test")
     model_ir.inputs = ["lhs_nwc", "rhs4"]
     model_ir.outputs = ["conv_out"]
 
@@ -33353,7 +33387,7 @@ def test_flatbuffer_direct_tencoder_add_expand_transpose_conv_nhwc_chain_legacy_
 
 
 def test_flatbuffer_direct_transpose_unary_transpose_reshape_expanddims_transpose_nhwc_chain() -> None:
-    model_ir = ModelIR(name="transpose_unary_transpose_reshape_expanddims_transpose_nhwc_test")
+    model_ir = ModelIR("transpose_unary_transpose_reshape_expanddims_transpose_nhwc_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["conv_out"]
 
@@ -33450,7 +33484,7 @@ def test_flatbuffer_direct_transpose_unary_transpose_reshape_expanddims_transpos
 
 
 def test_flatbuffer_direct_transpose_unary_transpose_reshape_expanddims_transpose_nhwc_chain_fanout_bridge() -> None:
-    model_ir = ModelIR(name="transpose_unary_transpose_reshape_expanddims_transpose_nhwc_fanout_test")
+    model_ir = ModelIR("transpose_unary_transpose_reshape_expanddims_transpose_nhwc_fanout_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["conv_out", "extra_out"]
 
@@ -33563,7 +33597,7 @@ def test_flatbuffer_direct_transpose_unary_transpose_reshape_expanddims_transpos
 
 
 def test_flatbuffer_direct_attention_qkv_gather_reshape_transpose_hoist() -> None:
-    model_ir = ModelIR(name="attention_qkv_gather_reshape_transpose_hoist_test")
+    model_ir = ModelIR("attention_qkv_gather_reshape_transpose_hoist_test")
     model_ir.inputs = ["src"]
     model_ir.outputs = ["z0", "z1", "z2"]
 
@@ -33695,7 +33729,7 @@ def test_flatbuffer_direct_attention_qkv_gather_reshape_transpose_hoist() -> Non
 
 
 def test_flatbuffer_direct_attention_qkv_slice_replace_gather_reshape() -> None:
-    model_ir = ModelIR(name="attention_qkv_slice_replace_test")
+    model_ir = ModelIR("attention_qkv_slice_replace_test")
     model_ir.inputs = ["src"]
     model_ir.outputs = ["z0", "z1", "z2"]
 
@@ -33826,7 +33860,7 @@ def test_flatbuffer_direct_attention_qkv_slice_replace_gather_reshape() -> None:
 
 
 def test_flatbuffer_direct_attention_qkv_slice_to_split() -> None:
-    model_ir = ModelIR(name="attention_qkv_slice_to_split_test")
+    model_ir = ModelIR("attention_qkv_slice_to_split_test")
     model_ir.inputs = ["src"]
     model_ir.outputs = ["z0", "z1", "z2"]
 
@@ -33908,7 +33942,7 @@ def test_flatbuffer_direct_attention_qkv_slice_to_split() -> None:
 
 
 def test_flatbuffer_direct_attention_qkv_shared_pretranspose_slice_nchw() -> None:
-    model_ir = ModelIR(name="attention_qkv_shared_pretranspose_slice_nchw_test")
+    model_ir = ModelIR("attention_qkv_shared_pretranspose_slice_nchw_test")
     model_ir.inputs = ["src"]
     model_ir.outputs = ["out"]
 
@@ -34118,7 +34152,7 @@ def test_flatbuffer_direct_attention_qkv_shared_pretranspose_slice_nchw() -> Non
 
 
 def test_flatbuffer_direct_attention_qkv_weighted_sum_bridge_to_nhwc() -> None:
-    model_ir = ModelIR(name="attention_qkv_weighted_sum_bridge_to_nhwc_test")
+    model_ir = ModelIR("attention_qkv_weighted_sum_bridge_to_nhwc_test")
     model_ir.inputs = ["k_nhwc", "q_in_nchw", "relu_in_nhwc"]
     model_ir.outputs = ["final_out"]
 
@@ -34264,7 +34298,7 @@ def test_flatbuffer_direct_attention_qkv_weighted_sum_bridge_to_nhwc() -> None:
 
 
 def test_flatbuffer_direct_attention_kv_slice_to_split_pipeline() -> None:
-    model_ir = ModelIR(name="attention_kv_slice_to_split_pipeline_test")
+    model_ir = ModelIR("attention_kv_slice_to_split_pipeline_test")
     model_ir.inputs = ["src"]
     model_ir.outputs = ["z0", "z1"]
 
@@ -35183,6 +35217,7 @@ def test_flatbuffer_direct_integration_quant_eval_coverage_smoke() -> None:
             "flatbuffer_direct",
             output_dynamic_range_quantized_tflite=True,
             output_integer_quantized_tflite=True,
+            custom_input_op_name_np_data_path=_write_x_calibration_data(tmpdir, "gemm_integ_calib"),
             eval_with_onnx=True,
             eval_num_samples=2,
             eval_target_tflite="full_integer_quant",
@@ -35389,6 +35424,7 @@ def test_flatbuffer_direct_integer_quantized_smoke() -> None:
             quant_type="per-channel",
             input_quant_dtype="int8",
             output_quant_dtype="int8",
+            custom_input_op_name_np_data_path=_write_x_calibration_data(tmpdir, "gemm_iq_calib"),
         )
 
         integer_tflite = os.path.join(out_dir, "gemm_iq_integer_quant.tflite")
@@ -35461,6 +35497,7 @@ def test_flatbuffer_direct_integer_quantized_reduce_compatibility() -> None:
             "flatbuffer_direct",
             output_integer_quantized_tflite=True,
             quant_type="per-channel",
+            custom_input_op_name_np_data_path=_write_x_calibration_data(tmpdir, "gemm_reduce_iq_calib"),
         )
         tflite_path = os.path.join(out_dir, "gemm_reduce_iq_integer_quant.tflite")
         assert os.path.isfile(tflite_path)
@@ -35562,6 +35599,7 @@ def test_flatbuffer_direct_accuracy_report_quant_dequant_mode() -> None:
             out_dir,
             "flatbuffer_direct",
             output_integer_quantized_tflite=True,
+            custom_input_op_name_np_data_path=_write_x_calibration_data(tmpdir, "gemm_eval_q_calib"),
             eval_with_onnx=True,
             eval_num_samples=3,
             eval_target_tflite="full_integer_quant",
@@ -35645,6 +35683,7 @@ def test_flatbuffer_direct_accuracy_report_fail_on_threshold() -> None:
                 out_dir,
                 "flatbuffer_direct",
                 output_integer_quantized_tflite=True,
+                custom_input_op_name_np_data_path=_write_x_calibration_data(tmpdir, "gemm_eval_fail_calib"),
                 eval_with_onnx=True,
                 eval_num_samples=2,
                 eval_target_tflite="full_integer_quant",
@@ -36848,6 +36887,8 @@ def _make_if_nms_guard_direct_model(*, nested_if: bool = True, offset_slice: boo
         helper.make_node("ReduceMax", ["boxes"], ["max_coordinate"], name="IfElseReduceMax", keepdims=0),
         helper.make_node("Cast", ["idxs"], ["idxs_f"], name="IfElseCast", to=TensorProto.FLOAT),
     ]
+    nested_then_graph: onnx.GraphProto | None = None
+    nested_else_graph: onnx.GraphProto | None = None
     if nested_if:
         eq_lhs = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="eq_lhs")
         eq_rhs = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="eq_rhs")
@@ -36932,6 +36973,8 @@ def _make_if_nms_guard_direct_model(*, nested_if: bool = True, offset_slice: boo
         ]
     )
     if nested_if:
+        assert nested_then_graph is not None
+        assert nested_else_graph is not None
         else_nodes.append(
             helper.make_node(
                 "If",
@@ -36962,6 +37005,8 @@ def _make_if_nms_guard_direct_model(*, nested_if: bool = True, offset_slice: boo
         nms_gather_index,
     ]
     if nested_if:
+        assert eq_lhs is not None
+        assert eq_rhs is not None
         else_initializers.extend([eq_lhs, eq_rhs])
     else:
         else_initializers.append(squeeze_axes)
@@ -37642,8 +37687,8 @@ def test_flatbuffer_direct_if_p1_lowers_to_builtin_ops_without_custom() -> None:
     assert "SLICE" in op_types
     out_tensor = model_ir.tensors["If_p1_output"]
     assert out_tensor.shape_signature is not None
-    assert int(out_tensor.shape_signature[0]) == -1
-    assert int(out_tensor.shape_signature[1]) == 100
+    assert int(_shape_signature(out_tensor)[0]) == -1
+    assert int(_shape_signature(out_tensor)[1]) == 100
 
 
 def test_flatbuffer_direct_if_p2_lowers_to_builtin_ops_without_custom() -> None:
@@ -37657,8 +37702,8 @@ def test_flatbuffer_direct_if_p2_lowers_to_builtin_ops_without_custom() -> None:
     assert "SLICE" in op_types
     out_tensor = model_ir.tensors["If_p2_output"]
     assert out_tensor.shape_signature is not None
-    assert int(out_tensor.shape_signature[0]) == -1
-    assert int(out_tensor.shape_signature[1]) == 100
+    assert int(_shape_signature(out_tensor)[0]) == -1
+    assert int(_shape_signature(out_tensor)[1]) == 100
 
 
 def test_flatbuffer_direct_if_p3_lowers_to_builtin_ops_without_custom() -> None:
@@ -37674,7 +37719,7 @@ def test_flatbuffer_direct_if_p3_lowers_to_builtin_ops_without_custom() -> None:
     assert any(op in op_types for op in {"SELECT", "MUL"})
     out_tensor = model_ir.tensors["If_p3_output"]
     assert out_tensor.shape_signature is not None
-    assert int(out_tensor.shape_signature[0]) == 100
+    assert int(_shape_signature(out_tensor)[0]) == 100
 
 
 def test_flatbuffer_direct_if_multi_output_nested_lowers_to_builtin_ops_without_custom() -> None:
@@ -37736,7 +37781,7 @@ def test_flatbuffer_direct_if_const_true_selects_branch_without_generic_mux() ->
     assert all(str(op.op_type) not in {"SELECT", "SELECT_V2"} for op in model_ir.operators)
     out_tensor = model_ir.tensors["if_const_y"]
     assert out_tensor.shape_signature is not None
-    assert [int(v) for v in list(out_tensor.shape_signature)] == [-1]
+    assert [int(v) for v in _shape_signature(out_tensor)] == [-1]
 
 
 def test_flatbuffer_direct_if_branch_lstm_optional_input_lowers_to_builtin_ops_without_custom() -> None:
@@ -37751,9 +37796,9 @@ def test_flatbuffer_direct_if_branch_lstm_optional_input_lowers_to_builtin_ops_w
     out_tensor = model_ir.tensors["if_lstm_out"]
     assert out_tensor.shape_signature is not None
     assert len(out_tensor.shape_signature) == 3
-    assert int(out_tensor.shape_signature[0]) == 1
-    assert int(out_tensor.shape_signature[1]) == 1
-    assert int(out_tensor.shape_signature[2]) == 2
+    assert int(_shape_signature(out_tensor)[0]) == 1
+    assert int(_shape_signature(out_tensor)[1]) == 1
+    assert int(_shape_signature(out_tensor)[2]) == 2
 
 
 def test_flatbuffer_direct_size_lowers_to_builtin_ops_without_custom() -> None:
@@ -38290,7 +38335,7 @@ def test_flatbuffer_direct_sinet_mid_residual_transpose_targets_are_folded() -> 
 
 
 def test_repair_mixed_singleton_nchw_inputs_for_nhwc_concat_inserts_local_reshape() -> None:
-    model_ir = ModelIR(name="mixed_singleton_concat_repair")
+    model_ir = ModelIR("mixed_singleton_concat_repair")
     model_ir.tensors["gate_nchw"] = TensorIR(
         name="gate_nchw",
         dtype="FLOAT32",
@@ -38346,7 +38391,7 @@ def test_repair_mixed_singleton_nchw_inputs_for_nhwc_concat_inserts_local_reshap
 
 
 def test_repair_rank4_binary_singleton_broadcast_layout_mismatch_inserts_transpose() -> None:
-    model_ir = ModelIR(name="singleton_binary_broadcast_repair")
+    model_ir = ModelIR("singleton_binary_broadcast_repair")
     model_ir.tensors["gate_nchw"] = TensorIR(
         name="gate_nchw",
         dtype="FLOAT32",
@@ -38393,7 +38438,7 @@ def test_repair_rank4_binary_singleton_broadcast_layout_mismatch_inserts_transpo
 
 
 def test_repair_rank4_binary_singleton_broadcast_layout_mismatch_skips_existing_broadcast() -> None:
-    model_ir = ModelIR(name="singleton_binary_broadcast_passthrough")
+    model_ir = ModelIR("singleton_binary_broadcast_passthrough")
     model_ir.tensors["bias_nchw"] = TensorIR(
         name="bias_nchw",
         dtype="FLOAT32",
@@ -38430,7 +38475,7 @@ def test_repair_rank4_binary_singleton_broadcast_layout_mismatch_skips_existing_
 
 
 def test_constant_input_average_pool_is_folded_into_div_denominator() -> None:
-    model_ir = ModelIR(name="constant_pool_div_fold")
+    model_ir = ModelIR("constant_pool_div_fold")
     model_ir.tensors["x"] = TensorIR(
         name="x",
         dtype="FLOAT32",
@@ -38494,7 +38539,7 @@ def test_constant_input_average_pool_is_folded_into_div_denominator() -> None:
 
 
 def test_constant_input_padv2_and_average_pool_are_folded_into_div_denominator() -> None:
-    model_ir = ModelIR(name="constant_pad_pool_div_fold")
+    model_ir = ModelIR("constant_pad_pool_div_fold")
     model_ir.tensors["x"] = TensorIR(
         name="x",
         dtype="FLOAT32",
@@ -38587,8 +38632,6 @@ def test_constant_input_padv2_and_average_pool_are_folded_into_div_denominator()
 
 def _make_wave1_unary_builtin_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
-    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3])
-    y_thr = helper.make_tensor_value_info("y_thr", TensorProto.FLOAT, [2, 3])
     y_shrink = helper.make_tensor_value_info("y_shrink", TensorProto.FLOAT, [2, 3])
     y_inf = helper.make_tensor_value_info("y_inf", TensorProto.BOOL, [2, 3])
     y_nan = helper.make_tensor_value_info("y_nan", TensorProto.BOOL, [2, 3])
@@ -39304,7 +39347,7 @@ def test_flatbuffer_direct_reverse_sequence_and_scatter_builtin_parity() -> None
 
 
 def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks() -> None:
-    model_ir = ModelIR(name="singleton_gate_conv_concat_nhwc_bridge_blocks_test")
+    model_ir = ModelIR("singleton_gate_conv_concat_nhwc_bridge_blocks_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nhwc"]
     model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 3], shape_signature=[1, 5, 7, 3])
@@ -39364,7 +39407,7 @@ def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks() -> No
 
 
 def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks_accepts_direct_singleton_aux() -> None:
-    model_ir = ModelIR(name="singleton_gate_conv_concat_direct_aux_test")
+    model_ir = ModelIR("singleton_gate_conv_concat_direct_aux_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nhwc"]
     model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 3], shape_signature=[1, 5, 7, 3])
@@ -39415,7 +39458,7 @@ def test_flatbuffer_direct_singleton_gate_conv_concat_nhwc_bridge_blocks_accepts
 
 
 def test_flatbuffer_direct_transpose_unary_split_concat_single_post_nchw() -> None:
-    model_ir = ModelIR(name="transpose_unary_split_concat_single_post_nchw_test")
+    model_ir = ModelIR("transpose_unary_split_concat_single_post_nchw_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["cat_nchw"]
     model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 2], shape_signature=[1, 5, 7, 2])
@@ -39446,7 +39489,9 @@ def test_flatbuffer_direct_transpose_unary_split_concat_single_post_nchw() -> No
     assert stats["optimized_transpose_unary_split_concat_single_post_nchw"] == 1
     assert not any(str(op.op_type) == "TRANSPOSE" and list(op.outputs) == ["x_nchw"] for op in model_ir.operators)
     split_op = next(op for op in model_ir.operators if str(op.op_type) == "SPLIT")
-    assert np.array_equal(model_ir.tensors[str(split_op.inputs[0])].data, np.asarray([3], dtype=np.int32))
+    split_axis_data = model_ir.tensors[str(split_op.inputs[0])].data
+    assert split_axis_data is not None
+    assert np.array_equal(np.asarray(split_axis_data), np.asarray([3], dtype=np.int32))
     concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
     assert int(concat_op.options.get("axis", -1)) == 3
     assert [str(v) for v in list(concat_op.inputs)] == ["clip3_nhwc", "u0", "u1"]
@@ -39454,7 +39499,7 @@ def test_flatbuffer_direct_transpose_unary_split_concat_single_post_nchw() -> No
 
 
 def test_flatbuffer_direct_transpose_binary_split_channelwise_tail_to_single_post_nchw() -> None:
-    model_ir = ModelIR(name="transpose_binary_split_channelwise_tail_test")
+    model_ir = ModelIR("transpose_binary_split_channelwise_tail_test")
     model_ir.inputs = ["x_nhwc", "gate_nhwc", "rgb_nhwc"]
     model_ir.outputs = ["y_nchw"]
     model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 3], shape_signature=[1, 5, 7, 3])
@@ -39491,7 +39536,7 @@ def test_flatbuffer_direct_transpose_binary_split_channelwise_tail_to_single_pos
 
 
 def test_flatbuffer_direct_transpose_gather_transpose_nhwc_channel_fanout() -> None:
-    model_ir = ModelIR(name="transpose_gather_transpose_nhwc_channel_fanout_test")
+    model_ir = ModelIR("transpose_gather_transpose_nhwc_channel_fanout_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y0_relu", "y1_relu"]
     model_ir.tensors["x_nhwc"] = TensorIR(name="x_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 4], shape_signature=[1, 5, 7, 4])
@@ -39550,7 +39595,7 @@ def test_flatbuffer_direct_transpose_gather_transpose_nhwc_channel_fanout() -> N
 
 
 def test_flatbuffer_direct_sinet_shuffle_residual_mul_posttranspose_tail_chains() -> None:
-    model_ir = ModelIR(name="sinet_shuffle_residual_mul_posttranspose_tail_test")
+    model_ir = ModelIR("sinet_shuffle_residual_mul_posttranspose_tail_test")
     model_ir.inputs = ["a_nhwc", "x0_nhwc", "x1_nhwc"]
     model_ir.outputs = ["y_nhwc", "aux_relu"]
     model_ir.tensors["a_nhwc"] = TensorIR(name="a_nhwc", dtype="FLOAT32", shape=[1, 5, 7, 2], shape_signature=[1, 5, 7, 2])
