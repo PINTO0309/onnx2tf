@@ -43,20 +43,47 @@ _STRICT_FULL_INTEGER_SUPPORTED_OPS = {
     "ADD",
     "SUB",
     "MUL",
+    "DIV",
+    "MAXIMUM",
+    "MINIMUM",
+    "SELECT",
+    "SELECT_V2",
     "CONCATENATION",
     "RESHAPE",
     "TRANSPOSE",
     "SQUEEZE",
     "EXPAND_DIMS",
+    "SLICE",
+    "STRIDED_SLICE",
+    "SPLIT",
+    "GATHER",
+    "TILE",
+    "SPACE_TO_DEPTH",
+    "DEPTH_TO_SPACE",
+    "PAD",
     "MEAN",
+    "SUM",
+    "REDUCE_MAX",
+    "REDUCE_MIN",
+    "REDUCE_PROD",
     "AVERAGE_POOL_2D",
     "MAX_POOL_2D",
+    "ABS",
+    "NEG",
     "RELU",
     "RELU6",
+    "RELU_N1_TO_1",
+    "LEAKY_RELU",
+    "HARD_SWISH",
+    "TANH",
+    "PRELU",
     "SOFTMAX",
     "LOGISTIC",
+    "RESIZE_NEAREST_NEIGHBOR",
+    "RESIZE_BILINEAR",
     "CONV_2D",
     "DEPTHWISE_CONV_2D",
+    "TRANSPOSE_CONV",
     "FULLY_CONNECTED",
     "BATCH_MATMUL",
 }
@@ -68,11 +95,21 @@ _STRICT_FULL_INTEGER_PASSTHROUGH_OPS = {
     "EXPAND_DIMS",
 }
 
-_STRICT_FULL_INTEGER_REQUIRES_SAME_QPARAMS = {
-    "CONCATENATION",
-    "MEAN",
-    "AVERAGE_POOL_2D",
-    "MAX_POOL_2D",
+_STRICT_FULL_INTEGER_SAME_QPARAM_INPUT_INDICES: Dict[str, Optional[Set[int]]] = {
+    "CONCATENATION": None,
+    "MEAN": {0},
+    "AVERAGE_POOL_2D": {0},
+    "MAX_POOL_2D": {0},
+    "SLICE": {0},
+    "STRIDED_SLICE": {0},
+    "SPLIT": {1},
+    "GATHER": {0},
+    "TILE": {0},
+    "SPACE_TO_DEPTH": {0},
+    "DEPTH_TO_SPACE": {0},
+    "PAD": {0},
+    "SELECT": {1, 2},
+    "SELECT_V2": {1, 2},
 }
 
 
@@ -587,6 +624,13 @@ def fixed_activation_qparams_for_op(
             return QuantParamIR(scale=[1.0 / 256.0], zero_point=[-128], quantized_dimension=0, min=[0.0], max=[1.0])
         if dtype_u == "INT16":
             return QuantParamIR(scale=[1.0 / 32768.0], zero_point=[0], quantized_dimension=0, min=[0.0], max=[1.0])
+    if op_u == "TANH":
+        if dtype_u == "UINT8":
+            return QuantParamIR(scale=[1.0 / 128.0], zero_point=[128], quantized_dimension=0, min=[-1.0], max=[1.0])
+        if dtype_u == "INT8":
+            return QuantParamIR(scale=[1.0 / 128.0], zero_point=[0], quantized_dimension=0, min=[-1.0], max=[1.0])
+        if dtype_u == "INT16":
+            return QuantParamIR(scale=[1.0 / 32768.0], zero_point=[0], quantized_dimension=0, min=[-1.0], max=[1.0])
     return None
 
 
@@ -626,6 +670,63 @@ def _used_tensor_names(model_ir: ModelIR) -> Set[str]:
         used.update(str(v) for v in op.inputs if str(v) != "")
         used.update(str(v) for v in op.outputs if str(v) != "")
     return used
+
+
+def _elide_identity_operators(model_ir: ModelIR) -> None:
+    rewritten: List[OperatorIR] = []
+    replacements: Dict[str, str] = {}
+    graph_outputs = {str(v) for v in model_ir.outputs}
+
+    def resolve(name: str) -> str:
+        current = str(name)
+        seen: Set[str] = set()
+        while current in replacements and current not in seen:
+            seen.add(current)
+            current = replacements[current]
+        return current
+
+    for op in model_ir.operators:
+        op.inputs = [resolve(str(v)) if str(v) != "" else v for v in op.inputs]
+        if str(op.op_type) != "IDENTITY" or len(op.inputs) != 1 or len(op.outputs) != 1:
+            rewritten.append(op)
+            continue
+        input_name = resolve(str(op.inputs[0]))
+        output_name = str(op.outputs[0])
+        if output_name in graph_outputs:
+            producer = next(
+                (
+                    candidate
+                    for candidate in reversed(rewritten)
+                    if input_name in [str(v) for v in candidate.outputs]
+                ),
+                None,
+            )
+            if producer is not None and input_name not in {str(v) for v in model_ir.inputs}:
+                producer.outputs = [output_name if str(v) == input_name else v for v in producer.outputs]
+                replacements[input_name] = output_name
+                continue
+        replacements[output_name] = input_name
+
+    for op in rewritten:
+        op.inputs = [resolve(str(v)) if str(v) != "" else v for v in op.inputs]
+        op.outputs = [resolve(str(v)) if str(v) != "" else v for v in op.outputs]
+    model_ir.outputs = [resolve(str(v)) for v in model_ir.outputs]
+    model_ir.operators = rewritten
+
+
+def _same_qparam_tensor_names_for_op(op: OperatorIR) -> List[str]:
+    input_indices = _STRICT_FULL_INTEGER_SAME_QPARAM_INPUT_INDICES.get(str(op.op_type), None)
+    names: List[str] = []
+    if input_indices is None and str(op.op_type) in _STRICT_FULL_INTEGER_SAME_QPARAM_INPUT_INDICES:
+        names.extend(str(v) for v in op.inputs if str(v) != "")
+    elif input_indices is not None:
+        names.extend(
+            str(input_name)
+            for idx, input_name in enumerate(op.inputs)
+            if int(idx) in input_indices and str(input_name) != ""
+        )
+    names.extend(str(v) for v in op.outputs if str(v) != "")
+    return names
 
 
 def _is_float_activation_tensor(
@@ -827,7 +928,7 @@ def _quantize_bias_tensor(
 def _kernel_weight_quant_axis_for_strict(op_type: str, tensor: TensorIR) -> int:
     if op_type == "DEPTHWISE_CONV_2D":
         return max(0, len(tensor.shape) - 1)
-    if op_type in {"CONV_2D", "FULLY_CONNECTED"}:
+    if op_type in {"CONV_2D", "FULLY_CONNECTED", "TRANSPOSE_CONV"}:
         return 0
     if op_type == "BATCH_MATMUL":
         return 0
@@ -1068,8 +1169,7 @@ def _build_strict_full_integer_model_ir(
         scale_floor=scale_floor,
     )
     clone = _clone_model_ir(model_ir)
-    graph_input_names = set(str(v) for v in clone.inputs)
-    graph_output_names = set(str(v) for v in clone.outputs)
+    _elide_identity_operators(clone)
     internal_dtype = str(internal_activation_dtype).upper()
     input_dtype = str(input_quant_dtype).upper()
     output_dtype = str(output_quant_dtype).upper()
@@ -1106,6 +1206,8 @@ def _build_strict_full_integer_model_ir(
     if not full_integer_io:
         for input_name in list(clone.inputs):
             old_tensor = clone.tensors[str(input_name)]
+            if old_tensor.dtype != "FLOAT32":
+                continue
             q_name = _make_unique_tensor_name(f"{input_name}_quantized_internal", clone.tensors)
             qparams = activation_qparams_from_range(
                 min_value=_require_tensor_range(
@@ -1139,6 +1241,8 @@ def _build_strict_full_integer_model_ir(
             }
         for output_name in list(clone.outputs):
             old_tensor = clone.tensors[str(output_name)]
+            if old_tensor.dtype != "FLOAT32":
+                continue
             q_name = str(output_name)
             float_name = _make_unique_tensor_name(f"{output_name}_dequantized_output", clone.tensors)
             clone.tensors[float_name] = TensorIR(
@@ -1156,6 +1260,8 @@ def _build_strict_full_integer_model_ir(
     else:
         for input_name in list(clone.inputs):
             old_tensor = clone.tensors[str(input_name)]
+            if old_tensor.dtype != "FLOAT32":
+                continue
             input_range = _require_tensor_range(
                 tensor_name=str(input_name),
                 calibration_ranges=calibration_ranges,
@@ -1207,9 +1313,11 @@ def _build_strict_full_integer_model_ir(
             for output_name in op.outputs
         }
         for output_name in list(clone.outputs):
+            old_tensor = clone.tensors[str(output_name)]
+            if old_tensor.dtype != "FLOAT32":
+                continue
             if output_dtype == internal_dtype:
                 continue
-            old_tensor = clone.tensors[str(output_name)]
             producer_op = producer_by_output.get(str(output_name), None)
             fixed_external = fixed_activation_qparams_for_op(
                 op_type=str(producer_op.op_type) if producer_op is not None else "",
@@ -1314,15 +1422,17 @@ def _build_strict_full_integer_model_ir(
                         fixed_qparams=output_fixed,
                     )
 
-        if op_type in {"FULLY_CONNECTED", "CONV_2D", "DEPTHWISE_CONV_2D", "BATCH_MATMUL"}:
-            if len(op.inputs) < 2:
+        if op_type in {"FULLY_CONNECTED", "CONV_2D", "DEPTHWISE_CONV_2D", "BATCH_MATMUL", "TRANSPOSE_CONV"}:
+            activation_input_idx = 2 if op_type == "TRANSPOSE_CONV" else 0
+            weight_input_idx = 1
+            if len(op.inputs) <= max(activation_input_idx, weight_input_idx):
                 raise StrictFullIntegerQuantizationError(f"{op_type} requires a weight input.")
-            input_tensor = clone.tensors[str(op.inputs[0])]
+            input_tensor = clone.tensors[str(op.inputs[activation_input_idx])]
             if not isinstance(input_tensor.quantization, QuantParamIR):
                 raise StrictFullIntegerQuantizationError(
-                    f"{op_type} input tensor is missing qparams: {op.inputs[0]}"
+                    f"{op_type} input tensor is missing qparams: {op.inputs[activation_input_idx]}"
                 )
-            weight_tensor = clone.tensors[str(op.inputs[1])]
+            weight_tensor = clone.tensors[str(op.inputs[weight_input_idx])]
             weight_qparams = _quantize_weight_tensor(
                 tensor=weight_tensor,
                 quant_type=quant_type,
@@ -1332,8 +1442,9 @@ def _build_strict_full_integer_model_ir(
                 scale_floor=float(controls["scale_floor"]),
                 report=report,
             )
-            if len(op.inputs) >= 3 and str(op.inputs[2]) != "":
-                bias_tensor = clone.tensors.get(str(op.inputs[2]), None)
+            bias_input_idx = 3 if op_type == "TRANSPOSE_CONV" else 2
+            if len(op.inputs) > bias_input_idx and str(op.inputs[bias_input_idx]) != "":
+                bias_tensor = clone.tensors.get(str(op.inputs[bias_input_idx]), None)
                 if bias_tensor is not None and bias_tensor.data is not None:
                     _quantize_bias_tensor(
                         tensor=bias_tensor,
@@ -1341,7 +1452,7 @@ def _build_strict_full_integer_model_ir(
                         weight_qparams=weight_qparams,
                         report=report,
                     )
-        elif op_type in _STRICT_FULL_INTEGER_REQUIRES_SAME_QPARAMS and len(op.outputs) > 0:
+        elif op_type in _STRICT_FULL_INTEGER_SAME_QPARAM_INPUT_INDICES and len(op.outputs) > 0:
             out_tensor = clone.tensors[str(op.outputs[0])]
             if not isinstance(out_tensor.quantization, QuantParamIR):
                 raise StrictFullIntegerQuantizationError(
@@ -1349,7 +1460,7 @@ def _build_strict_full_integer_model_ir(
                 )
             _force_same_qparams(
                 model_ir=clone,
-                tensor_names=[str(v) for v in list(op.inputs) + list(op.outputs) if str(v) != ""],
+                tensor_names=_same_qparam_tensor_names_for_op(op),
                 qparams=out_tensor.quantization,
                 dtype=out_tensor.dtype,
                 report=report,

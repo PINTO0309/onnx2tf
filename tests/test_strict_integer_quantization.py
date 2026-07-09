@@ -1,7 +1,11 @@
+import os
+import tempfile
+
 import numpy as np
 import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+from onnx2tf.tflite_builder.model_writer import write_model_file
 from onnx2tf.tflite_builder.quantization import (
     StrictFullIntegerQuantizationError,
     TensorCalibrationRange,
@@ -10,6 +14,32 @@ from onnx2tf.tflite_builder.quantization import (
     fixed_activation_qparams_for_op,
     load_calibration_samples,
 )
+from onnx2tf.tflite_builder.schema_loader import load_schema_module
+
+
+Interpreter = pytest.importorskip("ai_edge_litert.interpreter").Interpreter
+
+
+def _calibration_ranges_for_float_activations(model_ir: ModelIR) -> dict[str, TensorCalibrationRange]:
+    return {
+        name: TensorCalibrationRange(-1.0, 1.0, 1)
+        for name, tensor in model_ir.tensors.items()
+        if str(tensor.dtype).upper() == "FLOAT32" and tensor.data is None
+    }
+
+
+def _assert_litert_allocates(model_ir: ModelIR) -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        schema = load_schema_module(output_folder_path=tmpdir)
+        tflite_path = os.path.join(tmpdir, f"{model_ir.name}.tflite")
+        write_model_file(
+            schema_tflite=schema,
+            model_ir=model_ir,
+            output_tflite_path=tflite_path,
+            timing={},
+        )
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
 
 
 def test_activation_qparams_from_range_uint8_uses_calibrated_range() -> None:
@@ -117,3 +147,403 @@ def test_strict_full_integer_builder_rejects_unsupported_float_op() -> None:
                 "y": TensorCalibrationRange(0.0, 2.0, 1),
             },
         )
+
+
+def test_fixed_tanh_qparams_match_tflite_contract() -> None:
+    int8_qparams = fixed_activation_qparams_for_op(op_type="TANH", dtype="int8")
+    uint8_qparams = fixed_activation_qparams_for_op(op_type="TANH", dtype="uint8")
+    int16_qparams = fixed_activation_qparams_for_op(op_type="TANH", dtype="int16")
+
+    assert int8_qparams is not None
+    assert int8_qparams.scale == [1.0 / 128.0]
+    assert int8_qparams.zero_point == [0]
+    assert uint8_qparams is not None
+    assert uint8_qparams.scale == [1.0 / 128.0]
+    assert uint8_qparams.zero_point == [128]
+    assert int16_qparams is not None
+    assert int16_qparams.scale == [1.0 / 32768.0]
+    assert int16_qparams.zero_point == [0]
+
+
+def test_select_keeps_bool_condition_and_aligns_value_qparams() -> None:
+    model_ir = ModelIR(name="select")
+    model_ir.inputs = ["cond", "x", "z"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["cond"] = TensorIR(name="cond", dtype="BOOL", shape=[1, 4], shape_signature=[1, 4])
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+    model_ir.tensors["z"] = TensorIR(name="z", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+    model_ir.operators = [OperatorIR(op_type="SELECT_V2", inputs=["cond", "x", "z"], outputs=["y"])]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges={
+            "x": TensorCalibrationRange(-2.0, 2.0, 1),
+            "z": TensorCalibrationRange(-1.0, 1.0, 1),
+            "y": TensorCalibrationRange(-0.5, 0.5, 1),
+        },
+    )
+
+    assert quantized.tensors["cond"].dtype == "BOOL"
+    assert quantized.tensors["cond"].quantization is None
+    assert quantized.tensors["x"].quantization is not None
+    assert quantized.tensors["z"].quantization is not None
+    assert quantized.tensors["y"].quantization is not None
+    assert quantized.tensors["x"].quantization.scale == quantized.tensors["y"].quantization.scale
+    assert quantized.tensors["z"].quantization.scale == quantized.tensors["y"].quantization.scale
+    _assert_litert_allocates(quantized)
+
+
+def test_reduce_axes_remain_int32() -> None:
+    model_ir = ModelIR(name="reduce_sum")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+    model_ir.tensors["axes"] = TensorIR(
+        name="axes",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1], shape_signature=[1])
+    model_ir.operators = [
+        OperatorIR(op_type="SUM", inputs=["x", "axes"], outputs=["y"], options={"keepDims": False})
+    ]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges=_calibration_ranges_for_float_activations(model_ir),
+    )
+
+    assert quantized.tensors["axes"].dtype == "INT32"
+    assert quantized.tensors["axes"].quantization is None
+    _assert_litert_allocates(quantized)
+
+
+def test_transpose_conv_quantizes_weight_and_bias() -> None:
+    model_ir = ModelIR(name="transpose_conv")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["out_shape"] = TensorIR(
+        name="out_shape",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 4, 4, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["w"] = TensorIR(
+        name="w",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 1],
+        shape_signature=[1, 2, 2, 1],
+        data=np.ones((1, 2, 2, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["b"] = TensorIR(
+        name="b",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.zeros((1,), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 3, 3, 1], shape_signature=[1, 3, 3, 1])
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 4, 4, 1], shape_signature=[1, 4, 4, 1])
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE_CONV",
+            inputs=["out_shape", "w", "x", "b"],
+            outputs=["y"],
+            options={
+                "padding": "VALID",
+                "strideH": 1,
+                "strideW": 1,
+                "fusedActivationFunction": "NONE",
+            },
+        )
+    ]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges=_calibration_ranges_for_float_activations(model_ir),
+    )
+
+    assert quantized.tensors["out_shape"].dtype == "INT32"
+    assert quantized.tensors["w"].dtype == "INT8"
+    assert quantized.tensors["w"].quantization is not None
+    assert quantized.tensors["w"].quantization.quantized_dimension == 0
+    assert quantized.tensors["b"].dtype == "INT32"
+    assert quantized.tensors["b"].quantization is not None
+
+
+def test_transpose_conv_allocates_as_strict_full_integer() -> None:
+    model_ir = ModelIR(name="transpose_conv_allocate")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["out_shape"] = TensorIR(
+        name="out_shape",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 4, 4, 1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["w"] = TensorIR(
+        name="w",
+        dtype="FLOAT32",
+        shape=[1, 2, 2, 1],
+        shape_signature=[1, 2, 2, 1],
+        data=np.ones((1, 2, 2, 1), dtype=np.float32),
+        is_variable=False,
+    )
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 3, 3, 1], shape_signature=[1, 3, 3, 1])
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 4, 4, 1], shape_signature=[1, 4, 4, 1])
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE_CONV",
+            inputs=["out_shape", "w", "x"],
+            outputs=["y"],
+            options={
+                "padding": "VALID",
+                "strideH": 1,
+                "strideW": 1,
+                "fusedActivationFunction": "NONE",
+            },
+        )
+    ]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges=_calibration_ranges_for_float_activations(model_ir),
+    )
+
+    _assert_litert_allocates(quantized)
+
+
+def test_identity_is_elided_before_strict_full_integer_quantization() -> None:
+    model_ir = ModelIR(name="identity_elide")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+    model_ir.tensors["relu_out"] = TensorIR(name="relu_out", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+    model_ir.operators = [
+        OperatorIR(op_type="RELU", inputs=["x"], outputs=["relu_out"]),
+        OperatorIR(op_type="IDENTITY", inputs=["relu_out"], outputs=["y"]),
+    ]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges={
+            "x": TensorCalibrationRange(-1.0, 1.0, 1),
+            "relu_out": TensorCalibrationRange(0.0, 1.0, 1),
+            "y": TensorCalibrationRange(0.0, 1.0, 1),
+        },
+    )
+
+    assert [str(op.op_type) for op in quantized.operators] == ["RELU"]
+    assert quantized.outputs == ["y"]
+    assert quantized.operators[0].outputs == ["y"]
+    _assert_litert_allocates(quantized)
+
+
+def _make_single_op_model(op_type: str) -> ModelIR:
+    model_ir = ModelIR(name=str(op_type).lower())
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+    if op_type in {"MAXIMUM", "MINIMUM", "DIV"}:
+        model_ir.tensors["c"] = TensorIR(
+            name="c",
+            dtype="FLOAT32",
+            shape=[1, 4],
+            shape_signature=[1, 4],
+            data=np.ones((1, 4), dtype=np.float32),
+            is_variable=False,
+        )
+        model_ir.operators = [OperatorIR(op_type=op_type, inputs=["x", "c"], outputs=["y"])]
+    elif op_type == "PRELU":
+        model_ir.tensors["alpha"] = TensorIR(
+            name="alpha",
+            dtype="FLOAT32",
+            shape=[1, 4],
+            shape_signature=[1, 4],
+            data=np.full((1, 4), 0.25, dtype=np.float32),
+            is_variable=False,
+        )
+        model_ir.operators = [OperatorIR(op_type=op_type, inputs=["x", "alpha"], outputs=["y"])]
+    elif op_type == "LEAKY_RELU":
+        model_ir.operators = [OperatorIR(op_type=op_type, inputs=["x"], outputs=["y"], options={"alpha": 0.1})]
+    else:
+        model_ir.operators = [OperatorIR(op_type=op_type, inputs=["x"], outputs=["y"])]
+    return model_ir
+
+
+def _make_shape_op_model(op_type: str) -> ModelIR:
+    model_ir = ModelIR(name=str(op_type).lower())
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    if op_type == "SLICE":
+        model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+        model_ir.tensors["begin"] = TensorIR(name="begin", dtype="INT32", shape=[2], shape_signature=[2], data=np.asarray([0, 1], dtype=np.int32), is_variable=False)
+        model_ir.tensors["size"] = TensorIR(name="size", dtype="INT32", shape=[2], shape_signature=[2], data=np.asarray([1, 2], dtype=np.int32), is_variable=False)
+        model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 2], shape_signature=[1, 2])
+        model_ir.operators = [OperatorIR(op_type="SLICE", inputs=["x", "begin", "size"], outputs=["y"])]
+    elif op_type == "STRIDED_SLICE":
+        model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+        model_ir.tensors["begin"] = TensorIR(name="begin", dtype="INT32", shape=[2], shape_signature=[2], data=np.asarray([0, 0], dtype=np.int32), is_variable=False)
+        model_ir.tensors["end"] = TensorIR(name="end", dtype="INT32", shape=[2], shape_signature=[2], data=np.asarray([1, 4], dtype=np.int32), is_variable=False)
+        model_ir.tensors["stride"] = TensorIR(name="stride", dtype="INT32", shape=[2], shape_signature=[2], data=np.asarray([1, 1], dtype=np.int32), is_variable=False)
+        model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+        model_ir.operators = [
+            OperatorIR(
+                op_type="STRIDED_SLICE",
+                inputs=["x", "begin", "end", "stride"],
+                outputs=["y"],
+                options={"beginMask": 0, "endMask": 0, "ellipsisMask": 0, "newAxisMask": 0, "shrinkAxisMask": 0},
+            )
+        ]
+    elif op_type == "SPLIT":
+        model_ir.outputs = ["y0", "y1"]
+        model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+        model_ir.tensors["axis"] = TensorIR(name="axis", dtype="INT32", shape=[1], shape_signature=[1], data=np.asarray([1], dtype=np.int32), is_variable=False)
+        model_ir.tensors["y0"] = TensorIR(name="y0", dtype="FLOAT32", shape=[1, 2], shape_signature=[1, 2])
+        model_ir.tensors["y1"] = TensorIR(name="y1", dtype="FLOAT32", shape=[1, 2], shape_signature=[1, 2])
+        model_ir.operators = [OperatorIR(op_type="SPLIT", inputs=["axis", "x"], outputs=["y0", "y1"], options={"numSplits": 2})]
+    elif op_type == "GATHER":
+        model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+        model_ir.tensors["idx"] = TensorIR(name="idx", dtype="INT32", shape=[2], shape_signature=[2], data=np.asarray([0, 2], dtype=np.int32), is_variable=False)
+        model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 2], shape_signature=[1, 2])
+        model_ir.operators = [OperatorIR(op_type="GATHER", inputs=["x", "idx"], outputs=["y"], options={"axis": 1, "batchDims": 0})]
+    elif op_type == "TILE":
+        model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+        model_ir.tensors["reps"] = TensorIR(name="reps", dtype="INT32", shape=[2], shape_signature=[2], data=np.asarray([1, 2], dtype=np.int32), is_variable=False)
+        model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 8], shape_signature=[1, 8])
+        model_ir.operators = [OperatorIR(op_type="TILE", inputs=["x", "reps"], outputs=["y"])]
+    elif op_type == "PAD":
+        model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+        model_ir.tensors["pads"] = TensorIR(name="pads", dtype="INT32", shape=[2, 2], shape_signature=[2, 2], data=np.asarray([[0, 0], [1, 1]], dtype=np.int32), is_variable=False)
+        model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 6], shape_signature=[1, 6])
+        model_ir.operators = [OperatorIR(op_type="PAD", inputs=["x", "pads"], outputs=["y"])]
+    elif op_type == "SPACE_TO_DEPTH":
+        model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4, 4, 1], shape_signature=[1, 4, 4, 1])
+        model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 2, 2, 4], shape_signature=[1, 2, 2, 4])
+        model_ir.operators = [OperatorIR(op_type="SPACE_TO_DEPTH", inputs=["x"], outputs=["y"], options={"blockSize": 2})]
+    elif op_type == "DEPTH_TO_SPACE":
+        model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 2, 2, 4], shape_signature=[1, 2, 2, 4])
+        model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 4, 4, 1], shape_signature=[1, 4, 4, 1])
+        model_ir.operators = [OperatorIR(op_type="DEPTH_TO_SPACE", inputs=["x"], outputs=["y"], options={"blockSize": 2})]
+    else:
+        raise AssertionError(f"Unexpected shape op: {op_type}")
+    return model_ir
+
+
+@pytest.mark.parametrize(
+    "op_type",
+    [
+        "ABS",
+        "NEG",
+        "RELU_N1_TO_1",
+        "TANH",
+        "HARD_SWISH",
+        "LEAKY_RELU",
+        "MAXIMUM",
+        "MINIMUM",
+        "DIV",
+        "PRELU",
+    ],
+)
+def test_additional_activation_ops_allocate_as_strict_full_integer(op_type: str) -> None:
+    model_ir = _make_single_op_model(op_type)
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges=_calibration_ranges_for_float_activations(model_ir),
+    )
+
+    _assert_litert_allocates(quantized)
+
+
+@pytest.mark.parametrize(
+    "op_type",
+    [
+        "SLICE",
+        "STRIDED_SLICE",
+        "SPLIT",
+        "GATHER",
+        "TILE",
+        "PAD",
+        "SPACE_TO_DEPTH",
+        "DEPTH_TO_SPACE",
+    ],
+)
+def test_additional_forwarding_ops_allocate_as_strict_full_integer(op_type: str) -> None:
+    model_ir = _make_shape_op_model(op_type)
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges=_calibration_ranges_for_float_activations(model_ir),
+    )
+
+    _assert_litert_allocates(quantized)
+
+
+@pytest.mark.parametrize("op_type", ["SUM", "REDUCE_MAX", "REDUCE_MIN", "REDUCE_PROD"])
+def test_additional_reduce_ops_allocate_as_strict_full_integer(op_type: str) -> None:
+    model_ir = ModelIR(name=str(op_type).lower())
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 4], shape_signature=[1, 4])
+    model_ir.tensors["axes"] = TensorIR(
+        name="axes",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([1], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1], shape_signature=[1])
+    model_ir.operators = [
+        OperatorIR(op_type=op_type, inputs=["x", "axes"], outputs=["y"], options={"keepDims": False})
+    ]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges=_calibration_ranges_for_float_activations(model_ir),
+    )
+
+    _assert_litert_allocates(quantized)
+
+
+@pytest.mark.parametrize("op_type", ["RESIZE_NEAREST_NEIGHBOR", "RESIZE_BILINEAR"])
+def test_additional_resize_ops_allocate_as_strict_full_integer(op_type: str) -> None:
+    model_ir = ModelIR(name=str(op_type).lower())
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(name="x", dtype="FLOAT32", shape=[1, 2, 2, 1], shape_signature=[1, 2, 2, 1])
+    model_ir.tensors["size"] = TensorIR(
+        name="size",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([4, 4], dtype=np.int32),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(name="y", dtype="FLOAT32", shape=[1, 4, 4, 1], shape_signature=[1, 4, 4, 1])
+    model_ir.operators = [
+        OperatorIR(
+            op_type=op_type,
+            inputs=["x", "size"],
+            outputs=["y"],
+            options={"alignCorners": False, "halfPixelCenters": False},
+        )
+    ]
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        calibration_ranges=_calibration_ranges_for_float_activations(model_ir),
+    )
+
+    _assert_litert_allocates(quantized)
