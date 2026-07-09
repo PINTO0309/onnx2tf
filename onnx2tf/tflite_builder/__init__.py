@@ -33,6 +33,7 @@ from onnx2tf.tflite_builder.quantization import (
     build_integer_quantized_with_int16_act_model_ir,
     collect_calibration_ranges_from_tflite,
     load_calibration_samples,
+    strict_int16_activation_skip_reasons,
 )
 from onnx2tf.tflite_builder.preprocess import (
     configure_pseudo_ops_wave1_targets,
@@ -1100,6 +1101,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
 
         integer_quant_path = None
         full_integer_quant_path = None
+        integer_quant_with_int16_act_path = None
+        full_integer_quant_with_int16_act_path = None
+        int16_activation_skip_reasons: List[str] = []
         if output_integer_quantized_tflite:
             _set_export_progress_desc("write integer quant tflite")
             integer_result = build_integer_quantized_model_ir(
@@ -1171,76 +1175,100 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             )
             _advance_export_progress()
 
-            _set_export_progress_desc("write integer quant int16-act tflite")
-            integer_quant_with_int16_act_model_ir = build_integer_quantized_with_int16_act_model_ir(
-                model_ir,
-                quant_type=str(quant_type),
-                calibration_method=quant_controls["calibration_method"],
-                calibration_percentile=quant_controls["calibration_percentile"],
-                min_numel=quant_controls["min_numel"],
-                min_abs_max=quant_controls["min_abs_max"],
-                scale_floor=quant_controls["scale_floor"],
-                calibration_ranges=calibration_ranges,
-            )
-            integer_quant_with_int16_act_path = os.path.join(
-                output_folder_path,
-                f"{output_file_name}_integer_quant_with_int16_act.tflite",
-            )
-            integer_quant_int16_write_timing: Dict[str, Any] = {}
-            _write_validated_quantized_model_file(
-                model_ir=integer_quant_with_int16_act_model_ir,
-                output_tflite_path=integer_quant_with_int16_act_path,
-                timing=integer_quant_int16_write_timing,
-            )
-            write_timing_report["integer_quant_with_int16_act"] = integer_quant_int16_write_timing
-            _progress_write(
-                message=_format_write_timing_line(
-                    stage="integer_quant_with_int16_act",
+            int16_activation_skip_reasons = strict_int16_activation_skip_reasons(model_ir)
+            if len(int16_activation_skip_reasons) > 0:
+                calibration_report["variants"]["integer_quant_with_int16_act"] = {
+                    "skipped": True,
+                    "skip_reasons": list(int16_activation_skip_reasons),
+                }
+                calibration_report["variants"]["full_integer_quant_with_int16_act"] = {
+                    "skipped": True,
+                    "skip_reasons": list(int16_activation_skip_reasons),
+                }
+                _progress_write(
+                    message=(
+                        "integer_quant_with_int16_act skipped. "
+                        + " ".join(int16_activation_skip_reasons)
+                    ),
+                    enabled=bool(flatbuffer_direct_show_progress),
+                )
+                _advance_export_progress()
+                _progress_write(
+                    message=(
+                        "full_integer_quant_with_int16_act skipped. "
+                        + " ".join(int16_activation_skip_reasons)
+                    ),
+                    enabled=bool(flatbuffer_direct_show_progress),
+                )
+                _advance_export_progress()
+            else:
+                _set_export_progress_desc("write integer quant int16-act tflite")
+                integer_quant_with_int16_act_model_ir = build_integer_quantized_with_int16_act_model_ir(
+                    model_ir,
+                    quant_type=str(quant_type),
+                    calibration_method=quant_controls["calibration_method"],
+                    calibration_percentile=quant_controls["calibration_percentile"],
+                    min_numel=quant_controls["min_numel"],
+                    min_abs_max=quant_controls["min_abs_max"],
+                    scale_floor=quant_controls["scale_floor"],
+                    calibration_ranges=calibration_ranges,
+                )
+                integer_quant_with_int16_act_path = os.path.join(
+                    output_folder_path,
+                    f"{output_file_name}_integer_quant_with_int16_act.tflite",
+                )
+                integer_quant_int16_write_timing: Dict[str, Any] = {}
+                _write_validated_quantized_model_file(
+                    model_ir=integer_quant_with_int16_act_model_ir,
+                    output_tflite_path=integer_quant_with_int16_act_path,
                     timing=integer_quant_int16_write_timing,
-                ),
-                enabled=bool(flatbuffer_direct_show_progress),
-            )
-            _advance_export_progress()
+                )
+                write_timing_report["integer_quant_with_int16_act"] = integer_quant_int16_write_timing
+                _progress_write(
+                    message=_format_write_timing_line(
+                        stage="integer_quant_with_int16_act",
+                        timing=integer_quant_int16_write_timing,
+                    ),
+                    enabled=bool(flatbuffer_direct_show_progress),
+                )
+                _advance_export_progress()
 
-            _set_export_progress_desc("write full integer quant int16-act tflite")
-            full_integer_quant_with_int16_act_model_ir = build_full_integer_quantized_with_int16_act_model_ir(
-                model_ir,
-                quant_type=str(quant_type),
-                calibration_method=quant_controls["calibration_method"],
-                calibration_percentile=quant_controls["calibration_percentile"],
-                min_numel=quant_controls["min_numel"],
-                min_abs_max=quant_controls["min_abs_max"],
-                scale_floor=quant_controls["scale_floor"],
-                calibration_ranges=calibration_ranges,
-            )
-            full_integer_quant_with_int16_act_path = os.path.join(
-                output_folder_path,
-                f"{output_file_name}_full_integer_quant_with_int16_act.tflite",
-            )
-            full_integer_quant_int16_write_timing: Dict[str, Any] = {}
-            _write_validated_quantized_model_file(
-                model_ir=full_integer_quant_with_int16_act_model_ir,
-                output_tflite_path=full_integer_quant_with_int16_act_path,
-                timing=full_integer_quant_int16_write_timing,
-            )
-            write_timing_report["full_integer_quant_with_int16_act"] = full_integer_quant_int16_write_timing
-            _progress_write(
-                message=_format_write_timing_line(
-                    stage="full_integer_quant_with_int16_act",
+                _set_export_progress_desc("write full integer quant int16-act tflite")
+                full_integer_quant_with_int16_act_model_ir = build_full_integer_quantized_with_int16_act_model_ir(
+                    model_ir,
+                    quant_type=str(quant_type),
+                    calibration_method=quant_controls["calibration_method"],
+                    calibration_percentile=quant_controls["calibration_percentile"],
+                    min_numel=quant_controls["min_numel"],
+                    min_abs_max=quant_controls["min_abs_max"],
+                    scale_floor=quant_controls["scale_floor"],
+                    calibration_ranges=calibration_ranges,
+                )
+                full_integer_quant_with_int16_act_path = os.path.join(
+                    output_folder_path,
+                    f"{output_file_name}_full_integer_quant_with_int16_act.tflite",
+                )
+                full_integer_quant_int16_write_timing: Dict[str, Any] = {}
+                _write_validated_quantized_model_file(
+                    model_ir=full_integer_quant_with_int16_act_model_ir,
+                    output_tflite_path=full_integer_quant_with_int16_act_path,
                     timing=full_integer_quant_int16_write_timing,
-                ),
-                enabled=bool(flatbuffer_direct_show_progress),
-            )
-            _advance_export_progress()
+                )
+                write_timing_report["full_integer_quant_with_int16_act"] = full_integer_quant_int16_write_timing
+                _progress_write(
+                    message=_format_write_timing_line(
+                        stage="full_integer_quant_with_int16_act",
+                        timing=full_integer_quant_int16_write_timing,
+                    ),
+                    enabled=bool(flatbuffer_direct_show_progress),
+                )
+                _advance_export_progress()
             calibration_report_path = os.path.join(
                 output_folder_path,
                 f"{output_file_name}_strict_integer_quant_calibration_report.json",
             )
             with open(calibration_report_path, "w", encoding="utf-8") as f:
                 json.dump(calibration_report, f, indent=2)
-        else:
-            integer_quant_with_int16_act_path = None
-            full_integer_quant_with_int16_act_path = None
 
         if output_weights:
             _set_export_progress_desc("export float32 weights")
@@ -1349,6 +1377,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         outputs["integer_quant_with_int16_act_tflite_path"] = integer_quant_with_int16_act_path
     if full_integer_quant_with_int16_act_path is not None:
         outputs["full_integer_quant_with_int16_act_tflite_path"] = full_integer_quant_with_int16_act_path
+    if len(int16_activation_skip_reasons) > 0:
+        outputs["int16_activation_quantization_skipped"] = True
+        outputs["int16_activation_quantization_skip_reasons"] = list(int16_activation_skip_reasons)
     if calibration_report_path is not None:
         outputs["strict_integer_quant_calibration_report_path"] = calibration_report_path
     if split_plan_report_path is not None:

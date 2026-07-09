@@ -6142,11 +6142,13 @@ def convert(
                 raise RuntimeError(
                     'flatbuffer_direct full integer quantization was requested but no output was generated.'
                 )
-            if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs:
+            int16_act_skipped = bool(direct_outputs.get('int16_activation_quantization_skipped', False))
+            int16_act_skip_reasons = direct_outputs.get('int16_activation_quantization_skip_reasons', [])
+            if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
                 raise RuntimeError(
                     'flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.'
                 )
-            if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs:
+            if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
                 raise RuntimeError(
                     'flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.'
                 )
@@ -6162,18 +6164,26 @@ def convert(
                     f'({direct_outputs["full_integer_quant_tflite_path"]})'
                 )
             )
-            info(
-                Color.GREEN(
-                    f'INT8 Quantization with int16 activations tflite output complete! '
-                    f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
+            if int16_act_skipped:
+                info(
+                    Color.YELLOW(
+                        'INT8 Quantization with int16 activations skipped. '
+                        f'Reason: {"; ".join(str(v) for v in int16_act_skip_reasons)}'
+                    )
                 )
-            )
-            info(
-                Color.GREEN(
-                    f'Full INT8 Quantization with int16 activations tflite output complete! '
-                    f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
+            else:
+                info(
+                    Color.GREEN(
+                        f'INT8 Quantization with int16 activations tflite output complete! '
+                        f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
+                    )
                 )
-            )
+                info(
+                    Color.GREEN(
+                        f'Full INT8 Quantization with int16 activations tflite output complete! '
+                        f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
+                    )
+                )
         if copy_onnx_input_output_names_to_tflite:
             info(
                 'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
@@ -7385,11 +7395,13 @@ def convert(
                         raise RuntimeError(
                             'flatbuffer_direct full integer quantization was requested but no output was generated.'
                         )
-                    if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs:
+                    int16_act_skipped = bool(direct_outputs.get('int16_activation_quantization_skipped', False))
+                    int16_act_skip_reasons = direct_outputs.get('int16_activation_quantization_skip_reasons', [])
+                    if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
                         raise RuntimeError(
                             'flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.'
                         )
-                    if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs:
+                    if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
                         raise RuntimeError(
                             'flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.'
                         )
@@ -7405,18 +7417,26 @@ def convert(
                             f'({direct_outputs["full_integer_quant_tflite_path"]})'
                         )
                     )
-                    info(
-                        Color.GREEN(
-                            f'INT8 Quantization with int16 activations tflite output complete! '
-                            f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
+                    if int16_act_skipped:
+                        info(
+                            Color.YELLOW(
+                                'INT8 Quantization with int16 activations skipped. '
+                                f'Reason: {"; ".join(str(v) for v in int16_act_skip_reasons)}'
+                            )
                         )
-                    )
-                    info(
-                        Color.GREEN(
-                            f'Full INT8 Quantization with int16 activations tflite output complete! '
-                            f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
+                    else:
+                        info(
+                            Color.GREEN(
+                                f'INT8 Quantization with int16 activations tflite output complete! '
+                                f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
+                            )
                         )
-                    )
+                        info(
+                            Color.GREEN(
+                                f'Full INT8 Quantization with int16 activations tflite output complete! '
+                                f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
+                            )
+                        )
                 if copy_onnx_input_output_names_to_tflite:
                     info(
                         'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
