@@ -639,6 +639,39 @@ def _sanitize_onnx_graph_names_inplace(
     visit_graph(onnx_model.graph)
 
 
+def _run_onnxsim_inplace_safely(
+    *,
+    input_onnx_file_path: str,
+    append_param: List[str],
+) -> str:
+    """Run onnxsim without exposing the source model to a partial write."""
+
+    source_path = os.path.abspath(str(input_onnx_file_path))
+    source_dir = os.path.dirname(source_path)
+    source_stem = os.path.basename(source_path)
+    file_descriptor, staging_path = tempfile.mkstemp(
+        prefix=f'.{source_stem}.onnx2tf_onnxsim_',
+        suffix='.onnx',
+        dir=source_dir,
+    )
+    os.close(file_descriptor)
+    os.unlink(staging_path)
+    try:
+        result = subprocess.check_output(
+            [
+                'onnxsim',
+                source_path,
+                staging_path,
+            ] + list(append_param),
+            stderr=subprocess.PIPE,
+        ).decode('utf-8')
+        os.replace(staging_path, source_path)
+        return result
+    finally:
+        if os.path.exists(staging_path):
+            os.unlink(staging_path)
+
+
 def _is_tf_saved_model_verbose_line(line: str) -> bool:
     stripped = str(line).strip()
     if stripped == "":
@@ -4946,14 +4979,10 @@ def convert(
                     if overwrite_input_shape is not None else []
                 append_param = append_param + ['--no-large-tensor', '10MB'] \
                     if no_large_tensor else append_param
-                result = subprocess.check_output(
-                    [
-                        'onnxsim',
-                        f'{input_onnx_file_path}',
-                        f'{input_onnx_file_path}'
-                    ] + append_param,
-                    stderr=subprocess.PIPE
-                ).decode('utf-8')
+                result = _run_onnxsim_inplace_safely(
+                    input_onnx_file_path=f'{input_onnx_file_path}',
+                    append_param=append_param,
+                )
                 info(result)
             info(Color.GREEN(f'Model optimizing complete!'))
         except Exception as e:

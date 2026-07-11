@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import onnx
 import onnxruntime as ort
+import pytest
 from onnx import TensorProto, helper, numpy_helper
 
 from onnx2tf.utils.onnxruntime_compat import prepare_onnx_graph_for_onnxruntime
-from onnx2tf.onnx2tf import _sanitize_onnx_graph_names_inplace
+from onnx2tf.onnx2tf import (
+    _run_onnxsim_inplace_safely,
+    _sanitize_onnx_graph_names_inplace,
+)
 
 
 def _grid_sample_model(*, opset: int, include_inverse: bool):
@@ -23,6 +29,79 @@ def _grid_sample_model(*, opset: int, include_inverse: bool):
         helper.make_graph(nodes, "grid_sample", [x, grid], [y]),
         opset_imports=[helper.make_operatorsetid("", int(opset))],
     )
+
+
+def _missing_torchvision_nms_capture_model() -> onnx.ModelProto:
+    cond = helper.make_tensor_value_info("cond", TensorProto.BOOL, [])
+    boxes = helper.make_tensor_value_info("boxes", TensorProto.FLOAT, [4, 4])
+    scores = helper.make_tensor_value_info("scores", TensorProto.FLOAT, [4])
+    segment0 = helper.make_tensor_value_info("segment0", TensorProto.FLOAT, [2])
+    segment1 = helper.make_tensor_value_info("segment1", TensorProto.FLOAT, [2])
+    keep = helper.make_tensor_value_info("keep", TensorProto.INT64, ["K"])
+    k = numpy_helper.from_array(np.asarray(2, dtype=np.int64), name="k")
+    offset = numpy_helper.from_array(np.asarray(2, dtype=np.int64), name="offset")
+    prefilter = numpy_helper.from_array(np.arange(4, dtype=np.int64), name="prefilter")
+    final_filter = numpy_helper.from_array(np.arange(4, dtype=np.int64), name="final_filter")
+    max_output = numpy_helper.from_array(np.asarray([4], dtype=np.int64), name="max_output")
+    iou = numpy_helper.from_array(np.asarray([0.5], dtype=np.float32), name="iou")
+    gather_column = numpy_helper.from_array(np.asarray([2], dtype=np.int64), name="gather_column")
+    empty = numpy_helper.from_array(np.asarray([], dtype=np.int64), name="empty")
+
+    top_nodes = [
+        helper.make_node("TopK", ["segment0", "k"], ["values0", "indices0"], name="topk0"),
+        helper.make_node("TopK", ["segment1", "k"], ["values1", "indices1"], name="topk1"),
+        helper.make_node("Add", ["indices1", "offset"], ["indices1_offset"], name="offset1"),
+        helper.make_node("Concat", ["indices0", "indices1_offset"], ["global_indices"], name="topk_indices", axis=0),
+        helper.make_node("Gather", ["boxes", "global_indices"], ["box_candidates"], name="box_candidates", axis=0),
+        helper.make_node("Gather", ["scores", "global_indices"], ["score_candidates"], name="score_candidates", axis=0),
+        helper.make_node("Gather", ["box_candidates", "prefilter"], ["boxes_prefiltered"], name="boxes_prefiltered", axis=0),
+        helper.make_node("Gather", ["score_candidates", "prefilter"], ["scores_prefiltered"], name="scores_prefiltered", axis=0),
+        helper.make_node("Gather", ["boxes_prefiltered", "final_filter"], ["boxes_final"], name="boxes_final", axis=0),
+    ]
+    else_nodes = [
+        helper.make_node("ReduceMax", ["boxes_final"], ["max_coordinate"], keepdims=0),
+        helper.make_node("Cast", ["missing_levels"], ["levels_float"], to=TensorProto.FLOAT),
+        helper.make_node("Unsqueeze", ["boxes_final"], ["boxes_nms"], axes=[0]),
+        helper.make_node("Unsqueeze", ["missing_scores"], ["scores_nms"], axes=[0, 1]),
+        helper.make_node("NonMaxSuppression", ["boxes_nms", "scores_nms", "max_output", "iou"], ["selected"]),
+        helper.make_node("Gather", ["selected", "gather_column"], ["selected_column"], axis=1),
+        helper.make_node("Squeeze", ["selected_column"], ["keep"], axes=[1]),
+    ]
+    else_graph = helper.make_graph(
+        else_nodes,
+        "else_graph",
+        [],
+        [helper.make_tensor_value_info("keep", TensorProto.INT64, ["K"])],
+    )
+    then_graph = helper.make_graph(
+        [],
+        "then_graph",
+        [],
+        [helper.make_tensor_value_info("empty", TensorProto.INT64, [0])],
+        initializer=[empty],
+    )
+    top_nodes.append(
+        helper.make_node(
+            "If",
+            ["cond"],
+            ["keep"],
+            name="nms_guard",
+            then_branch=then_graph,
+            else_branch=else_graph,
+        )
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            top_nodes,
+            "missing_nms_captures",
+            [cond, boxes, scores, segment0, segment1],
+            [keep],
+            initializer=[k, offset, prefilter, final_filter, max_output, iou, gather_column],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 11)],
+    )
+    model.ir_version = 10
+    return model
 
 
 def test_prepare_onnxruntime_graph_redomains_legacy_grid_sample_and_inverse() -> None:
@@ -502,3 +581,64 @@ def test_recursive_name_sanitization_updates_control_flow_outer_captures() -> No
         },
     )[0]
     np.testing.assert_array_equal(actual, np.asarray([2.0], dtype=np.float32))
+
+
+def test_failed_onnxsim_does_not_partially_overwrite_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "model.onnx"
+    source_path.write_bytes(b"original-model")
+
+    def fail_after_partial_output(command, *, stderr):
+        assert command[1] == str(source_path)
+        assert command[2] != str(source_path)
+        Path(command[2]).write_bytes(b"partial-model")
+        raise RuntimeError("onnxsim failed")
+
+    monkeypatch.setattr(
+        "onnx2tf.onnx2tf.subprocess.check_output",
+        fail_after_partial_output,
+    )
+    with pytest.raises(RuntimeError, match="onnxsim failed"):
+        _run_onnxsim_inplace_safely(
+            input_onnx_file_path=str(source_path),
+            append_param=[],
+        )
+
+    assert source_path.read_bytes() == b"original-model"
+    assert list(tmp_path.glob("*.onnx2tf_onnxsim_*.onnx")) == []
+
+
+def test_prepare_onnxruntime_repairs_missing_torchvision_nms_guard_captures() -> None:
+    model = _missing_torchvision_nms_capture_model()
+    with pytest.raises(onnx.checker.ValidationError):
+        onnx.checker.check_model(model)
+
+    prepared, rewritten = prepare_onnx_graph_for_onnxruntime(model)
+
+    assert rewritten["TorchVisionNmsGuardCaptures"] == 1
+    onnx.checker.check_model(prepared)
+    repair_nodes = {
+        str(node.name): node
+        for node in prepared.graph.node
+        if "repair_nms" in str(node.name)
+    }
+    assert set(repair_nodes) == {
+        "nms_guard_repair_nms_scores",
+        "nms_guard_repair_nms_levels_prefilter",
+        "nms_guard_repair_nms_levels_final",
+    }
+    assert list(repair_nodes["nms_guard_repair_nms_scores"].input) == [
+        "scores_prefiltered",
+        "final_filter",
+    ]
+    levels = next(
+        numpy_helper.to_array(initializer)
+        for initializer in prepared.graph.initializer
+        if str(initializer.name) == "nms_guard_repair_nms_levels"
+    )
+    np.testing.assert_array_equal(
+        levels,
+        np.asarray([0, 0, 1, 1], dtype=np.int64),
+    )

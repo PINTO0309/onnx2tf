@@ -9,6 +9,9 @@ import numpy as np
 import onnx
 from onnx import numpy_helper
 
+from onnx2tf.utils.onnx_graph_repair import (
+    repair_missing_torchvision_nms_guard_captures,
+)
 from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
 from onnx2tf.tflite_builder.core.node import NodeView as _NodeWrap
 from onnx2tf.tflite_builder.core.model_ir_utils import (
@@ -3537,6 +3540,21 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                                 )
                             ),
                         ]
+                        flatten_consumer_feature_dim = op.options.get(
+                            "onnxFlattenConsumerFeatureDim",
+                            None,
+                        )
+                        if (
+                            flatten_consumer_feature_dim is not None
+                            and int(flatten_consumer_feature_dim) > 0
+                            and int(flatten_signature[1]) < 0
+                        ):
+                            flatten_signature[1] = int(
+                                flatten_consumer_feature_dim
+                            )
+                            flatten_shape[1] = int(
+                                flatten_consumer_feature_dim
+                            )
                         op.options["newShape"] = (
                             []
                             if len(existing_flatten_new_shape) == 0
@@ -3544,7 +3562,7 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                         )
                         if len(inputs) >= 2:
                             shape_tensor = model_ir.tensors.get(inputs[1], None)
-                            if shape_tensor is not None:
+                            if shape_tensor is not None and shape_tensor.data is not None:
                                 shape_tensor.data = np.asarray(
                                     flatten_signature,
                                     dtype=np.int32,
@@ -75305,6 +75323,7 @@ def lower_onnx_to_ir(
     replace_to_pseudo_operators: Optional[List[str]] = None,
     protected_boundary_tensor_names: Optional[List[str]] = None,
 ) -> ModelIR:
+    repair_missing_torchvision_nms_guard_captures(onnx_graph)
     onnx_graph = _infer_shapes_with_fallback(onnx_graph)
 
     shape_map, dtype_map = _extract_tensor_info(onnx_graph)

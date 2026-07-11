@@ -6,6 +6,10 @@ import numpy as np
 import onnx
 from onnx import numpy_helper
 
+from onnx2tf.utils.onnx_graph_repair import (
+    repair_missing_torchvision_nms_guard_captures,
+)
+
 
 _MICROSOFT_CONTRIB_OPS = {
     "FusedConv",
@@ -148,6 +152,12 @@ def _stable_topological_sort_graphs(model: onnx.ModelProto) -> Dict[str, int]:
     if reordered_graphs == 0:
         return {}
     return {"TopologicalSort": int(reordered_graphs)}
+
+
+def stable_topological_sort_graphs(model: onnx.ModelProto) -> Dict[str, int]:
+    """Public wrapper for deterministic recursive GraphProto ordering."""
+
+    return _stable_topological_sort_graphs(model)
 
 
 def _default_domain_opset(model: onnx.ModelProto) -> int | None:
@@ -780,6 +790,8 @@ def prepare_onnx_graph_for_onnxruntime(
     prepared = onnx.ModelProto()
     prepared.CopyFrom(onnx_graph)
 
+    rewritten = repair_missing_torchvision_nms_guard_captures(prepared)
+
     default_opset = _default_domain_opset(prepared)
     if default_opset is not None and int(default_opset) < 7:
         try:
@@ -788,9 +800,8 @@ def prepare_onnx_graph_for_onnxruntime(
         except Exception:
             pass
 
-    rewritten: Dict[str, int] = _upgrade_legacy_upsample_for_onnxruntime(
-        prepared
-    )
+    for op_type, count in _upgrade_legacy_upsample_for_onnxruntime(prepared).items():
+        rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
     for op_type, count in _stable_topological_sort_graphs(prepared).items():
         rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
     default_opset = _default_domain_opset(prepared)

@@ -2399,9 +2399,8 @@
     {
       "tier": 3,
       "model": "stock_frcnn_11.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "f065e25d80d30aeafb9f3b0124aaf48788d7428a98f7fdde6595b893d218375a"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0
     },
     {
       "tier": 3,

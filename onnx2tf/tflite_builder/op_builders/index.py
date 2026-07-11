@@ -2266,6 +2266,7 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(output_name)
 
     data_shape = [int(v) for v in ctx.get_tensor_shape(data_name)]
+    data_meta_shape = _tensor_shape_with_signature(ctx, data_name)
     indices_shape = [int(v) for v in ctx.get_tensor_shape(indices_name)]
     indices_meta_shape = _tensor_shape_with_signature(ctx, indices_name)
     updates_meta_shape = _tensor_shape_with_signature(ctx, updates_name)
@@ -2313,10 +2314,10 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
         )
 
     axis_dim_name = ""
-    if int(data_shape[axis]) > 0:
+    if int(data_meta_shape[axis]) > 0:
         axis_dim_name = ctx.add_const_tensor(
             f"{output_name}_scatter_elements_axis_dim",
-            np.asarray(int(data_shape[axis]), dtype=np.int32),
+            np.asarray(int(data_meta_shape[axis]), dtype=np.int32),
         )
     else:
         data_shape_name = ctx.add_intermediate_tensor(
@@ -2617,13 +2618,16 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
             dtype="INT32",
             shape=[int(v) for v in coord_shape_meta] + [1],
         )
+        coord_expanded_option_shape = [int(v) for v in coord_shape_meta] + [1]
+        if sum(int(value) < 0 for value in coord_expanded_option_shape) > 1:
+            coord_expanded_option_shape = []
         ctx.add_operator(
             OperatorIR(
                 op_type="RESHAPE",
                 inputs=[coord_base_name, indices_shape_plus_one_name],
                 outputs=[coord_expanded_name],
                 options={
-                    "newShape": [int(v) for v in list(coord_shape_meta)] + [1],
+                    "newShape": coord_expanded_option_shape,
                 },
             )
         )
@@ -2726,10 +2730,10 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
     )
 
     shape_for_scatter = ""
-    if rank > 0 and all(int(dim) > 0 for dim in data_shape):
+    if rank > 0 and all(int(dim) > 0 for dim in data_meta_shape):
         shape_for_scatter = ctx.add_const_tensor(
             f"{output_name}_scatter_elements_shape",
-            np.asarray(data_shape, dtype=np.int32),
+            np.asarray(data_meta_shape, dtype=np.int32),
         )
     else:
         shape_for_scatter = ctx.add_intermediate_tensor(
@@ -2746,7 +2750,6 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
             )
         )
 
-    data_meta_shape = _tensor_shape_with_signature(ctx, data_name)
     scattered_updates_name = ctx.add_intermediate_tensor(
         f"{output_name}_scatter_elements_updates_scattered",
         dtype=data_dtype,

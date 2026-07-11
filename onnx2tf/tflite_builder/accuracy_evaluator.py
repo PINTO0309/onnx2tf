@@ -337,7 +337,11 @@ def _collect_nondeterministic_onnx_output_reasons(
     }
 
 
-def _create_tflite_interpreter(model_path: str) -> "LiteRTInterpreter":
+def _create_tflite_interpreter(
+    model_path: str,
+    *,
+    preserve_all_tensors: bool = False,
+) -> "LiteRTInterpreter":
     from ai_edge_litert.interpreter import (
         Interpreter,
         OpResolverType,
@@ -348,7 +352,7 @@ def _create_tflite_interpreter(model_path: str) -> "LiteRTInterpreter":
         # runtime crashes on some dynamic-shape models.
         return Interpreter(
             model_path=model_path,
-            experimental_preserve_all_tensors=True,
+            experimental_preserve_all_tensors=bool(preserve_all_tensors),
             experimental_op_resolver_type=OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES,
         )
     except TypeError:
@@ -893,6 +897,56 @@ def _build_seeded_input_distribution_overrides(
         return {}
 
     output_specs = _collect_onnx_output_specs(onnx_graph)
+    initializer_names = {
+        str(initializer.name)
+        for initializer in onnx_graph.graph.initializer
+        if str(initializer.name) != ""
+    }
+    constant_names = set(initializer_names)
+    consumers: Dict[str, List[onnx.NodeProto]] = {}
+    for graph_node in onnx_graph.graph.node:
+        if str(graph_node.op_type) == "Constant":
+            constant_names.update(
+                str(output_name)
+                for output_name in graph_node.output
+                if str(output_name) != ""
+            )
+        for input_name in graph_node.input:
+            if str(input_name) != "":
+                consumers.setdefault(str(input_name), []).append(graph_node)
+
+    def has_image_normalization_prefix(input_name: str) -> bool:
+        queue: List[Tuple[str, int]] = [(str(input_name), 0)]
+        visited: set[str] = set()
+        normalization_ops: set[str] = set()
+        traversable_ops = {
+            "Identity",
+            "Cast",
+            "Squeeze",
+            "Unsqueeze",
+            "Sub",
+            "Div",
+        }
+        while queue:
+            tensor_name, depth = queue.pop(0)
+            if tensor_name in visited or int(depth) > 8:
+                continue
+            visited.add(tensor_name)
+            for consumer in consumers.get(tensor_name, []):
+                op_type = str(consumer.op_type)
+                if op_type not in traversable_ops:
+                    continue
+                if op_type in {"Sub", "Div"} and any(
+                    str(candidate_name) in constant_names
+                    for candidate_name in consumer.input
+                    if str(candidate_name) != tensor_name
+                ):
+                    normalization_ops.add(op_type)
+                for output_name in consumer.output:
+                    if str(output_name) != "":
+                        queue.append((str(output_name), int(depth) + 1))
+        return {"Sub", "Div"}.issubset(normalization_ops)
+
     overrides: Dict[str, str] = {}
     for input_name, input_dtype, input_shape in input_specs:
         if not np.issubdtype(np.dtype(input_dtype), np.floating):
@@ -904,7 +958,7 @@ def _build_seeded_input_distribution_overrides(
             and _is_likely_image_tensor_shape(output_shape)
             and _shape_matches_with_dynamic_wildcards(input_shape, output_shape)
             for _, output_dtype, output_shape in output_specs
-        ):
+        ) or has_image_normalization_prefix(str(input_name)):
             overrides[str(input_name)] = "uniform_0_1"
     return overrides
 

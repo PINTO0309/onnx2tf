@@ -8,6 +8,7 @@ import onnx
 from onnx import numpy_helper
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
+from onnx2tf.utils.onnxruntime_compat import stable_topological_sort_graphs
 
 
 _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF = [
@@ -125,38 +126,126 @@ class _GraphNodeList:
     output: List[Any] = field(default_factory=list)
 
 
-def is_supported_if_nms_guard_pattern(node: Any) -> bool:
+@dataclass
+class _IfNmsGuardMatch:
+    else_graph: Any
+    nms_node: Any
+    boxes_name: str
+    scores_name: str
+    indices_name: str
+
+
+def _match_if_nms_guard_pattern(node: Any) -> Optional[_IfNmsGuardMatch]:
     then_graph = node.attrs.get("then_branch", None)
     else_graph = node.attrs.get("else_branch", None)
     if then_graph is None or else_graph is None:
-        return False
+        return None
     if not hasattr(then_graph, "node") or not hasattr(else_graph, "node"):
-        return False
+        return None
     if len(node.inputs) != 1 or len(node.outputs) != 1:
-        return False
+        return None
     if len(then_graph.node) != 0:
-        return False
-    else_ops = [str(n.op_type) for n in else_graph.node]
-    if else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE:
-        return True
-    if else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE_WITH_OFFSET_SLICE:
-        return True
-    if else_ops != _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF:
-        return False
+        return None
 
-    nested_if = else_graph.node[-1]
-    nested_attrs = {a.name: a for a in nested_if.attribute}
-    if "then_branch" not in nested_attrs or "else_branch" not in nested_attrs:
-        return False
-    nested_then = nested_attrs["then_branch"].g
-    nested_else = nested_attrs["else_branch"].g
-    if len(nested_then.node) != 1 or len(nested_else.node) != 1:
-        return False
-    if str(nested_then.node[0].op_type) != "Squeeze":
-        return False
-    if str(nested_else.node[0].op_type) != "Identity":
-        return False
-    return True
+    allowed_ops = {
+        "ReduceMax",
+        "Cast",
+        "Equal",
+        "Unsqueeze",
+        "Add",
+        "Mul",
+        "Slice",
+        "NonMaxSuppression",
+        "Gather",
+        "Squeeze",
+        "If",
+    }
+    if any(str(graph_node.op_type) not in allowed_ops for graph_node in else_graph.node):
+        return None
+
+    reduce_nodes = [n for n in else_graph.node if str(n.op_type) == "ReduceMax"]
+    cast_nodes = [n for n in else_graph.node if str(n.op_type) == "Cast"]
+    nms_nodes = [n for n in else_graph.node if str(n.op_type) == "NonMaxSuppression"]
+    if len(reduce_nodes) != 1 or len(cast_nodes) != 1 or len(nms_nodes) != 1:
+        return None
+    reduce_node = reduce_nodes[0]
+    cast_node = cast_nodes[0]
+    nms_node = nms_nodes[0]
+    if (
+        len(reduce_node.input) != 1
+        or len(cast_node.input) != 1
+        or len(nms_node.input) < 2
+        or len(nms_node.output) != 1
+    ):
+        return None
+
+    producers = {
+        str(output_name): graph_node
+        for graph_node in else_graph.node
+        for output_name in graph_node.output
+        if str(output_name) != ""
+    }
+    score_source = str(nms_node.input[1])
+    visited: set[str] = set()
+    while score_source not in visited:
+        visited.add(score_source)
+        producer = producers.get(score_source, None)
+        if producer is None or str(producer.op_type) != "Unsqueeze" or len(producer.input) < 1:
+            break
+        score_source = str(producer.input[0])
+    if score_source == "" or score_source in producers:
+        return None
+
+    gather_nodes = [
+        graph_node
+        for graph_node in else_graph.node
+        if str(graph_node.op_type) == "Gather"
+        and len(graph_node.input) >= 1
+        and str(graph_node.input[0]) == str(nms_node.output[0])
+    ]
+    if len(gather_nodes) != 1 or len(gather_nodes[0].output) != 1:
+        return None
+    gathered_name = str(gather_nodes[0].output[0])
+    graph_output_name = str(else_graph.output[0].name) if len(else_graph.output) == 1 else ""
+    terminal = producers.get(graph_output_name, None)
+    if terminal is None:
+        return None
+    if str(terminal.op_type) == "Squeeze":
+        if len(terminal.input) < 1 or str(terminal.input[0]) != gathered_name:
+            return None
+    elif str(terminal.op_type) == "If":
+        nested_attrs = {a.name: a for a in terminal.attribute}
+        if "then_branch" not in nested_attrs or "else_branch" not in nested_attrs:
+            return None
+        nested_then = nested_attrs["then_branch"].g
+        nested_else = nested_attrs["else_branch"].g
+        nested_ops = {
+            str(branch.node[0].op_type)
+            for branch in (nested_then, nested_else)
+            if len(branch.node) == 1
+        }
+        if nested_ops != {"Squeeze", "Identity"}:
+            return None
+        if any(
+            len(branch.node[0].input) < 1
+            or str(branch.node[0].input[0]) != gathered_name
+            for branch in (nested_then, nested_else)
+        ):
+            return None
+    else:
+        return None
+
+    return _IfNmsGuardMatch(
+        else_graph=else_graph,
+        nms_node=nms_node,
+        boxes_name=str(reduce_node.input[0]),
+        scores_name=str(score_source),
+        indices_name=str(cast_node.input[0]),
+    )
+
+
+def is_supported_if_nms_guard_pattern(node: Any) -> bool:
+    return _match_if_nms_guard_pattern(node) is not None
 
 
 def _onnx_dim_to_int(dim_proto: Any) -> int:
@@ -234,6 +323,9 @@ def _apply_value_info_hint_to_tensor(
         tensor.dtype = str(hinted_dtype)
         if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
             ctx.dtype_map[str(tensor_name)] = str(hinted_dtype)
+
+    if has_runtime_producer:
+        return
 
     hinted_norm_shape = [int(v) if int(v) > 0 else 1 for v in hinted_shape]
     hinted_signature = [int(v) if int(v) > 0 else -1 for v in hinted_shape]
@@ -1991,42 +2083,22 @@ def build_if_op(node: Any, ctx: Any) -> None:
         output_name = node.outputs[0].name
 
         then_graph = node.attrs["then_branch"]
-        else_graph = node.attrs["else_branch"]
+        nms_match = _match_if_nms_guard_pattern(node)
+        if nms_match is None:
+            raise NotImplementedError(
+                f"If NMS guard pattern details are unsupported. node={node.name}"
+            )
+        branch_model = onnx.ModelProto()
+        branch_model.graph.CopyFrom(nms_match.else_graph)
+        stable_topological_sort_graphs(branch_model)
+        else_graph = branch_model.graph
+        nms_node = nms_match.nms_node
         _ensure_graph_initializers(then_graph, ctx)
         _ensure_graph_initializers(else_graph, ctx)
 
-        else_ops = [str(n.op_type) for n in else_graph.node]
-        if else_ops == _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF:
-            unsqueeze_scores_idx = 3
-            nms_idx = 9
-        elif else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE_WITH_OFFSET_SLICE:
-            unsqueeze_scores_idx = 4
-            nms_idx = 11
-        elif else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE:
-            unsqueeze_scores_idx = 2
-            nms_idx = 8
-        else:
-            raise NotImplementedError(
-                f"If pattern details are not supported by flatbuffer_direct built-in lowering. node={node.name}"
-            )
-
-        reduce_max_node = else_graph.node[0]
-        cast_node = else_graph.node[1]
-        unsqueeze_scores_node = else_graph.node[unsqueeze_scores_idx]
-        nms_node = else_graph.node[nms_idx]
-        if (
-            str(reduce_max_node.op_type) != "ReduceMax"
-            or str(cast_node.op_type) != "Cast"
-            or str(unsqueeze_scores_node.op_type) != "Unsqueeze"
-            or str(nms_node.op_type) != "NonMaxSuppression"
-        ):
-            raise NotImplementedError(
-                f"If pattern details are not supported by flatbuffer_direct built-in lowering. node={node.name}"
-            )
-
-        boxes_name = str(reduce_max_node.input[0])
-        idxs_name = str(cast_node.input[0])
-        scores_name = str(unsqueeze_scores_node.input[0])
+        boxes_name = str(nms_match.boxes_name)
+        idxs_name = str(nms_match.indices_name)
+        scores_name = str(nms_match.scores_name)
         ctx.ensure_tensor(boxes_name)
         ctx.ensure_tensor(scores_name)
         ctx.ensure_tensor(idxs_name)

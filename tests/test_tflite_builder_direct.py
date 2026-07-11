@@ -325,7 +325,10 @@ def _run_tflite_and_collect_tensors(
     sample_inputs: dict[str, np.ndarray],
     tensor_names: list[str],
 ) -> dict[str, np.ndarray]:
-    interpreter = _create_tflite_interpreter(model_path=tflite_path)
+    interpreter = _create_tflite_interpreter(
+        model_path=tflite_path,
+        preserve_all_tensors=True,
+    )
     interpreter.allocate_tensors()
     onnx_input_names = [name for name, _, _ in _collect_onnx_input_specs(onnx_model)]
     input_map = _build_tflite_detail_map(
@@ -1474,6 +1477,83 @@ def _make_scatternd_dynamic_data_static_output_shape_model() -> onnx.ModelProto:
         initializer=[indices],
     )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
+def _make_scatterelements_dynamic_data_model() -> onnx.ModelProto:
+    data = helper.make_tensor_value_info("data", TensorProto.FLOAT, ["N", 2])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, ["N", 2])
+    updates = helper.make_tensor_value_info("updates", TensorProto.FLOAT, ["N", 2])
+    out = helper.make_tensor_value_info("out", TensorProto.FLOAT, ["N", 2])
+    node = helper.make_node(
+        "ScatterElements",
+        ["data", "indices", "updates"],
+        ["out"],
+        name="ScatterElementsDynamicDataNode",
+        axis=0,
+    )
+    graph = helper.make_graph(
+        [node],
+        "scatterelements_dynamic_data_graph",
+        [data, indices, updates],
+        [out],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
+def _make_scatterelements_multi_dynamic_rank4_model() -> onnx.ModelProto:
+    dynamic_shape = ["N", "C", "H", "W"]
+    data = helper.make_tensor_value_info("data", TensorProto.FLOAT, dynamic_shape)
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, dynamic_shape)
+    updates = helper.make_tensor_value_info("updates", TensorProto.FLOAT, dynamic_shape)
+    out = helper.make_tensor_value_info("out", TensorProto.FLOAT, dynamic_shape)
+    node = helper.make_node(
+        "ScatterElements",
+        ["data", "indices", "updates"],
+        ["out"],
+        name="ScatterElementsMultiDynamicRank4Node",
+        axis=0,
+    )
+    graph = helper.make_graph(
+        [node],
+        "scatterelements_multi_dynamic_rank4_graph",
+        [data, indices, updates],
+        [out],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
+def _make_multi_dynamic_flatten_gemm_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", "C", "H", "W"])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, ["N", 5])
+    weight = numpy_helper.from_array(
+        np.arange(60, dtype=np.float32).reshape(5, 12),
+        name="flatten_gemm_weight",
+    )
+    bias = numpy_helper.from_array(
+        np.zeros((5,), dtype=np.float32),
+        name="flatten_gemm_bias",
+    )
+    nodes = [
+        helper.make_node("Flatten", ["x"], ["flattened"], name="MultiDynamicFlatten", axis=1),
+        helper.make_node(
+            "Gemm",
+            ["flattened", "flatten_gemm_weight", "flatten_gemm_bias"],
+            ["y"],
+            name="MultiDynamicFlattenGemm",
+            transB=1,
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "multi_dynamic_flatten_gemm_graph",
+        [x],
+        [y],
+        initializer=[weight, bias],
+        value_info=[
+            helper.make_tensor_value_info("flattened", TensorProto.FLOAT, ["N", "K"]),
+        ],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
 def _make_add_const_model() -> onnx.ModelProto:
@@ -37882,6 +37962,88 @@ def test_flatbuffer_direct_scatternd_dynamic_data_static_output_uses_runtime_sha
     )
 
 
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_scatterelements_dynamic_data_uses_runtime_shape() -> None:
+    model = _make_scatterelements_dynamic_data_model()
+    model_ir = lower_onnx_to_ir(
+        model,
+        output_file_name="scatterelements_dynamic_data_ir_test",
+    )
+    scatter_shape_inputs = {
+        str(op.inputs[2])
+        for op in model_ir.operators
+        if str(op.op_type) == "SCATTER_ND" and len(op.inputs) >= 3
+    }
+    assert len(scatter_shape_inputs) == 1
+    assert sum(
+        str(op.op_type) == "SCATTER_ND"
+        for op in model_ir.operators
+    ) == 2
+    assert any(
+        str(op.op_type) == "SHAPE"
+        and list(op.inputs) == ["data"]
+        and len(op.outputs) == 1
+        and str(op.outputs[0]) in scatter_shape_inputs
+        for op in model_ir.operators
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "scatterelements_dynamic_data", model)
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            "flatbuffer_direct",
+        )
+        interpreter = Interpreter(model_path=tflite_path)
+        for detail in interpreter.get_input_details():
+            interpreter.resize_tensor_input(detail["index"], [3, 2], strict=False)
+        interpreter.allocate_tensors()
+        by_name = {detail["name"]: detail for detail in interpreter.get_input_details()}
+        data = np.zeros((3, 2), dtype=np.float32)
+        indices = np.asarray([[0, 1], [2, 0], [1, 2]], dtype=np.int64)
+        updates = np.asarray([[10, 11], [20, 21], [30, 31]], dtype=np.float32)
+        interpreter.set_tensor(by_name["data"]["index"], data)
+        interpreter.set_tensor(by_name["indices"]["index"], indices)
+        interpreter.set_tensor(by_name["updates"]["index"], updates)
+        interpreter.invoke()
+        actual = interpreter.get_tensor(interpreter.get_output_details()[0]["index"])
+        expected = np.asarray([[10, 21], [30, 11], [20, 31]], dtype=np.float32)
+        np.testing.assert_array_equal(actual, expected)
+
+
+def test_flatbuffer_direct_scatterelements_multi_dynamic_reshape_options_are_valid() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_scatterelements_multi_dynamic_rank4_model(),
+        output_file_name="scatterelements_multi_dynamic_rank4_ir_test",
+    )
+    invalid_reshape_options = [
+        list(op.options.get("newShape", []))
+        for op in model_ir.operators
+        if str(op.op_type) == "RESHAPE"
+        and sum(int(value) < 0 for value in op.options.get("newShape", [])) > 1
+    ]
+    assert invalid_reshape_options == []
+
+
+def test_flatbuffer_direct_flatten_uses_gemm_feature_contract_for_dynamic_shape() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_multi_dynamic_flatten_gemm_model(),
+        output_file_name="multi_dynamic_flatten_gemm_ir_test",
+    )
+    flatten_reshape = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "RESHAPE"
+        and str(op.outputs[0]) == "flattened"
+    )
+    shape_tensor = model_ir.tensors[str(flatten_reshape.inputs[1])]
+    np.testing.assert_array_equal(
+        np.asarray(shape_tensor.data, dtype=np.int32),
+        np.asarray([-1, 12], dtype=np.int32),
+    )
+    assert list(model_ir.tensors["flattened"].shape_signature or []) == [-1, 12]
+
+
 def _make_flatten_dynamic_first_dim_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", 1, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, ["N", 4])
@@ -38274,6 +38436,69 @@ def _make_if_nms_guard_direct_simple_model() -> onnx.ModelProto:
 
 def _make_if_nms_guard_direct_offset_slice_model() -> onnx.ModelProto:
     return _make_if_nms_guard_direct_model(nested_if=False, offset_slice=True)
+
+
+def _make_if_nms_guard_direct_staged_scores_reordered_model() -> onnx.ModelProto:
+    model = _make_if_nms_guard_direct_model(nested_if=True)
+    top_if = model.graph.node[0]
+    else_graph = next(
+        attribute.g
+        for attribute in top_if.attribute
+        if str(attribute.name) == "else_branch"
+    )
+
+    score_unsqueeze = next(
+        branch_node
+        for branch_node in else_graph.node
+        if str(branch_node.name) == "IfElseUnsqueezeScores"
+    )
+    score_unsqueeze.input[1] = "unsq_scores_stage1_axes"
+    score_unsqueeze.output[0] = "scores_nms_stage1"
+    else_graph.initializer.extend(
+        [
+            numpy_helper.from_array(
+                np.asarray([0], dtype=np.int64),
+                name="unsq_scores_stage1_axes",
+            ),
+            numpy_helper.from_array(
+                np.asarray([0], dtype=np.int64),
+                name="unsq_scores_stage2_axes",
+            ),
+        ]
+    )
+    else_graph.value_info.extend(
+        [
+            # Reproduce stale scalar metadata emitted by some detection-model
+            # exporters for a value whose runtime producer is rank 2.
+            helper.make_tensor_value_info(
+                "boxes_for_nms",
+                TensorProto.FLOAT,
+                [],
+            ),
+        ]
+    )
+    score_stage2 = helper.make_node(
+        "Unsqueeze",
+        ["scores_nms_stage1", "unsq_scores_stage2_axes"],
+        ["scores_nms"],
+        name="IfElseUnsqueezeScoresStage2",
+    )
+
+    nodes = list(else_graph.node)
+    nested_if = next(
+        branch_node
+        for branch_node in nodes
+        if str(branch_node.name) == "IfElseNestedIf"
+    )
+    nodes.remove(nested_if)
+    score_stage1_index = nodes.index(score_unsqueeze)
+    nodes.insert(score_stage1_index + 1, score_stage2)
+    # Keep the raw branch order seen in exported detection models: the nested
+    # If captures nms_gathered even though its producer appears later.
+    nodes.insert(3, nested_if)
+    del else_graph.node[:]
+    else_graph.node.extend(nodes)
+    return model
 
 
 def _make_if_generic_int64_output_model() -> onnx.ModelProto:
@@ -39193,6 +39418,21 @@ def test_flatbuffer_direct_if_nms_guard_slice_dtype_consistent(model_fn: Any, na
         if str(in_tensor.dtype) != str(out_tensor.dtype):
             mismatches.append((in_name, in_tensor.dtype, out_name, out_tensor.dtype))
     assert mismatches == []
+
+
+def test_flatbuffer_direct_if_nms_guard_accepts_staged_scores_and_reordered_capture() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_if_nms_guard_direct_staged_scores_reordered_model(),
+        output_file_name="if_nms_guard_staged_scores_reordered_capture",
+        allow_custom_ops=True,
+        custom_op_allowlist=["If"],
+    )
+    assert all(str(op.op_type) != "CUSTOM" for op in model_ir.operators)
+    assert any(
+        str(op.op_type) in {"NON_MAX_SUPPRESSION_V4", "NON_MAX_SUPPRESSION_V5"}
+        for op in model_ir.operators
+    )
+    assert _find_unbound_nonconstant_operator_inputs(model_ir) == []
 
 
 @pytest.mark.parametrize(

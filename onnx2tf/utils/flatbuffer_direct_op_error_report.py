@@ -960,7 +960,10 @@ def generate_op_error_report(
     )
     onnx_tensor_names = list(onnx_output_meta.keys())
 
-    interpreter: _LiteInterpreterProtocol = _create_tflite_interpreter(tflite_path)
+    interpreter: _LiteInterpreterProtocol = _create_tflite_interpreter(
+        tflite_path,
+        preserve_all_tensors=True,
+    )
     interpreter.allocate_tensors()
     tflite_tensor_details = interpreter.get_tensor_details()
     tflite_base_detail_map = _build_tflite_base_detail_map(tflite_tensor_details)

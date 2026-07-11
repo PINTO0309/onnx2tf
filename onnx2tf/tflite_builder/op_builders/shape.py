@@ -5521,11 +5521,16 @@ def build_unsqueeze_op(node: Any, ctx: Any) -> None:
 
     axes = _resolve_axes_from_attr_or_input(node, ctx)
     input_raw_shape = ctx.shape_map.get(input_name, None)
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    runtime_producer = _find_producer_op(ctx, input_name)
     logical_scalar_input = (
         isinstance(input_raw_shape, (list, tuple))
         and len(list(input_raw_shape)) == 0
+        and not (
+            runtime_producer is not None
+            and len(input_shape) > 1
+        )
     )
-    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
     input_tensor = ctx.model_ir.tensors[input_name]
     input_signature = (
         [int(v) for v in list(input_tensor.shape_signature)]
@@ -6244,6 +6249,37 @@ def build_flatten_op(node: Any, ctx: Any) -> None:
         int(_flatten_dim(input_shape_signature[: int(axis)])),
         int(_flatten_dim(input_shape_signature[int(axis) :])),
     ]
+
+    consumer_feature_dims: set[int] = set()
+    for consumer in getattr(ctx, "onnx_tensor_consumers", {}).get(output_name, []):
+        consumer_op_type = str(getattr(consumer, "op_type", ""))
+        consumer_inputs = [str(name) for name in getattr(consumer, "input", [])]
+        if len(consumer_inputs) < 2 or consumer_inputs[0] != output_name:
+            continue
+        weight = ctx.get_constant_array(consumer_inputs[1])
+        if weight is None or int(np.asarray(weight).ndim) < 2:
+            continue
+        weight_shape = [int(value) for value in np.asarray(weight).shape]
+        if consumer_op_type == "Gemm":
+            trans_b = 0
+            for attribute in getattr(consumer, "attribute", []):
+                if str(attribute.name) == "transB":
+                    trans_b = int(attribute.i)
+                    break
+            feature_dim = int(weight_shape[1] if trans_b else weight_shape[0])
+        elif consumer_op_type == "MatMul":
+            feature_dim = int(weight_shape[-2])
+        else:
+            continue
+        if feature_dim > 0:
+            consumer_feature_dims.add(feature_dim)
+    flatten_consumer_feature_dim: Optional[int] = None
+    if (
+        int(inferred_output_signature[1]) < 0
+        and len(consumer_feature_dims) == 1
+    ):
+        flatten_consumer_feature_dim = int(next(iter(consumer_feature_dims)))
+        inferred_output_signature[1] = int(flatten_consumer_feature_dim)
     use_inferred_signature = (
         _is_unresolved_placeholder_shape(
             [int(v) for v in list(output_tensor.shape)],
@@ -6258,12 +6294,12 @@ def build_flatten_op(node: Any, ctx: Any) -> None:
         for existing_dim, inferred_dim in zip(output_shape_signature, inferred_output_signature):
             existing_i = int(existing_dim)
             inferred_i = int(inferred_dim)
-            if existing_i < 0:
-                merged_signature.append(int(existing_i))
-            elif inferred_i < 0:
+            if inferred_i > 0:
+                merged_signature.append(int(inferred_i))
+            elif existing_i > 0:
                 merged_signature.append(int(existing_i))
             else:
-                merged_signature.append(int(inferred_i))
+                merged_signature.append(-1)
         output_shape_signature = [int(v) for v in merged_signature]
 
     output_shape = [int(v) if int(v) > 0 else 1 for v in output_shape_signature]
@@ -6276,14 +6312,93 @@ def build_flatten_op(node: Any, ctx: Any) -> None:
         if bool(use_inferred_signature)
         else [int(v) for v in output_shape_signature]
     )
-    shape_const = ctx.add_const_tensor(
-        f"{output_name}_flatten_shape",
-        np.asarray(output_shape_signature, dtype=np.int32),
-    )
+    flatten_shape_input_name = ""
+    if sum(int(value) < 0 for value in output_shape_signature) > 1:
+        runtime_input_shape_name = ctx.add_intermediate_tensor(
+            f"{output_name}_flatten_input_shape",
+            dtype="INT32",
+            shape=[int(input_rank)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SHAPE",
+                inputs=[input_name],
+                outputs=[runtime_input_shape_name],
+                options={"outType": "INT32"},
+            )
+        )
+        flatten_part_names: list[str] = []
+        reduce_axis_name = ctx.add_const_tensor(
+            f"{output_name}_flatten_reduce_axis",
+            np.asarray([0], dtype=np.int32),
+        )
+        for part_index, (part_start, part_size) in enumerate(
+            ((0, int(axis)), (int(axis), int(input_rank - axis)))
+        ):
+            if part_size == 0:
+                flatten_part_names.append(
+                    ctx.add_const_tensor(
+                        f"{output_name}_flatten_part_{part_index}_product",
+                        np.asarray([1], dtype=np.int32),
+                    )
+                )
+                continue
+            part_begin_name = ctx.add_const_tensor(
+                f"{output_name}_flatten_part_{part_index}_begin",
+                np.asarray([int(part_start)], dtype=np.int32),
+            )
+            part_size_name = ctx.add_const_tensor(
+                f"{output_name}_flatten_part_{part_index}_size",
+                np.asarray([int(part_size)], dtype=np.int32),
+            )
+            part_dims_name = ctx.add_intermediate_tensor(
+                f"{output_name}_flatten_part_{part_index}_dims",
+                dtype="INT32",
+                shape=[int(part_size)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SLICE",
+                    inputs=[runtime_input_shape_name, part_begin_name, part_size_name],
+                    outputs=[part_dims_name],
+                )
+            )
+            part_product_name = ctx.add_intermediate_tensor(
+                f"{output_name}_flatten_part_{part_index}_product",
+                dtype="INT32",
+                shape=[1],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="REDUCE_PROD",
+                    inputs=[part_dims_name, reduce_axis_name],
+                    outputs=[part_product_name],
+                    options={"keepDims": True},
+                )
+            )
+            flatten_part_names.append(part_product_name)
+        flatten_shape_input_name = ctx.add_intermediate_tensor(
+            f"{output_name}_flatten_shape",
+            dtype="INT32",
+            shape=[2],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=flatten_part_names,
+                outputs=[flatten_shape_input_name],
+                options={"axis": 0, "fusedActivationFunction": "NONE"},
+            )
+        )
+    else:
+        flatten_shape_input_name = ctx.add_const_tensor(
+            f"{output_name}_flatten_shape",
+            np.asarray(output_shape_signature, dtype=np.int32),
+        )
     ctx.add_operator(
         OperatorIR(
             op_type="RESHAPE",
-            inputs=[input_name, shape_const],
+            inputs=[input_name, flatten_shape_input_name],
             outputs=[output_name],
             options={
                 "newShape": [int(v) for v in reshape_options_shape],
@@ -6291,6 +6406,7 @@ def build_flatten_op(node: Any, ctx: Any) -> None:
                 "onnxFlattenInputShape": [
                     int(v) for v in input_shape_signature
                 ],
+                "onnxFlattenConsumerFeatureDim": flatten_consumer_feature_dim,
             },
         )
     )

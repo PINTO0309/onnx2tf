@@ -1,5 +1,5 @@
 import numpy as np
-from onnx import TensorProto, helper
+from onnx import TensorProto, helper, numpy_helper
 
 from onnx2tf.tflite_builder.accuracy_evaluator import (
     _FLOAT_METRIC_THRESHOLDS,
@@ -106,6 +106,38 @@ def test_build_seeded_input_distribution_overrides_prefers_uniform_for_image_to_
     overrides = _build_seeded_input_distribution_overrides(
         onnx_graph=model,
         input_specs=input_specs,
+    )
+    assert overrides == {"input": "uniform_0_1"}
+
+
+def test_build_seeded_input_distribution_overrides_detects_image_normalization_prefix(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("ONNX2TF_EVAL_FLOAT_RANDOM_DISTRIBUTION", raising=False)
+    mean = numpy_helper.from_array(
+        np.asarray([0.4, 0.45, 0.5], dtype=np.float32).reshape(3, 1, 1),
+        name="mean",
+    )
+    std = numpy_helper.from_array(
+        np.asarray([0.2, 0.25, 0.3], dtype=np.float32).reshape(3, 1, 1),
+        name="std",
+    )
+    graph = helper.make_graph(
+        [
+            helper.make_node("Squeeze", ["input"], ["squeezed"], axes=[0]),
+            helper.make_node("Sub", ["squeezed", "mean"], ["centered"]),
+            helper.make_node("Div", ["centered", "std"], ["normalized"]),
+            helper.make_node("ReduceMean", ["normalized"], ["output"], keepdims=0),
+        ],
+        "normalized_image_classifier",
+        [helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 3, 32, 48])],
+        [helper.make_tensor_value_info("output", TensorProto.FLOAT, [])],
+        initializer=[mean, std],
+    )
+    model = helper.make_model(graph)
+    overrides = _build_seeded_input_distribution_overrides(
+        onnx_graph=model,
+        input_specs=_collect_onnx_input_specs(model),
     )
     assert overrides == {"input": "uniform_0_1"}
 
