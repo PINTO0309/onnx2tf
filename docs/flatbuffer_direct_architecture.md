@@ -69,28 +69,28 @@ test modules may be split when that improves ownership or reviewability, but
 there is no 2,000-line structural gate.
 
 The active improvement and regression scope is every root model in Tier 0
-through Tier 3, including models whose baseline classification is a conversion
-error, timeout, accuracy failure, or missing report. Tier 4 and Tier 5 are
-historical baselines only and must not be run as part of ongoing refactoring.
+through Tier 4, including models whose baseline classification is a conversion
+error, timeout, accuracy failure, or missing report. Tier 5 is a historical
+baseline only and must not be run as part of ongoing refactoring.
 Do not introduce a process pool or parallel model runner. Every successful
-baseline model must remain successful; known Tier 0-3 failures are improvement
+baseline model must remain successful; known Tier 0-4 failures are improvement
 targets and must retain a normalized signature until they improve. Accuracy
 reports retain their existing stricter judgement and every comparable float
 output must remain below a maximum absolute error of `1e-1`.
 
-Use the managed Tier 0-3 profile for a full active regression:
+Use the managed Tier 0-4 profile for a full active regression:
 
 ```bash
 uv run python -m onnx2tf.utils.flatbuffer_direct_bulk_runner \
   --root_dir . -o flatbuffer_direct_active_regression \
-  --regression_profile docs/baselines/flatbuffer_direct_active_tier0_3.json \
+  --regression_profile docs/baselines/flatbuffer_direct_active_tier0_4.json \
   --tflite_only
 ```
 
-The profile fixes root-only discovery, the 1–999 node range, all 390 managed
-models, and inference concurrency of one. It includes both the 255 baseline
-passes and the 135 baseline non-passes. Tier 4/5 models cannot be added because
-the profile loader rejects tiers above 3 and node ranges above 999.
+The profile fixes root-only discovery, the 1–1,999 node range, all 420 managed
+models, and inference concurrency of one. It currently includes 267 baseline
+passes and 153 baseline non-passes. Tier 5 models cannot be added because the
+profile loader rejects tiers above 4 and node ranges above 1,999.
 
 ### Recorded Tier 0 baseline
 
@@ -135,12 +135,13 @@ reports. Median and maximum durations were 51.621 and 123.486 seconds. All 6
 passing models remained below the required `1e-1` maximum absolute error; the
 largest passing error was `2.3543834686279297e-4`.
 
-Tier 4 and Tier 5 results above are retained only as historical evidence. Do
-not rerun them or use their failed models as current improvement gates.
+The Tier 4 result is part of the active improvement gate. The Tier 5 result is
+retained only as historical evidence; do not rerun Tier 5 or use its failed
+models as current improvement gates.
 
 ## Remaining refactoring order
 
-1. Improve Tier 0-3 layout, transpose, broadcast, shape reconciliation, and
+1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and
    fusion failures using semantic passes and focused ONNX fixtures.
 2. Continue moving validation, capability selection, and lowering into
    op-family modules while preserving the current public API and artifacts.
@@ -148,5 +149,5 @@ not rerun them or use their failed models as current improvement gates.
    artifact-only regression coverage on the validated ModelIR contract.
 4. Complete the shared PyTorch/TorchScript/Dynamo ONNX/ExportedProgram
    canonicalization and emitter separation.
-5. Measure warm-run conversion time and peak RSS on the active Tier 0-3 set,
+5. Measure warm-run conversion time and peak RSS on the active Tier 0-4 set,
    then document improvements and remaining normalized failures.

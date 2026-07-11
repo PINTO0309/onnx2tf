@@ -219,9 +219,9 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
             raise ValueError(f"Invalid regression profile model entry. path={path}")
         model_name = os.path.basename(str(entry.get("model", "")).strip())
         tier = int(entry.get("tier", -1))
-        if not model_name or tier < 0 or tier > 3:
+        if not model_name or tier < 0 or tier > 4:
             raise ValueError(
-                "Regression profile may contain only Tier 0-3 models. "
+                "Regression profile may contain only Tier 0-4 models. "
                 f"path={path} model={model_name!r} tier={tier}"
             )
         model_names.append(model_name)
@@ -245,10 +245,10 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
     if int(payload.get("inference_concurrency", 1)) != 1:
         raise ValueError("Regression profile inference_concurrency must be 1.")
     min_nodes = int(payload.get("min_nodes", 1))
-    max_nodes = int(payload.get("max_nodes", 999))
-    if min_nodes < 0 or max_nodes > 999 or min_nodes > max_nodes:
+    max_nodes = int(payload.get("max_nodes", 1999))
+    if min_nodes < 0 or max_nodes > 1999 or min_nodes > max_nodes:
         raise ValueError(
-            "Regression profile must remain within Tier 0-3 (at most 999 ONNX nodes). "
+            "Regression profile must remain within Tier 0-4 (at most 1,999 ONNX nodes). "
             f"path={path} min_nodes={min_nodes} max_nodes={max_nodes}"
         )
     content_sha256 = hashlib.sha256(
@@ -993,7 +993,7 @@ def main() -> None:
         type=str,
         default=None,
         help=(
-            "Run the models recorded in a managed Tier 0-3 profile. "
+            "Run the models recorded in a managed Tier 0-4 profile. "
             "The profile fixes root-only discovery and its node-count range."
         ),
     )

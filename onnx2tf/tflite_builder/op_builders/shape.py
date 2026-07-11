@@ -4872,6 +4872,173 @@ def build_tile_op(node: Any, ctx: Any) -> None:
     )
 
 
+def _add_edge_pad_ops(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    pads_begin: list[int],
+    pads_end: list[int],
+) -> None:
+    """Lower ONNX edge padding as boundary slices, tiles, and concatenations."""
+
+    rank = len(ctx.get_tensor_shape(input_name))
+    active_axes = [
+        axis
+        for axis in range(rank)
+        if int(pads_begin[axis]) > 0 or int(pads_end[axis]) > 0
+    ]
+    if not active_axes:
+        raise ValueError("edge pad lowering requires at least one positive padding")
+
+    def _add_passthrough_tensor(
+        *,
+        base_name: str,
+        source_name: str,
+        shape: list[int],
+        shape_signature: list[int],
+    ) -> str:
+        name = ctx.add_intermediate_tensor(
+            base_name,
+            dtype=str(ctx.get_tensor_dtype(source_name)),
+            shape=shape,
+        )
+        source_tensor = ctx.model_ir.tensors[source_name]
+        tensor = ctx.model_ir.tensors[name]
+        tensor.shape_signature = [int(value) for value in shape_signature]
+        tensor.logical_layout = str(source_tensor.logical_layout)
+        tensor.physical_layout = str(source_tensor.physical_layout)
+        if source_tensor.quantization is not None:
+            tensor.quantization = _clone_quantization(source_tensor.quantization)
+        return name
+
+    current_name = str(input_name)
+    for active_index, axis in enumerate(active_axes):
+        current_tensor = ctx.model_ir.tensors[current_name]
+        current_shape = [int(value) for value in current_tensor.shape]
+        current_signature = (
+            [int(value) for value in current_tensor.shape_signature]
+            if current_tensor.shape_signature is not None
+            else [int(value) for value in current_shape]
+        )
+        parts: list[str] = []
+        begin_mask = int(((1 << rank) - 1) & ~(1 << axis))
+        end_mask_without_axis = int(((1 << rank) - 1) & ~(1 << axis))
+
+        def _boundary_part(*, side: str, count: int) -> str:
+            begin_values = [0 for _ in range(rank)]
+            end_values = [0 for _ in range(rank)]
+            if side == "before":
+                begin_values[axis] = 0
+                end_values[axis] = 1
+                side_end_mask = end_mask_without_axis
+            else:
+                begin_values[axis] = -1
+                side_end_mask = int((1 << rank) - 1)
+            begin_name = ctx.add_const_tensor(
+                f"{output_name}_edge_axis{axis}_{side}_begin",
+                np.asarray(begin_values, dtype=np.int32),
+            )
+            end_name = ctx.add_const_tensor(
+                f"{output_name}_edge_axis{axis}_{side}_end",
+                np.asarray(end_values, dtype=np.int32),
+            )
+            strides_name = ctx.add_const_tensor(
+                f"{output_name}_edge_axis{axis}_{side}_strides",
+                np.ones((rank,), dtype=np.int32),
+            )
+            boundary_shape = [int(value) for value in current_shape]
+            boundary_signature = [int(value) for value in current_signature]
+            boundary_shape[axis] = 1
+            boundary_signature[axis] = 1
+            boundary_name = _add_passthrough_tensor(
+                base_name=f"{output_name}_edge_axis{axis}_{side}_slice",
+                source_name=current_name,
+                shape=boundary_shape,
+                shape_signature=boundary_signature,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="STRIDED_SLICE",
+                    inputs=[current_name, begin_name, end_name, strides_name],
+                    outputs=[boundary_name],
+                    options={
+                        "beginMask": begin_mask,
+                        "endMask": side_end_mask,
+                        "ellipsisMask": 0,
+                        "newAxisMask": 0,
+                        "shrinkAxisMask": 0,
+                        "offset": False,
+                    },
+                )
+            )
+            if int(count) == 1:
+                return boundary_name
+            multiples = [1 for _ in range(rank)]
+            multiples[axis] = int(count)
+            multiples_name = ctx.add_const_tensor(
+                f"{output_name}_edge_axis{axis}_{side}_multiples",
+                np.asarray(multiples, dtype=np.int32),
+            )
+            tiled_shape = [int(value) for value in boundary_shape]
+            tiled_signature = [int(value) for value in boundary_signature]
+            tiled_shape[axis] = int(count)
+            tiled_signature[axis] = int(count)
+            tiled_name = _add_passthrough_tensor(
+                base_name=f"{output_name}_edge_axis{axis}_{side}_tile",
+                source_name=boundary_name,
+                shape=tiled_shape,
+                shape_signature=tiled_signature,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="TILE",
+                    inputs=[boundary_name, multiples_name],
+                    outputs=[tiled_name],
+                )
+            )
+            return tiled_name
+
+        if int(pads_begin[axis]) > 0:
+            parts.append(
+                _boundary_part(side="before", count=int(pads_begin[axis]))
+            )
+        parts.append(current_name)
+        if int(pads_end[axis]) > 0:
+            parts.append(_boundary_part(side="after", count=int(pads_end[axis])))
+
+        padded_shape = [int(value) for value in current_shape]
+        padded_signature = [int(value) for value in current_signature]
+        padded_shape[axis] = int(
+            padded_shape[axis] + int(pads_begin[axis]) + int(pads_end[axis])
+        )
+        if int(padded_signature[axis]) > 0:
+            padded_signature[axis] = int(
+                padded_signature[axis]
+                + int(pads_begin[axis])
+                + int(pads_end[axis])
+            )
+        is_final = active_index == len(active_axes) - 1
+        if is_final:
+            next_name = str(output_name)
+        else:
+            next_name = _add_passthrough_tensor(
+                base_name=f"{output_name}_edge_axis{axis}_concat",
+                source_name=current_name,
+                shape=padded_shape,
+                shape_signature=padded_signature,
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=parts,
+                outputs=[next_name],
+                options={"axis": int(axis), "fusedActivationFunction": "NONE"},
+            )
+        )
+        current_name = next_name
+
+
 def build_pad_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
@@ -4888,7 +5055,7 @@ def build_pad_op(node: Any, ctx: Any) -> None:
         mode = mode_raw.decode("utf-8").lower()
     else:
         mode = str(mode_raw).lower()
-    if mode not in ["constant", "reflect"]:
+    if mode not in ["constant", "reflect", "edge"]:
         raise NotImplementedError(
             f"Pad mode is not supported in flatbuffer_direct. op={node.name} mode={mode}"
         )
@@ -4906,6 +5073,8 @@ def build_pad_op(node: Any, ctx: Any) -> None:
         pads_arr = node.attrs.get("pads")
 
     pads_name = ""
+    pads_begin: list[int] | None = None
+    pads_end: list[int] | None = None
     if pads_arr is not None:
         pads_flat = [int(v) for v in np.asarray(pads_arr).reshape(-1).tolist()]
         if len(pads_flat) != int(input_rank * 2):
@@ -5055,7 +5224,28 @@ def build_pad_op(node: Any, ctx: Any) -> None:
             )
         )
 
-    if mode == "constant":
+    if mode == "edge":
+        if pads_begin is None or pads_end is None:
+            raise NotImplementedError(
+                f"Pad edge mode requires constant pads in flatbuffer_direct. op={node.name}"
+            )
+        if any(int(value) > 0 for value in pads_begin + pads_end):
+            _add_edge_pad_ops(
+                ctx=ctx,
+                input_name=input_for_pad,
+                output_name=output_name,
+                pads_begin=pads_begin,
+                pads_end=pads_end,
+            )
+        else:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="PAD",
+                    inputs=[input_for_pad, pads_name],
+                    outputs=[output_name],
+                )
+            )
+    elif mode == "constant":
         pad_constant_tensor_name: str = ""
         use_padv2 = False
         if len(node.inputs) >= 3 and str(node.inputs[2].name) != "":

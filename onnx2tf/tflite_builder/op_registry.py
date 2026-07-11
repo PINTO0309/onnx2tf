@@ -7461,7 +7461,14 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "Pad": DispatchEntry(
         onnx_op="Pad",
-        tflite_ops=["PAD", "PADV2", "MIRROR_PAD"],
+        tflite_ops=[
+            "PAD",
+            "PADV2",
+            "MIRROR_PAD",
+            "STRIDED_SLICE",
+            "TILE",
+            "CONCATENATION",
+        ],
         builder=build_pad_op,
         validation=ValidationSpec(min_inputs=1, max_inputs=3, min_outputs=1, max_outputs=1),
     ),

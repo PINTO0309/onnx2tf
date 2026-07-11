@@ -827,7 +827,7 @@ def test_regression_profile_runs_recorded_tier_zero_to_three_successes_and_failu
     assert state["summary"]["filters"]["recursive"] is False
 
 
-def test_regression_profile_rejects_tier_four_models(tmp_path) -> None:
+def test_regression_profile_accepts_tier_four_models(tmp_path) -> None:
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(
         json.dumps(
@@ -841,27 +841,46 @@ def test_regression_profile_rejects_tier_four_models(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="only Tier 0-3 models"):
+    profile = bulk_runner._load_regression_profile(str(profile_path))
+    assert profile["tiers"] == [4]
+    assert profile["max_nodes"] == 1999
+
+
+def test_regression_profile_rejects_tier_five_models(tmp_path) -> None:
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 2000,
+                "max_nodes": 4000,
+                "models": [{"tier": 5, "model": "huge.onnx"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="only Tier 0-4 models"):
         bulk_runner._load_regression_profile(str(profile_path))
 
 
-def test_managed_regression_profile_includes_all_tier_zero_to_three_models() -> None:
+def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> None:
     profile_path = (
         Path(__file__).resolve().parents[1]
         / "docs"
         / "baselines"
-        / "flatbuffer_direct_active_tier0_3.json"
+        / "flatbuffer_direct_active_tier0_4.json"
     )
     profile = bulk_runner._load_regression_profile(str(profile_path))
 
-    assert profile["model_count"] == 390
-    assert profile["tiers"] == [0, 1, 2, 3]
+    assert profile["model_count"] == 420
+    assert profile["tiers"] == [0, 1, 2, 3, 4]
     assert profile["min_nodes"] == 1
-    assert profile["max_nodes"] == 999
+    assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "conversion_error": 32,
-        "missing_tflite_report": 59,
-        "pass": 255,
-        "tflite_fail": 24,
-        "timeout": 20,
+        "conversion_error": 38,
+        "missing_tflite_report": 65,
+        "pass": 267,
+        "tflite_fail": 26,
+        "timeout": 24,
     }
