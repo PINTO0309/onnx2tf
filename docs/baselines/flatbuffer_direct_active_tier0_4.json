@@ -2382,16 +2382,15 @@
     {
       "tier": 3,
       "model": "rf-detr-nano.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "tflite_fail",
+      "error_signature_sha256": "47ab7278e63b7e84f764d88861e35e4a876fe07a4931a757bc77b199ec8b5798"
     },
     {
       "tier": 3,
       "model": "rf-detr-seg-nano.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.00506591796875
     },
     {
       "tier": 3,

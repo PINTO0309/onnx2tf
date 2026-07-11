@@ -88,8 +88,8 @@ uv run python -m onnx2tf.utils.flatbuffer_direct_bulk_runner \
 ```
 
 The profile fixes root-only discovery, the 1–1,999 node range, all 420 managed
-models, and inference concurrency of one. It currently includes 282 expected
-passes and 138 expected non-passes. Tier 5 models cannot be added because the
+models, and inference concurrency of one. It currently includes 283 expected
+passes and 137 expected non-passes. Tier 5 models cannot be added because the
 profile loader rejects tiers above 4 and node ranges above 1,999.
 
 ### Recorded Tier 0 baseline
