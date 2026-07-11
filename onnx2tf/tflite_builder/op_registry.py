@@ -68,6 +68,9 @@ from onnx2tf.tflite_builder.op_families.recurrent import (
     _validate_lstm,
     _validate_rnn,
 )
+from onnx2tf.tflite_builder.op_families.shape import (
+    _validate_range,
+)
 
 from onnx2tf.tflite_builder.op_builders import (
     build_abs_op,
@@ -4053,22 +4056,6 @@ def _validate_where(node: Any, ctx: Any) -> None:
         node_name=node.name,
         node_op=node.op,
     )
-
-
-def _validate_range(node: Any, ctx: Any) -> None:
-    for idx, input_obj in enumerate(node.inputs[:3]):
-        shape = [int(v) for v in ctx.get_tensor_shape(input_obj.name)]
-        if len(shape) != 1 or int(shape[0]) != 1:
-            raise NodeValidationError(
-                reason_code="unsupported_input_shape",
-                message=(
-                    "Range requires scalar-like inputs represented as rank-1 length-1 "
-                    "in flatbuffer_direct. "
-                    f"input_index={idx} input_shape={shape}"
-                ),
-                node_name=node.name,
-                node_op=node.op,
-            )
 
 
 def _validate_random_normal_like(node: Any, ctx: Any) -> None:
