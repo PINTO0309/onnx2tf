@@ -61720,7 +61720,7 @@ def _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
             if rotated_broadcast != data_shape:
                 continue
             force_rotate_even_if_ambiguous = False
-            if as_is_broadcast == data_shape and int(const_data.ndim) == 4:
+            if as_is_broadcast == data_shape and int(const_data.ndim) in {3, 4}:
                 # Ambiguous case:
                 # [1,C,1,1] can broadcast to NHWC [N,H,W,C] when H==C, but this
                 # semantically applies scale over height, not channel.
@@ -61730,6 +61730,7 @@ def _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
                 )
                 if (
                     preferred_layout == "NHWC"
+                    and int(const_data.ndim) == 4
                     and int(const_shape[0]) == 1
                     and int(const_shape[1]) > 1
                     and int(const_shape[2]) == 1
@@ -61738,6 +61739,18 @@ def _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
                     and int(rotated_shape[1]) == 1
                     and int(rotated_shape[2]) == 1
                     and int(rotated_shape[3]) > 1
+                ):
+                    force_rotate_even_if_ambiguous = True
+                elif (
+                    preferred_layout == "NHWC"
+                    and int(const_data.ndim) == 3
+                    and int(const_shape[0]) > 1
+                    and int(const_shape[1]) == 1
+                    and int(const_shape[2]) == 1
+                    and int(rotated_shape[0]) == 1
+                    and int(rotated_shape[1]) == 1
+                    and int(rotated_shape[2]) == int(const_shape[0])
+                    and int(data_shape[3]) == int(const_shape[0])
                 ):
                     force_rotate_even_if_ambiguous = True
             if as_is_broadcast == data_shape and not force_rotate_even_if_ambiguous:

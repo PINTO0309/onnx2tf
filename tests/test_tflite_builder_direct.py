@@ -26421,6 +26421,49 @@ def test_flatbuffer_direct_repair_channelwise_broadcast_constants_uses_logical_l
     assert np.asarray(repaired.data).shape == (1, 1, 1, 16)
 
 
+def test_flatbuffer_direct_repair_channelwise_broadcast_constants_uses_logical_layout_on_ambiguous_rank3() -> None:
+    model_ir = ModelIR("repair_channelwise_rank3_ambiguous_logical_layout_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 16, 16, 16],
+        shape_signature=[1, 16, 16, 16],
+    )
+    model_ir.tensors["x"].logical_layout = "NHWC"
+    model_ir.tensors["bias"] = TensorIR(
+        name="bias",
+        dtype="FLOAT32",
+        shape=[16, 1, 1],
+        shape_signature=[16, 1, 1],
+        data=np.arange(16, dtype=np.float32).reshape(16, 1, 1),
+        is_variable=False,
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 16, 16, 16],
+        shape_signature=[1, 16, 16, 16],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="ADD",
+            inputs=["x", "bias"],
+            outputs=["y"],
+            options={"fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    stats = _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
+
+    assert stats["repaired_rank4_channelwise_broadcast_constants"] == 1
+    repaired = model_ir.tensors["bias"]
+    assert list(repaired.shape) == [1, 1, 16]
+    assert repaired.data is not None
+    assert np.asarray(repaired.data).shape == (1, 1, 16)
+
+
 def test_flatbuffer_direct_fold_conv_add_affine_chain_folds_fused_add_activation() -> None:
     model_ir = ModelIR("fold_conv_add_affine_fused_add_activation_fold_test")
     model_ir.inputs = ["x"]
