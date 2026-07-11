@@ -20,6 +20,7 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
     _adapt_input_layout_for_tflite_input,
     _align_output_layout_for_compare,
     _build_tflite_detail_map,
+    _build_static_control_input_overrides,
     _collect_nondeterministic_onnx_tensor_reasons,
     _collect_onnx_input_specs,
     _create_tflite_interpreter,
@@ -536,6 +537,10 @@ def _get_onnx_eval_outputs(
     generated_custom_inputs: Optional[List[List[str]]] = None
     if not custom_input_op_name_np_data_path:
         input_specs = _collect_onnx_input_specs(onnx_graph)
+        generated_input_overrides = _build_static_control_input_overrides(
+            onnx_graph=onnx_graph,
+            input_specs=input_specs,
+        )
         rng = np.random.default_rng(seed=int(seed))
         generated_input_dir = make_managed_tempdir(
             prefix="onnx2tf_operr_in_",
@@ -543,7 +548,12 @@ def _get_onnx_eval_outputs(
         )
         generated_custom_inputs = []
         for input_idx, (input_name, input_dtype, input_shape) in enumerate(input_specs):
-            if bool(force_zero_generated_inputs):
+            if input_name in generated_input_overrides:
+                sample = np.asarray(
+                    generated_input_overrides[input_name],
+                    dtype=input_dtype,
+                ).reshape(input_shape)
+            elif bool(force_zero_generated_inputs):
                 sample = np.zeros(input_shape, dtype=input_dtype)
             else:
                 sample = _generate_seeded_input(

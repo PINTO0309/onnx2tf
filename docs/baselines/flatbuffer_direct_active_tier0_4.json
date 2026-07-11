@@ -739,9 +739,8 @@
     {
       "tier": 0,
       "model": "topk_test_model.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "f0f86a0e2249123716ccc26761b5c9fb6caf224d4ab3fd3dd25d3ea0f0d45acf"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0
     },
     {
       "tier": 0,

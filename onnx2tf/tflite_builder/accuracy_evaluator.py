@@ -798,6 +798,77 @@ def _build_seeded_input_distribution_overrides(
     return overrides
 
 
+def _build_static_control_input_overrides(
+    *,
+    onnx_graph: onnx.ModelProto,
+    input_specs: Sequence[Tuple[str, np.dtype, Tuple[int, ...]]],
+) -> Dict[str, np.ndarray]:
+    """Derive deterministic values for graph inputs that control output shape."""
+    input_spec_map = {
+        str(name): (np.dtype(dtype), tuple(int(v) for v in shape))
+        for name, dtype, shape in input_specs
+    }
+    static_shapes: Dict[str, Tuple[int, ...]] = {}
+    for value_info in itertools.chain(
+        onnx_graph.graph.input,
+        onnx_graph.graph.value_info,
+        onnx_graph.graph.output,
+    ):
+        tensor_type = value_info.type.tensor_type
+        shape: List[int] = []
+        for dim in tensor_type.shape.dim:
+            shape.append(
+                int(dim.dim_value)
+                if dim.HasField("dim_value") and int(dim.dim_value) > 0
+                else 0
+            )
+        static_shapes[str(value_info.name)] = tuple(shape)
+
+    candidates: Dict[str, np.ndarray] = {}
+    conflicts: set[str] = set()
+    for node in onnx_graph.graph.node:
+        if str(node.op_type) != "TopK" or len(node.input) < 2 or len(node.output) < 1:
+            continue
+        k_name = str(node.input[1])
+        if k_name not in input_spec_map:
+            continue
+        k_dtype, k_shape = input_spec_map[k_name]
+        if not np.issubdtype(k_dtype, np.integer):
+            continue
+        output_shape = static_shapes.get(str(node.output[0]), ())
+        if len(output_shape) == 0:
+            continue
+        axis = -1
+        for attr in node.attribute:
+            if str(attr.name) == "axis":
+                axis = int(attr.i)
+                break
+        if axis < 0:
+            axis += len(output_shape)
+        if axis < 0 or axis >= len(output_shape):
+            continue
+        k_value = int(output_shape[axis])
+        if k_value <= 0:
+            continue
+        input_shape = static_shapes.get(str(node.input[0]), ())
+        if (
+            len(input_shape) == len(output_shape)
+            and int(input_shape[axis]) > 0
+            and k_value > int(input_shape[axis])
+        ):
+            continue
+        candidate = np.full(k_shape, k_value, dtype=k_dtype)
+        previous = candidates.get(k_name)
+        if previous is not None and not np.array_equal(previous, candidate):
+            conflicts.add(k_name)
+            continue
+        candidates[k_name] = candidate
+
+    for name in conflicts:
+        candidates.pop(name, None)
+    return candidates
+
+
 def _extract_sample_from_custom(
     *,
     data: np.ndarray,
@@ -842,9 +913,11 @@ def _build_eval_inputs_for_sample(
     rng: np.random.Generator,
     force_zero_generated_inputs: bool = False,
     distribution_overrides: Optional[Dict[str, str]] = None,
+    generated_input_overrides: Optional[Dict[str, np.ndarray]] = None,
 ) -> Dict[str, np.ndarray]:
     onnx_inputs: Dict[str, np.ndarray] = {}
     distribution_overrides = distribution_overrides or {}
+    generated_input_overrides = generated_input_overrides or {}
     for input_name, input_dtype, input_shape in input_specs:
         custom_data = custom_inputs.get(input_name)
         if custom_data is None:
@@ -852,6 +925,13 @@ def _build_eval_inputs_for_sample(
         if custom_data is not None:
             sample = _extract_sample_from_custom(
                 data=custom_data,
+                sample_index=sample_index,
+                expected_shape=input_shape,
+                np_dtype=input_dtype,
+            )
+        elif input_name in generated_input_overrides:
+            sample = _extract_sample_from_custom(
+                data=generated_input_overrides[input_name],
                 sample_index=sample_index,
                 expected_shape=input_shape,
                 np_dtype=input_dtype,
@@ -1479,6 +1559,10 @@ def evaluate_onnx_tflite_outputs(
         onnx_graph=onnx_graph,
         input_specs=input_specs,
     )
+    generated_input_overrides = _build_static_control_input_overrides(
+        onnx_graph=onnx_graph,
+        input_specs=input_specs,
+    )
     onnx_input_names = [name for name, _, _ in input_specs]
     onnx_output_names = [output.name for output in onnx_graph.graph.output]
     nondeterministic_output_reasons = _collect_nondeterministic_onnx_output_reasons(
@@ -1576,6 +1660,7 @@ def evaluate_onnx_tflite_outputs(
                 rng=rng,
                 force_zero_generated_inputs=bool(force_zero_generated_inputs),
                 distribution_overrides=distribution_overrides,
+                generated_input_overrides=generated_input_overrides,
             )
 
             onnx_outputs = onnx_session.run(onnx_output_names, onnx_inputs)
@@ -2093,6 +2178,10 @@ def evaluate_onnx_tflite_outputs_isolated(
         onnx_graph=onnx_graph,
         input_specs=input_specs,
     )
+    generated_input_overrides = _build_static_control_input_overrides(
+        onnx_graph=onnx_graph,
+        input_specs=input_specs,
+    )
     onnx_input_names = [name for name, _, _ in input_specs]
     onnx_output_names = [output.name for output in onnx_graph.graph.output]
     nondeterministic_output_reasons = _collect_nondeterministic_onnx_output_reasons(
@@ -2170,6 +2259,7 @@ def evaluate_onnx_tflite_outputs_isolated(
                 rng=rng,
                 force_zero_generated_inputs=bool(force_zero_generated_inputs),
                 distribution_overrides=distribution_overrides,
+                generated_input_overrides=generated_input_overrides,
             )
 
             onnx_input_manifest: Optional[Dict[str, Dict[str, Any]]] = None

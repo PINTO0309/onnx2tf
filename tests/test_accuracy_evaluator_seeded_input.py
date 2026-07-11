@@ -5,6 +5,7 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
     _FLOAT_METRIC_THRESHOLDS,
     _QUANT_METRIC_THRESHOLDS,
     _build_seeded_input_distribution_overrides,
+    _build_static_control_input_overrides,
     _build_eval_inputs_for_sample,
     _collect_onnx_input_specs,
     _generate_seeded_input,
@@ -162,6 +163,40 @@ def test_build_eval_inputs_for_sample_fills_mask_like_input_with_ones() -> None:
         inputs["pixel_attention_mask"],
         np.ones((1, 2, 3), dtype=np.bool_),
     )
+
+
+def test_build_static_control_input_overrides_infers_topk_k_from_output_shape() -> None:
+    data = helper.make_tensor_value_info("data", TensorProto.FLOAT, [1, 8400])
+    k = helper.make_tensor_value_info("k", TensorProto.INT64, [1])
+    values = helper.make_tensor_value_info("values", TensorProto.FLOAT, [1, 1250])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [1, 1250])
+    topk = helper.make_node(
+        "TopK",
+        ["data", "k"],
+        ["values", "indices"],
+        axis=1,
+        largest=1,
+        sorted=1,
+    )
+    model = helper.make_model(
+        helper.make_graph([topk], "topk_control_input", [data, k], [values, indices]),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+    input_specs = _collect_onnx_input_specs(model)
+
+    overrides = _build_static_control_input_overrides(
+        onnx_graph=model,
+        input_specs=input_specs,
+    )
+    inputs = _build_eval_inputs_for_sample(
+        input_specs=input_specs,
+        custom_inputs={},
+        sample_index=0,
+        rng=np.random.default_rng(0),
+        generated_input_overrides=overrides,
+    )
+
+    np.testing.assert_array_equal(inputs["k"], np.asarray([1250], dtype=np.int64))
 
 
 def test_collect_onnx_input_specs_uses_unit_time_axis_for_rank5_image_sequence() -> None:
