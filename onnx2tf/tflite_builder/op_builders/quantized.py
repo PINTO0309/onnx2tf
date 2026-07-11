@@ -2199,9 +2199,9 @@ def _build_qlinear_fc_like_op(
         quantized_dimension=0,
     )
     use_float_requantization_compatibility = (
-        np.asarray(a_zero).dtype == np.dtype(np.uint8)
-        and np.asarray(y_zero).dtype == np.dtype(np.uint8)
-        and np.asarray(b_zero).dtype == np.dtype(np.int8)
+        np.issubdtype(np.asarray(a_zero).dtype, np.integer)
+        and np.issubdtype(np.asarray(y_zero).dtype, np.integer)
+        and np.issubdtype(np.asarray(b_zero).dtype, np.integer)
     )
     w_name_for_fc = w_q_name
     bias_name_for_fc = bias_q_name

@@ -38687,6 +38687,16 @@ def test_flatbuffer_direct_flatten_uses_qlinear_matmul_feature_contract() -> Non
         np.asarray([-1, 4], dtype=np.int32),
     )
     assert list(model_ir.tensors["flat"].shape_signature or []) == [-1, 4]
+    fc_op = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "FULLY_CONNECTED"
+    )
+    assert all(
+        str(model_ir.tensors[str(name)].dtype) == "FLOAT32"
+        for name in fc_op.inputs
+    )
+    assert any(str(op.op_type) == "ROUND" for op in model_ir.operators)
 
 
 def _make_flatten_dynamic_first_dim_model() -> onnx.ModelProto:
