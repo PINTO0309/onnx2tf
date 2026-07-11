@@ -159,6 +159,19 @@ def tensor_shape_with_signature(ctx: Any, tensor_name: str) -> List[int]:
     ]
 
 
+def is_integer_dtype(dtype: str) -> bool:
+    return str(dtype).upper() in {
+        "INT8",
+        "INT16",
+        "INT32",
+        "INT64",
+        "UINT8",
+        "UINT16",
+        "UINT32",
+        "UINT64",
+    }
+
+
 def get_original_node_inputs(node: Any, ctx: Any) -> List[str]:
     onnx_model = getattr(ctx, "onnx_model", None)
     if onnx_model is None:

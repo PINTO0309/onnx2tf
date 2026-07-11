@@ -49,7 +49,7 @@ def test_legacy_megafiles_cannot_grow_while_they_are_being_retired() -> None:
     # migration baseline and force new code into bounded modules.
     ceilings = {
         "onnx2tf/tflite_builder/lower_from_onnx2tf.py": 75505,
-        "onnx2tf/tflite_builder/op_registry.py": 9030,
+        "onnx2tf/tflite_builder/op_registry.py": 8500,
         "onnx2tf/tflite_builder/pytorch_exporter.py": 46125,
         "tests/test_tflite_builder_direct.py": 40350,
         "tests/test_pytorch_exporter.py": 47000,
