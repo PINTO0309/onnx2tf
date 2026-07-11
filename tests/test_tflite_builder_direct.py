@@ -7835,6 +7835,12 @@ def test_flatbuffer_direct_averagepool1d_dynamic_lowering_uses_builtin_ops() -> 
     assert "CUSTOM" not in op_types
     assert "AVERAGE_POOL_2D" in op_types
     assert "RESHAPE" in op_types
+    assert "PADV2" not in op_types
+    assert "MUL" not in op_types
+    avg_pool = next(
+        op for op in model_ir.operators if str(op.op_type) == "AVERAGE_POOL_2D"
+    )
+    assert str(avg_pool.options.get("padding")) == "SAME"
     # Dynamic EXPAND_DIMS is intentionally preserved to avoid hard-coding
     # multi-axis dynamic extents into a static RESHAPE target.
     assert "SQUEEZE" not in op_types

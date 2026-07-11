@@ -222,10 +222,9 @@
     {
       "tier": 0,
       "model": "avgpool1d_dynamic.onnx",
-      "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "dfa57f1c2217bdeba8620f500b72ede9acca96c88f4fc12dbbc77cc1b38de656",
-      "tflite_max_abs": 25.274580240249634
+      "baseline_classification": "pass",
+      "baseline_reason": "pass",
+      "tflite_max_abs": 0.0
     },
     {
       "tier": 0,
