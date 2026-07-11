@@ -17,7 +17,11 @@ BOUNDED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_bridge_passes.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_model_passes.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_optimizer.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_errors.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_support.py",
 ]
+
+PYTORCH_PURE_UTILITY_FILES = BOUNDED_FILES[:-2]
 
 
 def _bounded_python_files():
@@ -59,7 +63,7 @@ def test_flatbuffer_direct_core_has_no_tensorflow_imports() -> None:
 
 def test_pytorch_pure_utilities_do_not_import_torch() -> None:
     offenders = []
-    for path in BOUNDED_FILES:
+    for path in PYTORCH_PURE_UTILITY_FILES:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             modules = []
@@ -79,7 +83,7 @@ def test_legacy_megafiles_cannot_grow_while_they_are_being_retired() -> None:
     ceilings = {
         "onnx2tf/tflite_builder/lower_from_onnx2tf.py": 75505,
         "onnx2tf/tflite_builder/op_registry.py": 8500,
-        "onnx2tf/tflite_builder/pytorch_exporter.py": 42855,
+        "onnx2tf/tflite_builder/pytorch_exporter.py": 42401,
         "tests/test_tflite_builder_direct.py": 40350,
         "tests/test_pytorch_exporter.py": 47000,
     }

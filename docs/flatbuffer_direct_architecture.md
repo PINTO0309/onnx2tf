@@ -39,6 +39,13 @@ No new third-party dependency may be added for this refactor. Use `uv sync` for
 the core profile, `uv sync --extra torch` for PyTorch exports, and
 `uv sync --extra tensorflow` for optional TensorFlow exports.
 
+PyTorch-family example-input construction and export metadata persistence live
+in `pytorch_export_support.py`; shared export exceptions live in
+`pytorch_export_errors.py`. These modules are bounded internal contracts and
+must not import TensorFlow. Image trace data is resized with the existing
+PyTorch dependency so TorchScript, Dynamo ONNX, and ExportedProgram generation
+does not require the TensorFlow optional extra.
+
 ## Regression workflow
 
 Create the local corpus inventory without copying model files into Git:
