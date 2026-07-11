@@ -68,3 +68,10 @@ managed result is `docs/baselines/flatbuffer_direct_tier0_c4f3b7a.json`:
 137 passed, 10 conversion errors, 1 timeout, 6 accuracy failures, and 36
 missing accuracy reports. The median per-model duration was 2.165 seconds.
 Failures are fixed by normalized signature; local run artifacts remain outside Git.
+
+The formal root-only Tier 0 gate at commit `32c3277` contains 120 readable
+models; the planned 121st entry has no readable node count. The managed result
+is `docs/baselines/flatbuffer_direct_tier0_root_32c3277.json`: 96 passed, 9
+conversion errors, 4 accuracy failures, 11 missing reports, and no timeouts.
+Its median duration was 2.281 seconds. All 120 classifications and normalized
+signatures match the same models in the recursive baseline.
