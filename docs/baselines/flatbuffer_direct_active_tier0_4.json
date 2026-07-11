@@ -299,9 +299,8 @@
     {
       "tier": 0,
       "model": "com.microsoft.GroupNorm.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "1d0183dac55c5a793131d11c10be6bec38a5ea039428ecc42daa399a63a972d5"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 4.76837158203125e-07
     },
     {
       "tier": 0,
