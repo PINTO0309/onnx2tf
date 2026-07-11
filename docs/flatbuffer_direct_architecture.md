@@ -80,3 +80,8 @@ The root-only Tier 1 gate at commit `a1fd301` contains 86 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier1_root_a1fd301.json`: 57
 passed, 5 conversion errors, 13 accuracy failures, 11 missing reports, and
 no timeouts. Median and maximum durations were 4.046 and 79.296 seconds.
+
+The root-only Tier 2 gate at commit `ad1d508` contains 113 models. The managed
+result is `docs/baselines/flatbuffer_direct_tier2_root_ad1d508.json`: 80
+passed, 4 conversion errors, 3 timeouts, 6 accuracy failures, and 20 missing
+reports. Median and maximum durations were 7.124 and 120.360 seconds.

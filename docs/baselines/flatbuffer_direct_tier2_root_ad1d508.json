@@ -1,0 +1,331 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "ad1d508",
+  "corpus_scope": "repository root only",
+  "models_sha256": "d1cd231a663c3754071e30185b3a8b3b16a7d4c7b55a4ef9bbbcd592b173dd64",
+  "total_entries": 113,
+  "filters": {
+    "min_nodes": 200,
+    "max_nodes": 499,
+    "recursive": false,
+    "include_pytorch_artifacts": false
+  },
+  "counts": {
+    "pass": 80,
+    "skipped_model": 0,
+    "missing_model": 0,
+    "conversion_error": 4,
+    "timeout": 3,
+    "tflite_fail": 6,
+    "pytorch_fail": 0,
+    "both_fail": 0,
+    "missing_tflite_report": 20,
+    "missing_pytorch_report": 0,
+    "missing_both_reports": 0
+  },
+  "strict_fail_count": 33,
+  "timing": {
+    "total_duration_sec": 1963.583636,
+    "median_duration_sec": 7.123691,
+    "max_duration_sec": 120.359583
+  },
+  "failed_models": [
+    {
+      "model": "ConvNext-Tiny.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/ConvNext-Tiny.onnx', '<PATH>/ConvNext-Tiny.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "84de2ff8401d8b923bcde34f8fe9f5c445faf7290cc3bd07526f274d67e72b12",
+      "tflite_max_abs": null,
+      "duration_sec": 3.82458
+    },
+    {
+      "model": "afhq_generator.v11.quant.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/conv.cc:353 input_channel % filter_input_channel != 0 (64 != 0)Node number 426 (CONV_2D) failed to prepare.",
+      "error_signature_sha256": "5cffac4d76bbe85c93972a7b65928c8ff2d6e6dc6e955866d81c4960f895ce63",
+      "tflite_max_abs": null,
+      "duration_sec": 6.886056
+    },
+    {
+      "model": "alike_l_opset11_192x320_post.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/alike_l_opset11_192x320_post_accuracy_comparison_report.json)",
+      "error_signature_sha256": "e1115894b8cb475450aad3e66acab916407d891e71280a74651596b62e183c61",
+      "tflite_max_abs": 290.0000057220459,
+      "duration_sec": 10.408406
+    },
+    {
+      "model": "arcfaceresnet100-11-int8.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 6.421398
+    },
+    {
+      "model": "crnn_lite_lstm.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 2.187437
+    },
+    {
+      "model": "double_gru.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/transpose_conv.cc:352 SizeOfDimension(input, 3) != SizeOfDimension(weights, 3) (16 != 32)Node number 183 (TRANSPOSE_CONV) failed to prepare.",
+      "error_signature_sha256": "400ac0853906a1ea2560fb372123b5d7137fd2043c7ffcf29b0c3100ae3b9866",
+      "tflite_max_abs": null,
+      "duration_sec": 2.776294
+    },
+    {
+      "model": "dynamics_rife_sim.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | NotImplementedError: Resize with dynamic spatial input supports integer scales only in flatbuffer_direct. op=Resize_77 scales_hw=[0.03125, 0.03125]",
+      "error_signature_sha256": "f7e197ea27bdd83499d6a5d1557cabd5b4749e66d1072a0dc62a330e5af84638",
+      "tflite_max_abs": null,
+      "duration_sec": 2.66859
+    },
+    {
+      "model": "east.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.Fail: [ONNXRuntimeError] : 1 : FAIL : Non-zero status code returned while running Concat node. Name:'import/feature_fusion/concat' Status Message: concatbase.h:133 PrepareForComputeImpl Non concat axis dimensions must match: Axis 2 has mismatched dimensions of 1 and 2",
+      "error_signature_sha256": "2ef32dfb9b5ef24414cfce3dd377521bf50b44d37a06e12edbfbc713ca7467e5",
+      "tflite_max_abs": null,
+      "duration_sec": 9.931426
+    },
+    {
+      "model": "faster_rcnn_opset12.onnx",
+      "classification": "timeout",
+      "reason": "timeout_after_120s",
+      "error_signature": "timeout | timeout_after_120s",
+      "error_signature_sha256": "900507a79b288b54d0fd7c95ef86726eea7a3c52c96cfd8c1dd6d1509bfbe56c",
+      "tflite_max_abs": null,
+      "duration_sec": 120.353776
+    },
+    {
+      "model": "model_.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: Given shapes, [1,64,7,28] and [1,256,1,1], are not broadcastable.Node number 146 (MUL) failed to prepare.",
+      "error_signature_sha256": "7e3a198ce69496cc3a405047aa4893d318e830b0e7421912eff80f000823ce57",
+      "tflite_max_abs": null,
+      "duration_sec": 2.857536
+    },
+    {
+      "model": "model_70_2023_0308_32_2_1_grid_sample_squeeze_1426.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/reshape.cc:94 num_input_elements != num_output_elements (128 != 64)Node number 271 (RESHAPE) failed to prepare.",
+      "error_signature_sha256": "cd3009c735c563ae95e8a1c188450448ba6dec598fbd274aed2a26159325dd69",
+      "tflite_max_abs": null,
+      "duration_sec": 4.141933
+    },
+    {
+      "model": "model_float32.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 4.942752
+    },
+    {
+      "model": "model_trans.onnx",
+      "classification": "timeout",
+      "reason": "timeout_after_120s",
+      "error_signature": "timeout | timeout_after_120s",
+      "error_signature_sha256": "900507a79b288b54d0fd7c95ef86726eea7a3c52c96cfd8c1dd6d1509bfbe56c",
+      "tflite_max_abs": null,
+      "duration_sec": 120.148061
+    },
+    {
+      "model": "modnet_old.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.Fail: [ONNXRuntimeError] : 1 : FAIL : Exception during initialization: /onnxruntime_src/onnxruntime/core/providers/cpu/tensor/upsamplebase.h:295 onnxruntime::UpsampleBase::UpsampleBase(const KernelInfoType&) [with KernelInfoType = onnxruntime::OpKernelInfo] [ONNXRuntimeError] : 1 : FAIL : upsamplebase.h:489 ScalesValidation Scale value should be greater than or equal to 1.",
+      "error_signature_sha256": "3c53a625178cb2ee734901388b23c96edf31c1520edae6fb2de8deaec5092cb3",
+      "tflite_max_abs": null,
+      "duration_sec": 9.680227
+    },
+    {
+      "model": "object_detection_nanodet_2022nov_int8.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/object_detection_nanodet_2022nov_int8.onnx', '<PATH>/object_detection_nanodet_2022nov_int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "dae58a21d739468bff2901c90ab76f9a6e48358f9ace5d57cfb04eca3dac1c7c",
+      "tflite_max_abs": null,
+      "duration_sec": 1.462947
+    },
+    {
+      "model": "object_detection_yolox_2022nov_int8.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/object_detection_yolox_2022nov_int8.onnx', '<PATH>/object_detection_yolox_2022nov_int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "d791755c15b8ac4661c0870ce00199be0997075491e02beee76c2a02a0f0bc98",
+      "tflite_max_abs": 3.234160177409649,
+      "duration_sec": 12.90359
+    },
+    {
+      "model": "rec.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/concatenation.cc:215 t->dims->data[d] != t0->dims->data[d] (6 != 1)Node number 338 (CONCATENATION) failed to prepare.",
+      "error_signature_sha256": "6f1767c5b3b951fdf41debc945fd48a5b6000b1af57959e97c09863e063363a7",
+      "tflite_max_abs": null,
+      "duration_sec": 4.000092
+    },
+    {
+      "model": "rec_org.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/concatenation.cc:215 t->dims->data[d] != t0->dims->data[d] (6 != 1)Node number 338 (CONCATENATION) failed to prepare.",
+      "error_signature_sha256": "6f1767c5b3b951fdf41debc945fd48a5b6000b1af57959e97c09863e063363a7",
+      "tflite_max_abs": null,
+      "duration_sec": 4.029082
+    },
+    {
+      "model": "rtmpose_wholebody_l_1x3x256x192.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/conv.cc:353 input_channel % filter_input_channel != 0 (512 != 0)Node number 266 (CONV_2D) failed to prepare.",
+      "error_signature_sha256": "9a640aa17f24629079a7483b2763585265de2407b806552c730f00b260a1ed6d",
+      "tflite_max_abs": null,
+      "duration_sec": 11.267267
+    },
+    {
+      "model": "rtmpose_wholebody_m_1x3x256x192.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/conv.cc:353 input_channel % filter_input_channel != 0 (384 != 0)Node number 207 (CONV_2D) failed to prepare.",
+      "error_signature_sha256": "6541f164f7bf8eace135f0e9fa4de274d39ebc11cf50eadbf67f6112028d012c",
+      "tflite_max_abs": null,
+      "duration_sec": 7.89373
+    },
+    {
+      "model": "shufflenet-9.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/shufflenet-9.onnx', '<PATH>/shufflenet-9.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "57f5809225da7ff9e606ce00c5f6f092ccce0c73a7d1531bf52b9e81d1225099",
+      "tflite_max_abs": null,
+      "duration_sec": 1.414282
+    },
+    {
+      "model": "something.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: Given shapes, [1,64,7,28] and [1,256,1,1], are not broadcastable.Node number 146 (MUL) failed to prepare.",
+      "error_signature_sha256": "7e3a198ce69496cc3a405047aa4893d318e830b0e7421912eff80f000823ce57",
+      "tflite_max_abs": null,
+      "duration_sec": 2.873427
+    },
+    {
+      "model": "ssdlite320_mobilenet_v3_large.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because ONNX graph validation failed in ONNX Runtime (topological order issue). source=flatbuffer_direct target=float32",
+      "error_signature_sha256": "f520b28d4b025834dacc97c0c39c78740f977618c54631634dddeec0752da35d",
+      "tflite_max_abs": null,
+      "duration_sec": 3.9262
+    },
+    {
+      "model": "test.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: Given shapes, [1,64,7,28] and [1,256,1,1], are not broadcastable.Node number 146 (MUL) failed to prepare.",
+      "error_signature_sha256": "7e3a198ce69496cc3a405047aa4893d318e830b0e7421912eff80f000823ce57",
+      "tflite_max_abs": null,
+      "duration_sec": 2.803429
+    },
+    {
+      "model": "text_detection_en_ppocrv3_2023may_int8.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException: [ONNXRuntimeError] : 6 : RUNTIME_EXCEPTION : Non-zero status code returned while running QLinearAdd node. Name:'p2o.Add.46_quant' Status Message: /onnxruntime_src/onnxruntime/core/providers/cpu/math/element_wise_ops.h:576 void onnxruntime::BroadcastIterator::Append(ptrdiff_t, ptrdiff_t) axis == 1 || axis == largest was false. Attempting to broadcast an axis by a dimension other than 1. 2 by 4",
+      "error_signature_sha256": "d2419f5996661ce1089fb5a585c9afde6adca1ff6229bc795b4a2ab85ee06bb7",
+      "tflite_max_abs": null,
+      "duration_sec": 2.225111
+    },
+    {
+      "model": "tmp_alike_debug.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ValueError: Tensor data is null. Run allocate_tensors() first",
+      "error_signature_sha256": "f506f17b72445e10128165005de2b877718518b2294c79554b07be2a1819cbb7",
+      "tflite_max_abs": null,
+      "duration_sec": 6.086586
+    },
+    {
+      "model": "tmp_alike_debug3.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/tmp_alike_debug3_accuracy_comparison_report.json)",
+      "error_signature_sha256": "224de9b141fb9878c1b1ef289b511c6f87d8844c4eac617b0e897cf0ade38f75",
+      "tflite_max_abs": 1.0,
+      "duration_sec": 5.997974
+    },
+    {
+      "model": "tmp_alike_debug4.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/tmp_alike_debug4_accuracy_comparison_report.json)",
+      "error_signature_sha256": "55596567db57cb322d3d8364fd9a668b24e93b882334c6d876a1b3af07506601",
+      "tflite_max_abs": 1.0,
+      "duration_sec": 6.121192
+    },
+    {
+      "model": "vit_atto_patch32.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 2.470626
+    },
+    {
+      "model": "yolov3-12-int8.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/yolov3-12-int8.onnx', '<PATH>/yolov3-12-int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "15d093b203325e1d4c1f2e8d9a3fce0141db4da0245dfa3f5254f006af417a89",
+      "tflite_max_abs": null,
+      "duration_sec": 4.339247
+    },
+    {
+      "model": "yolov5s.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/yolov5s_accuracy_comparison_report.json)",
+      "error_signature_sha256": "3d19e30742aaefcf03909adb23b0cfcbe24641b67bd5183d4c50f5998d8cb8ed",
+      "tflite_max_abs": 0.32965087890625,
+      "duration_sec": 8.120694
+    },
+    {
+      "model": "yolox_nano.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/yolox_nano_accuracy_comparison_report.json)",
+      "error_signature_sha256": "cc0ae8adce2d7859d1a223e1a080decef814e134e5e6d07525cf76a858c10dcb",
+      "tflite_max_abs": 0.1362457275390625,
+      "duration_sec": 4.641041
+    },
+    {
+      "model": "yolox_x_mul.onnx",
+      "classification": "timeout",
+      "reason": "timeout_after_120s",
+      "error_signature": "timeout | timeout_after_120s",
+      "error_signature_sha256": "900507a79b288b54d0fd7c95ef86726eea7a3c52c96cfd8c1dd6d1509bfbe56c",
+      "tflite_max_abs": null,
+      "duration_sec": 120.359583
+    }
+  ]
+}
