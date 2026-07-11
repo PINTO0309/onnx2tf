@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -72,6 +72,9 @@ def _rewrite_constant_divisors_to_multiplicative_reciprocals(
     rewritten_ops: List[OperatorIR] = []
     for op in model_ir.operators:
         if str(op.op_type) != "DIV" or len(op.inputs) != 2 or len(op.outputs) != 1:
+            rewritten_ops.append(op)
+            continue
+        if bool(op.options.get("preserveDivisionForOnnxRequantization", False)):
             rewritten_ops.append(op)
             continue
 
@@ -340,5 +343,3 @@ def _restore_precision_sensitive_reciprocal_divisions(
     return {
         "restored_precision_sensitive_reciprocal_divisions": int(restored),
     }
-
-

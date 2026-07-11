@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -306,6 +306,13 @@ def _optimize_constant_input_cast_chains(model_ir: ModelIR) -> Dict[str, int]:
         changed = False
         for cast_idx, cast_op in enumerate(model_ir.operators):
             if str(cast_op.op_type) != "CAST" or len(cast_op.inputs) != 1 or len(cast_op.outputs) != 1:
+                continue
+            if bool(
+                cast_op.options.get(
+                    "preserveRuntimeCastForQuantizedAccumulator",
+                    False,
+                )
+            ):
                 continue
 
             in_name = str(cast_op.inputs[0])
@@ -672,4 +679,3 @@ def _optimize_constant_binary_elementwise_chains(model_ir: ModelIR) -> Dict[str,
     if rewritten > 0:
         _prune_unused_tensors(model_ir)
     return {"optimized_constant_binary_elementwise_chains": int(rewritten)}
-

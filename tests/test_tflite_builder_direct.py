@@ -8769,7 +8769,7 @@ def test_flatbuffer_direct_qlinear_conv_filter_layout_is_ohwi() -> None:
         optimize_layout_transpose_chains=False,
     )
 
-    w_tensor = model_ir.tensors.get("QConvMC_conv_filter_q")
+    w_tensor = model_ir.tensors.get("QConvMC_filter_q_f32")
     assert w_tensor is not None
     assert list(w_tensor.shape) == [4, 1, 1, 3]
 
@@ -8782,10 +8782,51 @@ def test_flatbuffer_direct_qlinear_conv_filter_layout_is_ohwi() -> None:
         str(model_ir.tensors[name].dtype) == "FLOAT32"
         for name in qconv.inputs
     )
-    assert sum(str(op.op_type) == "DEQUANTIZE" for op in model_ir.operators) >= 2
+    assert sum(str(op.op_type) == "CAST" for op in model_ir.operators) >= 2
+    assert sum(str(op.op_type) == "ROUND" for op in model_ir.operators) >= 1
     # The post-lowering Q->DQ cleanup may elide the compatibility path's
     # output QUANTIZE together with the model's following DequantizeLinear.
     assert str(model_ir.tensors[qconv.outputs[0]].dtype) == "FLOAT32"
+
+
+@pytest.mark.skipif(
+    not _requires_flatbuffer_tools(),
+    reason="flatbuffer_direct requires bundled schema artifacts",
+)
+def test_flatbuffer_direct_mixed_uint8_int8_qlinear_conv_runtime_matches_onnx() -> None:
+    model = _make_qlinear_conv_multichannel_model()
+    sample_input = np.asarray(
+        [
+            [
+                [[-0.85, -0.45], [0.15, 0.55]],
+                [[-0.75, -0.35], [0.25, 0.65]],
+                [[-0.65, -0.25], [0.35, 0.75]],
+            ]
+        ],
+        dtype=np.float32,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "mixed_uint8_int8_qlinear_conv", model)
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+        )
+        expected = ort.InferenceSession(
+            model_path,
+            providers=["CPUExecutionProvider"],
+        ).run(None, {"x": sample_input})[0]
+        actual = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs={"x": sample_input},
+            tensor_names=["y"],
+        )["y"]
+        if actual.shape == (1, 2, 2, 4):
+            actual = np.transpose(actual, (0, 3, 1, 2))
+
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1.0e-6)
 
 
 def test_flatbuffer_direct_input_layout_defaults_to_nhwc_when_enabled() -> None:

@@ -473,10 +473,8 @@
     {
       "tier": 0,
       "model": "image_classification_mobilenetv1_2022apr_int8.onnx",
-      "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "6561a1f9f1c5aa2e601a9cc2d68d0cab4267d3af57349c4c33233b3c852e0e72",
-      "tflite_max_abs": 8.077499389648438
+      "baseline_classification": "pass",
+      "tflite_max_abs": 7.62939453125e-06
     },
     {
       "tier": 0,
