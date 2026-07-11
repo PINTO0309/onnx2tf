@@ -187,7 +187,7 @@ def _parse_value_hints(
     for hint in value_hints:
         if not isinstance(hint, str):
             continue
-        parts = hint.split(':', 1)
+        parts = hint.rsplit(':', 1)
         if len(parts) != 2:
             continue
         input_name, value_str = parts[0], parts[1]
@@ -4417,7 +4417,7 @@ def dummy_onnx_inference(
     else:
         shape_hints_dict = {}
         for hint in shape_hints:
-            parts = hint.split(':')
+            parts = hint.rsplit(':', 1)
             if len(parts) == 2:
                 input_name = parts[0]
                 shape_values = [int(val) for val in parts[1].split(',')]
@@ -4762,7 +4762,7 @@ def dummy_tf_inference(
     else:
         shape_hints_dict = {}
         for hint in shape_hints:
-            parts = hint.split(':')
+            parts = hint.rsplit(':', 1)
             if len(parts) == 2:
                 input_name = parts[0]
                 shape_values = [int(val) for val in parts[1].split(',')]

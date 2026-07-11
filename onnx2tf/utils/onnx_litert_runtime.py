@@ -171,7 +171,7 @@ def _parse_value_hints(
     for hint in value_hints:
         if not isinstance(hint, str):
             continue
-        parts = hint.split(":", 1)
+        parts = hint.rsplit(":", 1)
         if len(parts) != 2:
             continue
         key = parts[0].strip()
@@ -550,7 +550,7 @@ def dummy_onnx_inference(
     else:
         shape_hints_dict = {}
         for hint in shape_hints:
-            parts = hint.split(":")
+            parts = hint.rsplit(":", 1)
             if len(parts) == 2:
                 shape_hints_dict[parts[0]] = [int(val) for val in parts[1].split(",")]
         for i, (input_name, original_shape) in enumerate(zip(input_names, input_sizes)):

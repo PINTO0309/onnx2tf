@@ -853,6 +853,8 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
                         "tier": 0,
                         "model": "active.onnx",
                         "baseline_classification": "pass",
+                        "shape_hints": ["input:0:1,16,16,3"],
+                        "keep_shape_absolutely_input_names": ["state:0"],
                     },
                     {
                         "tier": 0,
@@ -865,11 +867,13 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
         encoding="utf-8",
     )
     calls: List[str] = []
+    commands: List[List[str]] = []
 
     def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
         model_path = Path(cmd[cmd.index("-i") + 1])
         artifact_dir = Path(cmd[cmd.index("-o") + 1])
         calls.append(model_path.name)
+        commands.append(list(cmd))
         _write_accuracy_report(
             path=artifact_dir / f"{model_path.stem}_accuracy_report.json",
             evaluation_pass=True,
@@ -885,6 +889,8 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
     )
 
     assert calls == ["active.onnx"]
+    assert commands[0][commands[0].index("-sh") + 1] == "input:0:1,16,16,3"
+    assert commands[0][commands[0].index("-kat") + 1] == "state:0"
     assert [entry["model"] for entry in state["entries"]] == ["active.onnx"]
     profile_filter = state["summary"]["filters"]["regression_profile"]
     assert profile_filter["model_count"] == 2
@@ -949,8 +955,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 54,
-        "pass": 308,
+        "missing_tflite_report": 53,
+        "pass": 309,
         "tflite_fail": 32,
         "timeout": 26,
     }

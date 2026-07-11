@@ -17,6 +17,7 @@ import onnx
 import onnx2tf.gs as gs
 from onnx2tf.tflite_builder.accuracy_evaluator import (
     _MetricAccumulator,
+    _apply_shape_hints_to_runtime_graph_inputs,
     _adapt_input_layout_for_tflite_input,
     _align_output_layout_for_compare,
     _build_tflite_detail_map,
@@ -531,14 +532,22 @@ def _get_onnx_eval_outputs(
     enable_ort_output_memmap: bool = True,
     ort_output_memmap_dir: Optional[str] = None,
     custom_input_op_name_np_data_path: Optional[List[List[str]]] = None,
+    shape_hints: Optional[List[str]] = None,
     seed: int = 0,
     force_zero_generated_inputs: bool = False,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List[str]]:
     onnx_runtime_graph = _prepare_onnx_graph_for_onnxruntime(onnx_graph)
+    _apply_shape_hints_to_runtime_graph_inputs(
+        onnx_runtime_graph,
+        shape_hints,
+    )
     generated_input_dir: Optional[str] = None
     generated_custom_inputs: Optional[List[List[str]]] = None
     if not custom_input_op_name_np_data_path:
-        input_specs = _collect_onnx_input_specs(onnx_runtime_graph)
+        input_specs = _collect_onnx_input_specs(
+            onnx_runtime_graph,
+            shape_hints=shape_hints,
+        )
         generated_input_overrides = _build_static_control_input_overrides(
             onnx_graph=onnx_runtime_graph,
             input_specs=input_specs,
@@ -895,6 +904,7 @@ def generate_op_error_report(
     onnxruntime_output_memmap: bool = True,
     onnxruntime_output_memmap_dir: Optional[str] = None,
     custom_input_op_name_np_data_path: Optional[List[List[str]]] = None,
+    shape_hints: Optional[List[str]] = None,
     seed: int = 0,
     verbose: bool = True,
 ) -> Dict[str, Any]:
@@ -974,6 +984,7 @@ def generate_op_error_report(
             enable_ort_output_memmap=bool(onnxruntime_output_memmap),
             ort_output_memmap_dir=onnxruntime_output_memmap_dir,
             custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+            shape_hints=shape_hints,
             seed=int(seed),
         )
         try:
@@ -999,6 +1010,7 @@ def generate_op_error_report(
                     enable_ort_output_memmap=bool(onnxruntime_output_memmap),
                     ort_output_memmap_dir=onnxruntime_output_memmap_dir,
                     custom_input_op_name_np_data_path=None,
+                    shape_hints=shape_hints,
                     seed=int(seed),
                     force_zero_generated_inputs=True,
                 )
@@ -1295,6 +1307,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--shape_hint",
+        action="append",
+        default=None,
+        help=(
+            "Input shape hint in INPUT_NAME:DIM0,...,DIMN format. "
+            "Can be specified multiple times."
+        ),
+    )
+    parser.add_argument(
         "--disable_onnxruntime_output_memmap",
         dest="disable_onnxruntime_output_memmap",
         action="store_true",
@@ -1328,6 +1349,7 @@ def main() -> None:
         onnxruntime_output_memmap=not bool(args.disable_onnxruntime_output_memmap),
         onnxruntime_output_memmap_dir=args.onnxruntime_output_memmap_dir,
         custom_input_op_name_np_data_path=args.custom_input_op_name_np_data_path,
+        shape_hints=args.shape_hint,
         seed=int(args.seed),
         verbose=True,
     )

@@ -876,7 +876,7 @@ def _complete_custom_inputs_for_graph(
     else:
         shape_hints_dict = {}
         for hint in shape_hints:
-            parts = hint.split(':')
+            parts = hint.rsplit(':', 1)
             if len(parts) == 2:
                 input_name = parts[0]
                 shape_values = [int(val) for val in parts[1].split(',')]
@@ -2485,6 +2485,7 @@ def convert(
                 'num_samples': eval_num_samples_local,
                 'seed': 0,
                 'custom_input_op_name_np_data_path': custom_input_op_name_np_data_path,
+                'shape_hints': shape_hints,
                 'rtol': eval_rtol,
                 'atol': eval_atol,
                 'compare_mode': eval_compare_mode,
@@ -3880,6 +3881,9 @@ def convert(
                             numpy_file_path,
                         ]
                     )
+            if shape_hints is not None:
+                for shape_hint in shape_hints:
+                    command.extend(["--shape_hint", str(shape_hint)])
             if not bool(onnxruntime_output_memmap):
                 command.append('--disable_onnxruntime_output_memmap')
             if (

@@ -15,8 +15,17 @@ from onnx2tf.tflite_builder.pytorch_export_support import (
 
 def test_parse_torchscript_shape_hints_ignores_malformed_values() -> None:
     assert _parse_torchscript_shape_hints(
-        ["image:1,224,224,3", "missing_shape", "bad:1,x", ":1,2"]
-    ) == {"image": [1, 224, 224, 3]}
+        [
+            "image:1,224,224,3",
+            "import/input:0:1,320,320,3",
+            "missing_shape",
+            "bad:1,x",
+            ":1,2",
+        ]
+    ) == {
+        "image": [1, 224, 224, 3],
+        "import/input:0": [1, 320, 320, 3],
+    }
 
 
 def test_resolve_trace_shape_rejects_unresolved_dynamic_dimension() -> None:

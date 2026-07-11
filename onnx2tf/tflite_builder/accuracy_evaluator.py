@@ -375,8 +375,43 @@ def _load_custom_input_data(
     return custom_inputs
 
 
+def _parse_shape_hint_map(
+    shape_hints: Optional[Sequence[str]],
+) -> Dict[str, List[int]]:
+    parsed: Dict[str, List[int]] = {}
+    for hint in list(shape_hints or []):
+        parts = str(hint).rsplit(":", 1)
+        if len(parts) != 2:
+            continue
+        try:
+            values = [int(value) for value in parts[1].split(",")]
+        except Exception:
+            continue
+        if len(values) > 0 and all(int(value) > 0 for value in values):
+            parsed[str(parts[0])] = values
+    return parsed
+
+
+def _lookup_shape_hint(
+    input_name: str,
+    shape_hint_map: Dict[str, List[int]],
+) -> Optional[List[int]]:
+    direct = shape_hint_map.get(str(input_name), None)
+    if direct is not None:
+        return list(direct)
+    canonical_name = re.sub(r"[^0-9a-z]+", "_", str(input_name).lower()).strip("_")
+    matches = [
+        values
+        for hint_name, values in shape_hint_map.items()
+        if re.sub(r"[^0-9a-z]+", "_", str(hint_name).lower()).strip("_")
+        == canonical_name
+    ]
+    return list(matches[0]) if len(matches) == 1 else None
+
+
 def _collect_onnx_input_specs(
     onnx_graph: onnx.ModelProto,
+    shape_hints: Optional[Sequence[str]] = None,
 ) -> List[Tuple[str, np.dtype, Tuple[int, ...]]]:
     def _canonical_input_name_local(name: str) -> str:
         pieces: List[str] = []
@@ -546,6 +581,8 @@ def _collect_onnx_input_specs(
 
         return int(default_dim)
 
+    shape_hint_map = _parse_shape_hint_map(shape_hints)
+
     initializer_names = {initializer.name for initializer in onnx_graph.graph.initializer}
     symbolic_dim_values: Dict[str, int] = {}
     # A symbol used on axis 0 anywhere in the public inputs represents the
@@ -576,12 +613,26 @@ def _collect_onnx_input_specs(
 
         shape: List[int] = []
         rank = int(len(raw_shape))
+        input_shape_hint = _lookup_shape_hint(
+            str(graph_input.name),
+            shape_hint_map,
+        )
+        if input_shape_hint is not None and len(input_shape_hint) != rank:
+            input_shape_hint = None
         for axis, dim_value in enumerate(raw_shape):
             if int(dim_value) > 0:
                 shape.append(int(dim_value))
             else:
                 dim_param = dim_params[int(axis)]
-                resolved_dim = symbolic_dim_values.get(dim_param, None) if dim_param != "" else None
+                resolved_dim = (
+                    int(input_shape_hint[int(axis)])
+                    if input_shape_hint is not None
+                    else (
+                        symbolic_dim_values.get(dim_param, None)
+                        if dim_param != ""
+                        else None
+                    )
+                )
                 if resolved_dim is None:
                     resolved_dim = _resolve_dynamic_dim(
                         input_name=str(graph_input.name),
@@ -594,6 +645,37 @@ def _collect_onnx_input_specs(
                 shape.append(int(resolved_dim))
         input_specs.append((graph_input.name, np_dtype, tuple(shape)))
     return input_specs
+
+
+def _apply_shape_hints_to_runtime_graph_inputs(
+    onnx_graph: onnx.ModelProto,
+    shape_hints: Optional[Sequence[str]],
+) -> None:
+    """Restore explicit evaluation shapes on a runtime-only ONNX graph copy."""
+
+    if not shape_hints:
+        return
+    parsed = _parse_shape_hint_map(shape_hints)
+
+    for graph_input in onnx_graph.graph.input:
+        hint_shape = _lookup_shape_hint(str(graph_input.name), parsed)
+        dims = graph_input.type.tensor_type.shape.dim
+        if hint_shape is None or len(hint_shape) != len(dims):
+            continue
+        for dim, hint_value in zip(dims, hint_shape):
+            current_value = (
+                int(dim.dim_value)
+                if dim.HasField("dim_value") and int(dim.dim_value) > 0
+                else -1
+            )
+            # Optimizer shape materialization commonly replaces dynamic dims
+            # with one. On this evaluation-only copy, an explicit positive
+            # hint is authoritative for dynamic or singleton placeholders.
+            if current_value <= 0 or (
+                current_value == 1 and int(hint_value) != 1
+            ):
+                dim.ClearField("dim_param")
+                dim.dim_value = int(hint_value)
 
 
 def _generate_seeded_input(
@@ -1567,6 +1649,7 @@ def evaluate_onnx_tflite_outputs(
     num_samples: int = 10,
     seed: int = 0,
     custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+    shape_hints: Optional[Sequence[str]] = None,
     rtol: float = 1.0e-4,
     atol: float = 1.0e-4,
     compare_mode: str = "auto",
@@ -1591,7 +1674,14 @@ def evaluate_onnx_tflite_outputs(
     rng = np.random.default_rng(seed=int(seed))
     custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
     onnx_runtime_graph = _prepare_onnx_graph_for_onnxruntime(onnx_graph)
-    input_specs = _collect_onnx_input_specs(onnx_runtime_graph)
+    _apply_shape_hints_to_runtime_graph_inputs(
+        onnx_runtime_graph,
+        shape_hints,
+    )
+    input_specs = _collect_onnx_input_specs(
+        onnx_runtime_graph,
+        shape_hints=shape_hints,
+    )
     distribution_overrides = _build_seeded_input_distribution_overrides(
         onnx_graph=onnx_runtime_graph,
         input_specs=input_specs,
@@ -2188,6 +2278,7 @@ def evaluate_onnx_tflite_outputs_isolated(
     num_samples: int = 10,
     seed: int = 0,
     custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+    shape_hints: Optional[Sequence[str]] = None,
     rtol: float = 1.0e-4,
     atol: float = 1.0e-4,
     compare_mode: str = "auto",
@@ -2211,7 +2302,14 @@ def evaluate_onnx_tflite_outputs_isolated(
     rng = np.random.default_rng(seed=int(seed))
     custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
     onnx_runtime_graph = _prepare_onnx_graph_for_onnxruntime(onnx_graph)
-    input_specs = _collect_onnx_input_specs(onnx_runtime_graph)
+    _apply_shape_hints_to_runtime_graph_inputs(
+        onnx_runtime_graph,
+        shape_hints,
+    )
+    input_specs = _collect_onnx_input_specs(
+        onnx_runtime_graph,
+        shape_hints=shape_hints,
+    )
     distribution_overrides = _build_seeded_input_distribution_overrides(
         onnx_graph=onnx_runtime_graph,
         input_specs=input_specs,

@@ -216,6 +216,7 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
     tiers: List[int] = []
     baseline_classification_counts: Dict[str, int] = {}
     excluded_baseline_classification_counts: Dict[str, int] = {}
+    model_options: Dict[str, Dict[str, List[str]]] = {}
     for entry in model_entries:
         if not isinstance(entry, dict):
             raise ValueError(f"Invalid regression profile model entry. path={path}")
@@ -228,6 +229,29 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
             )
         model_names.append(model_name)
         tiers.append(tier)
+        normalized_options: Dict[str, List[str]] = {}
+        for option_name in (
+            "shape_hints",
+            "keep_shape_absolutely_input_names",
+        ):
+            raw_values = entry.get(option_name, [])
+            if raw_values is None:
+                raw_values = []
+            if not isinstance(raw_values, list) or any(
+                not isinstance(value, str) or str(value).strip() == ""
+                for value in raw_values
+            ):
+                raise ValueError(
+                    "Regression profile model options must be lists of "
+                    f"non-empty strings. path={path} model={model_name!r} "
+                    f"option={option_name}"
+                )
+            if raw_values:
+                normalized_options[option_name] = [
+                    str(value) for value in raw_values
+                ]
+        if normalized_options:
+            model_options[model_name] = normalized_options
         baseline_classification = str(
             entry.get("baseline_classification", "unspecified")
         )
@@ -277,6 +301,7 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
         "max_nodes": max_nodes,
         "recursive": False,
         "tiers": sorted(set(tiers)),
+        "model_options": model_options,
         "baseline_classification_counts": dict(
             sorted(baseline_classification_counts.items())
         ),
@@ -854,6 +879,20 @@ def run_flatbuffer_direct_bulk_verification(
                 "flatbuffer_direct",
                 "-cotof",
             ]
+            if profile is not None:
+                per_model_options = profile.get("model_options", {}).get(
+                    model_name,
+                    {},
+                )
+                shape_hints_for_model = per_model_options.get("shape_hints", [])
+                if shape_hints_for_model:
+                    cmd.extend(["-sh", *shape_hints_for_model])
+                keep_shape_names = per_model_options.get(
+                    "keep_shape_absolutely_input_names",
+                    [],
+                )
+                if keep_shape_names:
+                    cmd.extend(["-kat", *keep_shape_names])
             if include_pytorch_artifacts:
                 cmd.extend(["-fdopt", "-fdots", "-fdodo", "-fdoep"])
             if int(native_pytorch_generation_timeout_sec) > 0:

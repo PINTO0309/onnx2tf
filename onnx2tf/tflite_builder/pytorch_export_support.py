@@ -32,7 +32,7 @@ def _parse_torchscript_shape_hints(
         return {}
     parsed: Dict[str, List[int]] = {}
     for hint in shape_hints:
-        parts = str(hint).split(":", maxsplit=1)
+        parts = str(hint).rsplit(":", maxsplit=1)
         if len(parts) != 2:
             continue
         input_name = str(parts[0]).strip()
