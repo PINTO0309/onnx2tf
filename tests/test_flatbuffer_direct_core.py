@@ -93,6 +93,17 @@ def test_model_ir_index_and_invariants_detect_duplicate_producer() -> None:
     )
 
 
+def test_model_ir_invariants_allow_empty_optional_operator_slots() -> None:
+    model_ir = _add_model_ir()
+    model_ir.operators[0].inputs.extend(["", "  "])
+    model_ir.operators[0].outputs.append("")
+
+    assert validate_model_ir_invariants(model_ir) == []
+    index = ModelIRGraphIndex(model_ir)
+    assert "" not in index.consumers
+    assert "" not in index.producers
+
+
 def test_ordered_pass_manager_orders_and_stops_at_fixed_point() -> None:
     state = {"value": 0, "events": []}
     manager = OrderedPassManager[dict](

@@ -23,9 +23,15 @@ def validate_model_ir_invariants(model_ir: ModelIR) -> List[str]:
     known.update(str(name) for name in model_ir.inputs)
     for op_index, op in enumerate(model_ir.operators):
         for name in op.inputs:
+            if str(name).strip() == "":
+                # TFLite uses an empty tensor name to preserve omitted optional
+                # input slots (for example the 24/48-input LSTM builtins).
+                continue
             if str(name) not in known:
                 problems.append(f"missing_input_tensor:{op_index}:{name}")
         for name in op.outputs:
+            if str(name).strip() == "":
+                continue
             if str(name) not in known:
                 problems.append(f"missing_output_tensor:{op_index}:{name}")
 

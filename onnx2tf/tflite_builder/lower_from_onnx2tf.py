@@ -74161,7 +74161,25 @@ def lower_onnx_to_ir(
         if input_rank not in [3, 4, 5]:
             continue
 
-        keep_shape_abs = input_name in keep_shape_abs_input_names
+        direct_input_consumers = session.graph_index.consumers_of(input_name)
+        direct_consumer_op_types = {
+            str(getattr(consumer, "op_type", ""))
+            for consumer in direct_input_consumers
+        }
+        recurrent_op_types = {"LSTM", "GRU", "RNN"}
+        recurrent_layout_neutral_op_types = recurrent_op_types | {
+            "Cast",
+            "Identity",
+            "Shape",
+            "Size",
+        }
+        preserve_recurrent_sequence_layout = bool(
+            direct_consumer_op_types & recurrent_op_types
+        ) and direct_consumer_op_types.issubset(recurrent_layout_neutral_op_types)
+        keep_shape_abs = (
+            input_name in keep_shape_abs_input_names
+            or preserve_recurrent_sequence_layout
+        )
         keep_ncw = input_name in keep_ncw_input_names
         keep_nwc = (
             input_name in keep_nwc_input_names
