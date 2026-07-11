@@ -66754,6 +66754,98 @@ def _optimize_nhwc_propagation_qlinear_concat_conv(model_ir: ModelIR) -> Dict[st
     }
 
 
+def _repair_singleton_nhwc_conv_input_reshapes(model_ir: ModelIR) -> Dict[str, int]:
+    """Remove stale singleton NCHW adapters in front of NHWC Conv inputs.
+
+    Layout propagation can move a rank-4 tensor to NHWC after Conv lowering has
+    already emitted its NCHW->NHWC adapter. When both spatial dimensions are
+    singleton, that adapter is represented as RESHAPE and can survive generic
+    transpose cleanup. The filter input-channel dimension provides an exact,
+    model-independent guard for recognizing the already-NHWC source.
+    """
+
+    repaired = 0
+    while True:
+        producers = _build_tensor_producer_map(model_ir)
+        consumers = _build_tensor_consumer_map(model_ir)
+        changed = False
+        for conv_idx, conv_op in enumerate(model_ir.operators):
+            if str(conv_op.op_type) != "CONV_2D" or len(conv_op.inputs) < 2 or len(conv_op.outputs) != 1:
+                continue
+            adapter_output_name = str(conv_op.inputs[0])
+            adapter_idx = producers.get(adapter_output_name, None)
+            if adapter_idx is None:
+                continue
+            adapter_op = model_ir.operators[int(adapter_idx)]
+            if str(adapter_op.op_type) != "RESHAPE" or len(adapter_op.inputs) < 1 or len(adapter_op.outputs) != 1:
+                continue
+            if adapter_output_name in model_ir.outputs:
+                continue
+            adapter_users = [int(v) for v in consumers.get(adapter_output_name, [])]
+            if adapter_users != [int(conv_idx)]:
+                continue
+
+            source_name = str(adapter_op.inputs[0])
+            filter_name = str(conv_op.inputs[1])
+            conv_output_name = str(conv_op.outputs[0])
+            source_tensor = model_ir.tensors.get(source_name, None)
+            adapter_tensor = model_ir.tensors.get(adapter_output_name, None)
+            filter_tensor = model_ir.tensors.get(filter_name, None)
+            output_tensor = model_ir.tensors.get(conv_output_name, None)
+            if any(t is None for t in [source_tensor, adapter_tensor, filter_tensor, output_tensor]):
+                continue
+            source_shape = [int(v) for v in list(source_tensor.shape)]
+            adapter_shape = [int(v) for v in list(adapter_tensor.shape)]
+            filter_shape = [int(v) for v in list(filter_tensor.shape)]
+            if len(source_shape) != 4 or len(adapter_shape) != 4 or len(filter_shape) != 4:
+                continue
+            filter_input_channels = int(filter_shape[3])
+            if (
+                int(source_shape[1]) != 1
+                or int(source_shape[2]) != 1
+                or int(source_shape[3]) != filter_input_channels
+                or int(adapter_shape[3]) == filter_input_channels
+                or int(np.prod(source_shape, dtype=np.int64))
+                != int(np.prod(adapter_shape, dtype=np.int64))
+            ):
+                continue
+
+            updated_inputs = [str(v) for v in list(conv_op.inputs)]
+            updated_inputs[0] = source_name
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=conv_op,
+                new_inputs=updated_inputs,
+            )
+
+            source_signature = (
+                [int(v) for v in list(source_tensor.shape_signature)]
+                if source_tensor.shape_signature is not None
+                else list(source_shape)
+            )
+            output_tensor.shape = [
+                int(source_shape[0]),
+                int(source_shape[1]),
+                int(source_shape[2]),
+                int(filter_shape[0]),
+            ]
+            output_tensor.shape_signature = [
+                int(source_signature[0]),
+                int(source_signature[1]),
+                int(source_signature[2]),
+                int(filter_shape[0]),
+            ]
+            del model_ir.operators[int(adapter_idx)]
+            repaired += 1
+            changed = True
+            break
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"repaired_singleton_nhwc_conv_input_reshapes": int(repaired)}
+
+
 def _optimize_nhwc_prefix_qlinear_silu_chains(model_ir: ModelIR) -> Dict[str, int]:
     """
     Propagate NHWC through early QLinear SiLU chains and remove unnecessary
@@ -75560,6 +75652,7 @@ def lower_onnx_to_ir(
         model_ir,
         prefer_runtime_inferable_from_onnx_raw=True,
     )
+    _repair_singleton_nhwc_conv_input_reshapes(model_ir)
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     split_fallback_stats = _replace_unsupported_split_with_slice(model_ir)

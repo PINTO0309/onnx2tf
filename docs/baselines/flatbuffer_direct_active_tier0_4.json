@@ -895,9 +895,8 @@
     {
       "tier": 1,
       "model": "face_blendshapes.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "d7a74056e41605cee64f29fa03eac381a4fb907394d4893a3148579d13e01fcd"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 1.0132789611816406e-06
     },
     {
       "tier": 1,
