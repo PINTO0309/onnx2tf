@@ -559,10 +559,9 @@
     {
       "tier": 0,
       "model": "model__modified.onnx",
-      "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "cd9f3e63c048aea2aa95dcbf9485599f87b21206a50fb9bef6fcfbf6ba10f663",
-      "tflite_max_abs": 4.513373374938965
+      "baseline_classification": "pass",
+      "baseline_reason": "pass",
+      "tflite_max_abs": 2.384185791015625e-07
     },
     {
       "tier": 0,

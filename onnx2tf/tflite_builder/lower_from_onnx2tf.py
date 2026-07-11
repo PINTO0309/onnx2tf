@@ -60452,6 +60452,9 @@ def _sanitize_probable_nhwc_axis_sensitive_ops(model_ir: ModelIR) -> Dict[str, i
     """
     rewritten = 0
     inserted_terminal_transposes = 0
+    public_layout_map = model_ir.metadata.get("onnx_public_layout_map", {})
+    if not isinstance(public_layout_map, dict):
+        public_layout_map = {}
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -60500,6 +60503,7 @@ def _sanitize_probable_nhwc_axis_sensitive_ops(model_ir: ModelIR) -> Dict[str, i
     while True:
         changed = False
         consumers = _build_tensor_consumer_map(model_ir)
+        producers = _build_tensor_producer_map(model_ir)
 
         for op_idx, op in enumerate(model_ir.operators):
             op_type = str(op.op_type)
@@ -60532,8 +60536,23 @@ def _sanitize_probable_nhwc_axis_sensitive_ops(model_ir: ModelIR) -> Dict[str, i
             if op_type == "CONCATENATION" and len(op.inputs) > 0:
                 axis = int(op.options.get("axis", -1))
                 input_tensors = [model_ir.tensors.get(str(name), None) for name in list(op.inputs)]
+                output_name = str(op.outputs[0]) if len(op.outputs) == 1 else ""
+                has_explicit_nchw_input = False
+                for input_name in op.inputs:
+                    producer_idx = producers.get(str(input_name), None)
+                    if producer_idx is None:
+                        continue
+                    producer_op = model_ir.operators[int(producer_idx)]
+                    if (
+                        str(producer_op.op_type) == "TRANSPOSE"
+                        and _read_transpose_perm(model_ir, producer_op) == [0, 3, 1, 2]
+                    ):
+                        has_explicit_nchw_input = True
+                        break
                 if (
                     axis == 1
+                    and str(public_layout_map.get(output_name, "")).upper() != "NCHW"
+                    and not has_explicit_nchw_input
                     and all(t is not None and _is_probable_nhwc_shape(t.shape) for t in input_tensors)
                 ):
                     base = [int(v) for v in list(input_tensors[0].shape)]

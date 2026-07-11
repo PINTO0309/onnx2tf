@@ -162,6 +162,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs,
     _replace_unsupported_split_with_slice,
     _replace_expand_dims_and_squeeze_with_reshape,
+    _sanitize_probable_nhwc_axis_sensitive_ops,
     _sanitize_squeeze_axes_with_static_input_shapes,
     _sanitize_static_shape_signature_consistency,
     _repair_rank4_channelwise_broadcast_constants_to_runtime_layout,
@@ -7844,6 +7845,66 @@ def test_flatbuffer_direct_averagepool1d_dynamic_lowering_uses_builtin_ops() -> 
     # Dynamic EXPAND_DIMS is intentionally preserved to avoid hard-coding
     # multi-axis dynamic extents into a static RESHAPE target.
     assert "SQUEEZE" not in op_types
+
+
+def test_probable_nhwc_sanitizer_preserves_explicit_nchw_concat_axis() -> None:
+    model_ir = ModelIR("explicit_nchw_concat_axis_test")
+    model_ir.outputs = ["output"]
+    model_ir.metadata["onnx_public_layout_map"] = {"output": "NCHW"}
+    concat_inputs: list[str] = []
+    for idx in range(4):
+        source_name = f"source_{idx}_nhwc"
+        nchw_name = f"branch_{idx}_nchw"
+        perm_name = f"perm_{idx}"
+        model_ir.tensors[source_name] = TensorIR(
+            name=source_name,
+            dtype="FLOAT32",
+            shape=[1, 7, 7, 64],
+            shape_signature=[1, 7, 7, 64],
+        )
+        model_ir.tensors[perm_name] = TensorIR(
+            name=perm_name,
+            dtype="INT32",
+            shape=[4],
+            shape_signature=[4],
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+            is_variable=False,
+        )
+        model_ir.tensors[nchw_name] = TensorIR(
+            name=nchw_name,
+            dtype="FLOAT32",
+            shape=[1, 64, 7, 7],
+            shape_signature=[1, 64, 7, 7],
+        )
+        model_ir.operators.append(
+            OperatorIR(
+                op_type="TRANSPOSE",
+                inputs=[source_name, perm_name],
+                outputs=[nchw_name],
+            )
+        )
+        concat_inputs.append(nchw_name)
+    model_ir.tensors["output"] = TensorIR(
+        name="output",
+        dtype="FLOAT32",
+        shape=[1, 256, 7, 7],
+        shape_signature=[1, 256, 7, 7],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=concat_inputs,
+            outputs=["output"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        )
+    )
+
+    stats = _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
+
+    concat = model_ir.operators[-1]
+    assert stats["sanitized_probable_nhwc_axis_sensitive_ops"] == 0
+    assert int(concat.options["axis"]) == 1
+    assert list(model_ir.tensors["output"].shape) == [1, 256, 7, 7]
 
 
 def test_flatbuffer_direct_sum_variadic_lowering_uses_builtin_ops() -> None:
