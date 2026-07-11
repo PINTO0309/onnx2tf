@@ -61769,7 +61769,7 @@ def _repair_decomposed_instance_normalization_layouts(
         if [int(v) for v in list(tensor.shape)] != normalized_shape:
             tensor.shape = list(normalized_shape)
             changed = True
-        if tensor.shape_signature is not None and len(list(tensor.shape_signature)) == len(normalized_shape):
+        if tensor.shape_signature is not None:
             if [int(v) for v in list(tensor.shape_signature)] != normalized_shape:
                 tensor.shape_signature = list(normalized_shape)
                 changed = True
@@ -61792,14 +61792,17 @@ def _repair_decomposed_instance_normalization_layouts(
         if [int(v) for v in list(tensor.shape)] != [int(v) for v in list(reshaped.shape)]:
             tensor.shape = [int(v) for v in list(reshaped.shape)]
             changed = True
-        if tensor.shape_signature is not None and len(list(tensor.shape_signature)) == int(reshaped.ndim):
-            if [int(v) for v in list(tensor.shape_signature)] != [int(v) for v in list(reshaped.shape)]:
-                tensor.shape_signature = [int(v) for v in list(reshaped.shape)]
+        reshaped_shape = [int(v) for v in list(reshaped.shape)]
+        if tensor.shape_signature is not None:
+            if [int(v) for v in list(tensor.shape_signature)] != reshaped_shape:
+                tensor.shape_signature = list(reshaped_shape)
                 changed = True
         return changed
 
     for mean1_idx, mean1_op in enumerate(list(model_ir.operators)):
         if str(mean1_op.op_type) != "MEAN" or len(mean1_op.inputs) != 2 or len(mean1_op.outputs) != 1:
+            continue
+        if str(getattr(mean1_op, "onnx_op_type", "")) != "InstanceNormalization":
             continue
         x_name = str(mean1_op.inputs[0])
         x_tensor = model_ir.tensors.get(x_name, None)
