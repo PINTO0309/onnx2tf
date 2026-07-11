@@ -713,7 +713,11 @@ def build_slice_op(node: Any, ctx: Any) -> None:
     if dynamic_start_input_name != "" or (
         dynamic_end_input_name != "" and len(normalized_axes) >= 1
     ):
+        int32_min = int(np.iinfo(np.int32).min)
         int32_max = int(np.iinfo(np.int32).max)
+
+        def _saturate_int32(value: int) -> int:
+            return int(min(int32_max, max(int32_min, int(value))))
 
         def _prepare_dynamic_vector_i32(
             *,
@@ -869,7 +873,7 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         else:
             begin_vec = [0 for _ in range(rank)]
             for idx, axis in enumerate(normalized_axes):
-                begin_vec[int(axis)] = int(starts[idx])
+                begin_vec[int(axis)] = _saturate_int32(starts[idx])
             begin_name = ctx.add_const_tensor(
                 f"{output_name}_stridedslice_begin",
                 np.asarray(begin_vec, dtype=np.int32),
@@ -890,7 +894,7 @@ def build_slice_op(node: Any, ctx: Any) -> None:
         else:
             end_vec = [int32_max for _ in range(rank)]
             for idx, axis in enumerate(normalized_axes):
-                end_vec[int(axis)] = int(ends[idx])
+                end_vec[int(axis)] = _saturate_int32(ends[idx])
             end_name = ctx.add_const_tensor(
                 f"{output_name}_stridedslice_end",
                 np.asarray(end_vec, dtype=np.int32),

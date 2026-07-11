@@ -2433,9 +2433,9 @@
     {
       "tier": 3,
       "model": "tiny_decoder_11.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1"
+      "baseline_classification": "missing_tflite_report",
+      "baseline_reason": "missing_tflite_report",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109"
     },
     {
       "tier": 3,

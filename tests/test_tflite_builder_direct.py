@@ -4229,7 +4229,10 @@ def _make_slice_dynamic_start_const_end_single_axis_model() -> onnx.ModelProto:
     unsq_axes = numpy_helper.from_array(np.asarray([0], dtype=np.int64), name="slice_dyn_start_unsq_axes")
     slice_axes = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="slice_dyn_start_axes")
     two = numpy_helper.from_array(np.asarray([2], dtype=np.int64), name="slice_dyn_start_two")
-    end = numpy_helper.from_array(np.asarray([2147483647], dtype=np.int64), name="slice_dyn_start_end")
+    end = numpy_helper.from_array(
+        np.asarray([np.iinfo(np.int64).max], dtype=np.int64),
+        name="slice_dyn_start_end",
+    )
     steps = numpy_helper.from_array(np.asarray([1], dtype=np.int64), name="slice_dyn_start_steps")
     nodes = [
         helper.make_node("Shape", ["x"], ["shape"], name="SliceDynStartShape"),
@@ -13527,6 +13530,10 @@ def test_flatbuffer_direct_slice_dynamic_start_const_end_single_axis_lowering() 
     assert str(end_tensor.dtype).upper() == "INT32"
     assert begin_tensor.data is None
     assert end_tensor.data is not None
+    np.testing.assert_array_equal(
+        np.asarray(end_tensor.data, dtype=np.int32),
+        np.asarray([np.iinfo(np.int32).max] * 3, dtype=np.int32),
+    )
 
 
 def test_flatbuffer_direct_slice_dynamic_start_end_multi_axis_lowering() -> None:
