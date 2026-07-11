@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+import numpy as np
 import onnx
+from onnx import numpy_helper
 
 
 class NodeView:
@@ -31,6 +33,10 @@ class NodeView:
                 self.attrs[attribute.name] = attribute.s.decode("utf-8")
             elif attribute.type == onnx.AttributeProto.STRINGS:
                 self.attrs[attribute.name] = [value.decode("utf-8") for value in attribute.strings]
+            elif attribute.type == onnx.AttributeProto.TENSOR:
+                self.attrs[attribute.name] = np.asarray(
+                    numpy_helper.to_array(attribute.t)
+                )
             elif attribute.type == onnx.AttributeProto.GRAPH:
                 self.attrs[attribute.name] = attribute.g
             elif attribute.type == onnx.AttributeProto.GRAPHS:

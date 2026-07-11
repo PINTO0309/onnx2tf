@@ -13769,6 +13769,58 @@ def test_branch_value_info_does_not_restore_widened_dtype_after_lowering() -> No
     assert ctx.dtype_map["runtime_indices"] == "INT32"
 
 
+def test_flatbuffer_direct_constant_of_shape_preserves_tensor_value_attribute() -> None:
+    dims = helper.make_tensor_value_info(
+        "dims",
+        TensorProto.INT64,
+        [2],
+    )
+    output = helper.make_tensor_value_info(
+        "output",
+        TensorProto.INT64,
+        [2, 3],
+    )
+    fill_value = numpy_helper.from_array(
+        np.asarray([7], dtype=np.int64),
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [
+                helper.make_node(
+                    "ConstantOfShape",
+                    ["dims"],
+                    ["output"],
+                    value=fill_value,
+                )
+            ],
+            "constant_of_shape_tensor_value",
+            [dims],
+            [output],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+    model.ir_version = 10
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "constant_of_shape_tensor_value", model)
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+        )
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        input_detail = interpreter.get_input_details()[0]
+        interpreter.set_tensor(
+            input_detail["index"],
+            np.asarray([2, 3], dtype=input_detail["dtype"]),
+        )
+        interpreter.invoke()
+        actual = interpreter.get_tensor(interpreter.get_output_details()[0]["index"])
+
+    np.testing.assert_array_equal(actual, np.full((2, 3), 7, dtype=np.int64))
+
+
 def test_flatbuffer_direct_topk_const_k_constantized_to_i32_scalar() -> None:
     model = _make_topk_const_k_model()
     register_default_preprocess_rules()

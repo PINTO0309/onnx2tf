@@ -524,6 +524,8 @@ def _to_tflite_attr_value(attr: Any) -> Any:
         return attr.s.decode("utf-8")
     if attr_type == int(onnx.AttributeProto.STRINGS):
         return [v.decode("utf-8") for v in attr.strings]
+    if attr_type == int(onnx.AttributeProto.TENSOR):
+        return np.asarray(numpy_helper.to_array(attr.t))
     if attr_type == int(onnx.AttributeProto.GRAPH):
         return attr.g
     if attr_type == int(onnx.AttributeProto.GRAPHS):
