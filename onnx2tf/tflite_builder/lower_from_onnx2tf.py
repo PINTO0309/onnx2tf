@@ -2677,7 +2677,14 @@ def _infer_batch_matmul_output_shape_and_signature(
         else list(b_shape)
     )
 
-    batch_shape = _broadcast_static_shapes(a_shape[:-2], b_shape[:-2])
+    a_batch_shape = [int(v) for v in a_shape[:-2]]
+    b_batch_shape = [int(v) for v in b_shape[:-2]]
+    if len(a_batch_shape) == 0:
+        batch_shape = list(b_batch_shape)
+    elif len(b_batch_shape) == 0:
+        batch_shape = list(a_batch_shape)
+    else:
+        batch_shape = _broadcast_static_shapes(a_batch_shape, b_batch_shape)
     if batch_shape is None:
         return None, None
 
@@ -3833,6 +3840,80 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
             break
 
     return {"reconciled_static_tensor_shapes": int(updated_tensors)}
+
+
+def _restore_placeholder_matmul_flattened_inputs(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """Remove fallback MatMul flattening after the original rank is recovered."""
+
+    consumers: Dict[str, List[int]] = {}
+    for op_index, op in enumerate(model_ir.operators):
+        for input_name in op.inputs:
+            consumers.setdefault(str(input_name), []).append(int(op_index))
+
+    remove_indices: set[int] = set()
+    restored = 0
+    for reshape_index, reshape_op in enumerate(model_ir.operators):
+        if (
+            str(reshape_op.op_type) != "RESHAPE"
+            or not bool(
+                reshape_op.options.get(
+                    "onnxMatMulFlattenedPlaceholder",
+                    False,
+                )
+            )
+            or len(reshape_op.inputs) < 1
+            or len(reshape_op.outputs) != 1
+        ):
+            continue
+        source_name = str(reshape_op.inputs[0])
+        flattened_name = str(reshape_op.outputs[0])
+        source_tensor = model_ir.tensors.get(source_name)
+        if (
+            source_tensor is None
+            or len(source_tensor.shape) < 3
+            or not _is_fully_known_positive_shape(source_tensor.shape)
+        ):
+            continue
+        user_indices = consumers.get(flattened_name, [])
+        if len(user_indices) != 1:
+            continue
+        matmul_index = int(user_indices[0])
+        matmul_op = model_ir.operators[matmul_index]
+        if (
+            str(matmul_op.op_type) != "BATCH_MATMUL"
+            or len(matmul_op.inputs) != 2
+            or str(matmul_op.inputs[0]) != flattened_name
+            or bool(matmul_op.options.get("adjX", False))
+        ):
+            continue
+        rhs_tensor = model_ir.tensors.get(str(matmul_op.inputs[1]))
+        if (
+            rhs_tensor is None
+            or len(rhs_tensor.shape) != 2
+            or not _is_fully_known_positive_shape(rhs_tensor.shape)
+        ):
+            continue
+        rhs_k = (
+            int(rhs_tensor.shape[1])
+            if bool(matmul_op.options.get("adjY", False))
+            else int(rhs_tensor.shape[0])
+        )
+        if int(source_tensor.shape[-1]) != rhs_k:
+            continue
+        matmul_op.inputs[0] = source_name
+        remove_indices.add(int(reshape_index))
+        restored += 1
+
+    if restored > 0:
+        model_ir.operators = [
+            op
+            for op_index, op in enumerate(model_ir.operators)
+            if int(op_index) not in remove_indices
+        ]
+        _prune_unused_tensors(model_ir)
+    return {"restored_placeholder_matmul_flattened_inputs": int(restored)}
 
 
 def _optimize_transpose_quant_dequant_bridges(model_ir: ModelIR) -> Dict[str, int]:
@@ -75926,6 +76007,13 @@ def lower_onnx_to_ir(
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(fallback_ir)
         _optimize_transpose_gather_transpose_nhwc_channel_chains(fallback_ir)
         _reconcile_static_tensor_shapes(fallback_ir)
+        if int(
+            _restore_placeholder_matmul_flattened_inputs(fallback_ir).get(
+                "restored_placeholder_matmul_flattened_inputs",
+                0,
+            )
+        ) > 0:
+            _reconcile_static_tensor_shapes(fallback_ir)
         _topologically_sort_operators(fallback_ir)
         _rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)
         _optimize_fold_consecutive_mul_constants_chains(fallback_ir)
@@ -75980,6 +76068,17 @@ def lower_onnx_to_ir(
         infer_model_ir_logical_layouts(model_ir)
     _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
+    if int(
+        _restore_placeholder_matmul_flattened_inputs(model_ir).get(
+            "restored_placeholder_matmul_flattened_inputs",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+        _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
+        _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
+        _reconcile_static_tensor_shapes(model_ir)
+        _topologically_sort_operators(model_ir)
     # Absolute-final SiNet/SE cleanup:
     # late broadcast/layout repairs can recreate SE gate and channel-shuffle
     # NHWC<->NCHW wrappers after the earlier dedicated passes have run.

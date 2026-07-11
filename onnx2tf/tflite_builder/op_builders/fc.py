@@ -1845,6 +1845,7 @@ def build_matmul_op(node: Any, ctx: Any) -> None:
                     options={
                         "newShape": [int(v) for v in a_matrix_new_shape],
                         "preserveDynamicShape": True,
+                        "onnxMatMulFlattenedPlaceholder": True,
                     },
                 )
             )
