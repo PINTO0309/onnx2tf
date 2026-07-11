@@ -6135,13 +6135,24 @@ def build_flatten_op(node: Any, ctx: Any) -> None:
         else [int(v) for v in list(input_shape)]
     )
     input_rank = int(len(input_shape_signature))
-    axis = int(node.attrs.get("axis", 1))
+    raw_axis = int(node.attrs.get("axis", 1))
+    axis = int(raw_axis)
     if axis < 0:
         axis += input_rank
     if axis < 0 or axis > input_rank:
+        if (
+            _is_unresolved_placeholder_shape(input_shape, input_shape_signature)
+            and bool(getattr(ctx, "allow_custom_ops", False))
+        ):
+            from onnx2tf.tflite_builder.op_builders.custom import (
+                build_custom_passthrough_op,
+            )
+
+            build_custom_passthrough_op(node, ctx)
+            return
         raise NotImplementedError(
             f"Flatten axis is out of range in flatbuffer_direct. "
-            f"op={node.name} axis={node.attrs.get('axis', 1)} rank={input_rank}"
+            f"op={node.name} axis={raw_axis} rank={input_rank}"
         )
 
     def _flatten_dim(dims: list[int]) -> int:

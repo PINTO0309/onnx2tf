@@ -2281,19 +2281,6 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
             int(nhwc_output_shape[3]),
         ]
 
-    x_nhwc = ctx.add_intermediate_tensor(
-        f"{node.name}_input_nhwc",
-        dtype=ctx.get_tensor_dtype(input_name),
-        shape=nhwc_input_shape,
-    )
-    x_nhwc = make_transpose(
-        ctx,
-        input_name,
-        x_nhwc,
-        [0, 2, 3, 1],
-        allow_elide_inverse_chain=True,
-    )
-
     use_dynamic_output_shape = (
         len(original_output_signature) != 4
         or any(int(v) <= 0 for v in list(original_output_signature))
@@ -2309,6 +2296,13 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
             and int(pad_left) == int(pad_right)
         )
         if (not pads_are_symmetric) or any(int(v) != 0 for v in output_padding):
+            if bool(getattr(ctx, "allow_custom_ops", False)):
+                from onnx2tf.tflite_builder.op_builders.custom import (
+                    build_custom_passthrough_op,
+                )
+
+                build_custom_passthrough_op(node, ctx)
+                return
             raise NotImplementedError(
                 "ConvTranspose with explicit pads requires static output shape in flatbuffer_direct "
                 "unless pads are symmetric and output_padding is zero. "
@@ -2319,6 +2313,20 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         # accounts for pads. Skip explicit crop to keep the shape dynamic.
         needs_spatial_crop = False
         nhwc_transpose_conv_output_shape = [int(v) for v in list(nhwc_output_shape)]
+
+    x_nhwc = ctx.add_intermediate_tensor(
+        f"{node.name}_input_nhwc",
+        dtype=ctx.get_tensor_dtype(input_name),
+        shape=nhwc_input_shape,
+    )
+    x_nhwc = make_transpose(
+        ctx,
+        input_name,
+        x_nhwc,
+        [0, 2, 3, 1],
+        allow_elide_inverse_chain=True,
+    )
+
     if use_dynamic_output_shape:
         kernel_shape_attr = node.attrs.get("kernel_shape", None)
         if kernel_shape_attr is None:

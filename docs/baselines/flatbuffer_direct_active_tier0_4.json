@@ -2592,16 +2592,16 @@
     {
       "tier": 4,
       "model": "dpt_levit_224_224x224_.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "355b403967a245a4f328c7b47e9308485d799840a9299771b1ad3b6ad4343672"
+      "baseline_classification": "missing_tflite_report",
+      "baseline_reason": "missing_tflite_report",
+      "error_signature_sha256": "4a2fa4345b95fe67986771d091148252b6700c4ce5bb7850d6e27a5f425491f7"
     },
     {
       "tier": 4,
       "model": "dpt_levit_224_224x224_org.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "d085536caeef0937ab6ce5fca79a49c736465509bb8c0300745e44a061f60f12"
+      "baseline_classification": "missing_tflite_report",
+      "baseline_reason": "missing_tflite_report",
+      "error_signature_sha256": "65aa3f90e0831b5d9a05e74d38306eea67af68f8d31c3c6a2616460aae9902b9"
     },
     {
       "tier": 4,

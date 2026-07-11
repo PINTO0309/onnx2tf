@@ -13409,6 +13409,25 @@ def test_flatbuffer_direct_convtranspose2d_output_padding_lowering() -> None:
     assert int(transpose_conv_op.options["strideW"]) == 2
 
 
+def test_flatbuffer_direct_dynamic_convtranspose_output_padding_custom_fallback() -> None:
+    model = _make_convtranspose2d_output_padding_model()
+    for value_info in (model.graph.input[0], model.graph.output[0]):
+        batch_dim = value_info.type.tensor_type.shape.dim[0]
+        batch_dim.ClearField("dim_value")
+        batch_dim.dim_param = "N"
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="dynamic_convtranspose_output_padding_custom_test",
+        allow_custom_ops=True,
+    )
+
+    custom_op = next(op for op in model_ir.operators if str(op.op_type) == "CUSTOM")
+    assert str(custom_op.options.get("customCode")) == "ONNX_CONVTRANSPOSE"
+
+
 def test_flatbuffer_direct_conv3d_lowering() -> None:
     model = _make_conv3d_model()
     register_default_preprocess_rules()
@@ -30263,6 +30282,31 @@ def test_flatbuffer_direct_gather_elements_unknown_rank_custom_fallback() -> Non
 
     custom_op = next(op for op in model_ir.operators if str(op.op_type) == "CUSTOM")
     assert str(custom_op.options.get("customCode")) == "ONNX_GATHERELEMENTS"
+
+
+def test_flatbuffer_direct_flatten_unknown_rank_custom_fallback() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, None)
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, None)
+    node = helper.make_node(
+        "Flatten",
+        ["x"],
+        ["y"],
+        name="UnknownRankFlatten",
+        axis=2,
+    )
+    model = helper.make_model(
+        helper.make_graph([node], "unknown_rank_flatten_graph", [x], [y]),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="unknown_rank_flatten_custom_test",
+        allow_custom_ops=True,
+    )
+
+    custom_op = next(op for op in model_ir.operators if str(op.op_type) == "CUSTOM")
+    assert str(custom_op.options.get("customCode")) == "ONNX_FLATTEN"
 
 
 def test_flatbuffer_direct_nms_scalar_const_inputs_do_not_emit_squeeze() -> None:
