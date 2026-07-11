@@ -15566,6 +15566,47 @@ def test_flatbuffer_direct_reconcile_bilstm_chain_and_resolve_reshape_zero_copy_
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [25, 1, 512]
 
 
+def test_flatbuffer_direct_shape_reconciliation_propagates_round_shape() -> None:
+    model_ir = ModelIR("round_shape_reconciliation_test")
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 30, 40, 64],
+        shape_signature=[1, 30, 40, 64],
+    )
+    model_ir.tensors["rounded"] = TensorIR(
+        name="rounded",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 64],
+        shape_signature=[1, 1, 1, 64],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="INT8",
+        shape=[1, 1, 1, 64],
+        shape_signature=[1, 1, 1, 64],
+    )
+    model_ir.operators.extend(
+        [
+            OperatorIR(
+                op_type="ROUND",
+                inputs=["x"],
+                outputs=["rounded"],
+            ),
+            OperatorIR(
+                op_type="CAST",
+                inputs=["rounded"],
+                outputs=["y"],
+            ),
+        ]
+    )
+
+    stats = _reconcile_static_tensor_shapes(model_ir)
+    assert stats["reconciled_static_tensor_shapes"] == 2
+    assert list(model_ir.tensors["rounded"].shape) == [1, 30, 40, 64]
+    assert list(model_ir.tensors["y"].shape) == [1, 30, 40, 64]
+
+
 def test_flatbuffer_direct_resolve_dynamic_reshape_zero_copy_dims_with_dynamic_signature() -> None:
     model_ir = ModelIR("reshape_zero_copy_dynamic_signature_fixup_test")
     model_ir.inputs = ["x"]

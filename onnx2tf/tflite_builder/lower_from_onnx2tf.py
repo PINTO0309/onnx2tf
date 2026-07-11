@@ -3073,6 +3073,7 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                 "CAST",
                 "NEG",
                 "FLOOR",
+                "ROUND",
             }:
                 if len(inputs) >= 1:
                     in_tensor = model_ir.tensors.get(inputs[0], None)
