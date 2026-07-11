@@ -1206,9 +1206,8 @@
     {
       "tier": 1,
       "model": "res2net50_48w_2s_Opset16.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "d920f2e3b6732fb34816377217974811c33e9d3fae09c56cb91f125663be58de"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 4.76837158203125e-06
     },
     {
       "tier": 1,

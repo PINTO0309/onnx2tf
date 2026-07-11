@@ -21333,6 +21333,91 @@ def _repair_nchw_channel_shuffle_concat_gathers(model_ir: ModelIR) -> Dict[str, 
     return {"repaired_nchw_channel_shuffle_concat_gathers": int(repaired)}
 
 
+def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]:
+    """Restore axis=1 for NCHW concat feeding an NHWC Conv adapter."""
+
+    repaired = 0
+    producers = _build_tensor_producer_map(model_ir)
+    for conv_op in model_ir.operators:
+        if str(conv_op.op_type) != "CONV_2D" or len(conv_op.inputs) < 2 or len(conv_op.outputs) != 1:
+            continue
+        transpose_output_name = str(conv_op.inputs[0])
+        transpose_idx = producers.get(transpose_output_name, None)
+        if transpose_idx is None:
+            continue
+        transpose_op = model_ir.operators[int(transpose_idx)]
+        if (
+            str(transpose_op.op_type) != "TRANSPOSE"
+            or len(transpose_op.inputs) < 2
+            or len(transpose_op.outputs) != 1
+            or _read_transpose_perm(model_ir, transpose_op) != [0, 2, 3, 1]
+        ):
+            continue
+        concat_output_name = str(transpose_op.inputs[0])
+        concat_idx = producers.get(concat_output_name, None)
+        if concat_idx is None:
+            continue
+        concat_op = model_ir.operators[int(concat_idx)]
+        if (
+            str(concat_op.op_type) != "CONCATENATION"
+            or len(concat_op.inputs) < 2
+            or len(concat_op.outputs) != 1
+            or int(concat_op.options.get("axis", 1)) == 1
+        ):
+            continue
+        filter_tensor = model_ir.tensors.get(str(conv_op.inputs[1]), None)
+        transpose_tensor = model_ir.tensors.get(transpose_output_name, None)
+        conv_output_tensor = model_ir.tensors.get(str(conv_op.outputs[0]), None)
+        input_tensors = [model_ir.tensors.get(str(name), None) for name in concat_op.inputs]
+        if (
+            filter_tensor is None
+            or transpose_tensor is None
+            or conv_output_tensor is None
+            or any(tensor is None for tensor in input_tensors)
+        ):
+            continue
+        filter_shape = [int(v) for v in list(filter_tensor.shape)]
+        input_shapes = [[int(v) for v in list(tensor.shape)] for tensor in input_tensors if tensor is not None]
+        if len(filter_shape) != 4 or not input_shapes or any(len(shape) != 4 for shape in input_shapes):
+            continue
+        reference = input_shapes[0]
+        if any(
+            any(int(shape[axis]) != int(reference[axis]) for axis in [0, 2, 3])
+            for shape in input_shapes[1:]
+        ):
+            continue
+        expected_channels = int(sum(int(shape[1]) for shape in input_shapes))
+        if expected_channels <= 0 or expected_channels != int(filter_shape[3]):
+            continue
+        if int(transpose_tensor.shape[3]) == expected_channels:
+            continue
+
+        concat_op.options["axis"] = 1
+        concat_shape = [int(v) for v in reference]
+        concat_shape[1] = int(expected_channels)
+        concat_tensor = model_ir.tensors.get(concat_output_name, None)
+        if concat_tensor is not None:
+            concat_tensor.shape = list(concat_shape)
+            concat_tensor.shape_signature = list(concat_shape)
+        nhwc_shape = [
+            int(concat_shape[0]),
+            int(concat_shape[2]),
+            int(concat_shape[3]),
+            int(concat_shape[1]),
+        ]
+        transpose_tensor.shape = list(nhwc_shape)
+        transpose_tensor.shape_signature = list(nhwc_shape)
+        conv_output_tensor.shape = [
+            int(nhwc_shape[0]),
+            int(nhwc_shape[1]),
+            int(nhwc_shape[2]),
+            int(filter_shape[0]),
+        ]
+        conv_output_tensor.shape_signature = list(conv_output_tensor.shape)
+        repaired += 1
+    return {"repaired_nchw_concat_transpose_conv_axes": int(repaired)}
+
+
 def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(
     model_ir: ModelIR,
 ) -> Dict[str, int]:
@@ -75718,6 +75803,7 @@ def lower_onnx_to_ir(
     )
     _repair_singleton_nhwc_conv_input_reshapes(model_ir)
     _repair_nchw_channel_shuffle_concat_gathers(model_ir)
+    _repair_nchw_concat_transpose_conv_axes(model_ir)
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     split_fallback_stats = _replace_unsupported_split_with_slice(model_ir)

@@ -4,6 +4,7 @@ import numpy as np
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
+    _repair_nchw_concat_transpose_conv_axes,
     _repair_singleton_nhwc_conv_input_reshapes,
 )
 
@@ -75,3 +76,55 @@ def test_repair_removes_stale_singleton_reshape_before_nhwc_conv() -> None:
     assert conv.inputs[0] == "source_nhwc"
     assert model_ir.tensors["conv_out"].shape == [1, 1, 1, 52]
     assert "bad_adapter" not in model_ir.tensors
+
+
+def test_repair_restores_nchw_concat_axis_before_conv_transpose() -> None:
+    model_ir = ModelIR("stale_concat_conv_axis")
+    model_ir.inputs = ["left", "right"]
+    model_ir.outputs = ["conv_out"]
+    _tensor(model_ir, "left", [1, 384, 7, 7])
+    _tensor(model_ir, "right", [1, 384, 7, 7])
+    _tensor(model_ir, "concat", [1, 384, 7, 14])
+    _tensor(
+        model_ir,
+        "perm",
+        [4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    _tensor(model_ir, "conv_input", [1, 7, 14, 384])
+    _tensor(
+        model_ir,
+        "filter",
+        [2048, 1, 1, 768],
+        data=np.ones((2048, 1, 1, 768), dtype=np.float32),
+    )
+    _tensor(
+        model_ir,
+        "bias",
+        [2048],
+        data=np.zeros((2048,), dtype=np.float32),
+    )
+    _tensor(model_ir, "conv_out", [1, 7, 14, 2048])
+    model_ir.operators = [
+        OperatorIR(
+            "CONCATENATION",
+            ["left", "right"],
+            ["concat"],
+            {"axis": 3, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR("TRANSPOSE", ["concat", "perm"], ["conv_input"]),
+        OperatorIR(
+            "CONV_2D",
+            ["conv_input", "filter", "bias"],
+            ["conv_out"],
+            {"padding": "SAME", "strideH": 1, "strideW": 1},
+        ),
+    ]
+
+    stats = _repair_nchw_concat_transpose_conv_axes(model_ir)
+
+    assert stats == {"repaired_nchw_concat_transpose_conv_axes": 1}
+    assert model_ir.operators[0].options["axis"] == 1
+    assert model_ir.tensors["concat"].shape == [1, 768, 7, 7]
+    assert model_ir.tensors["conv_input"].shape == [1, 7, 7, 768]
+    assert model_ir.tensors["conv_out"].shape == [1, 7, 7, 2048]
