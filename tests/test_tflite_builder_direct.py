@@ -36,6 +36,9 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_builders.norm import build_instance_normalization_op
+from onnx2tf.tflite_builder.op_builders.control import (
+    _apply_value_info_hint_to_tensor,
+)
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _align_boundary_signature_to_current_shape,
     _apply_safe_transpose_reduction_lite,
@@ -13725,6 +13728,45 @@ def test_flatbuffer_direct_preserves_scalar_to_vector_reshape_before_topk() -> N
 
     np.testing.assert_allclose(actual["values"], expected[0], rtol=0.0, atol=0.0)
     np.testing.assert_array_equal(actual["indices"], expected[1])
+
+
+def test_branch_value_info_does_not_restore_widened_dtype_after_lowering() -> None:
+    model_ir = ModelIR("branch_runtime_dtype")
+    model_ir.tensors["runtime_indices"] = TensorIR(
+        name="runtime_indices",
+        dtype="INT32",
+        shape=[1, 3],
+        shape_signature=[-1, 3],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["lhs", "rhs"],
+            outputs=["runtime_indices"],
+            options={"axis": 1},
+        )
+    ]
+    ctx = LoweringContext(
+        model_ir=model_ir,
+        shape_map={"runtime_indices": [None, 3]},
+        dtype_map={"runtime_indices": "INT32"},
+        constants={},
+    )
+    onnx_value_info = helper.make_tensor_value_info(
+        "runtime_indices",
+        TensorProto.INT64,
+        ["N", 3],
+    )
+
+    _apply_value_info_hint_to_tensor(
+        tensor_name="runtime_indices",
+        value_info=onnx_value_info,
+        ctx=ctx,
+        preserve_produced_dtype=True,
+    )
+
+    assert model_ir.tensors["runtime_indices"].dtype == "INT32"
+    assert ctx.dtype_map["runtime_indices"] == "INT32"
 
 
 def test_flatbuffer_direct_topk_const_k_constantized_to_i32_scalar() -> None:

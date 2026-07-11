@@ -212,6 +212,7 @@ def _apply_value_info_hint_to_tensor(
     tensor_name: str,
     value_info: Any,
     ctx: Any,
+    preserve_produced_dtype: bool = False,
 ) -> None:
     if value_info is None:
         return
@@ -222,7 +223,14 @@ def _apply_value_info_hint_to_tensor(
         return
 
     tensor = ctx.model_ir.tensors[tensor_name]
-    if hinted_dtype is not None:
+    has_runtime_producer = bool(
+        preserve_produced_dtype
+        and any(
+            str(tensor_name) in {str(name) for name in op.outputs}
+            for op in ctx.model_ir.operators
+        )
+    )
+    if hinted_dtype is not None and not has_runtime_producer:
         tensor.dtype = str(hinted_dtype)
         if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
             ctx.dtype_map[str(tensor_name)] = str(hinted_dtype)
@@ -837,6 +845,7 @@ def _lower_graph_nodes(
                 tensor_name=mapped_name,
                 value_info=value_info_map.get(original_name, None),
                 ctx=ctx,
+                preserve_produced_dtype=True,
             )
         for output_name in graph_node.output:
             original_name = str(output_name)
