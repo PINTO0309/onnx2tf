@@ -2290,29 +2290,10 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
             "Grouped ConvTranspose requires static output shape in flatbuffer_direct. "
             f"op={node.name} output_signature={original_output_signature} group={group}"
         )
-    if use_dynamic_output_shape and needs_spatial_crop:
-        pads_are_symmetric = (
-            int(pad_top) == int(pad_bottom)
-            and int(pad_left) == int(pad_right)
-        )
-        if (not pads_are_symmetric) or any(int(v) != 0 for v in output_padding):
-            if bool(getattr(ctx, "allow_custom_ops", False)):
-                from onnx2tf.tflite_builder.op_builders.custom import (
-                    build_custom_passthrough_op,
-                )
-
-                build_custom_passthrough_op(node, ctx)
-                return
-            raise NotImplementedError(
-                "ConvTranspose with explicit pads requires static output shape in flatbuffer_direct "
-                "unless pads are symmetric and output_padding is zero. "
-                f"op={node.name} output_signature={original_output_signature} "
-                f"pads={raw_pads} output_padding={output_padding}"
-            )
-        # For symmetric explicit pads, dynamic output-shape math below already
-        # accounts for pads. Skip explicit crop to keep the shape dynamic.
-        needs_spatial_crop = False
-        nhwc_transpose_conv_output_shape = [int(v) for v in list(nhwc_output_shape)]
+    # TRANSPOSE_CONV itself uses VALID padding and produces the uncropped
+    # extent. Keep the explicit crop for dynamic shapes as well: folding
+    # pads/output_padding into the requested output shape changes which border
+    # is removed and spatially shifts the ONNX result.
 
     x_nhwc = ctx.add_intermediate_tensor(
         f"{node.name}_input_nhwc",
@@ -2337,8 +2318,22 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0]))]
         eff_kh = (int(kernel_h) - 1) * int(dilations[0]) + 1
         eff_kw = (int(kernel_w) - 1) * int(dilations[1]) + 1
-        adjust_h = int(eff_kh + int(output_padding[0]) - int(pads[0]) - int(pads[2]))
-        adjust_w = int(eff_kw + int(output_padding[1]) - int(pads[1]) - int(pads[3]))
+        if needs_spatial_crop:
+            adjust_h = int(eff_kh)
+            adjust_w = int(eff_kw)
+        else:
+            adjust_h = int(
+                eff_kh
+                + int(output_padding[0])
+                - int(pads[0])
+                - int(pads[2])
+            )
+            adjust_w = int(
+                eff_kw
+                + int(output_padding[1])
+                - int(pads[1])
+                - int(pads[3])
+            )
 
         shape_vec = ctx.add_intermediate_tensor(
             f"{node.name}_transpose_conv_input_shape_vec",
@@ -2631,18 +2626,49 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
             f"{node.name}_transpose_conv_crop_begin",
             np.asarray([0, int(pad_top), int(pad_left), 0], dtype=np.int32),
         )
-        crop_end_name = ctx.add_const_tensor(
-            f"{node.name}_transpose_conv_crop_end",
-            np.asarray(
-                [
-                    int(nhwc_transpose_conv_output_shape[0]),
-                    int(nhwc_transpose_conv_output_shape[1]) - int(pad_bottom) + int(output_padding[0]),
-                    int(nhwc_transpose_conv_output_shape[2]) - int(pad_right) + int(output_padding[1]),
-                    int(nhwc_transpose_conv_output_shape[3]),
-                ],
-                dtype=np.int32,
-            ),
-        )
+        if use_dynamic_output_shape:
+            crop_end_adjustment_name = ctx.add_const_tensor(
+                f"{node.name}_transpose_conv_crop_end_adjustment",
+                np.asarray(
+                    [
+                        0,
+                        -int(pad_bottom) + int(output_padding[0]),
+                        -int(pad_right) + int(output_padding[1]),
+                        0,
+                    ],
+                    dtype=np.int32,
+                ),
+            )
+            crop_end_name = ctx.add_intermediate_tensor(
+                f"{node.name}_transpose_conv_crop_end",
+                dtype="INT32",
+                shape=[4],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="ADD",
+                    inputs=[out_shape_name, crop_end_adjustment_name],
+                    outputs=[crop_end_name],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+        else:
+            crop_end_name = ctx.add_const_tensor(
+                f"{node.name}_transpose_conv_crop_end",
+                np.asarray(
+                    [
+                        int(nhwc_transpose_conv_output_shape[0]),
+                        int(nhwc_transpose_conv_output_shape[1])
+                        - int(pad_bottom)
+                        + int(output_padding[0]),
+                        int(nhwc_transpose_conv_output_shape[2])
+                        - int(pad_right)
+                        + int(output_padding[1]),
+                        int(nhwc_transpose_conv_output_shape[3]),
+                    ],
+                    dtype=np.int32,
+                ),
+            )
         crop_stride_name = ctx.add_const_tensor(
             f"{node.name}_transpose_conv_crop_stride",
             np.asarray([1, 1, 1, 1], dtype=np.int32),

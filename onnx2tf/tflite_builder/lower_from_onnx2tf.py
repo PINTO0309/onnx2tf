@@ -3845,6 +3845,20 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                     begin_vals=begin_vals,
                     size_vals=size_vals,
                 )
+                if (
+                    bool(op.options.get("preserveDynamicShape", False))
+                    and out_signature is not None
+                    and len(out_signature) == len(size_vals)
+                ):
+                    out_signature = [
+                        -1 if int(size_vals[axis]) == -1 else int(size_vals[axis])
+                        for axis in range(len(size_vals))
+                    ]
+                    output_tensor = model_ir.tensors.get(outputs[0], None)
+                    if output_tensor is not None:
+                        output_tensor.shape_signature = [
+                            int(v) for v in out_signature
+                        ]
                 shape_for_update = [int(v) for v in list(out_shape)]
                 if (
                     has_dynamic_input_dim

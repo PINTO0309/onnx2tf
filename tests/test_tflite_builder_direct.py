@@ -14755,7 +14755,7 @@ def test_flatbuffer_direct_convtranspose2d_output_padding_lowering() -> None:
     assert int(transpose_conv_op.options["strideW"]) == 2
 
 
-def test_flatbuffer_direct_dynamic_convtranspose_output_padding_custom_fallback() -> None:
+def test_flatbuffer_direct_dynamic_convtranspose_output_padding_builtin_crop() -> None:
     model = _make_convtranspose2d_output_padding_model()
     for value_info in (model.graph.input[0], model.graph.output[0]):
         batch_dim = value_info.type.tensor_type.shape.dim[0]
@@ -14770,8 +14770,16 @@ def test_flatbuffer_direct_dynamic_convtranspose_output_padding_custom_fallback(
         allow_custom_ops=True,
     )
 
-    custom_op = next(op for op in model_ir.operators if str(op.op_type) == "CUSTOM")
-    assert str(custom_op.options.get("customCode")) == "ONNX_CONVTRANSPOSE"
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("TRANSPOSE_CONV") == 1
+    assert op_types.count("STRIDED_SLICE") == 1
+    assert op_types.count("CUSTOM") == 0
+
+    transpose_conv = next(
+        op for op in model_ir.operators if str(op.op_type) == "TRANSPOSE_CONV"
+    )
+    output_shape_name = str(transpose_conv.inputs[0])
+    assert model_ir.tensors[output_shape_name].data is None
 
 
 def test_flatbuffer_direct_conv3d_lowering() -> None:

@@ -2557,16 +2557,14 @@
     {
       "tier": 4,
       "model": "dpt_levit_224_224x224_.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "4a2fa4345b95fe67986771d091148252b6700c4ce5bb7850d6e27a5f425491f7"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.00453948974609375
     },
     {
       "tier": 4,
       "model": "dpt_levit_224_224x224_org.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "65aa3f90e0831b5d9a05e74d38306eea67af68f8d31c3c6a2616460aae9902b9"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.00453948974609375
     },
     {
       "tier": 4,

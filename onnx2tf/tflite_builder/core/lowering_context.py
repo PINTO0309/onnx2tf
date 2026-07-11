@@ -163,6 +163,21 @@ class LoweringContext:
         if not name:
             raise ValueError("Tensor name must not be empty in flatbuffer_direct lowering.")
         if name in self.model_ir.tensors:
+            tensor = self.model_ir.tensors[name]
+            rank_hint = self.shape_map.get(name, None)
+            hinted_rank = len(rank_hint) if isinstance(rank_hint, list) else 0
+            current_shape = [int(v) for v in list(tensor.shape)]
+            if int(hinted_rank) > len(current_shape):
+                missing_rank = int(hinted_rank) - len(current_shape)
+                current_signature = (
+                    [int(v) for v in list(tensor.shape_signature)]
+                    if tensor.shape_signature is not None
+                    else list(current_shape)
+                )
+                tensor.shape = [1 for _ in range(missing_rank)] + current_shape
+                tensor.shape_signature = [
+                    -1 for _ in range(missing_rank)
+                ] + current_signature
             self._record_layout(name)
             return name
         resolved_shape, signature = normalize_onnx_shape(

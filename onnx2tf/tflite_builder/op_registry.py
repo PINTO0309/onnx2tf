@@ -315,6 +315,9 @@ def _validate_softmax(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     input_shape = ctx.get_tensor_shape(input_name)
     rank = len(input_shape)
+    rank_hint = getattr(ctx, "shape_map", {}).get(input_name, None)
+    if isinstance(rank_hint, list):
+        rank = max(int(rank), int(len(rank_hint)))
     if rank <= 0:
         raise NodeValidationError(
             reason_code="unsupported_input_shape",

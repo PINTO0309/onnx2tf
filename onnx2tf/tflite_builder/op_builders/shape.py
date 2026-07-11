@@ -1368,6 +1368,16 @@ def build_split_op(node: Any, ctx: Any) -> None:
         if input_tensor.shape_signature is not None
         else list(input_shape)
     )
+    input_shape_hint = ctx.shape_map.get(input_name, None) if hasattr(ctx, "shape_map") else None
+    if isinstance(input_shape_hint, list) and len(input_shape_hint) == len(input_shape):
+        _, hinted_signature = normalize_onnx_shape(input_shape_hint)
+        if any(int(v) < 0 for v in hinted_signature):
+            # A runtime-driven Reshape may have placeholder static dimensions
+            # while the ONNX rank hint still records their dynamic nature.
+            # Preserve those unknown axes so Split-generated SLICE outputs can
+            # resize at invocation time.
+            input_signature = [int(v) for v in hinted_signature]
+            input_tensor.shape_signature = [int(v) for v in input_signature]
     rank = len(input_shape)
     axis_raw = int(node.attrs.get("axis", 0))
     input_raw_shape = ctx.shape_map.get(input_name, None) if hasattr(ctx, "shape_map") else None
@@ -1464,6 +1474,7 @@ def build_split_op(node: Any, ctx: Any) -> None:
                 op_type="SLICE",
                 inputs=[input_name, begin_name, size_name],
                 outputs=[output_name],
+                options={"preserveDynamicShape": True},
             )
         )
 

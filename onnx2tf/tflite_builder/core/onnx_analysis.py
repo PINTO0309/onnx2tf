@@ -87,16 +87,31 @@ def _infer_missing_tensor_ranks_with_axis_constraints(
     shape_map: Dict[str, List[Any]],
 ) -> None:
     rank_map: Dict[str, int] = {}
+    leading_dims_proven_missing: set[str] = set()
     for name, shape in shape_map.items():
         if isinstance(shape, list) and len(shape) > 0:
             rank_map[str(name)] = max(int(rank_map.get(str(name), 0)), int(len(shape)))
 
     constants = _collect_constant_arrays(onnx_graph)
+    consumers_by_tensor: Dict[str, List[onnx.NodeProto]] = {}
+    for graph_node in onnx_graph.graph.node:
+        for input_name in graph_node.input:
+            if str(input_name) != "":
+                consumers_by_tensor.setdefault(str(input_name), []).append(graph_node)
 
-    def _set_min_rank(tensor_name: str, rank: int) -> bool:
+    def _set_min_rank(
+        tensor_name: str,
+        rank: int,
+        *,
+        prove_missing_leading_dims: bool = False,
+    ) -> bool:
         name = str(tensor_name)
         if name == "" or int(rank) <= 0:
             return False
+        if prove_missing_leading_dims:
+            current = shape_map.get(name, None)
+            if isinstance(current, list) and 0 < len(current) < int(rank):
+                leading_dims_proven_missing.add(name)
         prev = int(rank_map.get(name, 0))
         if int(rank) > prev:
             rank_map[name] = int(rank)
@@ -111,8 +126,20 @@ def _infer_missing_tensor_ranks_with_axis_constraints(
         if max_rank <= 0:
             return False
         changed = False
+        propagate_missing_leading_dims = any(
+            name in leading_dims_proven_missing for name in normalized
+        )
         for name in normalized:
             changed = _set_min_rank(name, max_rank) or changed
+            current = shape_map.get(name, None)
+            if (
+                propagate_missing_leading_dims
+                and isinstance(current, list)
+                and 0 < len(current) < int(max_rank)
+                and name not in leading_dims_proven_missing
+            ):
+                leading_dims_proven_missing.add(name)
+                changed = True
         return changed
 
     def _slice_axes(node: onnx.NodeProto) -> List[int]:
@@ -151,8 +178,59 @@ def _infer_missing_tensor_ranks_with_axis_constraints(
                     axis = _node_attr_int(node, "axis", 1)
                     if axis >= 0:
                         min_rank = int(axis) + 1
-                        changed = _set_min_rank(inputs[0], min_rank) or changed
-                        changed = _set_min_rank(outputs[0], min_rank) or changed
+                        changed = _set_min_rank(
+                            inputs[0],
+                            min_rank,
+                            prove_missing_leading_dims=True,
+                        ) or changed
+                        changed = _set_min_rank(
+                            outputs[0],
+                            min_rank,
+                            prove_missing_leading_dims=True,
+                        ) or changed
+                continue
+
+            if op == "Flatten":
+                if len(inputs) >= 1:
+                    axis = _node_attr_int(node, "axis", 1)
+                    current_input_shape = shape_map.get(inputs[0], None)
+                    trailing_dim_required = False
+                    for consumer in consumers_by_tensor.get(outputs[0], []):
+                        if (
+                            str(consumer.op_type) == "BatchNormalization"
+                            and len(consumer.input) >= 2
+                        ):
+                            scale = constants.get(str(consumer.input[1]), None)
+                            if scale is not None and int(np.asarray(scale).size) > 1:
+                                trailing_dim_required = True
+                                break
+                    if (
+                        axis >= 0
+                        and (
+                            (
+                                isinstance(current_input_shape, list)
+                                and len(current_input_shape) > 0
+                            )
+                            or trailing_dim_required
+                        )
+                    ):
+                        # A positive Flatten axis identifies all preceding
+                        # dimensions.  When shape inference retained a short,
+                        # non-empty suffix, preserve one trailing dimension.
+                        # A completely unknown input may legally have
+                        # axis==rank. Only a downstream channel contract such
+                        # as non-scalar BatchNormalization scale proves that a
+                        # non-empty trailing product must exist.
+                        changed = _set_min_rank(
+                            inputs[0],
+                            int(axis) + 1,
+                            prove_missing_leading_dims=True,
+                        ) or changed
+                        changed = _set_min_rank(
+                            outputs[0],
+                            2,
+                            prove_missing_leading_dims=True,
+                        ) or changed
                 continue
 
             if op == "Slice":
@@ -162,8 +240,16 @@ def _infer_missing_tensor_ranks_with_axis_constraints(
                     positive_axes = [int(v) for v in axes if int(v) >= 0]
                     if len(positive_axes) > 0:
                         min_rank = max(positive_axes) + 1
-                        changed = _set_min_rank(inputs[0], min_rank) or changed
-                        changed = _set_min_rank(outputs[0], min_rank) or changed
+                        changed = _set_min_rank(
+                            inputs[0],
+                            min_rank,
+                            prove_missing_leading_dims=True,
+                        ) or changed
+                        changed = _set_min_rank(
+                            outputs[0],
+                            min_rank,
+                            prove_missing_leading_dims=True,
+                        ) or changed
                 continue
 
             if op == "QLinearConv":
@@ -195,6 +281,17 @@ def _infer_missing_tensor_ranks_with_axis_constraints(
         current = shape_map.get(str(tensor_name), None)
         if current is None or len(current) == 0:
             shape_map[str(tensor_name)] = [-1 for _ in range(int(rank))]
+        elif (
+            len(current) < int(rank)
+            and str(tensor_name) in leading_dims_proven_missing
+        ):
+            # Axis-bearing ops can prove a minimum rank even when ONNX shape
+            # inference dropped leading singleton/dynamic dimensions.  Keep
+            # the known trailing dimensions and restore only the missing
+            # leading dimensions as unknowns.
+            shape_map[str(tensor_name)] = [
+                -1 for _ in range(int(rank) - len(current))
+            ] + list(current)
 
 
 def _extract_tensor_info(
@@ -369,5 +466,3 @@ def _infer_shapes_with_fallback(onnx_graph: onnx.ModelProto) -> onnx.ModelProto:
             return inferred_graph
     except Exception:
         return inferred_graph
-
-
