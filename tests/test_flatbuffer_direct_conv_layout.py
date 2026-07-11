@@ -4,6 +4,7 @@ import numpy as np
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
+    _repair_nchw_concat_global_pool_conv_axes,
     _repair_nchw_concat_transpose_conv_axes,
     _repair_singleton_nhwc_conv_input_reshapes,
 )
@@ -180,3 +181,69 @@ def test_repair_restores_nchw_concat_axis_before_transpose_conv() -> None:
     assert model_ir.tensors["concat"].shape == [1, 32, 8, 1]
     assert model_ir.tensors["deconv_input"].shape == [1, 8, 1, 32]
     assert model_ir.tensors["deconv_out"].shape == [1, 17, 1, 16]
+
+
+def test_repair_restores_nchw_concat_axis_before_global_pool_attention() -> None:
+    model_ir = ModelIR("stale_concat_global_pool_conv_axis")
+    model_ir.inputs = ["left", "right"]
+    model_ir.outputs = ["conv_out"]
+    _tensor(model_ir, "left", [1, 384, 8, 6])
+    _tensor(model_ir, "right", [1, 384, 8, 6])
+    _tensor(model_ir, "concat", [1, 384, 8, 12])
+    _tensor(model_ir, "pool", [1, 384, 1, 1])
+    _tensor(model_ir, "conv_input", [1, 1, 1, 384])
+    _tensor(
+        model_ir,
+        "axes",
+        [2],
+        data=np.asarray([2, 3], dtype=np.int32),
+    )
+    _tensor(
+        model_ir,
+        "reshape_shape",
+        [4],
+        data=np.asarray([1, 1, 1, 384], dtype=np.int32),
+    )
+    _tensor(
+        model_ir,
+        "filter",
+        [768, 1, 1, 768],
+        data=np.ones((768, 1, 1, 768), dtype=np.float32),
+    )
+    _tensor(
+        model_ir,
+        "bias",
+        [768],
+        data=np.zeros((768,), dtype=np.float32),
+    )
+    _tensor(model_ir, "conv_out", [1, 1, 1, 768])
+    model_ir.operators = [
+        OperatorIR(
+            "CONCATENATION",
+            ["left", "right"],
+            ["concat"],
+            {"axis": 3, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR("MEAN", ["concat", "axes"], ["pool"], {"keepDims": True}),
+        OperatorIR("RESHAPE", ["pool", "reshape_shape"], ["conv_input"]),
+        OperatorIR(
+            "CONV_2D",
+            ["conv_input", "filter", "bias"],
+            ["conv_out"],
+            {"padding": "SAME", "strideH": 1, "strideW": 1},
+        ),
+    ]
+
+    stats = _repair_nchw_concat_global_pool_conv_axes(model_ir)
+
+    assert stats == {"repaired_nchw_concat_global_pool_conv_axes": 1}
+    assert model_ir.operators[0].options["axis"] == 1
+    assert model_ir.tensors["concat"].shape == [1, 768, 8, 6]
+    assert model_ir.tensors["pool"].shape == [1, 768, 1, 1]
+    assert model_ir.tensors["conv_input"].shape == [1, 1, 1, 768]
+    assert np.asarray(model_ir.tensors["reshape_shape"].data).tolist() == [
+        1,
+        1,
+        1,
+        768,
+    ]

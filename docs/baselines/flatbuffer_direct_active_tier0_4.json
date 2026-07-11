@@ -1773,9 +1773,8 @@
     {
       "tier": 2,
       "model": "rtmpose_wholebody_l_1x3x256x192.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "9a640aa17f24629079a7483b2763585265de2407b806552c730f00b260a1ed6d"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 8.940696716308594e-07
     },
     {
       "tier": 2,
@@ -1786,9 +1785,8 @@
     {
       "tier": 2,
       "model": "rtmpose_wholebody_m_1x3x256x192.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "6541f164f7bf8eace135f0e9fa4de274d39ebc11cf50eadbf67f6112028d012c"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 9.55536961555481e-07
     },
     {
       "tier": 2,

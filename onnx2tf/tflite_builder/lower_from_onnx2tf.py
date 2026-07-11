@@ -21665,6 +21665,130 @@ def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]
     return {"repaired_nchw_concat_transpose_conv_axes": int(repaired)}
 
 
+def _repair_nchw_concat_global_pool_conv_axes(model_ir: ModelIR) -> Dict[str, int]:
+    """Restore an NCHW concat channel axis before global-pool attention Conv."""
+
+    repaired = 0
+    producers = _build_tensor_producer_map(model_ir)
+    for conv_op in model_ir.operators:
+        if (
+            str(conv_op.op_type) != "CONV_2D"
+            or len(conv_op.inputs) < 2
+            or len(conv_op.outputs) != 1
+        ):
+            continue
+        reshape_output_name = str(conv_op.inputs[0])
+        reshape_idx = producers.get(reshape_output_name, None)
+        if reshape_idx is None:
+            continue
+        reshape_op = model_ir.operators[int(reshape_idx)]
+        if (
+            str(reshape_op.op_type) != "RESHAPE"
+            or len(reshape_op.inputs) < 1
+            or len(reshape_op.outputs) != 1
+        ):
+            continue
+        pool_output_name = str(reshape_op.inputs[0])
+        pool_idx = producers.get(pool_output_name, None)
+        if pool_idx is None:
+            continue
+        pool_op = model_ir.operators[int(pool_idx)]
+        if (
+            str(pool_op.op_type) != "MEAN"
+            or len(pool_op.inputs) < 1
+            or len(pool_op.outputs) != 1
+            or not bool(pool_op.options.get("keepDims", True))
+        ):
+            continue
+        concat_output_name = str(pool_op.inputs[0])
+        concat_idx = producers.get(concat_output_name, None)
+        if concat_idx is None:
+            continue
+        concat_op = model_ir.operators[int(concat_idx)]
+        if (
+            str(concat_op.op_type) != "CONCATENATION"
+            or len(concat_op.inputs) < 2
+            or len(concat_op.outputs) != 1
+            or int(concat_op.options.get("axis", 1)) == 1
+        ):
+            continue
+
+        filter_tensor = model_ir.tensors.get(str(conv_op.inputs[1]), None)
+        concat_tensor = model_ir.tensors.get(concat_output_name, None)
+        pool_tensor = model_ir.tensors.get(pool_output_name, None)
+        reshape_tensor = model_ir.tensors.get(reshape_output_name, None)
+        input_tensors = [
+            model_ir.tensors.get(str(name), None) for name in concat_op.inputs
+        ]
+        if (
+            filter_tensor is None
+            or concat_tensor is None
+            or pool_tensor is None
+            or reshape_tensor is None
+            or any(tensor is None for tensor in input_tensors)
+        ):
+            continue
+        filter_shape = [int(v) for v in list(filter_tensor.shape)]
+        input_shapes = [
+            [int(v) for v in list(tensor.shape)]
+            for tensor in input_tensors
+            if tensor is not None
+        ]
+        if (
+            len(filter_shape) != 4
+            or not input_shapes
+            or any(len(shape) != 4 for shape in input_shapes)
+        ):
+            continue
+        reference = input_shapes[0]
+        if any(
+            any(
+                int(shape[axis]) != int(reference[axis])
+                for axis in (0, 2, 3)
+            )
+            for shape in input_shapes[1:]
+        ):
+            continue
+        expected_channels = int(sum(int(shape[1]) for shape in input_shapes))
+        if (
+            expected_channels <= 0
+            or int(filter_shape[3]) != expected_channels
+            or [int(v) for v in list(reshape_tensor.shape)]
+            == [int(reference[0]), 1, 1, expected_channels]
+        ):
+            continue
+
+        concat_op.options["axis"] = 1
+        concat_shape = [int(v) for v in reference]
+        concat_shape[1] = expected_channels
+        concat_tensor.shape = list(concat_shape)
+        concat_tensor.shape_signature = list(concat_shape)
+        pool_shape = [int(reference[0]), expected_channels, 1, 1]
+        pool_tensor.shape = list(pool_shape)
+        pool_tensor.shape_signature = list(pool_shape)
+        reshape_shape = [int(reference[0]), 1, 1, expected_channels]
+        reshape_tensor.shape = list(reshape_shape)
+        reshape_tensor.shape_signature = list(reshape_shape)
+        if len(reshape_op.inputs) >= 2:
+            reshape_shape_tensor = model_ir.tensors.get(
+                str(reshape_op.inputs[1]),
+                None,
+            )
+            if (
+                reshape_shape_tensor is not None
+                and reshape_shape_tensor.data is not None
+                and int(np.asarray(reshape_shape_tensor.data).size) == 4
+            ):
+                reshape_shape_tensor.data = np.asarray(
+                    reshape_shape,
+                    dtype=np.asarray(reshape_shape_tensor.data).dtype,
+                )
+                reshape_op.options["newShape"] = list(reshape_shape)
+        repaired += 1
+
+    return {"repaired_nchw_concat_global_pool_conv_axes": int(repaired)}
+
+
 def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(
     model_ir: ModelIR,
 ) -> Dict[str, int]:
@@ -76055,6 +76179,7 @@ def lower_onnx_to_ir(
     _repair_singleton_nhwc_conv_input_reshapes(model_ir)
     _repair_nchw_channel_shuffle_concat_gathers(model_ir)
     _repair_nchw_concat_transpose_conv_axes(model_ir)
+    _repair_nchw_concat_global_pool_conv_axes(model_ir)
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     split_fallback_stats = _replace_unsupported_split_with_slice(model_ir)
