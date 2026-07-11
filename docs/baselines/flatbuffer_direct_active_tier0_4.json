@@ -1611,9 +1611,8 @@
     {
       "tier": 2,
       "model": "model_70_2023_0308_32_2_1_grid_sample_squeeze_1426.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "cd3009c735c563ae95e8a1c188450448ba6dec598fbd274aed2a26159325dd69"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 3.4332275390625e-05
     },
     {
       "tier": 2,

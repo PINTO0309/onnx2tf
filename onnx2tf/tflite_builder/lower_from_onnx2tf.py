@@ -10188,7 +10188,6 @@ def _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains(
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
-
     def _normalize_axis(axis: int, rank: int) -> Optional[int]:
         try:
             axis_int = int(axis)
@@ -42912,7 +42911,10 @@ def _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir: ModelIR
                     if a < 0 or a >= 4:
                         valid_axes = False
                         break
-                    mapped_axes.append(int(perm_nchw_to_nhwc[int(a)]))
+                    # `perm_nchw_to_nhwc` lists old axes in new-axis order.
+                    # Reduction axes need the inverse mapping (old axis -> new
+                    # axis), which is the NHWC->NCHW permutation here.
+                    mapped_axes.append(int(perm_nhwc_to_nchw[int(a)]))
                 if not valid_axes or len(mapped_axes) == 0:
                     continue
 
@@ -57483,6 +57485,7 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     consumers = _build_tensor_consumer_map(model_ir)
+    producers = _build_tensor_producer_map(model_ir)
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -57640,6 +57643,30 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
         )
         if len(output_shape) != rank or len(list(perm)) != rank:
             continue
+        input_producer_idx = producers.get(input_name, None)
+        input_producer = (
+            model_ir.operators[int(input_producer_idx)]
+            if input_producer_idx is not None
+            and 0 <= int(input_producer_idx) < len(model_ir.operators)
+            else None
+        )
+        obsolete_post_mean_layout_adapter = bool(
+            perm == perm_nchw_to_nhwc
+            and input_producer is not None
+            and str(input_producer.op_type) == "MEAN"
+            and isinstance(input_producer.options, dict)
+            and bool(
+                input_producer.options.get(
+                    "__convpool_output_nhwc_axes_remapped__",
+                    False,
+                )
+            )
+        )
+        if obsolete_post_mean_layout_adapter:
+            output_shape = [int(v) for v in input_shape]
+            output_signature = [int(v) for v in input_signature]
+            output_tensor.shape = list(output_shape)
+            output_tensor.shape_signature = list(output_signature)
         # Dynamic dimensions can be represented as placeholder static 1s in `shape`.
         # Replacing transpose with reshape is only safe when the moved layout axes
         # are still provably singleton in signatures. Rank-4 layout bridges keep
@@ -57672,10 +57699,18 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
             )
             canonical_singleton_safe = bool(channel_singleton or spatial_singleton)
 
-        expected_output_shape = _permute_shape(input_shape, perm)
+        expected_output_shape = (
+            list(input_shape)
+            if obsolete_post_mean_layout_adapter
+            else _permute_shape(input_shape, perm)
+        )
         if expected_output_shape is None or [int(v) for v in list(expected_output_shape)] != output_shape:
             continue
-        expected_output_signature = _permute_shape(input_signature, perm)
+        expected_output_signature = (
+            list(input_signature)
+            if obsolete_post_mean_layout_adapter
+            else _permute_shape(input_signature, perm)
+        )
         if (
             expected_output_signature is None
             or [int(v) for v in list(expected_output_signature)] != output_signature
@@ -57711,7 +57746,11 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
 
         op.op_type = "RESHAPE"
         op.inputs = [input_name, reshape_shape_name]
-        op.options = {"newShape": [int(v) for v in output_shape]}
+        op.options = {
+            "newShape": [int(v) for v in output_shape],
+            "layoutTransposeAsReshape": True,
+            "layoutTransposePerm": [int(v) for v in perm],
+        }
         rewritten += 1
 
     if rewritten > 0:
@@ -62633,6 +62672,15 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    mean_axes_remapped_marker = "__convpool_output_nhwc_axes_remapped__"
+    remapped_axes_tensor_names = {
+        str(v)
+        for v in model_ir.metadata.get(
+            "convpool_output_nhwc_remapped_axes_tensor_names",
+            [],
+        )
+        if str(v) != ""
+    }
     convpool_ops = {
         "CONV_2D",
         "DEPTHWISE_CONV_2D",
@@ -62871,6 +62919,14 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
                         or not bool(legacy_op.options.get("keepDims", False))
                     ):
                         continue
+                    legacy_options = (
+                        dict(legacy_op.options)
+                        if isinstance(legacy_op.options, dict)
+                        else {}
+                    )
+                    mean_was_remapped = bool(
+                        legacy_options.get(mean_axes_remapped_marker, False)
+                    )
                     if (
                         boundary_nhwc_tensor is None
                         or boundary_nhwc_tensor.shape is None
@@ -62896,15 +62952,35 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
                         normalized_axes.append(int(a))
                     if not valid_axes:
                         continue
-                    mapped_axes = [int(perm_nhwc_to_nchw[int(axis)]) for axis in normalized_axes]
+                    axes_were_remapped = (
+                        mean_was_remapped
+                        or mean_axes_name in remapped_axes_tensor_names
+                    )
+                    mapped_axes = (
+                        [int(v) for v in normalized_axes]
+                        if axes_were_remapped
+                        else [
+                            int(perm_nhwc_to_nchw[int(axis)])
+                            for axis in normalized_axes
+                        ]
+                    )
 
-                    _write_const_ints_to_tensor(mean_axes_tensor, [int(v) for v in mapped_axes])
+                    if not axes_were_remapped:
+                        _write_const_ints_to_tensor(
+                            mean_axes_tensor,
+                            [int(v) for v in mapped_axes],
+                        )
+                        remapped_axes_tensor_names.add(mean_axes_name)
+                        model_ir.metadata[
+                            "convpool_output_nhwc_remapped_axes_tensor_names"
+                        ] = sorted(remapped_axes_tensor_names)
                     if isinstance(legacy_op.options, dict):
                         mean_options = dict(legacy_op.options)
                         for key in ["axis", "axes", "onnxRawAxes"]:
                             value = mean_options.get(key, None)
                             if isinstance(value, list) and len(value) == len(mapped_axes):
                                 mean_options[key] = [int(v) for v in mapped_axes]
+                        mean_options[mean_axes_remapped_marker] = True
                         legacy_op.options = mean_options
 
                     mean_out_name = str(legacy_op.outputs[0])
@@ -62915,6 +62991,108 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
 
                     for mean_user_idx in consumers.get(mean_out_name, []):
                         mean_user_op = model_ir.operators[int(mean_user_idx)]
+                        mean_user_options = (
+                            dict(mean_user_op.options)
+                            if isinstance(mean_user_op.options, dict)
+                            else {}
+                        )
+                        if (
+                            str(mean_user_op.op_type) == "RESHAPE"
+                            and len(mean_user_op.inputs) >= 2
+                            and len(mean_user_op.outputs) == 1
+                            and str(mean_user_op.inputs[0]) == mean_out_name
+                            and bool(
+                                mean_user_options.get(
+                                    "layoutTransposeAsReshape",
+                                    False,
+                                )
+                            )
+                            and [
+                                int(v)
+                                for v in mean_user_options.get(
+                                    "layoutTransposePerm",
+                                    [],
+                                )
+                            ]
+                            == perm_nchw_to_nhwc
+                        ):
+                            mean_out_tensor = model_ir.tensors.get(
+                                mean_out_name,
+                                None,
+                            )
+                            adapter_out_tensor = model_ir.tensors.get(
+                                str(mean_user_op.outputs[0]),
+                                None,
+                            )
+                            if mean_out_tensor is not None:
+                                identity_shape = [
+                                    int(v) for v in mean_out_tensor.shape
+                                ]
+                                _write_const_ints_to_tensor(
+                                    model_ir.tensors.get(
+                                        str(mean_user_op.inputs[1]),
+                                        None,
+                                    ),
+                                    identity_shape,
+                                )
+                                mean_user_options["newShape"] = list(
+                                    identity_shape
+                                )
+                                mean_user_op.options = mean_user_options
+                                if adapter_out_tensor is not None:
+                                    adapter_out_tensor.shape = list(
+                                        identity_shape
+                                    )
+                                    adapter_out_tensor.shape_signature = (
+                                        list(mean_out_tensor.shape_signature)
+                                        if mean_out_tensor.shape_signature
+                                        is not None
+                                        else list(identity_shape)
+                                    )
+                            continue
+                        if (
+                            str(mean_user_op.op_type) == "TRANSPOSE"
+                            and len(mean_user_op.inputs) >= 2
+                            and len(mean_user_op.outputs) == 1
+                            and str(mean_user_op.inputs[0]) == mean_out_name
+                            and _read_transpose_perm(model_ir, mean_user_op)
+                            == perm_nchw_to_nhwc
+                        ):
+                            # MEAN now already produces NHWC. Keep the boundary
+                            # tensor name but turn its former NCHW->NHWC adapter
+                            # into identity so the generic transpose cleanup can
+                            # remove it without a second layout permutation.
+                            perm_tensor = model_ir.tensors.get(
+                                str(mean_user_op.inputs[1]),
+                                None,
+                            )
+                            _write_const_ints_to_tensor(
+                                perm_tensor,
+                                [0, 1, 2, 3],
+                            )
+                            mean_out_tensor = model_ir.tensors.get(
+                                mean_out_name,
+                                None,
+                            )
+                            adapter_out_tensor = model_ir.tensors.get(
+                                str(mean_user_op.outputs[0]),
+                                None,
+                            )
+                            if (
+                                mean_out_tensor is not None
+                                and adapter_out_tensor is not None
+                            ):
+                                adapter_out_tensor.shape = list(
+                                    mean_out_tensor.shape
+                                )
+                                adapter_out_tensor.shape_signature = (
+                                    list(mean_out_tensor.shape_signature)
+                                    if mean_out_tensor.shape_signature is not None
+                                    else list(mean_out_tensor.shape)
+                                )
+                            continue
+                        if mean_was_remapped:
+                            continue
                         if (
                             str(mean_user_op.op_type) != "SQUEEZE"
                             or len(mean_user_op.inputs) != 1

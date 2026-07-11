@@ -73,6 +73,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_layout_transpose_chains,
     _optimize_maximum_with_zero_input2_to_relu,
     _optimize_maximum_minimum_relu0to1_chains,
+    _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains,
     _optimize_singleton_channel_layout_transpose_to_reshape,
     _optimize_consecutive_inverse_singleton_layout_reshapes,
     _optimize_consecutive_reshape_passthrough_chains,
@@ -8414,6 +8415,116 @@ def test_flatbuffer_direct_layout_transpose_chain_preserves_observable_bridge() 
         ["nonzero_rank_first"],
         ["indices_rank_last"],
     ]
+
+
+def test_transpose_mean_affine_rewrite_maps_reduction_axes_to_nhwc() -> None:
+    model_ir = ModelIR("transpose_mean_affine_axes")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["z"]
+    tensor_specs = {
+        "x_nhwc": [1, 8, 8, 4],
+        "x_nchw": [1, 4, 8, 8],
+        "mean_nchw": [1, 4, 1, 1],
+        "mul_nchw": [1, 4, 1, 1],
+        "add_nchw": [1, 4, 1, 1],
+        "y_nhwc": [1, 1, 1, 4],
+        "z": [1, 1, 1, 4],
+    }
+    for name, shape in tensor_specs.items():
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype="FLOAT32",
+            shape=list(shape),
+            shape_signature=list(shape),
+        )
+    for name, values in (
+        ("pre_perm", [0, 3, 1, 2]),
+        ("post_perm", [0, 2, 3, 1]),
+        ("axes", [2, 3]),
+    ):
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype="INT32",
+            shape=[len(values)],
+            shape_signature=[len(values)],
+            data=np.asarray(values, dtype=np.int32),
+        )
+    for name, value in (("scale", 2.0), ("bias", 1.0)):
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype="FLOAT32",
+            shape=[1],
+            shape_signature=[1],
+            data=np.asarray([value], dtype=np.float32),
+        )
+    model_ir.operators = [
+        OperatorIR("TRANSPOSE", ["x_nhwc", "pre_perm"], ["x_nchw"]),
+        OperatorIR("MEAN", ["x_nchw", "axes"], ["mean_nchw"], {"keepDims": True}),
+        OperatorIR("MUL", ["mean_nchw", "scale"], ["mul_nchw"]),
+        OperatorIR("ADD", ["mul_nchw", "bias"], ["add_nchw"]),
+        OperatorIR("TRANSPOSE", ["add_nchw", "post_perm"], ["y_nhwc"]),
+        OperatorIR("RELU", ["y_nhwc"], ["z"]),
+    ]
+
+    stats = _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
+
+    assert stats["optimized_transpose_mean_mul_add_const_prepost_nhwc_chains"] == 1
+    mean_op = next(op for op in model_ir.operators if str(op.op_type) == "MEAN")
+    assert list(mean_op.inputs) == ["x_nhwc", "axes"]
+    assert np.asarray(model_ir.tensors["axes"].data).tolist() == [1, 2]
+
+
+def test_singleton_transpose_does_not_reapply_remapped_mean_layout() -> None:
+    model_ir = ModelIR("remapped_mean_singleton_adapter")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["z"]
+    for name, shape in (
+        ("x", [1, 8, 8, 64]),
+        ("mean", [1, 1, 1, 64]),
+        ("mean_adapter", [1, 1, 64, 1]),
+        ("z", [1, 1, 64, 1]),
+    ):
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype="FLOAT32",
+            shape=list(shape),
+            shape_signature=list(shape),
+        )
+    model_ir.tensors["axes"] = TensorIR(
+        name="axes",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([1, 2], dtype=np.int32),
+    )
+    model_ir.tensors["perm"] = TensorIR(
+        name="perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    model_ir.operators = [
+        OperatorIR(
+            "MEAN",
+            ["x", "axes"],
+            ["mean"],
+            {
+                "keepDims": True,
+                "__convpool_output_nhwc_axes_remapped__": True,
+            },
+        ),
+        OperatorIR("TRANSPOSE", ["mean", "perm"], ["mean_adapter"]),
+        OperatorIR("RELU", ["mean_adapter"], ["z"]),
+    ]
+
+    stats = _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
+
+    assert stats["rewritten_singleton_channel_layout_transpose_to_reshape"] == 1
+    adapter_op = model_ir.operators[1]
+    assert str(adapter_op.op_type) == "RESHAPE"
+    assert adapter_op.options["newShape"] == [1, 1, 1, 64]
+    assert model_ir.tensors["mean_adapter"].shape == [1, 1, 1, 64]
 
 
 def test_flatbuffer_direct_qlinear_conv_filter_layout_is_ohwi() -> None:
