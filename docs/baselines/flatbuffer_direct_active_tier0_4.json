@@ -1261,10 +1261,9 @@
     {
       "tier": 1,
       "model": "squeezenet1.0-12-int8.onnx",
-      "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "a2e02e5bebdaa1cbff2d9412bf466cc76116d987e386ced5d43c7a51e2e8f516",
-      "tflite_max_abs": 0.1653465332929045
+      "baseline_classification": "pass",
+      "baseline_reason": "pass",
+      "tflite_max_abs": 1.4901161193847656e-08
     },
     {
       "tier": 1,

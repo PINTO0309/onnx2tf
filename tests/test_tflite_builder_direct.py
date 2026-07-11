@@ -4755,12 +4755,44 @@ def _make_qlinear_global_average_pool_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_qlinear_average_pool_model(*, y_scale_value: float) -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 2, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 1, 1])
+    x_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="qavg_x_scale")
+    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qavg_x_zero")
+    y_scale = numpy_helper.from_array(
+        np.asarray([y_scale_value], dtype=np.float32),
+        name="qavg_y_scale",
+    )
+    y_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qavg_y_zero")
+    nodes = [
+        helper.make_node("QuantizeLinear", ["x", "qavg_x_scale", "qavg_x_zero"], ["x_q"], name="QAvgQ0"),
+        helper.make_node(
+            "QLinearAveragePool",
+            ["x_q", "qavg_x_scale", "qavg_x_zero", "qavg_y_scale", "qavg_y_zero"],
+            ["y_q"],
+            name="QAvgNode",
+            kernel_shape=[2, 2],
+            strides=[2, 2],
+        ),
+        helper.make_node("DequantizeLinear", ["y_q", "qavg_y_scale", "qavg_y_zero"], ["y"], name="QAvgDQ0"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_average_pool_graph",
+        [x],
+        [y],
+        initializer=[x_scale, x_zero, y_scale, y_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_qlinear_global_average_pool_dynamic_batch_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", 2, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, ["N", 2, 1, 1])
     x_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="qgap_dyn_x_scale")
     x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qgap_dyn_x_zero")
-    y_scale = numpy_helper.from_array(np.asarray([0.125], dtype=np.float32), name="qgap_dyn_y_scale")
+    y_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="qgap_dyn_y_scale")
     y_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qgap_dyn_y_zero")
     nodes = [
         helper.make_node(
@@ -4798,7 +4830,7 @@ def _make_transpose_qlinear_global_average_pool_model() -> onnx.ModelProto:
     y = helper.make_tensor_value_info("y_q", TensorProto.INT8, [1, 2, 1, 1])
     x_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="qgap_t_x_scale")
     x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qgap_t_x_zero")
-    y_scale = numpy_helper.from_array(np.asarray([0.125], dtype=np.float32), name="qgap_t_y_scale")
+    y_scale = numpy_helper.from_array(np.asarray([0.25], dtype=np.float32), name="qgap_t_y_scale")
     y_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qgap_t_y_zero")
     t_perm = numpy_helper.from_array(np.asarray([0, 3, 1, 2], dtype=np.int64), name="qgap_t_perm")
     nodes = [
@@ -4875,7 +4907,7 @@ def _make_qlinear_concat_conv_layout_chain_model() -> onnx.ModelProto:
 
     in_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="qlcc_in_scale")
     in_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qlcc_in_zero")
-    gap_scale = numpy_helper.from_array(np.asarray([0.2], dtype=np.float32), name="qlcc_gap_scale")
+    gap_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="qlcc_gap_scale")
     gap_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qlcc_gap_zero")
     cat_scale = numpy_helper.from_array(np.asarray([0.15], dtype=np.float32), name="qlcc_cat_scale")
     cat_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qlcc_cat_zero")
@@ -29141,14 +29173,69 @@ def test_flatbuffer_direct_qlinear_global_average_pool_lowering() -> None:
         output_file_name="qlinear_global_average_pool_lowering_test",
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
-    assert op_types.count("AVERAGE_POOL_2D") == 1
-    assert op_types.count("MEAN") == 0
+    assert op_types.count("AVERAGE_POOL_2D") == 0
+    assert op_types.count("MEAN") == 1
     assert op_types.count("DEQUANTIZE") >= 1
+    assert op_types.count("QUANTIZE") >= 1
 
     y = model_ir.tensors.get("y")
     assert y is not None
-    assert list(y.shape) == [1, 1, 1, 2]
-    assert _shape_signature(y) == [1, 1, 1, 2]
+    assert list(y.shape) == [1, 2, 1, 1]
+    assert _shape_signature(y) == [1, 2, 1, 1]
+
+
+def test_flatbuffer_direct_qlinear_global_average_pool_same_encoding_uses_builtin() -> None:
+    model = _make_qlinear_global_average_pool_model()
+    y_scale = next(
+        initializer
+        for initializer in model.graph.initializer
+        if initializer.name == "qgap_y_scale"
+    )
+    y_scale.CopyFrom(
+        numpy_helper.from_array(
+            np.asarray([0.25], dtype=np.float32),
+            name="qgap_y_scale",
+        )
+    )
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="qlinear_global_average_pool_same_encoding_test",
+    )
+
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("AVERAGE_POOL_2D") == 1
+    assert op_types.count("MEAN") == 0
+
+
+@pytest.mark.parametrize(
+    ("y_scale_value", "expected_input_dtype"),
+    [
+        (0.25, "INT8"),
+        (0.125, "FLOAT32"),
+    ],
+)
+def test_flatbuffer_direct_qlinear_average_pool_requantizes_distinct_encoding(
+    y_scale_value: float,
+    expected_input_dtype: str,
+) -> None:
+    model = _make_qlinear_average_pool_model(y_scale_value=y_scale_value)
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name=f"qlinear_average_pool_{y_scale_value}_test",
+        optimize_layout_transpose_chains=False,
+    )
+
+    pool = next(
+        op for op in model_ir.operators if str(op.op_type) == "AVERAGE_POOL_2D"
+    )
+    assert str(model_ir.tensors[pool.inputs[0]].dtype) == expected_input_dtype
+    if y_scale_value == 0.125:
+        assert any(str(op.op_type) == "DEQUANTIZE" for op in model_ir.operators)
+        assert any(str(op.op_type) == "QUANTIZE" for op in model_ir.operators)
 
 
 def test_flatbuffer_direct_qlinear_concat_lowering() -> None:

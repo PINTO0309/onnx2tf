@@ -2085,6 +2085,14 @@ def build_qlinear_average_pool_op(node: Any, ctx: Any) -> None:
         and len(output_shape) == 4
         and np.asarray(x_scale).size <= 1
         and np.asarray(y_scale).size <= 1
+        and np.array_equal(
+            np.asarray(x_scale).reshape(-1),
+            np.asarray(y_scale).reshape(-1),
+        )
+        and np.array_equal(
+            np.asarray(x_zero).reshape(-1),
+            np.asarray(y_zero).reshape(-1),
+        )
     )
     if not can_use_quantized_pool:
         _lower_via_dequantize_avgpool_quantize()
@@ -2266,6 +2274,18 @@ def build_qlinear_global_average_pool_op(node: Any, ctx: Any) -> None:
         if len(input_shape) != 4 or len(output_shape) != 4:
             return False
         if np.asarray(x_scale).size > 1 or np.asarray(y_scale).size > 1:
+            return False
+        # TFLite's quantized AVERAGE_POOL_2D preserves the input integer
+        # encoding; it does not requantize between distinct input/output
+        # scales or zero points. QLinearGlobalAveragePool explicitly permits
+        # different encodings, so use the float MEAN bridge in that case.
+        if not np.array_equal(
+            np.asarray(x_scale).reshape(-1),
+            np.asarray(y_scale).reshape(-1),
+        ) or not np.array_equal(
+            np.asarray(x_zero).reshape(-1),
+            np.asarray(y_zero).reshape(-1),
+        ):
             return False
 
         if channels_last:
