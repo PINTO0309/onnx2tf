@@ -823,7 +823,7 @@
       "baseline_classification": "tflite_fail",
       "baseline_reason": "tflite_fail",
       "error_signature_sha256": "c7a4a7ef957c2f5fced25ed644be05c06065f4a3e5ad7e5b16ac2b15a4e0ae5a",
-      "tflite_max_abs": 1.4335134029388428
+      "tflite_max_abs": 0.037707426119595766
     },
     {
       "tier": 1,
@@ -831,7 +831,7 @@
       "baseline_classification": "tflite_fail",
       "baseline_reason": "tflite_fail",
       "error_signature_sha256": "911e65713fc098e616df8438b9f112f8b156baadda27f7454114332067788bb2",
-      "tflite_max_abs": 1.4335134029388428
+      "tflite_max_abs": 0.037707426119595766
     },
     {
       "tier": 1,
@@ -929,7 +929,7 @@
       "baseline_classification": "tflite_fail",
       "baseline_reason": "tflite_fail",
       "error_signature_sha256": "bad0779487a6db22f258daf4dbab703332826625058381e723bcdc3a755cfd4e",
-      "tflite_max_abs": 1.4335134029388428
+      "tflite_max_abs": 0.037707426119595766
     },
     {
       "tier": 1,
@@ -1122,7 +1122,7 @@
       "baseline_classification": "tflite_fail",
       "baseline_reason": "tflite_fail",
       "error_signature_sha256": "7363cb5deaa04e9ea5b1a764c21e821e3858a43484234d9cb8f5f6c035307156",
-      "tflite_max_abs": 1.4335134029388428
+      "tflite_max_abs": 0.037707426119595766
     },
     {
       "tier": 1,
@@ -1292,7 +1292,8 @@
       "model": "text_recognition_CRNN_CN_2021nov_int8.onnx",
       "baseline_classification": "tflite_fail",
       "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "95d44e8733363dbb43c3cb2e37d84c936c309983e0a698c3929b143ae5ee1c99"
+      "error_signature_sha256": "95d44e8733363dbb43c3cb2e37d84c936c309983e0a698c3929b143ae5ee1c99",
+      "tflite_max_abs": 14.001063346862793
     },
     {
       "tier": 1,
