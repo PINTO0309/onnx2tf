@@ -128,3 +128,55 @@ def test_repair_restores_nchw_concat_axis_before_conv_transpose() -> None:
     assert model_ir.tensors["concat"].shape == [1, 768, 7, 7]
     assert model_ir.tensors["conv_input"].shape == [1, 7, 7, 768]
     assert model_ir.tensors["conv_out"].shape == [1, 7, 7, 2048]
+
+
+def test_repair_restores_nchw_concat_axis_before_transpose_conv() -> None:
+    model_ir = ModelIR("stale_concat_transpose_conv_axis")
+    model_ir.inputs = ["left", "right"]
+    model_ir.outputs = ["deconv_out"]
+    _tensor(model_ir, "left", [1, 16, 8, 1])
+    _tensor(model_ir, "right", [1, 16, 8, 1])
+    _tensor(model_ir, "concat", [1, 16, 8, 2])
+    _tensor(
+        model_ir,
+        "perm",
+        [4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    _tensor(model_ir, "deconv_input", [1, 8, 2, 16])
+    _tensor(
+        model_ir,
+        "output_shape",
+        [4],
+        data=np.asarray([1, 17, 1, 16], dtype=np.int32),
+    )
+    _tensor(
+        model_ir,
+        "filter",
+        [16, 3, 1, 32],
+        data=np.ones((16, 3, 1, 32), dtype=np.float32),
+    )
+    _tensor(model_ir, "deconv_out", [1, 17, 1, 16])
+    model_ir.operators = [
+        OperatorIR(
+            "CONCATENATION",
+            ["left", "right"],
+            ["concat"],
+            {"axis": 3, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR("TRANSPOSE", ["concat", "perm"], ["deconv_input"]),
+        OperatorIR(
+            "TRANSPOSE_CONV",
+            ["output_shape", "filter", "deconv_input"],
+            ["deconv_out"],
+            {"padding": "SAME", "strideH": 2, "strideW": 1},
+        ),
+    ]
+
+    stats = _repair_nchw_concat_transpose_conv_axes(model_ir)
+
+    assert stats == {"repaired_nchw_concat_transpose_conv_axes": 1}
+    assert model_ir.operators[0].options["axis"] == 1
+    assert model_ir.tensors["concat"].shape == [1, 32, 8, 1]
+    assert model_ir.tensors["deconv_input"].shape == [1, 8, 1, 32]
+    assert model_ir.tensors["deconv_out"].shape == [1, 17, 1, 16]

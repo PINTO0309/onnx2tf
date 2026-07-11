@@ -1455,9 +1455,8 @@
     {
       "tier": 2,
       "model": "double_gru.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "400ac0853906a1ea2560fb372123b5d7137fd2043c7ffcf29b0c3100ae3b9866"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 5.364418029785156e-07
     },
     {
       "tier": 2,

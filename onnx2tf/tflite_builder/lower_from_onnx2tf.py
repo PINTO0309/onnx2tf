@@ -21482,9 +21482,16 @@ def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]
     repaired = 0
     producers = _build_tensor_producer_map(model_ir)
     for conv_op in model_ir.operators:
-        if str(conv_op.op_type) != "CONV_2D" or len(conv_op.inputs) < 2 or len(conv_op.outputs) != 1:
+        conv_type = str(conv_op.op_type)
+        if (
+            conv_type not in {"CONV_2D", "TRANSPOSE_CONV"}
+            or len(conv_op.inputs) < (3 if conv_type == "TRANSPOSE_CONV" else 2)
+            or len(conv_op.outputs) != 1
+        ):
             continue
-        transpose_output_name = str(conv_op.inputs[0])
+        data_input_index = 2 if conv_type == "TRANSPOSE_CONV" else 0
+        filter_input_index = 1
+        transpose_output_name = str(conv_op.inputs[data_input_index])
         transpose_idx = producers.get(transpose_output_name, None)
         if transpose_idx is None:
             continue
@@ -21508,7 +21515,10 @@ def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]
             or int(concat_op.options.get("axis", 1)) == 1
         ):
             continue
-        filter_tensor = model_ir.tensors.get(str(conv_op.inputs[1]), None)
+        filter_tensor = model_ir.tensors.get(
+            str(conv_op.inputs[filter_input_index]),
+            None,
+        )
         transpose_tensor = model_ir.tensors.get(transpose_output_name, None)
         conv_output_tensor = model_ir.tensors.get(str(conv_op.outputs[0]), None)
         input_tensors = [model_ir.tensors.get(str(name), None) for name in concat_op.inputs]
@@ -21550,13 +21560,14 @@ def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]
         ]
         transpose_tensor.shape = list(nhwc_shape)
         transpose_tensor.shape_signature = list(nhwc_shape)
-        conv_output_tensor.shape = [
-            int(nhwc_shape[0]),
-            int(nhwc_shape[1]),
-            int(nhwc_shape[2]),
-            int(filter_shape[0]),
-        ]
-        conv_output_tensor.shape_signature = list(conv_output_tensor.shape)
+        if conv_type == "CONV_2D":
+            conv_output_tensor.shape = [
+                int(nhwc_shape[0]),
+                int(nhwc_shape[1]),
+                int(nhwc_shape[2]),
+                int(filter_shape[0]),
+            ]
+            conv_output_tensor.shape_signature = list(conv_output_tensor.shape)
         repaired += 1
     return {"repaired_nchw_concat_transpose_conv_axes": int(repaired)}
 
