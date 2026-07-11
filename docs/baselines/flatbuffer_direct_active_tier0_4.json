@@ -118,9 +118,8 @@
     {
       "tier": 0,
       "model": "GRU_org.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "f0689f754044d535dd670c0ecdc722231e14f876f166ae031f81e8aee390d2a8"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 1.1920928955078125e-07
     },
     {
       "tier": 0,

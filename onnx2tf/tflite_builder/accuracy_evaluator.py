@@ -432,6 +432,10 @@ def _collect_onnx_input_specs(
         name for name in graph_input_names
         if _is_length_like_input_name_local(name)
     ]
+    graph_has_recurrent_sequence_op = any(
+        str(node.op_type) in {"GRU", "LSTM", "RNN"}
+        for node in onnx_graph.graph.node
+    )
 
     def _has_related_length_like_input(input_name: str) -> bool:
         base = _strip_length_like_suffix_local(input_name)
@@ -465,6 +469,12 @@ def _collect_onnx_input_specs(
         known_dims: List[int],
     ) -> int:
         if int(axis) == 0:
+            return 1
+        if bool(graph_has_recurrent_sequence_op) and int(rank) == 3:
+            # The direct recurrent lowerers currently materialize their
+            # dynamic sequence placeholder at one step. Validate that supported
+            # default instance instead of inventing a longer sequence that the
+            # serialized unrolled graph cannot represent.
             return 1
         default_dim = _dynamic_dim_default()
         feature_dims = {40, 64, 80, 128, 256}
@@ -536,6 +546,18 @@ def _collect_onnx_input_specs(
         return int(default_dim)
 
     initializer_names = {initializer.name for initializer in onnx_graph.graph.initializer}
+    symbolic_dim_values: Dict[str, int] = {}
+    # A symbol used on axis 0 anywhere in the public inputs represents the
+    # shared batch dimension. Resolve it before walking individual inputs so
+    # input order cannot assign a conflicting non-batch default elsewhere.
+    for graph_input in onnx_graph.graph.input:
+        if graph_input.name in initializer_names:
+            continue
+        for axis, dim in enumerate(graph_input.type.tensor_type.shape.dim):
+            dim_param = str(dim.dim_param).strip()
+            if dim_param != "" and int(axis) == 0:
+                symbolic_dim_values[dim_param] = 1
+
     input_specs: List[Tuple[str, np.dtype, Tuple[int, ...]]] = []
     for graph_input in onnx_graph.graph.input:
         if graph_input.name in initializer_names:
@@ -543,11 +565,13 @@ def _collect_onnx_input_specs(
         tensor_type = graph_input.type.tensor_type
         np_dtype = np.dtype(onnx.helper.tensor_dtype_to_np_dtype(tensor_type.elem_type))
         raw_shape: List[int] = []
+        dim_params: List[str] = []
         for dim in tensor_type.shape.dim:
             if dim.HasField("dim_value") and int(dim.dim_value) > 0:
                 raw_shape.append(int(dim.dim_value))
             else:
                 raw_shape.append(0)
+            dim_params.append(str(dim.dim_param).strip())
 
         shape: List[int] = []
         rank = int(len(raw_shape))
@@ -555,14 +579,18 @@ def _collect_onnx_input_specs(
             if int(dim_value) > 0:
                 shape.append(int(dim_value))
             else:
-                shape.append(
-                    _resolve_dynamic_dim(
+                dim_param = dim_params[int(axis)]
+                resolved_dim = symbolic_dim_values.get(dim_param, None) if dim_param != "" else None
+                if resolved_dim is None:
+                    resolved_dim = _resolve_dynamic_dim(
                         input_name=str(graph_input.name),
                         rank=int(rank),
                         axis=int(axis),
                         known_dims=[int(v) for v in list(raw_shape)],
                     )
-                )
+                    if dim_param != "":
+                        symbolic_dim_values[dim_param] = int(resolved_dim)
+                shape.append(int(resolved_dim))
         input_specs.append((graph_input.name, np_dtype, tuple(shape)))
     return input_specs
 

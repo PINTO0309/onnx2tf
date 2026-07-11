@@ -242,6 +242,35 @@ def test_collect_onnx_input_specs_uses_unit_time_axis_for_rank5_image_sequence()
     assert specs["pixel_attention_mask"] == (1, 1, 512, 512)
 
 
+def test_collect_onnx_input_specs_reuses_shared_symbolic_batch_across_axes() -> None:
+    data = helper.make_tensor_value_info(
+        "data",
+        TensorProto.FLOAT,
+        ["batch_size", "seq_length", 3],
+    )
+    initial_h = helper.make_tensor_value_info(
+        "initial_h",
+        TensorProto.FLOAT,
+        [1, "batch_size", 5],
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [helper.make_node("GRU", ["data"], ["sequence"])],
+            "shared_batch",
+            [initial_h, data],
+            [],
+        ),
+    )
+
+    specs = {
+        name: shape
+        for name, _dtype, shape in _collect_onnx_input_specs(model)
+    }
+
+    assert specs["data"] == (1, 1, 3)
+    assert specs["initial_h"] == (1, 1, 5)
+
+
 def test_collect_onnx_input_specs_uses_longer_sequence_axis_for_rank3_feature_tensor() -> None:
     x = helper.make_tensor_value_info(
         "x",
