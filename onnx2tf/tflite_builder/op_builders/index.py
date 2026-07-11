@@ -5404,6 +5404,13 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
             f"op={node.name} indices_shape={indices_shape} output_shape={output_shape}"
         )
     if data_rank_unknown and indices_rank_unknown and output_rank_unknown:
+        if bool(getattr(ctx, "allow_custom_ops", False)):
+            from onnx2tf.tflite_builder.op_builders.custom import (
+                build_custom_passthrough_op,
+            )
+
+            build_custom_passthrough_op(node, ctx)
+            return
         raise NotImplementedError(
             "GatherElements requires resolvable rank in flatbuffer_direct. "
             f"op={node.name} data_shape={data_shape} indices_shape={indices_shape} output_shape={output_shape}"

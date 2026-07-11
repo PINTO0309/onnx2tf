@@ -30234,6 +30234,37 @@ def test_flatbuffer_direct_gather_rank1_params_scalar_const_indices_not_scalariz
     assert all(len(shape) == 1 for shape in concat_input_shapes)
 
 
+def test_flatbuffer_direct_gather_elements_unknown_rank_custom_fallback() -> None:
+    data = helper.make_tensor_value_info("data", TensorProto.INT64, None)
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, None)
+    output = helper.make_tensor_value_info("output", TensorProto.INT64, None)
+    node = helper.make_node(
+        "GatherElements",
+        ["data", "indices"],
+        ["output"],
+        name="UnknownRankGatherElements",
+        axis=1,
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [node],
+            "unknown_rank_gather_elements_graph",
+            [data, indices],
+            [output],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="unknown_rank_gather_elements_custom_test",
+        allow_custom_ops=True,
+    )
+
+    custom_op = next(op for op in model_ir.operators if str(op.op_type) == "CUSTOM")
+    assert str(custom_op.options.get("customCode")) == "ONNX_GATHERELEMENTS"
+
+
 def test_flatbuffer_direct_nms_scalar_const_inputs_do_not_emit_squeeze() -> None:
     model = _make_non_max_suppression_model()
     register_default_preprocess_rules()

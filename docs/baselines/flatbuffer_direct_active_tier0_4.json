@@ -2625,9 +2625,9 @@
     {
       "tier": 4,
       "model": "image_segmentation_efficientsam_ti_2025april_int8.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1"
+      "baseline_classification": "timeout",
+      "baseline_reason": "timeout_after_120s",
+      "error_signature_sha256": "900507a79b288b54d0fd7c95ef86726eea7a3c52c96cfd8c1dd6d1509bfbe56c"
     },
     {
       "tier": 4,
@@ -2705,9 +2705,9 @@
     {
       "tier": 4,
       "model": "superpoint_lightglue_end2end_fused_cpu.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "ea9721615de676c5191a7cb3eac96e495d5011c92792962bae5f70f2f05df152"
+      "baseline_classification": "missing_tflite_report",
+      "baseline_reason": "missing_tflite_report",
+      "error_signature_sha256": "9412873bf9e473a4e93edf0d9a8da2ee3da577c20b3803203b65980fefc9e0c0"
     },
     {
       "tier": 4,
