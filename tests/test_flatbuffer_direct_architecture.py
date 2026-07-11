@@ -12,6 +12,7 @@ BOUNDED_ROOTS = [
 BOUNDED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_layout_utils.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_utils.py",
 ]
 
 
@@ -52,13 +53,29 @@ def test_flatbuffer_direct_core_has_no_tensorflow_imports() -> None:
     assert offenders == []
 
 
+def test_pytorch_pure_utilities_do_not_import_torch() -> None:
+    offenders = []
+    for path in BOUNDED_FILES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            modules = []
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                modules = [str(node.module or "")]
+            if any(module == "torch" or module.startswith("torch.") for module in modules):
+                offenders.append(str(path.relative_to(REPO_ROOT)))
+                break
+    assert offenders == []
+
+
 def test_legacy_megafiles_cannot_grow_while_they_are_being_retired() -> None:
     # Generated schema is intentionally excluded. These ceilings capture the
     # migration baseline and force new code into bounded modules.
     ceilings = {
         "onnx2tf/tflite_builder/lower_from_onnx2tf.py": 75505,
         "onnx2tf/tflite_builder/op_registry.py": 8500,
-        "onnx2tf/tflite_builder/pytorch_exporter.py": 45545,
+        "onnx2tf/tflite_builder/pytorch_exporter.py": 44885,
         "tests/test_tflite_builder_direct.py": 40350,
         "tests/test_pytorch_exporter.py": 47000,
     }
