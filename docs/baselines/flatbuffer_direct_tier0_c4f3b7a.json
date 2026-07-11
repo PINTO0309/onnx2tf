@@ -1,0 +1,511 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "c4f3b7a",
+  "corpus_scope": "recursive repository discovery",
+  "models_sha256": "d42f96ef084efe5fb140ef6c6835bf3054b524fd13c052528995c31fb9a00126",
+  "total_entries": 190,
+  "filters": {
+    "min_nodes": 1,
+    "max_nodes": 49,
+    "recursive": true,
+    "include_pytorch_artifacts": false
+  },
+  "counts": {
+    "pass": 137,
+    "skipped_model": 0,
+    "missing_model": 0,
+    "conversion_error": 10,
+    "timeout": 1,
+    "tflite_fail": 6,
+    "pytorch_fail": 0,
+    "both_fail": 0,
+    "missing_tflite_report": 36,
+    "missing_pytorch_report": 0,
+    "missing_both_reports": 0
+  },
+  "strict_fail_count": 53,
+  "timing": {
+    "total_duration_sec": 871.485455,
+    "median_duration_sec": 2.16523,
+    "max_duration_sec": 120.896149
+  },
+  "failed_models": [
+    {
+      "model": "GRU_org.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.Fail: [ONNXRuntimeError] : 1 : FAIL : Non-zero status code returned while running GRU node. Name:'GRU_1' Status Message: Input initial_h must have shape {1,1,5}. Actual:{1,16,5}",
+      "error_signature_sha256": "f0689f754044d535dd670c0ecdc722231e14f876f166ae031f81e8aee390d2a8",
+      "tflite_max_abs": null,
+      "duration_sec": 1.846913
+    },
+    {
+      "model": "LSTM.tanh.bidirectional.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 1.198747
+    },
+    {
+      "model": "LSTM.tanh.bidirectional_b10.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 1.190285
+    },
+    {
+      "model": "MNIST_6.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.NotImplemented: [ONNXRuntimeError] : 9 : NOT_IMPLEMENTED : Could not find an implementation for Gemm(6) node with name 'sng_Gemm_8'",
+      "error_signature_sha256": "41b26080f470caba856726ae9da9496e41d80f68918fb99b08bbe33391ce4f38",
+      "tflite_max_abs": null,
+      "duration_sec": 1.826589
+    },
+    {
+      "model": "ViT-B-16__openai_partial_cut.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 2.568678
+    },
+    {
+      "model": "avgpool1d_dynamic.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/avgpool1d_dynamic_accuracy_comparison_report.json)",
+      "error_signature_sha256": "dfa57f1c2217bdeba8620f500b72ede9acca96c88f4fc12dbbc77cc1b38de656",
+      "tflite_max_abs": 25.274580240249634,
+      "duration_sec": 2.141748
+    },
+    {
+      "model": "com.microsoft.GroupNorm.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.NotImplemented: [ONNXRuntimeError] : 9 : NOT_IMPLEMENTED : Could not find an implementation for GroupNorm(1) node with name 'GroupNorm_0'",
+      "error_signature_sha256": "1d0183dac55c5a793131d11c10be6bec38a5ea039428ecc42daa399a63a972d5",
+      "tflite_max_abs": null,
+      "duration_sec": 1.76465
+    },
+    {
+      "model": "if_p2_11.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.Fail: [ONNXRuntimeError] : 1 : FAIL : Node (wa/If) Op (If) [TypeInferenceError] Graph attribute inferencing failed: Type Error: Type (tensor(float)) of output arg (/SequenceConstruct_output_0) of node (/SequenceConstruct) does not match expected type (seq(tensor(float))).",
+      "error_signature_sha256": "301abe3a0e06cba4fc2d6ccce2b5614c85f032b5bab26a416f67280abd072fbf",
+      "tflite_max_abs": null,
+      "duration_sec": 1.466507
+    },
+    {
+      "model": "image_classification_mobilenetv1_2022apr_int8.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/image_classification_mobilenetv1_2022apr_int8.onnx', '<PATH>/image_classification_mobilenetv1_2022apr_int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "6561a1f9f1c5aa2e601a9cc2d68d0cab4267d3af57349c4c33233b3c852e0e72",
+      "tflite_max_abs": 89.66031646728516,
+      "duration_sec": 2.395326
+    },
+    {
+      "model": "inverse_11.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/inverse_11.onnx', '<PATH>/inverse_11.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "2ddafacaad52dc057613699a3760e632fd4e9b92f73028238cd8943aa9e4966a",
+      "tflite_max_abs": null,
+      "duration_sec": 0.696326
+    },
+    {
+      "model": "latest.opset17.head3_test2.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 2.432847
+    },
+    {
+      "model": "make_test_op/ops/Attention_torch2.10_23.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/Attention_torch2.10_23.onnx', '<PATH>/Attention_torch2.10_23.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "ee0228b12046f8756c82a09304c2186288543609c87b08dacbe3dbf7a658e09b",
+      "tflite_max_abs": null,
+      "duration_sec": 0.674787
+    },
+    {
+      "model": "make_test_op/ops/AvgPool3D.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: Input tensor 2 lacks data",
+      "error_signature_sha256": "5678bfe47bfcedd9622b3ee0ecb61f9a39f8ceff8e2a4a1db71a75ad43497f2d",
+      "tflite_max_abs": null,
+      "duration_sec": 2.881663
+    },
+    {
+      "model": "make_test_op/ops/BatchNorm1D_15.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.133133
+    },
+    {
+      "model": "make_test_op/ops/BatchNorm2D_15.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.144118
+    },
+    {
+      "model": "make_test_op/ops/BatchNorm3D_15.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.14561
+    },
+    {
+      "model": "make_test_op/ops/DFT_17.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/DFT_17.onnx', '<PATH>/DFT_17.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "0f01336854294233241fa562225802323b5b5ac6b3ebbc95c51d10c2fff3ff4c",
+      "tflite_max_abs": null,
+      "duration_sec": 0.672141
+    },
+    {
+      "model": "make_test_op/ops/DFT_17_irfft.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/DFT_17_irfft.onnx', '<PATH>/DFT_17_irfft.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "0fa571046dcf5ca594eaed36ea4724938beeb3180aa40760f50e3adaa6f3cd29",
+      "tflite_max_abs": null,
+      "duration_sec": 0.661701
+    },
+    {
+      "model": "make_test_op/ops/DFT_17_onesided.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/DFT_17_onesided.onnx', '<PATH>/DFT_17_onesided.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "bf1affa0d2927f23c50b5319b9678c64f9c3550c030b76f60668ac0c51977fd2",
+      "tflite_max_abs": null,
+      "duration_sec": 0.709344
+    },
+    {
+      "model": "make_test_op/ops/DFT_20.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/DFT_20.onnx', '<PATH>/DFT_20.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "e8da360ffd7f7dcfeff9d221f74c916fd9ca80fcc31b419a6deaeb64748ed516",
+      "tflite_max_abs": null,
+      "duration_sec": 0.688328
+    },
+    {
+      "model": "make_test_op/ops/DFT_20_irfft.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/DFT_20_irfft.onnx', '<PATH>/DFT_20_irfft.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "137d188a480079f53b2d27696672cb82aad0c507e0d14c4f1a062974af28b0b1",
+      "tflite_max_abs": null,
+      "duration_sec": 0.667393
+    },
+    {
+      "model": "make_test_op/ops/DFT_20_onesided.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/DFT_20_onesided.onnx', '<PATH>/DFT_20_onesided.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "f5093f4346280a3cc4e934177a02949c3fde30f5cf124fd8325efb1189191d28",
+      "tflite_max_abs": null,
+      "duration_sec": 0.671459
+    },
+    {
+      "model": "make_test_op/ops/DeformConv_19.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.209455
+    },
+    {
+      "model": "make_test_op/ops/GroupNormalization_18.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/GroupNormalization_18.onnx', '<PATH>/GroupNormalization_18.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "6e6c60ad12dcc50e808671d4b45bec391bc2817f29e03e9e5b02e51082fe9ed8",
+      "tflite_max_abs": 0.9754325151443481,
+      "duration_sec": 1.634145
+    },
+    {
+      "model": "make_test_op/ops/If_p2_11.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.Fail: [ONNXRuntimeError] : 1 : FAIL : Node (wa/If) Op (If) [TypeInferenceError] Graph attribute inferencing failed: Type Error: Type (tensor(float)) of output arg (/SequenceConstruct_output_0) of node (/SequenceConstruct) does not match expected type (seq(tensor(float))).",
+      "error_signature_sha256": "301abe3a0e06cba4fc2d6ccce2b5614c85f032b5bab26a416f67280abd072fbf",
+      "tflite_max_abs": null,
+      "duration_sec": 1.438701
+    },
+    {
+      "model": "make_test_op/ops/Inverse_11.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.130996
+    },
+    {
+      "model": "make_test_op/ops/LSTM.tanh.bidirectional.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 1.169553
+    },
+    {
+      "model": "make_test_op/ops/LSTM_1layer_fixed.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.141462
+    },
+    {
+      "model": "make_test_op/ops/LayerNormalization2D_17.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/LayerNormalization2D_17_accuracy_comparison_report.json)",
+      "error_signature_sha256": "d13c52787bf0e4b994dfb99927f0128b3491f0cda010febf25378e93bd6a18ea",
+      "tflite_max_abs": 0.06391379237174988,
+      "duration_sec": 2.120692
+    },
+    {
+      "model": "make_test_op/ops/Loop_1_16.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because ONNX graph validation failed in ONNX Runtime (topological order issue). source=flatbuffer_direct target=float32",
+      "error_signature_sha256": "f520b28d4b025834dacc97c0c39c78740f977618c54631634dddeec0752da35d",
+      "tflite_max_abs": null,
+      "duration_sec": 1.793141
+    },
+    {
+      "model": "make_test_op/ops/Loop_3_16.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because ONNX graph validation failed in ONNX Runtime (topological order issue). source=flatbuffer_direct target=float32",
+      "error_signature_sha256": "f520b28d4b025834dacc97c0c39c78740f977618c54631634dddeec0752da35d",
+      "tflite_max_abs": null,
+      "duration_sec": 1.887393
+    },
+    {
+      "model": "make_test_op/ops/STFT_17.onnx",
+      "classification": "timeout",
+      "reason": "timeout_after_120s",
+      "error_signature": "timeout | timeout_after_120s",
+      "error_signature_sha256": "900507a79b288b54d0fd7c95ef86726eea7a3c52c96cfd8c1dd6d1509bfbe56c",
+      "tflite_max_abs": null,
+      "duration_sec": 120.896149
+    },
+    {
+      "model": "make_test_op/ops/Squeeze_var_13.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.149267
+    },
+    {
+      "model": "make_test_op/ops/StringNormalizer_model_monday_casesensintive_nochangecase.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | WARNING: ONNX/TFLite output check failed. source=flatbuffer_direct target=float32 reason=Array can't be memory-mapped: Python objects in dtype.",
+      "error_signature_sha256": "87e96e62f469ab292f32ac3a32c84dbd568dc38a766c1954364b21a9a491ee57",
+      "tflite_max_abs": null,
+      "duration_sec": 1.476355
+    },
+    {
+      "model": "make_test_op/ops/StringNormalizer_strnorm_model_monday_casesensintive_lower.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.126404
+    },
+    {
+      "model": "make_test_op/ops/StringNormalizer_strnorm_model_monday_casesensintive_upper.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.162416
+    },
+    {
+      "model": "make_test_op/ops/StringNormalizer_strnorm_model_monday_empty_output.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.137609
+    },
+    {
+      "model": "make_test_op/ops/StringNormalizer_strnorm_model_monday_insensintive_upper_twodim.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.153151
+    },
+    {
+      "model": "make_test_op/ops/StringNormalizer_strnorm_model_nostopwords_nochangecase.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | WARNING: ONNX/TFLite output check failed. source=flatbuffer_direct target=float32 reason=Array can't be memory-mapped: Python objects in dtype.",
+      "error_signature_sha256": "87e96e62f469ab292f32ac3a32c84dbd568dc38a766c1954364b21a9a491ee57",
+      "tflite_max_abs": null,
+      "duration_sec": 1.754708
+    },
+    {
+      "model": "make_test_op/ops/Unsqueeze_var_13.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.181726
+    },
+    {
+      "model": "matmul_model.uint8.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.InvalidGraph: [ONNXRuntimeError] : 10 : INVALID_GRAPH : This is an invalid model. Type Error: Type 'tensor(uint8)' of input parameter (onnx____MatMul_0) of operator (MatMul) in node (wa/MatMul) is invalid.",
+      "error_signature_sha256": "47d2a196979cd9f5c3221700d6a81d8e23283cd8c720f551a946768229b22d89",
+      "tflite_max_abs": null,
+      "duration_sec": 1.782164
+    },
+    {
+      "model": "model__modified.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/model__modified_accuracy_comparison_report.json)",
+      "error_signature_sha256": "cd9f3e63c048aea2aa95dcbf9485599f87b21206a50fb9bef6fcfbf6ba10f663",
+      "tflite_max_abs": 4.513373374938965,
+      "duration_sec": 2.138338
+    },
+    {
+      "model": "optional.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.InvalidGraph: [ONNXRuntimeError] : 10 : INVALID_GRAPH : This is an invalid model. Type Error: Type 'tensor(float)' of input parameter (x) of operator (OptionalHasElement) in node (wa/OptionalHasElement) is invalid.",
+      "error_signature_sha256": "ff429d346b776526ed5e373dac823480b7084ff2d5a56324dbb74828d16d48d5",
+      "tflite_max_abs": null,
+      "duration_sec": 1.408893
+    },
+    {
+      "model": "recognizer_japanese_g2.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 2.167456
+    },
+    {
+      "model": "silero_vad (1).onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | NotImplementedError: Concat input dtypes must be compatible in flatbuffer_direct. op=If_0_then_branch__Inline_0__/decoder/rnn_1/Concat input_dtypes=['INT32', 'FLOAT32'] output_dtype=INT32",
+      "error_signature_sha256": "36b9eebd899f487f9873bfbba36fd7e230c40e8e235ef012e5b67fb6ab9ccb11",
+      "tflite_max_abs": null,
+      "duration_sec": 1.389745
+    },
+    {
+      "model": "silero_vad.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 5.246049
+    },
+    {
+      "model": "string_normalizer_11.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.16331
+    },
+    {
+      "model": "sym_shape_infer_temp.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.Fail: [ONNXRuntimeError] : 1 : FAIL : Non-zero status code returned while running Conv node. Name:'y_nchwc' Status Message: X num_dims does not match W num_dims. X: {} W: {8,3,3,3}",
+      "error_signature_sha256": "b1520bf516733ae1022f90c3ed0dc2dc692e98caf8e98f3eb75de8d9bdcbefa7",
+      "tflite_max_abs": null,
+      "duration_sec": 1.429863
+    },
+    {
+      "model": "text_recognition_CRNN_EN_2021sep.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 3.226349
+    },
+    {
+      "model": "text_recognition_CRNN_EN_2023feb_fp16.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 2.192903
+    },
+    {
+      "model": "topk_test_model.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: Error in execution: Non-zero status code returned while running TopK node. Name:'sng_TopK_0' Status Message: /onnxruntime_src/onnxruntime/core/framework/execution_frame.cc:160 onnxruntime::common::Status onnxruntime::IExecutionFrame::GetOrCreateNodeOutputMLValue(int, int, const onnxruntime::TensorShape*, OrtValue*&, const onnxruntime::Node&) shape && tensor.Shape() == *shape was false. OrtValue shape verification failed. Current shape:{1,1250} Requested shape:{1,0}",
+      "error_signature_sha256": "f0f86a0e2249123716ccc26761b5c9fb6caf224d4ab3fd3dd25d3ea0f0d45acf",
+      "tflite_max_abs": null,
+      "duration_sec": 2.793173
+    },
+    {
+      "model": "torch_lstm.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 1.173921
+    },
+    {
+      "model": "zfnet512-12-int8.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/zfnet512-12-int8.onnx', '<PATH>/zfnet512-12-int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "b98ba096c5b687ed2461269405f49f8965cde4572332858bc72e9a2f476c064a",
+      "tflite_max_abs": 0.003009278327226639,
+      "duration_sec": 7.426448
+    }
+  ]
+}

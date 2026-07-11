@@ -60,3 +60,11 @@ Use the fixed order Tier 0 through Tier 5. Do not introduce a process pool or
 parallel model runner. Every successful baseline model must remain successful;
 accuracy reports must retain their existing stricter judgement and every
 comparable float output must remain below a maximum absolute error of `1e-1`.
+
+### Recorded Tier 0 baseline
+
+The recursive Tier 0 corpus at commit `c4f3b7a` contains 190 models. Its
+managed result is `docs/baselines/flatbuffer_direct_tier0_c4f3b7a.json`:
+137 passed, 10 conversion errors, 1 timeout, 6 accuracy failures, and 36
+missing accuracy reports. The median per-model duration was 2.165 seconds.
+Failures are fixed by normalized signature; local run artifacts remain outside Git.

@@ -100,6 +100,65 @@ def normalize_axis_for_rank(*, axis: int, rank: int, node: Any) -> int:
     return normalized
 
 
+def is_unknown_rank_placeholder_tensor(ctx: Any, tensor_name: str) -> bool:
+    shape = [int(value) for value in list(ctx.get_tensor_shape(tensor_name))]
+    if len(shape) == 0 or not all(int(value) == 1 for value in shape):
+        return False
+    tensor = ctx.model_ir.tensors.get(str(tensor_name))
+    if tensor is not None:
+        signature = (
+            [int(value) for value in list(tensor.shape_signature)]
+            if tensor.shape_signature is not None
+            else list(shape)
+        )
+        if len(signature) != len(shape):
+            return False
+        if any(int(value) < 0 for value in signature):
+            return True
+        if len(shape) == 1 and int(signature[0]) == 1:
+            raw_shape = getattr(ctx, "shape_map", {}).get(str(tensor_name))
+            if raw_shape is None:
+                return True
+            if isinstance(raw_shape, (list, tuple)) and len(raw_shape) == 0:
+                return True
+        return False
+    raw_shape = getattr(ctx, "shape_map", {}).get(str(tensor_name))
+    if raw_shape is None or not isinstance(raw_shape, (list, tuple)):
+        return True
+    if len(raw_shape) == 0:
+        return True
+    return any(
+        not isinstance(dim, (int, np.integer)) or int(dim) <= 0
+        for dim in raw_shape
+    )
+
+
+def tensor_shape_with_signature(ctx: Any, tensor_name: str) -> List[int]:
+    shape = [int(value) for value in list(ctx.get_tensor_shape(tensor_name))]
+    tensor = ctx.model_ir.tensors.get(str(tensor_name))
+    if tensor is not None and tensor.shape_signature is not None:
+        signature = [int(value) for value in list(tensor.shape_signature)]
+    else:
+        raw_shape = getattr(ctx, "shape_map", {}).get(str(tensor_name))
+        if isinstance(raw_shape, (list, tuple)):
+            signature = [
+                int(dim)
+                if isinstance(dim, (int, np.integer)) and int(dim) >= 0
+                else -1
+                for dim in raw_shape
+            ]
+        else:
+            signature = list(shape)
+    if len(signature) != len(shape):
+        return list(shape)
+    return [
+        int(signature[index])
+        if int(signature[index]) < 0
+        else int(shape[index])
+        for index in range(len(shape))
+    ]
+
+
 def get_original_node_inputs(node: Any, ctx: Any) -> List[str]:
     onnx_model = getattr(ctx, "onnx_model", None)
     if onnx_model is None:
