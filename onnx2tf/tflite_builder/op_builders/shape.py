@@ -6214,6 +6214,9 @@ def build_flatten_op(node: Any, ctx: Any) -> None:
             options={
                 "newShape": [int(v) for v in reshape_options_shape],
                 "onnxFlattenAxis": int(axis),
+                "onnxFlattenInputShape": [
+                    int(v) for v in input_shape_signature
+                ],
             },
         )
     )

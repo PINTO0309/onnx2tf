@@ -589,6 +589,10 @@ def optimize_redundant_transpose_operators(
             if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.outputs) != 1 or len(pre_op.inputs) < 1:
                 continue
             bridge_name = str(pre_op.outputs[0])
+            if bool(preserve_model_outputs) and bridge_name in set(
+                str(v) for v in model_ir.outputs
+            ):
+                continue
             bridge_users = [int(v) for v in consumers.get(bridge_name, [])]
             if len(bridge_users) != 1:
                 continue

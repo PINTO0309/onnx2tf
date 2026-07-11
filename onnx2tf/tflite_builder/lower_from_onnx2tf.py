@@ -3466,6 +3466,34 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                         existing_flatten_new_shape = []
                     input_shape = [int(v) for v in list(input_tensor.shape)]
                     input_rank = len(input_shape)
+                    semantic_input_shape = op.options.get(
+                        "onnxFlattenInputShape",
+                        [],
+                    )
+                    try:
+                        semantic_input_shape = [
+                            int(v)
+                            for v in np.asarray(
+                                semantic_input_shape
+                            ).reshape(-1).tolist()
+                        ]
+                    except Exception:
+                        semantic_input_shape = []
+                    if not (
+                        len(semantic_input_shape) == input_rank
+                        and _is_fully_known_positive_shape(
+                            semantic_input_shape
+                        )
+                        and _is_fully_known_positive_shape(input_shape)
+                        and int(np.prod(semantic_input_shape, dtype=np.int64))
+                        == int(np.prod(input_shape, dtype=np.int64))
+                    ):
+                        semantic_input_shape = list(input_shape)
+                    flatten_signature_basis = (
+                        list(semantic_input_shape)
+                        if semantic_input_shape != input_shape
+                        else list(input_signature)
+                    )
                     flatten_axis = int(op.options.get("onnxFlattenAxis", 1))
                     if flatten_axis < 0:
                         flatten_axis += input_rank
@@ -3480,19 +3508,33 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                             return int(product)
 
                         flatten_shape = [
-                            _flatten_product(input_shape[:flatten_axis]),
-                            _flatten_product(input_shape[flatten_axis:]),
+                            _flatten_product(
+                                semantic_input_shape[:flatten_axis]
+                            ),
+                            _flatten_product(
+                                semantic_input_shape[flatten_axis:]
+                            ),
                         ]
                         flatten_signature = [
                             (
                                 -1
-                                if any(int(v) < 0 for v in input_signature[:flatten_axis])
-                                else _flatten_product(input_signature[:flatten_axis])
+                                if any(
+                                    int(v) < 0
+                                    for v in flatten_signature_basis[:flatten_axis]
+                                )
+                                else _flatten_product(
+                                    flatten_signature_basis[:flatten_axis]
+                                )
                             ),
                             (
                                 -1
-                                if any(int(v) < 0 for v in input_signature[flatten_axis:])
-                                else _flatten_product(input_signature[flatten_axis:])
+                                if any(
+                                    int(v) < 0
+                                    for v in flatten_signature_basis[flatten_axis:]
+                                )
+                                else _flatten_product(
+                                    flatten_signature_basis[flatten_axis:]
+                                )
                             ),
                         ]
                         op.options["newShape"] = (
@@ -68816,6 +68858,13 @@ def _optimize_layout_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
                 bridge_tensor = str(op.outputs[0])
                 bridge_users = [int(v) for v in consumers.get(bridge_tensor, [])]
                 if len(bridge_users) != 1:
+                    continue
+                # The first transpose may be observable independently from the
+                # downstream chain (for example ONNX NonZero exposes [rank, N]
+                # while a following Transpose consumes it as [N, rank]).  It is
+                # valid to compose the pair for the consumer only when deleting
+                # the first operator cannot orphan a public output tensor.
+                if bridge_tensor in set(str(v) for v in model_ir.outputs):
                     continue
 
                 next_op_idx = int(bridge_users[0])

@@ -1878,9 +1878,8 @@
     {
       "tier": 2,
       "model": "tmp_alike_debug.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "f506f17b72445e10128165005de2b877718518b2294c79554b07be2a1819cbb7"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 2.4020671844482422e-05
     },
     {
       "tier": 2,

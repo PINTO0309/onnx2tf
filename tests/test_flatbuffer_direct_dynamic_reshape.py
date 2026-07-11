@@ -177,3 +177,49 @@ def test_restores_placeholder_matmul_flatten_after_rank_recovery() -> None:
     assert model_ir.operators[0].inputs == ["x", "weights"]
     assert model_ir.tensors["y"].shape == [1, 56, 56, 96]
     assert model_ir.tensors["y"].shape_signature == [-1, 56, 56, 96]
+
+
+def test_flatten_reconciliation_preserves_semantic_axis_after_layout_change() -> None:
+    model_ir = ModelIR("semantic_flatten_axis")
+    model_ir.inputs = ["x_nchw"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 1, 192, 320],
+        shape_signature=[1, 1, 192, 320],
+    )
+    model_ir.tensors["flatten_shape"] = TensorIR(
+        name="flatten_shape",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([192, 320], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[192, 320],
+        shape_signature=[192, 320],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            "RESHAPE",
+            ["x_nchw", "flatten_shape"],
+            ["y"],
+            {
+                "newShape": [192, 320],
+                "onnxFlattenAxis": 3,
+                "onnxFlattenInputShape": [1, 192, 320, 1],
+            },
+        )
+    ]
+
+    _reconcile_static_tensor_shapes(model_ir)
+
+    assert model_ir.tensors["y"].shape == [61440, 1]
+    assert model_ir.tensors["y"].shape_signature == [61440, 1]
+    assert np.asarray(model_ir.tensors["flatten_shape"].data).tolist() == [
+        61440,
+        1,
+    ]

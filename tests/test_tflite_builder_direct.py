@@ -2653,6 +2653,56 @@ def test_optimize_redundant_transpose_operators_keeps_output_name_boundary() -> 
     assert np.asarray(perm_2.data).tolist() == [0, 1, 2, 3]
 
 
+def test_optimize_redundant_transpose_operators_keeps_bridge_output_boundary() -> None:
+    model_ir = ModelIR("optimize_transpose_bridge_output_boundary_test")
+    model_ir.inputs = ["where_indices"]
+    model_ir.outputs = ["nonzero_rank_first", "rank_last"]
+    for name, signature in (
+        ("where_indices", [-1, 1]),
+        ("nonzero_rank_first", [1, -1]),
+        ("rank_last", [-1, 1]),
+    ):
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype="INT64",
+            shape=[1, 1],
+            shape_signature=signature,
+        )
+    for name in ("perm_1", "perm_2"):
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype="INT32",
+            shape=[2],
+            shape_signature=[2],
+            data=np.asarray([1, 0], dtype=np.int32),
+        )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["where_indices", "perm_1"],
+            outputs=["nonzero_rank_first"],
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["nonzero_rank_first", "perm_2"],
+            outputs=["rank_last"],
+        ),
+    ]
+
+    stats = optimize_redundant_transpose_operators(
+        model_ir,
+        preserve_model_outputs=True,
+    )
+
+    assert int(stats.get("removed_inverse_transpose_pairs", 0)) == 0
+    assert int(stats.get("composed_consecutive_transpose_pairs", 0)) == 0
+    assert len(model_ir.operators) == 2
+    assert [list(op.outputs) for op in model_ir.operators] == [
+        ["nonzero_rank_first"],
+        ["rank_last"],
+    ]
+
+
 def test_optimize_redundant_transpose_operators_composes_consecutive_pair() -> None:
     model_ir = ModelIR("optimize_transpose_compose_test")
     model_ir.inputs = ["x"]
@@ -8264,6 +8314,65 @@ def test_flatbuffer_direct_layout_transpose_chain_removes_inverse_fanout_branch(
     assert op_types.count("TRANSPOSE") == 1
     z_relu = next(op for op in model_ir.operators if str(op.op_type) == "RELU" and list(op.outputs) == ["z"])
     assert list(z_relu.inputs) == ["x"]
+
+
+def test_flatbuffer_direct_layout_transpose_chain_preserves_observable_bridge() -> None:
+    model_ir = ModelIR("layout_transpose_observable_bridge_test")
+    model_ir.inputs = ["condition_indices"]
+    model_ir.outputs = ["nonzero_rank_first", "indices_rank_last"]
+    model_ir.tensors["condition_indices"] = TensorIR(
+        name="condition_indices",
+        dtype="INT64",
+        shape=[1, 1],
+        shape_signature=[-1, 1],
+    )
+    model_ir.tensors["perm_rank_first"] = TensorIR(
+        name="perm_rank_first",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([1, 0], dtype=np.int32),
+    )
+    model_ir.tensors["perm_rank_last"] = TensorIR(
+        name="perm_rank_last",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([1, 0], dtype=np.int32),
+    )
+    model_ir.tensors["nonzero_rank_first"] = TensorIR(
+        name="nonzero_rank_first",
+        dtype="INT64",
+        shape=[1, 1],
+        shape_signature=[1, -1],
+    )
+    model_ir.tensors["indices_rank_last"] = TensorIR(
+        name="indices_rank_last",
+        dtype="INT64",
+        shape=[1, 1],
+        shape_signature=[-1, 1],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["condition_indices", "perm_rank_first"],
+            outputs=["nonzero_rank_first"],
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["nonzero_rank_first", "perm_rank_last"],
+            outputs=["indices_rank_last"],
+        ),
+    ]
+
+    stats = _optimize_layout_transpose_chains(model_ir)
+
+    assert stats["composed_consecutive_transpose_pairs"] == 0
+    assert len(model_ir.operators) == 2
+    assert [list(op.outputs) for op in model_ir.operators] == [
+        ["nonzero_rank_first"],
+        ["indices_rank_last"],
+    ]
 
 
 def test_flatbuffer_direct_qlinear_conv_filter_layout_is_ohwi() -> None:
