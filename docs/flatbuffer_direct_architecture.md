@@ -75,3 +75,8 @@ is `docs/baselines/flatbuffer_direct_tier0_root_32c3277.json`: 96 passed, 9
 conversion errors, 4 accuracy failures, 11 missing reports, and no timeouts.
 Its median duration was 2.281 seconds. All 120 classifications and normalized
 signatures match the same models in the recursive baseline.
+
+The root-only Tier 1 gate at commit `a1fd301` contains 86 models. The managed
+result is `docs/baselines/flatbuffer_direct_tier1_root_a1fd301.json`: 57
+passed, 5 conversion errors, 13 accuracy failures, 11 missing reports, and
+no timeouts. Median and maximum durations were 4.046 and 79.296 seconds.

@@ -1,0 +1,295 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "a1fd301",
+  "corpus_scope": "repository root only",
+  "models_sha256": "38a5c99fdc77064e58dc9bdee97515a9d15de9607451790ce7ba2aee56522c77",
+  "total_entries": 86,
+  "filters": {
+    "min_nodes": 50,
+    "max_nodes": 199,
+    "recursive": false,
+    "include_pytorch_artifacts": false
+  },
+  "counts": {
+    "pass": 57,
+    "skipped_model": 0,
+    "missing_model": 0,
+    "conversion_error": 5,
+    "timeout": 0,
+    "tflite_fail": 13,
+    "pytorch_fail": 0,
+    "both_fail": 0,
+    "missing_tflite_report": 11,
+    "missing_pytorch_report": 0,
+    "missing_both_reports": 0
+  },
+  "strict_fail_count": 29,
+  "timing": {
+    "total_duration_sec": 825.176698,
+    "median_duration_sec": 4.04556,
+    "max_duration_sec": 79.296171
+  },
+  "failed_models": [
+    {
+      "model": "InSPyReNet_latest.opset17.head1.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 3.902077
+    },
+    {
+      "model": "anime-gan-v2.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/anime-gan-v2_accuracy_comparison_report.json)",
+      "error_signature_sha256": "c7a4a7ef957c2f5fced25ed644be05c06065f4a3e5ad7e5b16ac2b15a4e0ae5a",
+      "tflite_max_abs": 1.4335134029388428,
+      "duration_sec": 77.841815
+    },
+    {
+      "model": "anime-gan-v2_org.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/anime-gan-v2_org_accuracy_comparison_report.json)",
+      "error_signature_sha256": "911e65713fc098e616df8438b9f112f8b156baadda27f7454114332067788bb2",
+      "tflite_max_abs": 1.4335134029388428,
+      "duration_sec": 75.834724
+    },
+    {
+      "model": "bodypix_mobilenet050_stride8_1x3x128x160.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/bodypix_mobilenet050_stride8_1x3x128x160_accuracy_comparison_report.json)",
+      "error_signature_sha256": "b4d7f169fdad2c0ca7fb96e442a60079b7f83268b368e980c46293039298604d",
+      "tflite_max_abs": 541165879138.0,
+      "duration_sec": 4.124343
+    },
+    {
+      "model": "efficientnet-lite4-11-int8.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/efficientnet-lite4-11-int8.onnx', '<PATH>/efficientnet-lite4-11-int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "dce65798acf0e7e25f223874b2d81b2b78289e84041bbcd84ec21dbcfc30f10b",
+      "tflite_max_abs": 0.016077397856861353,
+      "duration_sec": 4.103836
+    },
+    {
+      "model": "exp28_lstm_binary_final.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 1.316108
+    },
+    {
+      "model": "face_blendshapes.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/conv.cc:353 input_channel % filter_input_channel != 0 (1 != 0)Node number 159 (CONV_2D) failed to prepare.",
+      "error_signature_sha256": "d7a74056e41605cee64f29fa03eac381a4fb907394d4893a3148579d13e01fcd",
+      "tflite_max_abs": null,
+      "duration_sec": 2.460071
+    },
+    {
+      "model": "face_detection_yunet_2023mar_int8.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/face_detection_yunet_2023mar_int8.onnx', '<PATH>/face_detection_yunet_2023mar_int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "ac1e917ab5589214444eb1040a2f5ae35b3cab4d0a9d5e90132d2bf5435c82b6",
+      "tflite_max_abs": 0.8446110486984253,
+      "duration_sec": 3.549728
+    },
+    {
+      "model": "face_paint_512_v2_0.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/face_paint_512_v2_0_accuracy_comparison_report.json)",
+      "error_signature_sha256": "bad0779487a6db22f258daf4dbab703332826625058381e723bcdc3a755cfd4e",
+      "tflite_max_abs": 1.4335134029388428,
+      "duration_sec": 79.296171
+    },
+    {
+      "model": "face_recognition_sface_2021dec_int8.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/reshape.cc:94 num_input_elements != num_output_elements (50176 != 1)Node number 172 (RESHAPE) failed to prepare.",
+      "error_signature_sha256": "1ab60f7b4b02885af0f49ff6ca374185c05899e2bc852bdf04511d211da34518",
+      "tflite_max_abs": null,
+      "duration_sec": 2.343051
+    },
+    {
+      "model": "facial_expression_recognition_mobilefacenet_2022july_int8.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/facial_expression_recognition_mobilefacenet_2022july_int8.onnx', '<PATH>/facial_expression_recognition_mobilefacenet_2022july_int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "09ce0641ace79c4c6b64aad599bfe19c4e055e42c7d88219ab8d481323bbf858",
+      "tflite_max_abs": null,
+      "duration_sec": 1.159047
+    },
+    {
+      "model": "fcn-resnet50-12-int8.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/fcn-resnet50-12-int8.onnx', '<PATH>/fcn-resnet50-12-int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "d80563fa73220bba115c51af9919e2c755776fb969f60e44dcaed98f2b2c12cc",
+      "tflite_max_abs": 1.5115007311105728,
+      "duration_sec": 5.064241
+    },
+    {
+      "model": "googlenet-12-int8.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/googlenet-12-int8.onnx', '<PATH>/googlenet-12-int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "6a69f94d6f8e7b6c163254abca9b6bdabead348198b4beb45ce49c32fc385513",
+      "tflite_max_abs": 0.013523593544960022,
+      "duration_sec": 3.024467
+    },
+    {
+      "model": "handpose_estimation_mediapipe_2023feb_int8.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/reshape.cc:94 num_input_elements != num_output_elements (32928 != 672)Node number 68 (RESHAPE) failed to prepare.",
+      "error_signature_sha256": "7d9d0a3e26a9a7428214ec41c5740760a736b2200db31ac04217a19e209449e9",
+      "tflite_max_abs": null,
+      "duration_sec": 1.825585
+    },
+    {
+      "model": "human_segmentation_pphumanseg_2023mar_int8.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/human_segmentation_pphumanseg_2023mar_int8.onnx', '<PATH>/human_segmentation_pphumanseg_2023mar_int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "60ee78e5db3a5c92a16f46ab826539e87de3c8aa2d52ca3c06e18c6544208507",
+      "tflite_max_abs": 0.99609375,
+      "duration_sec": 2.897464
+    },
+    {
+      "model": "image_classification_ppresnet50_2022jan_int8.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | WARNING: ONNX/TFLite output check failed. source=flatbuffer_direct target=float32 reason=Evaluation output shape mismatch. name=save_infer_model/scale_0.tmp_0 onnx_shape=(1, 1000) tflite_shape=(49, 1000) reason=Evaluation output shape mismatch after layout alignment. onnx_shape=(1, 1000) tflite_shape=(49, 1000)",
+      "error_signature_sha256": "b11845bca06f32ee84235ddc8ea1973397856eca32c817a7af9f5e7cc6470d5a",
+      "tflite_max_abs": null,
+      "duration_sec": 4.001674
+    },
+    {
+      "model": "license_plate_detection_lpd_yunet_2023mar_int8.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/license_plate_detection_lpd_yunet_2023mar_int8.onnx', '<PATH>/license_plate_detection_lpd_yunet_2023mar_int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "ca07ef9220806a5c38b4df9f75bf24bf2c9dd9afeec841e5dc2c6058a16af929",
+      "tflite_max_abs": 1.0101327896118164,
+      "duration_sec": 2.896039
+    },
+    {
+      "model": "lstm_undefined_dim.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 2.090422
+    },
+    {
+      "model": "model_paint_v2_test.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/model_paint_v2_test_accuracy_comparison_report.json)",
+      "error_signature_sha256": "7363cb5deaa04e9ea5b1a764c21e821e3858a43484234d9cb8f5f6c035307156",
+      "tflite_max_abs": 1.4335134029388428,
+      "duration_sec": 79.206899
+    },
+    {
+      "model": "onnx_dense_optimized.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.InvalidGraph: [ONNXRuntimeError] : 10 : INVALID_GRAPH : This is an invalid model. In Node, (\"wa/GridSample\", GridSample, \"\", -1) : (\"wa/Reshape_14_output_0\": tensor(float),\"wa/Reshape_15_output_0\": tensor(float),) -> (\"wa/GridSample_output_0\",) , Error No Op registered for GridSample with domain_version of 10",
+      "error_signature_sha256": "59a44bb85b49e8a9432623a1508a7cb11acff7bdc53c19a38aaee91d7f0eadbc",
+      "tflite_max_abs": null,
+      "duration_sec": 1.953547
+    },
+    {
+      "model": "onnx_dense_optimized_org.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | onnxruntime.capi.onnxruntime_pybind11_state.InvalidGraph: [ONNXRuntimeError] : 10 : INVALID_GRAPH : This is an invalid model. In Node, (\"wa/GridSample\", GridSample, \"\", -1) : (\"wa/Reshape_14_output_0\": tensor(float),\"wa/Reshape_15_output_0\": tensor(float),) -> (\"wa/GridSample_output_0\",) , Error No Op registered for GridSample with domain_version of 10",
+      "error_signature_sha256": "59a44bb85b49e8a9432623a1508a7cb11acff7bdc53c19a38aaee91d7f0eadbc",
+      "tflite_max_abs": null,
+      "duration_sec": 2.716662
+    },
+    {
+      "model": "paddlepaddle_26_ocr.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 2.112321
+    },
+    {
+      "model": "person_reid_youtu_2021nov_int8.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/concatenation.cc:215 t->dims->data[d] != t0->dims->data[d] (1 != 16)Node number 79 (CONCATENATION) failed to prepare.",
+      "error_signature_sha256": "defc48f7d37f91ae2e35b3d1b7dbe1119a7242c2886e2b922555765b1a86f9c3",
+      "tflite_max_abs": null,
+      "duration_sec": 2.699407
+    },
+    {
+      "model": "res2net50_48w_2s_Opset16.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/conv.cc:353 input_channel % filter_input_channel != 0 (384 != 0)Node number 113 (CONV_2D) failed to prepare.",
+      "error_signature_sha256": "d920f2e3b6732fb34816377217974811c33e9d3fae09c56cb91f125663be58de",
+      "tflite_max_abs": null,
+      "duration_sec": 9.345036
+    },
+    {
+      "model": "shufflenet-v2-12.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: gather index out of boundsNode number 134 (GATHER) failed to invoke.",
+      "error_signature_sha256": "a8a7dd751be20d89eaefb1049d213270406b58ea4529c5c57b3d7ccabef906dd",
+      "tflite_max_abs": null,
+      "duration_sec": 3.256476
+    },
+    {
+      "model": "squeezenet1.0-12-int8.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/squeezenet1.0-12-int8.onnx', '<PATH>/squeezenet1.0-12-int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "a2e02e5bebdaa1cbff2d9412bf466cc76116d987e386ced5d43c7a51e2e8f516",
+      "tflite_max_abs": 0.1653465332929045,
+      "duration_sec": 2.329352
+    },
+    {
+      "model": "ssd_mobilenet_v1_12-int8.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/ssd_mobilenet_v1_12-int8.onnx', '<PATH>/ssd_mobilenet_v1_12-int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "e4f9628070ec6fbc8edb43fd0ad82ea3c47e8419c8e710414abfc26b4655385d",
+      "tflite_max_abs": null,
+      "duration_sec": 1.750896
+    },
+    {
+      "model": "text_recognition_CRNN_CN_2021nov_int8.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/text_recognition_CRNN_CN_2021nov_int8.onnx', '<PATH>/text_recognition_CRNN_CN_2021nov_int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "1c4872713c615a0c786b5bdd3928380c9a3720fa2d24aee60c4e6e664093f4bb",
+      "tflite_max_abs": null,
+      "duration_sec": 1.618236
+    },
+    {
+      "model": "version-RFB-320-int8.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/version-RFB-320-int8.onnx', '<PATH>/version-RFB-320-int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "c4f4571f021aaaa76b13509894837a7e6505c254f4e0f6f7f43b9434b317d4b6",
+      "tflite_max_abs": 0.21163245104253292,
+      "duration_sec": 2.264649
+    }
+  ]
+}
