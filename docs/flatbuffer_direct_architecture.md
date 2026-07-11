@@ -97,3 +97,9 @@ The root-only Tier 3 gate at commit `c838b42` contains 71 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier3_root_c838b42.json`: 22
 passed, 15 conversion errors, 17 timeouts, 1 accuracy failure, and 16 missing
 reports. Median and maximum durations were 17.248 and 120.662 seconds.
+
+The root-only Tier 4 gate at commit `0a8ee88` contains 30 models. The managed
+result is `docs/baselines/flatbuffer_direct_tier4_root_0a8ee88.json`: 12
+passed, 7 conversion errors, 4 timeouts, 2 accuracy failures, and 5 missing
+reports. Median and maximum durations were 28.100 and 121.826 seconds. All 12
+passing models remained below the required `1e-1` maximum absolute error.

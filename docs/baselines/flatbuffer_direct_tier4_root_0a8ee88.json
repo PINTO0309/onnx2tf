@@ -1,0 +1,196 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "0a8ee88",
+  "corpus_scope": "repository root only",
+  "models_sha256": "7436fd16e879948810d13d207a94a0e89faf1badf867a6e5ac396ef5f6def095",
+  "total_entries": 30,
+  "filters": {
+    "min_nodes": 1000,
+    "max_nodes": 1999,
+    "recursive": false,
+    "include_pytorch_artifacts": false
+  },
+  "counts": {
+    "pass": 12,
+    "skipped_model": 0,
+    "missing_model": 0,
+    "conversion_error": 7,
+    "timeout": 4,
+    "tflite_fail": 2,
+    "pytorch_fail": 0,
+    "both_fail": 0,
+    "missing_tflite_report": 5,
+    "missing_pytorch_report": 0,
+    "missing_both_reports": 0
+  },
+  "strict_fail_count": 18,
+  "timing": {
+    "total_duration_sec": 1390.211388,
+    "median_duration_sec": 28.099527,
+    "max_duration_sec": 121.82647
+  },
+  "failed_models": [
+    {
+      "model": "G_180000.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/reshape.cc:94 num_input_elements != num_output_elements (32768 != 256)Node number 2691 (RESHAPE) failed to prepare.",
+      "error_signature_sha256": "5a1003d04fddfcce184aafce8f741fa38052a756521662ff980dc6cc88164e2b",
+      "tflite_max_abs": null,
+      "duration_sec": 23.381182
+    },
+    {
+      "model": "LibreRFDETRn.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | NotImplementedError: GatherElements with dynamic gather-axis currently supports only non-axis dimensions with size=1. op=wa/model/transformer/GatherElements axis=1 dim=2 output_shape=[1, 1, 4] output_signature=[-1, -1, 4]",
+      "error_signature_sha256": "b8fe69ef2fa136740986618a7600dd231387a80c4ff0df962832afc5c8629731",
+      "tflite_max_abs": null,
+      "duration_sec": 7.856345
+    },
+    {
+      "model": "bertsquad-12-int8.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/bertsquad-12-int8.onnx', '<PATH>/bertsquad-12-int8.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "6ff24c95a66de18bc32f4c9ad1ab3d41d714213b5849f3fb3a156aa652896105",
+      "tflite_max_abs": 1.964650273323059,
+      "duration_sec": 61.630001
+    },
+    {
+      "model": "campp_vin.onnx",
+      "classification": "tflite_fail",
+      "reason": "tflite_fail",
+      "error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/campp_vin_accuracy_comparison_report.json)",
+      "error_signature_sha256": "2d3c830401e7367e1cbfcbf5f506f0e0bafbfbfe4470cd3ea7a3d8187fe51e44",
+      "tflite_max_abs": 11.07311725616455,
+      "duration_sec": 20.40588
+    },
+    {
+      "model": "crestereo_combined_iter2_240x320.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | NotImplementedError: Pad mode is not supported in flatbuffer_direct. op=init_Pad_3128 mode=edge",
+      "error_signature_sha256": "9547519385c17ae7e91d6ca1ab55bea1d1bca9767e6654e39008fe96750f43fa",
+      "tflite_max_abs": null,
+      "duration_sec": 6.555053
+    },
+    {
+      "model": "d3net_dnn_double_44.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: Given shapes, [1,44,32,96] and [1,1,1,32], are not broadcastable.Node number 127 (ADD) failed to prepare.",
+      "error_signature_sha256": "35871fcfe1b5dec06f3f2648a4432501e1816eee08b7452b13a98e0a99e3c0e5",
+      "tflite_max_abs": null,
+      "duration_sec": 25.491175
+    },
+    {
+      "model": "dpt_levit_224_224x224_.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/dpt_levit_224_224x224_.onnx', '<PATH>/dpt_levit_224_224x224_.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "355b403967a245a4f328c7b47e9308485d799840a9299771b1ad3b6ad4343672",
+      "tflite_max_abs": null,
+      "duration_sec": 8.196859
+    },
+    {
+      "model": "dpt_levit_224_224x224_org.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/dpt_levit_224_224x224_org.onnx', '<PATH>/dpt_levit_224_224x224_org.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "d085536caeef0937ab6ce5fca79a49c736465509bb8c0300745e44a061f60f12",
+      "tflite_max_abs": null,
+      "duration_sec": 8.749971
+    },
+    {
+      "model": "gmstereo-scale2-resumeflowthings-sceneflow-48020649_1x3x480x640_sim.onnx",
+      "classification": "timeout",
+      "reason": "timeout_after_120s",
+      "error_signature": "timeout | timeout_after_120s",
+      "error_signature_sha256": "900507a79b288b54d0fd7c95ef86726eea7a3c52c96cfd8c1dd6d1509bfbe56c",
+      "tflite_max_abs": null,
+      "duration_sec": 120.26023
+    },
+    {
+      "model": "hitnet_middlebury_d400.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/concatenation.cc:215 t->dims->data[d] != t0->dims->data[d] (10 != 8)Node number 50 (CONCATENATION) failed to prepare.",
+      "error_signature_sha256": "18041eadf7d978d7fba2534248a5904f28639dc30cb799e5c5454f50b586dab6",
+      "tflite_max_abs": null,
+      "duration_sec": 9.543672
+    },
+    {
+      "model": "image_segmentation_efficientsam_ti_2025april_int8.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 8.095961
+    },
+    {
+      "model": "latest.opset17_reshape.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | RuntimeError: flatbuffer_direct fast path failed.",
+      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1",
+      "tflite_max_abs": null,
+      "duration_sec": 66.381651
+    },
+    {
+      "model": "mirnet_180x320.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 20.171037
+    },
+    {
+      "model": "raft_stereo_iter10_1x3x192x320.onnx",
+      "classification": "timeout",
+      "reason": "timeout_after_120s",
+      "error_signature": "timeout | timeout_after_120s",
+      "error_signature_sha256": "900507a79b288b54d0fd7c95ef86726eea7a3c52c96cfd8c1dd6d1509bfbe56c",
+      "tflite_max_abs": null,
+      "duration_sec": 120.091681
+    },
+    {
+      "model": "sapiens-depth-0.3b.onnx",
+      "classification": "timeout",
+      "reason": "timeout_after_120s",
+      "error_signature": "timeout | timeout_after_120s",
+      "error_signature_sha256": "900507a79b288b54d0fd7c95ef86726eea7a3c52c96cfd8c1dd6d1509bfbe56c",
+      "tflite_max_abs": null,
+      "duration_sec": 121.82647
+    },
+    {
+      "model": "superpoint_lightglue_end2end_fused_cpu.onnx",
+      "classification": "conversion_error",
+      "reason": "onnx2tf_nonzero_exit",
+      "error_signature": "conversion_error | onnx2tf_nonzero_exit | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/superpoint_lightglue_end2end_fused_cpu.onnx', '<PATH>/superpoint_lightglue_end2end_fused_cpu.onnx']' returned non-zero exit status 1.",
+      "error_signature_sha256": "ea9721615de676c5191a7cb3eac96e495d5011c92792962bae5f70f2f05df152",
+      "tflite_max_abs": null,
+      "duration_sec": 4.156792
+    },
+    {
+      "model": "vision_encoder_uint8.onnx",
+      "classification": "timeout",
+      "reason": "timeout_after_120s",
+      "error_signature": "timeout | timeout_after_120s",
+      "error_signature_sha256": "900507a79b288b54d0fd7c95ef86726eea7a3c52c96cfd8c1dd6d1509bfbe56c",
+      "tflite_max_abs": null,
+      "duration_sec": 120.263675
+    },
+    {
+      "model": "wd-v1-4-moat-tagger-v2.onnx",
+      "classification": "missing_tflite_report",
+      "reason": "missing_tflite_report",
+      "error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "tflite_max_abs": null,
+      "duration_sec": 48.527342
+    }
+  ]
+}
