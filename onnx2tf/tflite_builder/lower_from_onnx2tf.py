@@ -58740,6 +58740,8 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
             dst_tensor = model_ir.tensors.get(dst_name, None)
             if src_tensor is None or dst_tensor is None:
                 continue
+            if bool(src_tensor.is_variable) or bool(dst_tensor.is_variable):
+                continue
 
             src_shape = [int(v) for v in list(src_tensor.shape)]
             dst_shape = [int(v) for v in list(dst_tensor.shape)]
@@ -58801,7 +58803,14 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
                 continue
 
             first_input_tensor = model_ir.tensors.get(first_input_name, None)
-            if first_input_tensor is None or not _is_fully_known_positive_shape(first_input_tensor.shape):
+            first_output_tensor = model_ir.tensors.get(first_output_name, None)
+            if (
+                first_input_tensor is None
+                or first_output_tensor is None
+                or bool(first_input_tensor.is_variable)
+                or bool(first_output_tensor.is_variable)
+                or not _is_fully_known_positive_shape(first_input_tensor.shape)
+            ):
                 continue
             first_input_shape = [int(v) for v in list(first_input_tensor.shape)]
             if len(first_input_shape) == 0:
@@ -58862,6 +58871,15 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
             first_output_name = str(first_op.outputs[0])
             if first_output_name in model_outputs:
                 continue
+            first_input_tensor = model_ir.tensors.get(first_input_name, None)
+            first_output_tensor = model_ir.tensors.get(first_output_name, None)
+            if (
+                first_input_tensor is None
+                or first_output_tensor is None
+                or bool(first_input_tensor.is_variable)
+                or bool(first_output_tensor.is_variable)
+            ):
+                continue
 
             first_users = [int(v) for v in consumers.get(first_output_name, [])]
             if len(first_users) != 1:
@@ -58880,7 +58898,6 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
 
             second_output_name = str(second_op.outputs[0])
 
-            first_input_tensor = model_ir.tensors.get(first_input_name, None)
             second_output_tensor = model_ir.tensors.get(second_output_name, None)
             if (
                 first_input_tensor is None

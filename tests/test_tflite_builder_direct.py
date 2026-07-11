@@ -28561,6 +28561,61 @@ def test_flatbuffer_direct_consecutive_reshape_passthrough_chains_fanout_bypass(
     assert list(model_ir.operators[2].inputs) == ["x", "shape_y"]
 
 
+def test_flatbuffer_direct_consecutive_reshape_preserves_mutable_state_boundary() -> None:
+    model_ir = ModelIR("consecutive_reshape_mutable_state_test")
+    model_ir.inputs = ["initial_state", "sequence"]
+    model_ir.outputs = ["final_state", "sequence_out"]
+    model_ir.tensors = {
+        "initial_state": TensorIR(name="initial_state", dtype="FLOAT32", shape=[1, 1, 2]),
+        "state_shape": TensorIR(
+            name="state_shape",
+            dtype="INT32",
+            shape=[2],
+            data=np.asarray([1, 2], dtype=np.int32),
+        ),
+        "state": TensorIR(
+            name="state",
+            dtype="FLOAT32",
+            shape=[1, 2],
+            is_variable=True,
+        ),
+        "sequence": TensorIR(name="sequence", dtype="FLOAT32", shape=[1, 1, 2]),
+        "sequence_out": TensorIR(name="sequence_out", dtype="FLOAT32", shape=[1, 1, 2]),
+        "final_shape": TensorIR(
+            name="final_shape",
+            dtype="INT32",
+            shape=[3],
+            data=np.asarray([1, 1, 2], dtype=np.int32),
+        ),
+        "final_state": TensorIR(name="final_state", dtype="FLOAT32", shape=[1, 1, 2]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["initial_state", "state_shape"],
+            outputs=["state"],
+            options={"newShape": [1, 2]},
+        ),
+        OperatorIR(
+            op_type="UNIDIRECTIONAL_SEQUENCE_LSTM",
+            inputs=["sequence", "state"],
+            outputs=["sequence_out"],
+        ),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["state", "final_shape"],
+            outputs=["final_state"],
+            options={"newShape": [1, 1, 2]},
+        ),
+    ]
+
+    stats = _optimize_consecutive_reshape_passthrough_chains(model_ir)
+
+    assert stats["rewritten_fanout_bypass_reshape_passthrough_chains"] == 0
+    final_reshape = next(op for op in model_ir.operators if "final_state" in op.outputs)
+    assert final_reshape.inputs[0] == "state"
+
+
 def test_flatbuffer_direct_consecutive_reshape_passthrough_chains_removed_after_static_minus_one_resolution() -> None:
     model_ir = ModelIR("consecutive_reshape_passthrough_static_minus_one_test")
     model_ir.inputs = ["x"]
