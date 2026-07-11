@@ -8,6 +8,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_nchw_concat_transpose_conv_axes,
     _repair_mixed_nhwc_inputs_for_nchw_concat,
     _repair_singleton_nhwc_conv_input_reshapes,
+    _repair_stale_nchw_to_nhwc_channelwise_binary_transposes,
     _repair_stale_nchw_to_nhwc_conv_input_transposes,
 )
 
@@ -205,6 +206,101 @@ def test_repair_adds_local_nchw_adapter_for_mixed_concat_input() -> None:
     assert adapter_name != "split_keep_nhwc"
     assert model_ir.tensors[adapter_name].shape == [1, 72, 64, 64]
     assert model_ir.tensors["stacked"].shape == [1, 144, 64, 64]
+
+
+def test_repair_removes_stale_transpose_before_channelwise_add() -> None:
+    model_ir = ModelIR("stale_batchnorm_add_adapter")
+    model_ir.inputs = ["mul_out_nhwc"]
+    model_ir.outputs = ["add_out"]
+    _tensor(model_ir, "mul_out_nhwc", [1, 96, 44, 32])
+    _tensor(model_ir, "bad_adapter", [1, 44, 32, 96])
+    _tensor(
+        model_ir,
+        "perm",
+        [4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    _tensor(
+        model_ir,
+        "bias",
+        [1, 1, 1, 32],
+        data=np.zeros((1, 1, 1, 32), dtype=np.float32),
+    )
+    _tensor(model_ir, "add_out", [1, 32, 96, 44])
+    model_ir.operators = [
+        OperatorIR(
+            "TRANSPOSE",
+            ["mul_out_nhwc", "perm"],
+            ["bad_adapter"],
+        ),
+        OperatorIR("ADD", ["bad_adapter", "bias"], ["add_out"]),
+    ]
+
+    stats = _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
+        model_ir
+    )
+
+    assert stats == {
+        "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": 1,
+    }
+    add = next(op for op in model_ir.operators if op.op_type == "ADD")
+    assert add.inputs[0] == "mul_out_nhwc"
+    assert model_ir.tensors["add_out"].shape == [1, 96, 44, 32]
+    assert "bad_adapter" not in model_ir.tensors
+
+
+def test_repair_removes_stale_transpose_before_nhwc_conv_residual() -> None:
+    model_ir = ModelIR("stale_residual_add_adapter")
+    model_ir.inputs = ["skip_nhwc", "conv_input"]
+    model_ir.outputs = ["add_out"]
+    _tensor(model_ir, "skip_nhwc", [1, 96, 44, 32])
+    _tensor(model_ir, "bad_adapter", [1, 44, 32, 96])
+    _tensor(
+        model_ir,
+        "perm",
+        [4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    _tensor(model_ir, "conv_input", [1, 96, 44, 32])
+    _tensor(
+        model_ir,
+        "filter",
+        [32, 1, 1, 32],
+        data=np.ones((32, 1, 1, 32), dtype=np.float32),
+    )
+    _tensor(
+        model_ir,
+        "bias",
+        [32],
+        data=np.zeros((32,), dtype=np.float32),
+    )
+    _tensor(model_ir, "conv_out", [1, 96, 44, 32])
+    _tensor(model_ir, "add_out", [1, 44, 32, 96])
+    model_ir.operators = [
+        OperatorIR(
+            "TRANSPOSE",
+            ["skip_nhwc", "perm"],
+            ["bad_adapter"],
+        ),
+        OperatorIR(
+            "CONV_2D",
+            ["conv_input", "filter", "bias"],
+            ["conv_out"],
+            {"padding": "SAME", "strideH": 1, "strideW": 1},
+        ),
+        OperatorIR("ADD", ["bad_adapter", "conv_out"], ["add_out"]),
+    ]
+
+    stats = _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
+        model_ir
+    )
+
+    assert stats == {
+        "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": 1,
+    }
+    add = next(op for op in model_ir.operators if op.op_type == "ADD")
+    assert add.inputs == ["skip_nhwc", "conv_out"]
+    assert model_ir.tensors["add_out"].shape == [1, 96, 44, 32]
 
 
 def test_repair_restores_nchw_concat_axis_before_conv_transpose() -> None:

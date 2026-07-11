@@ -67925,6 +67925,137 @@ def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, in
     return {"repaired_mixed_nhwc_inputs_for_nchw_concat": int(repaired)}
 
 
+def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """Bypass stale layout adapters before channel-last binary constants.
+
+    Late NHWC propagation can leave the data tensor of a decomposed
+    BatchNormalization already channel-last while a later binary-layout pass
+    inserts another NCHW->NHWC transpose. The channel-last constant provides
+    an exact guard: its final dimension must match the source final dimension
+    and must not match the adapter final dimension.
+    """
+
+    repaired = 0
+    binary_ops = {"ADD", "MUL", "SUB", "DIV", "MAXIMUM", "MINIMUM"}
+    perm_nchw_to_nhwc = [0, 2, 3, 1]
+    while True:
+        producers = _build_tensor_producer_map(model_ir)
+        consumers = _build_tensor_consumer_map(model_ir)
+        changed = False
+        for binary_idx, binary_op in enumerate(model_ir.operators):
+            if (
+                str(binary_op.op_type) not in binary_ops
+                or len(binary_op.inputs) != 2
+                or len(binary_op.outputs) != 1
+            ):
+                continue
+            for data_input_idx, const_input_idx in ((0, 1), (1, 0)):
+                adapter_output_name = str(binary_op.inputs[data_input_idx])
+                adapter_idx = producers.get(adapter_output_name, None)
+                if adapter_idx is None:
+                    continue
+                adapter_op = model_ir.operators[int(adapter_idx)]
+                if (
+                    str(adapter_op.op_type) != "TRANSPOSE"
+                    or len(adapter_op.inputs) < 2
+                    or len(adapter_op.outputs) != 1
+                    or _read_transpose_perm(model_ir, adapter_op)
+                    != perm_nchw_to_nhwc
+                    or adapter_output_name in model_ir.outputs
+                    or [
+                        int(v)
+                        for v in consumers.get(adapter_output_name, [])
+                    ]
+                    != [int(binary_idx)]
+                ):
+                    continue
+
+                source_name = str(adapter_op.inputs[0])
+                const_name = str(binary_op.inputs[const_input_idx])
+                source_tensor = model_ir.tensors.get(source_name, None)
+                adapter_tensor = model_ir.tensors.get(adapter_output_name, None)
+                const_tensor = model_ir.tensors.get(const_name, None)
+                output_tensor = model_ir.tensors.get(
+                    str(binary_op.outputs[0]),
+                    None,
+                )
+                if any(
+                    tensor is None
+                    for tensor in (
+                        source_tensor,
+                        adapter_tensor,
+                        const_tensor,
+                        output_tensor,
+                    )
+                ):
+                    continue
+                source_shape = [int(v) for v in list(source_tensor.shape)]
+                adapter_shape = [int(v) for v in list(adapter_tensor.shape)]
+                const_shape = [int(v) for v in list(const_tensor.shape)]
+                channelwise_const_matches = (
+                    len(const_shape) == 4
+                    and const_shape[:3] == [1, 1, 1]
+                    and int(const_shape[3]) > 1
+                    and int(source_shape[3]) == int(const_shape[3])
+                    and int(adapter_shape[3]) != int(const_shape[3])
+                )
+                peer_producer_idx = producers.get(const_name, None)
+                peer_producer_type = (
+                    str(
+                        model_ir.operators[int(peer_producer_idx)].op_type
+                    )
+                    if peer_producer_idx is not None
+                    else ""
+                )
+                nhwc_peer_matches = (
+                    len(const_shape) == 4
+                    and source_shape == const_shape
+                    and adapter_shape != const_shape
+                    and peer_producer_type
+                    in {"CONV_2D", "DEPTHWISE_CONV_2D", "TRANSPOSE_CONV"}
+                )
+                if (
+                    len(source_shape) != 4
+                    or len(adapter_shape) != 4
+                    or not (
+                        channelwise_const_matches or nhwc_peer_matches
+                    )
+                ):
+                    continue
+
+                updated_inputs = [str(v) for v in list(binary_op.inputs)]
+                updated_inputs[data_input_idx] = source_name
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=binary_op,
+                    new_inputs=updated_inputs,
+                )
+                source_signature = (
+                    [int(v) for v in list(source_tensor.shape_signature)]
+                    if source_tensor.shape_signature is not None
+                    else list(source_shape)
+                )
+                output_tensor.shape = list(source_shape)
+                output_tensor.shape_signature = list(source_signature)
+                del model_ir.operators[int(adapter_idx)]
+                repaired += 1
+                changed = True
+                break
+            if changed:
+                break
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {
+        "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": int(
+            repaired
+        ),
+    }
+
+
 def _optimize_nhwc_prefix_qlinear_silu_chains(model_ir: ModelIR) -> Dict[str, int]:
     """
     Propagate NHWC through early QLinear SiLU chains and remove unnecessary
@@ -77060,6 +77191,18 @@ def lower_onnx_to_ir(
             )
         ) > 0:
             _reconcile_static_tensor_shapes(fallback_ir)
+        fallback_binary_layout_stats = (
+            _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
+                fallback_ir
+            )
+        )
+        if int(
+            fallback_binary_layout_stats.get(
+                "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes",
+                0,
+            )
+        ) > 0:
+            _reconcile_static_tensor_shapes(fallback_ir)
         _topologically_sort_operators(fallback_ir)
         fallback_layout_problems = validate_model_ir_layout_annotations(fallback_ir)
         if len(fallback_layout_problems) > 0:
@@ -77080,6 +77223,15 @@ def lower_onnx_to_ir(
         ) > 0:
             _reconcile_static_tensor_shapes(fallback_ir)
             _topologically_sort_operators(fallback_ir)
+        for _ in range(3):
+            _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
+                fallback_ir
+            )
+            _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
+                fallback_ir
+            )
+            _reconcile_static_tensor_shapes(fallback_ir)
+        _topologically_sort_operators(fallback_ir)
         return fallback_ir
 
     _rewrite_constant_divisors_to_multiplicative_reciprocals(model_ir)
@@ -77208,6 +77360,17 @@ def lower_onnx_to_ir(
     ) > 0:
         _reconcile_static_tensor_shapes(model_ir)
         _topologically_sort_operators(model_ir)
+    final_binary_layout_stats = (
+        _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
+    )
+    if int(
+        final_binary_layout_stats.get(
+            "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+        _topologically_sort_operators(model_ir)
     layout_problems = validate_model_ir_layout_annotations(model_ir)
     if len(layout_problems) > 0:
         model_ir.metadata["logical_layout_validation_errors"] = list(layout_problems)
@@ -77216,4 +77379,15 @@ def lower_onnx_to_ir(
         post_progress_spinner.stop()
         post_progress_bar.close()
 
+    # Layout validation infers annotations from the terminal graph and can
+    # expose stale direct-NCHW fallback bridges that were not identifiable
+    # before the final annotations were available.
+    for _ in range(3):
+        _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
+            model_ir
+        )
+        _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
+        _reconcile_static_tensor_shapes(model_ir)
+    _realign_dynamic_boundary_shape_signature_map(model_ir)
+    _topologically_sort_operators(model_ir)
     return model_ir
