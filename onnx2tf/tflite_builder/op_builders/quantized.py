@@ -873,11 +873,27 @@ def _resolve_qlinear_conv_padding_and_explicit_pads(
         raw_pads = [0, 0, 0, 0]
     pads = [int(raw_pads[0]), int(raw_pads[1]), int(raw_pads[2]), int(raw_pads[3])]
     pad_top, pad_left, pad_bottom, pad_right = pads
-    pads_axes_opposite_same = bool((pad_top == pad_bottom) and (pad_left == pad_right))
+    strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
+    dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
+    kernel = [int(v) for v in list(node.attrs.get("kernel_shape", [1, 1]))]
+    explicit_pads_match_same_upper = False
+    if strides == [1, 1] and len(kernel) == 2 and len(dilations) == 2:
+        effective_h = (int(kernel[0]) - 1) * int(dilations[0]) + 1
+        effective_w = (int(kernel[1]) - 1) * int(dilations[1]) + 1
+        same_top = (effective_h - 1) // 2
+        same_bottom = (effective_h - 1) - same_top
+        same_left = (effective_w - 1) // 2
+        same_right = (effective_w - 1) - same_left
+        explicit_pads_match_same_upper = pads == [
+            same_top,
+            same_left,
+            same_bottom,
+            same_right,
+        ]
 
     if auto_pad == "NOTSET":
         if (
-            pads_axes_opposite_same
+            explicit_pads_match_same_upper
             and len(input_shape_nchw) == 4
             and len(output_shape_nchw) == 4
             and list(input_shape_nchw[2:]) == list(output_shape_nchw[2:])
@@ -1046,19 +1062,11 @@ def _build_qlinear_binary_op(node: Any, ctx: Any, op_type: str) -> None:
         quantized_dimension=0 if np.asarray(c_scale).size <= 1 else _normalize_axis(1, out_rank),
     )
 
-    if str(op_type).upper() != "MUL":
-        ctx.add_operator(
-            OperatorIR(
-                op_type=op_type,
-                inputs=[a_name, b_name],
-                outputs=[output_name],
-                options={"fusedActivationFunction": "NONE"},
-            )
-        )
-        return
-
-    # Prefer float-path lowering for QLinearMul to match ONNX quantized
-    # multiply semantics more closely across runtimes.
+    # TFLite's quantized binary kernels use fixed-point requantization whose
+    # tie handling can differ by one quantum from ONNX Runtime.  Preserve the
+    # ONNX dequantize -> arithmetic -> round -> saturate contract explicitly;
+    # an early one-quantum residual error can otherwise be amplified by later
+    # quantized convolutions.
     a_f_name = ctx.add_intermediate_tensor(
         f"{output_name}_{str(op_type).lower()}_a_f32",
         dtype="FLOAT32",
@@ -1096,13 +1104,18 @@ def _build_qlinear_binary_op(node: Any, ctx: Any, op_type: str) -> None:
             options={"fusedActivationFunction": "NONE"},
         )
     )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="QUANTIZE",
-            inputs=[out_f_name],
-            outputs=[output_name],
+    if not _add_scalar_onnx_requantization(
+        ctx=ctx,
+        input_name=out_f_name,
+        output_name=output_name,
+    ):
+        ctx.add_operator(
+            OperatorIR(
+                op_type="QUANTIZE",
+                inputs=[out_f_name],
+                outputs=[output_name],
+            )
         )
-    )
 
 
 def build_qlinear_add_op(node: Any, ctx: Any) -> None:

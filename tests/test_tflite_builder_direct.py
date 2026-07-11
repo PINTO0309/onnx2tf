@@ -5006,6 +5006,66 @@ def _make_qlinear_softmax_wrap_model() -> onnx.ModelProto:
     )
 
 
+def _make_qlinear_add_rounding_model() -> onnx.ModelProto:
+    a = helper.make_tensor_value_info("a", TensorProto.INT8, [2, 8])
+    b = helper.make_tensor_value_info("b", TensorProto.INT8, [2, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.INT8, [2, 8])
+    a_scale = numpy_helper.from_array(
+        np.asarray(0.03, dtype=np.float32),
+        name="qadd_a_scale",
+    )
+    a_zero = numpy_helper.from_array(
+        np.asarray(-7, dtype=np.int8),
+        name="qadd_a_zero",
+    )
+    b_scale = numpy_helper.from_array(
+        np.asarray(0.07, dtype=np.float32),
+        name="qadd_b_scale",
+    )
+    b_zero = numpy_helper.from_array(
+        np.asarray(11, dtype=np.int8),
+        name="qadd_b_zero",
+    )
+    y_scale = numpy_helper.from_array(
+        np.asarray(0.04, dtype=np.float32),
+        name="qadd_y_scale",
+    )
+    y_zero = numpy_helper.from_array(
+        np.asarray(-3, dtype=np.int8),
+        name="qadd_y_zero",
+    )
+    node = helper.make_node(
+        "QLinearAdd",
+        [
+            "a",
+            "qadd_a_scale",
+            "qadd_a_zero",
+            "b",
+            "qadd_b_scale",
+            "qadd_b_zero",
+            "qadd_y_scale",
+            "qadd_y_zero",
+        ],
+        ["y"],
+        name="QAddRounding",
+        domain="com.microsoft",
+    )
+    graph = helper.make_graph(
+        [node],
+        "qlinear_add_rounding_graph",
+        [a, b],
+        [y],
+        initializer=[a_scale, a_zero, b_scale, b_zero, y_scale, y_zero],
+    )
+    return helper.make_model(
+        graph,
+        opset_imports=[
+            helper.make_operatorsetid("", 13),
+            helper.make_operatorsetid("com.microsoft", 1),
+        ],
+    )
+
+
 def _make_qlinear_global_average_pool_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 1, 1])
@@ -5638,6 +5698,73 @@ def _make_qlinear_conv_valid_explicit_pad_model() -> onnx.ModelProto:
     graph = helper.make_graph(
         nodes,
         "qlinear_conv_valid_explicit_pad_graph",
+        [x],
+        [y],
+        initializer=[x_scale, x_zero, w, w_scale, w_zero, y_scale, y_zero],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_qlinear_conv_stride2_symbolic_pad_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info(
+        "x",
+        TensorProto.FLOAT,
+        ["N", 1, "H", "W"],
+    )
+    y = helper.make_tensor_value_info(
+        "y",
+        TensorProto.FLOAT,
+        ["N", 1, "OH", "OW"],
+    )
+
+    x_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="qs_x_scale")
+    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qs_x_zero")
+    w = numpy_helper.from_array(
+        np.asarray([[[[1, 2, 1], [0, 1, 0], [-1, 0, 1]]]], dtype=np.int8),
+        name="qs_w",
+    )
+    w_scale = numpy_helper.from_array(np.asarray([0.2], dtype=np.float32), name="qs_w_scale")
+    w_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qs_w_zero")
+    y_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="qs_y_scale")
+    y_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="qs_y_zero")
+
+    nodes = [
+        helper.make_node(
+            "QuantizeLinear",
+            ["x", "qs_x_scale", "qs_x_zero"],
+            ["x_q"],
+            name="QS_Q0",
+        ),
+        helper.make_node(
+            "QLinearConv",
+            [
+                "x_q",
+                "qs_x_scale",
+                "qs_x_zero",
+                "qs_w",
+                "qs_w_scale",
+                "qs_w_zero",
+                "qs_y_scale",
+                "qs_y_zero",
+            ],
+            ["y_q"],
+            name="QS_QConv",
+            kernel_shape=[3, 3],
+            pads=[1, 1, 1, 1],
+            strides=[2, 2],
+            dilations=[1, 1],
+            group=1,
+        ),
+        helper.make_node(
+            "DequantizeLinear",
+            ["y_q", "qs_y_scale", "qs_y_zero"],
+            ["y"],
+            name="QS_DQ0",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "qlinear_conv_stride2_symbolic_pad_graph",
         [x],
         [y],
         initializer=[x_scale, x_zero, w, w_scale, w_zero, y_scale, y_zero],
@@ -8911,6 +9038,50 @@ def test_flatbuffer_direct_qlinear_softmax_wrap_runtime_matches_onnx() -> None:
             tflite_path=tflite_path,
             onnx_model=model,
             sample_inputs={"x": sample_input},
+            tensor_names=["y"],
+        )["y"]
+
+    np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.skipif(
+    not _requires_flatbuffer_tools(),
+    reason="flatbuffer_direct requires bundled schema artifacts",
+)
+def test_flatbuffer_direct_qlinear_add_rounding_runtime_matches_onnx() -> None:
+    model = _make_qlinear_add_rounding_model()
+    sample_inputs = {
+        "a": np.asarray(
+            [
+                [-128, -64, -9, -8, -7, -6, 63, 127],
+                [127, 64, 9, 8, 7, 6, -63, -128],
+            ],
+            dtype=np.int8,
+        ),
+        "b": np.asarray(
+            [
+                [127, 63, 13, 12, 11, 10, -64, -128],
+                [-128, -63, -13, -12, -11, -10, 64, 127],
+            ],
+            dtype=np.int8,
+        ),
+    }
+    expected = ort.InferenceSession(
+        model.SerializeToString(),
+        providers=["CPUExecutionProvider"],
+    ).run(None, sample_inputs)[0]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "qlinear_add_rounding", model)
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+        )
+        actual = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
             tensor_names=["y"],
         )["y"]
 
@@ -31647,6 +31818,21 @@ def test_flatbuffer_direct_qlinear_conv_valid_nonzero_pad_uses_explicit_pad() ->
     model_ir = lower_onnx_to_ir(
         onnx_graph=preprocessed_model,
         output_file_name="qlinear_conv_valid_nonzero_pad_explicit_pad_test",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types.count("PAD") >= 1
+    conv_ops = [op for op in model_ir.operators if str(op.op_type) == "CONV_2D"]
+    assert len(conv_ops) == 1
+    assert str(conv_ops[0].options.get("padding", "")) == "VALID"
+
+
+def test_flatbuffer_direct_qlinear_conv_stride2_symbolic_pad_uses_explicit_pad() -> None:
+    model = _make_qlinear_conv_stride2_symbolic_pad_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="qlinear_conv_stride2_symbolic_pad_test",
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("PAD") >= 1
