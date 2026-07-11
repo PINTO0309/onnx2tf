@@ -848,7 +848,21 @@ def _validate_conv(node: Any, ctx: Any) -> None:
         and (out_channels % group) == 0
     )
     if group != 1 and not is_depthwise:
-        if int(weights.ndim) != 4 or len(input_shape) != 4 or len(output_shape) != 4:
+        input_rank_supported = (
+            len(input_shape) == 4
+            or input_is_unknown_placeholder
+            or input_has_unresolved_raw_shape
+        )
+        output_rank_supported = (
+            len(output_shape) == 4
+            or output_is_unknown_placeholder
+            or output_has_unresolved_raw_shape
+        )
+        if (
+            int(weights.ndim) != 4
+            or not input_rank_supported
+            or not output_rank_supported
+        ):
             raise NodeValidationError(
                 reason_code="unsupported_grouped_convolution",
                 message=(
@@ -8274,7 +8288,10 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             max_outputs=1,
             required_attrs=["kernel_shape"],
             input_rank={0: [3, 4, 5]},
-            output_rank={0: [1, 3, 4, 5]},
+            # Pool output rank is determined by the input rank. Some exported
+            # ONNX graphs leave a stale placeholder rank on the output even
+            # though the input and attributes are complete. The lowerer
+            # materializes the canonical output shape before serialization.
         ),
         extra_validator=_validate_pool,
     ),

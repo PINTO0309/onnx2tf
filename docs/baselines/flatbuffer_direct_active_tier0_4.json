@@ -1815,9 +1815,8 @@
     {
       "tier": 2,
       "model": "shufflenet-9.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "57f5809225da7ff9e606ce00c5f6f092ccce0c73a7d1531bf52b9e81d1225099"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 8.940696716308594e-08
     },
     {
       "tier": 2,
