@@ -4,6 +4,8 @@ import numpy as np
 
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_nhwc_propagation_qlinear_concat_conv,
+    _optimize_transpose_pre_add_nhwc_chains,
+    _repair_unbound_nonconstant_operator_inputs_with_layout_transpose,
 )
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
@@ -82,3 +84,91 @@ def test_qlinear_concat_propagates_nhwc_across_singleton_layout_reshape() -> Non
     assert model_ir.tensors["cat_q_nchw"].shape == [1, 1, 1, 16]
     conv = next(op for op in model_ir.operators if op.op_type == "CONV_2D")
     assert conv.inputs[0] == "cat_q_nchw"
+
+
+def test_transpose_pre_add_rewrite_is_idempotent_with_legacy_consumer() -> None:
+    model_ir = ModelIR("qlinear_residual_add_idempotency")
+    model_ir.inputs = ["left_nhwc", "right_nhwc"]
+    model_ir.outputs = ["legacy_f32", "tail"]
+    _tensor(model_ir, "left_nhwc", [1, 8, 8, 16], "INT8")
+    _tensor(model_ir, "right_nhwc", [1, 8, 8, 16], "INT8")
+    _tensor(model_ir, "left_nchw", [1, 16, 8, 8], "INT8")
+    _tensor(model_ir, "right_nchw", [1, 16, 8, 8], "INT8")
+    _tensor(model_ir, "sum_nchw", [1, 16, 8, 8], "INT8")
+    _tensor(model_ir, "sum_nhwc", [1, 8, 8, 16], "INT8")
+    _tensor(model_ir, "legacy_f32", [1, 16, 8, 8])
+    _tensor(model_ir, "tail", [1, 8, 8, 16], "INT8")
+    _tensor(
+        model_ir,
+        "to_nchw_perm",
+        [4],
+        "INT32",
+        np.asarray([0, 3, 1, 2], dtype=np.int32),
+    )
+    _tensor(
+        model_ir,
+        "to_nhwc_perm",
+        [4],
+        "INT32",
+        np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    model_ir.operators = [
+        OperatorIR("TRANSPOSE", ["left_nhwc", "to_nchw_perm"], ["left_nchw"]),
+        OperatorIR("TRANSPOSE", ["right_nhwc", "to_nchw_perm"], ["right_nchw"]),
+        OperatorIR("ADD", ["left_nchw", "right_nchw"], ["sum_nchw"]),
+        OperatorIR("TRANSPOSE", ["sum_nchw", "to_nhwc_perm"], ["sum_nhwc"]),
+        OperatorIR("DEQUANTIZE", ["sum_nchw"], ["legacy_f32"]),
+        OperatorIR("RELU", ["sum_nhwc"], ["tail"]),
+    ]
+
+    first = _optimize_transpose_pre_add_nhwc_chains(model_ir)
+    second = _optimize_transpose_pre_add_nhwc_chains(model_ir)
+
+    assert first == {"optimized_transpose_pre_add_nhwc_chains": 1}
+    assert second == {"optimized_transpose_pre_add_nhwc_chains": 0}
+    add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+    assert add_op.options["__transpose_pre_add_nhwc_optimized__"] is True
+    producers = {
+        output_name
+        for op in model_ir.operators
+        for output_name in op.outputs
+    }
+    assert "sum_nchw" in producers
+    assert next(op for op in model_ir.operators if op.op_type == "DEQUANTIZE").inputs == [
+        "sum_nchw"
+    ]
+
+
+def test_repairs_unbound_qlinear_residual_from_exact_nhwc_bridge() -> None:
+    model_ir = ModelIR("qlinear_residual_unbound_bridge")
+    model_ir.inputs = ["left", "right"]
+    model_ir.outputs = ["sum_f32"]
+    _tensor(model_ir, "left", [1, 8, 8, 16], "INT8")
+    _tensor(model_ir, "right", [1, 8, 8, 16], "INT8")
+    _tensor(model_ir, "sum_quantized_nhwc_bridge", [1, 8, 8, 16], "INT8")
+    _tensor(model_ir, "sum_quantized", [1, 16, 8, 8], "INT8")
+    _tensor(model_ir, "sum_f32", [1, 16, 8, 8])
+    model_ir.operators = [
+        OperatorIR(
+            "ADD",
+            ["left", "right"],
+            ["sum_quantized_nhwc_bridge"],
+        ),
+        OperatorIR("DEQUANTIZE", ["sum_quantized"], ["sum_f32"]),
+    ]
+
+    stats = _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
+        model_ir
+    )
+
+    assert stats == {
+        "repaired_unbound_nonconstant_inputs_with_layout_transpose": 1
+    }
+    assert [op.op_type for op in model_ir.operators] == [
+        "ADD",
+        "TRANSPOSE",
+        "DEQUANTIZE",
+    ]
+    transpose_op = model_ir.operators[1]
+    assert transpose_op.inputs[0] == "sum_quantized_nhwc_bridge"
+    assert transpose_op.outputs == ["sum_quantized"]

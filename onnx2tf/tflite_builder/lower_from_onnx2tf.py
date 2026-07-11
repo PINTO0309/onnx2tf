@@ -459,6 +459,99 @@ def _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
                 continue
             consumer_op = model_ir.operators[int(op_index)]
             consumer_op_type = str(consumer_op.op_type)
+            if consumer_op_type == "DEQUANTIZE" and int(input_index) == 0:
+                orphan_tensor = model_ir.tensors.get(tensor_name, None)
+                if (
+                    orphan_tensor is not None
+                    and orphan_tensor.data is None
+                    and _is_fully_known_positive_shape(orphan_tensor.shape)
+                    and len(orphan_tensor.shape) == 4
+                ):
+                    orphan_shape = [int(v) for v in list(orphan_tensor.shape)]
+                    expected_source_shape = [
+                        int(orphan_shape[0]),
+                        int(orphan_shape[2]),
+                        int(orphan_shape[3]),
+                        int(orphan_shape[1]),
+                    ]
+                    source_name: Optional[str] = None
+                    source_idx: Optional[int] = None
+                    exact_source_name = f"{tensor_name}_nhwc_bridge"
+                    exact_source_idx = producers.get(exact_source_name, None)
+                    if exact_source_idx is not None:
+                        source_name = str(exact_source_name)
+                        source_idx = int(exact_source_idx)
+                    else:
+                        for candidate_name, candidate_idx in producers.items():
+                            candidate_name = str(candidate_name)
+                            candidate_idx = int(candidate_idx)
+                            if candidate_idx >= int(op_index):
+                                continue
+                            if not (
+                                candidate_name.endswith("_nhwc")
+                                or candidate_name.endswith("_nhwc_bridge")
+                            ):
+                                continue
+                            candidate_op = model_ir.operators[candidate_idx]
+                            candidate_tensor = model_ir.tensors.get(
+                                candidate_name,
+                                None,
+                            )
+                            if (
+                                str(candidate_op.op_type) != "ADD"
+                                or candidate_tensor is None
+                                or candidate_tensor.data is not None
+                                or str(candidate_tensor.dtype)
+                                != str(orphan_tensor.dtype)
+                                or [int(v) for v in list(candidate_tensor.shape)]
+                                != expected_source_shape
+                            ):
+                                continue
+                            if source_idx is None or candidate_idx > source_idx:
+                                source_name = candidate_name
+                                source_idx = candidate_idx
+                    source_tensor = (
+                        model_ir.tensors.get(source_name, None)
+                        if source_name is not None
+                        else None
+                    )
+                    if (
+                        source_idx is not None
+                        and source_name is not None
+                        and int(source_idx) < int(op_index)
+                        and source_tensor is not None
+                        and source_tensor.data is None
+                        and str(source_tensor.dtype) == str(orphan_tensor.dtype)
+                        and [int(v) for v in list(source_tensor.shape)]
+                        == expected_source_shape
+                    ):
+                        perm_name = _unique_tensor_name(
+                            f"{tensor_name}_repair_perm"
+                        )
+                        model_ir.tensors[perm_name] = TensorIR(
+                            name=perm_name,
+                            dtype="INT32",
+                            shape=[4],
+                            shape_signature=[4],
+                            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+                            is_variable=False,
+                        )
+                        model_ir.operators.insert(
+                            int(op_index),
+                            OperatorIR(
+                                op_type="TRANSPOSE",
+                                inputs=[str(source_name), perm_name],
+                                outputs=[tensor_name],
+                                options={},
+                            ),
+                        )
+                        orphan_tensor.quantization = _clone_quantization(
+                            source_tensor.quantization
+                        )
+                        repaired += 1
+                        changed = True
+                        break
+
             target_input_index = 0
             if consumer_op_type == "SPLIT":
                 target_input_index = 1
@@ -21733,6 +21826,7 @@ def _optimize_transpose_pre_add_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     unary_passthrough_ops = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU", "HARD_SWISH", "LEAKY_RELU"}
     skip_add_activation_fuse_marker = "__skip_add_activation_fuse__"
+    optimized_add_marker = "__transpose_pre_add_nhwc_optimized__"
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -22967,6 +23061,8 @@ def _optimize_transpose_pre_add_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]
         for add_idx, add_op in enumerate(model_ir.operators):
             if str(add_op.op_type) != "ADD" or len(add_op.inputs) != 2 or len(add_op.outputs) != 1:
                 continue
+            if bool(add_op.options.get(optimized_add_marker, False)):
+                continue
             add_out_name = str(add_op.outputs[0])
 
             bridge_output_name = add_out_name
@@ -23273,6 +23369,7 @@ def _optimize_transpose_pre_add_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]
             # Keep explicit unary ops after transpose-bridge rewrites for stability.
             add_opts = dict(add_op.options) if isinstance(add_op.options, dict) else {}
             add_opts[skip_add_activation_fuse_marker] = True
+            add_opts[optimized_add_marker] = True
             add_op.options = add_opts
 
             optimized += 1
@@ -76029,6 +76126,18 @@ def lower_onnx_to_ir(
         _rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)
         _optimize_fold_consecutive_mul_constants_chains(fallback_ir)
         _restore_precision_sensitive_reciprocal_divisions(fallback_ir)
+        fallback_unbound_repair_stats = (
+            _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
+                fallback_ir
+            )
+        )
+        if int(
+            fallback_unbound_repair_stats.get(
+                "repaired_unbound_nonconstant_inputs_with_layout_transpose",
+                0,
+            )
+        ) > 0:
+            _reconcile_static_tensor_shapes(fallback_ir)
         _topologically_sort_operators(fallback_ir)
         fallback_layout_problems = validate_model_ir_layout_annotations(fallback_ir)
         if len(fallback_layout_problems) > 0:
