@@ -598,6 +598,47 @@ def _prepare_onnx_graph_for_runtime_checks(
     return prepared
 
 
+def _sanitize_onnx_graph_names_inplace(
+    *,
+    onnx_model: onnx.ModelProto,
+    rewrite_leading_slash: bool,
+) -> None:
+    """Apply public name sanitization recursively, including outer captures."""
+
+    def sanitize_name(name: str) -> str:
+        sanitized = str(name).replace(':', '__')
+        if rewrite_leading_slash:
+            sanitized = re.sub(r'^/', 'wa/', sanitized)
+        return sanitized
+
+    def visit_graph(graph_proto: onnx.GraphProto) -> None:
+        for value_info in [
+            *graph_proto.input,
+            *graph_proto.output,
+            *graph_proto.value_info,
+        ]:
+            value_info.name = sanitize_name(value_info.name)
+        for initializer in graph_proto.initializer:
+            initializer.name = sanitize_name(initializer.name)
+        for initializer in graph_proto.sparse_initializer:
+            initializer.values.name = sanitize_name(initializer.values.name)
+            initializer.indices.name = sanitize_name(initializer.indices.name)
+        for node_proto in graph_proto.node:
+            node_proto.name = sanitize_name(node_proto.name)
+            for index, input_name in enumerate(node_proto.input):
+                node_proto.input[index] = sanitize_name(input_name)
+            for index, output_name in enumerate(node_proto.output):
+                node_proto.output[index] = sanitize_name(output_name)
+            for attribute in node_proto.attribute:
+                if attribute.type == onnx.AttributeProto.GRAPH:
+                    visit_graph(attribute.g)
+                elif attribute.type == onnx.AttributeProto.GRAPHS:
+                    for child_graph in attribute.graphs:
+                        visit_graph(child_graph)
+
+    visit_graph(onnx_model.graph)
+
+
 def _is_tf_saved_model_verbose_line(line: str) -> bool:
     stripped = str(line).strip()
     if stripped == "":
@@ -5690,6 +5731,12 @@ def convert(
         onnx_graph = gs.export_onnx(graph=graph, do_type_check=False, **meta_data)
         if metadata_props is not None:
             onnx_graph.metadata_props.extend(metadata_props)
+        _sanitize_onnx_graph_names_inplace(
+            onnx_model=onnx_graph,
+            rewrite_leading_slash=bool(
+                output_signaturedefs or output_integer_quantized_tflite
+            ),
+        )
     except Exception as ex:
         # Workaround for SequenceConstruct terminating abnormally with gs.py export
         pass

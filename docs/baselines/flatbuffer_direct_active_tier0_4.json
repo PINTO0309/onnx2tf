@@ -1839,9 +1839,8 @@
     {
       "tier": 2,
       "model": "ssdlite320_mobilenet_v3_large.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "f520b28d4b025834dacc97c0c39c78740f977618c54631634dddeec0752da35d"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 6.103515625e-05
     },
     {
       "tier": 2,

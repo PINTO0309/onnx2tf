@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import numpy as np
+import onnx
 import onnxruntime as ort
 from onnx import TensorProto, helper, numpy_helper
 
 from onnx2tf.utils.onnxruntime_compat import prepare_onnx_graph_for_onnxruntime
+from onnx2tf.onnx2tf import _sanitize_onnx_graph_names_inplace
 
 
 def _grid_sample_model(*, opset: int, include_inverse: bool):
@@ -435,3 +437,68 @@ def test_prepare_onnx_graph_recursively_toposorts_control_flow_subgraphs() -> No
         },
     )[0]
     np.testing.assert_array_equal(actual, np.asarray([0.0], dtype=np.float32))
+
+
+def test_recursive_name_sanitization_updates_control_flow_outer_captures() -> None:
+    condition = helper.make_tensor_value_info("condition", TensorProto.BOOL, [])
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
+    branch_output = helper.make_tensor_value_info(
+        "branch:output",
+        TensorProto.FLOAT,
+        [1],
+    )
+    then_branch = helper.make_graph(
+        [helper.make_node("Identity", ["/captured:value"], ["branch:output"])],
+        "then/branch",
+        [],
+        [branch_output],
+    )
+    else_branch = helper.make_graph(
+        [helper.make_node("Neg", ["/captured:value"], ["branch:output"])],
+        "else/branch",
+        [],
+        [branch_output],
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [
+                helper.make_node("Identity", ["x"], ["/captured:value"]),
+                helper.make_node(
+                    "If",
+                    ["condition"],
+                    ["y"],
+                    then_branch=then_branch,
+                    else_branch=else_branch,
+                ),
+            ],
+            "outer_capture_sanitize",
+            [condition, x],
+            [y],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+    model.ir_version = 10
+
+    _sanitize_onnx_graph_names_inplace(
+        onnx_model=model,
+        rewrite_leading_slash=True,
+    )
+
+    assert model.graph.node[0].output[0] == "wa/captured__value"
+    if_node = model.graph.node[1]
+    for attribute in if_node.attribute:
+        if attribute.type == onnx.AttributeProto.GRAPH:
+            assert attribute.g.node[0].input[0] == "wa/captured__value"
+            assert attribute.g.node[0].output[0] == "branch__output"
+    actual = ort.InferenceSession(
+        model.SerializeToString(),
+        providers=["CPUExecutionProvider"],
+    ).run(
+        None,
+        {
+            "condition": np.asarray(True),
+            "x": np.asarray([2.0], dtype=np.float32),
+        },
+    )[0]
+    np.testing.assert_array_equal(actual, np.asarray([2.0], dtype=np.float32))
