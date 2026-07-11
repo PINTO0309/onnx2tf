@@ -59343,6 +59343,8 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
                 continue
             if bool(reshape_op.options.get("preserveDynamicShape", False)):
                 continue
+            if bool(reshape_op.options.get("preserveSemanticRank", False)):
+                continue
 
             src_name = str(reshape_op.inputs[0])
             dst_name = str(reshape_op.outputs[0])
@@ -59405,6 +59407,8 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
         # 2) Bypass intermediate reshape for RESHAPE->RESHAPE links, even with fan-out.
         for first_idx, first_op in enumerate(model_ir.operators):
             if str(first_op.op_type) != "RESHAPE" or len(first_op.inputs) < 1 or len(first_op.outputs) != 1:
+                continue
+            if bool(first_op.options.get("preserveSemanticRank", False)):
                 continue
 
             first_input_name = str(first_op.inputs[0])
@@ -59475,6 +59479,8 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
         # 3) Remove consecutive reshape chains when the middle tensor has a single user.
         for first_idx, first_op in enumerate(model_ir.operators):
             if str(first_op.op_type) != "RESHAPE" or len(first_op.inputs) < 1 or len(first_op.outputs) != 1:
+                continue
+            if bool(first_op.options.get("preserveSemanticRank", False)):
                 continue
 
             first_input_name = str(first_op.inputs[0])
@@ -74510,7 +74516,11 @@ def build_op_coverage_report(
             )
             continue
 
-        wrapped = _NodeWrap(node)
+        wrapped = _NodeWrap(
+            node,
+            shape_map=ctx.shape_map,
+            dtype_map=ctx.dtype_map,
+        )
         try:
             resolution = resolve_node_dispatch(wrapped, ctx)
             dispatch_mode = str(resolution.dispatch_mode)
@@ -75526,6 +75536,8 @@ def lower_onnx_to_ir(
                 wrapped = _NodeWrap(
                     node,
                     input_name_remap=input_name_remap,
+                    shape_map=shape_map,
+                    dtype_map=dtype_map,
                 )
                 try:
                     dispatch_node(wrapped, ctx)

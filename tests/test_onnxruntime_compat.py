@@ -356,3 +356,82 @@ def test_prepare_onnxruntime_graph_materializes_unknown_rank_fused_conv_io() -> 
         providers=["CPUExecutionProvider"],
     ).run(["y"], {"x": np.ones((1, 3, 1, 1), dtype=np.float32)})[0]
     np.testing.assert_array_equal(actual, np.full((1, 4, 1, 1), 3.0, dtype=np.float32))
+
+def test_prepare_onnx_graph_recursively_toposorts_control_flow_subgraphs() -> None:
+    condition = helper.make_tensor_value_info(
+        "condition",
+        TensorProto.BOOL,
+        [],
+    )
+    source = helper.make_tensor_value_info("source", TensorProto.FLOAT, [1])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
+    branch_output = helper.make_tensor_value_info(
+        "branch_output",
+        TensorProto.FLOAT,
+        [1],
+    )
+    one = numpy_helper.from_array(
+        np.asarray([1.0], dtype=np.float32),
+        name="one",
+    )
+    then_branch = helper.make_graph(
+        [
+            helper.make_node("Relu", ["sum"], ["branch_output"]),
+            helper.make_node("Add", ["x", "one"], ["sum"]),
+        ],
+        "then_branch",
+        [],
+        [branch_output],
+        initializer=[one],
+    )
+    else_branch = helper.make_graph(
+        [helper.make_node("Identity", ["x"], ["branch_output"])],
+        "else_branch",
+        [],
+        [branch_output],
+    )
+    graph = helper.make_graph(
+        [
+            helper.make_node(
+                "If",
+                ["condition"],
+                ["y"],
+                then_branch=then_branch,
+                else_branch=else_branch,
+            ),
+            helper.make_node("Add", ["source", "one"], ["x"]),
+        ],
+        "recursive_toposort",
+        [condition, source],
+        [y],
+        initializer=[one],
+    )
+    model = helper.make_model(
+        graph,
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+    model.ir_version = 10
+
+    prepared, rewritten = prepare_onnx_graph_for_onnxruntime(model)
+
+    assert [node.op_type for node in prepared.graph.node] == ["Add", "If"]
+    if_node = prepared.graph.node[1]
+    prepared_then = next(
+        attribute.g
+        for attribute in if_node.attribute
+        if attribute.name == "then_branch"
+    )
+    assert [node.op_type for node in prepared_then.node] == ["Add", "Relu"]
+    assert rewritten["TopologicalSort"] == 2
+    session = ort.InferenceSession(
+        prepared.SerializeToString(),
+        providers=["CPUExecutionProvider"],
+    )
+    actual = session.run(
+        None,
+        {
+            "condition": np.asarray(True),
+            "source": np.asarray([-3.0], dtype=np.float32),
+        },
+    )[0]
+    np.testing.assert_array_equal(actual, np.asarray([0.0], dtype=np.float32))

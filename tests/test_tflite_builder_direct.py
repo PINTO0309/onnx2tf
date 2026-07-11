@@ -3945,6 +3945,56 @@ def _make_min_topk_dynamic_k_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_reduce_reshape_topk_dynamic_k_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 10])
+    k_source = helper.make_tensor_value_info("k_source", TensorProto.INT64, [1])
+    values = helper.make_tensor_value_info("values", TensorProto.FLOAT, [1, "K"])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [1, "K"])
+    k_scalar = helper.make_tensor_value_info("k_scalar", TensorProto.INT64, [])
+    k_vector = helper.make_tensor_value_info("k_vector", TensorProto.INT64, [1])
+    k_shape = numpy_helper.from_array(
+        np.asarray([1], dtype=np.int64),
+        name="k_shape",
+    )
+    nodes = [
+        helper.make_node(
+            "ReduceMin",
+            ["k_source"],
+            ["k_scalar"],
+            name="ReduceKToScalar",
+            axes=[0],
+            keepdims=0,
+        ),
+        helper.make_node(
+            "Reshape",
+            ["k_scalar", "k_shape"],
+            ["k_vector"],
+            name="RestoreKVector",
+        ),
+        helper.make_node(
+            "TopK",
+            ["x", "k_vector"],
+            ["values", "indices"],
+            name="DynamicTopK",
+            axis=1,
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "reduce_reshape_topk_dynamic_k_graph",
+        [x, k_source],
+        [values, indices],
+        initializer=[k_shape],
+        value_info=[k_scalar, k_vector],
+    )
+    model = helper.make_model(
+        graph,
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+    model.ir_version = 10
+    return model
+
+
 def _make_topk_const_k_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 10])
     values = helper.make_tensor_value_info("values", TensorProto.FLOAT, [1, 3])
@@ -13625,6 +13675,56 @@ def test_flatbuffer_direct_min_topk_dynamic_k_lowering() -> None:
     ]
     assert len(cast_to_i64) == 1
     assert list(cast_to_i64[0].inputs) == ["indices_topk_indices_raw"]
+
+
+def test_flatbuffer_direct_preserves_scalar_to_vector_reshape_before_topk() -> None:
+    model = _make_reduce_reshape_topk_dynamic_k_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="reduce_reshape_topk_dynamic_k_lowering_test",
+        allow_custom_ops=False,
+    )
+
+    semantic_reshape = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "RESHAPE"
+        and str(op.outputs[0]) == "k_vector"
+    )
+    assert semantic_reshape.inputs[0] == "k_scalar"
+    assert semantic_reshape.options["preserveSemanticRank"] is True
+    assert semantic_reshape.options["onnxInputRank"] == 0
+    assert semantic_reshape.options["onnxOutputRank"] == 1
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "reduce_reshape_topk_dynamic_k", model)
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+        )
+        sample_inputs = {
+            "x": np.asarray(
+                [[0.5, -1.0, 4.0, 3.0, 2.0, 8.0, 1.0, 7.0, 6.0, 5.0]],
+                dtype=np.float32,
+            ),
+            "k_source": np.asarray([3], dtype=np.int64),
+        }
+        expected = ort.InferenceSession(
+            model_path,
+            providers=["CPUExecutionProvider"],
+        ).run(None, sample_inputs)
+        actual = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["values", "indices"],
+        )
+
+    np.testing.assert_allclose(actual["values"], expected[0], rtol=0.0, atol=0.0)
+    np.testing.assert_array_equal(actual["indices"], expected[1])
 
 
 def test_flatbuffer_direct_topk_const_k_constantized_to_i32_scalar() -> None:

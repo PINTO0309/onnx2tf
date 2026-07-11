@@ -26,6 +26,130 @@ _MICROSOFT_CONTRIB_OPS = {
 }
 
 
+def _stable_topological_sort_graphs(model: onnx.ModelProto) -> Dict[str, int]:
+    """Topologically order every graph without treating outer captures as inputs.
+
+    ONNX control-flow subgraphs may reference values from their enclosing graph.
+    Only values produced by nodes in the same GraphProto therefore participate
+    in dependency ordering. Cyclic or otherwise invalid graphs are left in their
+    original order instead of being partially rewritten.
+    """
+
+    reordered_graphs = 0
+
+    def external_references(graph: onnx.GraphProto) -> set[str]:
+        locally_defined = {
+            str(value.name)
+            for value in graph.input
+            if str(value.name) != ""
+        }
+        locally_defined.update(
+            str(initializer.name)
+            for initializer in graph.initializer
+            if str(initializer.name) != ""
+        )
+        locally_defined.update(
+            str(initializer.values.name)
+            for initializer in graph.sparse_initializer
+            if str(initializer.values.name) != ""
+        )
+        locally_defined.update(
+            str(output_name)
+            for node in graph.node
+            for output_name in node.output
+            if str(output_name) != ""
+        )
+        referenced = {
+            str(input_name)
+            for node in graph.node
+            for input_name in node.input
+            if str(input_name) != ""
+        }
+        referenced.update(
+            str(output.name)
+            for output in graph.output
+            if str(output.name) != ""
+        )
+        for node in graph.node:
+            for attribute in node.attribute:
+                if attribute.type == onnx.AttributeProto.GRAPH:
+                    referenced.update(external_references(attribute.g))
+                elif attribute.type == onnx.AttributeProto.GRAPHS:
+                    for child_graph in attribute.graphs:
+                        referenced.update(external_references(child_graph))
+        return referenced - locally_defined
+
+    def node_dependencies(node: onnx.NodeProto) -> set[str]:
+        dependencies = {
+            str(input_name)
+            for input_name in node.input
+            if str(input_name) != ""
+        }
+        for attribute in node.attribute:
+            if attribute.type == onnx.AttributeProto.GRAPH:
+                dependencies.update(external_references(attribute.g))
+            elif attribute.type == onnx.AttributeProto.GRAPHS:
+                for child_graph in attribute.graphs:
+                    dependencies.update(external_references(child_graph))
+        return dependencies
+
+    def visit(graph: onnx.GraphProto) -> None:
+        nonlocal reordered_graphs
+        for node in graph.node:
+            for attribute in node.attribute:
+                if attribute.type == onnx.AttributeProto.GRAPH:
+                    visit(attribute.g)
+                elif attribute.type == onnx.AttributeProto.GRAPHS:
+                    for child_graph in attribute.graphs:
+                        visit(child_graph)
+
+        nodes = list(graph.node)
+        if len(nodes) < 2:
+            return
+        internal_outputs = {
+            str(output_name)
+            for node in nodes
+            for output_name in node.output
+            if str(output_name) != ""
+        }
+        emitted_outputs: set[str] = set()
+        remaining = list(enumerate(nodes))
+        sorted_nodes: List[tuple[int, onnx.NodeProto]] = []
+        while remaining:
+            ready_position: Optional[int] = None
+            for position, (_, node) in enumerate(remaining):
+                dependencies = node_dependencies(node) & internal_outputs
+                if dependencies.issubset(emitted_outputs):
+                    ready_position = int(position)
+                    break
+            if ready_position is None:
+                return
+            original_index, ready_node = remaining.pop(ready_position)
+            sorted_nodes.append((int(original_index), ready_node))
+            emitted_outputs.update(
+                str(output_name)
+                for output_name in ready_node.output
+                if str(output_name) != ""
+            )
+
+        original_indices = [index for index, _ in sorted_nodes]
+        if original_indices == list(range(len(nodes))):
+            return
+        node_copies: List[onnx.NodeProto] = []
+        for _, node in sorted_nodes:
+            copied = onnx.NodeProto()
+            copied.CopyFrom(node)
+            node_copies.append(copied)
+        del graph.node[:]
+        graph.node.extend(node_copies)
+        reordered_graphs += 1
+
+    visit(model.graph)
+    if reordered_graphs == 0:
+        return {}
+    return {"TopologicalSort": int(reordered_graphs)}
+
+
 def _default_domain_opset(model: onnx.ModelProto) -> int | None:
     versions = [
         int(opset.version)
@@ -667,6 +791,8 @@ def prepare_onnx_graph_for_onnxruntime(
     rewritten: Dict[str, int] = _upgrade_legacy_upsample_for_onnxruntime(
         prepared
     )
+    for op_type, count in _stable_topological_sort_graphs(prepared).items():
+        rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
     default_opset = _default_domain_opset(prepared)
     for op_type, count in _decompose_group_norm_for_onnxruntime(prepared).items():
         rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)

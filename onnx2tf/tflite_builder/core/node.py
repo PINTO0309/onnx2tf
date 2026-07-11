@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import onnx
 
@@ -12,6 +12,8 @@ class NodeView:
         self,
         node: onnx.NodeProto,
         input_name_remap: Optional[Dict[str, str]] = None,
+        shape_map: Optional[Dict[str, Any]] = None,
+        dtype_map: Optional[Dict[str, str]] = None,
     ) -> None:
         self.name = node.name if node.name else node.op_type
         self.op = node.op_type
@@ -34,10 +36,32 @@ class NodeView:
             elif attribute.type == onnx.AttributeProto.GRAPHS:
                 self.attrs[attribute.name] = list(attribute.graphs)
         remap = input_name_remap if isinstance(input_name_remap, dict) else {}
+        shapes = shape_map if isinstance(shape_map, dict) else {}
+        dtypes = dtype_map if isinstance(dtype_map, dict) else {}
         self.inputs = [
-            type("In", (), {"name": remap.get(name, name) if name else ""})
+            type(
+                "In",
+                (),
+                {
+                    "name": remap.get(name, name) if name else "",
+                    "onnx_name": name if name else "",
+                    "shape": shapes.get(name),
+                    "dtype": dtypes.get(name),
+                },
+            )
             for name in node.input
         ]
         self.outputs = [
-            type("Out", (), {"name": name}) for name in node.output if name
+            type(
+                "Out",
+                (),
+                {
+                    "name": name,
+                    "onnx_name": name,
+                    "shape": shapes.get(name),
+                    "dtype": dtypes.get(name),
+                },
+            )
+            for name in node.output
+            if name
         ]

@@ -1708,6 +1708,24 @@ def build_reshape_op(node: Any, ctx: Any) -> None:
     raw_new_shape: list[int] = []
     new_shape: list[int] = []
     reshape_shape_input_name = shape_name
+    semantic_input_shape = getattr(node.inputs[0], "shape", None)
+    semantic_output_shape = getattr(node.outputs[0], "shape", None)
+    semantic_input_rank = (
+        int(len(list(semantic_input_shape)))
+        if semantic_input_shape is not None
+        else None
+    )
+    semantic_output_rank = (
+        int(len(list(semantic_output_shape)))
+        if semantic_output_shape is not None
+        else None
+    )
+    preserve_semantic_rank = bool(
+        semantic_input_rank is not None
+        and semantic_output_rank is not None
+        and semantic_input_rank != semantic_output_rank
+        and 0 in {semantic_input_rank, semantic_output_rank}
+    )
 
     if shape_values is not None:
         raw_new_shape = [int(v) for v in np.asarray(shape_values).reshape(-1).tolist()]
@@ -1779,16 +1797,22 @@ def build_reshape_op(node: Any, ctx: Any) -> None:
             new_shape = []
             raw_new_shape = []
 
+    reshape_options = {
+        "newShape": new_shape,
+        "onnxRawNewShape": raw_new_shape,
+        "allowZero": bool(allowzero),
+    }
+    if preserve_semantic_rank:
+        reshape_options["preserveSemanticRank"] = True
+        reshape_options["onnxInputRank"] = int(semantic_input_rank)
+        reshape_options["onnxOutputRank"] = int(semantic_output_rank)
+
     ctx.add_operator(
         OperatorIR(
             op_type="RESHAPE",
             inputs=[input_name, reshape_shape_input_name],
             outputs=[output_name],
-            options={
-                "newShape": new_shape,
-                "onnxRawNewShape": raw_new_shape,
-                "allowZero": bool(allowzero),
-            },
+            options=reshape_options,
         )
     )
 
