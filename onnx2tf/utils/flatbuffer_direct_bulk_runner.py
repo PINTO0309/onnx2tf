@@ -212,8 +212,10 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
     if not isinstance(model_entries, list) or not model_entries:
         raise ValueError(f"Regression profile contains no models. path={path}")
     model_names: List[str] = []
+    active_model_names: List[str] = []
     tiers: List[int] = []
     baseline_classification_counts: Dict[str, int] = {}
+    excluded_baseline_classification_counts: Dict[str, int] = {}
     for entry in model_entries:
         if not isinstance(entry, dict):
             raise ValueError(f"Invalid regression profile model entry. path={path}")
@@ -232,6 +234,15 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
         baseline_classification_counts[baseline_classification] = int(
             baseline_classification_counts.get(baseline_classification, 0)
         ) + 1
+        if baseline_classification == "timeout":
+            excluded_baseline_classification_counts[baseline_classification] = int(
+                excluded_baseline_classification_counts.get(
+                    baseline_classification,
+                    0,
+                )
+            ) + 1
+        else:
+            active_model_names.append(model_name)
     if len(model_names) != len(set(model_names)):
         raise ValueError(f"Regression profile contains duplicate model names. path={path}")
     declared_model_count = int(payload.get("model_count", len(model_names)))
@@ -258,13 +269,19 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
         "name": str(payload.get("name", os.path.basename(path))),
         "content_sha256": content_sha256,
         "model_names": model_names,
+        "active_model_names": active_model_names,
         "model_count": len(model_names),
+        "active_model_count": len(active_model_names),
+        "excluded_model_count": len(model_names) - len(active_model_names),
         "min_nodes": min_nodes,
         "max_nodes": max_nodes,
         "recursive": False,
         "tiers": sorted(set(tiers)),
         "baseline_classification_counts": dict(
             sorted(baseline_classification_counts.items())
+        ),
+        "excluded_baseline_classification_counts": dict(
+            sorted(excluded_baseline_classification_counts.items())
         ),
     }
 
@@ -611,7 +628,7 @@ def run_flatbuffer_direct_bulk_verification(
         profile_identity = {
             key: value
             for key, value in profile.items()
-            if key != "model_names"
+            if key not in {"model_names", "active_model_names"}
         }
         if min_nodes is not None and int(min_nodes) != int(profile["min_nodes"]):
             raise ValueError("min_nodes conflicts with the regression profile.")
@@ -643,7 +660,7 @@ def run_flatbuffer_direct_bulk_verification(
         max_nodes=max_nodes,
     )
     if profile is not None:
-        allowed_names = set(profile["model_names"])
+        allowed_names = set(profile["active_model_names"])
         discovered_names = {os.path.basename(path) for path in models}
         missing_names = sorted(allowed_names - discovered_names)
         if missing_names:
@@ -994,7 +1011,8 @@ def main() -> None:
         default=None,
         help=(
             "Run the models recorded in a managed Tier 0-4 profile. "
-            "The profile fixes root-only discovery and its node-count range."
+            "The profile fixes root-only discovery and its node-count range; "
+            "models whose managed baseline is timeout are excluded."
         ),
     )
     parser.add_argument(

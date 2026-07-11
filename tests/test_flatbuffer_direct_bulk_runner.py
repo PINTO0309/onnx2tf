@@ -827,6 +827,74 @@ def test_regression_profile_runs_recorded_tier_zero_to_three_successes_and_failu
     assert state["summary"]["filters"]["recursive"] is False
 
 
+def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from onnx import TensorProto, helper, save
+
+    def _model(path: Path) -> None:
+        x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+        y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
+        node = helper.make_node("Relu", ["x"], ["y"])
+        save(helper.make_model(helper.make_graph([node], "g", [x], [y])), path)
+
+    _model(tmp_path / "active.onnx")
+    _model(tmp_path / "timed_out.onnx")
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 1,
+                "max_nodes": 49,
+                "models": [
+                    {
+                        "tier": 0,
+                        "model": "active.onnx",
+                        "baseline_classification": "pass",
+                    },
+                    {
+                        "tier": 0,
+                        "model": "timed_out.onnx",
+                        "baseline_classification": "timeout",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: List[str] = []
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        model_path = Path(cmd[cmd.index("-i") + 1])
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        calls.append(model_path.name)
+        _write_accuracy_report(
+            path=artifact_dir / f"{model_path.stem}_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+        regression_profile=str(profile_path),
+    )
+
+    assert calls == ["active.onnx"]
+    assert [entry["model"] for entry in state["entries"]] == ["active.onnx"]
+    profile_filter = state["summary"]["filters"]["regression_profile"]
+    assert profile_filter["model_count"] == 2
+    assert profile_filter["active_model_count"] == 1
+    assert profile_filter["excluded_model_count"] == 1
+    assert profile_filter["excluded_baseline_classification_counts"] == {
+        "timeout": 1,
+    }
+
+
 def test_regression_profile_accepts_tier_four_models(tmp_path) -> None:
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(
@@ -874,13 +942,16 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     profile = bulk_runner._load_regression_profile(str(profile_path))
 
     assert profile["model_count"] == 420
+    assert profile["active_model_count"] == 396
+    assert profile["excluded_model_count"] == 24
+    assert profile["excluded_baseline_classification_counts"] == {"timeout": 24}
     assert profile["tiers"] == [0, 1, 2, 3, 4]
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "conversion_error": 11,
+        "conversion_error": 9,
         "missing_tflite_report": 72,
-        "pass": 283,
+        "pass": 285,
         "tflite_fail": 30,
         "timeout": 24,
     }
