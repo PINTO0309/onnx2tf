@@ -1738,16 +1738,20 @@
     {
       "tier": 2,
       "model": "rec.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "6f1767c5b3b951fdf41debc945fd48a5b6000b1af57959e97c09863e063363a7"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 8.702278137207031e-06,
+      "overwrite_input_shape": [
+        "x:1,3,48,320"
+      ]
     },
     {
       "tier": 2,
       "model": "rec_org.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "6f1767c5b3b951fdf41debc945fd48a5b6000b1af57959e97c09863e063363a7"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 8.702278137207031e-06,
+      "overwrite_input_shape": [
+        "x:1,3,48,320"
+      ]
     },
     {
       "tier": 2,

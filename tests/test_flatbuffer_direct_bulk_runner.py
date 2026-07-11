@@ -854,6 +854,7 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
                         "model": "active.onnx",
                         "baseline_classification": "pass",
                         "shape_hints": ["input:0:1,16,16,3"],
+                        "overwrite_input_shape": ["image:1,3,16,16"],
                         "keep_shape_absolutely_input_names": ["state:0"],
                     },
                     {
@@ -890,6 +891,7 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
 
     assert calls == ["active.onnx"]
     assert commands[0][commands[0].index("-sh") + 1] == "input:0:1,16,16,3"
+    assert commands[0][commands[0].index("-ois") + 1] == "image:1,3,16,16"
     assert commands[0][commands[0].index("-kat") + 1] == "state:0"
     assert [entry["model"] for entry in state["entries"]] == ["active.onnx"]
     profile_filter = state["summary"]["filters"]["regression_profile"]
@@ -955,8 +957,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 53,
-        "pass": 309,
+        "missing_tflite_report": 51,
+        "pass": 311,
         "tflite_fail": 32,
         "timeout": 26,
     }

@@ -232,6 +232,7 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
         normalized_options: Dict[str, List[str]] = {}
         for option_name in (
             "shape_hints",
+            "overwrite_input_shape",
             "keep_shape_absolutely_input_names",
         ):
             raw_values = entry.get(option_name, [])
@@ -887,6 +888,12 @@ def run_flatbuffer_direct_bulk_verification(
                 shape_hints_for_model = per_model_options.get("shape_hints", [])
                 if shape_hints_for_model:
                     cmd.extend(["-sh", *shape_hints_for_model])
+                overwrite_shapes = per_model_options.get(
+                    "overwrite_input_shape",
+                    [],
+                )
+                if overwrite_shapes:
+                    cmd.extend(["-ois", *overwrite_shapes])
                 keep_shape_names = per_model_options.get(
                     "keep_shape_absolutely_input_names",
                     [],
