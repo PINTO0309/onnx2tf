@@ -268,3 +268,49 @@ def test_prepare_onnxruntime_graph_folds_optional_has_element_tensor_alias() -> 
         providers=["CPUExecutionProvider"],
     ).run(["y"], {"x": np.asarray([1.0, 2.0], dtype=np.float32)})[0]
     np.testing.assert_array_equal(actual, np.asarray(True, dtype=np.bool_))
+
+
+def test_prepare_onnxruntime_graph_materializes_unknown_rank_fused_conv_io() -> None:
+    x_info = helper.make_tensor_value_info("x", TensorProto.FLOAT, [])
+    y_info = helper.make_tensor_value_info("y", TensorProto.FLOAT, [])
+    weights = np.ones((4, 3, 3, 3), dtype=np.float32)
+    bias = np.zeros((4,), dtype=np.float32)
+    node = helper.make_node(
+        "FusedConv",
+        ["x", "weights", "bias"],
+        ["y"],
+        name="fused_conv",
+        activation="Relu",
+        pads=[1, 1, 1, 1],
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [node],
+            "unknown_rank_fused_conv",
+            [x_info],
+            [y_info],
+            [
+                numpy_helper.from_array(weights, name="weights"),
+                numpy_helper.from_array(bias, name="bias"),
+            ],
+        ),
+        opset_imports=[
+            helper.make_operatorsetid("", 13),
+            helper.make_operatorsetid("com.microsoft", 1),
+        ],
+    )
+
+    prepared, rewritten = prepare_onnx_graph_for_onnxruntime(model)
+
+    assert rewritten == {"FusedConv": 1, "UnknownRankConv": 1}
+    input_dims = prepared.graph.input[0].type.tensor_type.shape.dim
+    output_dims = prepared.graph.output[0].type.tensor_type.shape.dim
+    assert len(input_dims) == 4
+    assert input_dims[1].dim_value == 3
+    assert len(output_dims) == 4
+    assert output_dims[1].dim_value == 4
+    actual = ort.InferenceSession(
+        prepared.SerializeToString(),
+        providers=["CPUExecutionProvider"],
+    ).run(["y"], {"x": np.ones((1, 3, 1, 1), dtype=np.float32)})[0]
+    np.testing.assert_array_equal(actual, np.full((1, 4, 1, 1), 3.0, dtype=np.float32))

@@ -534,12 +534,13 @@ def _get_onnx_eval_outputs(
     seed: int = 0,
     force_zero_generated_inputs: bool = False,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], List[str]]:
+    onnx_runtime_graph = _prepare_onnx_graph_for_onnxruntime(onnx_graph)
     generated_input_dir: Optional[str] = None
     generated_custom_inputs: Optional[List[List[str]]] = None
     if not custom_input_op_name_np_data_path:
-        input_specs = _collect_onnx_input_specs(onnx_graph)
+        input_specs = _collect_onnx_input_specs(onnx_runtime_graph)
         generated_input_overrides = _build_static_control_input_overrides(
-            onnx_graph=onnx_graph,
+            onnx_graph=onnx_runtime_graph,
             input_specs=input_specs,
         )
         rng = np.random.default_rng(seed=int(seed))
@@ -579,7 +580,7 @@ def _get_onnx_eval_outputs(
     memmap_paths_for_cleanup: List[str] = []
     try:
         outputs = dummy_onnx_inference(
-            onnx_graph=_prepare_onnx_graph_for_onnxruntime(onnx_graph),
+            onnx_graph=onnx_runtime_graph,
             output_names=target_output_names,
             custom_input_op_name_np_data_path=effective_custom_inputs,
             input_datas_for_validation=onnx_input_datas_for_validation,
@@ -598,7 +599,7 @@ def _get_onnx_eval_outputs(
                 "because dynamic output shapes were detected. Falling back to in-memory outputs."
             )
             outputs = dummy_onnx_inference(
-                onnx_graph=onnx_graph,
+                onnx_graph=onnx_runtime_graph,
                 output_names=target_output_names,
                 custom_input_op_name_np_data_path=effective_custom_inputs,
                 input_datas_for_validation=onnx_input_datas_for_validation,
@@ -614,7 +615,7 @@ def _get_onnx_eval_outputs(
                 "Retrying with ONNX Runtime graph optimization disabled."
             )
             outputs = dummy_onnx_inference(
-                onnx_graph=onnx_graph,
+                onnx_graph=onnx_runtime_graph,
                 output_names=target_output_names,
                 custom_input_op_name_np_data_path=effective_custom_inputs,
                 input_datas_for_validation=onnx_input_datas_for_validation,

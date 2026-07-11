@@ -538,6 +538,90 @@ def _rewrite_tensor_optional_has_element_for_onnxruntime(
     return {"TensorOptionalHasElement": rewritten_count} if rewritten_count else {}
 
 
+def _repair_unknown_rank_conv_io_for_onnxruntime(
+    model: onnx.ModelProto,
+) -> Dict[str, int]:
+    rewritten_count = 0
+
+    def visit_graph(graph: onnx.GraphProto) -> None:
+        nonlocal rewritten_count
+        initializer_map = {
+            str(initializer.name): initializer
+            for initializer in graph.initializer
+        }
+        value_map = {
+            str(value.name): value
+            for value in [*graph.input, *graph.value_info, *graph.output]
+        }
+        for node in graph.node:
+            for attribute in node.attribute:
+                if attribute.type == onnx.AttributeProto.GRAPH:
+                    visit_graph(attribute.g)
+                elif attribute.type == onnx.AttributeProto.GRAPHS:
+                    for child_graph in attribute.graphs:
+                        visit_graph(child_graph)
+            if (
+                str(node.op_type) not in {"Conv", "FusedConv"}
+                or len(node.input) < 2
+                or len(node.output) != 1
+            ):
+                continue
+            input_value = value_map.get(str(node.input[0]))
+            output_value = value_map.get(str(node.output[0]))
+            weights = initializer_map.get(str(node.input[1]))
+            if input_value is None or weights is None or len(weights.dims) < 3:
+                continue
+            input_tensor_type = input_value.type.tensor_type
+            input_has_unknown_rank = (
+                not input_tensor_type.HasField("shape")
+                or len(input_tensor_type.shape.dim) == 0
+            )
+            if not input_has_unknown_rank:
+                continue
+            spatial_rank = len(weights.dims) - 2
+            group = int(_node_attribute(node, "group", 1))
+            input_channels = int(weights.dims[1]) * int(group)
+            output_channels = int(weights.dims[0])
+            symbolic_input_shape: List[object] = [
+                f"{str(node.name or node.input[0])}_batch",
+                input_channels,
+                *[
+                    f"{str(node.name or node.input[0])}_spatial_{index}"
+                    for index in range(spatial_rank)
+                ],
+            ]
+            input_value.CopyFrom(
+                onnx.helper.make_tensor_value_info(
+                    str(node.input[0]),
+                    int(input_tensor_type.elem_type),
+                    symbolic_input_shape,
+                )
+            )
+            if output_value is not None:
+                output_tensor_type = output_value.type.tensor_type
+                output_has_unknown_rank = (
+                    not output_tensor_type.HasField("shape")
+                    or len(output_tensor_type.shape.dim) == 0
+                )
+                if output_has_unknown_rank:
+                    symbolic_output_shape: List[object] = [
+                        symbolic_input_shape[0],
+                        output_channels,
+                        *symbolic_input_shape[2:],
+                    ]
+                    output_value.CopyFrom(
+                        onnx.helper.make_tensor_value_info(
+                            str(node.output[0]),
+                            int(output_tensor_type.elem_type),
+                            symbolic_output_shape,
+                        )
+                    )
+            rewritten_count += 1
+
+    visit_graph(model.graph)
+    return {"UnknownRankConv": rewritten_count} if rewritten_count else {}
+
+
 def prepare_onnx_graph_for_onnxruntime(
     onnx_graph: onnx.ModelProto,
 ) -> tuple[onnx.ModelProto, Dict[str, int]]:
@@ -562,6 +646,10 @@ def prepare_onnx_graph_for_onnxruntime(
     for op_type, count in _rewrite_integer_matmul_for_onnxruntime(prepared).items():
         rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
     for op_type, count in _rewrite_tensor_optional_has_element_for_onnxruntime(
+        prepared
+    ).items():
+        rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
+    for op_type, count in _repair_unknown_rank_conv_io_for_onnxruntime(
         prepared
     ).items():
         rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)

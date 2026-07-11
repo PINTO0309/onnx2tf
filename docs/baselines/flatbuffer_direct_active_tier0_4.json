@@ -708,9 +708,8 @@
     {
       "tier": 0,
       "model": "sym_shape_infer_temp.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "b1520bf516733ae1022f90c3ed0dc2dc692e98caf8e98f3eb75de8d9bdcbefa7"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 1.430511474609375e-06
     },
     {
       "tier": 0,

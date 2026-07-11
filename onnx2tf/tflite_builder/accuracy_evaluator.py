@@ -1590,13 +1590,14 @@ def evaluate_onnx_tflite_outputs(
 
     rng = np.random.default_rng(seed=int(seed))
     custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
-    input_specs = _collect_onnx_input_specs(onnx_graph)
+    onnx_runtime_graph = _prepare_onnx_graph_for_onnxruntime(onnx_graph)
+    input_specs = _collect_onnx_input_specs(onnx_runtime_graph)
     distribution_overrides = _build_seeded_input_distribution_overrides(
-        onnx_graph=onnx_graph,
+        onnx_graph=onnx_runtime_graph,
         input_specs=input_specs,
     )
     generated_input_overrides = _build_static_control_input_overrides(
-        onnx_graph=onnx_graph,
+        onnx_graph=onnx_runtime_graph,
         input_specs=input_specs,
     )
     onnx_input_names = [name for name, _, _ in input_specs]
@@ -1616,7 +1617,6 @@ def evaluate_onnx_tflite_outputs(
         if output_name in nondeterministic_output_reasons
     ]
 
-    onnx_runtime_graph = _prepare_onnx_graph_for_onnxruntime(onnx_graph)
     try:
         onnx_session = ort.InferenceSession(
             onnx_runtime_graph.SerializeToString(),
@@ -2210,13 +2210,14 @@ def evaluate_onnx_tflite_outputs_isolated(
 
     rng = np.random.default_rng(seed=int(seed))
     custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
-    input_specs = _collect_onnx_input_specs(onnx_graph)
+    onnx_runtime_graph = _prepare_onnx_graph_for_onnxruntime(onnx_graph)
+    input_specs = _collect_onnx_input_specs(onnx_runtime_graph)
     distribution_overrides = _build_seeded_input_distribution_overrides(
-        onnx_graph=onnx_graph,
+        onnx_graph=onnx_runtime_graph,
         input_specs=input_specs,
     )
     generated_input_overrides = _build_static_control_input_overrides(
-        onnx_graph=onnx_graph,
+        onnx_graph=onnx_runtime_graph,
         input_specs=input_specs,
     )
     onnx_input_names = [name for name, _, _ in input_specs]
@@ -2235,7 +2236,6 @@ def evaluate_onnx_tflite_outputs_isolated(
         for output_name in onnx_output_names
         if output_name in nondeterministic_output_reasons
     ]
-    onnx_runtime_graph = _prepare_onnx_graph_for_onnxruntime(onnx_graph)
     onnx_graph_serialized = onnx_runtime_graph.SerializeToString()
     use_worker_output_memmap, worker_output_memmap_dir = _resolve_eval_memmap_config(
         onnx_graph=onnx_graph,
