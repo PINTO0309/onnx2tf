@@ -1023,10 +1023,8 @@
     {
       "tier": 1,
       "model": "license_plate_detection_lpd_yunet_2023mar_int8.onnx",
-      "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "ca07ef9220806a5c38b4df9f75bf24bf2c9dd9afeec841e5dc2c6058a16af929",
-      "tflite_max_abs": 1.0101327896118164
+      "baseline_classification": "pass",
+      "tflite_max_abs": 9.5367431640625e-07
     },
     {
       "tier": 1,

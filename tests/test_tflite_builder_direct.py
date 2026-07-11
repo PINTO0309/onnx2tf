@@ -4956,6 +4956,56 @@ def _make_qlinear_sigmoid_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_qlinear_softmax_wrap_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT8, [5, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.INT8, [5, 2])
+    x_scale = numpy_helper.from_array(
+        np.asarray(0.20202656, dtype=np.float32),
+        name="qsoftmax_x_scale",
+    )
+    x_zero = numpy_helper.from_array(
+        np.asarray(-8, dtype=np.int8),
+        name="qsoftmax_x_zero",
+    )
+    y_scale = numpy_helper.from_array(
+        np.asarray(1.0 / 256.0, dtype=np.float32),
+        name="qsoftmax_y_scale",
+    )
+    y_zero = numpy_helper.from_array(
+        np.asarray(-128, dtype=np.int8),
+        name="qsoftmax_y_zero",
+    )
+    node = helper.make_node(
+        "QLinearSoftmax",
+        [
+            "x",
+            "qsoftmax_x_scale",
+            "qsoftmax_x_zero",
+            "qsoftmax_y_scale",
+            "qsoftmax_y_zero",
+        ],
+        ["y"],
+        name="QSoftmaxWrap",
+        domain="com.microsoft",
+        axis=-1,
+        opset=13,
+    )
+    graph = helper.make_graph(
+        [node],
+        "qlinear_softmax_wrap_graph",
+        [x],
+        [y],
+        initializer=[x_scale, x_zero, y_scale, y_zero],
+    )
+    return helper.make_model(
+        graph,
+        opset_imports=[
+            helper.make_operatorsetid("", 13),
+            helper.make_operatorsetid("com.microsoft", 1),
+        ],
+    )
+
+
 def _make_qlinear_global_average_pool_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 1, 1])
@@ -8827,6 +8877,44 @@ def test_flatbuffer_direct_mixed_uint8_int8_qlinear_conv_runtime_matches_onnx() 
             actual = np.transpose(actual, (0, 3, 1, 2))
 
     np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1.0e-6)
+
+
+@pytest.mark.skipif(
+    not _requires_flatbuffer_tools(),
+    reason="flatbuffer_direct requires bundled schema artifacts",
+)
+def test_flatbuffer_direct_qlinear_softmax_wrap_runtime_matches_onnx() -> None:
+    model = _make_qlinear_softmax_wrap_model()
+    sample_input = np.asarray(
+        [
+            [-128, -128],
+            [1, 0],
+            [10, 0],
+            [127, -128],
+            [-128, 127],
+        ],
+        dtype=np.int8,
+    )
+    expected = ort.InferenceSession(
+        model.SerializeToString(),
+        providers=["CPUExecutionProvider"],
+    ).run(None, {"x": sample_input})[0]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "qlinear_softmax_wrap", model)
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+        )
+        actual = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs={"x": sample_input},
+            tensor_names=["y"],
+        )["y"]
+
+    np.testing.assert_array_equal(actual, expected)
 
 
 def test_flatbuffer_direct_input_layout_defaults_to_nhwc_when_enabled() -> None:

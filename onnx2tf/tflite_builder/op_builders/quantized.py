@@ -130,6 +130,7 @@ def _add_scalar_onnx_requantization(
     input_name: str,
     output_name: str,
     input_is_scaled_quant_units: bool = False,
+    wrap_on_overflow: bool = False,
 ) -> bool:
     """Requantize float data with ONNX round-then-saturate semantics.
 
@@ -186,20 +187,9 @@ def _add_scalar_onnx_requantization(
         np.asarray(float(quantization.zero_point[0]), dtype=np.float32),
     )
     qmin, qmax = dtype_limits[output_dtype]
-    qmin_name = ctx.add_const_tensor(
-        f"{output_name}_onnx_requant_min",
-        np.asarray(qmin, dtype=np.float32),
-    )
-    qmax_name = ctx.add_const_tensor(
-        f"{output_name}_onnx_requant_max",
-        np.asarray(qmax, dtype=np.float32),
-    )
-
     scaled_name = input_name
     rounded_name = intermediate("rounded")
     shifted_name = intermediate("shifted")
-    lower_clamped_name = intermediate("lower_clamped")
-    clamped_name = intermediate("clamped")
     if not bool(input_is_scaled_quant_units):
         scale_name = ctx.add_const_tensor(
             f"{output_name}_onnx_requant_scale",
@@ -232,24 +222,103 @@ def _add_scalar_onnx_requantization(
             options={"fusedActivationFunction": "NONE"},
         )
     )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="MAXIMUM",
-            inputs=[shifted_name, qmin_name],
-            outputs=[lower_clamped_name],
+    cast_input_name = shifted_name
+    if bool(wrap_on_overflow):
+        qmin_name = ctx.add_const_tensor(
+            f"{output_name}_onnx_requant_min",
+            np.asarray(qmin, dtype=np.float32),
         )
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="MINIMUM",
-            inputs=[lower_clamped_name, qmax_name],
-            outputs=[clamped_name],
+        modulus_name = ctx.add_const_tensor(
+            f"{output_name}_onnx_requant_modulus",
+            np.asarray(qmax - qmin + 1.0, dtype=np.float32),
         )
-    )
+        offset_name = intermediate("wrap_offset")
+        quotient_name = intermediate("wrap_quotient")
+        cycles_name = intermediate("wrap_cycles")
+        cycle_span_name = intermediate("wrap_cycle_span")
+        wrapped_offset_name = intermediate("wrapped_offset")
+        wrapped_name = intermediate("wrapped")
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[shifted_name, qmin_name],
+                outputs=[offset_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="DIV",
+                inputs=[offset_name, modulus_name],
+                outputs=[quotient_name],
+                options={
+                    "fusedActivationFunction": "NONE",
+                    "preserveDivisionForOnnxRequantization": True,
+                },
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="FLOOR",
+                inputs=[quotient_name],
+                outputs=[cycles_name],
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[cycles_name, modulus_name],
+                outputs=[cycle_span_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[offset_name, cycle_span_name],
+                outputs=[wrapped_offset_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[wrapped_offset_name, qmin_name],
+                outputs=[wrapped_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        cast_input_name = wrapped_name
+    else:
+        qmin_name = ctx.add_const_tensor(
+            f"{output_name}_onnx_requant_min",
+            np.asarray(qmin, dtype=np.float32),
+        )
+        qmax_name = ctx.add_const_tensor(
+            f"{output_name}_onnx_requant_max",
+            np.asarray(qmax, dtype=np.float32),
+        )
+        lower_clamped_name = intermediate("lower_clamped")
+        clamped_name = intermediate("clamped")
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MAXIMUM",
+                inputs=[shifted_name, qmin_name],
+                outputs=[lower_clamped_name],
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MINIMUM",
+                inputs=[lower_clamped_name, qmax_name],
+                outputs=[clamped_name],
+            )
+        )
+        cast_input_name = clamped_name
     ctx.add_operator(
         OperatorIR(
             op_type="CAST",
-            inputs=[clamped_name],
+            inputs=[cast_input_name],
             outputs=[output_name],
             options={"inDataType": "FLOAT32", "outDataType": output_dtype},
         )
@@ -3069,10 +3138,16 @@ def build_qlinear_softmax_op(node: Any, ctx: Any) -> None:
         )
     )
 
-    ctx.add_operator(
-        OperatorIR(
-            op_type="QUANTIZE",
-            inputs=[softmax_out],
-            outputs=[output_name],
+    if not _add_scalar_onnx_requantization(
+        ctx=ctx,
+        input_name=softmax_out,
+        output_name=output_name,
+        wrap_on_overflow=True,
+    ):
+        ctx.add_operator(
+            OperatorIR(
+                op_type="QUANTIZE",
+                inputs=[softmax_out],
+                outputs=[output_name],
+            )
         )
-    )
