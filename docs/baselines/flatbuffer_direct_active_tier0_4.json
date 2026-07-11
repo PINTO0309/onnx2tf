@@ -1173,9 +1173,10 @@
     {
       "tier": 1,
       "model": "person_reid_youtu_2021nov_int8.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "defc48f7d37f91ae2e35b3d1b7dbe1119a7242c2886e2b922555765b1a86f9c3"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "tflite_fail",
+      "error_signature_sha256": "613f23995aa604383e77511475030b54efc0aea9ef82d095f7edfaf6ab239bd6",
+      "tflite_max_abs": 3.9098572731018066
     },
     {
       "tier": 1,

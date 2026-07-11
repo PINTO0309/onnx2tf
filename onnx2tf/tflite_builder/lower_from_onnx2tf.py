@@ -66193,6 +66193,42 @@ def _optimize_nhwc_propagation_qlinear_concat_conv(model_ir: ModelIR) -> Dict[st
         # Reinterpretation is safe when spatial dimensions are statically singleton.
         return int(shape[2]) == 1 and int(shape[3]) == 1 and int(signature[2]) == 1 and int(signature[3]) == 1
 
+    def _is_nhwc_singleton_spatial(tensor: Optional[TensorIR]) -> bool:
+        if tensor is None:
+            return False
+        shape = [int(v) for v in list(tensor.shape)]
+        signature = (
+            [int(v) for v in list(tensor.shape_signature)]
+            if tensor.shape_signature is not None
+            else list(shape)
+        )
+        return (
+            len(shape) == 4
+            and len(signature) == 4
+            and int(shape[1]) == 1
+            and int(shape[2]) == 1
+            and int(signature[1]) == 1
+            and int(signature[2]) == 1
+        )
+
+    def _is_singleton_nchw_to_nhwc_reshape(op: OperatorIR) -> bool:
+        if str(op.op_type) != "RESHAPE" or len(op.inputs) < 1 or len(op.outputs) != 1:
+            return False
+        input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+        output_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+        if not _is_nchw_nhwc_reinterpret_safe(input_tensor) or not _is_nhwc_singleton_spatial(output_tensor):
+            return False
+        expected = _permuted_shape_signature(input_tensor, rank4_perm_nchw_to_nhwc)
+        if expected is None or output_tensor is None:
+            return False
+        output_shape = [int(v) for v in list(output_tensor.shape)]
+        output_signature = (
+            [int(v) for v in list(output_tensor.shape_signature)]
+            if output_tensor.shape_signature is not None
+            else list(output_shape)
+        )
+        return output_shape == list(expected[0]) and output_signature == list(expected[1])
+
     def _permute_tensor_shape_signature(tensor: Optional[TensorIR], perm: List[int]) -> bool:
         if tensor is None:
             return False
@@ -66287,14 +66323,18 @@ def _optimize_nhwc_propagation_qlinear_concat_conv(model_ir: ModelIR) -> Dict[st
             valid_posts = True
             for post_idx in post_users:
                 post_op = model_ir.operators[post_idx]
-                if str(post_op.op_type) != "TRANSPOSE" or len(post_op.inputs) < 2 or len(post_op.outputs) != 1:
+                if len(post_op.inputs) < 1 or len(post_op.outputs) != 1:
                     valid_posts = False
                     break
                 if str(post_op.inputs[0]) != q_out_name:
                     valid_posts = False
                     break
-                perm_post = _read_transpose_perm(model_ir, post_op)
-                if perm_post != rank4_perm_nchw_to_nhwc:
+                is_layout_transpose = (
+                    str(post_op.op_type) == "TRANSPOSE"
+                    and len(post_op.inputs) >= 2
+                    and _read_transpose_perm(model_ir, post_op) == rank4_perm_nchw_to_nhwc
+                )
+                if not is_layout_transpose and not _is_singleton_nchw_to_nhwc_reshape(post_op):
                     valid_posts = False
                     break
                 post_output_name = str(post_op.outputs[0])
@@ -66341,6 +66381,20 @@ def _optimize_nhwc_propagation_qlinear_concat_conv(model_ir: ModelIR) -> Dict[st
                     convertible = False
                     break
                 q_in_producer = model_ir.operators[int(q_in_producer_idx)]
+
+                # The input may already be a physical NHWC singleton-spatial
+                # tensor (for example, a quantized global-average-pool result).
+                # It needs no adapter or metadata rewrite when DEQUANTIZE is its
+                # only consumer.
+                q_in_users = [int(v) for v in consumers.get(q_in_name, [])]
+                dq_out_tensor = model_ir.tensors.get(str(dq_op.outputs[0]), None)
+                if (
+                    len(q_in_users) == 1
+                    and int(q_in_users[0]) == int(dq_idx)
+                    and _is_nhwc_singleton_spatial(q_in_tensor)
+                    and _is_nhwc_singleton_spatial(dq_out_tensor)
+                ):
+                    continue
 
                 # Pattern 1:
                 #   q_raw --TRANSPOSE(0,3,1,2)--> q_nchw --DEQUANTIZE--> dq
@@ -66419,7 +66473,65 @@ def _optimize_nhwc_propagation_qlinear_concat_conv(model_ir: ModelIR) -> Dict[st
                             removable_pre_indices.append(int(q_float_producer_idx))
                             continue
 
-                # Pattern 3:
+                        # Pattern 3:
+                        #   x_nhwc --RESHAPE--> x_nchw(N,C,1,1)
+                        #          --QUANTIZE--> q_nchw --DEQUANTIZE--> dq
+                        #
+                        # TFLite commonly represents a singleton-spatial NCHW
+                        # layout restore as RESHAPE instead of TRANSPOSE.  The
+                        # byte order is identical for N,C,1,1 and N,1,1,C, so
+                        # bypass the reshape when the source already has the
+                        # prospective NHWC shape.  Updating both the QUANTIZE
+                        # input and its output metadata keeps later shape
+                        # reconciliation from recreating the NCHW shape.
+                        if (
+                            str(q_float_producer.op_type) == "RESHAPE"
+                            and len(q_float_producer.inputs) >= 1
+                            and len(q_float_producer.outputs) == 1
+                            and str(q_float_producer.outputs[0]) == q_float_name
+                            and _is_nchw_nhwc_reinterpret_safe(q_in_tensor)
+                        ):
+                            q_float_users = [int(v) for v in consumers.get(q_float_name, [])]
+                            q_in_users = [int(v) for v in consumers.get(q_in_name, [])]
+                            if (
+                                len(q_float_users) == 1
+                                and int(q_float_users[0]) == int(q_in_producer_idx)
+                                and len(q_in_users) == 1
+                                and int(q_in_users[0]) == int(dq_idx)
+                                and q_float_name not in model_ir.outputs
+                            ):
+                                q_raw_name = str(q_float_producer.inputs[0])
+                                q_raw_tensor = model_ir.tensors.get(q_raw_name, None)
+                                permuted_q_in = _permuted_shape_signature(
+                                    q_in_tensor,
+                                    rank4_perm_nchw_to_nhwc,
+                                )
+                                if q_raw_tensor is not None and permuted_q_in is not None:
+                                    q_raw_shape = [int(v) for v in list(q_raw_tensor.shape)]
+                                    q_raw_signature = (
+                                        [int(v) for v in list(q_raw_tensor.shape_signature)]
+                                        if q_raw_tensor.shape_signature is not None
+                                        else list(q_raw_shape)
+                                    )
+                                    if (
+                                        q_raw_shape == list(permuted_q_in[0])
+                                        and q_raw_signature == list(permuted_q_in[1])
+                                    ):
+                                        pending_quant_input_rewrites[int(q_in_producer_idx)] = q_raw_name
+                                        pending_tensor_shape_updates[q_in_name] = permuted_q_in
+                                        pending_qdim_remaps.add(q_in_name)
+                                        dq_out_tensor = model_ir.tensors.get(str(dq_op.outputs[0]), None)
+                                        if dq_out_tensor is None:
+                                            convertible = False
+                                            break
+                                        pending_tensor_shape_updates[str(dq_op.outputs[0])] = (
+                                            list(permuted_q_in[0]),
+                                            list(permuted_q_in[1]),
+                                        )
+                                        removable_pre_indices.append(int(q_float_producer_idx))
+                                        continue
+
+                # Pattern 4:
                 #   q_nchw --DEQUANTIZE--> dq, where q_nchw is effectively layout-invariant
                 #   (e.g., NCHW N,C,1,1), so we can reinterpret metadata without data movement.
                 q_in_users = [int(v) for v in consumers.get(q_in_name, [])]
