@@ -461,9 +461,8 @@
     {
       "tier": 0,
       "model": "if_p2_11.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "301abe3a0e06cba4fc2d6ccce2b5614c85f032b5bab26a416f67280abd072fbf"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0
     },
     {
       "tier": 0,

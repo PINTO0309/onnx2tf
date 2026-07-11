@@ -239,6 +239,164 @@ def _decompose_group_norm_for_onnxruntime(
     return {"GroupNorm": rewritten_count}
 
 
+def _graph_static_shapes(graph: onnx.GraphProto) -> Dict[str, List[int]]:
+    shapes: Dict[str, List[int]] = {}
+    for value in [*graph.input, *graph.value_info, *graph.output]:
+        tensor_type = value.type.tensor_type
+        if not tensor_type.HasField("shape"):
+            continue
+        dims: List[int] = []
+        for dim in tensor_type.shape.dim:
+            if not dim.HasField("dim_value") or int(dim.dim_value) <= 0:
+                dims = []
+                break
+            dims.append(int(dim.dim_value))
+        if dims:
+            shapes[str(value.name)] = dims
+    for initializer in graph.initializer:
+        shapes[str(initializer.name)] = [int(dim) for dim in initializer.dims]
+    return shapes
+
+
+def _graph_tensor_elem_types(graph: onnx.GraphProto) -> Dict[str, int]:
+    elem_types: Dict[str, int] = {}
+    for value in [*graph.input, *graph.value_info, *graph.output]:
+        tensor_type = value.type.tensor_type
+        if int(tensor_type.elem_type) != int(onnx.TensorProto.UNDEFINED):
+            elem_types[str(value.name)] = int(tensor_type.elem_type)
+    for initializer in graph.initializer:
+        elem_types[str(initializer.name)] = int(initializer.data_type)
+    return elem_types
+
+
+def _sequenceconstruct_tensor_spec(
+    graph: onnx.GraphProto,
+) -> Optional[tuple[onnx.NodeProto, List[int], int]]:
+    if len(graph.node) == 0 or len(graph.output) != 1:
+        return None
+    terminal = graph.node[-1]
+    if (
+        str(terminal.op_type) != "SequenceConstruct"
+        or len(terminal.output) != 1
+        or str(terminal.output[0]) != str(graph.output[0].name)
+        or len(terminal.input) == 0
+    ):
+        return None
+    if any(str(node.op_type) not in {"Add", "Constant"} for node in graph.node[:-1]):
+        return None
+
+    shapes = _graph_static_shapes(graph)
+    elem_types = _graph_tensor_elem_types(graph)
+    input_shapes = [shapes.get(str(name)) for name in terminal.input]
+    input_elem_types = [elem_types.get(str(name)) for name in terminal.input]
+    if any(shape is None or len(shape) == 0 for shape in input_shapes):
+        return None
+    if any(elem_type is None for elem_type in input_elem_types):
+        return None
+    concrete_shapes = [list(shape) for shape in input_shapes if shape is not None]
+    rank = len(concrete_shapes[0])
+    tail = concrete_shapes[0][1:]
+    if any(len(shape) != rank or shape[1:] != tail for shape in concrete_shapes[1:]):
+        return None
+    concrete_elem_types = [int(value) for value in input_elem_types if value is not None]
+    if any(value != concrete_elem_types[0] for value in concrete_elem_types[1:]):
+        return None
+    output_shape = [sum(int(shape[0]) for shape in concrete_shapes), *tail]
+    return terminal, output_shape, concrete_elem_types[0]
+
+
+def _replace_sequenceconstruct_with_tensor(
+    *,
+    graph: onnx.GraphProto,
+    terminal: onnx.NodeProto,
+    output_shape: List[int],
+    elem_type: int,
+) -> None:
+    terminal.domain = ""
+    del terminal.attribute[:]
+    if len(terminal.input) == 1:
+        terminal.op_type = "Identity"
+    else:
+        terminal.op_type = "Concat"
+        terminal.attribute.extend([onnx.helper.make_attribute("axis", 0)])
+    output_name = str(terminal.output[0])
+    graph.output[0].CopyFrom(
+        onnx.helper.make_tensor_value_info(
+            output_name,
+            int(elem_type),
+            [int(dim) for dim in output_shape],
+        )
+    )
+
+
+def _repair_if_sequenceconstruct_outputs_for_onnxruntime(
+    model: onnx.ModelProto,
+) -> Dict[str, int]:
+    rewritten_count = 0
+
+    def visit_graph(graph: onnx.GraphProto) -> None:
+        nonlocal rewritten_count
+        for node in graph.node:
+            for attribute in node.attribute:
+                if attribute.type == onnx.AttributeProto.GRAPH:
+                    visit_graph(attribute.g)
+                elif attribute.type == onnx.AttributeProto.GRAPHS:
+                    for child_graph in attribute.graphs:
+                        visit_graph(child_graph)
+            if str(node.op_type) != "If" or len(node.output) != 1:
+                continue
+            branch_graphs = {
+                str(attribute.name): attribute.g
+                for attribute in node.attribute
+                if attribute.type == onnx.AttributeProto.GRAPH
+            }
+            then_graph = branch_graphs.get("then_branch")
+            else_graph = branch_graphs.get("else_branch")
+            if then_graph is None or else_graph is None:
+                continue
+            then_spec = _sequenceconstruct_tensor_spec(then_graph)
+            else_spec = _sequenceconstruct_tensor_spec(else_graph)
+            if then_spec is None or else_spec is None:
+                continue
+            then_terminal, then_shape, then_elem_type = then_spec
+            else_terminal, else_shape, else_elem_type = else_spec
+            if (
+                len(then_shape) != len(else_shape)
+                or then_shape[1:] != else_shape[1:]
+                or int(then_elem_type) != int(else_elem_type)
+            ):
+                continue
+            _replace_sequenceconstruct_with_tensor(
+                graph=then_graph,
+                terminal=then_terminal,
+                output_shape=then_shape,
+                elem_type=then_elem_type,
+            )
+            _replace_sequenceconstruct_with_tensor(
+                graph=else_graph,
+                terminal=else_terminal,
+                output_shape=else_shape,
+                elem_type=else_elem_type,
+            )
+            dynamic_output_shape: List[object] = [
+                f"{str(node.name or node.output[0])}_axis0",
+                *then_shape[1:],
+            ]
+            for value in [*graph.value_info, *graph.output]:
+                if str(value.name) == str(node.output[0]):
+                    value.CopyFrom(
+                        onnx.helper.make_tensor_value_info(
+                            str(node.output[0]),
+                            int(then_elem_type),
+                            dynamic_output_shape,
+                        )
+                    )
+            rewritten_count += 1
+
+    visit_graph(model.graph)
+    return {"IfSequenceConstruct": rewritten_count} if rewritten_count else {}
+
+
 def prepare_onnx_graph_for_onnxruntime(
     onnx_graph: onnx.ModelProto,
 ) -> tuple[onnx.ModelProto, Dict[str, int]]:
@@ -256,6 +414,10 @@ def prepare_onnx_graph_for_onnxruntime(
             pass
 
     rewritten: Dict[str, int] = _decompose_group_norm_for_onnxruntime(prepared)
+    for op_type, count in _repair_if_sequenceconstruct_outputs_for_onnxruntime(
+        prepared
+    ).items():
+        rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
     for node in prepared.graph.node:
         if str(node.domain) not in {"", "ai.onnx"}:
             continue

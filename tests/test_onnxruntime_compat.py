@@ -94,3 +94,107 @@ def test_prepare_onnxruntime_graph_decomposes_group_norm_with_swish() -> None:
     affine = normalized * scale.reshape(1, 1, 1, 4) + bias.reshape(1, 1, 1, 4)
     expected = affine / (1.0 + np.exp(-affine))
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
+
+
+def test_prepare_onnxruntime_graph_repairs_if_sequenceconstruct_tensor_alias() -> None:
+    cond_info = helper.make_tensor_value_info("cond", TensorProto.BOOL, [])
+    x1_info = helper.make_tensor_value_info("x1", TensorProto.FLOAT, [1, 2])
+    x2_info = helper.make_tensor_value_info("x2", TensorProto.FLOAT, [2, 2])
+    y_info = helper.make_tensor_value_info("y", TensorProto.FLOAT, [])
+
+    def branch(*, name: str, include_x2: bool):
+        one = numpy_helper.from_array(np.asarray(1.0, dtype=np.float32))
+        nodes = [
+            helper.make_node(
+                "Constant",
+                [],
+                [f"{name}_one"],
+                name=f"{name}_constant",
+                value=one,
+            ),
+            helper.make_node(
+                "Add",
+                ["x1", f"{name}_one"],
+                [f"{name}_x1"],
+                name=f"{name}_add_x1",
+            ),
+        ]
+        sequence_inputs = [f"{name}_x1"]
+        value_infos = [
+            helper.make_tensor_value_info(
+                f"{name}_x1", TensorProto.FLOAT, [1, 2]
+            )
+        ]
+        if include_x2:
+            nodes.append(
+                helper.make_node(
+                    "Add",
+                    ["x2", f"{name}_one"],
+                    [f"{name}_x2"],
+                    name=f"{name}_add_x2",
+                )
+            )
+            sequence_inputs.append(f"{name}_x2")
+            value_infos.append(
+                helper.make_tensor_value_info(
+                    f"{name}_x2", TensorProto.FLOAT, [2, 2]
+                )
+            )
+        sequence_output = f"{name}_sequence"
+        nodes.append(
+            helper.make_node(
+                "SequenceConstruct",
+                sequence_inputs,
+                [sequence_output],
+                name=f"{name}_sequence_node",
+            )
+        )
+        graph = helper.make_graph(
+            nodes,
+            name,
+            [],
+            [helper.make_tensor_value_info(sequence_output, TensorProto.FLOAT, [])],
+            value_info=value_infos,
+        )
+        return graph
+
+    if_node = helper.make_node(
+        "If",
+        ["cond"],
+        ["y"],
+        name="if_sequence",
+        then_branch=branch(name="then", include_x2=False),
+        else_branch=branch(name="else", include_x2=True),
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [if_node],
+            "if_sequence",
+            [cond_info, x1_info, x2_info],
+            [y_info],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 11)],
+    )
+
+    prepared, rewritten = prepare_onnx_graph_for_onnxruntime(model)
+
+    assert rewritten == {"IfSequenceConstruct": 1}
+    prepared_if = prepared.graph.node[0]
+    branch_terminals = {
+        attribute.name: attribute.g.node[-1].op_type
+        for attribute in prepared_if.attribute
+    }
+    assert branch_terminals == {
+        "else_branch": "Concat",
+        "then_branch": "Identity",
+    }
+    session = ort.InferenceSession(
+        prepared.SerializeToString(),
+        providers=["CPUExecutionProvider"],
+    )
+    x1 = np.asarray([[1.0, 2.0]], dtype=np.float32)
+    x2 = np.asarray([[3.0, 4.0], [5.0, 6.0]], dtype=np.float32)
+    actual_then = session.run(["y"], {"cond": np.asarray(True), "x1": x1, "x2": x2})[0]
+    actual_else = session.run(["y"], {"cond": np.asarray(False), "x1": x1, "x2": x2})[0]
+    np.testing.assert_array_equal(actual_then, x1 + 1.0)
+    np.testing.assert_array_equal(actual_else, np.concatenate([x1 + 1.0, x2 + 1.0], axis=0))
