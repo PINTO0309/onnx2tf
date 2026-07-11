@@ -27,6 +27,7 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
+    QuantParamIR,
     TensorIR,
     clone_model_ir_with_float32,
     optimize_redundant_transpose_operators,
@@ -50,6 +51,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict,
     _optimize_concat_mul_add_transpose_nhwc_bridge_chains,
     _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains,
+    _optimize_concat_pre_quantize_dequantize,
     _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains,
     _optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains,
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains,
@@ -29948,7 +29950,7 @@ def test_flatbuffer_direct_serialize_model_sanitizes_negative_tensor_shape() -> 
         assert [int(y_tensor.ShapeSignature(i)) for i in range(y_tensor.ShapeSignatureLength())] == [-1]
 
 
-def test_flatbuffer_direct_terminal_quantize_dequantize_optimization() -> None:
+def test_flatbuffer_direct_terminal_quantize_dequantize_preserves_rounding() -> None:
     model = _make_terminal_quantize_dequantize_model()
     register_default_preprocess_rules()
     preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
@@ -29957,9 +29959,95 @@ def test_flatbuffer_direct_terminal_quantize_dequantize_optimization() -> None:
         output_file_name="terminal_qdq_opt_test",
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
-    assert "QUANTIZE" not in op_types
-    assert "DEQUANTIZE" not in op_types
+    assert op_types.count("QUANTIZE") == 1
+    assert op_types.count("DEQUANTIZE") == 1
     assert op_types.count("RELU") == 1
+
+
+def test_flatbuffer_direct_concat_qdq_bypass_preserves_post_arithmetic_quantization() -> None:
+    model_ir = ModelIR("concat_qdq_post_arithmetic_preservation_test")
+    model_ir.inputs = ["xq"]
+    model_ir.outputs = ["y"]
+    source_q = QuantParamIR(scale=[0.25], zero_point=[0], quantized_dimension=0)
+    target_q = QuantParamIR(scale=[0.5], zero_point=[0], quantized_dimension=0)
+    model_ir.tensors = {
+        "xq": TensorIR(name="xq", dtype="INT8", shape=[1, 2], quantization=source_q),
+        "xf": TensorIR(name="xf", dtype="FLOAT32", shape=[1, 2]),
+        "bias": TensorIR(
+            name="bias",
+            dtype="FLOAT32",
+            shape=[1],
+            data=np.asarray([0.1], dtype=np.float32),
+        ),
+        "sum": TensorIR(name="sum", dtype="FLOAT32", shape=[1, 2]),
+        "q": TensorIR(name="q", dtype="INT8", shape=[1, 2], quantization=target_q),
+        "dq": TensorIR(name="dq", dtype="FLOAT32", shape=[1, 2]),
+        "other": TensorIR(
+            name="other",
+            dtype="FLOAT32",
+            shape=[1, 1],
+            data=np.asarray([[1.0]], dtype=np.float32),
+        ),
+        "y": TensorIR(name="y", dtype="FLOAT32", shape=[1, 3]),
+    }
+    model_ir.operators = [
+        OperatorIR(op_type="DEQUANTIZE", inputs=["xq"], outputs=["xf"]),
+        OperatorIR(op_type="ADD", inputs=["xf", "bias"], outputs=["sum"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["sum"], outputs=["q"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["q"], outputs=["dq"]),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["dq", "other"],
+            outputs=["y"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    stats = _optimize_concat_pre_quantize_dequantize(model_ir)
+
+    assert stats["bypassed_concat_pre_quantize_dequantize"] == 0
+    assert [str(op.op_type) for op in model_ir.operators].count("QUANTIZE") == 1
+    assert [str(op.op_type) for op in model_ir.operators].count("DEQUANTIZE") == 2
+    concat = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert concat.inputs[0] == "dq"
+
+
+def test_flatbuffer_direct_concat_qdq_bypass_accepts_identical_direct_grid() -> None:
+    model_ir = ModelIR("concat_qdq_identical_direct_grid_test")
+    model_ir.inputs = ["xq"]
+    model_ir.outputs = ["y"]
+    source_q = QuantParamIR(scale=[0.25], zero_point=[-3], quantized_dimension=0)
+    target_q = QuantParamIR(scale=[0.25], zero_point=[-3], quantized_dimension=0)
+    model_ir.tensors = {
+        "xq": TensorIR(name="xq", dtype="INT8", shape=[1, 2], quantization=source_q),
+        "xf": TensorIR(name="xf", dtype="FLOAT32", shape=[1, 2]),
+        "q": TensorIR(name="q", dtype="INT8", shape=[1, 2], quantization=target_q),
+        "dq": TensorIR(name="dq", dtype="FLOAT32", shape=[1, 2]),
+        "other": TensorIR(
+            name="other",
+            dtype="FLOAT32",
+            shape=[1, 1],
+            data=np.asarray([[1.0]], dtype=np.float32),
+        ),
+        "y": TensorIR(name="y", dtype="FLOAT32", shape=[1, 3]),
+    }
+    model_ir.operators = [
+        OperatorIR(op_type="DEQUANTIZE", inputs=["xq"], outputs=["xf"]),
+        OperatorIR(op_type="QUANTIZE", inputs=["xf"], outputs=["q"]),
+        OperatorIR(op_type="DEQUANTIZE", inputs=["q"], outputs=["dq"]),
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["dq", "other"],
+            outputs=["y"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    stats = _optimize_concat_pre_quantize_dequantize(model_ir)
+
+    assert stats["bypassed_concat_pre_quantize_dequantize"] == 1
+    concat = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert concat.inputs[0] == "xf"
 
 
 def test_flatbuffer_direct_terminal_transpose_before_dequantize_sanitization() -> None:
@@ -31251,9 +31339,10 @@ def test_flatbuffer_direct_qlinear_concat_conv_layout_propagation() -> None:
         for op in model_ir.operators
     )
 
-    # If a QUANTIZE input is already in dequantized flow, avoid redundant Q->DQ before CONCAT.
-    assert all(
-        not (
+    # MAX_POOL output is requantized onto pool_q's grid. Preserve the following
+    # DEQUANTIZE so CONCAT observes the rounded/clipped ONNX values.
+    assert any(
+        (
             str(op.op_type) == "DEQUANTIZE"
             and len(op.inputs) == 1
             and op.inputs[0] == "pool_q"
@@ -31261,7 +31350,7 @@ def test_flatbuffer_direct_qlinear_concat_conv_layout_propagation() -> None:
         for op in model_ir.operators
     )
     concat_inputs = list(concat_ops[0].inputs)
-    assert "QLCatConv_MaxPool_output_nhwc" in concat_inputs
+    assert "QLCatConv_Concat_pool_q_dq" in concat_inputs
 
 
 def test_flatbuffer_direct_qlinear_concat_conv_layout_propagation_with_concat_post_transpose() -> None:
@@ -32180,8 +32269,8 @@ def test_flatbuffer_direct_transpose_mixed_add_qdq_transpose_residual_optimizati
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("TRANSPOSE") == 0
-    assert op_types.count("QUANTIZE") == 1
-    assert op_types.count("DEQUANTIZE") == 1
+    assert op_types.count("QUANTIZE") == 2
+    assert op_types.count("DEQUANTIZE") == 2
     assert op_types.count("ADD") == 1
 
 

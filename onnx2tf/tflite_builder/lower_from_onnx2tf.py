@@ -64463,6 +64463,35 @@ def _optimize_dequant_logistic_quantize_chains(model_ir: ModelIR) -> Dict[str, i
     return {"folded_dequant_logistic_quantize_chains": int(folded)}
 
 
+def _quantized_tensors_share_exact_grid(
+    model_ir: ModelIR,
+    lhs_name: str,
+    rhs_name: str,
+) -> bool:
+    lhs = model_ir.tensors.get(str(lhs_name), None)
+    rhs = model_ir.tensors.get(str(rhs_name), None)
+    if lhs is None or rhs is None:
+        return False
+    if str(lhs.dtype).upper() != str(rhs.dtype).upper():
+        return False
+    lhs_q = lhs.quantization
+    rhs_q = rhs.quantization
+    if lhs_q is None or rhs_q is None:
+        return False
+    if int(lhs_q.quantized_dimension) != int(rhs_q.quantized_dimension):
+        return False
+    return bool(
+        np.array_equal(
+            np.asarray(lhs_q.scale, dtype=np.float64),
+            np.asarray(rhs_q.scale, dtype=np.float64),
+        )
+        and np.array_equal(
+            np.asarray(lhs_q.zero_point, dtype=np.int64),
+            np.asarray(rhs_q.zero_point, dtype=np.int64),
+        )
+    )
+
+
 def _optimize_terminal_quantize_dequantize(model_ir: ModelIR) -> Dict[str, int]:
     """
     Remove terminal QUANTIZE->DEQUANTIZE pairs for float outputs when safe.
@@ -64473,7 +64502,8 @@ def _optimize_terminal_quantize_dequantize(model_ir: ModelIR) -> Dict[str, int]:
     Safety conditions:
     - q is consumed only by that DEQUANTIZE
     - y_float is a graph output and has no internal consumers
-    - x_float is produced by another op and consumed only by QUANTIZE
+    - x_float is produced directly by DEQUANTIZE from the exact same
+      quantization grid and consumed only by QUANTIZE
       (allows preserving output name by renaming x_float -> y_float)
     """
     removed_pairs = 0
@@ -64521,6 +64551,20 @@ def _optimize_terminal_quantize_dequantize(model_ir: ModelIR) -> Dict[str, int]:
             if float_input_name not in producers:
                 continue
             if float_input_name in model_ir.outputs:
+                continue
+            float_producer = model_ir.operators[int(producers[float_input_name])]
+            if (
+                str(float_producer.op_type) != "DEQUANTIZE"
+                or len(float_producer.inputs) != 1
+                or len(float_producer.outputs) != 1
+                or str(float_producer.outputs[0]) != str(float_input_name)
+            ):
+                continue
+            if not _quantized_tensors_share_exact_grid(
+                model_ir,
+                str(float_producer.inputs[0]),
+                str(quantized_name),
+            ):
                 continue
 
             _rename_tensor_globally(
@@ -65281,53 +65325,15 @@ def _optimize_concat_pre_quantize_dequantize(model_ir: ModelIR) -> Dict[str, int
     Safety conditions:
     - q is consumed only by that DEQUANTIZE
     - neither q nor x_dq is a graph output
-    - x_float is already in a dequantized flow:
-      - producer(x_float) is DEQUANTIZE, or
-      - producer(x_float) has at least one DEQUANTIZE input
+    - x_float is the direct output of DEQUANTIZE
+    - the source and destination quantized tensors use the exact same dtype
+      and quantization grid
+
+    A value merely originating from a DEQUANTIZE is not sufficient: arithmetic
+    such as ADD can move values off the destination quantization grid, so
+    removing the Q/DQ pair would discard observable rounding and clipping.
     """
     bypassed = 0
-
-    def _has_dequantized_origin(
-        tensor_name: str,
-        producers: Dict[str, int],
-        max_depth: int = 6,
-    ) -> bool:
-        traceable_ops = {
-            "TRANSPOSE",
-            "RESHAPE",
-            "MAX_POOL_2D",
-            "AVERAGE_POOL_2D",
-            "PAD",
-            "ADD",
-            "SUB",
-            "MUL",
-            "DIV",
-            "CONCATENATION",
-            "MEAN",
-        }
-        visited = set()
-        stack: List[Tuple[str, int]] = [(str(tensor_name), 0)]
-        while len(stack) > 0:
-            current_name, depth = stack.pop()
-            key = (str(current_name), int(depth))
-            if key in visited:
-                continue
-            visited.add(key)
-            if int(depth) > int(max_depth):
-                continue
-
-            producer_idx = producers.get(str(current_name), None)
-            if producer_idx is None:
-                continue
-            producer = model_ir.operators[int(producer_idx)]
-            producer_type = str(producer.op_type)
-            if producer_type == "DEQUANTIZE":
-                return True
-            if producer_type not in traceable_ops:
-                continue
-            for input_name in list(producer.inputs):
-                stack.append((str(input_name), int(depth) + 1))
-        return False
 
     while True:
         changed = False
@@ -65381,7 +65387,23 @@ def _optimize_concat_pre_quantize_dequantize(model_ir: ModelIR) -> Dict[str, int
                     continue
                 if not _shapes_equal(list(float_tensor.shape), list(dq_tensor.shape)):
                     continue
-                if not _has_dequantized_origin(float_name, producers):
+                float_producer_idx = producers.get(float_name, None)
+                if float_producer_idx is None:
+                    continue
+                float_producer = model_ir.operators[int(float_producer_idx)]
+                if (
+                    str(float_producer.op_type) != "DEQUANTIZE"
+                    or len(float_producer.inputs) != 1
+                    or len(float_producer.outputs) != 1
+                    or str(float_producer.outputs[0]) != float_name
+                ):
+                    continue
+                source_quantized_name = str(float_producer.inputs[0])
+                if not _quantized_tensors_share_exact_grid(
+                    model_ir,
+                    source_quantized_name,
+                    quantized_name,
+                ):
                     continue
 
                 updated_concat_inputs = [str(v) for v in list(concat_op.inputs)]

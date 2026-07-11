@@ -2144,7 +2144,7 @@
       "baseline_classification": "tflite_fail",
       "baseline_reason": "tflite_fail",
       "error_signature_sha256": "aca9525029ba7a608c692da1d3944c7ba88e2c55d50b7b54a6bc35b237aa2a42",
-      "tflite_max_abs": 372.26778411865234
+      "tflite_max_abs": 61.597930908203125
     },
     {
       "tier": 3,

@@ -130,8 +130,11 @@ def _reshape_quant_param_for_axis(
 ) -> Optional[np.ndarray]:
     arr = np.asarray(param)
     x_rank = int(len(x_shape))
-    if arr.ndim == 0:
-        return arr
+    # Exporters commonly encode a per-tensor scalar as a one-element vector.
+    # Axis is irrelevant for that representation, including rank-1 bias
+    # tensors where the default ONNX axis=1 is otherwise out of range.
+    if arr.size == 1:
+        return np.asarray(arr).reshape(())
     if x_rank <= 0:
         return None
 
@@ -443,6 +446,31 @@ def _fold_node(
 def apply_constant_fold_rule(onnx_graph: onnx.ModelProto) -> Dict[str, Any]:
     graph = onnx_graph.graph
     const_map = _build_constant_map(graph)
+    # Some exported graphs place a constant-only consumer before the node that
+    # produces one of its constant inputs.  A single source-order scan then
+    # misses the consumer even though the expression is statically evaluable
+    # (for example DequantizeLinear(..., Cast(constant))).  Resolve constant
+    # expressions to a bounded fixed point first, while preserving the
+    # original node order when the graph is rewritten below.
+    unresolved_foldable_nodes = [
+        node for node in graph.node if str(node.op_type) in _FOLDABLE_OPS
+    ]
+    for _ in range(len(unresolved_foldable_nodes)):
+        next_unresolved: List[onnx.NodeProto] = []
+        progress = False
+        for node in unresolved_foldable_nodes:
+            if len(node.output) == 1 and str(node.output[0]) in const_map:
+                continue
+            folded = _fold_node(node=node, const_map=const_map)
+            if folded is None:
+                next_unresolved.append(node)
+                continue
+            const_map[str(node.output[0])] = np.asarray(folded)
+            progress = True
+        unresolved_foldable_nodes = next_unresolved
+        if not progress or len(unresolved_foldable_nodes) == 0:
+            break
+
     rewritten_nodes: List[onnx.NodeProto] = []
     matched_nodes = 0
     rewritten_count = 0
@@ -454,7 +482,11 @@ def apply_constant_fold_rule(onnx_graph: onnx.ModelProto) -> Dict[str, Any]:
         if op_type in _FOLDABLE_OPS:
             matched_nodes += 1
             matched_by_op[op_type] = int(matched_by_op.get(op_type, 0) + 1)
-        folded = _fold_node(node=node, const_map=const_map)
+        folded = (
+            np.asarray(const_map[str(node.output[0])])
+            if len(node.output) == 1 and str(node.output[0]) in const_map
+            else None
+        )
         if folded is None:
             rewritten_nodes.append(_copy_node(node))
             continue

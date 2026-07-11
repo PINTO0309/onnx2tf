@@ -511,6 +511,66 @@ def test_constant_fold_rewrites_constant_qdq_chain() -> None:
     )
 
 
+def test_constant_fold_resolves_reverse_order_constant_dependencies() -> None:
+    clear_preprocess_rules()
+    register_default_preprocess_rules()
+    values = numpy_helper.from_array(
+        np.asarray([10, 20], dtype=np.int32),
+        name="values",
+    )
+    scale = numpy_helper.from_array(
+        np.asarray([0.25], dtype=np.float32),
+        name="scale",
+    )
+    zero_source = numpy_helper.from_array(
+        np.asarray([2], dtype=np.int64),
+        name="zero_source",
+    )
+    # Intentionally list the consumer before the constant-only Cast producer.
+    dequantize = helper.make_node(
+        "DequantizeLinear",
+        ["values", "scale", "zero_point"],
+        ["y"],
+        name="DequantizeBeforeZeroPointCast",
+    )
+    cast = helper.make_node(
+        "Cast",
+        ["zero_source"],
+        ["zero_point"],
+        name="ZeroPointCast",
+        to=TensorProto.INT32,
+    )
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2])
+    model = helper.make_model(
+        helper.make_graph(
+            [dequantize, cast],
+            "reverse_constant_dependency",
+            [],
+            [y],
+            initializer=[values, scale, zero_source],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+
+    preprocessed, report = run_preprocess_pipeline(
+        onnx_graph=model,
+        enabled_rule_ids=[CONSTANT_FOLD_RULE_ID],
+    )
+
+    assert report["summary"]["changed_rule_count"] == 1
+    assert [str(node.op_type) for node in preprocessed.graph.node] == [
+        "Constant",
+        "Constant",
+    ]
+    y_const = preprocessed.graph.node[0]
+    value_attr = next((a for a in y_const.attribute if str(a.name) == "value"), None)
+    assert value_attr is not None
+    assert np.array_equal(
+        np.asarray(numpy_helper.to_array(value_attr.t)),
+        np.asarray([2.0, 4.5], dtype=np.float32),
+    )
+
+
 def test_constant_fold_rewrites_block_quantized_1d_dequantize_linear() -> None:
     clear_preprocess_rules()
     register_default_preprocess_rules()
