@@ -940,10 +940,8 @@
     {
       "tier": 1,
       "model": "facial_expression_recognition_mobilefacenet_2022july_int8.onnx",
-      "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "b8abd22130c9dd0ccd540a1fd24e3fcbec824d6f555d5fda26779e9e364df142",
-      "tflite_max_abs": 0.5741406455636024
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0
     },
     {
       "tier": 1,
