@@ -14,6 +14,7 @@ BOUNDED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_layout_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_layout_passes.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_bridge_passes.py",
 ]
 
 
@@ -76,7 +77,7 @@ def test_legacy_megafiles_cannot_grow_while_they_are_being_retired() -> None:
     ceilings = {
         "onnx2tf/tflite_builder/lower_from_onnx2tf.py": 75505,
         "onnx2tf/tflite_builder/op_registry.py": 8500,
-        "onnx2tf/tflite_builder/pytorch_exporter.py": 44470,
+        "onnx2tf/tflite_builder/pytorch_exporter.py": 43165,
         "tests/test_tflite_builder_direct.py": 40350,
         "tests/test_pytorch_exporter.py": 47000,
     }
