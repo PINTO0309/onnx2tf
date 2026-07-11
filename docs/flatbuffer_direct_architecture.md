@@ -91,7 +91,7 @@ The profile fixes root-only discovery, the 1–1,999 node range, all 420 managed
 historical model records, and inference concurrency of one. Models classified
 as `timeout` in the current managed baseline remain recorded for provenance but
 are automatically excluded from subsequent runs. The active run therefore
-contains 396 models: 285 expected passes and 111 expected non-passes, excluding
+contains 396 models: 286 expected passes and 110 expected non-passes, excluding
 24 recorded timeouts. Tier 5 models cannot be added because the profile loader
 rejects tiers above 4 and node ranges above 1,999.
 
