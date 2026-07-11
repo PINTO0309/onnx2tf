@@ -1270,7 +1270,7 @@
       "baseline_classification": "tflite_fail",
       "baseline_reason": "tflite_fail",
       "error_signature_sha256": "95d44e8733363dbb43c3cb2e37d84c936c309983e0a698c3929b143ae5ee1c99",
-      "tflite_max_abs": 14.001063346862793
+      "tflite_max_abs": 0.14842605590820312
     },
     {
       "tier": 1,

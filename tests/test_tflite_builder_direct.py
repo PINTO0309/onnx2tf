@@ -33028,6 +33028,22 @@ def test_flatbuffer_direct_lstm_forward_builtin_lowering() -> None:
     assert op_types.count("CUSTOM") == 0
     assert "CONCATENATION" not in op_types
 
+    lstm_op = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "UNIDIRECTIONAL_SEQUENCE_LSTM"
+    )
+    produced_tensors = {
+        str(output_name)
+        for op in model_ir.operators
+        for output_name in op.outputs
+    }
+    for state_name in [str(lstm_op.inputs[18]), str(lstm_op.inputs[19])]:
+        state_tensor = model_ir.tensors[state_name]
+        assert state_tensor.is_variable is True
+        assert state_tensor.data is None
+        assert state_name not in produced_tensors
+
     y_tensor = model_ir.tensors.get("y")
     assert y_tensor is not None
     assert list(y_tensor.shape) == [3, 1, 1, 2]

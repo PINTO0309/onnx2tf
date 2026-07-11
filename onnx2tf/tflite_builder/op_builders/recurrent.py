@@ -631,6 +631,31 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
             reference = np.zeros((int(batch_dim), int(hidden_size)), dtype=np.float32)
             return _add_zero_variable_state(f"{state_tag}_state", reference)
 
+        constant_state = ctx.get_constant_array(state_input_name)
+        if constant_state is not None:
+            constant_state = np.asarray(constant_state, dtype=np.float32)
+            expected_shape = (
+                int(expected_num_directions),
+                int(batch_dim),
+                int(hidden_size),
+            )
+            if int(constant_state.size) == int(np.prod(expected_shape)):
+                constant_state = constant_state.reshape(expected_shape)
+                direction_state = np.asarray(
+                    constant_state[int(dir_index)],
+                    dtype=np.float32,
+                )
+                if not np.any(direction_state):
+                    # TFLite sequence-LSTM state inputs are mutable variable
+                    # tensors. Feeding them from runtime SPLIT/RESHAPE ops
+                    # leaves the variable storage uninitialized at invoke
+                    # time. A constant ONNX zero state is exactly represented
+                    # by a producer-free zero-initialized variable tensor.
+                    return _add_zero_variable_state(
+                        f"{state_tag}_dir{dir_index}_state",
+                        direction_state,
+                    )
+
         slice_input_name = state_input_name
         state_shape = [int(v) for v in ctx.get_tensor_shape(state_input_name)]
         if len(state_shape) != 3:
