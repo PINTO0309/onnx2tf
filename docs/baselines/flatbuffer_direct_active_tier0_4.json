@@ -1593,9 +1593,8 @@
     {
       "tier": 2,
       "model": "model_.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "7e3a198ce69496cc3a405047aa4893d318e830b0e7421912eff80f000823ce57"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 1.9073486328125e-06
     },
     {
       "tier": 2,
@@ -1830,9 +1829,8 @@
     {
       "tier": 2,
       "model": "something.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "7e3a198ce69496cc3a405047aa4893d318e830b0e7421912eff80f000823ce57"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 1.9073486328125e-06
     },
     {
       "tier": 2,
@@ -1862,9 +1860,8 @@
     {
       "tier": 2,
       "model": "test.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "7e3a198ce69496cc3a405047aa4893d318e830b0e7421912eff80f000823ce57"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 1.9073486328125e-06
     },
     {
       "tier": 2,
