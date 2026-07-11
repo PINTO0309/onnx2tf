@@ -5177,7 +5177,10 @@ def _make_qlinear_conv_multichannel_model() -> onnx.ModelProto:
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 2, 2])
 
     x_scale = numpy_helper.from_array(np.asarray([0.1], dtype=np.float32), name="mc_x_scale")
-    x_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="mc_x_zero")
+    # Exercise the ONNX UINT8 activation / INT8 per-channel filter combination.
+    # TFLite represents the internal activation as INT8 and uses the float
+    # requantization compatibility path to preserve ONNX tie handling.
+    x_zero = numpy_helper.from_array(np.asarray([128], dtype=np.uint8), name="mc_x_zero")
     # ONNX QLinearConv weights: OIHW
     w = numpy_helper.from_array(
         np.asarray(
@@ -5194,7 +5197,7 @@ def _make_qlinear_conv_multichannel_model() -> onnx.ModelProto:
     w_scale = numpy_helper.from_array(np.asarray([0.2], dtype=np.float32), name="mc_w_scale")
     w_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="mc_w_zero")
     y_scale = numpy_helper.from_array(np.asarray([0.05], dtype=np.float32), name="mc_y_scale")
-    y_zero = numpy_helper.from_array(np.asarray([0], dtype=np.int8), name="mc_y_zero")
+    y_zero = numpy_helper.from_array(np.asarray([127], dtype=np.uint8), name="mc_y_zero")
 
     nodes = [
         helper.make_node("QuantizeLinear", ["x", "mc_x_scale", "mc_x_zero"], ["x_q"], name="QMC0"),
@@ -8152,6 +8155,20 @@ def test_flatbuffer_direct_qlinear_conv_filter_layout_is_ohwi() -> None:
     w_tensor = model_ir.tensors.get("QConvMC_conv_filter_q")
     assert w_tensor is not None
     assert list(w_tensor.shape) == [4, 1, 1, 3]
+
+    qconv = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "CONV_2D"
+    )
+    assert all(
+        str(model_ir.tensors[name].dtype) == "FLOAT32"
+        for name in qconv.inputs
+    )
+    assert sum(str(op.op_type) == "DEQUANTIZE" for op in model_ir.operators) >= 2
+    # The post-lowering Q->DQ cleanup may elide the compatibility path's
+    # output QUANTIZE together with the model's following DequantizeLinear.
+    assert str(model_ir.tensors[qconv.outputs[0]].dtype) == "FLOAT32"
 
 
 def test_flatbuffer_direct_input_layout_defaults_to_nhwc_when_enabled() -> None:

@@ -1192,21 +1192,47 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
         bias_values = np.asarray(bias_values, dtype=np.int32).reshape(-1)
     else:
         bias_values = np.zeros((out_channels,), dtype=np.int32)
-    bias_q_name = ctx.add_const_tensor(
-        f"{node.name}_conv_bias_q",
-        bias_values,
-    )
     x_scales, _ = _normalize_quant_params(scale=x_scale, zero_point=x_zero)
     w_scales, _ = _normalize_quant_params(scale=w_scale, zero_point=w_zero)
     if len(w_scales) == 1:
         bias_scales = [float(x_scales[0] * w_scales[0])]
     else:
         bias_scales = [float(x_scales[0] * ws) for ws in w_scales]
-    ctx.model_ir.tensors[bias_q_name].quantization = QuantParamIR(
-        scale=bias_scales,
-        zero_point=[0 for _ in range(len(bias_scales))],
-        quantized_dimension=0,
+    # TFLite's signed int8 convolution kernels use a fixed-point requantizer
+    # whose tie handling can differ by one output quantum from ONNX Runtime's
+    # QLinearConv implementation. This matters when an ONNX UINT8 activation
+    # has to be represented as INT8 for TFLite's per-channel INT8 filters: a
+    # single early one-quantum difference can be amplified by later quantized
+    # layers. Keep quantized graph boundaries, but evaluate this mixed UINT8 /
+    # INT8 convolution through the mathematically equivalent float builtin
+    # path before quantizing to the declared QLinearConv output.
+    use_float_requantization_compatibility = (
+        np.asarray(x_zero).dtype == np.dtype(np.uint8)
+        and np.asarray(y_zero).dtype == np.dtype(np.uint8)
+        and np.asarray(w_zero).dtype == np.dtype(np.int8)
     )
+
+    if use_float_requantization_compatibility:
+        bias_scales_array = np.asarray(bias_scales, dtype=np.float32).reshape(-1)
+        if bias_scales_array.size == 1 and bias_values.size > 1:
+            bias_scales_array = np.repeat(
+                bias_scales_array,
+                repeats=int(bias_values.size),
+            )
+        bias_name_for_conv = ctx.add_const_tensor(
+            f"{node.name}_conv_bias_f32",
+            np.asarray(bias_values, dtype=np.float32) * bias_scales_array,
+        )
+    else:
+        bias_name_for_conv = ctx.add_const_tensor(
+            f"{node.name}_conv_bias_q",
+            bias_values,
+        )
+        ctx.model_ir.tensors[bias_name_for_conv].quantization = QuantParamIR(
+            scale=bias_scales,
+            zero_point=[0 for _ in range(len(bias_scales))],
+            quantized_dimension=0,
+        )
 
     y_nhwc = ctx.add_intermediate_tensor(
         f"{node.name}_output_nhwc",
@@ -1216,12 +1242,52 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
     ctx.model_ir.tensors[y_nhwc].quantization = ctx.model_ir.tensors[output_name].quantization
     ctx.model_ir.tensors[y_nhwc].shape_signature = [int(v) for v in nhwc_output_signature]
     y_nhwc_conv = y_nhwc
+    x_name_for_conv = x_nhwc_conv
+    w_name_for_conv = w_q_name
+    if use_float_requantization_compatibility:
+        x_name_for_conv = ctx.add_intermediate_tensor(
+            f"{node.name}_input_nhwc_f32",
+            dtype="FLOAT32",
+            shape=list(ctx.model_ir.tensors[x_nhwc_conv].shape),
+        )
+        ctx.model_ir.tensors[x_name_for_conv].shape_signature = (
+            list(ctx.model_ir.tensors[x_nhwc_conv].shape_signature)
+            if ctx.model_ir.tensors[x_nhwc_conv].shape_signature is not None
+            else list(ctx.model_ir.tensors[x_nhwc_conv].shape)
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="DEQUANTIZE",
+                inputs=[x_nhwc_conv],
+                outputs=[x_name_for_conv],
+            )
+        )
+        w_name_for_conv = ctx.add_intermediate_tensor(
+            f"{node.name}_filter_f32",
+            dtype="FLOAT32",
+            shape=list(ctx.model_ir.tensors[w_q_name].shape),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="DEQUANTIZE",
+                inputs=[w_q_name],
+                outputs=[w_name_for_conv],
+            )
+        )
+        y_nhwc_conv = ctx.add_intermediate_tensor(
+            f"{node.name}_output_nhwc_f32",
+            dtype="FLOAT32",
+            shape=list(nhwc_output_shape),
+        )
+        ctx.model_ir.tensors[y_nhwc_conv].shape_signature = [
+            int(v) for v in nhwc_output_signature
+        ]
 
     if is_depthwise:
         ctx.add_operator(
             OperatorIR(
                 op_type="DEPTHWISE_CONV_2D",
-                inputs=[x_nhwc_conv, w_q_name, bias_q_name],
+                inputs=[x_name_for_conv, w_name_for_conv, bias_name_for_conv],
                 outputs=[y_nhwc_conv],
                 options={
                     "padding": padding,
@@ -1239,7 +1305,7 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
         ctx.add_operator(
             OperatorIR(
                 op_type="CONV_2D",
-                inputs=[x_nhwc_conv, w_q_name, bias_q_name],
+                inputs=[x_name_for_conv, w_name_for_conv, bias_name_for_conv],
                 outputs=[y_nhwc_conv],
                 options={
                     "padding": padding,
@@ -1250,6 +1316,14 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
                     "fusedActivationFunction": "NONE",
                 },
                 version=3,
+            )
+        )
+    if use_float_requantization_compatibility:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="QUANTIZE",
+                inputs=[y_nhwc_conv],
+                outputs=[y_nhwc],
             )
         )
     make_transpose(
