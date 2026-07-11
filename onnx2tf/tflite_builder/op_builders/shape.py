@@ -1534,6 +1534,76 @@ def _resolve_reshape_shape_with_static_dims(
     return resolved_shape
 
 
+def _reshape_shape_preserving_boundary_hint(
+    *,
+    ctx: Any,
+    tensor_name: str,
+    raw_new_shape: list[int],
+) -> Optional[list[int]]:
+    shape_preserving_ops = {
+        "Abs",
+        "Cast",
+        "Ceil",
+        "Clip",
+        "DequantizeLinear",
+        "Elu",
+        "Exp",
+        "Floor",
+        "HardSigmoid",
+        "Identity",
+        "LeakyRelu",
+        "Log",
+        "Neg",
+        "PRelu",
+        "QLinearSigmoid",
+        "QuantizeLinear",
+        "Reciprocal",
+        "Relu",
+        "Round",
+        "Sigmoid",
+        "Softplus",
+        "Softsign",
+        "Sqrt",
+        "Tanh",
+    }
+    graph_outputs = {str(name) for name in getattr(ctx, "graph_output_names", [])}
+    queue = [str(tensor_name)]
+    visited: set[str] = set()
+    boundary_shapes: set[tuple[int, ...]] = set()
+    while queue:
+        current_name = str(queue.pop(0))
+        if current_name in visited:
+            continue
+        visited.add(current_name)
+        if current_name in graph_outputs:
+            hinted_shape = getattr(ctx, "shape_map", {}).get(current_name, None)
+            if (
+                hinted_shape is not None
+                and len(hinted_shape) == len(raw_new_shape)
+                and all(int(dim) > 0 for dim in hinted_shape)
+            ):
+                boundary_shapes.add(tuple(int(dim) for dim in hinted_shape))
+            continue
+        for consumer in getattr(ctx, "onnx_tensor_consumers", {}).get(current_name, []):
+            consumer_inputs = [str(name) for name in getattr(consumer, "input", [])]
+            if len(consumer_inputs) < 1 or consumer_inputs[0] != current_name:
+                continue
+            if str(getattr(consumer, "op_type", "")) not in shape_preserving_ops:
+                continue
+            for output_name in getattr(consumer, "output", []):
+                if str(output_name) != "":
+                    queue.append(str(output_name))
+
+    if len(boundary_shapes) != 1:
+        return None
+    boundary_shape = [int(dim) for dim in next(iter(boundary_shapes))]
+    for axis, raw_dim in enumerate(raw_new_shape):
+        raw_dim_i = int(raw_dim)
+        if raw_dim_i > 0 and int(boundary_shape[axis]) != raw_dim_i:
+            return None
+    return boundary_shape
+
+
 def _rewrite_dynamic_reshape_shape_allowzero_copy_dim0(
     *,
     ctx: Any,
@@ -1729,12 +1799,20 @@ def build_reshape_op(node: Any, ctx: Any) -> None:
 
     if shape_values is not None:
         raw_new_shape = [int(v) for v in np.asarray(shape_values).reshape(-1).tolist()]
-        new_shape = _resolve_reshape_shape_with_static_dims(
-            new_shape=list(raw_new_shape),
-            input_tensor=input_tensor,
-            output_tensor=output_tensor,
-            allowzero=allowzero,
+        boundary_shape_hint = _reshape_shape_preserving_boundary_hint(
+            ctx=ctx,
+            tensor_name=output_name,
+            raw_new_shape=raw_new_shape,
         )
+        if boundary_shape_hint is not None:
+            new_shape = [int(dim) for dim in boundary_shape_hint]
+        else:
+            new_shape = _resolve_reshape_shape_with_static_dims(
+                new_shape=list(raw_new_shape),
+                input_tensor=input_tensor,
+                output_tensor=output_tensor,
+                allowzero=allowzero,
+            )
         if len(new_shape) > 0 and all(int(dim) >= 0 for dim in new_shape):
             output_tensor.shape = [int(dim) for dim in new_shape]
             output_tensor.shape_signature = [int(dim) for dim in new_shape]
@@ -1802,6 +1880,8 @@ def build_reshape_op(node: Any, ctx: Any) -> None:
         "onnxRawNewShape": raw_new_shape,
         "allowZero": bool(allowzero),
     }
+    if shape_values is not None and boundary_shape_hint is not None:
+        reshape_options["onnxBoundaryShapeHint"] = True
     if preserve_semantic_rank:
         reshape_options["preserveSemanticRank"] = True
         reshape_options["onnxInputRank"] = int(semantic_input_rank)

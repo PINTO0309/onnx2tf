@@ -4956,6 +4956,138 @@ def _make_qlinear_sigmoid_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_symbolic_qlinear_head_boundary_reshape_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info(
+        "x",
+        TensorProto.FLOAT,
+        [1, 1, "H", "W"],
+    )
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 16, 1])
+    x_scale = numpy_helper.from_array(
+        np.asarray(0.1, dtype=np.float32),
+        name="qhead_x_scale",
+    )
+    x_zero = numpy_helper.from_array(
+        np.asarray(0, dtype=np.int8),
+        name="qhead_x_zero",
+    )
+    weights = numpy_helper.from_array(
+        np.asarray([[[[1]]]], dtype=np.int8),
+        name="qhead_weights",
+    )
+    weight_scale = numpy_helper.from_array(
+        np.asarray(0.2, dtype=np.float32),
+        name="qhead_weight_scale",
+    )
+    weight_zero = numpy_helper.from_array(
+        np.asarray(0, dtype=np.int8),
+        name="qhead_weight_zero",
+    )
+    conv_scale = numpy_helper.from_array(
+        np.asarray(0.05, dtype=np.float32),
+        name="qhead_conv_scale",
+    )
+    conv_zero = numpy_helper.from_array(
+        np.asarray(0, dtype=np.int8),
+        name="qhead_conv_zero",
+    )
+    sigmoid_scale = numpy_helper.from_array(
+        np.asarray(1.0 / 256.0, dtype=np.float32),
+        name="qhead_sigmoid_scale",
+    )
+    sigmoid_zero = numpy_helper.from_array(
+        np.asarray(-128, dtype=np.int8),
+        name="qhead_sigmoid_zero",
+    )
+    reshape_shape = numpy_helper.from_array(
+        np.asarray([1, -1, 1], dtype=np.int64),
+        name="qhead_reshape_shape",
+    )
+    nodes = [
+        helper.make_node(
+            "QuantizeLinear",
+            ["x", "qhead_x_scale", "qhead_x_zero"],
+            ["x_q"],
+            name="QHeadQuantize",
+        ),
+        helper.make_node(
+            "QLinearConv",
+            [
+                "x_q",
+                "qhead_x_scale",
+                "qhead_x_zero",
+                "qhead_weights",
+                "qhead_weight_scale",
+                "qhead_weight_zero",
+                "qhead_conv_scale",
+                "qhead_conv_zero",
+            ],
+            ["conv_q"],
+            name="QHeadConv",
+            kernel_shape=[1, 1],
+            pads=[0, 0, 0, 0],
+            strides=[1, 1],
+        ),
+        helper.make_node(
+            "Transpose",
+            ["conv_q"],
+            ["head_q"],
+            name="QHeadTranspose",
+            perm=[0, 2, 3, 1],
+        ),
+        helper.make_node(
+            "Reshape",
+            ["head_q", "qhead_reshape_shape"],
+            ["flat_q"],
+            name="QHeadReshape",
+        ),
+        helper.make_node(
+            "QLinearSigmoid",
+            [
+                "flat_q",
+                "qhead_conv_scale",
+                "qhead_conv_zero",
+                "qhead_sigmoid_scale",
+                "qhead_sigmoid_zero",
+            ],
+            ["sigmoid_q"],
+            name="QHeadSigmoid",
+            domain="com.microsoft",
+        ),
+        helper.make_node(
+            "DequantizeLinear",
+            ["sigmoid_q", "qhead_sigmoid_scale", "qhead_sigmoid_zero"],
+            ["y"],
+            name="QHeadDequantize",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "symbolic_qlinear_head_boundary_reshape_graph",
+        [x],
+        [y],
+        initializer=[
+            x_scale,
+            x_zero,
+            weights,
+            weight_scale,
+            weight_zero,
+            conv_scale,
+            conv_zero,
+            sigmoid_scale,
+            sigmoid_zero,
+            reshape_shape,
+        ],
+    )
+    return helper.make_model(
+        graph,
+        opset_imports=[
+            helper.make_operatorsetid("", 13),
+            helper.make_operatorsetid("com.microsoft", 1),
+        ],
+    )
+
+
 def _make_qlinear_softmax_wrap_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.INT8, [5, 2])
     y = helper.make_tensor_value_info("y", TensorProto.INT8, [5, 2])
@@ -9177,6 +9309,54 @@ def test_flatbuffer_direct_qlinear_add_rounding_runtime_matches_onnx() -> None:
         )["y"]
 
     np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.skipif(
+    not _requires_flatbuffer_tools(),
+    reason="flatbuffer_direct requires bundled schema artifacts",
+)
+def test_flatbuffer_direct_qlinear_head_reshape_uses_boundary_shape() -> None:
+    model = _make_symbolic_qlinear_head_boundary_reshape_model()
+    model_ir = lower_onnx_to_ir(
+        model,
+        output_file_name="symbolic_qlinear_head_boundary_reshape_ir_test",
+    )
+    reshape_op = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "RESHAPE"
+        and str(op.outputs[0]) == "flat_q"
+    )
+    assert bool(reshape_op.options.get("onnxBoundaryShapeHint", False))
+    shape_tensor = model_ir.tensors[str(reshape_op.inputs[1])]
+    np.testing.assert_array_equal(
+        np.asarray(shape_tensor.data, dtype=np.int32),
+        np.asarray([1, 16, 1], dtype=np.int32),
+    )
+
+    for axis, dim in enumerate(model.graph.input[0].type.tensor_type.shape.dim):
+        dim.ClearField("dim_param")
+        dim.dim_value = [1, 1, 4, 4][axis]
+    sample_input = np.linspace(-1.0, 1.0, num=16, dtype=np.float32).reshape(1, 1, 4, 4)
+    expected = ort.InferenceSession(
+        model.SerializeToString(),
+        providers=["CPUExecutionProvider"],
+    ).run(None, {"x": sample_input})[0]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "symbolic_qlinear_head_boundary_reshape", model)
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+        )
+        actual = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs={"x": sample_input},
+            tensor_names=["y"],
+        )["y"]
+
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1.0e-6)
 
 
 def test_flatbuffer_direct_input_layout_defaults_to_nhwc_when_enabled() -> None:

@@ -3590,6 +3590,12 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                 except Exception:
                     onnx_raw_shape_list = []
                 if (
+                    bool(op.options.get("onnxBoundaryShapeHint", False))
+                    and len(new_shape) > 0
+                    and all(int(dim) > 0 for dim in new_shape)
+                ):
+                    resolved = [int(v) for v in new_shape]
+                elif (
                     has_onnx_raw_new_shape
                     and len(onnx_raw_shape_list) > 0
                     and all(int(dim) > 0 for dim in onnx_raw_shape_list)
