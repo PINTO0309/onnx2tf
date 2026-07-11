@@ -2592,9 +2592,8 @@
     {
       "tier": 4,
       "model": "crestereo_combined_iter2_240x320.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "9547519385c17ae7e91d6ca1ab55bea1d1bca9767e6654e39008fe96750f43fa"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0105133
     },
     {
       "tier": 4,
