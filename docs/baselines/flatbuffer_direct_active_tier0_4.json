@@ -524,9 +524,8 @@
     {
       "tier": 0,
       "model": "matmul_model.uint8.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "47d2a196979cd9f5c3221700d6a81d8e23283cd8c720f551a946768229b22d89"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0
     },
     {
       "tier": 0,

@@ -397,6 +397,94 @@ def _repair_if_sequenceconstruct_outputs_for_onnxruntime(
     return {"IfSequenceConstruct": rewritten_count} if rewritten_count else {}
 
 
+def _rewrite_integer_matmul_for_onnxruntime(
+    model: onnx.ModelProto,
+) -> Dict[str, int]:
+    integer_types = {
+        int(onnx.TensorProto.INT8),
+        int(onnx.TensorProto.INT16),
+        int(onnx.TensorProto.INT32),
+        int(onnx.TensorProto.INT64),
+        int(onnx.TensorProto.UINT8),
+        int(onnx.TensorProto.UINT16),
+        int(onnx.TensorProto.UINT32),
+        int(onnx.TensorProto.UINT64),
+    }
+    rewritten_count = 0
+
+    def visit_graph(graph: onnx.GraphProto) -> None:
+        nonlocal rewritten_count
+        elem_types = _graph_tensor_elem_types(graph)
+        rewritten_nodes: List[onnx.NodeProto] = []
+        for node in graph.node:
+            for attribute in node.attribute:
+                if attribute.type == onnx.AttributeProto.GRAPH:
+                    visit_graph(attribute.g)
+                elif attribute.type == onnx.AttributeProto.GRAPHS:
+                    for child_graph in attribute.graphs:
+                        visit_graph(child_graph)
+            if (
+                str(node.op_type) != "MatMul"
+                or str(node.domain) not in {"", "ai.onnx"}
+                or len(node.input) != 2
+                or len(node.output) != 1
+            ):
+                rewritten_nodes.append(node)
+                continue
+            lhs_type = elem_types.get(str(node.input[0]))
+            rhs_type = elem_types.get(str(node.input[1]))
+            output_type = elem_types.get(str(node.output[0]))
+            if (
+                lhs_type not in integer_types
+                or rhs_type not in integer_types
+                or output_type not in integer_types
+            ):
+                rewritten_nodes.append(node)
+                continue
+
+            prefix = str(node.name or node.output[0]) + "_ort_compat"
+            lhs_float = f"{prefix}_lhs_float"
+            rhs_float = f"{prefix}_rhs_float"
+            result_float = f"{prefix}_result_float"
+            rewritten_nodes.extend(
+                [
+                    onnx.helper.make_node(
+                        "Cast",
+                        [str(node.input[0])],
+                        [lhs_float],
+                        name=f"{prefix}_cast_lhs",
+                        to=int(onnx.TensorProto.FLOAT),
+                    ),
+                    onnx.helper.make_node(
+                        "Cast",
+                        [str(node.input[1])],
+                        [rhs_float],
+                        name=f"{prefix}_cast_rhs",
+                        to=int(onnx.TensorProto.FLOAT),
+                    ),
+                    onnx.helper.make_node(
+                        "MatMul",
+                        [lhs_float, rhs_float],
+                        [result_float],
+                        name=f"{prefix}_matmul",
+                    ),
+                    onnx.helper.make_node(
+                        "Cast",
+                        [result_float],
+                        [str(node.output[0])],
+                        name=f"{prefix}_cast_output",
+                        to=int(output_type),
+                    ),
+                ]
+            )
+            rewritten_count += 1
+        del graph.node[:]
+        graph.node.extend(rewritten_nodes)
+
+    visit_graph(model.graph)
+    return {"IntegerMatMul": rewritten_count} if rewritten_count else {}
+
+
 def prepare_onnx_graph_for_onnxruntime(
     onnx_graph: onnx.ModelProto,
 ) -> tuple[onnx.ModelProto, Dict[str, int]]:
@@ -417,6 +505,8 @@ def prepare_onnx_graph_for_onnxruntime(
     for op_type, count in _repair_if_sequenceconstruct_outputs_for_onnxruntime(
         prepared
     ).items():
+        rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
+    for op_type, count in _rewrite_integer_matmul_for_onnxruntime(prepared).items():
         rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
     for node in prepared.graph.node:
         if str(node.domain) not in {"", "ai.onnx"}:

@@ -198,3 +198,39 @@ def test_prepare_onnxruntime_graph_repairs_if_sequenceconstruct_tensor_alias() -
     actual_else = session.run(["y"], {"cond": np.asarray(False), "x1": x1, "x2": x2})[0]
     np.testing.assert_array_equal(actual_then, x1 + 1.0)
     np.testing.assert_array_equal(actual_else, np.concatenate([x1 + 1.0, x2 + 1.0], axis=0))
+
+
+def test_prepare_onnxruntime_graph_rewrites_integer_matmul_like_direct_lowerer() -> None:
+    x_info = helper.make_tensor_value_info("x", TensorProto.UINT8, [2, 2])
+    y_info = helper.make_tensor_value_info("y", TensorProto.UINT8, [2, 2])
+    weights = np.asarray([[1, 2], [3, 4]], dtype=np.uint8)
+    node = helper.make_node("MatMul", ["x", "weights"], ["y"], name="matmul")
+    model = helper.make_model(
+        helper.make_graph(
+            [node],
+            "integer_matmul",
+            [x_info],
+            [y_info],
+            [numpy_helper.from_array(weights, name="weights")],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 14)],
+    )
+
+    prepared, rewritten = prepare_onnx_graph_for_onnxruntime(model)
+
+    assert rewritten == {"IntegerMatMul": 1}
+    assert [node.op_type for node in prepared.graph.node] == [
+        "Cast",
+        "Cast",
+        "MatMul",
+        "Cast",
+    ]
+    x = np.asarray([[2, 3], [4, 5]], dtype=np.uint8)
+    actual = ort.InferenceSession(
+        prepared.SerializeToString(),
+        providers=["CPUExecutionProvider"],
+    ).run(["y"], {"x": x})[0]
+    expected = np.matmul(x.astype(np.float32), weights.astype(np.float32)).astype(
+        np.uint8
+    )
+    np.testing.assert_array_equal(actual, expected)
