@@ -1153,16 +1153,18 @@
     {
       "tier": 1,
       "model": "onnx_dense_optimized.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "59a44bb85b49e8a9432623a1508a7cb11acff7bdc53c19a38aaee91d7f0eadbc"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "tflite_fail",
+      "error_signature_sha256": "37bf9980838279493a96fca1b58950bb0407b5f23778d29578318cec92ce8c93",
+      "tflite_max_abs": 0.8238084316253662
     },
     {
       "tier": 1,
       "model": "onnx_dense_optimized_org.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "59a44bb85b49e8a9432623a1508a7cb11acff7bdc53c19a38aaee91d7f0eadbc"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "tflite_fail",
+      "error_signature_sha256": "6fed1a179d2f77cc95f51e889921b9ea4f0b4df8d3e67d89d6ea6f5836e5191b",
+      "tflite_max_abs": 0.8238084316253662
     },
     {
       "tier": 1,

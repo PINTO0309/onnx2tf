@@ -16,6 +16,7 @@ from onnx2tf.utils.tempdir_cleanup import (
     cleanup_managed_tempdir,
     make_managed_tempdir,
 )
+from onnx2tf.utils.onnxruntime_compat import prepare_onnx_graph_for_onnxruntime
 
 if TYPE_CHECKING:
     from ai_edge_litert.interpreter import Interpreter as LiteRTInterpreter
@@ -900,20 +901,8 @@ def _build_static_control_input_overrides(
 def _prepare_onnx_graph_for_onnxruntime(
     onnx_graph: onnx.ModelProto,
 ) -> onnx.ModelProto:
-    """Upgrade legacy default-domain opsets that current ORT no longer runs."""
-    default_versions = [
-        int(opset.version)
-        for opset in onnx_graph.opset_import
-        if str(opset.domain) in {"", "ai.onnx"}
-    ]
-    if len(default_versions) == 0 or min(default_versions) >= 7:
-        return onnx_graph
-    try:
-        return onnx.version_converter.convert_version(onnx_graph, 7)
-    except Exception:
-        # Preserve the original ORT error when the standard converter cannot
-        # upgrade a legacy/custom graph.
-        return onnx_graph
+    prepared, _ = prepare_onnx_graph_for_onnxruntime(onnx_graph)
+    return prepared
 
 
 def _extract_sample_from_custom(

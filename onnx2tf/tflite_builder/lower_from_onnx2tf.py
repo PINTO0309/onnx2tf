@@ -950,10 +950,15 @@ def _resolve_dynamic_reshape_shapes(
                 and raw_has_minus_one
                 and not raw_has_zero_dim
                 and len(new_shape) >= 5
-                and any(int(dim) <= 0 for dim in input_signature)
+                and int(next(idx for idx, dim in enumerate(new_shape) if int(dim) == -1)) > 0
             ):
                 # Final-stage safety mode:
-                # keep ONNX's runtime-inferable `-1` instead of stale concretized values.
+                # keep ONNX's runtime-inferable `-1` instead of stale
+                # concretized values. High-rank shape metadata can appear
+                # fully static while still being a placeholder propagated
+                # through dynamic Slice/MatMul/broadcast chains. TFLite
+                # RESHAPE supports one `-1`, so the raw ONNX template is the
+                # authoritative and safer final serialization contract.
                 resolved_shape = _sanitize_reshape_template(
                     template=new_shape,
                     input_dims=signature_for_resolve,
