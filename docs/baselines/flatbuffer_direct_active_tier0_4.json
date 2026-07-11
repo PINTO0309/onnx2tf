@@ -2074,9 +2074,9 @@
     {
       "tier": 3,
       "model": "LINEA.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1"
+      "baseline_classification": "missing_tflite_report",
+      "baseline_reason": "missing_tflite_report",
+      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109"
     },
     {
       "tier": 3,
@@ -2126,9 +2126,9 @@
     {
       "tier": 3,
       "model": "deim_hgnetv2_n_wholebody28_1250query_fp16.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "tflite_fail",
+      "error_signature_sha256": "a75d1fda64da71761a9509afc251b281643c60d7121cc8dcd19296deb0c3baca"
     },
     {
       "tier": 3,
@@ -2287,9 +2287,8 @@
     {
       "tier": 3,
       "model": "latest.opset17.head2.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0005334615707397461
     },
     {
       "tier": 3,
@@ -2485,9 +2484,9 @@
     {
       "tier": 3,
       "model": "vit_b_encoder.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1"
+      "baseline_classification": "missing_tflite_report",
+      "baseline_reason": "missing_tflite_report",
+      "error_signature_sha256": "bf55a0e358d5123e63f1f7f576651f4ba2f94cf2584d00f3db8c785e2be0a2c9"
     },
     {
       "tier": 3,

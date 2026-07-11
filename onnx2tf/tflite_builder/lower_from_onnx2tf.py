@@ -59333,6 +59333,7 @@ def _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir: Mode
             mapped_concat_inputs: List[str] = []
             reshape_ops_to_remove: List[OperatorIR] = []
             adapters_to_insert: List[Tuple[str, str, str, List[int]]] = []
+            adapter_by_source: Dict[str, str] = {}
             valid = True
 
             for input_name in concat_inputs:
@@ -59385,8 +59386,14 @@ def _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir: Mode
                     valid = False
                     break
 
+                existing_adapter_name = adapter_by_source.get(str(input_name), None)
+                if existing_adapter_name is not None:
+                    mapped_concat_inputs.append(str(existing_adapter_name))
+                    continue
+
                 adapter_name = _unique_tensor_name(f"{input_name}_nhwc_adapter")
                 shape_name = _unique_tensor_name(f"{adapter_name}_reshape_shape")
+                adapter_by_source[str(input_name)] = str(adapter_name)
                 adapters_to_insert.append(
                     (
                         str(input_name),

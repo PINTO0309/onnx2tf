@@ -28641,6 +28641,59 @@ def test_flatbuffer_direct_singleton_reshape_concat_post_transpose_rewritten_to_
     assert "split0_nchw" in list(mul_op.inputs)
 
 
+def test_flatbuffer_direct_singleton_concat_reuses_adapter_for_repeated_input() -> None:
+    model_ir = ModelIR("singleton_concat_repeated_input_adapter_test")
+    model_ir.inputs = ["x_nchw"]
+    model_ir.outputs = ["y_nhwc"]
+
+    def _add_tensor(name: str, shape: list[int], dtype: str = "FLOAT32") -> None:
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype=dtype,
+            shape=[int(v) for v in shape],
+            shape_signature=[int(v) for v in shape],
+        )
+
+    _add_tensor("x_nchw", [1, 1, 8, 8])
+    _add_tensor("concat_nchw", [1, 3, 8, 8])
+    _add_tensor("y_nhwc", [1, 8, 8, 3])
+    _add_tensor("perm_nchw_to_nhwc", [4], dtype="INT32")
+    model_ir.tensors["perm_nchw_to_nhwc"].data = np.asarray(
+        [0, 2, 3, 1],
+        dtype=np.int32,
+    )
+    model_ir.tensors["perm_nchw_to_nhwc"].is_variable = False
+    model_ir.operators = [
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["x_nchw", "x_nchw", "x_nchw"],
+            outputs=["concat_nchw"],
+            options={"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["concat_nchw", "perm_nchw_to_nhwc"],
+            outputs=["y_nhwc"],
+        ),
+    ]
+
+    stats = _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir)
+
+    assert stats["rewritten_singleton_reshape_concat_post_transpose_nhwc_chains"] == 1
+    reshape_ops = [op for op in model_ir.operators if str(op.op_type) == "RESHAPE"]
+    assert len(reshape_ops) == 1
+    adapter_name = str(reshape_ops[0].outputs[0])
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert list(concat_op.inputs) == [adapter_name, adapter_name, adapter_name]
+    assert len(
+        [
+            op
+            for op in model_ir.operators
+            if adapter_name in [str(output_name) for output_name in op.outputs]
+        ]
+    ) == 1
+
+
 def test_flatbuffer_direct_duplicate_transpose_fanout_deduplicates_shared_layout_adapter() -> None:
     model_ir = ModelIR("duplicate_transpose_fanout_dedup_test")
     model_ir.inputs = ["x"]
