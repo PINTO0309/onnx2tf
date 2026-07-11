@@ -6505,6 +6505,128 @@ def _resolve_integer_resize_scales_hw(onnx_scales_hw: list[float] | None) -> lis
     return scales_int
 
 
+def _build_dynamic_resize_size_from_scales(
+    *,
+    ctx: Any,
+    node_name: str,
+    x_nhwc: str,
+    scales_hw: list[float],
+) -> str:
+    """Build runtime [height, width] using ONNX floor(input_size * scale)."""
+
+    shape_vec = ctx.add_intermediate_tensor(
+        f"{node_name}_input_shape_vec",
+        dtype="INT32",
+        shape=[4],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SHAPE",
+            inputs=[x_nhwc],
+            outputs=[shape_vec],
+            options={"outType": "INT32"},
+        )
+    )
+    input_hw_shape = ctx.add_intermediate_tensor(
+        f"{node_name}_input_hw_shape",
+        dtype="INT32",
+        shape=[2],
+    )
+    shape_begin = ctx.add_const_tensor(
+        f"{node_name}_shape_slice_begin",
+        np.asarray([1], dtype=np.int32),
+    )
+    shape_size = ctx.add_const_tensor(
+        f"{node_name}_shape_slice_size",
+        np.asarray([2], dtype=np.int32),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SLICE",
+            inputs=[shape_vec, shape_begin, shape_size],
+            outputs=[input_hw_shape],
+        )
+    )
+
+    integer_scales = _resolve_integer_resize_scales_hw(scales_hw)
+    if integer_scales is not None:
+        scales_const = ctx.add_const_tensor(
+            f"{node_name}_resize_scales_hw_int",
+            np.asarray(integer_scales, dtype=np.int32),
+        )
+        dynamic_size = ctx.add_intermediate_tensor(
+            f"{node_name}_resize_size_dynamic",
+            dtype="INT32",
+            shape=[2],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[input_hw_shape, scales_const],
+                outputs=[dynamic_size],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        return dynamic_size
+
+    input_hw_float = ctx.add_intermediate_tensor(
+        f"{node_name}_input_hw_float",
+        dtype="FLOAT32",
+        shape=[2],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[input_hw_shape],
+            outputs=[input_hw_float],
+            options={"inDataType": "INT32", "outDataType": "FLOAT32"},
+        )
+    )
+    scales_const = ctx.add_const_tensor(
+        f"{node_name}_resize_scales_hw_float",
+        np.asarray(scales_hw[:2], dtype=np.float32),
+    )
+    scaled_hw = ctx.add_intermediate_tensor(
+        f"{node_name}_resize_scaled_hw",
+        dtype="FLOAT32",
+        shape=[2],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="MUL",
+            inputs=[input_hw_float, scales_const],
+            outputs=[scaled_hw],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    floored_hw = ctx.add_intermediate_tensor(
+        f"{node_name}_resize_floored_hw",
+        dtype="FLOAT32",
+        shape=[2],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="FLOOR",
+            inputs=[scaled_hw],
+            outputs=[floored_hw],
+        )
+    )
+    dynamic_size = ctx.add_intermediate_tensor(
+        f"{node_name}_resize_size_dynamic",
+        dtype="INT32",
+        shape=[2],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[floored_hw],
+            outputs=[dynamic_size],
+            options={"inDataType": "FLOAT32", "outDataType": "INT32"},
+        )
+    )
+    return dynamic_size
+
+
 def _extract_resize_onnx_hw_hints(
     node: Any,
     ctx: Any,
@@ -8975,66 +9097,15 @@ def build_resize_op(node: Any, ctx: Any) -> None:
             has_dynamic_width_input = (
                 len(nhwc_input_signature) == 4 and int(nhwc_input_signature[2]) < 0
             )
-            resize_scales_hw_int = _resolve_integer_resize_scales_hw(onnx_scales_hw)
             if dynamic_size_input_name is not None:
                 size_input_name = dynamic_size_input_name
             elif has_dynamic_width_input and onnx_sizes_hw is None and onnx_scales_hw is not None:
-                if resize_scales_hw_int is None:
-                    raise NotImplementedError(
-                        f"Resize with dynamic 1D spatial input supports integer scales only in flatbuffer_direct. "
-                        f"op={node.name} scales_hw={onnx_scales_hw}"
-                    )
-                input_hw_shape = ctx.add_intermediate_tensor(
-                    f"{node.name}_input_hw_shape",
-                    dtype="INT32",
-                    shape=[2],
+                size_input_name = _build_dynamic_resize_size_from_scales(
+                    ctx=ctx,
+                    node_name=str(node.name),
+                    x_nhwc=x_nhwc,
+                    scales_hw=onnx_scales_hw,
                 )
-                shape_vec = ctx.add_intermediate_tensor(
-                    f"{node.name}_input_shape_vec",
-                    dtype="INT32",
-                    shape=[4],
-                )
-                ctx.add_operator(
-                    OperatorIR(
-                        op_type="SHAPE",
-                        inputs=[x_nhwc],
-                        outputs=[shape_vec],
-                        options={"outType": "INT32"},
-                    )
-                )
-                shape_begin = ctx.add_const_tensor(
-                    f"{node.name}_shape_slice_begin",
-                    np.asarray([1], dtype=np.int32),
-                )
-                shape_size = ctx.add_const_tensor(
-                    f"{node.name}_shape_slice_size",
-                    np.asarray([2], dtype=np.int32),
-                )
-                ctx.add_operator(
-                    OperatorIR(
-                        op_type="SLICE",
-                        inputs=[shape_vec, shape_begin, shape_size],
-                        outputs=[input_hw_shape],
-                    )
-                )
-                scales_const = ctx.add_const_tensor(
-                    f"{node.name}_resize_scales_hw_int",
-                    np.asarray([int(resize_scales_hw_int[0]), int(resize_scales_hw_int[1])], dtype=np.int32),
-                )
-                dynamic_size = ctx.add_intermediate_tensor(
-                    f"{node.name}_resize_size_dynamic",
-                    dtype="INT32",
-                    shape=[2],
-                )
-                ctx.add_operator(
-                    OperatorIR(
-                        op_type="MUL",
-                        inputs=[input_hw_shape, scales_const],
-                        outputs=[dynamic_size],
-                        options={"fusedActivationFunction": "NONE"},
-                    )
-                )
-                size_input_name = dynamic_size
             else:
                 size_input_name = ctx.add_const_tensor(
                     f"{node.name}_resize_size",
@@ -9152,66 +9223,15 @@ def build_resize_op(node: Any, ctx: Any) -> None:
         has_dynamic_spatial_input = (
             len(input_signature) == 4 and (int(input_signature[2]) < 0 or int(input_signature[3]) < 0)
         )
-        resize_scales_hw_int = _resolve_integer_resize_scales_hw(onnx_scales_hw)
         if dynamic_size_input_name is not None:
             size_input_name = dynamic_size_input_name
         elif has_dynamic_spatial_input and onnx_sizes_hw is None and onnx_scales_hw is not None:
-            if resize_scales_hw_int is None:
-                raise NotImplementedError(
-                    f"Resize with dynamic spatial input supports integer scales only in flatbuffer_direct. "
-                    f"op={node.name} scales_hw={onnx_scales_hw}"
-                )
-            input_hw_shape = ctx.add_intermediate_tensor(
-                f"{node.name}_input_hw_shape",
-                dtype="INT32",
-                shape=[2],
+            size_input_name = _build_dynamic_resize_size_from_scales(
+                ctx=ctx,
+                node_name=str(node.name),
+                x_nhwc=x_nhwc,
+                scales_hw=onnx_scales_hw,
             )
-            shape_vec = ctx.add_intermediate_tensor(
-                f"{node.name}_input_shape_vec",
-                dtype="INT32",
-                shape=[4],
-            )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="SHAPE",
-                    inputs=[x_nhwc],
-                    outputs=[shape_vec],
-                    options={"outType": "INT32"},
-                )
-            )
-            shape_begin = ctx.add_const_tensor(
-                f"{node.name}_shape_slice_begin",
-                np.asarray([1], dtype=np.int32),
-            )
-            shape_size = ctx.add_const_tensor(
-                f"{node.name}_shape_slice_size",
-                np.asarray([2], dtype=np.int32),
-            )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="SLICE",
-                    inputs=[shape_vec, shape_begin, shape_size],
-                    outputs=[input_hw_shape],
-                )
-            )
-            scales_const = ctx.add_const_tensor(
-                f"{node.name}_resize_scales_hw_int",
-                np.asarray([int(resize_scales_hw_int[0]), int(resize_scales_hw_int[1])], dtype=np.int32),
-            )
-            dynamic_size = ctx.add_intermediate_tensor(
-                f"{node.name}_resize_size_dynamic",
-                dtype="INT32",
-                shape=[2],
-            )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="MUL",
-                    inputs=[input_hw_shape, scales_const],
-                    outputs=[dynamic_size],
-                    options={"fusedActivationFunction": "NONE"},
-                )
-            )
-            size_input_name = dynamic_size
         else:
             size_const = ctx.add_const_tensor(
                 f"{node.name}_resize_size",
