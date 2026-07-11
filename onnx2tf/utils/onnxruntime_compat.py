@@ -485,6 +485,59 @@ def _rewrite_integer_matmul_for_onnxruntime(
     return {"IntegerMatMul": rewritten_count} if rewritten_count else {}
 
 
+def _rewrite_tensor_optional_has_element_for_onnxruntime(
+    model: onnx.ModelProto,
+) -> Dict[str, int]:
+    rewritten_count = 0
+
+    def visit_graph(
+        graph: onnx.GraphProto,
+        outer_tensor_names: set[str],
+    ) -> None:
+        nonlocal rewritten_count
+        local_tensor_names = {
+            str(value.name)
+            for value in [*graph.input, *graph.value_info, *graph.output]
+            if value.type.HasField("tensor_type")
+        }
+        local_tensor_names.update(str(value.name) for value in graph.initializer)
+        visible_tensor_names = outer_tensor_names | local_tensor_names
+        rewritten_nodes: List[onnx.NodeProto] = []
+        for node in graph.node:
+            for attribute in node.attribute:
+                if attribute.type == onnx.AttributeProto.GRAPH:
+                    visit_graph(attribute.g, visible_tensor_names)
+                elif attribute.type == onnx.AttributeProto.GRAPHS:
+                    for child_graph in attribute.graphs:
+                        visit_graph(child_graph, visible_tensor_names)
+            if (
+                str(node.op_type) == "OptionalHasElement"
+                and str(node.domain) in {"", "ai.onnx"}
+                and len(node.input) == 1
+                and len(node.output) == 1
+                and str(node.input[0]) in visible_tensor_names
+            ):
+                rewritten_nodes.append(
+                    onnx.helper.make_node(
+                        "Constant",
+                        [],
+                        [str(node.output[0])],
+                        name=str(node.name),
+                        value=numpy_helper.from_array(
+                            np.asarray(True, dtype=np.bool_)
+                        ),
+                    )
+                )
+                rewritten_count += 1
+            else:
+                rewritten_nodes.append(node)
+        del graph.node[:]
+        graph.node.extend(rewritten_nodes)
+
+    visit_graph(model.graph, set())
+    return {"TensorOptionalHasElement": rewritten_count} if rewritten_count else {}
+
+
 def prepare_onnx_graph_for_onnxruntime(
     onnx_graph: onnx.ModelProto,
 ) -> tuple[onnx.ModelProto, Dict[str, int]]:
@@ -507,6 +560,10 @@ def prepare_onnx_graph_for_onnxruntime(
     ).items():
         rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
     for op_type, count in _rewrite_integer_matmul_for_onnxruntime(prepared).items():
+        rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
+    for op_type, count in _rewrite_tensor_optional_has_element_for_onnxruntime(
+        prepared
+    ).items():
         rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
     for node in prepared.graph.node:
         if str(node.domain) not in {"", "ai.onnx"}:

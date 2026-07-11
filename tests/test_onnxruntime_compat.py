@@ -234,3 +234,37 @@ def test_prepare_onnxruntime_graph_rewrites_integer_matmul_like_direct_lowerer()
         np.uint8
     )
     np.testing.assert_array_equal(actual, expected)
+
+
+def test_prepare_onnxruntime_graph_folds_optional_has_element_tensor_alias() -> None:
+    x_info = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2])
+    y_info = helper.make_tensor_value_info("y", TensorProto.BOOL, [])
+    model = helper.make_model(
+        helper.make_graph(
+            [
+                helper.make_node(
+                    "OptionalHasElement",
+                    ["x"],
+                    ["has_element"],
+                    name="optional_has_element",
+                ),
+                helper.make_node(
+                    "Identity", ["has_element"], ["y"], name="identity"
+                ),
+            ],
+            "optional_tensor_alias",
+            [x_info],
+            [y_info],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 15)],
+    )
+
+    prepared, rewritten = prepare_onnx_graph_for_onnxruntime(model)
+
+    assert rewritten == {"TensorOptionalHasElement": 1}
+    assert prepared.graph.node[0].op_type == "Constant"
+    actual = ort.InferenceSession(
+        prepared.SerializeToString(),
+        providers=["CPUExecutionProvider"],
+    ).run(["y"], {"x": np.asarray([1.0, 2.0], dtype=np.float32)})[0]
+    np.testing.assert_array_equal(actual, np.asarray(True, dtype=np.bool_))
