@@ -39,6 +39,7 @@ from onnx2tf.tflite_builder.op_builders.norm import build_instance_normalization
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _align_boundary_signature_to_current_shape,
     _apply_safe_transpose_reduction_lite,
+    _compress_static_high_rank_batch_matmul,
     _dtype_from_onnx_elem_type,
     _infer_shapes_with_fallback,
     _infer_rank4_signature_from_input,
@@ -8525,6 +8526,104 @@ def test_singleton_transpose_does_not_reapply_remapped_mean_layout() -> None:
     assert str(adapter_op.op_type) == "RESHAPE"
     assert adapter_op.options["newShape"] == [1, 1, 1, 64]
     assert model_ir.tensors["mean_adapter"].shape == [1, 1, 1, 64]
+
+
+def test_static_rank6_batch_matmul_is_wrapped_with_rank5_reshapes() -> None:
+    model_ir = ModelIR("rank6_batch_matmul")
+    model_ir.inputs = ["lhs", "rhs"]
+    model_ir.outputs = ["output"]
+    lhs_shape = [1, 2, 2, 3, 4, 5]
+    rhs_shape = [1, 2, 2, 3, 5, 6]
+    output_shape = [1, 2, 2, 3, 4, 6]
+    for name, shape in (
+        ("lhs", lhs_shape),
+        ("rhs", rhs_shape),
+        ("output", output_shape),
+    ):
+        model_ir.tensors[name] = TensorIR(
+            name=name,
+            dtype="FLOAT32",
+            shape=list(shape),
+            shape_signature=list(shape),
+        )
+    model_ir.operators = [
+        OperatorIR(
+            "BATCH_MATMUL",
+            ["lhs", "rhs"],
+            ["output"],
+            {"adjX": False, "adjY": False},
+        )
+    ]
+
+    stats = _compress_static_high_rank_batch_matmul(model_ir)
+
+    assert stats["compressed_static_high_rank_batch_matmul"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == [
+        "RESHAPE",
+        "RESHAPE",
+        "BATCH_MATMUL",
+        "RESHAPE",
+    ]
+    batch_matmul = model_ir.operators[2]
+    assert model_ir.tensors[batch_matmul.inputs[0]].shape == [2, 2, 3, 4, 5]
+    assert model_ir.tensors[batch_matmul.inputs[1]].shape == [2, 2, 3, 5, 6]
+    assert model_ir.tensors[batch_matmul.outputs[0]].shape == [2, 2, 3, 4, 6]
+    assert model_ir.operators[-1].outputs == ["output"]
+
+    rng = np.random.default_rng(0)
+    lhs = rng.standard_normal(lhs_shape).astype(np.float32)
+    rhs = rng.standard_normal(rhs_shape).astype(np.float32)
+    expected = np.matmul(lhs, rhs)
+    compressed = np.matmul(
+        lhs.reshape([2, 2, 3, 4, 5]),
+        rhs.reshape([2, 2, 3, 5, 6]),
+    ).reshape(output_shape)
+    np.testing.assert_allclose(compressed, expected, rtol=0.0, atol=0.0)
+
+
+def test_flatbuffer_direct_static_rank6_matmul_runs_with_numeric_parity() -> None:
+    lhs_shape = [1, 2, 2, 3, 4, 5]
+    rhs_shape = [1, 2, 2, 3, 5, 6]
+    output_shape = [1, 2, 2, 3, 4, 6]
+    graph = helper.make_graph(
+        [helper.make_node("MatMul", ["lhs", "rhs"], ["output"])],
+        "static_rank6_matmul",
+        [
+            helper.make_tensor_value_info("lhs", TensorProto.FLOAT, lhs_shape),
+            helper.make_tensor_value_info("rhs", TensorProto.FLOAT, rhs_shape),
+        ],
+        [helper.make_tensor_value_info("output", TensorProto.FLOAT, output_shape)],
+    )
+    model = helper.make_model(
+        graph,
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+    model.ir_version = 10
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "static_rank6_matmul", model)
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+        )
+        rng = np.random.default_rng(0)
+        sample_inputs = {
+            "lhs": rng.standard_normal(lhs_shape).astype(np.float32),
+            "rhs": rng.standard_normal(rhs_shape).astype(np.float32),
+        }
+        expected = ort.InferenceSession(
+            model_path,
+            providers=["CPUExecutionProvider"],
+        ).run(None, sample_inputs)[0]
+        actual = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["output"],
+        )["output"]
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
 
 
 def test_flatbuffer_direct_qlinear_conv_filter_layout_is_ohwi() -> None:
