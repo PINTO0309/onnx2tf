@@ -202,6 +202,73 @@ def _models_sha256(model_paths: List[str]) -> str:
     return _sha256_text("\n".join(str(path) for path in model_paths))
 
 
+def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
+    path = os.path.abspath(profile_path)
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    if int(payload.get("schema_version", 0)) != 1:
+        raise ValueError(f"Unsupported regression profile schema. path={path}")
+    model_entries = payload.get("models", [])
+    if not isinstance(model_entries, list) or not model_entries:
+        raise ValueError(f"Regression profile contains no models. path={path}")
+    model_names: List[str] = []
+    tiers: List[int] = []
+    baseline_classification_counts: Dict[str, int] = {}
+    for entry in model_entries:
+        if not isinstance(entry, dict):
+            raise ValueError(f"Invalid regression profile model entry. path={path}")
+        model_name = os.path.basename(str(entry.get("model", "")).strip())
+        tier = int(entry.get("tier", -1))
+        if not model_name or tier < 0 or tier > 3:
+            raise ValueError(
+                "Regression profile may contain only Tier 0-3 models. "
+                f"path={path} model={model_name!r} tier={tier}"
+            )
+        model_names.append(model_name)
+        tiers.append(tier)
+        baseline_classification = str(
+            entry.get("baseline_classification", "unspecified")
+        )
+        baseline_classification_counts[baseline_classification] = int(
+            baseline_classification_counts.get(baseline_classification, 0)
+        ) + 1
+    if len(model_names) != len(set(model_names)):
+        raise ValueError(f"Regression profile contains duplicate model names. path={path}")
+    declared_model_count = int(payload.get("model_count", len(model_names)))
+    if declared_model_count != len(model_names):
+        raise ValueError(
+            "Regression profile model_count does not match its model entries. "
+            f"path={path} declared={declared_model_count} actual={len(model_names)}"
+        )
+    if not bool(payload.get("root_only", True)):
+        raise ValueError("Regression profile must use root-only discovery.")
+    if int(payload.get("inference_concurrency", 1)) != 1:
+        raise ValueError("Regression profile inference_concurrency must be 1.")
+    min_nodes = int(payload.get("min_nodes", 1))
+    max_nodes = int(payload.get("max_nodes", 999))
+    if min_nodes < 0 or max_nodes > 999 or min_nodes > max_nodes:
+        raise ValueError(
+            "Regression profile must remain within Tier 0-3 (at most 999 ONNX nodes). "
+            f"path={path} min_nodes={min_nodes} max_nodes={max_nodes}"
+        )
+    content_sha256 = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return {
+        "name": str(payload.get("name", os.path.basename(path))),
+        "content_sha256": content_sha256,
+        "model_names": model_names,
+        "model_count": len(model_names),
+        "min_nodes": min_nodes,
+        "max_nodes": max_nodes,
+        "recursive": False,
+        "tiers": sorted(set(tiers)),
+        "baseline_classification_counts": dict(
+            sorted(baseline_classification_counts.items())
+        ),
+    }
+
+
 def _stage_model_for_run(*, model_path: str, run_dir: str) -> str:
     """Copy a model and its external tensors so conversion cannot edit corpus files."""
 
@@ -423,19 +490,22 @@ def _build_summary(state: Dict[str, Any]) -> Dict[str, Any]:
         if not bool(entry.get("strict_pass", False))
     ]
     durations = [float(entry.get("duration_sec", 0.0)) for entry in entries]
+    filters: Dict[str, Any] = {
+        "min_nodes": state.get("min_nodes"),
+        "max_nodes": state.get("max_nodes"),
+        "recursive": bool(state.get("recursive", True)),
+        "include_pytorch_artifacts": bool(
+            state.get("include_pytorch_artifacts", True)
+        ),
+    }
+    if state.get("regression_profile") is not None:
+        filters["regression_profile"] = dict(state["regression_profile"])
     return {
         "schema_version": _STATE_SCHEMA_VERSION,
         "root_dir": state.get("root_dir", ""),
         "models_sha256": state.get("models_sha256", ""),
         "total_entries": int(len(entries)),
-        "filters": {
-            "min_nodes": state.get("min_nodes"),
-            "max_nodes": state.get("max_nodes"),
-            "recursive": bool(state.get("recursive", True)),
-            "include_pytorch_artifacts": bool(
-                state.get("include_pytorch_artifacts", True)
-            ),
-        },
+        "filters": filters,
         "timing": {
             "total_duration_sec": float(sum(durations)),
             "median_duration_sec": float(statistics.median(durations))
@@ -522,6 +592,7 @@ def run_flatbuffer_direct_bulk_verification(
     max_nodes: Optional[int] = None,
     include_pytorch_artifacts: bool = True,
     recursive: bool = True,
+    regression_profile: Optional[str] = None,
 ) -> Dict[str, Any]:
     root_dir_abs = os.path.abspath(root_dir)
     output_dir_abs = os.path.abspath(output_dir)
@@ -532,6 +603,23 @@ def run_flatbuffer_direct_bulk_verification(
 
     if not os.path.isdir(root_dir_abs):
         raise FileNotFoundError(f"Root directory does not exist. path={root_dir_abs}")
+
+    profile: Optional[Dict[str, Any]] = None
+    profile_identity: Optional[Dict[str, Any]] = None
+    if regression_profile:
+        profile = _load_regression_profile(regression_profile)
+        profile_identity = {
+            key: value
+            for key, value in profile.items()
+            if key != "model_names"
+        }
+        if min_nodes is not None and int(min_nodes) != int(profile["min_nodes"]):
+            raise ValueError("min_nodes conflicts with the regression profile.")
+        if max_nodes is not None and int(max_nodes) != int(profile["max_nodes"]):
+            raise ValueError("max_nodes conflicts with the regression profile.")
+        min_nodes = int(profile["min_nodes"])
+        max_nodes = int(profile["max_nodes"])
+        recursive = False
 
     if min_nodes is not None and int(min_nodes) < 0:
         raise ValueError("min_nodes must be >= 0")
@@ -554,6 +642,16 @@ def run_flatbuffer_direct_bulk_verification(
         min_nodes=min_nodes,
         max_nodes=max_nodes,
     )
+    if profile is not None:
+        allowed_names = set(profile["model_names"])
+        discovered_names = {os.path.basename(path) for path in models}
+        missing_names = sorted(allowed_names - discovered_names)
+        if missing_names:
+            raise RuntimeError(
+                "Regression-profile models are missing from the current root corpus. "
+                f"missing_models={missing_names}"
+            )
+        models = [path for path in models if os.path.basename(path) in allowed_names]
     models_sha256 = _models_sha256(models)
     normalized_skip_model_names = sorted(
         {
@@ -615,6 +713,8 @@ def run_flatbuffer_direct_bulk_verification(
                 "Resume state does not match recursive discovery mode. "
                 f"state={state.get('recursive')} current={recursive}"
             )
+        if state.get("regression_profile") != profile_identity:
+            raise RuntimeError("Resume state does not match regression_profile.")
         entries: List[Dict[str, Any]] = list(state.get("entries", []))
     else:
         state = {
@@ -627,6 +727,7 @@ def run_flatbuffer_direct_bulk_verification(
             "max_nodes": max_nodes,
             "include_pytorch_artifacts": bool(include_pytorch_artifacts),
             "recursive": bool(recursive),
+            "regression_profile": profile_identity,
             "started_at": _utc_now_iso(),
             "entries": [],
         }
@@ -888,6 +989,15 @@ def main() -> None:
     parser.add_argument("--min_nodes", type=int, default=None)
     parser.add_argument("--max_nodes", type=int, default=None)
     parser.add_argument(
+        "--regression_profile",
+        type=str,
+        default=None,
+        help=(
+            "Run the models recorded in a managed Tier 0-3 profile. "
+            "The profile fixes root-only discovery and its node-count range."
+        ),
+    )
+    parser.add_argument(
         "--tflite_only",
         action="store_true",
         help="Run the TensorFlow-free ONNX/TFLite check without optional PyTorch artifacts.",
@@ -919,6 +1029,7 @@ def main() -> None:
         max_nodes=args.max_nodes,
         include_pytorch_artifacts=not bool(args.tflite_only),
         recursive=not bool(args.root_only),
+        regression_profile=args.regression_profile,
     )
     summary = state.get("summary", {}) or {}
     failed_models = list(summary.get("failed_models", []))

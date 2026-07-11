@@ -3,6 +3,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
 
+import pytest
+
 from onnx2tf.utils import flatbuffer_direct_bulk_runner as bulk_runner
 from onnx2tf.utils.flatbuffer_direct_bulk_runner import (
     run_flatbuffer_direct_bulk_verification,
@@ -743,3 +745,123 @@ def test_flatbuffer_direct_bulk_runner_summary_lists_failed_models_only(
     assert len(failed_models) == 1
     assert failed_models[0]["model"] == "fail.onnx"
     assert failed_models[0]["classification"] == "tflite_fail"
+
+
+def test_regression_profile_runs_recorded_tier_zero_to_three_successes_and_failures(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from onnx import TensorProto, helper, save
+
+    def _model(path: Path, count: int) -> None:
+        x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+        previous = "x"
+        nodes = []
+        for index in range(count):
+            output = f"v{index}"
+            nodes.append(helper.make_node("Relu", [previous], [output]))
+            previous = output
+        y = helper.make_tensor_value_info(previous, TensorProto.FLOAT, [1])
+        save(helper.make_model(helper.make_graph(nodes, "g", [x], [y])), path)
+
+    _model(tmp_path / "baseline_pass.onnx", 2)
+    _model(tmp_path / "known_failure.onnx", 2)
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "test-tier0-3-all-models",
+                "min_nodes": 1,
+                "max_nodes": 999,
+                "models": [
+                    {
+                        "tier": 0,
+                        "model": "baseline_pass.onnx",
+                        "baseline_classification": "pass",
+                    },
+                    {
+                        "tier": 0,
+                        "model": "known_failure.onnx",
+                        "baseline_classification": "conversion_error",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: List[str] = []
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        model_path = Path(cmd[cmd.index("-i") + 1])
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        calls.append(model_path.name)
+        _write_accuracy_report(
+            path=artifact_dir / f"{model_path.stem}_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+        regression_profile=str(profile_path),
+    )
+
+    assert calls == ["baseline_pass.onnx", "known_failure.onnx"]
+    assert [entry["model"] for entry in state["entries"]] == [
+        "baseline_pass.onnx",
+        "known_failure.onnx",
+    ]
+    profile_filter = state["summary"]["filters"]["regression_profile"]
+    assert profile_filter["model_count"] == 2
+    assert profile_filter["tiers"] == [0]
+    assert profile_filter["baseline_classification_counts"] == {
+        "conversion_error": 1,
+        "pass": 1,
+    }
+    assert "model_names" not in profile_filter
+    assert state["summary"]["filters"]["max_nodes"] == 999
+    assert state["summary"]["filters"]["recursive"] is False
+
+
+def test_regression_profile_rejects_tier_four_models(tmp_path) -> None:
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 1000,
+                "max_nodes": 1999,
+                "models": [{"tier": 4, "model": "large.onnx"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="only Tier 0-3 models"):
+        bulk_runner._load_regression_profile(str(profile_path))
+
+
+def test_managed_regression_profile_includes_all_tier_zero_to_three_models() -> None:
+    profile_path = (
+        Path(__file__).resolve().parents[1]
+        / "docs"
+        / "baselines"
+        / "flatbuffer_direct_active_tier0_3.json"
+    )
+    profile = bulk_runner._load_regression_profile(str(profile_path))
+
+    assert profile["model_count"] == 390
+    assert profile["tiers"] == [0, 1, 2, 3]
+    assert profile["min_nodes"] == 1
+    assert profile["max_nodes"] == 999
+    assert profile["baseline_classification_counts"] == {
+        "conversion_error": 33,
+        "missing_tflite_report": 58,
+        "pass": 255,
+        "tflite_fail": 24,
+        "timeout": 20,
+    }
