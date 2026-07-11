@@ -2578,9 +2578,8 @@
     {
       "tier": 4,
       "model": "hitnet_middlebury_d400.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "18041eadf7d978d7fba2534248a5904f28639dc30cb799e5c5454f50b586dab6"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.00177001953125
     },
     {
       "tier": 4,

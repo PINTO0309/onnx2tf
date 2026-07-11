@@ -74,6 +74,9 @@ from onnx2tf.tflite_builder.passes.precision import (
     _restore_precision_sensitive_reciprocal_divisions,
     _rewrite_constant_divisors_to_multiplicative_reciprocals,
 )
+from onnx2tf.tflite_builder.passes.pad_layout import (
+    repair_channel_last_inputs_for_channel_first_pad,
+)
 from onnx2tf.tflite_builder.passes.constant_fold import (
     _optimize_constant_binary_elementwise_chains,
     _optimize_constant_input_cast_chains,
@@ -1625,6 +1628,16 @@ def _replace_expand_dims_and_squeeze_with_reshape(model_ir: ModelIR) -> Dict[str
             if output_tensor.shape_signature is not None
             else [int(v) for v in list(output_shape)]
         )
+        squeeze_dims_for_reshape: Optional[List[int]] = None
+        if op_type == "SQUEEZE":
+            squeeze_dims_raw = op.options.get("squeezeDims", [])
+            try:
+                squeeze_dims_for_reshape = [
+                    int(v)
+                    for v in np.asarray(squeeze_dims_raw).reshape(-1).tolist()
+                ]
+            except Exception:
+                squeeze_dims_for_reshape = []
 
         if op_type == "SQUEEZE" and len(output_shape) > 0 and all(int(v) == 1 for v in output_shape):
             # Conservative guard:
@@ -1727,7 +1740,11 @@ def _replace_expand_dims_and_squeeze_with_reshape(model_ir: ModelIR) -> Dict[str
             )
             op.op_type = "RESHAPE"
             op.inputs = [input_name, runtime_shape_filtered_name]
-            op.options = {"newShape": []}
+            op.options = {
+                "newShape": [],
+                "onnxSqueezeDims": [int(v) for v in normalized_axes],
+                "preserveSemanticRank": True,
+            }
             rewritten += 1
             shape_tensors_created += 1
             continue
@@ -1772,6 +1789,11 @@ def _replace_expand_dims_and_squeeze_with_reshape(model_ir: ModelIR) -> Dict[str
         op.op_type = "RESHAPE"
         op.inputs = [input_name, shape_name]
         op.options = {"newShape": [int(v) for v in list(reshape_target)]}
+        if squeeze_dims_for_reshape is not None:
+            op.options["onnxSqueezeDims"] = [
+                int(v) for v in list(squeeze_dims_for_reshape)
+            ]
+            op.options["preserveSemanticRank"] = True
         if preserve_dynamic_shape:
             op.options["preserveDynamicShape"] = True
         rewritten += 1
@@ -3457,6 +3479,42 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                     if input_tensor.shape_signature is not None
                     else list(input_tensor.shape)
                 )
+                if "onnxSqueezeDims" in op.options:
+                    squeeze_axes = _parse_axes_option(
+                        op.options.get("onnxSqueezeDims", [])
+                    )
+                    out_shape, out_signature = (
+                        _infer_squeeze_output_shape_and_signature(
+                            input_shape=list(input_tensor.shape),
+                            input_signature=input_signature,
+                            squeeze_axes=squeeze_axes,
+                        )
+                    )
+                    if (
+                        out_shape is not None
+                        and _is_fully_known_positive_shape(out_shape)
+                    ):
+                        op.options["newShape"] = [
+                            int(v) for v in list(out_shape)
+                        ]
+                        if len(inputs) >= 2:
+                            shape_tensor = model_ir.tensors.get(inputs[1], None)
+                            if (
+                                shape_tensor is not None
+                                and shape_tensor.data is not None
+                            ):
+                                changed |= _write_const_ints_to_tensor(
+                                    shape_tensor,
+                                    [int(v) for v in list(out_shape)],
+                                )
+                                shape_tensor.shape = [int(len(out_shape))]
+                                shape_tensor.shape_signature = [int(len(out_shape))]
+                        changed |= _update_tensor_shape(
+                            outputs[0],
+                            out_shape,
+                            out_signature,
+                        )
+                    continue
                 if "onnxFlattenAxis" in op.options:
                     existing_flatten_new_shape = op.options.get("newShape", [])
                     try:
@@ -3682,6 +3740,82 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                     out_shape,
                     out_signature,
                 )
+                continue
+
+            if (
+                op_type == "STRIDED_SLICE"
+                and len(inputs) >= 4
+                and len(outputs) == 1
+            ):
+                input_tensor = model_ir.tensors.get(inputs[0], None)
+                begin_values = _read_const_ints_from_tensor(
+                    model_ir.tensors.get(inputs[1], None)
+                )
+                end_values = _read_const_ints_from_tensor(
+                    model_ir.tensors.get(inputs[2], None)
+                )
+                stride_values = _read_const_ints_from_tensor(
+                    model_ir.tensors.get(inputs[3], None)
+                )
+                if (
+                    input_tensor is None
+                    or not _is_fully_known_positive_shape(input_tensor.shape)
+                    or begin_values is None
+                    or end_values is None
+                    or stride_values is None
+                ):
+                    continue
+                input_shape = [int(v) for v in list(input_tensor.shape)]
+                rank = len(input_shape)
+                if not (
+                    len(begin_values) == rank
+                    and len(end_values) == rank
+                    and len(stride_values) == rank
+                    and all(int(v) > 0 for v in stride_values)
+                    and int(op.options.get("ellipsisMask", 0)) == 0
+                    and int(op.options.get("newAxisMask", 0)) == 0
+                    and int(op.options.get("shrinkAxisMask", 0)) == 0
+                ):
+                    continue
+                begin_mask = int(op.options.get("beginMask", 0))
+                end_mask = int(op.options.get("endMask", 0))
+                out_shape: List[int] = []
+                for axis, dim in enumerate(input_shape):
+                    stride = int(stride_values[axis])
+                    if ((begin_mask >> axis) & 1) != 0:
+                        start = 0
+                    else:
+                        start = int(begin_values[axis])
+                        start = (
+                            max(int(dim) + start, 0)
+                            if start < 0
+                            else min(start, int(dim))
+                        )
+                    if ((end_mask >> axis) & 1) != 0:
+                        stop = int(dim)
+                    else:
+                        stop = int(end_values[axis])
+                        stop = (
+                            max(int(dim) + stop, 0)
+                            if stop < 0
+                            else min(stop, int(dim))
+                        )
+                    out_shape.append(
+                        int(max((int(stop) - int(start) + stride - 1) // stride, 0))
+                    )
+                if _is_fully_known_positive_shape(out_shape):
+                    input_signature = (
+                        [int(v) for v in list(input_tensor.shape_signature)]
+                        if input_tensor.shape_signature is not None
+                        else list(input_shape)
+                    )
+                    out_signature = [
+                        -1 if int(input_signature[axis]) < 0 else int(out_shape[axis])
+                        for axis in range(rank)
+                    ]
+                    changed |= _update_tensor_shape(
+                        outputs[0], out_shape, out_signature
+                    )
                 continue
 
             if op_type == "SLICE" and len(inputs) >= 3 and len(outputs) == 1:
@@ -59487,6 +59621,8 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
                 second_op = model_ir.operators[int(second_idx)]
                 if str(second_op.op_type) != "RESHAPE" or len(second_op.inputs) < 1 or len(second_op.outputs) != 1:
                     continue
+                if bool(second_op.options.get("preserveSemanticRank", False)):
+                    continue
                 if str(second_op.inputs[0]) != first_output_name:
                     continue
                 if _reshape_depends_on_input_dims(second_op):
@@ -59554,6 +59690,8 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
                 continue
             second_op = model_ir.operators[int(second_idx)]
             if str(second_op.op_type) != "RESHAPE" or len(second_op.inputs) < 1 or len(second_op.outputs) != 1:
+                continue
+            if bool(second_op.options.get("preserveSemanticRank", False)):
                 continue
             if str(second_op.inputs[0]) != first_output_name:
                 continue
@@ -62396,9 +62534,30 @@ def _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
 
             rotated_shape = [int(v) for v in list(rotated_data.shape)]
             rotated_broadcast = _broadcast_static_shapes(data_shape, rotated_shape)
-            if rotated_broadcast is None:
-                continue
-            if rotated_broadcast != data_shape:
+            if (
+                (rotated_broadcast is None or rotated_broadcast != data_shape)
+                and int(const_data.ndim) == 4
+            ):
+                # A previous NHWC rewrite can become stale after later shape
+                # reconciliation.  Try the exact inverse standard layout
+                # permutation and accept it only when it restores the runtime
+                # broadcast equation.
+                inverse_rotated_data = np.transpose(
+                    const_data,
+                    axes=[0, 3, 1, 2],
+                )
+                inverse_rotated_shape = [
+                    int(v) for v in list(inverse_rotated_data.shape)
+                ]
+                inverse_broadcast = _broadcast_static_shapes(
+                    data_shape,
+                    inverse_rotated_shape,
+                )
+                if inverse_broadcast == data_shape:
+                    rotated_data = inverse_rotated_data
+                    rotated_shape = inverse_rotated_shape
+                    rotated_broadcast = inverse_broadcast
+            if rotated_broadcast is None or rotated_broadcast != data_shape:
                 continue
             force_rotate_even_if_ambiguous = False
             if as_is_broadcast == data_shape and int(const_data.ndim) in {3, 4}:
@@ -77324,6 +77483,17 @@ def lower_onnx_to_ir(
     if int(
         final_high_rank_bmm_stats.get(
             "compressed_static_high_rank_batch_matmul",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+        _topologically_sort_operators(model_ir)
+    final_pad_layout_stats = repair_channel_last_inputs_for_channel_first_pad(
+        model_ir
+    )
+    if int(
+        final_pad_layout_stats.get(
+            "repaired_channel_last_inputs_for_channel_first_pad",
             0,
         )
     ) > 0:
