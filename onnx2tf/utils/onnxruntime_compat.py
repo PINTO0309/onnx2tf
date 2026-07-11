@@ -35,6 +35,32 @@ def _default_domain_opset(model: onnx.ModelProto) -> int | None:
     return min(versions) if versions else None
 
 
+def _upgrade_legacy_upsample_for_onnxruntime(
+    model: onnx.ModelProto,
+) -> Dict[str, int]:
+    default_opset = _default_domain_opset(model)
+    legacy_upsample_count = int(
+        sum(
+            1
+            for node in model.graph.node
+            if str(node.domain) in {"", "ai.onnx"}
+            and str(node.op_type) == "Upsample"
+        )
+    )
+    if (
+        default_opset is None
+        or int(default_opset) >= 10
+        or legacy_upsample_count == 0
+    ):
+        return {}
+    try:
+        converted = onnx.version_converter.convert_version(model, 11)
+    except Exception:
+        return {}
+    model.CopyFrom(converted)
+    return {"LegacyUpsample": legacy_upsample_count}
+
+
 def _static_shape_map(model: onnx.ModelProto) -> Dict[str, List[int]]:
     shapes: Dict[str, List[int]] = {}
     for value in [
@@ -638,7 +664,12 @@ def prepare_onnx_graph_for_onnxruntime(
         except Exception:
             pass
 
-    rewritten: Dict[str, int] = _decompose_group_norm_for_onnxruntime(prepared)
+    rewritten: Dict[str, int] = _upgrade_legacy_upsample_for_onnxruntime(
+        prepared
+    )
+    default_opset = _default_domain_opset(prepared)
+    for op_type, count in _decompose_group_norm_for_onnxruntime(prepared).items():
+        rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
     for op_type, count in _repair_if_sequenceconstruct_outputs_for_onnxruntime(
         prepared
     ).items():

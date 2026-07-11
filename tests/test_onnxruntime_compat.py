@@ -46,6 +46,48 @@ def test_prepare_onnxruntime_graph_keeps_standard_grid_sample_at_opset_16() -> N
     assert prepared.graph.node[0].domain == ""
 
 
+def test_prepare_onnxruntime_graph_upgrades_legacy_downsample_upsample() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 4, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 2])
+    scales = numpy_helper.from_array(
+        np.asarray([1.0, 1.0, 0.5, 0.5], dtype=np.float32),
+        name="scales",
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [
+                helper.make_node(
+                    "Upsample",
+                    ["x", "scales"],
+                    ["y"],
+                    mode="linear",
+                )
+            ],
+            "legacy_downsample",
+            [x],
+            [y],
+            [scales],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 9)],
+    )
+
+    prepared, rewritten = prepare_onnx_graph_for_onnxruntime(model)
+
+    assert rewritten == {"LegacyUpsample": 1}
+    assert model.graph.node[0].op_type == "Upsample"
+    assert any(node.op_type == "Resize" for node in prepared.graph.node)
+    assert all(node.op_type != "Upsample" for node in prepared.graph.node)
+    assert next(
+        opset.version
+        for opset in prepared.opset_import
+        if opset.domain in {"", "ai.onnx"}
+    ) == 11
+    ort.InferenceSession(
+        prepared.SerializeToString(),
+        providers=["CPUExecutionProvider"],
+    )
+
+
 def test_prepare_onnxruntime_graph_decomposes_group_norm_with_swish() -> None:
     x_info = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 2, 4])
     y_info = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 2, 4])

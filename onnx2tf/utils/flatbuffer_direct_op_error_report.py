@@ -541,6 +541,20 @@ def _get_onnx_eval_outputs(
         onnx_runtime_graph,
         shape_hints,
     )
+    runtime_tensor_names = {
+        str(name)
+        for node in onnx_runtime_graph.graph.node
+        for name in node.output
+        if str(name) != ""
+    }
+    runtime_tensor_names.update(
+        str(output.name) for output in onnx_runtime_graph.graph.output
+    )
+    runtime_target_output_names = [
+        str(name)
+        for name in target_output_names
+        if str(name) in runtime_tensor_names
+    ]
     generated_input_dir: Optional[str] = None
     generated_custom_inputs: Optional[List[List[str]]] = None
     if not custom_input_op_name_np_data_path:
@@ -590,7 +604,7 @@ def _get_onnx_eval_outputs(
     try:
         outputs = dummy_onnx_inference(
             onnx_graph=onnx_runtime_graph,
-            output_names=target_output_names,
+            output_names=runtime_target_output_names,
             custom_input_op_name_np_data_path=effective_custom_inputs,
             input_datas_for_validation=onnx_input_datas_for_validation,
             enable_ort_output_memmap=bool(enable_ort_output_memmap),
@@ -609,7 +623,7 @@ def _get_onnx_eval_outputs(
             )
             outputs = dummy_onnx_inference(
                 onnx_graph=onnx_runtime_graph,
-                output_names=target_output_names,
+                output_names=runtime_target_output_names,
                 custom_input_op_name_np_data_path=effective_custom_inputs,
                 input_datas_for_validation=onnx_input_datas_for_validation,
                 enable_ort_output_memmap=False,
@@ -625,7 +639,7 @@ def _get_onnx_eval_outputs(
             )
             outputs = dummy_onnx_inference(
                 onnx_graph=onnx_runtime_graph,
-                output_names=target_output_names,
+                output_names=runtime_target_output_names,
                 custom_input_op_name_np_data_path=effective_custom_inputs,
                 input_datas_for_validation=onnx_input_datas_for_validation,
                 enable_ort_output_memmap=bool(enable_ort_output_memmap),
@@ -639,14 +653,17 @@ def _get_onnx_eval_outputs(
         if generated_input_dir is not None:
             shutil.rmtree(generated_input_dir, ignore_errors=True)
 
-    if len(outputs) != len(target_output_names):
+    if len(outputs) != len(runtime_target_output_names):
         raise RuntimeError(
             "dummy_onnx_inference output count mismatch. "
-            f"requested={len(target_output_names)} actual={len(outputs)}"
+            f"requested={len(runtime_target_output_names)} actual={len(outputs)}"
         )
     onnx_outputs = {
         output_name: np.asarray(output_value)
-        for output_name, output_value in zip(target_output_names, outputs)
+        for output_name, output_value in zip(
+            runtime_target_output_names,
+            outputs,
+        )
     }
     return onnx_outputs, onnx_input_datas_for_validation, memmap_paths_for_cleanup
 

@@ -1637,9 +1637,10 @@
     {
       "tier": 2,
       "model": "modnet_old.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "3c53a625178cb2ee734901388b23c96edf31c1520edae6fb2de8deaec5092cb3"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "tflite_fail",
+      "error_signature_sha256": "d76456bdf196e65110f3a057e04bec790bad507d0fe77b085d7d9eff5dbbcd73",
+      "tflite_max_abs": 0.9999848816346457
     },
     {
       "tier": 2,
