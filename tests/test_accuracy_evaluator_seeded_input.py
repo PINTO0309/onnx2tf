@@ -13,6 +13,7 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
     _judge_metrics,
     _max_abs_error,
     _MetricAccumulator,
+    _prepare_onnx_graph_for_onnxruntime,
     _resolve_tflite_evaluation_pass,
 )
 
@@ -197,6 +198,25 @@ def test_build_static_control_input_overrides_infers_topk_k_from_output_shape() 
     )
 
     np.testing.assert_array_equal(inputs["k"], np.asarray([1250], dtype=np.int64))
+
+
+def test_prepare_onnx_graph_for_onnxruntime_upgrades_legacy_default_opset() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2])
+    model = helper.make_model(
+        helper.make_graph(
+            [helper.make_node("Relu", ["x"], ["y"])],
+            "legacy_opset",
+            [x],
+            [y],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 6)],
+    )
+
+    prepared = _prepare_onnx_graph_for_onnxruntime(model)
+
+    assert next(opset.version for opset in model.opset_import if opset.domain == "") == 6
+    assert next(opset.version for opset in prepared.opset_import if opset.domain == "") == 7
 
 
 def test_collect_onnx_input_specs_uses_unit_time_axis_for_rank5_image_sequence() -> None:

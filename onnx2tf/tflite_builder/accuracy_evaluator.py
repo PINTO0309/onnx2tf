@@ -869,6 +869,25 @@ def _build_static_control_input_overrides(
     return candidates
 
 
+def _prepare_onnx_graph_for_onnxruntime(
+    onnx_graph: onnx.ModelProto,
+) -> onnx.ModelProto:
+    """Upgrade legacy default-domain opsets that current ORT no longer runs."""
+    default_versions = [
+        int(opset.version)
+        for opset in onnx_graph.opset_import
+        if str(opset.domain) in {"", "ai.onnx"}
+    ]
+    if len(default_versions) == 0 or min(default_versions) >= 7:
+        return onnx_graph
+    try:
+        return onnx.version_converter.convert_version(onnx_graph, 7)
+    except Exception:
+        # Preserve the original ORT error when the standard converter cannot
+        # upgrade a legacy/custom graph.
+        return onnx_graph
+
+
 def _extract_sample_from_custom(
     *,
     data: np.ndarray,
@@ -1580,9 +1599,10 @@ def evaluate_onnx_tflite_outputs(
         if output_name in nondeterministic_output_reasons
     ]
 
+    onnx_runtime_graph = _prepare_onnx_graph_for_onnxruntime(onnx_graph)
     try:
         onnx_session = ort.InferenceSession(
-            onnx_graph.SerializeToString(),
+            onnx_runtime_graph.SerializeToString(),
             providers=["CPUExecutionProvider"],
         )
     except Exception as ex:
@@ -1590,7 +1610,7 @@ def evaluate_onnx_tflite_outputs(
         if "Unsupported model IR version" not in err:
             raise
         fallback_graph = onnx.ModelProto()
-        fallback_graph.CopyFrom(onnx_graph)
+        fallback_graph.CopyFrom(onnx_runtime_graph)
         fallback_graph.ir_version = min(int(fallback_graph.ir_version), 10)
         onnx_session = ort.InferenceSession(
             fallback_graph.SerializeToString(),
@@ -2198,7 +2218,8 @@ def evaluate_onnx_tflite_outputs_isolated(
         for output_name in onnx_output_names
         if output_name in nondeterministic_output_reasons
     ]
-    onnx_graph_serialized = onnx_graph.SerializeToString()
+    onnx_runtime_graph = _prepare_onnx_graph_for_onnxruntime(onnx_graph)
+    onnx_graph_serialized = onnx_runtime_graph.SerializeToString()
     use_worker_output_memmap, worker_output_memmap_dir = _resolve_eval_memmap_config(
         onnx_graph=onnx_graph,
         onnx_output_names=onnx_output_names,

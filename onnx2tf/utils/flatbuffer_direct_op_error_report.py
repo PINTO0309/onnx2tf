@@ -29,6 +29,7 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
     _is_integer_or_bool_dtype,
     _normalize_tensor_name,
     _quantize_for_tflite_input,
+    _prepare_onnx_graph_for_onnxruntime,
     _resize_tflite_inputs_if_needed,
 )
 from onnx2tf.utils.tempdir_cleanup import make_managed_tempdir
@@ -578,7 +579,7 @@ def _get_onnx_eval_outputs(
     memmap_paths_for_cleanup: List[str] = []
     try:
         outputs = dummy_onnx_inference(
-            onnx_graph=onnx_graph,
+            onnx_graph=_prepare_onnx_graph_for_onnxruntime(onnx_graph),
             output_names=target_output_names,
             custom_input_op_name_np_data_path=effective_custom_inputs,
             input_datas_for_validation=onnx_input_datas_for_validation,
