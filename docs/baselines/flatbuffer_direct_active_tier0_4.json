@@ -481,7 +481,7 @@
       "baseline_classification": "tflite_fail",
       "baseline_reason": "tflite_fail",
       "error_signature_sha256": "6561a1f9f1c5aa2e601a9cc2d68d0cab4267d3af57349c4c33233b3c852e0e72",
-      "tflite_max_abs": 89.66031646728516
+      "tflite_max_abs": 8.077499389648438
     },
     {
       "tier": 0,
@@ -1321,7 +1321,7 @@
       "baseline_classification": "tflite_fail",
       "baseline_reason": "tflite_fail",
       "error_signature_sha256": "c4f4571f021aaaa76b13509894837a7e6505c254f4e0f6f7f43b9434b317d4b6",
-      "tflite_max_abs": 0.21163245104253292
+      "tflite_max_abs": 0.15208351612091064
     },
     {
       "tier": 1,
