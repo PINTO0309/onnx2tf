@@ -1062,6 +1062,22 @@ def _build_qlinear_binary_op(node: Any, ctx: Any, op_type: str) -> None:
         quantized_dimension=0 if np.asarray(c_scale).size <= 1 else _normalize_axis(1, out_rank),
     )
 
+    op_type_upper = str(op_type).upper()
+    use_float_binary_path = (
+        op_type_upper == "MUL"
+        or (a_name not in ctx.constants and b_name not in ctx.constants)
+    )
+    if not use_float_binary_path:
+        ctx.add_operator(
+            OperatorIR(
+                op_type=op_type,
+                inputs=[a_name, b_name],
+                outputs=[output_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        return
+
     # TFLite's quantized binary kernels use fixed-point requantization whose
     # tie handling can differ by one quantum from ONNX Runtime.  Preserve the
     # ONNX dequantize -> arithmetic -> round -> saturate contract explicitly;
@@ -1104,11 +1120,15 @@ def _build_qlinear_binary_op(node: Any, ctx: Any, op_type: str) -> None:
             options={"fusedActivationFunction": "NONE"},
         )
     )
-    if not _add_scalar_onnx_requantization(
-        ctx=ctx,
-        input_name=out_f_name,
-        output_name=output_name,
-    ):
+    use_explicit_onnx_requantization = (
+        op_type_upper == "ADD"
+        and _add_scalar_onnx_requantization(
+            ctx=ctx,
+            input_name=out_f_name,
+            output_name=output_name,
+        )
+    )
+    if not use_explicit_onnx_requantization:
         ctx.add_operator(
             OperatorIR(
                 op_type="QUANTIZE",

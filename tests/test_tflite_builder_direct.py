@@ -5066,6 +5066,97 @@ def _make_qlinear_add_rounding_model() -> onnx.ModelProto:
     )
 
 
+def _make_symbolic_flatten_qlinear_matmul_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info(
+        "x",
+        TensorProto.FLOAT,
+        ["N", 1, "H", "W"],
+    )
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, ["N", 3])
+    x_scale = numpy_helper.from_array(
+        np.asarray(0.1, dtype=np.float32),
+        name="sfq_x_scale",
+    )
+    x_zero = numpy_helper.from_array(
+        np.asarray(0, dtype=np.int8),
+        name="sfq_x_zero",
+    )
+    weights = numpy_helper.from_array(
+        np.asarray(
+            [
+                [1, 0, -1],
+                [2, 1, 0],
+                [0, -1, 2],
+                [1, 1, 1],
+            ],
+            dtype=np.int8,
+        ),
+        name="sfq_weights",
+    )
+    weight_scale = numpy_helper.from_array(
+        np.asarray(0.2, dtype=np.float32),
+        name="sfq_weight_scale",
+    )
+    weight_zero = numpy_helper.from_array(
+        np.asarray(0, dtype=np.int8),
+        name="sfq_weight_zero",
+    )
+    y_scale = numpy_helper.from_array(
+        np.asarray(0.05, dtype=np.float32),
+        name="sfq_y_scale",
+    )
+    y_zero = numpy_helper.from_array(
+        np.asarray(0, dtype=np.int8),
+        name="sfq_y_zero",
+    )
+    nodes = [
+        helper.make_node("Flatten", ["x"], ["flat"], name="SFQFlatten", axis=1),
+        helper.make_node(
+            "QuantizeLinear",
+            ["flat", "sfq_x_scale", "sfq_x_zero"],
+            ["flat_q"],
+            name="SFQQuantize",
+        ),
+        helper.make_node(
+            "QLinearMatMul",
+            [
+                "flat_q",
+                "sfq_x_scale",
+                "sfq_x_zero",
+                "sfq_weights",
+                "sfq_weight_scale",
+                "sfq_weight_zero",
+                "sfq_y_scale",
+                "sfq_y_zero",
+            ],
+            ["y_q"],
+            name="SFQMatMul",
+        ),
+        helper.make_node(
+            "DequantizeLinear",
+            ["y_q", "sfq_y_scale", "sfq_y_zero"],
+            ["y"],
+            name="SFQDequantize",
+        ),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "symbolic_flatten_qlinear_matmul_graph",
+        [x],
+        [y],
+        initializer=[
+            x_scale,
+            x_zero,
+            weights,
+            weight_scale,
+            weight_zero,
+            y_scale,
+            y_zero,
+        ],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_qlinear_global_average_pool_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 1, 1])
@@ -38356,6 +38447,25 @@ def test_flatbuffer_direct_flatten_uses_gemm_feature_contract_for_dynamic_shape(
         np.asarray([-1, 12], dtype=np.int32),
     )
     assert list(model_ir.tensors["flattened"].shape_signature or []) == [-1, 12]
+
+
+def test_flatbuffer_direct_flatten_uses_qlinear_matmul_feature_contract() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_symbolic_flatten_qlinear_matmul_model(),
+        output_file_name="symbolic_flatten_qlinear_matmul_ir_test",
+    )
+    flatten_reshape = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "RESHAPE"
+        and str(op.outputs[0]) == "flat"
+    )
+    shape_tensor = model_ir.tensors[str(flatten_reshape.inputs[1])]
+    np.testing.assert_array_equal(
+        np.asarray(shape_tensor.data, dtype=np.int32),
+        np.asarray([-1, 4], dtype=np.int32),
+    )
+    assert list(model_ir.tensors["flat"].shape_signature or []) == [-1, 4]
 
 
 def _make_flatten_dynamic_first_dim_model() -> onnx.ModelProto:

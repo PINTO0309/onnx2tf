@@ -3547,7 +3547,8 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                         if (
                             flatten_consumer_feature_dim is not None
                             and int(flatten_consumer_feature_dim) > 0
-                            and int(flatten_signature[1]) < 0
+                            and int(flatten_signature[1])
+                            != int(flatten_consumer_feature_dim)
                         ):
                             flatten_signature[1] = int(
                                 flatten_consumer_feature_dim

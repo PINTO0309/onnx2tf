@@ -6250,34 +6250,61 @@ def build_flatten_op(node: Any, ctx: Any) -> None:
         int(_flatten_dim(input_shape_signature[int(axis) :])),
     ]
 
+    def _feature_consumer_candidates(tensor_name: str) -> list[Any]:
+        candidates: list[Any] = []
+        for consumer in getattr(ctx, "onnx_tensor_consumers", {}).get(tensor_name, []):
+            consumer_op_type = str(getattr(consumer, "op_type", ""))
+            consumer_inputs = [str(name) for name in getattr(consumer, "input", [])]
+            if len(consumer_inputs) < 1 or consumer_inputs[0] != tensor_name:
+                continue
+            if (
+                consumer_op_type == "QuantizeLinear"
+                and len(getattr(consumer, "output", [])) >= 1
+            ):
+                quantized_name = str(consumer.output[0])
+                for quantized_consumer in getattr(
+                    ctx,
+                    "onnx_tensor_consumers",
+                    {},
+                ).get(quantized_name, []):
+                    quantized_inputs = [
+                        str(name)
+                        for name in getattr(quantized_consumer, "input", [])
+                    ]
+                    if len(quantized_inputs) >= 1 and quantized_inputs[0] == quantized_name:
+                        candidates.append(quantized_consumer)
+            else:
+                candidates.append(consumer)
+        return candidates
+
     consumer_feature_dims: set[int] = set()
-    for consumer in getattr(ctx, "onnx_tensor_consumers", {}).get(output_name, []):
+    for consumer in _feature_consumer_candidates(output_name):
         consumer_op_type = str(getattr(consumer, "op_type", ""))
         consumer_inputs = [str(name) for name in getattr(consumer, "input", [])]
-        if len(consumer_inputs) < 2 or consumer_inputs[0] != output_name:
+        if len(consumer_inputs) < 2:
             continue
-        weight = ctx.get_constant_array(consumer_inputs[1])
+        weight_input_index = 3 if consumer_op_type in {"QLinearMatMul", "QGemm"} else 1
+        if len(consumer_inputs) <= weight_input_index:
+            continue
+        weight = ctx.get_constant_array(consumer_inputs[weight_input_index])
         if weight is None or int(np.asarray(weight).ndim) < 2:
             continue
         weight_shape = [int(value) for value in np.asarray(weight).shape]
-        if consumer_op_type == "Gemm":
+        if consumer_op_type in {"Gemm", "QGemm"}:
             trans_b = 0
             for attribute in getattr(consumer, "attribute", []):
                 if str(attribute.name) == "transB":
                     trans_b = int(attribute.i)
                     break
             feature_dim = int(weight_shape[1] if trans_b else weight_shape[0])
-        elif consumer_op_type == "MatMul":
+        elif consumer_op_type in {"MatMul", "QLinearMatMul"}:
             feature_dim = int(weight_shape[-2])
         else:
             continue
         if feature_dim > 0:
             consumer_feature_dims.add(feature_dim)
     flatten_consumer_feature_dim: Optional[int] = None
-    if (
-        int(inferred_output_signature[1]) < 0
-        and len(consumer_feature_dims) == 1
-    ):
+    if len(consumer_feature_dims) == 1:
         flatten_consumer_feature_dim = int(next(iter(consumer_feature_dims)))
         inferred_output_signature[1] = int(flatten_consumer_feature_dim)
     use_inferred_signature = (
