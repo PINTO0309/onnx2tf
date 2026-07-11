@@ -30284,6 +30284,37 @@ def test_flatbuffer_direct_gather_elements_unknown_rank_custom_fallback() -> Non
     assert str(custom_op.options.get("customCode")) == "ONNX_GATHERELEMENTS"
 
 
+def test_flatbuffer_direct_gather_elements_unsupported_dynamic_grid_custom_fallback() -> None:
+    data = helper.make_tensor_value_info("data", TensorProto.FLOAT, ["B", "N", 4])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, ["B", "N", 4])
+    output = helper.make_tensor_value_info("output", TensorProto.FLOAT, ["B", "N", 4])
+    node = helper.make_node(
+        "GatherElements",
+        ["data", "indices"],
+        ["output"],
+        name="DynamicGridGatherElements",
+        axis=1,
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [node],
+            "dynamic_grid_gather_elements_graph",
+            [data, indices],
+            [output],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="dynamic_grid_gather_elements_custom_test",
+        allow_custom_ops=True,
+    )
+
+    custom_op = next(op for op in model_ir.operators if str(op.op_type) == "CUSTOM")
+    assert str(custom_op.options.get("customCode")) == "ONNX_GATHERELEMENTS"
+
+
 def test_flatbuffer_direct_flatten_unknown_rank_custom_fallback() -> None:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, None)
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, None)

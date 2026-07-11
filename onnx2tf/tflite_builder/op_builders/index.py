@@ -5434,6 +5434,30 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
             f"GatherElements axis out of range in flatbuffer_direct. op={node.name} axis={axis} rank={rank}"
         )
 
+    if int(output_signature[axis]) < 0:
+        unsupported_dynamic_dims = [
+            int(dim)
+            for dim in range(rank)
+            if int(dim) != int(axis)
+            and int(output_signature[dim]) != 1
+            and int(output_shape[dim]) != 1
+        ]
+        if unsupported_dynamic_dims:
+            if bool(getattr(ctx, "allow_custom_ops", False)):
+                from onnx2tf.tflite_builder.op_builders.custom import (
+                    build_custom_passthrough_op,
+                )
+
+                build_custom_passthrough_op(node, ctx)
+                return
+            first_dim = int(unsupported_dynamic_dims[0])
+            raise NotImplementedError(
+                "GatherElements with dynamic gather-axis currently supports only "
+                "non-axis dimensions with size=1. "
+                f"op={node.name} axis={axis} dim={first_dim} "
+                f"output_shape={output_shape} output_signature={output_signature}"
+            )
+
     indices_i32_name = indices_name
     indices_dtype = str(ctx.get_tensor_dtype(indices_name)).upper()
     if indices_dtype != "INT32":

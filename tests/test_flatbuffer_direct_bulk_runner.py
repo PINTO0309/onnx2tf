@@ -942,16 +942,15 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     profile = bulk_runner._load_regression_profile(str(profile_path))
 
     assert profile["model_count"] == 420
-    assert profile["active_model_count"] == 395
-    assert profile["excluded_model_count"] == 25
-    assert profile["excluded_baseline_classification_counts"] == {"timeout": 25}
+    assert profile["active_model_count"] == 394
+    assert profile["excluded_model_count"] == 26
+    assert profile["excluded_baseline_classification_counts"] == {"timeout": 26}
     assert profile["tiers"] == [0, 1, 2, 3, 4]
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "conversion_error": 2,
-        "missing_tflite_report": 77,
+        "missing_tflite_report": 78,
         "pass": 286,
         "tflite_fail": 30,
-        "timeout": 25,
+        "timeout": 26,
     }
