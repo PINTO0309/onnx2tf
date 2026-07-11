@@ -2133,9 +2133,9 @@
     {
       "tier": 3,
       "model": "deim_hgnetv2_s_wholebody28_ft_1250query_fixed.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "tflite_fail",
+      "error_signature_sha256": "1b6a5955240529bbab342853a4d78e02bb77b07beb9fb8e418c079e2ed23082c"
     },
     {
       "tier": 3,
@@ -2402,9 +2402,9 @@
     {
       "tier": 3,
       "model": "rtdetrv4_s.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "6ef1dadf441b75cb58ebd4b067b837b968948699c3facb54256df23253ab4cc1"
+      "baseline_classification": "missing_tflite_report",
+      "baseline_reason": "missing_tflite_report",
+      "error_signature_sha256": "89f1c401ebba34f7ff14255ba823d701d215a9f265b4010910d7c4686e79fa32"
     },
     {
       "tier": 3,
