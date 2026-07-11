@@ -6,12 +6,18 @@ import glob
 import hashlib
 import json
 import os
+import re
 import shlex
+import shutil
+import statistics
 import subprocess
 import sys
 import threading
 import time
 from typing import Any, Dict, List, Optional
+
+import onnx
+from onnx.external_data_helper import uses_external_data
 
 
 _STATE_SCHEMA_VERSION = 1
@@ -117,14 +123,127 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _discover_onnx_models(root_dir: str) -> List[str]:
+def _normalized_error_signature(
+    *,
+    classification: str,
+    reason: str,
+    stdout_text: str = "",
+    stderr_text: str = "",
+    volatile_paths: Optional[List[str]] = None,
+) -> Dict[str, str]:
+    """Build a stable, readable failure signature without embedding run paths."""
+
+    if str(classification) in {"pass", "skipped_model"}:
+        return {"error_signature": "", "error_signature_sha256": ""}
+    combined = "\n".join([str(stderr_text or ""), str(stdout_text or "")])
+    combined = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", combined)
+    for path in sorted(
+        {os.path.abspath(path) for path in (volatile_paths or []) if str(path)},
+        key=len,
+        reverse=True,
+    ):
+        combined = combined.replace(path, "<PATH>")
+    lines = [re.sub(r"\s+", " ", line).strip() for line in combined.splitlines()]
+    lines = [line for line in lines if line]
+    diagnostic = ""
+    for line in reversed(lines):
+        if any(
+            marker in line
+            for marker in ("Error", "Exception", "Traceback", "FAILED", "failed")
+        ):
+            diagnostic = line
+            break
+    if not diagnostic and lines:
+        diagnostic = lines[-1]
+    diagnostic = diagnostic[:500]
+    signature = " | ".join(
+        part
+        for part in [str(classification), str(reason), diagnostic]
+        if part
+    )
+    return {
+        "error_signature": signature,
+        "error_signature_sha256": _sha256_text(signature),
+    }
+
+
+def _discover_onnx_models(root_dir: str, *, recursive: bool = True) -> List[str]:
     root_dir_abs = os.path.abspath(root_dir)
-    pattern = os.path.join(root_dir_abs, "**", "*.onnx")
-    return sorted(os.path.abspath(path) for path in glob.glob(pattern, recursive=True))
+    pattern = os.path.join(root_dir_abs, "**", "*.onnx") if recursive else os.path.join(root_dir_abs, "*.onnx")
+    return sorted(os.path.abspath(path) for path in glob.glob(pattern, recursive=recursive))
+
+
+def _filter_models_by_node_count(
+    model_paths: List[str],
+    *,
+    min_nodes: Optional[int],
+    max_nodes: Optional[int],
+) -> List[str]:
+    if min_nodes is None and max_nodes is None:
+        return list(model_paths)
+    selected: List[str] = []
+    for model_path in model_paths:
+        try:
+            model = onnx.load(model_path, load_external_data=False)
+        except Exception:
+            # Invalid ONNX files belong in the manifest's invalid_onnx class,
+            # not in a size tier whose node count cannot be established.
+            continue
+        node_count = int(len(model.graph.node))
+        if min_nodes is not None and node_count < int(min_nodes):
+            continue
+        if max_nodes is not None and node_count > int(max_nodes):
+            continue
+        selected.append(model_path)
+    return selected
 
 
 def _models_sha256(model_paths: List[str]) -> str:
     return _sha256_text("\n".join(str(path) for path in model_paths))
+
+
+def _stage_model_for_run(*, model_path: str, run_dir: str) -> str:
+    """Copy a model and its external tensors so conversion cannot edit corpus files."""
+
+    source = os.path.abspath(model_path)
+    staged = os.path.join(run_dir, os.path.basename(source))
+    shutil.copy2(source, staged)
+    try:
+        model = onnx.load(source, load_external_data=False)
+    except Exception:
+        return staged
+
+    source_dir = os.path.dirname(source)
+    copied_locations: set[str] = set()
+
+    def _graphs(graph: Any):
+        yield graph
+        for node in graph.node:
+            for attribute in node.attribute:
+                if attribute.type == onnx.AttributeProto.GRAPH:
+                    yield from _graphs(attribute.g)
+                elif attribute.type == onnx.AttributeProto.GRAPHS:
+                    for subgraph in attribute.graphs:
+                        yield from _graphs(subgraph)
+
+    for graph in _graphs(model.graph):
+        for tensor in graph.initializer:
+            if not uses_external_data(tensor):
+                continue
+            fields = {str(item.key): str(item.value) for item in tensor.external_data}
+            location = fields.get("location", "")
+            if not location or location in copied_locations:
+                continue
+            source_data = os.path.abspath(os.path.join(source_dir, location))
+            if os.path.commonpath([source_dir, source_data]) != source_dir:
+                raise ValueError(f"External data escapes model directory: {location}")
+            destination_data = os.path.abspath(os.path.join(run_dir, location))
+            if os.path.commonpath([os.path.abspath(run_dir), destination_data]) != os.path.abspath(run_dir):
+                raise ValueError(f"External data escapes run directory: {location}")
+            os.makedirs(os.path.dirname(destination_data), exist_ok=True)
+            shutil.copy2(source_data, destination_data)
+            copied_locations.add(location)
+    return staged
 
 
 def _accuracy_report_path(*, artifact_dir: str, model_path: str) -> str:
@@ -161,19 +280,53 @@ def _classify_reports(
     *,
     tflite_report: Optional[Dict[str, Any]],
     pytorch_report: Optional[Dict[str, Any]],
+    require_pytorch_report: bool = True,
 ) -> Dict[str, Any]:
+    def _max_abs(report: Optional[Dict[str, Any]]) -> Optional[float]:
+        if report is None:
+            return None
+        metrics = report.get("overall_metrics", {})
+        if not isinstance(metrics, dict) or metrics.get("max_abs") is None:
+            return None
+        return float(metrics["max_abs"])
+
     tflite_exists = tflite_report is not None
     pytorch_exists = pytorch_report is not None
+    tflite_max_abs = _max_abs(tflite_report)
+    pytorch_max_abs = _max_abs(pytorch_report)
     tflite_pass = (
         bool(tflite_report.get("evaluation_pass", False))
+        and (tflite_max_abs is None or tflite_max_abs <= 1.0e-1)
         if tflite_exists
         else None
     )
     pytorch_pass = (
         bool(pytorch_report.get("evaluation_pass", False))
+        and (pytorch_max_abs is None or pytorch_max_abs <= 1.0e-1)
         if pytorch_exists
         else None
     )
+
+    if not require_pytorch_report:
+        if not tflite_exists:
+            return {
+                "classification": "missing_tflite_report",
+                "strict_pass": False,
+                "reason": "missing_tflite_report",
+                "tflite_accuracy_pass": None,
+                "pytorch_accuracy_pass": None,
+                "tflite_max_abs": None,
+                "pytorch_max_abs": None,
+            }
+        return {
+            "classification": "pass" if tflite_pass else "tflite_fail",
+            "strict_pass": bool(tflite_pass),
+            "reason": "" if tflite_pass else "tflite_fail",
+            "tflite_accuracy_pass": tflite_pass,
+            "pytorch_accuracy_pass": None,
+            "tflite_max_abs": tflite_max_abs,
+            "pytorch_max_abs": None,
+        }
 
     if not tflite_exists and not pytorch_exists:
         return {
@@ -182,6 +335,8 @@ def _classify_reports(
             "reason": "missing_tflite_report,missing_pytorch_report",
             "tflite_accuracy_pass": None,
             "pytorch_accuracy_pass": None,
+            "tflite_max_abs": tflite_max_abs,
+            "pytorch_max_abs": pytorch_max_abs,
         }
     if not tflite_exists:
         return {
@@ -190,6 +345,8 @@ def _classify_reports(
             "reason": "missing_tflite_report",
             "tflite_accuracy_pass": None,
             "pytorch_accuracy_pass": pytorch_pass,
+            "tflite_max_abs": tflite_max_abs,
+            "pytorch_max_abs": pytorch_max_abs,
         }
     if not pytorch_exists:
         return {
@@ -198,6 +355,8 @@ def _classify_reports(
             "reason": "missing_pytorch_report",
             "tflite_accuracy_pass": tflite_pass,
             "pytorch_accuracy_pass": None,
+            "tflite_max_abs": tflite_max_abs,
+            "pytorch_max_abs": pytorch_max_abs,
         }
     if tflite_pass and pytorch_pass:
         return {
@@ -206,6 +365,8 @@ def _classify_reports(
             "reason": "",
             "tflite_accuracy_pass": True,
             "pytorch_accuracy_pass": True,
+            "tflite_max_abs": tflite_max_abs,
+            "pytorch_max_abs": pytorch_max_abs,
         }
     if not tflite_pass and not pytorch_pass:
         return {
@@ -214,6 +375,8 @@ def _classify_reports(
             "reason": "tflite_fail,pytorch_fail",
             "tflite_accuracy_pass": False,
             "pytorch_accuracy_pass": False,
+            "tflite_max_abs": tflite_max_abs,
+            "pytorch_max_abs": pytorch_max_abs,
         }
     if not tflite_pass:
         return {
@@ -222,6 +385,8 @@ def _classify_reports(
             "reason": "tflite_fail",
             "tflite_accuracy_pass": False,
             "pytorch_accuracy_pass": True,
+            "tflite_max_abs": tflite_max_abs,
+            "pytorch_max_abs": pytorch_max_abs,
         }
     return {
         "classification": "pytorch_fail",
@@ -229,6 +394,8 @@ def _classify_reports(
         "reason": "pytorch_fail",
         "tflite_accuracy_pass": True,
         "pytorch_accuracy_pass": False,
+        "tflite_max_abs": tflite_max_abs,
+        "pytorch_max_abs": pytorch_max_abs,
     }
 
 
@@ -255,11 +422,27 @@ def _build_summary(state: Dict[str, Any]) -> Dict[str, Any]:
         for entry in entries
         if not bool(entry.get("strict_pass", False))
     ]
+    durations = [float(entry.get("duration_sec", 0.0)) for entry in entries]
     return {
         "schema_version": _STATE_SCHEMA_VERSION,
         "root_dir": state.get("root_dir", ""),
         "models_sha256": state.get("models_sha256", ""),
         "total_entries": int(len(entries)),
+        "filters": {
+            "min_nodes": state.get("min_nodes"),
+            "max_nodes": state.get("max_nodes"),
+            "recursive": bool(state.get("recursive", True)),
+            "include_pytorch_artifacts": bool(
+                state.get("include_pytorch_artifacts", True)
+            ),
+        },
+        "timing": {
+            "total_duration_sec": float(sum(durations)),
+            "median_duration_sec": float(statistics.median(durations))
+            if durations
+            else 0.0,
+            "max_duration_sec": float(max(durations)) if durations else 0.0,
+        },
         "counts": counts,
         "strict_fail_count": int(len(failed_entries)),
         "failed_models": [
@@ -268,6 +451,10 @@ def _build_summary(state: Dict[str, Any]) -> Dict[str, Any]:
                 "model_path": str(entry.get("model_path", "")),
                 "classification": str(entry.get("classification", "")),
                 "reason": str(entry.get("reason", "")),
+                "error_signature": str(entry.get("error_signature", "")),
+                "error_signature_sha256": str(
+                    entry.get("error_signature_sha256", "")
+                ),
             }
             for entry in failed_entries
         ],
@@ -331,6 +518,10 @@ def run_flatbuffer_direct_bulk_verification(
     timeout_sec: int = 600,
     native_pytorch_generation_timeout_sec: int = 0,
     skip_model_names: Optional[List[str]] = None,
+    min_nodes: Optional[int] = None,
+    max_nodes: Optional[int] = None,
+    include_pytorch_artifacts: bool = True,
+    recursive: bool = True,
 ) -> Dict[str, Any]:
     root_dir_abs = os.path.abspath(root_dir)
     output_dir_abs = os.path.abspath(output_dir)
@@ -342,7 +533,27 @@ def run_flatbuffer_direct_bulk_verification(
     if not os.path.isdir(root_dir_abs):
         raise FileNotFoundError(f"Root directory does not exist. path={root_dir_abs}")
 
-    models = _discover_onnx_models(root_dir_abs)
+    if min_nodes is not None and int(min_nodes) < 0:
+        raise ValueError("min_nodes must be >= 0")
+    if max_nodes is not None and int(max_nodes) < 0:
+        raise ValueError("max_nodes must be >= 0")
+    if min_nodes is not None and max_nodes is not None and int(min_nodes) > int(max_nodes):
+        raise ValueError("min_nodes must be <= max_nodes")
+    discovered_source = (
+        _discover_onnx_models(root_dir_abs)
+        if recursive
+        else _discover_onnx_models(root_dir_abs, recursive=False)
+    )
+    discovered_models = [
+        path
+        for path in discovered_source
+        if os.path.commonpath([output_dir_abs, os.path.abspath(path)]) != output_dir_abs
+    ]
+    models = _filter_models_by_node_count(
+        discovered_models,
+        min_nodes=min_nodes,
+        max_nodes=max_nodes,
+    )
     models_sha256 = _models_sha256(models)
     normalized_skip_model_names = sorted(
         {
@@ -387,6 +598,23 @@ def run_flatbuffer_direct_bulk_verification(
                 f"state_timeout={state.get('native_pytorch_generation_timeout_sec', 0)} "
                 f"current_timeout={int(native_pytorch_generation_timeout_sec)}"
             )
+        if state.get("min_nodes") != min_nodes or state.get("max_nodes") != max_nodes:
+            raise RuntimeError(
+                "Resume state does not match the current node-count tier. "
+                f"state=({state.get('min_nodes')},{state.get('max_nodes')}) "
+                f"current=({min_nodes},{max_nodes})"
+            )
+        if bool(state.get("include_pytorch_artifacts", True)) != bool(include_pytorch_artifacts):
+            raise RuntimeError(
+                "Resume state does not match include_pytorch_artifacts. "
+                f"state={state.get('include_pytorch_artifacts')} "
+                f"current={include_pytorch_artifacts}"
+            )
+        if bool(state.get("recursive", True)) != bool(recursive):
+            raise RuntimeError(
+                "Resume state does not match recursive discovery mode. "
+                f"state={state.get('recursive')} current={recursive}"
+            )
         entries: List[Dict[str, Any]] = list(state.get("entries", []))
     else:
         state = {
@@ -395,6 +623,10 @@ def run_flatbuffer_direct_bulk_verification(
             "models_sha256": models_sha256,
             "skip_model_names": normalized_skip_model_names,
             "native_pytorch_generation_timeout_sec": int(native_pytorch_generation_timeout_sec),
+            "min_nodes": min_nodes,
+            "max_nodes": max_nodes,
+            "include_pytorch_artifacts": bool(include_pytorch_artifacts),
+            "recursive": bool(recursive),
             "started_at": _utc_now_iso(),
             "entries": [],
         }
@@ -446,6 +678,10 @@ def run_flatbuffer_direct_bulk_verification(
                 "command": "",
                 "tflite_accuracy_pass": None,
                 "pytorch_accuracy_pass": None,
+                "tflite_max_abs": None,
+                "pytorch_max_abs": None,
+                "error_signature": "",
+                "error_signature_sha256": "",
             }
 
             started = time.time()
@@ -469,6 +705,12 @@ def run_flatbuffer_direct_bulk_verification(
                 entry["strict_pass"] = False
                 entry["reason"] = "model_not_found"
                 entry["duration_sec"] = float(time.time() - started)
+                entry.update(
+                    _normalized_error_signature(
+                        classification=str(entry["classification"]),
+                        reason=str(entry["reason"]),
+                    )
+                )
                 entries.append(entry)
                 state["entries"] = entries
                 _write_json(state_path, state)
@@ -479,20 +721,23 @@ def run_flatbuffer_direct_bulk_verification(
                 )
                 continue
 
+            staged_model_path = _stage_model_for_run(
+                model_path=model_path,
+                run_dir=run_dir,
+            )
+
             cmd = [
                 *command_prefix,
                 "-i",
-                str(model_path),
+                str(staged_model_path),
                 "-o",
                 str(artifact_dir),
                 "-tb",
                 "flatbuffer_direct",
                 "-cotof",
-                "-fdopt",
-                "-fdots",
-                "-fdodo",
-                "-fdoep",
             ]
+            if include_pytorch_artifacts:
+                cmd.extend(["-fdopt", "-fdots", "-fdodo", "-fdoep"])
             if int(native_pytorch_generation_timeout_sec) > 0:
                 cmd.extend(
                     [
@@ -531,6 +776,15 @@ def run_flatbuffer_direct_bulk_verification(
                 with open(stderr_log_path, "w", encoding="utf-8") as f:
                     f.write(stderr_text)
                 entry["duration_sec"] = float(time.time() - started)
+                entry.update(
+                    _normalized_error_signature(
+                        classification=str(entry["classification"]),
+                        reason=str(entry["reason"]),
+                        stdout_text=stdout_text,
+                        stderr_text=stderr_text,
+                        volatile_paths=[root_dir_abs, output_dir_abs, run_dir],
+                    )
+                )
                 entries.append(entry)
                 state["entries"] = entries
                 _write_json(state_path, state)
@@ -553,6 +807,15 @@ def run_flatbuffer_direct_bulk_verification(
                 entry["strict_pass"] = False
                 entry["reason"] = "onnx2tf_nonzero_exit"
                 entry["duration_sec"] = float(time.time() - started)
+                entry.update(
+                    _normalized_error_signature(
+                        classification=str(entry["classification"]),
+                        reason=str(entry["reason"]),
+                        stdout_text=stdout_text,
+                        stderr_text=stderr_text,
+                        volatile_paths=[root_dir_abs, output_dir_abs, run_dir],
+                    )
+                )
                 entries.append(entry)
                 state["entries"] = entries
                 _write_json(state_path, state)
@@ -568,13 +831,25 @@ def run_flatbuffer_direct_bulk_verification(
             classification = _classify_reports(
                 tflite_report=tflite_report,
                 pytorch_report=pytorch_report,
+                require_pytorch_report=bool(include_pytorch_artifacts),
             )
             entry["classification"] = str(classification["classification"])
             entry["strict_pass"] = bool(classification["strict_pass"])
             entry["reason"] = str(classification["reason"])
             entry["tflite_accuracy_pass"] = classification["tflite_accuracy_pass"]
             entry["pytorch_accuracy_pass"] = classification["pytorch_accuracy_pass"]
+            entry["tflite_max_abs"] = classification["tflite_max_abs"]
+            entry["pytorch_max_abs"] = classification["pytorch_max_abs"]
             entry["duration_sec"] = float(time.time() - started)
+            entry.update(
+                _normalized_error_signature(
+                    classification=str(entry["classification"]),
+                    reason=str(entry["reason"]),
+                    stdout_text=stdout_text,
+                    stderr_text=stderr_text,
+                    volatile_paths=[root_dir_abs, output_dir_abs, run_dir],
+                )
+            )
             entries.append(entry)
             state["entries"] = entries
             _write_json(state_path, state)
@@ -610,6 +885,18 @@ def main() -> None:
     parser.add_argument("--onnx2tf_command", type=str, default="")
     parser.add_argument("--timeout_sec", type=int, default=600)
     parser.add_argument("--native_pytorch_generation_timeout_sec", type=int, default=0)
+    parser.add_argument("--min_nodes", type=int, default=None)
+    parser.add_argument("--max_nodes", type=int, default=None)
+    parser.add_argument(
+        "--tflite_only",
+        action="store_true",
+        help="Run the TensorFlow-free ONNX/TFLite check without optional PyTorch artifacts.",
+    )
+    parser.add_argument(
+        "--root_only",
+        action="store_true",
+        help="Discover only *.onnx directly under root_dir, excluding nested test assets.",
+    )
     parser.add_argument(
         "--skip_model_name",
         "--skip_model_names",
@@ -628,6 +915,10 @@ def main() -> None:
         timeout_sec=int(args.timeout_sec),
         native_pytorch_generation_timeout_sec=int(args.native_pytorch_generation_timeout_sec),
         skip_model_names=list(args.skip_model_name),
+        min_nodes=args.min_nodes,
+        max_nodes=args.max_nodes,
+        include_pytorch_artifacts=not bool(args.tflite_only),
+        recursive=not bool(args.root_only),
     )
     summary = state.get("summary", {}) or {}
     failed_models = list(summary.get("failed_models", []))

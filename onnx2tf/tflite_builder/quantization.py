@@ -171,6 +171,8 @@ def _clone_model_ir(model_ir: ModelIR) -> ModelIR:
             options=dict(op.options),
             axis_semantics=dict(op.axis_semantics),
             version=op.version,
+            onnx_node_name=op.onnx_node_name,
+            onnx_op_type=op.onnx_op_type,
         )
         for op in model_ir.operators
     ]
@@ -202,6 +204,8 @@ def _clone_model_ir(model_ir: ModelIR) -> ModelIR:
                 else tensor.quantization
             ),
             logical_layout=tensor.logical_layout,
+            physical_layout=tensor.physical_layout,
+            onnx_tensor_name=tensor.onnx_tensor_name,
         )
     return clone
 

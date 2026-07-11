@@ -53,6 +53,23 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.pytorch_package_runtime import (
     SUPPORTED_TORCH_KERNEL_OP_TYPES,
 )
+from onnx2tf.tflite_builder.pytorch_codegen_utils import (
+    _add_synthetic_tensor_to_model_ir,
+    _broadcast_shapes_relaxed,
+    _extract_statement_assignments,
+    _extract_statement_loads,
+    _is_all_ones_shape,
+    _product_expr,
+    _remap_axis_values_through_permutation,
+    _remap_mask_bits_through_permutation,
+    _shape_can_broadcast_to_target_relaxed,
+    _shape_lists_equal,
+    _shape_lists_equal_relaxed,
+    _shape_literal,
+)
+from onnx2tf.tflite_builder.passes.pytorch_compat import (
+    _restore_same_average_pool_exclude_pad_correction_for_native_runtime,
+)
 from onnx2tf.tflite_builder.split_planner import (
     rewrite_model_ir_unroll_recurrent_ops,
 )
@@ -67,135 +84,6 @@ class ModelIRPyTorchExportError(RuntimeError):
 
 class NativePyTorchGenerationTimeoutError(ModelIRPyTorchExportError):
     pass
-
-
-def _restore_same_average_pool_exclude_pad_correction_for_native_runtime(
-    model_ir: ModelIR,
-) -> Dict[str, int]:
-    def _unique_tensor_name(base_name: str) -> str:
-        candidate = str(base_name)
-        suffix = 0
-        while candidate in model_ir.tensors:
-            suffix += 1
-            candidate = f"{base_name}_{suffix}"
-        return candidate
-
-    def _tensor_nhwc_shape(tensor: Optional[TensorIR]) -> Optional[List[int]]:
-        if tensor is None or len(tensor.shape) != 4:
-            return None
-        shape = [int(v) for v in list(tensor.shape)]
-        layout = normalize_logical_layout(tensor.logical_layout)
-        if is_channel_first_logical_layout(layout):
-            return [int(shape[0]), int(shape[2]), int(shape[3]), int(shape[1])]
-        if is_channel_last_logical_layout(layout):
-            return [int(shape[0]), int(shape[1]), int(shape[2]), int(shape[3])]
-        return None
-
-    rewritten_ops: List[OperatorIR] = []
-    restored = 0
-    for op in model_ir.operators:
-        rewritten_ops.append(op)
-        if str(op.op_type) != "AVERAGE_POOL_2D" or len(op.inputs) != 1 or len(op.outputs) != 1:
-            continue
-        if str(op.options.get("padding", "")).upper() != "SAME":
-            continue
-        output_name = str(op.outputs[0])
-        if output_name in {str(v) for v in list(model_ir.outputs)}:
-            pass
-        if str(output_name).endswith("_include_pad"):
-            continue
-        input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
-        output_tensor = model_ir.tensors.get(output_name, None)
-        input_nhwc_shape = _tensor_nhwc_shape(input_tensor)
-        output_nhwc_shape = _tensor_nhwc_shape(output_tensor)
-        if (
-            input_tensor is None
-            or output_tensor is None
-            or input_nhwc_shape is None
-            or output_nhwc_shape is None
-        ):
-            continue
-        _, input_h, input_w, _ = input_nhwc_shape
-        _, output_h, output_w, output_c = output_nhwc_shape
-        kernel_h = int(op.options.get("filterHeight", 0))
-        kernel_w = int(op.options.get("filterWidth", 0))
-        stride_h = int(op.options.get("strideH", 0))
-        stride_w = int(op.options.get("strideW", 0))
-        output_dtype = str(output_tensor.dtype).upper()
-        if (
-            input_h <= 0
-            or input_w <= 0
-            or output_h <= 0
-            or output_w <= 0
-            or output_c <= 0
-            or kernel_h <= 0
-            or kernel_w <= 0
-            or stride_h <= 0
-            or stride_w <= 0
-            or output_dtype not in {"FLOAT16", "FLOAT32"}
-        ):
-            continue
-        total_pad_h = max((int(output_h) - 1) * int(stride_h) + int(kernel_h) - int(input_h), 0)
-        total_pad_w = max((int(output_w) - 1) * int(stride_w) + int(kernel_w) - int(input_w), 0)
-        if total_pad_h == 0 and total_pad_w == 0:
-            continue
-        pad_top = int(total_pad_h) // 2
-        pad_left = int(total_pad_w) // 2
-        correction_hw = np.ones((int(output_h), int(output_w), 1), dtype=np.float32)
-        kernel_area = float(int(kernel_h) * int(kernel_w))
-        for out_y in range(int(output_h)):
-            start_y = int(out_y) * int(stride_h) - int(pad_top)
-            end_y = int(start_y) + int(kernel_h)
-            valid_h = max(min(end_y, int(input_h)) - max(start_y, 0), 0)
-            for out_x in range(int(output_w)):
-                start_x = int(out_x) * int(stride_w) - int(pad_left)
-                end_x = int(start_x) + int(kernel_w)
-                valid_w = max(min(end_x, int(input_w)) - max(start_x, 0), 0)
-                valid_count = int(valid_h) * int(valid_w)
-                if valid_count <= 0 or valid_count == int(kernel_h) * int(kernel_w):
-                    continue
-                correction_hw[out_y, out_x, 0] = float(kernel_area / float(valid_count))
-        reciprocal_values = np.broadcast_to(
-            correction_hw.reshape(1, int(output_h), int(output_w), 1),
-            (1, int(output_h), int(output_w), int(output_c)),
-        ).astype(np.float16 if output_dtype == "FLOAT16" else np.float32, copy=False)
-        reciprocal_name = _unique_tensor_name(f"{output_name}_div_reciprocal")
-        model_ir.tensors[reciprocal_name] = TensorIR(
-            name=reciprocal_name,
-            dtype=output_dtype,
-            shape=[1, int(output_h), int(output_w), int(output_c)],
-            shape_signature=[1, int(output_h), int(output_w), int(output_c)],
-            data=np.asarray(reciprocal_values),
-            logical_layout=normalize_logical_layout("NHWC"),
-        )
-        include_pad_name = _unique_tensor_name(f"{output_name}_include_pad")
-        model_ir.tensors[include_pad_name] = TensorIR(
-            name=include_pad_name,
-            dtype=str(output_tensor.dtype),
-            shape=[int(v) for v in list(output_tensor.shape)],
-            shape_signature=(
-                [int(v) for v in list(output_tensor.shape_signature)]
-                if output_tensor.shape_signature is not None
-                else [int(v) for v in list(output_tensor.shape)]
-            ),
-            quantization=copy.deepcopy(output_tensor.quantization),
-            logical_layout=normalize_logical_layout(output_tensor.logical_layout),
-        )
-        op.outputs = [include_pad_name]
-        rewritten_ops.append(
-            OperatorIR(
-                op_type="MUL",
-                inputs=[include_pad_name, reciprocal_name],
-                outputs=[output_name],
-                options={"fusedActivationFunction": "NONE"},
-            )
-        )
-        restored += 1
-    if restored > 0:
-        model_ir.operators = rewritten_ops
-    return {
-        "restored_same_average_pool_exclude_pad_corrections": int(restored),
-    }
 
 
 def _prepare_native_codegen_state(
@@ -302,173 +190,6 @@ def _assemble_native_model_source(
         forward_named_call_args=forward_named_call_args,
     )
     return model_source
-
-
-def _extract_statement_assignments(statement: ast.stmt) -> List[str]:
-    names: List[str] = []
-
-    def _walk_target(target: ast.expr) -> None:
-        if isinstance(target, ast.Name):
-            names.append(str(target.id))
-            return
-        if isinstance(target, (ast.Tuple, ast.List)):
-            for item in target.elts:
-                _walk_target(item)
-
-    if isinstance(statement, ast.Assign):
-        for target in statement.targets:
-            _walk_target(target)
-    elif isinstance(statement, ast.AnnAssign):
-        _walk_target(statement.target)
-    return names
-
-
-def _extract_statement_loads(statement: ast.stmt) -> List[str]:
-    names: List[str] = []
-    seen: Set[str] = set()
-    for node in ast.walk(statement):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and str(node.id) not in seen:
-            seen.add(str(node.id))
-            names.append(str(node.id))
-    return names
-
-
-def _shape_literal(values: Sequence[int]) -> str:
-    return repr(tuple(int(v) for v in list(values)))
-
-
-def _remap_axis_values_through_permutation(
-    values: Sequence[int],
-    perm: Sequence[int],
-) -> List[int]:
-    remapped = [0] * len(list(perm))
-    for output_axis, input_axis in enumerate(list(perm)):
-        remapped[int(input_axis)] = int(values[output_axis])
-    return [int(v) for v in list(remapped)]
-
-
-def _remap_mask_bits_through_permutation(
-    mask: int,
-    perm: Sequence[int],
-) -> int:
-    remapped_mask = 0
-    for output_axis, input_axis in enumerate(list(perm)):
-        if int(mask) & (1 << int(output_axis)):
-            remapped_mask |= 1 << int(input_axis)
-    return int(remapped_mask)
-
-
-def _shape_lists_equal(lhs: Optional[Sequence[int]], rhs: Optional[Sequence[int]]) -> bool:
-    if lhs is None or rhs is None:
-        return False
-    return [int(v) for v in list(lhs)] == [int(v) for v in list(rhs)]
-
-
-def _shape_lists_equal_relaxed(lhs: Optional[Sequence[int]], rhs: Optional[Sequence[int]]) -> bool:
-    if lhs is None or rhs is None:
-        return False
-    lhs_items = [int(v) for v in list(lhs)]
-    rhs_items = [int(v) for v in list(rhs)]
-    if len(lhs_items) != len(rhs_items):
-        return False
-    for lhs_dim, rhs_dim in zip(lhs_items, rhs_items):
-        if lhs_dim == rhs_dim:
-            continue
-        if lhs_dim <= 0 or rhs_dim <= 0:
-            continue
-        return False
-    return True
-
-
-def _shape_can_broadcast_to_target_relaxed(
-    shape: Optional[Sequence[int]],
-    target_shape: Optional[Sequence[int]],
-) -> bool:
-    if shape is None or target_shape is None:
-        return False
-    shape_items = [int(v) for v in list(shape)]
-    target_items = [int(v) for v in list(target_shape)]
-    if len(shape_items) != len(target_items):
-        return False
-    for shape_dim, target_dim in zip(shape_items, target_items):
-        if shape_dim == 1 or shape_dim == target_dim:
-            continue
-        if shape_dim <= 0 or target_dim <= 0:
-            continue
-        return False
-    return True
-
-
-def _broadcast_shapes_relaxed(
-    lhs: Optional[Sequence[int]],
-    rhs: Optional[Sequence[int]],
-) -> Optional[List[int]]:
-    if lhs is None or rhs is None:
-        return None
-    lhs_items = [int(v) for v in list(lhs)]
-    rhs_items = [int(v) for v in list(rhs)]
-    if len(lhs_items) != len(rhs_items):
-        return None
-    result: List[int] = []
-    for lhs_dim, rhs_dim in zip(lhs_items, rhs_items):
-        if lhs_dim == rhs_dim:
-            result.append(int(lhs_dim))
-            continue
-        if lhs_dim == 1:
-            result.append(int(rhs_dim))
-            continue
-        if rhs_dim == 1:
-            result.append(int(lhs_dim))
-            continue
-        if lhs_dim <= 0 and rhs_dim > 0:
-            result.append(int(rhs_dim))
-            continue
-        if rhs_dim <= 0 and lhs_dim > 0:
-            result.append(int(lhs_dim))
-            continue
-        if lhs_dim <= 0 and rhs_dim <= 0:
-            result.append(-1)
-            continue
-        return None
-    return result
-
-
-def _product_expr(items: Sequence[str]) -> str:
-    item_list = [str(item) for item in list(items)]
-    if len(item_list) == 0:
-        return "1"
-    expr = item_list[0]
-    for item in item_list[1:]:
-        expr = f"({expr} * {item})"
-    return expr
-
-
-def _is_all_ones_shape(shape: Sequence[int]) -> bool:
-    values = [int(v) for v in list(shape)]
-    return len(values) > 0 and all(int(v) == 1 for v in values)
-
-
-def _add_synthetic_tensor_to_model_ir(
-    *,
-    model_ir: ModelIR,
-    base_name: str,
-    data: np.ndarray,
-    dtype: str,
-    synthetic_tensor_serial_ref: List[int],
-) -> str:
-    candidate = str(base_name)
-    while candidate in model_ir.tensors:
-        synthetic_tensor_serial_ref[0] += 1
-        candidate = f"{base_name}_{synthetic_tensor_serial_ref[0]}"
-    array = np.asarray(data)
-    model_ir.tensors[candidate] = TensorIR(
-        name=candidate,
-        dtype=str(dtype),
-        shape=[int(v) for v in list(array.shape)],
-        shape_signature=[int(v) for v in list(array.shape)],
-        data=array,
-    )
-    return candidate
 
 
 def _require_constant_array_from_model_ir(

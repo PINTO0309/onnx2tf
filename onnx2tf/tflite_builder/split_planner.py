@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.validation import run_model_ir_validation_pipeline
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
@@ -251,6 +252,8 @@ def build_partition_model_ir(
             options=dict(op.options),
             axis_semantics=dict(op.axis_semantics),
             version=op.version,
+            onnx_node_name=op.onnx_node_name,
+            onnx_op_type=op.onnx_op_type,
         )
         for op in range_ops
     ]
@@ -271,6 +274,8 @@ def build_partition_model_ir(
             is_variable=bool(tensor.is_variable),
             quantization=tensor.quantization,
             logical_layout=tensor.logical_layout,
+            physical_layout=tensor.physical_layout,
+            onnx_tensor_name=tensor.onnx_tensor_name,
         )
     return part_model
 
@@ -2292,6 +2297,7 @@ def write_split_model_files_and_manifest(
             end_op_index=end_op_index,
             partition_id=partition_id,
         )
+        run_model_ir_validation_pipeline(part_model_ir)
         split_file_name = f"{output_file_name}_{partition_id:04d}.tflite"
         split_file_path = os.path.join(output_folder_path, split_file_name)
         write_model_file(

@@ -45,6 +45,8 @@ class TensorIR:
     is_variable: bool = False
     quantization: Optional[Union[Dict[str, Any], QuantParamIR]] = None
     logical_layout: str = LOGICAL_LAYOUT_UNKNOWN
+    physical_layout: str = LOGICAL_LAYOUT_UNKNOWN
+    onnx_tensor_name: Optional[str] = None
 
 
 @dataclass
@@ -55,6 +57,8 @@ class OperatorIR:
     options: Dict[str, Any] = field(default_factory=dict)
     axis_semantics: Dict[str, str] = field(default_factory=dict)
     version: int = 1
+    onnx_node_name: Optional[str] = None
+    onnx_op_type: Optional[str] = None
 
 
 @dataclass
@@ -238,6 +242,8 @@ def clone_model_ir_with_float16(model_ir: ModelIR) -> ModelIR:
             options=dict(op.options),
             axis_semantics=dict(op.axis_semantics),
             version=op.version,
+            onnx_node_name=op.onnx_node_name,
+            onnx_op_type=op.onnx_op_type,
         ) for op in model_ir.operators
     ]
     for name, tensor in model_ir.tensors.items():
@@ -272,6 +278,8 @@ def clone_model_ir_with_float16(model_ir: ModelIR) -> ModelIR:
                 else tensor.quantization
             ),
             logical_layout=normalize_logical_layout(tensor.logical_layout),
+            physical_layout=normalize_logical_layout(tensor.physical_layout),
+            onnx_tensor_name=tensor.onnx_tensor_name,
         )
     return clone
 
@@ -308,6 +316,8 @@ def clone_model_ir_with_float32(model_ir: ModelIR) -> ModelIR:
             options=_rewrite_float16_token_to_float32(dict(op.options)),
             axis_semantics=dict(op.axis_semantics),
             version=op.version,
+            onnx_node_name=op.onnx_node_name,
+            onnx_op_type=op.onnx_op_type,
         ) for op in model_ir.operators
     ]
     for name, tensor in model_ir.tensors.items():
@@ -342,6 +352,8 @@ def clone_model_ir_with_float32(model_ir: ModelIR) -> ModelIR:
                 else tensor.quantization
             ),
             logical_layout=normalize_logical_layout(tensor.logical_layout),
+            physical_layout=normalize_logical_layout(tensor.physical_layout),
+            onnx_tensor_name=tensor.onnx_tensor_name,
         )
     return clone
 

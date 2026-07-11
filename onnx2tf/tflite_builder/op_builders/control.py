@@ -2400,7 +2400,7 @@ def _build_loop_while(node: Any, ctx: Any) -> None:
     body_subgraph = ModelIR(name=f"{node.name}_while_body")
 
     # Build subgraph-local contexts with copied shape/dtype knowledge.
-    from onnx2tf.tflite_builder.lower_from_onnx2tf import LoweringContext
+    from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
 
     cond_ctx = LoweringContext(
         model_ir=cond_subgraph,
