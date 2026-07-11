@@ -558,6 +558,20 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
             input_target_dtype = _promote_integer_target_dtype()
         elif all(str(ctx.get_tensor_dtype(name)).upper() in float_dtypes for name in input_names):
             input_target_dtype = "FLOAT32"
+        elif (
+            output_target_dtype in integer_dtypes | float_dtypes
+            and all(
+                str(ctx.get_tensor_dtype(name)).upper() in integer_dtypes | float_dtypes
+                for name in input_names
+            )
+        ):
+            # Some control-flow exporters retain a captured scalar/tensor with
+            # a dtype that disagrees with the declared numeric result. Follow
+            # that authoritative output dtype and make the coercion explicit
+            # for LiteRT's same-dtype binary kernels.
+            input_target_dtype = (
+                "FLOAT32" if output_target_dtype == "FLOAT64" else output_target_dtype
+            )
         else:
             raise NotImplementedError(
                 "Binary op input dtypes must be compatible in flatbuffer_direct. "

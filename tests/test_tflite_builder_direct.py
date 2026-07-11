@@ -30074,6 +30074,125 @@ def test_flatbuffer_direct_binary_broadcast_rhs_preserves_rank_for_matmul_path_s
     assert len(reshape_from_b_ops) == 0
 
 
+def test_flatbuffer_direct_mixed_numeric_add_uses_declared_float_dtype() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+    index = helper.make_tensor_value_info("index", TensorProto.INT32, [1])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
+    node = helper.make_node("Add", ["x", "index"], ["y"], name="MixedNumericAdd")
+    model = helper.make_model(
+        helper.make_graph([node], "mixed_numeric_add_graph", [x, index], [y]),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="mixed_numeric_add_declared_float_test",
+        allow_custom_ops=False,
+    )
+
+    add_op = next(op for op in model_ir.operators if str(op.op_type) == "ADD")
+    assert [str(model_ir.tensors[str(name)].dtype) for name in add_op.inputs] == [
+        "FLOAT32",
+        "FLOAT32",
+    ]
+    assert str(model_ir.tensors["y"].dtype) == "FLOAT32"
+    assert any(str(op.op_type) == "CAST" for op in model_ir.operators)
+
+
+def test_flatbuffer_direct_mixed_numeric_sub_uses_declared_integer_dtype() -> None:
+    index = helper.make_tensor_value_info("index", TensorProto.INT32, [1])
+    delta = helper.make_tensor_value_info("delta", TensorProto.FLOAT, [1])
+    y = helper.make_tensor_value_info("y", TensorProto.INT32, [1])
+    node = helper.make_node("Sub", ["index", "delta"], ["y"], name="MixedNumericSub")
+    model = helper.make_model(
+        helper.make_graph([node], "mixed_numeric_sub_graph", [index, delta], [y]),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="mixed_numeric_sub_declared_integer_test",
+        allow_custom_ops=False,
+    )
+
+    sub_op = next(op for op in model_ir.operators if str(op.op_type) == "SUB")
+    assert [str(model_ir.tensors[str(name)].dtype) for name in sub_op.inputs] == [
+        "INT32",
+        "INT32",
+    ]
+    assert str(model_ir.tensors["y"].dtype) == "INT32"
+    assert any(str(op.op_type) == "CAST" for op in model_ir.operators)
+
+
+def test_flatbuffer_direct_mixed_numeric_singletons_concat_as_float_vector() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1])
+    index = helper.make_tensor_value_info("index", TensorProto.INT32, [1])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2])
+    node = helper.make_node("Concat", ["x", "index"], ["y"], name="MixedNumericConcat", axis=0)
+    model = helper.make_model(
+        helper.make_graph([node], "mixed_numeric_concat_graph", [x, index], [y]),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="mixed_numeric_singleton_concat_test",
+        allow_custom_ops=False,
+    )
+
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert [list(model_ir.tensors[str(name)].shape) for name in concat_op.inputs] == [
+        [1],
+        [1],
+    ]
+    assert [str(model_ir.tensors[str(name)].dtype) for name in concat_op.inputs] == [
+        "FLOAT32",
+        "FLOAT32",
+    ]
+    assert str(model_ir.tensors["y"].dtype) == "FLOAT32"
+
+
+def test_flatbuffer_direct_mixed_numeric_control_vectors_use_declared_integer_dtype() -> None:
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT32, [2])
+    first = helper.make_tensor_value_info("first", TensorProto.FLOAT, [1, 1])
+    second = helper.make_tensor_value_info("second", TensorProto.FLOAT, [1, 1])
+    y = helper.make_tensor_value_info("y", TensorProto.INT32, [4])
+    node = helper.make_node(
+        "Concat",
+        ["indices", "first", "second"],
+        ["y"],
+        name="MixedNumericControlConcat",
+        axis=0,
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [node],
+            "mixed_numeric_control_concat_graph",
+            [indices, first, second],
+            [y],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="mixed_numeric_control_vector_concat_test",
+        allow_custom_ops=False,
+    )
+
+    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
+    assert [list(model_ir.tensors[str(name)].shape) for name in concat_op.inputs] == [
+        [2],
+        [1],
+        [1],
+    ]
+    assert all(
+        str(model_ir.tensors[str(name)].dtype) == "INT32"
+        for name in concat_op.inputs
+    )
+    assert str(model_ir.tensors["y"].dtype) == "INT32"
+
+
 def test_flatbuffer_direct_where_mixed_int64_int32_prefers_int32_select_inputs() -> None:
     model = _make_where_mixed_int64_int32_model()
     register_default_preprocess_rules()

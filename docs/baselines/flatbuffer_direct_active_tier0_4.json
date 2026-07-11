@@ -2299,9 +2299,9 @@
     {
       "tier": 3,
       "model": "maskrcnn_resnet50_fpn.onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "52307656818c535b1933cbd3edf742834cc1ab18b88e05c73a9b8578e9a4da40"
+      "baseline_classification": "missing_tflite_report",
+      "baseline_reason": "missing_tflite_report",
+      "error_signature_sha256": "7bad28ab3ea72bbd5dc8e6cee69dc9075b37b9ff1186070ac4f6ec9350d09a38"
     },
     {
       "tier": 3,

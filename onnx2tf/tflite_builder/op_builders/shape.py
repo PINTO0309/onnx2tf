@@ -1873,12 +1873,9 @@ def build_concat_op(node: Any, ctx: Any) -> None:
         elif (
             int(axis) == 0
             and len(output_shape) == 1
-            and normalized_output_dtype in {
-                "INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32"
-            }
+            and normalized_output_dtype in numeric_dtypes
             and all(
-                len(ctx.get_tensor_shape(name)) == 0
-                or all(int(dim) == 1 for dim in ctx.get_tensor_shape(name))
+                all(int(dim) > 0 for dim in ctx.get_tensor_shape(name))
                 for name in input_names
             )
             and all(
@@ -1887,11 +1884,27 @@ def build_concat_op(node: Any, ctx: Any) -> None:
             )
         ):
             # Shape/control-flow graphs exported by PyTorch occasionally carry
-            # a captured integral scalar as FLOAT32 while ONNX inference marks
-            # the resulting rank-1 shape vector as integer. Preserve that
-            # declared contract by casting every component to the output dtype.
-            concat_dtype = normalized_output_dtype
+            # vector components with mixed ranks and numeric dtypes. Preserve
+            # the declared rank-1 output contract by casting and vectorizing
+            # every component before concatenation.
+            concat_dtype = (
+                "FLOAT32"
+                if normalized_output_dtype == "FLOAT64"
+                else normalized_output_dtype
+            )
             coerce_singletons_to_shape_vector = True
+        elif (
+            normalized_output_dtype in {"FLOAT16", "FLOAT32", "FLOAT64"}
+            and all(
+                str(ctx.get_tensor_dtype(name)).upper() in numeric_dtypes
+                for name in input_names
+            )
+        ):
+            concat_dtype = (
+                "FLOAT32"
+                if normalized_output_dtype == "FLOAT64"
+                else normalized_output_dtype
+            )
         else:
             raise NotImplementedError(
                 "Concat input dtypes must be compatible in flatbuffer_direct. "
@@ -1935,19 +1948,21 @@ def build_concat_op(node: Any, ctx: Any) -> None:
             concat_input_name = cast_name
         if (
             coerce_singletons_to_shape_vector
-            and [int(v) for v in ctx.get_tensor_shape(concat_input_name)] != [1]
+            and len(ctx.get_tensor_shape(concat_input_name)) != 1
         ):
+            source_shape = [int(v) for v in ctx.get_tensor_shape(concat_input_name)]
+            vector_length = int(np.prod(source_shape, dtype=np.int64)) if source_shape else 1
             reshape_name = ctx.add_intermediate_tensor(
                 f"{output_name}_concat_input{idx}_vector",
                 dtype=concat_dtype,
-                shape=[1],
+                shape=[int(vector_length)],
             )
             ctx.add_operator(
                 OperatorIR(
                     op_type="RESHAPE",
                     inputs=[concat_input_name],
                     outputs=[reshape_name],
-                    options={"newShape": [1]},
+                    options={"newShape": [int(vector_length)]},
                 )
             )
             concat_input_name = reshape_name
