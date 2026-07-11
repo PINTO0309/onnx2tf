@@ -5642,6 +5642,29 @@ def _make_gather_elements_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_gather_elements_after_int64_cast_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [2, 3])
+    idx = numpy_helper.from_array(
+        np.asarray([[0, 2, 1], [1, 0, 2]], dtype=np.int64),
+        name="idx",
+    )
+    nodes = [
+        helper.make_node("Cast", ["x"], ["x_i64"], name="CastToInt64", to=TensorProto.INT64),
+        helper.make_node("GatherElements", ["x_i64", "idx"], ["gathered"], name="GatherInt64", axis=1),
+        helper.make_node("Reshape", ["gathered", "shape"], ["y"], name="ReshapeInt64"),
+    ]
+    shape = numpy_helper.from_array(np.asarray([2, 3], dtype=np.int64), name="shape")
+    graph = helper.make_graph(
+        nodes,
+        "gather_elements_after_int64_cast_graph",
+        [x],
+        [y],
+        [idx, shape],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_gather_elements_unknown_data_rank_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, None)
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4])
@@ -32027,6 +32050,24 @@ def test_flatbuffer_direct_rtpo_gathernd_applies_to_gather_elements_generated_pa
             and isinstance(in1.data, np.ndarray)
         )
         assert not both_const
+
+
+def test_flatbuffer_direct_gather_elements_propagates_normalized_data_dtype() -> None:
+    model = _make_gather_elements_after_int64_cast_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="gather_elements_normalized_dtype_test",
+    )
+
+    assert str(model_ir.tensors["x_i64"].dtype) == "INT32"
+    assert str(model_ir.tensors["y"].dtype) == "INT32"
+    gather_nd = next(
+        op for op in model_ir.operators if str(op.op_type) == "GATHER_ND"
+    )
+    assert str(model_ir.tensors[gather_nd.inputs[0]].dtype) == "INT32"
+    assert str(model_ir.tensors[gather_nd.outputs[0]].dtype) == "INT32"
 
 
 def test_flatbuffer_direct_gather_elements_allows_unknown_data_rank_placeholder() -> None:

@@ -842,10 +842,9 @@
     {
       "tier": 1,
       "model": "bodypix_mobilenet050_stride8_1x3x128x160.onnx",
-      "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "b4d7f169fdad2c0ca7fb96e442a60079b7f83268b368e980c46293039298604d",
-      "tflite_max_abs": 541165879138.0
+      "baseline_classification": "pass",
+      "baseline_reason": "pass",
+      "tflite_max_abs": 9.045470505952835e-08
     },
     {
       "tier": 1,

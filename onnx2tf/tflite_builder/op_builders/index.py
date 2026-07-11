@@ -5344,6 +5344,15 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(indices_name)
     ctx.ensure_tensor(output_name)
 
+    # GatherElements preserves the data tensor dtype. In particular, an ONNX
+    # INT64-producing Cast is normalized to INT32 by the TFLite Cast builder;
+    # leaving this output at its original INT64 placeholder would make a
+    # following RESHAPE reinterpret the INT32 buffer as packed INT64 values.
+    data_dtype = str(ctx.get_tensor_dtype(data_name)).upper()
+    ctx.model_ir.tensors[output_name].dtype = data_dtype
+    if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+        ctx.dtype_map[str(output_name)] = data_dtype
+
     data_shape = [int(v) for v in ctx.get_tensor_shape(data_name)]
     indices_shape = [int(v) for v in ctx.get_tensor_shape(indices_name)]
     output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
