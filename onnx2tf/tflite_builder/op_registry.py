@@ -5921,10 +5921,19 @@ def _validate_resize(node: Any, ctx: Any) -> None:
                 node_op=node.op,
             )
         nearest_mode = str(node.attrs.get("nearest_mode", "round_prefer_floor")).lower()
-        if nearest_mode not in ["floor", "round_prefer_floor"]:
+        supported_nearest_modes = {"floor", "round_prefer_floor"}
+        if ctm == "half_pixel":
+            # TFLite half_pixel_centers computes
+            # floor((out + 0.5) * input_size / output_size), which is ONNX
+            # half_pixel followed by round_prefer_ceil.
+            supported_nearest_modes.add("round_prefer_ceil")
+        if nearest_mode not in supported_nearest_modes:
             raise NodeValidationError(
                 reason_code="unsupported_attribute_value",
-                message=f"Resize nearest_mode must be floor or round_prefer_floor. got={nearest_mode}",
+                message=(
+                    "Resize nearest_mode is not representable by the selected "
+                    f"TFLite coordinate mode. ctm={ctm} got={nearest_mode}"
+                ),
                 node_name=node.name,
                 node_op=node.op,
             )
