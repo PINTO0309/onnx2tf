@@ -21664,7 +21664,20 @@ def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]
         ):
             continue
         concat_output_name = str(transpose_op.inputs[0])
+        shape_passthrough_output_names: List[str] = []
         concat_idx = producers.get(concat_output_name, None)
+        while concat_idx is not None:
+            candidate_op = model_ir.operators[int(concat_idx)]
+            if (
+                str(candidate_op.op_type) not in {"RELU", "RELU6"}
+                or len(candidate_op.inputs) != 1
+                or len(candidate_op.outputs) != 1
+                or str(candidate_op.outputs[0]) != concat_output_name
+            ):
+                break
+            shape_passthrough_output_names.append(concat_output_name)
+            concat_output_name = str(candidate_op.inputs[0])
+            concat_idx = producers.get(concat_output_name, None)
         if concat_idx is None:
             continue
         concat_op = model_ir.operators[int(concat_idx)]
@@ -21712,6 +21725,15 @@ def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]
         if concat_tensor is not None:
             concat_tensor.shape = list(concat_shape)
             concat_tensor.shape_signature = list(concat_shape)
+        for passthrough_output_name in shape_passthrough_output_names:
+            passthrough_tensor = model_ir.tensors.get(
+                passthrough_output_name,
+                None,
+            )
+            if passthrough_tensor is None:
+                continue
+            passthrough_tensor.shape = list(concat_shape)
+            passthrough_tensor.shape_signature = list(concat_shape)
         nhwc_shape = [
             int(concat_shape[0]),
             int(concat_shape[2]),
@@ -77028,6 +77050,16 @@ def lower_onnx_to_ir(
             )
         ) > 0:
             _reconcile_static_tensor_shapes(fallback_ir)
+        fallback_concat_axis_stats = _repair_nchw_concat_transpose_conv_axes(
+            fallback_ir
+        )
+        if int(
+            fallback_concat_axis_stats.get(
+                "repaired_nchw_concat_transpose_conv_axes",
+                0,
+            )
+        ) > 0:
+            _reconcile_static_tensor_shapes(fallback_ir)
         _topologically_sort_operators(fallback_ir)
         fallback_layout_problems = validate_model_ir_layout_annotations(fallback_ir)
         if len(fallback_layout_problems) > 0:
@@ -77162,6 +77194,15 @@ def lower_onnx_to_ir(
     if int(
         final_concat_layout_stats.get(
             "repaired_mixed_nhwc_inputs_for_nchw_concat",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+        _topologically_sort_operators(model_ir)
+    final_concat_axis_stats = _repair_nchw_concat_transpose_conv_axes(model_ir)
+    if int(
+        final_concat_axis_stats.get(
+            "repaired_nchw_concat_transpose_conv_axes",
             0,
         )
     ) > 0:

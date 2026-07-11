@@ -2247,9 +2247,8 @@
     {
       "tier": 3,
       "model": "imageclassifier.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "466d996116b4b79eeec47e317013c0a92682f4f5bc1090a2145b52b80da03367"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 5.0067901611328125e-06
     },
     {
       "tier": 3,
