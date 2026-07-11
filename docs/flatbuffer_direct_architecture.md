@@ -103,3 +103,10 @@ result is `docs/baselines/flatbuffer_direct_tier4_root_0a8ee88.json`: 12
 passed, 7 conversion errors, 4 timeouts, 2 accuracy failures, and 5 missing
 reports. Median and maximum durations were 28.100 and 121.826 seconds. All 12
 passing models remained below the required `1e-1` maximum absolute error.
+
+The root-only Tier 5 gate at commit `95aa61b` contains 34 models. The managed
+result is `docs/baselines/flatbuffer_direct_tier5_root_95aa61b.json`: 6
+passed, 4 conversion errors, 10 timeouts, 2 accuracy failures, and 12 missing
+reports. Median and maximum durations were 51.621 and 123.486 seconds. All 6
+passing models remained below the required `1e-1` maximum absolute error; the
+largest passing error was `2.3543834686279297e-4`.
