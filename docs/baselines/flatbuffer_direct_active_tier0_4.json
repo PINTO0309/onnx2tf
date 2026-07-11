@@ -989,10 +989,8 @@
     {
       "tier": 1,
       "model": "human_segmentation_pphumanseg_2023mar_int8.onnx",
-      "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "60ee78e5db3a5c92a16f46ab826539e87de3c8aa2d52ca3c06e18c6544208507",
-      "tflite_max_abs": 0.99609375
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0
     },
     {
       "tier": 1,

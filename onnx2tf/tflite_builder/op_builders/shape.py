@@ -7087,6 +7087,116 @@ def _resolve_resize_flags(node: Any) -> tuple[str, str, bool, bool]:
     return mode, ctm, align_corners, half_pixel_centers
 
 
+def _add_resize_builtin_with_integer_linear_compatibility(
+    *,
+    ctx: Any,
+    node_name: str,
+    tflite_op: str,
+    input_name: str,
+    size_input_name: str,
+    output_name: str,
+    options: dict[str, Any],
+) -> None:
+    """Preserve ONNX Runtime's integer linear-Resize cast semantics.
+
+    ONNX Resize keeps the input element type. For an integer linear Resize,
+    ONNX Runtime interpolates in floating point and converts the result back
+    to the integer type by truncating toward zero. LiteRT's quantized
+    RESIZE_BILINEAR instead rounds to the nearest quantized value. A one-unit
+    difference at every fractional sample can be amplified substantially by
+    downstream quantized convolutions.
+
+    Run only this integer case through an unquantized FLOAT32 Resize and an
+    explicit CAST back to the original type. Nearest-neighbor Resize does not
+    need this path because it selects existing integer samples exactly.
+    """
+    input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+    integer_dtypes = {
+        "INT8",
+        "UINT8",
+        "INT16",
+        "UINT16",
+        "INT32",
+        "UINT32",
+        "INT64",
+        "UINT64",
+    }
+    use_integer_linear_compatibility = (
+        str(tflite_op) == "RESIZE_BILINEAR"
+        and input_dtype in integer_dtypes
+        and output_dtype in integer_dtypes
+    )
+    if not use_integer_linear_compatibility:
+        ctx.add_operator(
+            OperatorIR(
+                op_type=tflite_op,
+                inputs=[input_name, size_input_name],
+                outputs=[output_name],
+                options=dict(options),
+            )
+        )
+        return
+
+    input_tensor = ctx.model_ir.tensors[input_name]
+    output_tensor = ctx.model_ir.tensors[output_name]
+    input_float_name = ctx.add_intermediate_tensor(
+        f"{node_name}_integer_resize_input_float",
+        dtype="FLOAT32",
+        shape=[int(v) for v in list(input_tensor.shape)],
+    )
+    input_float_tensor = ctx.model_ir.tensors[input_float_name]
+    input_float_tensor.shape_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor.shape_signature is not None
+        else [int(v) for v in list(input_tensor.shape)]
+    )
+    input_float_tensor.logical_layout = input_tensor.logical_layout
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[input_name],
+            outputs=[input_float_name],
+            options={
+                "inDataType": input_dtype,
+                "outDataType": "FLOAT32",
+            },
+        )
+    )
+
+    output_float_name = ctx.add_intermediate_tensor(
+        f"{node_name}_integer_resize_output_float",
+        dtype="FLOAT32",
+        shape=[int(v) for v in list(output_tensor.shape)],
+    )
+    output_float_tensor = ctx.model_ir.tensors[output_float_name]
+    output_float_tensor.shape_signature = (
+        [int(v) for v in list(output_tensor.shape_signature)]
+        if output_tensor.shape_signature is not None
+        else [int(v) for v in list(output_tensor.shape)]
+    )
+    output_float_tensor.logical_layout = output_tensor.logical_layout
+    ctx.add_operator(
+        OperatorIR(
+            op_type=tflite_op,
+            inputs=[input_float_name, size_input_name],
+            outputs=[output_float_name],
+            options=dict(options),
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[output_float_name],
+            outputs=[output_name],
+            options={
+                "inDataType": "FLOAT32",
+                "outDataType": output_dtype,
+            },
+        )
+    )
+
+
 def _normalize_resize_coordinate_transformation_mode(
     *,
     coordinate_transformation_mode: str,
@@ -9487,18 +9597,19 @@ def build_resize_op(node: Any, ctx: Any) -> None:
                     f"{node.name}_resize_size",
                     np.asarray([1, int(out_w)], dtype=np.int32),
                 )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type=tflite_op,
-                    inputs=[x_nhwc, size_input_name],
-                    outputs=[y_nhwc],
-                    options={
-                        "alignCorners": bool(align_corners),
-                        "halfPixelCenters": bool(half_pixel_centers),
-                        "onnxSizesHW": list(onnx_sizes_hw) if onnx_sizes_hw is not None else None,
-                        "onnxScalesHW": list(onnx_scales_hw) if onnx_scales_hw is not None else None,
-                    },
-                )
+            _add_resize_builtin_with_integer_linear_compatibility(
+                ctx=ctx,
+                node_name=str(node.name),
+                tflite_op=tflite_op,
+                input_name=x_nhwc,
+                size_input_name=size_input_name,
+                output_name=y_nhwc,
+                options={
+                    "alignCorners": bool(align_corners),
+                    "halfPixelCenters": bool(half_pixel_centers),
+                    "onnxSizesHW": list(onnx_sizes_hw) if onnx_sizes_hw is not None else None,
+                    "onnxScalesHW": list(onnx_scales_hw) if onnx_scales_hw is not None else None,
+                },
             )
 
         if channel_first_rank3:
@@ -9614,18 +9725,19 @@ def build_resize_op(node: Any, ctx: Any) -> None:
                 np.asarray([int(output_shape[2]), int(output_shape[3])], dtype=np.int32),
             )
             size_input_name = size_const
-        ctx.add_operator(
-            OperatorIR(
-                op_type=tflite_op,
-                inputs=[x_nhwc, size_input_name],
-                outputs=[y_nhwc],
-                options={
-                    "alignCorners": bool(align_corners),
-                    "halfPixelCenters": bool(half_pixel_centers),
-                    "onnxSizesHW": list(onnx_sizes_hw) if onnx_sizes_hw is not None else None,
-                    "onnxScalesHW": list(onnx_scales_hw) if onnx_scales_hw is not None else None,
-                },
-            )
+        _add_resize_builtin_with_integer_linear_compatibility(
+            ctx=ctx,
+            node_name=str(node.name),
+            tflite_op=tflite_op,
+            input_name=x_nhwc,
+            size_input_name=size_input_name,
+            output_name=y_nhwc,
+            options={
+                "alignCorners": bool(align_corners),
+                "halfPixelCenters": bool(half_pixel_centers),
+                "onnxSizesHW": list(onnx_sizes_hw) if onnx_sizes_hw is not None else None,
+                "onnxScalesHW": list(onnx_scales_hw) if onnx_scales_hw is not None else None,
+            },
         )
     make_transpose(
         ctx,
