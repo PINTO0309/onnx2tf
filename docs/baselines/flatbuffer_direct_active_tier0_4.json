@@ -930,9 +930,10 @@
     {
       "tier": 1,
       "model": "face_recognition_sface_2021dec_int8.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "1ab60f7b4b02885af0f49ff6ca374185c05899e2bc852bdf04511d211da34518"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "tflite_fail",
+      "error_signature_sha256": "03c67dc24d62b816e53a8f50f7faa3cd6160cb90dccdcde4b50a8bdce675ac06",
+      "tflite_max_abs": 0.7243438847362995
     },
     {
       "tier": 1,
@@ -943,9 +944,10 @@
     {
       "tier": 1,
       "model": "facial_expression_recognition_mobilefacenet_2022july_int8.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "09ce0641ace79c4c6b64aad599bfe19c4e055e42c7d88219ab8d481323bbf858"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "tflite_fail",
+      "error_signature_sha256": "b8abd22130c9dd0ccd540a1fd24e3fcbec824d6f555d5fda26779e9e364df142",
+      "tflite_max_abs": 0.5741406455636024
     },
     {
       "tier": 1,

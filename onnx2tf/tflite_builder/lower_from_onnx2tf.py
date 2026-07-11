@@ -3353,6 +3353,68 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                     if input_tensor.shape_signature is not None
                     else list(input_tensor.shape)
                 )
+                if "onnxFlattenAxis" in op.options:
+                    existing_flatten_new_shape = op.options.get("newShape", [])
+                    try:
+                        existing_flatten_new_shape = [
+                            int(v)
+                            for v in np.asarray(
+                                existing_flatten_new_shape
+                            ).reshape(-1).tolist()
+                        ]
+                    except Exception:
+                        existing_flatten_new_shape = []
+                    input_shape = [int(v) for v in list(input_tensor.shape)]
+                    input_rank = len(input_shape)
+                    flatten_axis = int(op.options.get("onnxFlattenAxis", 1))
+                    if flatten_axis < 0:
+                        flatten_axis += input_rank
+                    if (
+                        0 <= flatten_axis <= input_rank
+                        and _is_fully_known_positive_shape(input_shape)
+                    ):
+                        def _flatten_product(values: List[int]) -> int:
+                            product = 1
+                            for value in values:
+                                product *= int(value)
+                            return int(product)
+
+                        flatten_shape = [
+                            _flatten_product(input_shape[:flatten_axis]),
+                            _flatten_product(input_shape[flatten_axis:]),
+                        ]
+                        flatten_signature = [
+                            (
+                                -1
+                                if any(int(v) < 0 for v in input_signature[:flatten_axis])
+                                else _flatten_product(input_signature[:flatten_axis])
+                            ),
+                            (
+                                -1
+                                if any(int(v) < 0 for v in input_signature[flatten_axis:])
+                                else _flatten_product(input_signature[flatten_axis:])
+                            ),
+                        ]
+                        op.options["newShape"] = (
+                            []
+                            if len(existing_flatten_new_shape) == 0
+                            else [int(v) for v in flatten_signature]
+                        )
+                        if len(inputs) >= 2:
+                            shape_tensor = model_ir.tensors.get(inputs[1], None)
+                            if shape_tensor is not None:
+                                shape_tensor.data = np.asarray(
+                                    flatten_signature,
+                                    dtype=np.int32,
+                                )
+                                shape_tensor.shape = [2]
+                                shape_tensor.shape_signature = [2]
+                        changed |= _update_tensor_shape(
+                            outputs[0],
+                            flatten_shape,
+                            flatten_signature,
+                        )
+                        continue
                 raw_new_shape = op.options.get("newShape", [])
                 try:
                     new_shape = [int(v) for v in np.asarray(raw_new_shape).reshape(-1).tolist()]

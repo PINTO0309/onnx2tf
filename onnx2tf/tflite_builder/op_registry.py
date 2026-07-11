@@ -6444,6 +6444,25 @@ def _validate_prelu(node: Any, ctx: Any) -> None:
     if input_shape == [1] or input_rank <= 1:
         # Unknown/placeholder shape. Defer broadcast validation to runtime.
         return
+    raw_shape = (
+        ctx.shape_map.get(str(node.inputs[0].name), None)
+        if hasattr(ctx, "shape_map") and isinstance(ctx.shape_map, dict)
+        else None
+    )
+    raw_shape_is_unresolved = (
+        raw_shape is None
+        or not isinstance(raw_shape, (list, tuple))
+        or len(raw_shape) == 0
+        or any(
+            not isinstance(dim, (int, np.integer)) or int(dim) <= 0
+            for dim in raw_shape
+        )
+    )
+    if raw_shape_is_unresolved:
+        # Shape reconciliation can recover channels from the producer after
+        # lowering. A rank-shaped all-ones placeholder is not evidence that a
+        # valid per-channel slope is incompatible.
+        return
     if input_rank in [2, 4] and len(input_shape) >= 2:
         channels = int(input_shape[1])
         if slope_size == channels:
