@@ -983,10 +983,8 @@
     {
       "tier": 1,
       "model": "handpose_estimation_mediapipe_2023feb_int8.onnx",
-      "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "d18e4ed9d4d65b16475aa7512993824024290fd590d80a2ff25176e73557deb8",
-      "tflite_max_abs": 9.382095336914062
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0008895993232727051
     },
     {
       "tier": 1,

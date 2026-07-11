@@ -31963,7 +31963,6 @@ def test_flatbuffer_direct_qlinear_conv2d_intermediate_preserves_dynamic_batch_s
     assert len(conv_ops) == 1
     out_name = conv_ops[0].outputs[0]
     out_tensor = model_ir.tensors[out_name]
-    assert out_tensor.quantization is not None
     assert out_tensor.shape_signature is not None
     assert int(_shape_signature(out_tensor)[0]) == -1
 
