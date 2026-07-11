@@ -5946,9 +5946,9 @@ def build_depth_to_space_op(node: Any, ctx: Any) -> None:
 
     input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]
     output_shape = [int(v) for v in list(ctx.get_tensor_shape(output_name))]
-    if len(input_shape) != 4 or len(output_shape) != 4:
+    if len(input_shape) != 4:
         raise NotImplementedError(
-            f"DepthToSpace supports rank-4 input/output only. op={node.name} "
+            f"DepthToSpace supports rank-4 input only. op={node.name} "
             f"input_shape={input_shape} output_shape={output_shape}"
         )
 
@@ -5966,6 +5966,56 @@ def build_depth_to_space_op(node: Any, ctx: Any) -> None:
         raise NotImplementedError(
             f"DepthToSpace mode must be DCR or CRD for flatbuffer_direct builtin lowering. op={node.name} mode={mode}"
         )
+
+    # ONNX shape inference can stop at an earlier unsupported/dynamic operator
+    # and leave later DepthToSpace outputs as the generic rank-1 placeholder.
+    # The output rank and dimensions are nevertheless fully determined by a
+    # rank-4 input and blocksize, so recover that contract from the already
+    # lowered producer metadata instead of forcing custom-op fallback.
+    if len(output_shape) != 4:
+        block_area = int(block_size * block_size)
+        input_channels = int(input_shape[1])
+        if input_channels <= 0 or input_channels % block_area != 0:
+            raise NotImplementedError(
+                "DepthToSpace requires a known input channel dimension divisible "
+                "by blocksize^2 when output shape inference is unavailable. "
+                f"op={node.name} input_shape={input_shape} blocksize={block_size}"
+            )
+        output_shape = [
+            int(input_shape[0]),
+            int(input_channels // block_area),
+            int(input_shape[2] * block_size),
+            int(input_shape[3] * block_size),
+        ]
+        input_tensor_for_recovery = ctx.model_ir.tensors.get(input_name, None)
+        output_tensor_for_recovery = ctx.model_ir.tensors.get(output_name, None)
+        if output_tensor_for_recovery is not None:
+            output_tensor_for_recovery.shape = [int(v) for v in output_shape]
+            input_signature = (
+                [int(v) for v in input_tensor_for_recovery.shape_signature]
+                if input_tensor_for_recovery is not None
+                and input_tensor_for_recovery.shape_signature is not None
+                and len(input_tensor_for_recovery.shape_signature) == 4
+                else [int(v) for v in input_shape]
+            )
+            output_tensor_for_recovery.shape_signature = [
+                int(input_signature[0]),
+                (
+                    -1
+                    if int(input_signature[1]) < 0
+                    else int(input_signature[1] // block_area)
+                ),
+                (
+                    -1
+                    if int(input_signature[2]) < 0
+                    else int(input_signature[2] * block_size)
+                ),
+                (
+                    -1
+                    if int(input_signature[3]) < 0
+                    else int(input_signature[3] * block_size)
+                ),
+            ]
 
     nhwc_input_shape = [int(input_shape[0]), int(input_shape[2]), int(input_shape[3]), int(input_shape[1])]
     nhwc_output_shape = [int(output_shape[0]), int(output_shape[2]), int(output_shape[3]), int(output_shape[1])]

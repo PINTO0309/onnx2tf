@@ -33,6 +33,8 @@ from onnx2tf.tflite_builder.ir import (
     optimize_redundant_transpose_operators,
     prune_identity_cast_operators,
 )
+from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
+from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_builders.norm import build_instance_normalization_op
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _align_boundary_signature_to_current_shape,
@@ -4517,6 +4519,45 @@ def _make_depth_to_space_crd_model() -> onnx.ModelProto:
     )
     graph = helper.make_graph([node], "depth_to_space_crd_graph", [x], [y])
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def test_depth_to_space_recovers_uninferred_output_shape_from_input() -> None:
+    model_ir = ModelIR("depth_to_space_uninferred_output")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 12, 2, 3],
+        shape_signature=[-1, 12, 2, 3],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    ctx = LoweringContext(
+        model_ir=model_ir,
+        shape_map={"x": [1, 12, 2, 3], "y": None},
+        dtype_map={"x": "FLOAT32", "y": "FLOAT32"},
+        constants={},
+        graph_output_names=["y"],
+    )
+    node = types.SimpleNamespace(
+        op="DepthToSpace",
+        name="DepthToSpaceUnknownOutput",
+        inputs=[types.SimpleNamespace(name="x")],
+        outputs=[types.SimpleNamespace(name="y")],
+        attrs={"blocksize": 2, "mode": b"CRD"},
+    )
+
+    dispatch_node(node, ctx)
+
+    assert model_ir.tensors["y"].shape == [1, 3, 4, 6]
+    assert model_ir.tensors["y"].shape_signature == [-1, 3, 4, 6]
+    assert all(str(op.op_type) != "CUSTOM" for op in model_ir.operators)
+    assert sum(str(op.op_type) == "DEPTH_TO_SPACE" for op in model_ir.operators) == 1
 
 
 def _make_resize_nearest_model() -> onnx.ModelProto:

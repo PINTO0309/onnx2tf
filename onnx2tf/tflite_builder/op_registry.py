@@ -8198,7 +8198,6 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             min_outputs=1,
             max_outputs=1,
             input_rank={0: [4]},
-            output_rank={0: [4]},
         ),
         extra_validator=_validate_depth_to_space,
     ),
