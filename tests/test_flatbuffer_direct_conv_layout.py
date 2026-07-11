@@ -6,7 +6,9 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _repair_nchw_concat_global_pool_conv_axes,
     _repair_nchw_concat_transpose_conv_axes,
+    _repair_mixed_nhwc_inputs_for_nchw_concat,
     _repair_singleton_nhwc_conv_input_reshapes,
+    _repair_stale_nchw_to_nhwc_conv_input_transposes,
 )
 
 
@@ -77,6 +79,132 @@ def test_repair_removes_stale_singleton_reshape_before_nhwc_conv() -> None:
     assert conv.inputs[0] == "source_nhwc"
     assert model_ir.tensors["conv_out"].shape == [1, 1, 1, 52]
     assert "bad_adapter" not in model_ir.tensors
+
+
+def test_repair_removes_stale_transpose_before_already_nhwc_conv() -> None:
+    model_ir = ModelIR("stale_split_conv_adapter")
+    model_ir.inputs = ["source_nhwc"]
+    model_ir.outputs = ["conv_out"]
+    _tensor(model_ir, "source_nhwc", [1, 64, 64, 72])
+    _tensor(model_ir, "bad_adapter", [1, 64, 72, 64])
+    _tensor(
+        model_ir,
+        "perm",
+        [4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    _tensor(
+        model_ir,
+        "filter",
+        [36, 1, 1, 72],
+        data=np.ones((36, 1, 1, 72), dtype=np.float32),
+    )
+    _tensor(
+        model_ir,
+        "bias",
+        [36],
+        data=np.zeros((36,), dtype=np.float32),
+    )
+    _tensor(model_ir, "conv_out", [1, 64, 72, 36])
+    model_ir.operators = [
+        OperatorIR(
+            "TRANSPOSE",
+            ["source_nhwc", "perm"],
+            ["bad_adapter"],
+        ),
+        OperatorIR(
+            "CONV_2D",
+            ["bad_adapter", "filter", "bias"],
+            ["conv_out"],
+            {"padding": "SAME", "strideH": 1, "strideW": 1},
+        ),
+    ]
+
+    stats = _repair_stale_nchw_to_nhwc_conv_input_transposes(model_ir)
+
+    assert stats == {
+        "repaired_stale_nchw_to_nhwc_conv_input_transposes": 1,
+    }
+    conv = next(op for op in model_ir.operators if op.op_type == "CONV_2D")
+    assert conv.inputs[0] == "source_nhwc"
+    assert model_ir.tensors["conv_out"].shape == [1, 64, 64, 36]
+    assert "bad_adapter" not in model_ir.tensors
+
+
+def test_repair_keeps_valid_nchw_to_nhwc_conv_transpose() -> None:
+    model_ir = ModelIR("valid_conv_adapter")
+    model_ir.inputs = ["source_nchw"]
+    model_ir.outputs = ["conv_out"]
+    _tensor(model_ir, "source_nchw", [1, 72, 64, 64])
+    _tensor(model_ir, "conv_input", [1, 64, 64, 72])
+    _tensor(
+        model_ir,
+        "perm",
+        [4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    _tensor(
+        model_ir,
+        "filter",
+        [36, 1, 1, 72],
+        data=np.ones((36, 1, 1, 72), dtype=np.float32),
+    )
+    _tensor(
+        model_ir,
+        "bias",
+        [36],
+        data=np.zeros((36,), dtype=np.float32),
+    )
+    _tensor(model_ir, "conv_out", [1, 64, 64, 36])
+    model_ir.operators = [
+        OperatorIR(
+            "TRANSPOSE",
+            ["source_nchw", "perm"],
+            ["conv_input"],
+        ),
+        OperatorIR(
+            "CONV_2D",
+            ["conv_input", "filter", "bias"],
+            ["conv_out"],
+            {"padding": "SAME", "strideH": 1, "strideW": 1},
+        ),
+    ]
+
+    stats = _repair_stale_nchw_to_nhwc_conv_input_transposes(model_ir)
+
+    assert stats == {
+        "repaired_stale_nchw_to_nhwc_conv_input_transposes": 0,
+    }
+    assert model_ir.operators[0].op_type == "TRANSPOSE"
+
+
+def test_repair_adds_local_nchw_adapter_for_mixed_concat_input() -> None:
+    model_ir = ModelIR("mixed_split_concat_layout")
+    model_ir.inputs = ["split_keep_nhwc", "branch1", "branch2"]
+    model_ir.outputs = ["stacked"]
+    _tensor(model_ir, "split_keep_nhwc", [1, 64, 64, 72])
+    _tensor(model_ir, "branch1", [1, 36, 64, 64])
+    _tensor(model_ir, "branch2", [1, 36, 64, 64])
+    _tensor(model_ir, "stacked", [1, 136, 64, 72])
+    model_ir.operators = [
+        OperatorIR(
+            "CONCATENATION",
+            ["split_keep_nhwc", "branch1", "branch2"],
+            ["stacked"],
+            {"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    stats = _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir)
+
+    assert stats == {"repaired_mixed_nhwc_inputs_for_nchw_concat": 1}
+    concat = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    adapter_name = concat.inputs[0]
+    assert adapter_name != "split_keep_nhwc"
+    assert model_ir.tensors[adapter_name].shape == [1, 72, 64, 64]
+    assert model_ir.tensors["stacked"].shape == [1, 144, 64, 64]
 
 
 def test_repair_restores_nchw_concat_axis_before_conv_transpose() -> None:

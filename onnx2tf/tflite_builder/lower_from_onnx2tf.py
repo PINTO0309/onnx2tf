@@ -67622,6 +67622,287 @@ def _repair_singleton_nhwc_conv_input_reshapes(model_ir: ModelIR) -> Dict[str, i
     return {"repaired_singleton_nhwc_conv_input_reshapes": int(repaired)}
 
 
+def _repair_stale_nchw_to_nhwc_conv_input_transposes(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """Bypass stale Conv adapters when their source is already NHWC.
+
+    Late layout propagation can move a channel Split to NHWC after Conv
+    lowering has emitted the usual NCHW->NHWC transpose for one of the split
+    branches. The transpose then moves a spatial dimension into the channel
+    position and produces a model that LiteRT cannot prepare. The filter input
+    channel dimension is an exact invariant: bypass the adapter only when the
+    source channel count matches it and the adapter output does not.
+    """
+
+    repaired = 0
+    perm_nchw_to_nhwc = [0, 2, 3, 1]
+    while True:
+        producers = _build_tensor_producer_map(model_ir)
+        consumers = _build_tensor_consumer_map(model_ir)
+        changed = False
+        for conv_idx, conv_op in enumerate(model_ir.operators):
+            if (
+                str(conv_op.op_type) != "CONV_2D"
+                or len(conv_op.inputs) < 2
+                or len(conv_op.outputs) != 1
+            ):
+                continue
+            adapter_output_name = str(conv_op.inputs[0])
+            adapter_idx = producers.get(adapter_output_name, None)
+            if adapter_idx is None:
+                continue
+            adapter_op = model_ir.operators[int(adapter_idx)]
+            if (
+                str(adapter_op.op_type) != "TRANSPOSE"
+                or len(adapter_op.inputs) < 2
+                or len(adapter_op.outputs) != 1
+                or _read_transpose_perm(model_ir, adapter_op)
+                != perm_nchw_to_nhwc
+            ):
+                continue
+            if adapter_output_name in model_ir.outputs:
+                continue
+            if [int(v) for v in consumers.get(adapter_output_name, [])] != [
+                int(conv_idx)
+            ]:
+                continue
+
+            source_name = str(adapter_op.inputs[0])
+            filter_name = str(conv_op.inputs[1])
+            conv_output_name = str(conv_op.outputs[0])
+            source_tensor = model_ir.tensors.get(source_name, None)
+            adapter_tensor = model_ir.tensors.get(adapter_output_name, None)
+            filter_tensor = model_ir.tensors.get(filter_name, None)
+            output_tensor = model_ir.tensors.get(conv_output_name, None)
+            if any(
+                tensor is None
+                for tensor in (
+                    source_tensor,
+                    adapter_tensor,
+                    filter_tensor,
+                    output_tensor,
+                )
+            ):
+                continue
+            source_shape = [int(v) for v in list(source_tensor.shape)]
+            adapter_shape = [int(v) for v in list(adapter_tensor.shape)]
+            filter_shape = [int(v) for v in list(filter_tensor.shape)]
+            if (
+                len(source_shape) != 4
+                or len(adapter_shape) != 4
+                or len(filter_shape) != 4
+            ):
+                continue
+            filter_input_channels = int(filter_shape[3])
+            if (
+                filter_input_channels <= 0
+                or int(source_shape[3]) != filter_input_channels
+                or int(adapter_shape[3]) == filter_input_channels
+            ):
+                continue
+
+            updated_inputs = [str(v) for v in list(conv_op.inputs)]
+            updated_inputs[0] = source_name
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=conv_op,
+                new_inputs=updated_inputs,
+            )
+
+            source_signature = (
+                [int(v) for v in list(source_tensor.shape_signature)]
+                if source_tensor.shape_signature is not None
+                else list(source_shape)
+            )
+            output_tensor.shape = [
+                int(source_shape[0]),
+                int(source_shape[1]),
+                int(source_shape[2]),
+                int(filter_shape[0]),
+            ]
+            output_tensor.shape_signature = [
+                int(source_signature[0]),
+                int(source_signature[1]),
+                int(source_signature[2]),
+                int(filter_shape[0]),
+            ]
+            del model_ir.operators[int(adapter_idx)]
+            repaired += 1
+            changed = True
+            break
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {
+        "repaired_stale_nchw_to_nhwc_conv_input_transposes": int(repaired),
+    }
+
+
+def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, int]:
+    """Restore local NHWC split branches at an otherwise NCHW Concat.
+
+    A channel Split may be propagated to NHWC for Conv consumers while another
+    split output still feeds a legacy channel-axis Concat. Establish the
+    Concat's NCHW spatial contract from at least two agreeing inputs, then add
+    a local NHWC->NCHW adapter only for inputs whose leading spatial dimensions
+    match that contract. This preserves both branches without guessing layout
+    from tensor names.
+    """
+
+    repaired = 0
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+
+    def _unique_tensor_name(base: str) -> str:
+        existing = set(model_ir.tensors.keys())
+        if str(base) not in existing:
+            return str(base)
+        suffix = 1
+        while f"{base}_{suffix}" in existing:
+            suffix += 1
+        return f"{base}_{suffix}"
+
+    while True:
+        changed = False
+        for concat_idx, concat_op in enumerate(model_ir.operators):
+            if (
+                str(concat_op.op_type) != "CONCATENATION"
+                or len(concat_op.inputs) < 3
+                or len(concat_op.outputs) != 1
+            ):
+                continue
+            concat_axis = int(concat_op.options.get("axis", 0))
+            if concat_axis < 0:
+                concat_axis += 4
+            if concat_axis != 1:
+                continue
+
+            input_tensors = [
+                model_ir.tensors.get(str(name), None)
+                for name in list(concat_op.inputs)
+            ]
+            if any(tensor is None for tensor in input_tensors):
+                continue
+            input_shapes = [
+                [int(v) for v in list(tensor.shape)]
+                for tensor in input_tensors
+            ]
+            if any(
+                len(shape) != 4 or any(int(v) <= 0 for v in shape)
+                for shape in input_shapes
+            ):
+                continue
+
+            spatial_counts: Dict[Tuple[int, int], int] = {}
+            for shape in input_shapes:
+                spatial = (int(shape[2]), int(shape[3]))
+                spatial_counts[spatial] = int(spatial_counts.get(spatial, 0)) + 1
+            canonical_spatial, canonical_count = max(
+                spatial_counts.items(),
+                key=lambda item: int(item[1]),
+            )
+            if int(canonical_count) < 2:
+                continue
+            height, width = [int(v) for v in canonical_spatial]
+
+            nhwc_input_indices: List[int] = []
+            valid = True
+            for input_idx, shape in enumerate(input_shapes):
+                if [int(shape[2]), int(shape[3])] == [height, width]:
+                    continue
+                if [int(shape[1]), int(shape[2])] == [height, width]:
+                    nhwc_input_indices.append(int(input_idx))
+                    continue
+                valid = False
+                break
+            if not valid or len(nhwc_input_indices) == 0:
+                continue
+
+            new_inputs = [str(v) for v in list(concat_op.inputs)]
+            insert_pos = int(concat_idx)
+            for input_idx in nhwc_input_indices:
+                source_name = str(new_inputs[int(input_idx)])
+                source_tensor = model_ir.tensors[source_name]
+                source_shape = [int(v) for v in list(source_tensor.shape)]
+                adapter_name = _unique_tensor_name(
+                    f"{source_name}_nchw_concat_adapter"
+                )
+                perm_name = _unique_tensor_name(f"{adapter_name}_perm")
+                adapter_shape = [
+                    int(source_shape[0]),
+                    int(source_shape[3]),
+                    int(source_shape[1]),
+                    int(source_shape[2]),
+                ]
+                source_signature = (
+                    [int(v) for v in list(source_tensor.shape_signature)]
+                    if source_tensor.shape_signature is not None
+                    else list(source_shape)
+                )
+                adapter_signature = [
+                    int(source_signature[0]),
+                    int(source_signature[3]),
+                    int(source_signature[1]),
+                    int(source_signature[2]),
+                ]
+                model_ir.tensors[perm_name] = TensorIR(
+                    name=perm_name,
+                    dtype="INT32",
+                    shape=[4],
+                    shape_signature=[4],
+                    data=np.asarray(perm_nhwc_to_nchw, dtype=np.int32),
+                    is_variable=False,
+                )
+                model_ir.tensors[adapter_name] = TensorIR(
+                    name=adapter_name,
+                    dtype=str(source_tensor.dtype),
+                    shape=adapter_shape,
+                    shape_signature=adapter_signature,
+                    data=None,
+                    is_variable=False,
+                    quantization=_clone_quantization(source_tensor.quantization),
+                )
+                model_ir.operators.insert(
+                    insert_pos,
+                    OperatorIR(
+                        op_type="TRANSPOSE",
+                        inputs=[source_name, perm_name],
+                        outputs=[adapter_name],
+                    ),
+                )
+                insert_pos += 1
+                new_inputs[int(input_idx)] = adapter_name
+
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=concat_op,
+                new_inputs=new_inputs,
+            )
+            output_tensor = model_ir.tensors.get(str(concat_op.outputs[0]), None)
+            if output_tensor is not None:
+                channel_count = int(
+                    sum(
+                        int(model_ir.tensors[name].shape[1])
+                        for name in new_inputs
+                    )
+                )
+                output_tensor.shape = [
+                    int(input_shapes[0][0]),
+                    channel_count,
+                    height,
+                    width,
+                ]
+                output_tensor.shape_signature = list(output_tensor.shape)
+            repaired += 1
+            changed = True
+            break
+        if not changed:
+            break
+
+    return {"repaired_mixed_nhwc_inputs_for_nchw_concat": int(repaired)}
+
+
 def _optimize_nhwc_prefix_qlinear_silu_chains(model_ir: ModelIR) -> Dict[str, int]:
     """
     Propagate NHWC through early QLinear SiLU chains and remove unnecessary
@@ -76639,6 +76920,7 @@ def lower_onnx_to_ir(
         prefer_runtime_inferable_from_onnx_raw=True,
     )
     _repair_singleton_nhwc_conv_input_reshapes(model_ir)
+    _repair_stale_nchw_to_nhwc_conv_input_transposes(model_ir)
     _repair_nchw_channel_shuffle_concat_gathers(model_ir)
     _repair_nchw_concat_transpose_conv_axes(model_ir)
     _repair_nchw_concat_global_pool_conv_axes(model_ir)
@@ -76721,6 +77003,27 @@ def lower_onnx_to_ir(
         if int(
             fallback_unbound_repair_stats.get(
                 "repaired_unbound_nonconstant_inputs_with_layout_transpose",
+                0,
+            )
+        ) > 0:
+            _reconcile_static_tensor_shapes(fallback_ir)
+        _repair_singleton_nhwc_conv_input_reshapes(fallback_ir)
+        fallback_conv_input_stats = (
+            _repair_stale_nchw_to_nhwc_conv_input_transposes(fallback_ir)
+        )
+        if int(
+            fallback_conv_input_stats.get(
+                "repaired_stale_nchw_to_nhwc_conv_input_transposes",
+                0,
+            )
+        ) > 0:
+            _reconcile_static_tensor_shapes(fallback_ir)
+        fallback_concat_layout_stats = (
+            _repair_mixed_nhwc_inputs_for_nchw_concat(fallback_ir)
+        )
+        if int(
+            fallback_concat_layout_stats.get(
+                "repaired_mixed_nhwc_inputs_for_nchw_concat",
                 0,
             )
         ) > 0:
@@ -76837,6 +77140,28 @@ def lower_onnx_to_ir(
     if int(
         final_high_rank_bmm_stats.get(
             "compressed_static_high_rank_batch_matmul",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+        _topologically_sort_operators(model_ir)
+    final_conv_input_stats = (
+        _repair_stale_nchw_to_nhwc_conv_input_transposes(model_ir)
+    )
+    if int(
+        final_conv_input_stats.get(
+            "repaired_stale_nchw_to_nhwc_conv_input_transposes",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+        _topologically_sort_operators(model_ir)
+    final_concat_layout_stats = _repair_mixed_nhwc_inputs_for_nchw_concat(
+        model_ir
+    )
+    if int(
+        final_concat_layout_stats.get(
+            "repaired_mixed_nhwc_inputs_for_nchw_concat",
             0,
         )
     ) > 0:

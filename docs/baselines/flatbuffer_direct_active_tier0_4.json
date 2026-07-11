@@ -2374,9 +2374,8 @@
     {
       "tier": 3,
       "model": "sgscsh.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "5a777b420abaa7df277a71596b0b1f5180ba6a78527851690bcd922ef7f0d8ad"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 3.2782554626464844e-07
     },
     {
       "tier": 3,
