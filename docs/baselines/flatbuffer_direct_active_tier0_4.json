@@ -676,9 +676,9 @@
     {
       "tier": 0,
       "model": "silero_vad (1).onnx",
-      "baseline_classification": "conversion_error",
-      "baseline_reason": "onnx2tf_nonzero_exit",
-      "error_signature_sha256": "36b9eebd899f487f9873bfbba36fd7e230c40e8e235ef012e5b67fb6ab9ccb11"
+      "baseline_classification": "missing_tflite_report",
+      "baseline_reason": "missing_tflite_report",
+      "error_signature_sha256": "f520b28d4b025834dacc97c0c39c78740f977618c54631634dddeec0752da35d"
     },
     {
       "tier": 0,

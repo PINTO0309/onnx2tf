@@ -486,9 +486,16 @@ def is_supported_if_generic_branch_mux_pattern(node: Any, ctx: Any = None) -> bo
     return True
 
 
-def _ensure_graph_initializers(graph: Any, ctx: Any) -> None:
+def _ensure_graph_initializers(
+    graph: Any,
+    ctx: Any,
+    *,
+    name_remap: Optional[Dict[str, str]] = None,
+) -> None:
+    remap = name_remap if isinstance(name_remap, dict) else {}
     for initializer in graph.initializer:
-        name = str(initializer.name)
+        original_name = str(initializer.name)
+        name = remap.get(original_name, original_name)
         if name in ctx.model_ir.tensors:
             continue
         value = np.asarray(numpy_helper.to_array(initializer))
@@ -1619,6 +1626,42 @@ def _resolve_if_branch_output_name(
     )
 
 
+def _build_if_branch_tensor_remap(
+    *,
+    graph: Any,
+    prefix: str,
+    graph_output_remap: Dict[str, str],
+) -> Dict[str, str]:
+    """Give every branch-local tensor a deterministic, branch-specific name."""
+    remap: Dict[str, str] = {}
+    for initializer_index, initializer in enumerate(
+        list(getattr(graph, "initializer", []))
+    ):
+        initializer_name = str(getattr(initializer, "name", ""))
+        if initializer_name != "":
+            remap[initializer_name] = (
+                f"{prefix}_initializer_{initializer_index}"
+            )
+    for node_index, graph_node in enumerate(list(getattr(graph, "node", []))):
+        for output_index, output_name_obj in enumerate(
+            list(getattr(graph_node, "output", []))
+        ):
+            output_name = str(output_name_obj)
+            if output_name != "":
+                remap[output_name] = (
+                    f"{prefix}_internal_{node_index}_{output_index}"
+                )
+
+    # Public branch outputs keep the existing stable names used by the mux.
+    remap.update(
+        {
+            str(original_name): str(remapped_name)
+            for original_name, remapped_name in graph_output_remap.items()
+        }
+    )
+    return remap
+
+
 def _build_if_generic_branch_mux(node: Any, ctx: Any) -> None:
     if not is_supported_if_generic_branch_mux_pattern(node, ctx):
         raise NotImplementedError(
@@ -1631,9 +1674,6 @@ def _build_if_generic_branch_mux(node: Any, ctx: Any) -> None:
 
     then_graph = node.attrs["then_branch"]
     else_graph = node.attrs["else_branch"]
-    _ensure_graph_initializers(then_graph, ctx)
-    _ensure_graph_initializers(else_graph, ctx)
-
     then_output_remap: Dict[str, str] = {}
     else_output_remap: Dict[str, str] = {}
     node_name = str(node.name) if str(getattr(node, "name", "")) != "" else "if"
@@ -1644,15 +1684,38 @@ def _build_if_generic_branch_mux(node: Any, ctx: Any) -> None:
         then_output_remap[then_output_name] = f"{node_name}_if_then_output_{output_index}"
         else_output_remap[else_output_name] = f"{node_name}_if_else_output_{output_index}"
 
+    then_tensor_remap = _build_if_branch_tensor_remap(
+        graph=then_graph,
+        prefix=f"{node_name}_if_then",
+        graph_output_remap=then_output_remap,
+    )
+    else_tensor_remap = _build_if_branch_tensor_remap(
+        graph=else_graph,
+        prefix=f"{node_name}_if_else",
+        graph_output_remap=else_output_remap,
+    )
+    _ensure_graph_initializers(
+        then_graph,
+        ctx,
+        name_remap=then_tensor_remap,
+    )
+    _ensure_graph_initializers(
+        else_graph,
+        ctx,
+        name_remap=else_tensor_remap,
+    )
+
     _lower_graph_nodes(
         graph=then_graph,
         ctx=ctx,
-        output_name_remap=then_output_remap,
+        input_name_remap=then_tensor_remap,
+        output_name_remap=then_tensor_remap,
     )
     _lower_graph_nodes(
         graph=else_graph,
         ctx=ctx,
-        output_name_remap=else_output_remap,
+        input_name_remap=else_tensor_remap,
+        output_name_remap=else_tensor_remap,
     )
 
     for output_index, output_obj in enumerate(node.outputs):

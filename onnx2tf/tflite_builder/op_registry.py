@@ -7807,7 +7807,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "Concat": DispatchEntry(
         onnx_op="Concat",
-        tflite_ops=["CONCATENATION"],
+        tflite_ops=["CONCATENATION", "CAST", "RESHAPE"],
         builder=build_concat_op,
         validation=ValidationSpec(min_inputs=2, min_outputs=1, max_outputs=1),
     ),

@@ -1848,12 +1848,14 @@ def build_concat_op(node: Any, ctx: Any) -> None:
 
     integer_dtypes = {"INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32", "INT64", "UINT64"}
     unsigned_integer_dtypes = {"UINT8", "UINT16", "UINT32", "UINT64"}
+    numeric_dtypes = integer_dtypes | {"FLOAT16", "FLOAT32", "FLOAT64"}
     normalized_input_dtypes = [
         _normalize_concat_dtype(str(ctx.get_tensor_dtype(name)).upper())
         for name in input_names
     ]
     normalized_output_dtype = _normalize_concat_dtype(str(ctx.get_tensor_dtype(output_name)).upper())
     concat_dtype = normalized_output_dtype
+    coerce_singletons_to_shape_vector = False
     if len(normalized_input_dtypes) > 0 and any(dt != concat_dtype for dt in normalized_input_dtypes):
         unique_input_dtypes = set(normalized_input_dtypes)
         if len(unique_input_dtypes) == 1:
@@ -1864,44 +1866,88 @@ def build_concat_op(node: Any, ctx: Any) -> None:
                 concat_dtype = "UINT32"
             else:
                 concat_dtype = "INT32"
+        elif (
+            int(axis) == 0
+            and len(output_shape) == 1
+            and normalized_output_dtype in {
+                "INT8", "UINT8", "INT16", "UINT16", "INT32", "UINT32"
+            }
+            and all(
+                len(ctx.get_tensor_shape(name)) == 0
+                or all(int(dim) == 1 for dim in ctx.get_tensor_shape(name))
+                for name in input_names
+            )
+            and all(
+                str(ctx.get_tensor_dtype(name)).upper() in numeric_dtypes
+                for name in input_names
+            )
+        ):
+            # Shape/control-flow graphs exported by PyTorch occasionally carry
+            # a captured integral scalar as FLOAT32 while ONNX inference marks
+            # the resulting rank-1 shape vector as integer. Preserve that
+            # declared contract by casting every component to the output dtype.
+            concat_dtype = normalized_output_dtype
+            coerce_singletons_to_shape_vector = True
         else:
             raise NotImplementedError(
                 "Concat input dtypes must be compatible in flatbuffer_direct. "
-                f"op={node.name} input_dtypes={normalized_input_dtypes} output_dtype={normalized_output_dtype}"
+                f"op={node.name} input_dtypes={normalized_input_dtypes} "
+                f"output_dtype={normalized_output_dtype} axis={axis} "
+                f"input_shapes={[ctx.get_tensor_shape(name) for name in input_names]}"
             )
 
     casted_input_names: list[str] = []
     for idx, name in enumerate(input_names):
         input_dtype = str(ctx.get_tensor_dtype(name)).upper()
         normalized_input_dtype = _normalize_concat_dtype(input_dtype)
+        concat_input_name = str(name)
         if normalized_input_dtype == concat_dtype and input_dtype == concat_dtype:
-            casted_input_names.append(name)
-            continue
-        cast_name = ctx.add_intermediate_tensor(
-            f"{output_name}_concat_input{idx}_{concat_dtype.lower()}",
-            dtype=concat_dtype,
-            shape=[int(v) for v in ctx.get_tensor_shape(name)],
-        )
-        src_tensor = ctx.model_ir.tensors.get(name, None)
-        cast_tensor = ctx.model_ir.tensors.get(cast_name, None)
-        if src_tensor is not None and cast_tensor is not None:
-            cast_tensor.shape_signature = (
-                [int(v) for v in list(src_tensor.shape_signature)]
-                if src_tensor.shape_signature is not None
-                else [int(v) for v in list(src_tensor.shape)]
+            concat_input_name = str(name)
+        else:
+            cast_name = ctx.add_intermediate_tensor(
+                f"{output_name}_concat_input{idx}_{concat_dtype.lower()}",
+                dtype=concat_dtype,
+                shape=[int(v) for v in ctx.get_tensor_shape(name)],
             )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="CAST",
-                inputs=[name],
-                outputs=[cast_name],
-                options={
-                    "inDataType": input_dtype,
-                    "outDataType": concat_dtype,
-                },
+            src_tensor = ctx.model_ir.tensors.get(name, None)
+            cast_tensor = ctx.model_ir.tensors.get(cast_name, None)
+            if src_tensor is not None and cast_tensor is not None:
+                cast_tensor.shape_signature = (
+                    [int(v) for v in list(src_tensor.shape_signature)]
+                    if src_tensor.shape_signature is not None
+                    else [int(v) for v in list(src_tensor.shape)]
+                )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[name],
+                    outputs=[cast_name],
+                    options={
+                        "inDataType": input_dtype,
+                        "outDataType": concat_dtype,
+                    },
+                )
             )
-        )
-        casted_input_names.append(cast_name)
+            concat_input_name = cast_name
+        if (
+            coerce_singletons_to_shape_vector
+            and [int(v) for v in ctx.get_tensor_shape(concat_input_name)] != [1]
+        ):
+            reshape_name = ctx.add_intermediate_tensor(
+                f"{output_name}_concat_input{idx}_vector",
+                dtype=concat_dtype,
+                shape=[1],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[concat_input_name],
+                    outputs=[reshape_name],
+                    options={"newShape": [1]},
+                )
+            )
+            concat_input_name = reshape_name
+        casted_input_names.append(concat_input_name)
 
     output_tensor = ctx.model_ir.tensors.get(output_name, None)
     if output_tensor is not None:
