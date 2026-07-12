@@ -2878,3 +2878,16 @@ to `core/model_ir_utils.py` (AST-identical), and the lowerer now imports and
 compatibility re-exports it. Focused helper, ownership, and unary/binary tests
 passed 11 tests. This prerequisite avoids either duplicating shape semantics in
 the layout pass or introducing a circular import when the 305-line rule moves.
+
+The 305-line unary→binary rule was then moved mechanically into
+`passes/layout_transpose.py`. Its AST is identical to the implementation in
+`3f5383d`; the lowerer now holds only a compatibility wrapper. Non-commutative
+operand order, broadcast/shape-signature checks, quantization guards, multi-post
+coalescing, and legacy-adapter behavior are unchanged. All six production raw
+calls retain their original positions until the differential-index migration.
+Related family/core ownership validation passed 26 tests, followed by the full
+direct selection:
+
+```text
+1124 passed, 5 deselected, 2 warnings in 148.32s
+```

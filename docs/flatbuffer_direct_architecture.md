@@ -519,6 +519,15 @@ and structural removal share one differential index and `LayoutState` under a
 transactional invariant check. The implementation no longer rebuilds a global
 consumer map inside its rewrite loop.
 
+The related unary→binary full-post fan-out implementation is mechanically
+owned by the same family. It preserves non-commutative operand order, matching
+pre-permutations, static/dynamic broadcast metadata, quantization-grid guards,
+multiple inverse-post branches, and the optional legacy adapter. Its complete
+305-line implementation moved with an identical AST after broadcast signature
+reconciliation became a shared core helper. The lowerer retains a thin
+compatibility wrapper, while its six production positions remain unchanged for
+the subsequent indexed-runner checkpoint.
+
 General consecutive Reshape passthrough cleanup is also owned by
 `passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,
 fan-out-safe bypass of a second Reshape, and strict single-user chain collapse,
