@@ -255,9 +255,23 @@ Verification completed with:
 - `1009 passed, 5 deselected, 2 warnings in 125.74s` for the full sequential
   direct suite.
 
-The next Pad-family increment is the flatten/global-normalization Pad rewrite,
-which has an existing full positive characterization and should remain a
-separate checkpoint.
+The flatten/global-normalization followed by Pad rewrite now lives in
+`passes/pad_layout.py`. Its exact implementation and nested helpers moved as a
+single unit behind the legacy wrapper. The existing full-topology fixture
+preserves reshape targets, reduction axes, reciprocal and affine branches,
+layout-sensitive constants, Pad rotation, metadata, and terminal output
+wiring.
+
+Verification completed with:
+
+- `19 passed, 758 deselected` for focused architecture, Pad repair, and the
+  flatten/global-normalization characterization;
+- `1009 passed, 5 deselected, 2 warnings in 126.32s` for the full sequential
+  direct suite.
+
+The core Pad family is now substantially centralized. Before adding another
+large pattern, audit remaining Pad-named passes for whether they truly share
+this phase and helper contract or belong to attention/slice-specific families.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

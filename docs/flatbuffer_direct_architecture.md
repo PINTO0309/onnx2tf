@@ -135,6 +135,11 @@ legacy-consumer adapter, Pad-axis, and terminal-transpose guards. Shared tensor
 mutation utilities maintain quantization, metadata, and lineage while the
 lowerer exposes only a compatibility wrapper.
 
+Flatten/global-normalization followed by Pad is likewise owned by
+`passes/pad_layout.py`. Its complete reshape, reduction, reciprocal, affine,
+Pad, and inverse-transpose topology is validated before rewriting; scalar and
+layout-sensitive constants are handled by its nested guarded helpers.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither
