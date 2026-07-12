@@ -232,6 +232,17 @@ stride multiplication to a final maximum absolute error of
 `0.1362457275390625`. This exceeds the project's independent `1e-1` ceiling,
 so the model is not promoted despite the aggregate evaluator result.
 
+`alike_l_opset11_192x320_post.onnx` remains active with the normalized reason
+`topk_index_instability_from_float_ties`. Both previous-frame matching outputs
+are exact. In the new-keypoint path, the TopK values differ by at most
+`1.8298625946044922e-5`, but near-tied scores select or order different indices.
+That turns into an index difference up to 59,908 and a decoded coordinate
+difference up to `290.0000057220459`. Of the 5,000 returned keypoints, 4,955
+coordinates are common as sets and many raw-order differences are adjacent
+pair swaps; the associated descriptors move with those indices. Rounding the
+scores before TopK would alter the source model's selection semantics, so the
+converter does not add such a model-specific stabilization rule.
+
 The root-only Tier 3 gate at commit `c838b42` contains 71 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier3_root_c838b42.json`: 22
 passed, 15 conversion errors, 17 timeouts, 1 accuracy failure, and 16 missing
