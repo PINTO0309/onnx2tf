@@ -957,8 +957,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 17,
-        "pass": 345,
+        "missing_tflite_report": 15,
+        "pass": 347,
         "tflite_fail": 32,
         "timeout": 26,
     }
@@ -1157,6 +1157,36 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "743900046d8e38c14684c26f9df0c0fcd60a95f014698a135d2162ef77b8ae05"
     )
     assert rtdetrv4_entry["tflite_max_abs"] == 79.0
+    yolov9_n_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "yolov9_n_wholebody15_Nx3HxW.onnx"
+    )
+    assert yolov9_n_entry == {
+        "tier": 3,
+        "model": "yolov9_n_wholebody15_Nx3HxW.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 0.0008544921875,
+        "overwrite_input_shape": ["images:1,3,640,640"],
+    }
+    assert profile["model_options"]["yolov9_n_wholebody15_Nx3HxW.onnx"] == {
+        "overwrite_input_shape": ["images:1,3,640,640"],
+    }
+    yolov9_t_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "yolov9_t_wholebody28_Nx3HxW.onnx"
+    )
+    assert yolov9_t_entry == {
+        "tier": 3,
+        "model": "yolov9_t_wholebody28_Nx3HxW.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 0.0081634521484375,
+        "overwrite_input_shape": ["images:1,3,640,640"],
+    }
+    assert profile["model_options"]["yolov9_t_wholebody28_Nx3HxW.onnx"] == {
+        "overwrite_input_shape": ["images:1,3,640,640"],
+    }
     version_rfb_entry = next(
         entry
         for entry in profile_payload["models"]

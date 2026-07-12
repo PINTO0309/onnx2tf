@@ -92,8 +92,8 @@ The profile fixes root-only discovery, the 1–1,999 node range, all 420 managed
 historical model records, and inference concurrency of one. Models classified
 as `timeout` in the current managed baseline remain recorded for provenance but
 are automatically excluded from subsequent runs. The active run therefore
-contains 394 models: 345 expected passes and 49 expected non-passes, excluding
-26 recorded timeouts. The active non-passes are 32 accuracy failures and 17
+contains 394 models: 347 expected passes and 47 expected non-passes, excluding
+26 recorded timeouts. The active non-passes are 32 accuracy failures and 15
 missing reports. Tier 5 models cannot be added because the profile loader
 rejects tiers above 4 and node ranges above 1,999.
 
@@ -411,6 +411,14 @@ XNNPACK delegate, all labels and zero-scaled boxes match exactly and score
 maximum error is only `4.954636096954346e-6`. The evaluator remains
 builtin-only for portability and dynamic-shape crash isolation; the converter
 does not make XNNPACK a hidden accuracy dependency or alter TopK tie semantics.
+
+`yolov9_n_wholebody15_Nx3HxW.onnx` and
+`yolov9_t_wholebody28_Nx3HxW.onnx` are promoted from missing reports to passes
+with the explicit input shape `images:1,3,640,640`. Their symbolic height and
+width previously remained unresolved placeholders; no converter rewrite was
+required. Sequential fixed-seed evaluation reports maximum absolute errors of
+`0.0008544921875` and `0.0081634521484375`, respectively, with cosine
+similarity above `0.9999999999995` for both models.
 
 The root-only Tier 4 gate at commit `0a8ee88` contains 30 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier4_root_0a8ee88.json`: 12

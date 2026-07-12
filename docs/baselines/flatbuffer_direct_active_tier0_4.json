@@ -2506,9 +2506,11 @@
     {
       "tier": 3,
       "model": "yolov9_n_wholebody15_Nx3HxW.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "213aeef634e4aabafcdf27c4062e32d9a2ac6bb95373e30d2604d7f018568bd7"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0008544921875,
+      "overwrite_input_shape": [
+        "images:1,3,640,640"
+      ]
     },
     {
       "tier": 3,
@@ -2537,9 +2539,11 @@
     {
       "tier": 3,
       "model": "yolov9_t_wholebody28_Nx3HxW.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "213aeef634e4aabafcdf27c4062e32d9a2ac6bb95373e30d2604d7f018568bd7"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0081634521484375,
+      "overwrite_input_shape": [
+        "images:1,3,640,640"
+      ]
     },
     {
       "tier": 4,
