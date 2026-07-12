@@ -2749,3 +2749,59 @@ time. No new package was introduced, and all commands used the `uv` environment.
    guard, and finally rerun the root model sequentially.
 
 The persistent project goal is paused at this checkpoint; it is not complete.
+
+## 2026-07-13 indexed Transpose/unary passthrough checkpoint
+
+Branch `fb-refactor3` continued the mechanically extracted strict
+Transpose/unary passthrough family from checkpoint `acb0b5d`:
+
+- `_optimize_transpose_unary_passthrough_chains` now accepts and reuses one
+  differential `ModelIRGraphIndex` and the session `LayoutState`.
+- Edge rewrites use indexed input/output setters, and pre/post Transpose
+  deletion uses `ModelIRGraphIndex.remove_operator`; the pass no longer builds
+  a whole-graph consumer map inside its rewrite loop.
+- `run_transpose_unary_passthrough_cleanup` provides the stable pass ID
+  `layout.transpose_unary_passthrough` in `LAYOUT_PLAN`, model-only preflight,
+  exact indexed candidate detection, transactional validation, diagnostics,
+  and no-candidate short-circuiting before snapshots or fingerprints.
+- All six production positions were migrated from the raw compatibility
+  wrapper to the ordered runner without changing their relative pipeline
+  positions. The raw wrapper remains available for compatibility.
+- Focused characterization covers the successful canonical
+  NHWC→NCHW→RELU→NHWC rewrite and rejection of a pre-Transpose fan-out. Runner
+  instrumentation proves one initial index refresh and one transactional
+  snapshot for a rewrite, and zero snapshots for an indexed guard rejection.
+- Architecture tests require exactly six runner calls and diagnostics routed
+  through the active `ConversionSession`. The irrelevant-graph efficiency test
+  now covers this runner and still requires zero index refreshes, snapshots,
+  and fingerprints.
+
+Sequential validation completed in the core `uv` environment:
+
+```text
+uv run pytest -q \
+  tests/test_flatbuffer_direct_transpose_unary.py \
+  tests/test_flatbuffer_direct_architecture.py::test_layout_transpose_cleanup_has_single_owner \
+  tests/test_flatbuffer_direct_architecture.py::test_ordered_model_ir_runner_calls_record_session_diagnostics \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_all_production_runner_preflights_avoid_heavy_no_candidate_work
+
+7 passed in 1.88s
+```
+
+Tier 1 `superpoint.onnx` was converted sequentially with
+`-tb flatbuffer_direct -cotof`. The output check passed with
+`max_abs=1.6666e-06`, `rmse=1.62079e-07`, and cosine similarity `1`. All six
+invocations of the new runner correctly skipped without snapshots or
+fingerprints because this model had no exact candidate at those positions.
+
+The complete direct regression selection passed:
+
+```text
+1118 passed, 5 deselected, 2 warnings in 150.04s
+```
+
+The five deselections and two NumPy float16 overflow warnings are the same
+optional-environment exclusions and known warnings documented above. No new
+dependency was added, TensorFlow was not imported for this work, inference ran
+with one process at a time, and generated SuperPoint artifacts/metrics under
+`/tmp/onnx2tf_transpose_unary_superpoint*` were removed after inspection.

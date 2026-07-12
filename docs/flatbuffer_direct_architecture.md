@@ -481,8 +481,20 @@ Strict canonical NHWC→NCHW Transpose→unary-chain→inverse Transpose passthr
 is mechanically owned by the same family. Only linear layout-agnostic unary
 chains are eligible; public intermediate outputs and pre-Transpose fan-out are
 rejected, while final dtype/quantization/shape metadata is preserved. The
-157-line implementation moved with an identical AST and all six production
-positions still use the compatibility wrapper in their original order.
+157-line implementation moved with an identical AST before its indexed
+migration; the lowerer keeps the compatibility wrapper for external callers.
+
+All six production positions now call
+`run_transpose_unary_passthrough_cleanup`, registered as
+`layout.transpose_unary_passthrough` in `LAYOUT_PLAN`, in their original order.
+A model-only Transpose preflight avoids state construction when no Transpose is
+present. The indexed guard exactly verifies the canonical pre-permutation, a
+strictly linear supported unary chain, protected graph outputs, and the inverse
+post-permutation before a transactional snapshot is taken. Rewiring and both
+structural removals use the shared differential `ModelIRGraphIndex`; tensor
+pruning and layout reconciliation use the invocation's `LayoutState`. Thus the
+rewrite no longer rebuilds a consumer map for every iteration or mutates the
+operator list outside the structural index API.
 
 General consecutive Reshape passthrough cleanup is also owned by
 `passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,

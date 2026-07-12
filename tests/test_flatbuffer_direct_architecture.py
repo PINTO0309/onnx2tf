@@ -506,6 +506,7 @@ def test_layout_transpose_cleanup_has_single_owner() -> None:
         "_optimize_transpose_unary_passthrough_chains",
         "run_layout_transpose_cleanup",
         "run_transpose_gather_axis_cleanup",
+        "run_transpose_unary_passthrough_cleanup",
     }
 
 
@@ -545,6 +546,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_singleton_spatial_reshape_cleanup",
         "run_terminal_quantize_dequantize_cleanup",
         "run_transpose_gather_axis_cleanup",
+        "run_transpose_unary_passthrough_cleanup",
     }
     tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
     calls = [
@@ -556,7 +558,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 124
+    assert len(calls) == 130
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -718,6 +720,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_transpose_gather_axis_cleanup"
     ]
     assert len(transpose_gather_axis_calls) == 8
+
+    transpose_unary_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_transpose_unary_passthrough_cleanup"
+    ]
+    assert len(transpose_unary_calls) == 6
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:

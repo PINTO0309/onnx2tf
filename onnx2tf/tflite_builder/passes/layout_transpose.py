@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
     _clone_quantization,
     _invert_perm,
     _permute_tensor_metadata_if_rank_matches,
@@ -24,6 +23,28 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+
+
+_TRANSPOSE_UNARY_PASSTHROUGH_OPS = frozenset(
+    {
+        "RELU",
+        "RELU6",
+        "RELU_0_TO_1",
+        "HARD_SWISH",
+        "LEAKY_RELU",
+        "LOGISTIC",
+        "TANH",
+        "GELU",
+        "ABS",
+        "NEG",
+        "SQRT",
+        "EXP",
+        "FLOOR",
+        "CEIL",
+    }
+)
+
+
 def _is_identity_perm(perm: List[int]) -> bool:
     return perm == [int(i) for i in range(len(perm))]
 
@@ -438,7 +459,12 @@ def run_layout_transpose_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_transpose_unary_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_unary_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Fold transpose wrappers around strict unary passthrough chains.
 
@@ -453,27 +479,11 @@ def _optimize_transpose_unary_passthrough_chains(model_ir: ModelIR) -> Dict[str,
     - Only layout-agnostic unary ops are allowed.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
-    unary_passthrough_ops = {
-        "RELU",
-        "RELU6",
-        "RELU_0_TO_1",
-        "HARD_SWISH",
-        "LEAKY_RELU",
-        "LOGISTIC",
-        "TANH",
-        "GELU",
-        "ABS",
-        "NEG",
-        "SQRT",
-        "EXP",
-        "FLOOR",
-        "CEIL",
-    }
-
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
             if str(pre_op.op_type) != "TRANSPOSE":
@@ -510,7 +520,7 @@ def _optimize_transpose_unary_passthrough_chains(model_ir: ModelIR) -> Dict[str,
                 op_idx = int(current_users[0])
                 op = model_ir.operators[op_idx]
                 op_type = str(op.op_type)
-                if op_type not in unary_passthrough_ops:
+                if op_type not in _TRANSPOSE_UNARY_PASSTHROUGH_OPS:
                     break
                 if len(op.inputs) != 1 or len(op.outputs) != 1:
                     break
@@ -550,12 +560,14 @@ def _optimize_transpose_unary_passthrough_chains(model_ir: ModelIR) -> Dict[str,
                 model_ir=model_ir,
                 op=chain_ops[0],
                 new_inputs=[pre_input_name],
+                graph_index=graph_index,
             )
             # Preserve output name expected after post-transpose.
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=chain_ops[-1],
                 new_outputs=[post_output_name],
+                graph_index=graph_index,
             )
 
             # Update intermediate metadata to post-transpose layout.
@@ -584,7 +596,7 @@ def _optimize_transpose_unary_passthrough_chains(model_ir: ModelIR) -> Dict[str,
 
             remove_indices = sorted(list({int(pre_idx), int(post_idx)}), reverse=True)
             for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -593,8 +605,104 @@ def _optimize_transpose_unary_passthrough_chains(model_ir: ModelIR) -> Dict[str,
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_transpose_unary_passthrough_chains": int(rewritten)}
+
+
+def run_transpose_unary_passthrough_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run strict NHWC/NCHW unary Transpose passthrough cleanup."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            if str(operator.op_type) == "TRANSPOSE":
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        graph_outputs = set(str(name) for name in candidate_model.outputs)
+        for pre_op in candidate_model.operators:
+            if (
+                str(pre_op.op_type) != "TRANSPOSE"
+                or len(pre_op.inputs) < 2
+                or len(pre_op.outputs) != 1
+                or _read_transpose_perm(candidate_model, pre_op) != [0, 3, 1, 2]
+            ):
+                continue
+            current_tensor = str(pre_op.outputs[0])
+            if current_tensor in graph_outputs:
+                continue
+            chain_length = 0
+            while True:
+                users = pass_state.graph_index.consumer_indices(current_tensor)
+                if len(users) != 1:
+                    break
+                operator = candidate_model.operators[int(users[0])]
+                if (
+                    str(operator.op_type) not in _TRANSPOSE_UNARY_PASSTHROUGH_OPS
+                    or len(operator.inputs) != 1
+                    or len(operator.outputs) != 1
+                    or str(operator.inputs[0]) != current_tensor
+                ):
+                    break
+                current_tensor = str(operator.outputs[0])
+                if current_tensor in graph_outputs:
+                    break
+                chain_length += 1
+            if chain_length == 0 or current_tensor in graph_outputs:
+                continue
+            users = pass_state.graph_index.consumer_indices(current_tensor)
+            if len(users) != 1:
+                continue
+            post_op = candidate_model.operators[int(users[0])]
+            if (
+                str(post_op.op_type) == "TRANSPOSE"
+                and len(post_op.inputs) >= 2
+                and len(post_op.outputs) == 1
+                and str(post_op.inputs[0]) == current_tensor
+                and _read_transpose_perm(candidate_model, post_op) == [0, 2, 3, 1]
+            ):
+                return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_unary_passthrough_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("rewritten_transpose_unary_passthrough_chains", 0)
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.transpose_unary_passthrough",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={"rewritten_transpose_unary_passthrough_chains": 0},
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(

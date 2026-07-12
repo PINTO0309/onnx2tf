@@ -99,6 +99,7 @@ from onnx2tf.tflite_builder.passes.layout_transpose import (
     _optimize_transpose_unary_passthrough_chains as _optimize_transpose_unary_passthrough_chains_pass,
     run_layout_transpose_cleanup,
     run_transpose_gather_axis_cleanup,
+    run_transpose_unary_passthrough_cleanup,
 )
 from onnx2tf.tflite_builder.passes.pad_layout import (
     _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains as _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains_pass,
@@ -59773,7 +59774,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
         _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
-        _optimize_transpose_unary_passthrough_chains(model_ir)
+        run_transpose_unary_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir)
         _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir)
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
@@ -59908,7 +59913,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
         _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
-        _optimize_transpose_unary_passthrough_chains(model_ir)
+        run_transpose_unary_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir)
         _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir)
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
@@ -60052,7 +60061,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
         _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
-        _optimize_transpose_unary_passthrough_chains(model_ir)
+        run_transpose_unary_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir)
         _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir)
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
@@ -60213,7 +60226,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
         _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
-        _optimize_transpose_unary_passthrough_chains(model_ir)
+        run_transpose_unary_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir)
         _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir)
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
@@ -60508,7 +60525,11 @@ def lower_onnx_to_ir(
     # MAXIMUM/MINIMUM -> RELU_0_TO_1 canonicalization can expose fresh
     # NHWC<->NCHW unary wrappers (e.g. HardSigmoid clamp). Re-run the
     # strict transpose-unary passthrough fold once in terminal stage.
-    _optimize_transpose_unary_passthrough_chains(model_ir)
+    run_transpose_unary_passthrough_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_maximum_zero_relu_cleanup(
         model_ir,
         layout_state=session.layout_state,
@@ -60759,7 +60780,11 @@ def lower_onnx_to_ir(
     # Some late specialized rewrites can still leave trivial
     # NHWC->NCHW->NHWC wrappers around unary activations.
     # Run one final strict unary transpose fold before serialization guards.
-    _optimize_transpose_unary_passthrough_chains(model_ir)
+    run_transpose_unary_passthrough_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir)
     # No-layout fallback relowering can still keep strict
     # TRANSPOSE->LOGISTIC->MUL->TRANSPOSE swish wrappers (e.g. MobileViT stem).
