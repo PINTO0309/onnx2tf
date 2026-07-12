@@ -999,8 +999,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 6,
-        "pass": 366,
-        "tflite_fail": 22,
+        "pass": 367,
+        "tflite_fail": 21,
         "timeout": 26,
     }
     assert profile["model_options"]["silero_vad.onnx"] == {
@@ -1611,6 +1611,18 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         ],
     }
     assert profile["model_options"]["LibreRFDETRn.onnx"] == {
+        "overwrite_input_shape": ["input:1,3,384,384"],
+    }
+    libre_rfdetr_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "LibreRFDETRn.onnx"
+    )
+    assert libre_rfdetr_entry == {
+        "tier": 4,
+        "model": "LibreRFDETRn.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 0.0001087188720703125,
         "overwrite_input_shape": ["input:1,3,384,384"],
     }
     assert profile["model_options"]["conv_tasnet.onnx"] == {
