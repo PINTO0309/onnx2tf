@@ -9285,6 +9285,149 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         ctx.model_ir.tensors[output_name].quantization = _clone_quantization(in_quant)
 
 
+def _build_static_resize_5d_op(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    input_shape: list[int],
+    output_shape: list[int],
+    tflite_op: str,
+    align_corners: bool,
+    half_pixel_centers: bool,
+) -> None:
+    n, c, in_d, in_h, in_w = [int(v) for v in input_shape]
+    out_n, out_c, out_d, out_h, out_w = [int(v) for v in output_shape]
+    if n != out_n or c != out_c:
+        raise NotImplementedError(
+            "Resize rank-5 cannot change batch/channel dimensions in flatbuffer_direct. "
+            f"op={node.name} input_shape={input_shape} output_shape={output_shape}"
+        )
+    if any(int(v) <= 0 for v in input_shape + output_shape):
+        raise NotImplementedError(
+            "Resize rank-5 requires static positive input/output shapes in flatbuffer_direct. "
+            f"op={node.name} input_shape={input_shape} output_shape={output_shape}"
+        )
+
+    dtype = ctx.get_tensor_dtype(input_name)
+
+    def _add_intermediate(name: str, shape: list[int]) -> str:
+        tensor_name = ctx.add_intermediate_tensor(name, dtype=dtype, shape=shape)
+        source_quant = ctx.model_ir.tensors[input_name].quantization
+        if source_quant is not None:
+            ctx.model_ir.tensors[tensor_name].quantization = _clone_quantization(source_quant)
+        return tensor_name
+
+    def _add_reshape(src: str, dst: str, shape: list[int]) -> None:
+        shape_name = ctx.add_const_tensor(
+            f"{dst}_shape",
+            np.asarray(shape, dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[src, shape_name],
+                outputs=[dst],
+                options={"newShape": [int(v) for v in shape]},
+            )
+        )
+
+    resize_options = {
+        "alignCorners": bool(align_corners),
+        "halfPixelCenters": bool(half_pixel_centers),
+    }
+    x_ndhwc = _add_intermediate(
+        f"{node.name}_input_ndhwc",
+        [n, in_d, in_h, in_w, c],
+    )
+    x_ndhwc = make_transpose(
+        ctx,
+        input_name,
+        x_ndhwc,
+        [0, 2, 3, 4, 1],
+        allow_elide_inverse_chain=True,
+    )
+
+    x_hw = _add_intermediate(
+        f"{node.name}_input_hw_batches",
+        [n * in_d, in_h, in_w, c],
+    )
+    _add_reshape(x_ndhwc, x_hw, [n * in_d, in_h, in_w, c])
+    y_hw = _add_intermediate(
+        f"{node.name}_output_hw_batches",
+        [n * in_d, out_h, out_w, c],
+    )
+    hw_size = ctx.add_const_tensor(
+        f"{node.name}_resize_hw_size",
+        np.asarray([out_h, out_w], dtype=np.int32),
+    )
+    _add_resize_builtin_with_integer_linear_compatibility(
+        ctx=ctx,
+        node_name=f"{node.name}_hw",
+        tflite_op=tflite_op,
+        input_name=x_hw,
+        size_input_name=hw_size,
+        output_name=y_hw,
+        options=dict(resize_options),
+    )
+
+    y_hw_5d = _add_intermediate(
+        f"{node.name}_output_hw_ndhwc",
+        [n, in_d, out_h, out_w, c],
+    )
+    _add_reshape(y_hw, y_hw_5d, [n, in_d, out_h, out_w, c])
+    y_d_major = _add_intermediate(
+        f"{node.name}_output_hw_nhwdc",
+        [n, out_h, out_w, in_d, c],
+    )
+    y_d_major = make_transpose(
+        ctx,
+        y_hw_5d,
+        y_d_major,
+        [0, 2, 3, 1, 4],
+    )
+    x_d = _add_intermediate(
+        f"{node.name}_input_depth_batches",
+        [n * out_h * out_w, in_d, 1, c],
+    )
+    _add_reshape(y_d_major, x_d, [n * out_h * out_w, in_d, 1, c])
+    y_d = _add_intermediate(
+        f"{node.name}_output_depth_batches",
+        [n * out_h * out_w, out_d, 1, c],
+    )
+    depth_size = ctx.add_const_tensor(
+        f"{node.name}_resize_depth_size",
+        np.asarray([out_d, 1], dtype=np.int32),
+    )
+    _add_resize_builtin_with_integer_linear_compatibility(
+        ctx=ctx,
+        node_name=f"{node.name}_depth",
+        tflite_op=tflite_op,
+        input_name=x_d,
+        size_input_name=depth_size,
+        output_name=y_d,
+        options=dict(resize_options),
+    )
+
+    y_d_5d = _add_intermediate(
+        f"{node.name}_output_nhwdc",
+        [n, out_h, out_w, out_d, c],
+    )
+    _add_reshape(y_d, y_d_5d, [n, out_h, out_w, out_d, c])
+    y_ndhwc = _add_intermediate(
+        f"{node.name}_output_ndhwc",
+        [n, out_d, out_h, out_w, c],
+    )
+    y_ndhwc = make_transpose(
+        ctx,
+        y_d_5d,
+        y_ndhwc,
+        [0, 3, 1, 2, 4],
+    )
+    make_transpose(ctx, y_ndhwc, output_name, [0, 4, 1, 2, 3])
+
+
 def build_resize_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
@@ -9302,11 +9445,11 @@ def build_resize_op(node: Any, ctx: Any) -> None:
     )
     existing_output_signature = (
         [int(v) for v in list(output_tensor.shape_signature)]
-        if output_tensor.shape_signature is not None and len(list(output_tensor.shape_signature)) in {3, 4}
+        if output_tensor.shape_signature is not None and len(list(output_tensor.shape_signature)) in {3, 4, 5}
         else None
     )
-    if len(input_shape) not in {3, 4}:
-        if len(input_signature) in {3, 4}:
+    if len(input_shape) not in {3, 4, 5}:
+        if len(input_signature) in {3, 4, 5}:
             _materialize_tensor_shape_from_signature(input_tensor, signature=input_signature)
             input_shape = [int(v) for v in list(input_tensor.shape)]
         elif _is_unresolved_placeholder_shape(input_shape, input_signature) and len(input_signature) in {0, 1}:
@@ -9316,9 +9459,9 @@ def build_resize_op(node: Any, ctx: Any) -> None:
             )
             input_shape = [int(v) for v in list(input_tensor.shape)]
             input_signature = [int(v) for v in list(input_tensor.shape_signature)]
-    if len(input_shape) not in {3, 4}:
+    if len(input_shape) not in {3, 4, 5}:
         raise NotImplementedError(
-            f"Resize supports only rank-3/4 tensors in flatbuffer_direct. op={node.name} input_shape={input_shape}"
+            f"Resize supports only rank-3/4/5 tensors in flatbuffer_direct. op={node.name} input_shape={input_shape}"
         )
     input_rank = len(input_shape)
     rank3_layout = (
@@ -9435,6 +9578,24 @@ def build_resize_op(node: Any, ctx: Any) -> None:
 
     mode, coordinate_transformation_mode, align_corners, half_pixel_centers = _resolve_resize_flags(node)
     tflite_op = "RESIZE_NEAREST_NEIGHBOR" if mode == "nearest" else "RESIZE_BILINEAR"
+    if input_rank == 5:
+        if mode == "cubic":
+            raise NotImplementedError(
+                f"Resize rank-5 supports nearest/linear only. op={node.name} mode={mode}"
+            )
+        output_tensor.shape_signature = [int(v) for v in output_shape]
+        _build_static_resize_5d_op(
+            node=node,
+            ctx=ctx,
+            input_name=input_name,
+            output_name=output_name,
+            input_shape=input_shape,
+            output_shape=output_shape,
+            tflite_op=tflite_op,
+            align_corners=align_corners,
+            half_pixel_centers=half_pixel_centers,
+        )
+        return
     onnx_sizes_hw, onnx_scales_hw = _extract_resize_onnx_hw_hints(
         node,
         ctx,

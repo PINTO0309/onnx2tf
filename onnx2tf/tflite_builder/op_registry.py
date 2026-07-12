@@ -5895,17 +5895,17 @@ def _validate_resize(node: Any, ctx: Any) -> None:
     output_is_unknown_placeholder = _is_unknown_rank_placeholder_tensor(ctx, node.outputs[0].name)
     input_rank = len(input_shape)
     output_rank = len(output_shape)
-    if input_rank not in {3, 4} and not input_is_unknown_placeholder:
+    if input_rank not in {3, 4, 5} and not input_is_unknown_placeholder:
         raise NodeValidationError(
             reason_code="unsupported_input_rank",
-            message=f"Resize supports rank-3/4 input. input_shape={input_shape}",
+            message=f"Resize supports rank-3/4/5 input. input_shape={input_shape}",
             node_name=node.name,
             node_op=node.op,
         )
-    if output_rank not in {3, 4} and not output_is_unknown_placeholder:
+    if output_rank not in {3, 4, 5} and not output_is_unknown_placeholder:
         raise NodeValidationError(
             reason_code="unsupported_output_rank",
-            message=f"Resize supports rank-3/4 output. output_shape={output_shape}",
+            message=f"Resize supports rank-3/4/5 output. output_shape={output_shape}",
             node_name=node.name,
             node_op=node.op,
         )
@@ -5932,6 +5932,24 @@ def _validate_resize(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
+    if input_rank == 5:
+        if mode == "cubic":
+            raise NodeValidationError(
+                reason_code="unsupported_attribute_value",
+                message="Resize rank-5 supports nearest/linear modes only in flatbuffer_direct.",
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if any(int(v) <= 0 for v in list(input_shape) + list(output_shape)):
+            raise NodeValidationError(
+                reason_code="unsupported_input_shape",
+                message=(
+                    "Resize rank-5 requires static positive input/output shapes in "
+                    f"flatbuffer_direct. input_shape={input_shape} output_shape={output_shape}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
     default_ctm = "asymmetric" if str(node.op) == "Upsample" else "half_pixel"
     ctm = str(node.attrs.get("coordinate_transformation_mode", default_ctm)).lower()
     if mode == "nearest":
@@ -8076,6 +8094,8 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
         tflite_ops=[
             "RESIZE_NEAREST_NEIGHBOR",
             "RESIZE_BILINEAR",
+            "RESHAPE",
+            "TRANSPOSE",
             "SHAPE",
             "SLICE",
             "MUL",
