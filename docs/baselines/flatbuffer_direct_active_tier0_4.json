@@ -2532,9 +2532,17 @@
     {
       "tier": 4,
       "model": "G_180000.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "5a1003d04fddfcce184aafce8f741fa38052a756521662ff980dc6cc88164e2b"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0,
+      "overwrite_input_shape": [
+        "specs:1,257,73"
+      ],
+      "keep_shape_absolutely_input_names": [
+        "specs",
+        "lengths",
+        "sid_src",
+        "sid_tgt"
+      ]
     },
     {
       "tier": 4,
