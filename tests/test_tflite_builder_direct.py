@@ -39777,6 +39777,90 @@ def _make_if_p3_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 11)])
 
 
+def _make_nested_if_captures_outer_branch_tensor_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2])
+    outer_cond = helper.make_tensor_value_info("outer_cond", TensorProto.BOOL, [])
+    nested_cond = helper.make_tensor_value_info("nested_cond", TensorProto.BOOL, [])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2])
+
+    nested_then_bias = numpy_helper.from_array(
+        np.asarray(2.0, dtype=np.float32), name="nested_then_bias"
+    )
+    nested_then_node = helper.make_node(
+        "Add", ["outer_local", "nested_then_bias"], ["nested_then_out"]
+    )
+    nested_then_graph = helper.make_graph(
+        [nested_then_node],
+        "nested_capture_then",
+        [],
+        [helper.make_tensor_value_info("nested_then_out", TensorProto.FLOAT, [2])],
+        initializer=[nested_then_bias],
+    )
+    nested_else_bias = numpy_helper.from_array(
+        np.asarray(3.0, dtype=np.float32), name="nested_else_bias"
+    )
+    nested_else_node = helper.make_node(
+        "Add", ["outer_local", "nested_else_bias"], ["nested_else_out"]
+    )
+    nested_else_graph = helper.make_graph(
+        [nested_else_node],
+        "nested_capture_else",
+        [],
+        [helper.make_tensor_value_info("nested_else_out", TensorProto.FLOAT, [2])],
+        initializer=[nested_else_bias],
+    )
+
+    outer_then_bias = numpy_helper.from_array(
+        np.asarray(1.0, dtype=np.float32), name="outer_then_bias"
+    )
+    outer_local_node = helper.make_node(
+        "Add", ["x", "outer_then_bias"], ["outer_local"]
+    )
+    nested_if_node = helper.make_node(
+        "If",
+        ["nested_cond"],
+        ["outer_then_out"],
+        name="NestedCaptureIf",
+        then_branch=nested_then_graph,
+        else_branch=nested_else_graph,
+    )
+    outer_then_graph = helper.make_graph(
+        [outer_local_node, nested_if_node],
+        "outer_capture_then",
+        [],
+        [helper.make_tensor_value_info("outer_then_out", TensorProto.FLOAT, [2])],
+        initializer=[outer_then_bias],
+    )
+    outer_else_bias = numpy_helper.from_array(
+        np.asarray(4.0, dtype=np.float32), name="outer_else_bias"
+    )
+    outer_else_node = helper.make_node(
+        "Add", ["x", "outer_else_bias"], ["outer_else_out"]
+    )
+    outer_else_graph = helper.make_graph(
+        [outer_else_node],
+        "outer_capture_else",
+        [],
+        [helper.make_tensor_value_info("outer_else_out", TensorProto.FLOAT, [2])],
+        initializer=[outer_else_bias],
+    )
+    outer_if_node = helper.make_node(
+        "If",
+        ["outer_cond"],
+        ["y"],
+        name="OuterCaptureIf",
+        then_branch=outer_then_graph,
+        else_branch=outer_else_graph,
+    )
+    graph = helper.make_graph(
+        [outer_if_node],
+        "nested_if_capture_graph",
+        [x, outer_cond, nested_cond],
+        [y],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_if_multi_output_nested_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("if_mo_x", TensorProto.FLOAT, [2, 2])
     y = helper.make_tensor_value_info("if_mo_y", TensorProto.FLOAT, [2, 2])
@@ -40059,6 +40143,15 @@ def test_flatbuffer_direct_if_p3_lowers_to_builtin_ops_without_custom() -> None:
     out_tensor = model_ir.tensors["If_p3_output"]
     assert out_tensor.shape_signature is not None
     assert int(_shape_signature(out_tensor)[0]) == 100
+
+
+def test_flatbuffer_direct_nested_if_remaps_outer_branch_tensor_capture() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_nested_if_captures_outer_branch_tensor_model(),
+        output_file_name="nested_if_outer_branch_capture",
+    )
+    assert all(str(op.op_type) != "CUSTOM" for op in model_ir.operators)
+    assert _find_unbound_nonconstant_operator_inputs(model_ir) == []
 
 
 def test_flatbuffer_direct_if_multi_output_nested_lowers_to_builtin_ops_without_custom() -> None:

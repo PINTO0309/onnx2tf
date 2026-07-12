@@ -646,6 +646,44 @@ def _constant_node_to_array(node_proto: Any) -> np.ndarray:
     )
 
 
+def _clone_graph_with_captured_name_remap(
+    graph: Any,
+    name_remap: Dict[str, str],
+) -> Any:
+    """Remap lexical captures without renaming tensors local to the graph."""
+    cloned_graph = onnx.GraphProto()
+    cloned_graph.CopyFrom(graph)
+    local_names = {
+        str(value.name)
+        for value in list(cloned_graph.input) + list(cloned_graph.initializer)
+        if str(value.name) != ""
+    }
+    local_names.update(
+        str(output_name)
+        for graph_node in cloned_graph.node
+        for output_name in graph_node.output
+        if str(output_name) != ""
+    )
+    for graph_node in cloned_graph.node:
+        for input_index, input_name in enumerate(graph_node.input):
+            normalized_name = str(input_name)
+            if normalized_name not in local_names and normalized_name in name_remap:
+                graph_node.input[input_index] = str(name_remap[normalized_name])
+        for attr in graph_node.attribute:
+            if int(attr.type) == int(onnx.AttributeProto.GRAPH):
+                attr.g.CopyFrom(
+                    _clone_graph_with_captured_name_remap(attr.g, name_remap)
+                )
+            elif int(attr.type) == int(onnx.AttributeProto.GRAPHS):
+                remapped_graphs = [
+                    _clone_graph_with_captured_name_remap(nested_graph, name_remap)
+                    for nested_graph in attr.graphs
+                ]
+                del attr.graphs[:]
+                attr.graphs.extend(remapped_graphs)
+    return cloned_graph
+
+
 def _wrap_node(
     node_proto: Any,
     *,
@@ -658,6 +696,8 @@ def _wrap_node(
     for attr in node_proto.attribute:
         converted = _to_tflite_attr_value(attr)
         if converted is not None:
+            if isinstance(converted, onnx.GraphProto) and len(remap_in) > 0:
+                converted = _clone_graph_with_captured_name_remap(converted, remap_in)
             attrs[str(attr.name)] = converted
 
     return _WrappedBranchNode(
