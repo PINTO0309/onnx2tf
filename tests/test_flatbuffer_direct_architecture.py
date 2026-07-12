@@ -420,6 +420,12 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
         assert f"{function_name}_pass" in wrapper_names
     lowerer_names = {
         node.id
+        for node in ast.walk(ast.parse(lowering_path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Name)
+    }
+    assert "run_singleton_maxpool_layout_cleanup" in lowerer_names
+    lowerer_names = {
+        node.id
         for node in ast.walk(
             ast.parse(lowering_path.read_text(encoding="utf-8"))
         )
@@ -456,6 +462,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_hard_activation_passthrough_cleanup",
         "run_redundant_cast_cleanup",
         "run_squeeze_reshape_identity_cleanup",
+        "run_singleton_maxpool_layout_cleanup",
         "run_terminal_quantize_dequantize_cleanup",
     }
     tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
@@ -468,7 +475,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 82
+    assert len(calls) == 85
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -566,6 +573,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_quantized_reshape_cleanup"
     ]
     assert len(quantized_reshape_calls) == 3
+
+    singleton_maxpool_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_singleton_maxpool_layout_cleanup"
+    ]
+    assert len(singleton_maxpool_calls) == 3
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:

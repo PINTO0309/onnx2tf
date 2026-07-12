@@ -4,6 +4,13 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _build_tensor_consumer_map,
     _build_tensor_producer_map,
@@ -14,9 +21,15 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_inputs,
     _set_operator_outputs,
 )
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
-def _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Remove redundant singleton layout RESHAPE bridges around consecutive MAX_POOL blocks.
 
@@ -34,6 +47,7 @@ def _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir: Mode
     preserving external NCHW contracts.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     binary_ops = {
@@ -77,8 +91,8 @@ def _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir: Mode
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for post1_idx, post1_op in enumerate(model_ir.operators):
@@ -251,6 +265,7 @@ def _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir: Mode
                 model_ir=model_ir,
                 op=bin_op,
                 new_inputs=bin_inputs,
+                graph_index=graph_index,
             )
 
             pre2_target_shape = [int(v) for v in list(cast_path["pre2_target_shape"])]
@@ -299,6 +314,7 @@ def _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir: Mode
                             str(adapter_out_name) if str(v) == str(bin_out_name) else str(v)
                             for v in list(user_inputs)
                         ],
+                        graph_index=graph_index,
                     )
 
                 bin_current_idx = next(
@@ -307,7 +323,7 @@ def _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir: Mode
                 )
                 if bin_current_idx is None:
                     continue
-                model_ir.operators.insert(
+                graph_index.insert_operator(
                     int(bin_current_idx) + 1,
                     OperatorIR(
                         op_type="RESHAPE",
@@ -321,6 +337,7 @@ def _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir: Mode
                 model_ir=model_ir,
                 op=cast_path["pool2_op"],
                 new_inputs=[str(cast_path["cast_out_name"])],
+                graph_index=graph_index,
             )
             _set_tensor_shape_metadata(str(cast_path["cast_out_name"]), pre2_target_shape)
 
@@ -329,7 +346,7 @@ def _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir: Mode
                 if op_ref is post1_op or op_ref is cast_path["pre2_op"]:
                     remove_indices.append(int(op_idx))
             for remove_idx in sorted(list(set(remove_indices)), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -339,11 +356,18 @@ def _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir: Mode
             break
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_singleton_layout_reshape_maxpool_binary_cast_chains": int(rewritten)}
 
 
-def _optimize_singleton_nms_maxpool_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_singleton_nms_maxpool_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Collapse SuperPoint-like singleton-channel NMS MAX_POOL reshape ladders into NHWC.
 
@@ -359,6 +383,7 @@ def _optimize_singleton_nms_maxpool_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
       NHWC->NCHW adapter.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -414,8 +439,8 @@ def _optimize_singleton_nms_maxpool_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for post1_idx, post1_op in enumerate(model_ir.operators):
@@ -857,7 +882,7 @@ def _optimize_singleton_nms_maxpool_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
             select0_current_idx = next((int(i) for i, op in enumerate(model_ir.operators) if op is select0_op), None)
             if select0_current_idx is None:
                 continue
-            model_ir.operators.insert(
+            graph_index.insert_operator(
                 int(select0_current_idx),
                 OperatorIR(
                     op_type="RESHAPE",
@@ -877,22 +902,26 @@ def _optimize_singleton_nms_maxpool_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
                 model_ir=model_ir,
                 op=greater0_op,
                 new_inputs=greater0_inputs,
+                graph_index=graph_index,
             )
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=select0_op,
                 new_inputs=[str(cond0_name), str(zero_nhwc_name), str(base_nhwc_name)],
+                graph_index=graph_index,
             )
 
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=pool2_op,
                 new_inputs=[str(select0_out_name)],
+                graph_index=graph_index,
             )
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=equal1_op,
                 new_inputs=[str(select0_out_name), str(pool2_out_name)],
+                graph_index=graph_index,
             )
 
             _set_operator_inputs(
@@ -902,12 +931,14 @@ def _optimize_singleton_nms_maxpool_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
                     str(eq0_nhwc_name) if str(v) == str(eq0_nchw_name) else str(v)
                     for v in list(or0_op.inputs)
                 ],
+                graph_index=graph_index,
             )
 
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=pool3_op,
                 new_inputs=[str(cast1_out_name)],
+                graph_index=graph_index,
             )
             greater1_inputs = [str(v) for v in list(greater1_op.inputs)]
             greater1_inputs = [
@@ -918,27 +949,32 @@ def _optimize_singleton_nms_maxpool_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
                 model_ir=model_ir,
                 op=greater1_op,
                 new_inputs=greater1_inputs,
+                graph_index=graph_index,
             )
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=select1_op,
                 new_inputs=[str(cond1_name), str(zero_nhwc_name), str(base_nhwc_name)],
+                graph_index=graph_index,
             )
 
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=pool4_op,
                 new_inputs=[str(select1_out_name)],
+                graph_index=graph_index,
             )
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=equal2_op,
                 new_inputs=[str(select1_out_name), str(pool4_out_name)],
+                graph_index=graph_index,
             )
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=select2_op,
                 new_inputs=[str(or1_out_name), str(base_nhwc_name), str(zero_nhwc_name)],
+                graph_index=graph_index,
             )
 
             # Convert NHWC output of final SELECT back to NCHW for downstream.
@@ -962,6 +998,7 @@ def _optimize_singleton_nms_maxpool_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
                 model_ir=model_ir,
                 op=select2_op,
                 new_outputs=[str(select2_out_nhwc_name)],
+                graph_index=graph_index,
             )
 
             final_nchw_shape_name = _unique_tensor_name(f"{select2_out_nchw_name}_shape_nchw")
@@ -977,7 +1014,7 @@ def _optimize_singleton_nms_maxpool_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
             select2_current_idx = next((int(i) for i, op in enumerate(model_ir.operators) if op is select2_op), None)
             if select2_current_idx is None:
                 continue
-            model_ir.operators.insert(
+            graph_index.insert_operator(
                 int(select2_current_idx) + 1,
                 OperatorIR(
                     op_type="RESHAPE",
@@ -1023,7 +1060,7 @@ def _optimize_singleton_nms_maxpool_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
                 if any(op_ref is target for target in remove_refs):
                     remove_indices.append(int(op_idx))
             for remove_idx in sorted(list(set(remove_indices)), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -1033,7 +1070,213 @@ def _optimize_singleton_nms_maxpool_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
             break
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_singleton_nms_maxpool_nhwc_chains": int(rewritten)}
 
 
+def run_singleton_maxpool_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    include_binary_cast: bool = True,
+    include_nms: bool = True,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run adjacent singleton MaxPool layout rewrites in legacy order."""
+
+    binary_ops = {
+        "EQUAL",
+        "NOT_EQUAL",
+        "GREATER",
+        "GREATER_EQUAL",
+        "LESS",
+        "LESS_EQUAL",
+        "MAXIMUM",
+        "MINIMUM",
+        "ADD",
+        "SUB",
+        "MUL",
+        "DIV",
+    }
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"RESHAPE", "MAX_POOL_2D"}
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            required.discard(str(operator.op_type))
+            if len(required) == 0:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _reshape_shape(candidate_model: ModelIR, op: OperatorIR) -> List[int] | None:
+        if str(op.op_type) != "RESHAPE" or len(op.inputs) < 2:
+            return None
+        values = _read_const_ints_from_tensor(
+            candidate_model.tensors.get(str(op.inputs[1]))
+        )
+        if values is None or len(values) != 4:
+            return None
+        return [int(value) for value in values]
+
+    def _single_user(
+        pass_state: ModelIRPassState,
+        tensor_name: str,
+        op_type: str,
+    ) -> tuple[int, OperatorIR] | None:
+        users = pass_state.graph_index.consumer_indices(str(tensor_name))
+        if len(users) != 1:
+            return None
+        index = int(users[0])
+        op = pass_state.model_ir.operators[index]
+        if str(op.op_type) != str(op_type):
+            return None
+        return index, op
+
+    def _has_binary_cast_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        model_outputs = set(str(value) for value in candidate_model.outputs)
+        for post1_op in candidate_model.operators:
+            post1_shape = _reshape_shape(candidate_model, post1_op)
+            if (
+                post1_shape is None
+                or len(post1_op.outputs) != 1
+                or int(post1_shape[1]) != 1
+                or str(post1_op.outputs[0]) in model_outputs
+            ):
+                continue
+            pool1 = pass_state.graph_index.producer(str(post1_op.inputs[0]))
+            if (
+                pool1 is None
+                or str(pool1.op_type) != "MAX_POOL_2D"
+                or len(pool1.inputs) != 1
+                or len(pool1.outputs) != 1
+            ):
+                continue
+            pre1 = pass_state.graph_index.producer(str(pool1.inputs[0]))
+            pre1_shape = (
+                _reshape_shape(candidate_model, pre1) if pre1 is not None else None
+            )
+            if pre1 is None or pre1_shape is None or int(pre1_shape[3]) != 1:
+                continue
+            binary = _single_user(
+                pass_state,
+                str(post1_op.outputs[0]),
+                next(
+                    (
+                        str(candidate_model.operators[index].op_type)
+                        for index in pass_state.graph_index.consumer_indices(
+                            str(post1_op.outputs[0])
+                        )
+                        if str(candidate_model.operators[index].op_type) in binary_ops
+                    ),
+                    "",
+                ),
+            )
+            if binary is None or str(pre1.inputs[0]) not in [str(v) for v in binary[1].inputs]:
+                continue
+            cast = _single_user(pass_state, str(binary[1].outputs[0]), "CAST")
+            if cast is None or len(cast[1].outputs) != 1:
+                continue
+            pre2 = _single_user(pass_state, str(cast[1].outputs[0]), "RESHAPE")
+            if pre2 is None or _reshape_shape(candidate_model, pre2[1]) is None:
+                continue
+            pool2 = _single_user(pass_state, str(pre2[1].outputs[0]), "MAX_POOL_2D")
+            if pool2 is None or len(pool2[1].outputs) != 1:
+                continue
+            post2 = _single_user(pass_state, str(pool2[1].outputs[0]), "RESHAPE")
+            if post2 is None:
+                continue
+            pre2_shape = _reshape_shape(candidate_model, pre2[1])
+            post2_shape = _reshape_shape(candidate_model, post2[1])
+            if (
+                pre2_shape is not None
+                and post2_shape is not None
+                and int(pre2_shape[3]) == 1
+                and int(post2_shape[1]) == 1
+            ):
+                return True
+        return False
+
+    def _has_nms_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        for post1_op in candidate_model.operators:
+            post1_shape = _reshape_shape(candidate_model, post1_op)
+            if post1_shape is None or int(post1_shape[1]) != 1:
+                continue
+            pool = pass_state.graph_index.producer(str(post1_op.inputs[0]))
+            if pool is None or str(pool.op_type) != "MAX_POOL_2D" or len(pool.inputs) != 1:
+                continue
+            cast = pass_state.graph_index.producer(str(pool.inputs[0]))
+            if cast is None or str(cast.op_type) != "CAST" or len(cast.inputs) != 1:
+                continue
+            equal = pass_state.graph_index.producer(str(cast.inputs[0]))
+            if equal is not None and str(equal.op_type) == "EQUAL":
+                return True
+        return False
+
+    def _run_binary_cast(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "rewritten_singleton_layout_reshape_maxpool_binary_cast_chains",
+                    0,
+                )
+            ),
+        }
+
+    def _run_nms(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_singleton_nms_maxpool_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("rewritten_singleton_nms_maxpool_nhwc_chains", 0)),
+        }
+
+    specs: List[PassSpec[ModelIRPassState]] = []
+    if include_binary_cast:
+        specs.append(
+            PassSpec(
+                pass_id="layout.singleton_maxpool_binary_cast",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_binary_cast,
+                precondition=_has_binary_cast_candidate,
+                priority=10,
+                transactional=True,
+            )
+        )
+    if include_nms:
+        specs.append(
+            PassSpec(
+                pass_id="layout.singleton_nms_maxpool_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_nms,
+                precondition=_has_nms_candidate,
+                priority=20,
+                transactional=True,
+            )
+        )
+    default_details = {
+        "rewritten_singleton_layout_reshape_maxpool_binary_cast_chains": 0,
+        "rewritten_singleton_nms_maxpool_nhwc_chains": 0,
+    }
+    if len(specs) == 0:
+        return default_details
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=specs,
+        layout_state=layout_state,
+        default_details=default_details,
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}

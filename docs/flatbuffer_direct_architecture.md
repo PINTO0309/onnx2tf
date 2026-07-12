@@ -267,6 +267,18 @@ mutation, and pruning helpers remain canonical; both legacy lowerer symbols
 are thin compatibility wrappers. The two rewrites remain adjacent in their
 three production positions.
 
+Those adjacent rewrites now run through one ordered pass group with stable IDs
+`layout.singleton_maxpool_binary_cast` and
+`layout.singleton_nms_maxpool_nhwc`. The group builds one differential
+`ModelIRGraphIndex` and one `LayoutState` only after its model-only preflight
+finds both Reshape and MaxPool operators. Each spec then applies a local
+producer/consumer topology guard before taking a transactional snapshot. All
+input/output rewiring, operator insertion/removal, and tensor pruning update
+the shared index and layout state; the lowerer no longer calls either raw
+implementation directly. This preserves the legacy order while exposing
+per-spec diagnostics and avoiding snapshots on irrelevant or guard-rejected
+graphs.
+
 The mixed attention MirrorPad pass is the first post-lowering rewrite migrated
 to the differential ModelIR index. It builds producer/consumer state once,
 updates input edges through indexed lineage helpers, and removes the redundant

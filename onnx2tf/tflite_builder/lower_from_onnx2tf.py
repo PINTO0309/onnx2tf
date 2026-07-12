@@ -140,6 +140,7 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
 from onnx2tf.tflite_builder.passes.singleton_maxpool_layout import (
     _optimize_singleton_layout_reshape_maxpool_binary_cast_chains as _optimize_singleton_layout_reshape_maxpool_binary_cast_chains_pass,
     _optimize_singleton_nms_maxpool_nhwc_chains as _optimize_singleton_nms_maxpool_nhwc_chains_pass,
+    run_singleton_maxpool_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.cast_cleanup import (
     _optimize_redundant_int32_to_int64_passthrough_cast_chains as _optimize_redundant_int32_to_int64_passthrough_cast_chains_pass,
@@ -62461,8 +62462,11 @@ def lower_onnx_to_ir(
         _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
         _optimize_singleton_layout_reshape_unary_passthrough_chains(model_ir)
         _optimize_consecutive_inverse_singleton_layout_reshapes(model_ir)
-        _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir)
-        _optimize_singleton_nms_maxpool_nhwc_chains(model_ir)
+        run_singleton_maxpool_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir)
         _optimize_consecutive_reshape_passthrough_chains(model_ir)
         run_squeeze_reshape_identity_cleanup(
@@ -62519,8 +62523,11 @@ def lower_onnx_to_ir(
     )
     _optimize_singleton_layout_reshape_unary_passthrough_chains(model_ir)
     _optimize_consecutive_inverse_singleton_layout_reshapes(model_ir)
-    _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir)
-    _optimize_singleton_nms_maxpool_nhwc_chains(model_ir)
+    run_singleton_maxpool_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir)
     _optimize_consecutive_reshape_passthrough_chains(model_ir)
     run_squeeze_reshape_identity_cleanup(
@@ -62674,8 +62681,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     if optimize_layout_transpose_chains:
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-    _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir)
-    _optimize_singleton_nms_maxpool_nhwc_chains(model_ir)
+    run_singleton_maxpool_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     # Boundary cleanup can recreate a terminal no-op RESHAPE.
     # Run one last pass to remove shape-preserving single reshapes.
     _optimize_consecutive_reshape_passthrough_chains(model_ir)

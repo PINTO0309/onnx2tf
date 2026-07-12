@@ -1583,6 +1583,43 @@ LayoutState aware as one ordered pair. Its integration gate must capture
 runner diagnostics for a root SuperPoint model to prove which spec changes,
 then run `-cotof` sequentially.
 
+That checkpoint is now complete. The two implementations use the shared
+differential graph index for producer/consumer lookup and every graph mutation,
+and synchronize tensor pruning through `LayoutState`. Their three adjacent
+production call pairs were replaced by one ordered transactional runner with
+stable IDs `layout.singleton_maxpool_binary_cast` and
+`layout.singleton_nms_maxpool_nhwc`; compatibility wrappers remain the only
+lowerer owners of the raw symbols. Model-only preflight rejects graphs without
+both Reshape and MaxPool without building index, snapshot, or fingerprint
+state. The binary/cast and strict NMS specs use local topology guards rather
+than model names or global operation-count thresholds.
+
+Sequential validation completed with:
+
+- `6 passed` for singleton success/fan-out, the compact NMS positive-guard
+  prefix, runner ownership, ordered runner diagnostics, and irrelevant-
+  preflight efficiency coverage;
+- an AST mutation audit showing zero raw production calls, exactly three
+  runner calls, and no direct operator deletion/insertion or local
+  producer/consumer-map construction in either implementation;
+- Tier 1 `superpoint.onnx` conversion with both strict specs correctly reported
+  as guard-rejected no-ops in all three positions, followed by `-cotof` with
+  every output compared, `evaluation_pass=true`, and maximum absolute error
+  `1.6666017472743988e-06`;
+- Tier 4 `superpoint_lightglue_end2end_fused_cpu.onnx` conversion with both
+  specs likewise reported as no-ops. Its pre-existing `onnxsim` non-zero exit
+  warning remained non-fatal and direct float32/float16 export completed;
+- `1096 passed, 5 deselected, 2 warnings in 141.78s` for the final full direct
+  suite.
+
+The generated 18 MB Tier 1 and 112 MB Tier 4 output directories and internal
+metrics files were deleted after recording the results. Validation remained
+single-process and sequential. No dependency or TensorFlow import was added.
+The next work unit should begin by rerunning the remaining raw post-lowering
+family inventory and selecting the next adjacent, independently testable
+family; do not create a pull request, and commit/push only at a coherent
+checkpoint.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work
