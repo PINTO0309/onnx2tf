@@ -462,6 +462,13 @@ permutation tensor updates, edge rewrites, structural removals, and pruning are
 validated transactionally against `LayoutState`. The runner derives `changed`
 only from rewrite counters, never from the diagnostic iteration count.
 
+The same family mechanically owns strict
+NHWC→NCHW-Transpose→Gather→NCHW→NHWC-Transpose axis remapping. It remaps the
+Gather axis into NHWC, preserves `batchDims=0`, retargets the final output, and
+removes the pre-Transpose only when it has no remaining users. Its 134-line
+implementation moved with an identical AST; all eight production positions
+still call the compatibility wrapper in their original order.
+
 General consecutive Reshape passthrough cleanup is also owned by
 `passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,
 fan-out-safe bypass of a second Reshape, and strict single-user chain collapse,

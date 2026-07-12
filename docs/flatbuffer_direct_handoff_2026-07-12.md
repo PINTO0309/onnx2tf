@@ -1863,6 +1863,28 @@ remained single-process and sequential, with no new dependency or TensorFlow
 import. Rerun the raw post-lowering inventory before selecting the next family.
 Do not create a pull request; commit and push only at a coherent checkpoint.
 
+The next mechanical split is complete. The 134-line strict
+NHWC→NCHW-Transpose→Gather→NCHW→NHWC-Transpose axis-remap rewrite moved
+unchanged into `passes/layout_transpose.py`. Axis remapping, `batchDims=0`,
+final-output retargeting, shape/quantization metadata, and preservation of a
+shared pre-Transpose are unchanged. The old/new function ASTs are identical,
+all eight production call sites remain in place through a thin wrapper, and
+the layout-Transpose ownership contract includes the implementation. A missing
+`_set_operator_outputs` module import was detected by the focused tests and
+fixed before any checkpoint commit.
+
+Sequential verification completed with:
+
+- `2 passed` for strict optimization and shared-pre-Transpose preservation;
+- `1 passed` for the expanded family ownership contract;
+- `1112 passed, 5 deselected, 2 warnings in 146.92s` for the full direct suite.
+
+No algorithm, call order, artifact, dependency, or TensorFlow boundary changed.
+The next checkpoint should migrate graph lookup and all mutation to the shared
+differential index, add an exact transactional runner, and replace all eight
+raw production calls. Do not create a pull request; commit and push only at a
+coherent checkpoint.
+
 The next mechanical split is complete. The 193-line fully static
 4D→2D Reshape/Concat/2D→4D Reshape rewrite moved unchanged into
 `passes/singleton_reshape_layout.py`. Its NHWC singleton-spatial, batch/channel,

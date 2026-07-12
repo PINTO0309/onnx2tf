@@ -5,10 +5,14 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _build_tensor_consumer_map,
+    _build_tensor_producer_map,
+    _clone_quantization,
     _prune_unused_tensors,
     _read_transpose_perm,
     _replace_tensor_inputs,
     _set_operator_inputs,
+    _set_operator_outputs,
 )
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
@@ -431,3 +435,139 @@ def run_layout_transpose_cleanup(
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
+
+
+def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """
+    Remove NHWC<->NCHW transpose wrappers around GATHER by remapping axis.
+
+    Target:
+      x_nhwc --TRANSPOSE(0,3,1,2)--> x_nchw
+      x_nchw --GATHER(axis=a_nchw, batchDims=0)--> g_nchw
+      g_nchw --TRANSPOSE(0,2,3,1)--> y_nhwc
+
+    Rewrite:
+      x_nhwc --GATHER(axis=a_nhwc, batchDims=0)--> y_nhwc
+
+    where a_nhwc = perm_nhwc_to_nchw[a_nchw].
+    """
+    optimized = 0
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+    perm_nchw_to_nhwc = [0, 2, 3, 1]
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+        producers = _build_tensor_producer_map(model_ir)
+        model_outputs = set(str(v) for v in model_ir.outputs)
+
+        for gather_idx, gather_op in enumerate(model_ir.operators):
+            if str(gather_op.op_type) != "GATHER" or len(gather_op.inputs) < 2 or len(gather_op.outputs) != 1:
+                continue
+            gather_in_name = str(gather_op.inputs[0])
+            gather_out_name = str(gather_op.outputs[0])
+            if gather_out_name in model_outputs:
+                continue
+
+            gather_options = dict(gather_op.options) if isinstance(gather_op.options, dict) else {}
+            batch_dims = int(gather_options.get("batchDims", 0))
+            if int(batch_dims) != 0:
+                continue
+
+            pre_idx = producers.get(gather_in_name, None)
+            if pre_idx is None:
+                continue
+            pre_op = model_ir.operators[int(pre_idx)]
+            if (
+                str(pre_op.op_type) != "TRANSPOSE"
+                or len(pre_op.inputs) < 2
+                or len(pre_op.outputs) != 1
+                or str(pre_op.outputs[0]) != gather_in_name
+                or _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw
+            ):
+                continue
+            pre_out_name = str(pre_op.outputs[0])
+
+            gather_users = [int(v) for v in consumers.get(gather_out_name, [])]
+            if len(gather_users) != 1:
+                continue
+            post_idx = int(gather_users[0])
+            post_op = model_ir.operators[int(post_idx)]
+            if (
+                str(post_op.op_type) != "TRANSPOSE"
+                or len(post_op.inputs) < 2
+                or len(post_op.outputs) != 1
+                or str(post_op.inputs[0]) != gather_out_name
+                or _read_transpose_perm(model_ir, post_op) != perm_nchw_to_nhwc
+            ):
+                continue
+
+            gather_in_tensor = model_ir.tensors.get(gather_in_name, None)
+            if gather_in_tensor is None or len(list(gather_in_tensor.shape)) != 4:
+                continue
+
+            axis = int(gather_options.get("axis", 0))
+            if axis < 0:
+                axis += 4
+            if int(axis) < 0 or int(axis) >= 4:
+                continue
+            remapped_axis = int(perm_nhwc_to_nchw[int(axis)])
+
+            pre_input_name = str(pre_op.inputs[0])
+            post_output_name = str(post_op.outputs[0])
+            if post_output_name not in model_ir.tensors:
+                gather_out_tensor = model_ir.tensors.get(gather_out_name, None)
+                if gather_out_tensor is not None:
+                    model_ir.tensors[post_output_name] = TensorIR(
+                        name=post_output_name,
+                        dtype=str(gather_out_tensor.dtype),
+                        shape=[int(v) for v in list(gather_out_tensor.shape)],
+                        shape_signature=(
+                            [int(v) for v in list(gather_out_tensor.shape_signature)]
+                            if gather_out_tensor.shape_signature is not None
+                            else [int(v) for v in list(gather_out_tensor.shape)]
+                        ),
+                        data=None,
+                        is_variable=False,
+                        quantization=_clone_quantization(gather_out_tensor.quantization),
+                    )
+
+            gather_inputs = [str(v) for v in list(gather_op.inputs)]
+            gather_inputs[0] = pre_input_name
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=gather_op,
+                new_inputs=gather_inputs,
+            )
+            gather_options["axis"] = int(remapped_axis)
+            gather_options["batchDims"] = 0
+            gather_op.options = gather_options
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=gather_op,
+                new_outputs=[str(post_output_name)],
+            )
+
+            remove_indices: List[int] = [int(post_idx)]
+            remaining_pre_users = [
+                int(v)
+                for v in consumers.get(pre_out_name, [])
+                if int(v) != int(gather_idx)
+            ]
+            if len(remaining_pre_users) == 0 and pre_out_name not in model_outputs:
+                remove_indices.append(int(pre_idx))
+            for remove_idx in sorted(remove_indices, reverse=True):
+                del model_ir.operators[int(remove_idx)]
+
+            optimized += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    if optimized > 0:
+        _prune_unused_tensors(model_ir)
+    return {"optimized_transpose_gather_transpose_axis_remap_nhwc_chains": int(optimized)}
