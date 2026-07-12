@@ -34,6 +34,7 @@ from onnx2tf.tflite_builder.ir import (
     prune_identity_cast_operators,
 )
 from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.passes.attention_layout import (
     run_conv_attention_layout_cleanup,
@@ -119,6 +120,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_attention_qkv_gather_reshape_transpose_hoist_chains,
     _optimize_attention_qkv_slice_replace_gather_reshape_chains,
     _optimize_attention_qkv_slice_to_split_chains,
+    _optimize_attention_split_post_reshape_collapse_chains,
     _optimize_transpose_dequant_logistic_mul_quantize_bridges,
     _optimize_transpose_swish_residual_concat_closure_nhwc_chains,
     _optimize_transpose_swish_qdq_nhwc_islands,
@@ -36829,6 +36831,75 @@ def test_flatbuffer_direct_attention_qkv_slice_to_split() -> None:
     split_axis_tensor = model_ir.tensors.get(split_axis_name, None)
     assert split_axis_tensor is not None
     assert np.array_equal(np.asarray(split_axis_tensor.data).reshape(-1), np.asarray([0], dtype=np.int32))
+
+
+def test_flatbuffer_direct_attention_split_post_reshape_collapse_uses_one_index(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("attention_split_post_reshape_collapse_test")
+    model_ir.inputs = ["src"]
+    model_ir.outputs = ["r0", "r1"]
+    model_ir.tensors = {
+        "src": TensorIR("src", "FLOAT32", [1, 2, 1, 4], [1, 2, 1, 4]),
+        "axis": TensorIR(
+            "axis",
+            "INT32",
+            [1],
+            [1],
+            data=np.asarray([1], dtype=np.int32),
+        ),
+        "s0": TensorIR("s0", "FLOAT32", [1, 1, 1, 4], [1, 1, 1, 4]),
+        "s1": TensorIR("s1", "FLOAT32", [1, 1, 1, 4], [1, 1, 1, 4]),
+        "shape0": TensorIR(
+            "shape0",
+            "INT32",
+            [4],
+            [4],
+            data=np.asarray([1, 1, 4, 1], dtype=np.int32),
+        ),
+        "shape1": TensorIR(
+            "shape1",
+            "INT32",
+            [4],
+            [4],
+            data=np.asarray([1, 1, 4, 1], dtype=np.int32),
+        ),
+        "r0": TensorIR("r0", "FLOAT32", [1, 1, 4, 1], [1, 1, 4, 1]),
+        "r1": TensorIR("r1", "FLOAT32", [1, 1, 4, 1], [1, 1, 4, 1]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            "SPLIT",
+            ["axis", "src"],
+            ["s0", "s1"],
+            options={"numSplits": 2},
+        ),
+        OperatorIR("RESHAPE", ["s0", "shape0"], ["r0"]),
+        OperatorIR("RESHAPE", ["s1", "shape1"], ["r1"]),
+    ]
+
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = _optimize_attention_split_post_reshape_collapse_chains(model_ir)
+
+    assert stats["optimized_attention_split_post_reshape_collapse_chains"] == 1
+    assert refresh_count == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["RESHAPE", "SPLIT"]
+    split_op = model_ir.operators[1]
+    assert list(split_op.outputs) == ["r0", "r1"]
+    assert list(model_ir.tensors[str(split_op.inputs[1])].shape) == [1, 2, 4, 1]
+    assert np.array_equal(
+        np.asarray(model_ir.tensors[str(split_op.inputs[0])].data).reshape(-1),
+        np.asarray([1], dtype=np.int32),
+    )
 
 
 def test_flatbuffer_direct_attention_qkv_shared_pretranspose_slice_nchw() -> None:

@@ -1037,6 +1037,40 @@ implementation out of the lowerer, then make all four rewrites differential-
 index aware and group only those two exactly contiguous positions. Keep the
 three tail-group calls separate so late recovery can still rerun them.
 
+The first prerequisite is complete: the Split/post-Reshape collapse body moved
+from `lower_from_onnx2tf.py` to `passes/attention_layout.py`, and the old symbol
+is now a thin compatibility wrapper. Its semantic guards and both production
+positions are unchanged. The rewrite now owns one ModelIRGraphIndex, performs
+indexed Split input/output mutation, inserts the pre-Split Reshape through the
+index, removes every post-Split Reshape structurally, and prunes LayoutState
+entries together with tensors.
+
+A new strict fixture fixes the transformation
+`SPLIT(axis=1) → RESHAPE × 2` to `RESHAPE → SPLIT(axis=1)`, public output names,
+the remapped static shape, and exactly one initial GraphIndex refresh. It also
+exposed the moved implementation's `itertools.permutations` dependency, now
+imported locally by the owning module rather than reached through lowerer
+scope.
+
+Sequential verification completed with:
+
+- `1 passed, 780 deselected` for the new indexed collapse fixture;
+- `6 passed, 754 deselected` for all generic QKV/collapse fixtures;
+- `21 passed` for architecture ownership and import-boundary checks;
+- `1080 passed, 5 deselected, 2 warnings in 136.33s` for the full direct suite;
+- post-move Tier 2 `rtmDet-tiny-res640-fp32.onnx` `-cotof` evaluation with all
+  outputs compared, `evaluation_pass=true`, and maximum absolute error
+  `0.00018310546875`.
+
+The real-model output and log were deleted after inspection. No inference ran
+in parallel, no dependency was added, and TensorFlow remains outside the
+direct path.
+
+Next, make slice-to-split, gather-to-slice replacement, and gather/reshape
+hoist differential-index aware in that dependency order. After each focused
+checkpoint passes, register those three plus the already-indexed collapse as a
+four-spec prefix runner at exactly the two contiguous production positions.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

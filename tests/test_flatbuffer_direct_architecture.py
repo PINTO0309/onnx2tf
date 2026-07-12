@@ -547,6 +547,7 @@ def test_attention_layout_rewrites_have_single_owner() -> None:
         "_optimize_attention_qkv_shared_pretranspose_slice_nchw_chains",
         "_optimize_attention_qkv_slice_replace_gather_reshape_chains",
         "_optimize_attention_qkv_slice_to_split_chains",
+        "_optimize_attention_split_post_reshape_collapse_chains",
         "_optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains",
     }
 

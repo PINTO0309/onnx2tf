@@ -198,6 +198,17 @@ single model-only scan still avoids constructing state when neither Slice nor
 weighted-Sum capability is present. The four earlier QKV canonicalization
 steps remain outside this group until their own indexed migration is complete.
 
+The QKV `SPLIT → RESHAPE × N` collapse implementation is also owned by
+`passes/attention_layout.py`; the lowerer exposes only its compatibility
+wrapper. It recognizes static, rank-preserving reshapes whose apparent
+permutation moves singleton axes without changing memory order, inserts one
+pre-Split Reshape, retargets the Split outputs, and removes every post-Split
+Reshape. Input/output mutation and structural insertion/removal update one
+ModelIRGraphIndex throughout the rewrite, while tensor pruning updates the
+optional LayoutState. This pass remains at its two original raw call positions
+until the other three QKV prefix rewrites are indexed and can join one ordered
+prefix group without changing recovery order.
+
 Generic structural deduplication lives in `passes/graph_cleanup.py`. Duplicate
 Transpose fan-out cleanup uses one `ModelIRGraphIndex`, rewires only indexed
 consumers through the lineage-aware bulk input replacement helper, and removes

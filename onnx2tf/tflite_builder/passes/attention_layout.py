@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from itertools import permutations
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -727,6 +728,306 @@ def _optimize_attention_qkv_slice_to_split_chains(
 
     _prune_unused_tensors(model_ir)
     return {"optimized_attention_qkv_slice_to_split_chains": int(rewritten)}
+
+
+def _optimize_attention_split_post_reshape_collapse_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """
+    Collapse `SPLIT -> RESHAPE xN` into `RESHAPE -> SPLIT` when safe.
+
+    Target:
+      src --SPLIT(axis=a, numSplits=N)--> s_i
+      s_i --RESHAPE(shape=tgt)--> r_i      (for all i in 0..N-1)
+
+    Rewrite:
+      src --RESHAPE(shape=src_pre)--> src_pre
+      src_pre --SPLIT(axis=a', numSplits=N)--> r_i
+
+    Safety:
+    - `SPLIT` outputs must each feed exactly one `RESHAPE`.
+    - All reshape targets must be identical, static, and rank-preserving.
+    - Reshape must be memory-order-equivalent by singleton axes only.
+    """
+    rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+
+    def _unique_tensor_name(base: str) -> str:
+        candidate = str(base)
+        serial = 1
+        while candidate in model_ir.tensors:
+            candidate = f"{base}_{serial}"
+            serial += 1
+        return candidate
+
+    def _is_memory_order_equivalent_perm(
+        *,
+        src_shape: List[int],
+        perm: List[int],
+    ) -> bool:
+        non_singleton_src_axes = [int(idx) for idx, dim in enumerate(src_shape) if int(dim) != 1]
+        non_singleton_perm_axes = [int(axis) for axis in list(perm) if int(src_shape[int(axis)]) != 1]
+        return non_singleton_src_axes == non_singleton_perm_axes
+
+    def _find_singleton_preserving_perm(
+        *,
+        src_shape: List[int],
+        dst_shape: List[int],
+    ) -> Optional[List[int]]:
+        rank = len(src_shape)
+        if int(rank) <= 0 or len(dst_shape) != int(rank) or int(rank) > 6:
+            return None
+        src = [int(v) for v in list(src_shape)]
+        dst = [int(v) for v in list(dst_shape)]
+        for perm_tuple in permutations(range(int(rank))):
+            perm = [int(v) for v in list(perm_tuple)]
+            candidate = _permute_shape(src, perm)
+            if candidate is None:
+                continue
+            if [int(v) for v in list(candidate)] != dst:
+                continue
+            if not _is_memory_order_equivalent_perm(src_shape=src, perm=perm):
+                continue
+            return [int(v) for v in list(perm)]
+        return None
+
+    def _assign_axis_const(
+        *,
+        split_op: OperatorIR,
+        split_idx: int,
+        new_axis: int,
+        consumers: Dict[str, List[int]],
+    ) -> None:
+        if len(split_op.inputs) < 1:
+            return
+        axis_name = str(split_op.inputs[0])
+        axis_tensor = model_ir.tensors.get(axis_name, None)
+        if axis_tensor is None:
+            return
+        axis_users = set(int(v) for v in consumers.get(str(axis_name), []))
+        if axis_users == {int(split_idx)}:
+            _write_const_ints_to_tensor(axis_tensor, [int(new_axis)])
+            return
+
+        axis_const_name = _unique_tensor_name(f"{axis_name}_split_axis")
+        np_dtype = np.int32
+        if axis_tensor.data is not None:
+            try:
+                np_dtype = np.asarray(axis_tensor.data).dtype
+            except Exception:
+                np_dtype = np.int32
+        model_ir.tensors[axis_const_name] = TensorIR(
+            name=axis_const_name,
+            dtype=str(axis_tensor.dtype),
+            shape=[1],
+            shape_signature=[1],
+            data=np.asarray([int(new_axis)], dtype=np_dtype),
+            is_variable=False,
+            quantization=_clone_quantization(axis_tensor.quantization),
+        )
+        _replace_operator_input_at(
+            model_ir=model_ir,
+            op=split_op,
+            input_index=0,
+            new_input_name=axis_const_name,
+            graph_index=graph_index,
+        )
+
+    while True:
+        changed = False
+        consumers = graph_index.consumers
+        producers = graph_index.producers
+
+        for split_idx, split_op in enumerate(model_ir.operators):
+            if str(split_op.op_type) != "SPLIT" or len(split_op.inputs) < 2 or len(split_op.outputs) < 2:
+                continue
+
+            split_input_name = str(split_op.inputs[1])
+            split_input_tensor = model_ir.tensors.get(split_input_name, None)
+            if split_input_tensor is None or not _is_fully_known_positive_shape(split_input_tensor.shape):
+                continue
+            split_input_shape = [int(v) for v in list(split_input_tensor.shape)]
+            split_rank = int(len(split_input_shape))
+            if int(split_rank) <= 0:
+                continue
+
+            axis_vals = _read_const_ints_from_tensor(model_ir.tensors.get(str(split_op.inputs[0]), None))
+            if axis_vals is None or len(axis_vals) <= 0:
+                continue
+            split_axis = int(axis_vals[0])
+            if split_axis < 0:
+                split_axis += int(split_rank)
+            if split_axis < 0 or split_axis >= int(split_rank):
+                continue
+
+            num_splits = int(split_op.options.get("numSplits", len(split_op.outputs)))
+            if int(num_splits) <= 1 or int(num_splits) != len(split_op.outputs):
+                continue
+            if int(split_input_shape[int(split_axis)]) % int(num_splits) != 0:
+                continue
+            split_chunk = int(split_input_shape[int(split_axis)] // int(num_splits))
+            if int(split_chunk) <= 0:
+                continue
+
+            split_output_shape = [int(v) for v in list(split_input_shape)]
+            split_output_shape[int(split_axis)] = int(split_chunk)
+
+            reshape_indices: List[int] = []
+            reshape_output_names: List[str] = []
+            reshape_target_shape: Optional[List[int]] = None
+            valid_chain = True
+
+            for split_out_name in [str(v) for v in list(split_op.outputs)]:
+                split_out_users = [int(v) for v in consumers.get(str(split_out_name), [])]
+                if len(split_out_users) != 1:
+                    valid_chain = False
+                    break
+                reshape_idx = int(split_out_users[0])
+                reshape_op = model_ir.operators[int(reshape_idx)]
+                if (
+                    str(reshape_op.op_type) != "RESHAPE"
+                    or len(reshape_op.inputs) < 2
+                    or len(reshape_op.outputs) != 1
+                    or str(reshape_op.inputs[0]) != str(split_out_name)
+                ):
+                    valid_chain = False
+                    break
+
+                split_out_tensor = model_ir.tensors.get(str(split_out_name), None)
+                if (
+                    split_out_tensor is None
+                    or not _is_fully_known_positive_shape(split_out_tensor.shape)
+                    or [int(v) for v in list(split_out_tensor.shape)] != [int(v) for v in list(split_output_shape)]
+                ):
+                    valid_chain = False
+                    break
+
+                target_vals = _read_const_ints_from_tensor(model_ir.tensors.get(str(reshape_op.inputs[1]), None))
+                if (
+                    target_vals is None
+                    or len(target_vals) != int(split_rank)
+                    or not _is_fully_known_positive_shape([int(v) for v in list(target_vals)])
+                ):
+                    valid_chain = False
+                    break
+                target_shape = [int(v) for v in list(target_vals)]
+                if int(np.prod(np.asarray(target_shape, dtype=np.int64))) != int(
+                    np.prod(np.asarray(split_output_shape, dtype=np.int64))
+                ):
+                    valid_chain = False
+                    break
+                if reshape_target_shape is None:
+                    reshape_target_shape = [int(v) for v in list(target_shape)]
+                elif [int(v) for v in list(reshape_target_shape)] != [int(v) for v in list(target_shape)]:
+                    valid_chain = False
+                    break
+
+                reshape_indices.append(int(reshape_idx))
+                reshape_output_names.append(str(reshape_op.outputs[0]))
+
+            if not valid_chain or reshape_target_shape is None:
+                continue
+
+            perm = _find_singleton_preserving_perm(
+                src_shape=[int(v) for v in list(split_output_shape)],
+                dst_shape=[int(v) for v in list(reshape_target_shape)],
+            )
+            if perm is None:
+                continue
+            if int(split_axis) not in set(int(v) for v in list(perm)):
+                continue
+
+            pre_reshape_shape = _permute_shape(
+                [int(v) for v in list(split_input_shape)],
+                [int(v) for v in list(perm)],
+            )
+            if pre_reshape_shape is None:
+                continue
+            pre_reshape_shape = [int(v) for v in list(pre_reshape_shape)]
+            new_split_axis = int([int(i) for i, axis in enumerate(list(perm)) if int(axis) == int(split_axis)][0])
+            if int(pre_reshape_shape[int(new_split_axis)]) % int(num_splits) != 0:
+                continue
+            if int(pre_reshape_shape[int(new_split_axis)] // int(num_splits)) != int(
+                reshape_target_shape[int(new_split_axis)]
+            ):
+                continue
+
+            pre_reshape_shape_name = _unique_tensor_name(f"{split_input_name}_pre_split_shape")
+            model_ir.tensors[pre_reshape_shape_name] = TensorIR(
+                name=pre_reshape_shape_name,
+                dtype="INT32",
+                shape=[int(split_rank)],
+                shape_signature=[int(split_rank)],
+                data=np.asarray([int(v) for v in list(pre_reshape_shape)], dtype=np.int32),
+                is_variable=False,
+            )
+            pre_reshape_out_name = _unique_tensor_name(f"{split_input_name}_pre_split_reshape")
+            input_signature = (
+                [int(v) for v in list(split_input_tensor.shape_signature)]
+                if split_input_tensor.shape_signature is not None
+                else [int(v) for v in list(split_input_shape)]
+            )
+            pre_signature = _permute_shape([int(v) for v in list(input_signature)], [int(v) for v in list(perm)])
+            if pre_signature is None:
+                pre_signature = [int(v) for v in list(pre_reshape_shape)]
+            model_ir.tensors[pre_reshape_out_name] = TensorIR(
+                name=pre_reshape_out_name,
+                dtype=str(split_input_tensor.dtype),
+                shape=[int(v) for v in list(pre_reshape_shape)],
+                shape_signature=[int(v) for v in list(pre_signature)],
+                data=None,
+                is_variable=False,
+                quantization=_clone_quantization(split_input_tensor.quantization),
+            )
+            pre_reshape_op = OperatorIR(
+                op_type="RESHAPE",
+                inputs=[str(split_input_name), str(pre_reshape_shape_name)],
+                outputs=[str(pre_reshape_out_name)],
+                options={"newShape": [int(v) for v in list(pre_reshape_shape)]},
+            )
+            graph_index.insert_operator(int(split_idx), pre_reshape_op)
+
+            shifted_split_idx = int(split_idx + 1)
+            shifted_split_op = model_ir.operators[int(shifted_split_idx)]
+            _replace_operator_input_at(
+                model_ir=model_ir,
+                op=shifted_split_op,
+                input_index=1,
+                new_input_name=str(pre_reshape_out_name),
+                graph_index=graph_index,
+            )
+            _assign_axis_const(
+                split_op=shifted_split_op,
+                split_idx=int(shifted_split_idx),
+                new_axis=int(new_split_axis),
+                consumers=consumers,
+            )
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=shifted_split_op,
+                new_outputs=[str(v) for v in list(reshape_output_names)],
+                graph_index=graph_index,
+            )
+
+            shifted_reshape_indices = sorted([int(v) + 1 for v in list(reshape_indices)], reverse=True)
+            for remove_idx in shifted_reshape_indices:
+                graph_index.remove_operator(int(remove_idx))
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    if rewritten > 0:
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
+    return {"optimized_attention_split_post_reshape_collapse_chains": int(rewritten)}
 
 
 def _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(
