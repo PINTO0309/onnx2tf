@@ -4001,6 +4001,29 @@ def _make_batchnorm_rank4_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_batchnorm_dynamic_statistics_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 2, 2])
+    scale = helper.make_tensor_value_info("scale", TensorProto.FLOAT, [3])
+    bias = helper.make_tensor_value_info("bias", TensorProto.FLOAT, [3])
+    mean = helper.make_tensor_value_info("mean", TensorProto.FLOAT, [3])
+    var = helper.make_tensor_value_info("var", TensorProto.FLOAT, [3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 2, 2])
+    node = helper.make_node(
+        "BatchNormalization",
+        ["x", "scale", "bias", "mean", "var"],
+        ["y"],
+        name="DynamicStatisticsBatchNorm",
+        epsilon=1e-3,
+    )
+    graph = helper.make_graph(
+        [node],
+        "batchnorm_dynamic_statistics_graph",
+        [x, scale, bias, mean, var],
+        [y],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_min_topk_dynamic_k_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 10])
     values = helper.make_tensor_value_info("values", TensorProto.FLOAT, [1, "K"])
@@ -14997,6 +15020,42 @@ def test_flatbuffer_direct_batch_normalization_rank4_nhwc_broadcast_coeff_shape(
     assert list(input_tensor.shape) == [1, 4, 4, 3]
     assert list(mul_const.shape) == [1, 1, 1, 3]
     assert list(add_const.shape) == [1, 1, 1, 3]
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_batch_normalization_dynamic_statistics_runtime_matches_onnx() -> None:
+    model = _make_batchnorm_dynamic_statistics_model()
+    sample_inputs = {
+        "x": np.asarray(
+            [[[[0.0, 1.0], [2.0, 3.0]], [[4.0, 5.0], [6.0, 7.0]], [[8.0, 9.0], [10.0, 11.0]]]],
+            dtype=np.float32,
+        ),
+        "scale": np.asarray([1.0, 0.5, 2.0], dtype=np.float32),
+        "bias": np.asarray([0.25, -0.5, 1.0], dtype=np.float32),
+        "mean": np.asarray([1.5, 5.5, 9.5], dtype=np.float32),
+        "var": np.asarray([1.25, 1.25, 1.25], dtype=np.float32),
+    }
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "batchnorm_dynamic_statistics", model)
+        tflite_path = _convert(
+            model_path=model_path,
+            output_dir=os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+        )
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["y"],
+        )
+        ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        onnx_output = ort_session.run(["y"], sample_inputs)[0]
+        np.testing.assert_allclose(
+            tflite_outputs["y"],
+            onnx_output,
+            rtol=1e-5,
+            atol=1e-5,
+        )
 
 
 def test_flatbuffer_direct_convtranspose2d_output_padding_lowering() -> None:

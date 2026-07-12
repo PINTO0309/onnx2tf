@@ -7143,7 +7143,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "BatchNormalization": DispatchEntry(
         onnx_op="BatchNormalization",
-        tflite_ops=["MUL", "ADD"],
+        tflite_ops=["RESHAPE", "CAST", "ADD", "SQRT", "DIV", "MUL", "SUB"],
         builder=build_batch_normalization_op,
         validation=ValidationSpec(min_inputs=5, max_inputs=5, min_outputs=1, max_outputs=1),
         extra_validator=_validate_batch_norm,

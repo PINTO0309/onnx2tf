@@ -63,12 +63,40 @@ def _validate_depth_to_space(node: Any, ctx: Any) -> None:
 
 
 def _validate_batch_norm(node: Any, ctx: Any) -> None:
-    for idx, label in enumerate(["scale", "bias", "mean", "var"], start=1):
-        _require_const_input(node, ctx, idx, f"BatchNormalization {label}")
     if len(node.inputs) < 5:
         raise NodeValidationError(
             reason_code="invalid_input_count",
             message="BatchNormalization expects 5 inputs.",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
+    output_dtype = str(ctx.get_tensor_dtype(node.outputs[0].name)).upper()
+    parameter_dtypes = [
+        str(ctx.get_tensor_dtype(node.inputs[idx].name)).upper()
+        for idx in range(1, 5)
+    ]
+    if input_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=f"BatchNormalization input must be FLOAT16/FLOAT32. dtype={input_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if output_dtype not in {"FLOAT16", "FLOAT32"}:
+        raise NodeValidationError(
+            reason_code="unsupported_output_dtype",
+            message=f"BatchNormalization output must be FLOAT16/FLOAT32. dtype={output_dtype}",
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if any(dtype not in {"FLOAT16", "FLOAT32"} for dtype in parameter_dtypes):
+        raise NodeValidationError(
+            reason_code="unsupported_input_dtype",
+            message=(
+                "BatchNormalization parameters must be FLOAT16/FLOAT32. "
+                f"parameter_dtypes={parameter_dtypes}"
+            ),
             node_name=node.name,
             node_op=node.op,
         )
