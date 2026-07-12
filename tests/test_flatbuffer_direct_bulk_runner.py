@@ -856,6 +856,8 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
                         "shape_hints": ["input:0:1,16,16,3"],
                         "overwrite_input_shape": ["image:1,3,16,16"],
                         "keep_shape_absolutely_input_names": ["state:0"],
+                        "eval_num_samples": 1,
+                        "accuracy_only": True,
                     },
                     {
                         "tier": 0,
@@ -893,6 +895,9 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
     assert commands[0][commands[0].index("-sh") + 1] == "input:0:1,16,16,3"
     assert commands[0][commands[0].index("-ois") + 1] == "image:1,3,16,16"
     assert commands[0][commands[0].index("-kat") + 1] == "state:0"
+    assert commands[0][commands[0].index("-ens") + 1] == "1"
+    assert "--eval_with_onnx" in commands[0]
+    assert "-cotof" not in commands[0]
     assert [entry["model"] for entry in state["entries"]] == ["active.onnx"]
     profile_filter = state["summary"]["filters"]["regression_profile"]
     assert profile_filter["model_count"] == 2
@@ -940,6 +945,42 @@ def test_regression_profile_rejects_tier_five_models(tmp_path) -> None:
         bulk_runner._load_regression_profile(str(profile_path))
 
 
+@pytest.mark.parametrize(
+    ("model_option", "expected_error"),
+    [
+        ({"eval_num_samples": 0}, "positive integer"),
+        ({"eval_num_samples": True}, "positive integer"),
+        ({"accuracy_only": "true"}, "must be a boolean"),
+    ],
+)
+def test_regression_profile_rejects_invalid_evaluation_options(
+    tmp_path,
+    model_option,
+    expected_error,
+) -> None:
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 1,
+                "max_nodes": 49,
+                "models": [
+                    {
+                        "tier": 0,
+                        "model": "model.onnx",
+                        **model_option,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=expected_error):
+        bulk_runner._load_regression_profile(str(profile_path))
+
+
 def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> None:
     profile_path = (
         Path(__file__).resolve().parents[1]
@@ -957,8 +998,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 13,
-        "pass": 348,
+        "missing_tflite_report": 12,
+        "pass": 349,
         "tflite_fail": 33,
         "timeout": 26,
     }
@@ -1172,6 +1213,23 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "743900046d8e38c14684c26f9df0c0fcd60a95f014698a135d2162ef77b8ae05"
     )
     assert rtdetrv4_entry["tflite_max_abs"] == 79.0
+    new_encoder_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "new_encoder.onnx"
+    )
+    assert new_encoder_entry == {
+        "tier": 3,
+        "model": "new_encoder.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 0.0008774623274803162,
+        "eval_num_samples": 1,
+        "accuracy_only": True,
+    }
+    assert profile["model_options"]["new_encoder.onnx"] == {
+        "eval_num_samples": 1,
+        "accuracy_only": True,
+    }
     yolo11x_obb_entry = next(
         entry
         for entry in profile_payload["models"]

@@ -92,8 +92,8 @@ The profile fixes root-only discovery, the 1–1,999 node range, all 420 managed
 historical model records, and inference concurrency of one. Models classified
 as `timeout` in the current managed baseline remain recorded for provenance but
 are automatically excluded from subsequent runs. The active run therefore
-contains 394 models: 348 expected passes and 46 expected non-passes, excluding
-26 recorded timeouts. The active non-passes are 33 accuracy failures and 13
+contains 394 models: 349 expected passes and 45 expected non-passes, excluding
+26 recorded timeouts. The active non-passes are 33 accuracy failures and 12
 missing reports. Tier 5 models cannot be added because the profile loader
 rejects tiers above 4 and node ranges above 1,999.
 
@@ -380,6 +380,22 @@ The root-only Tier 3 gate at commit `c838b42` contains 71 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier3_root_c838b42.json`: 22
 passed, 15 conversion errors, 17 timeouts, 1 accuracy failure, and 16 missing
 reports. Median and maximum durations were 17.248 and 120.662 seconds.
+
+`new_encoder.onnx` is promoted from a missing report to a pass. Its static
+rank-6 attention DIV was unresolved when op lowering ran, then became rank-6
+only after final shape reconciliation; LiteRT aborted in `BroadcastDivSlow<5>`.
+A bounded final ModelIR pass now coalesces fully-static broadcast-equivalent
+axes to rank 4 while leaving negative/dynamic signatures unchanged. Evaluation
+also derives deterministic multi-scale controls from the graph: Split sizes
+`[8352,2088,522,135]` imply spatial shapes
+`[[72,116],[36,58],[18,29],[9,15]]`, valid ratios are one, and float inputs
+cast directly to boolean masks are zero. The fixed-seed one-sample result has
+maximum error `0.0008774623274803162` and cosine similarity
+`0.9999999999724198`. Its managed profile uses `eval_num_samples: 1` because
+the ten-sample sequential run exceeds 180 seconds, and `accuracy_only: true`
+selects the existing `--eval_with_onnx` path so the much heavier intermediate
+operator report is not generated for this model. Inference remains strictly
+single-process.
 
 `conv_tasnet.onnx` remains an active missing-report model with the normalized
 reason `invalid_onnx_scatterelements_rank_mismatch_4_6`. Its terminal

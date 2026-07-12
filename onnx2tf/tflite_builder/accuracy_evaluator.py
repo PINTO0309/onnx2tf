@@ -989,7 +989,14 @@ def _build_static_control_input_overrides(
             )
         static_shapes[str(value_info.name)] = tuple(shape)
 
-    candidates: Dict[str, np.ndarray] = {}
+    from onnx2tf.tflite_builder.eval_input_overrides import (
+        build_attention_control_input_overrides,
+    )
+
+    candidates: Dict[str, np.ndarray] = build_attention_control_input_overrides(
+        onnx_graph=onnx_graph,
+        input_specs=input_specs,
+    )
     conflicts: set[str] = set()
     sample_rate_names = {
         "sr",

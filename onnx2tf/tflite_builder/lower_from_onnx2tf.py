@@ -80,6 +80,9 @@ from onnx2tf.tflite_builder.passes.pad_layout import (
 from onnx2tf.tflite_builder.passes.quantized_layout import (
     repair_channel_last_convinteger_input_transposes,
 )
+from onnx2tf.tflite_builder.passes.high_rank_binary import (
+    coalesce_static_high_rank_binary_operators,
+)
 from onnx2tf.tflite_builder.passes.constant_fold import (
     _optimize_constant_binary_elementwise_chains,
     _optimize_constant_input_cast_chains,
@@ -77903,6 +77906,7 @@ def lower_onnx_to_ir(
         )
         _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
         _reconcile_static_tensor_shapes(model_ir)
+    coalesce_static_high_rank_binary_operators(model_ir)
     _realign_dynamic_boundary_shape_signature_map(model_ir)
     _topologically_sort_operators(model_ir)
     return model_ir
