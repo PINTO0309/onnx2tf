@@ -109,6 +109,13 @@ axis remapping, and cases where a legacy NCHW adapter must be retained for
 other consumers. Constant-vector and graph mutations use only shared core
 helpers.
 
+Pad layout ownership is centralized in `passes/pad_layout.py`. In addition to
+repairing a proven channel-last input/channel-first Pad mismatch, the module
+owns direct inverse-transpose Pad folding and the guarded unary-to-Pad tail
+rewrite that can retain one local NCHW adapter for legacy consumers. Padding
+axis rotation, dynamic metadata, quantization, fan-out slots, and output names
+are preserved; lowerer symbols remain compatibility wrappers.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

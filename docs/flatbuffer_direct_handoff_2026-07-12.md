@@ -201,10 +201,24 @@ Verification completed with:
 - `1008 passed, 5 deselected, 2 warnings in 125.54s` for the full sequential
   direct suite.
 
-The next extraction should start a separate cohesive layout family rather than
-expanding `input_passthrough_layout.py`. Reassess the remaining lowerer
-functions by phase and shared dependencies; transpose Pad or simple unary
-pre/post chains are preferable before the very large Concat/Add families.
+Pad layout is now the next cohesive family. The direct inverse-transpose Pad
+rewrite and unary-to-Pad tail rewrite moved from the lowerer into the existing
+`passes/pad_layout.py`, alongside the channel-last-input repair. Legacy lowerer
+entry points delegate to the module. Existing characterization fixtures retain
+padding-axis rotation, inverse permutations, dynamic metadata, quantization,
+legacy fan-out slots, the optional local NCHW adapter, and output naming.
+
+Verification completed with:
+
+- `18 passed, 759 deselected` for focused architecture, Pad layout repair, and
+  Pad pre/post characterization;
+- `1009 passed, 5 deselected, 2 warnings in 125.61s` for the full sequential
+  direct suite.
+
+The next Pad increment can evaluate the adjacent normalization-subgraph Pad
+rewrite. Because that topology is substantially larger, first map its helper
+dependencies and existing characterization coverage; otherwise select the
+smaller Pad/Mul/post-transpose/Add rewrite as a separate guarded family.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
