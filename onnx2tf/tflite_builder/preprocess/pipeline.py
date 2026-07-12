@@ -5,6 +5,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import onnx
 
+from onnx2tf.tflite_builder.core.passes import OrderedPassManager, PassPhase, PassSpec
+
 PreprocessRuleCallback = Callable[[onnx.ModelProto], Optional[Dict[str, Any]]]
 
 
@@ -70,35 +72,42 @@ def run_preprocess_pipeline(
             )
 
     applied_rules: List[Dict[str, Any]] = []
-    total_matched_nodes = 0
-    total_rewritten_nodes = 0
-    for rule_id in target_rule_ids:
+    manager = OrderedPassManager[onnx.ModelProto]()
+
+    def _register(rule_id: str, priority: int) -> None:
         rule = _REGISTERED_PREPROCESS_RULES[rule_id]
-        raw_result = rule.callback(working_graph)
-        result = raw_result if isinstance(raw_result, dict) else {}
-        matched_nodes = int(result.get("matched_nodes", 0))
-        rewritten_nodes = int(result.get("rewritten_nodes", 0))
-        if matched_nodes < 0:
-            matched_nodes = 0
-        if rewritten_nodes < 0:
-            rewritten_nodes = 0
-        changed = bool(
-            result.get(
-                "changed",
-                rewritten_nodes > 0,
+
+        def _run(model: onnx.ModelProto) -> Dict[str, Any]:
+            raw = rule.callback(model)
+            result = raw if isinstance(raw, dict) else {}
+            matched = max(0, int(result.get("matched_nodes", 0)))
+            rewritten = max(0, int(result.get("rewritten_nodes", 0)))
+            changed = bool(result.get("changed", rewritten > 0))
+            applied_rules.append(
+                {
+                    "rule_id": rule_id,
+                    "matched_nodes": matched,
+                    "rewritten_nodes": rewritten,
+                    "changed": changed,
+                    "message": str(result.get("message", "")),
+                }
+            )
+            return {"changed": changed}
+
+        manager.register(
+            PassSpec(
+                pass_id=f"preprocess.{rule_id}",
+                phase=PassPhase.NORMALIZE,
+                priority=priority,
+                callback=_run,
             )
         )
-        applied_rules.append(
-            {
-                "rule_id": rule_id,
-                "matched_nodes": matched_nodes,
-                "rewritten_nodes": rewritten_nodes,
-                "changed": changed,
-                "message": str(result.get("message", "")),
-            }
-        )
-        total_matched_nodes += matched_nodes
-        total_rewritten_nodes += rewritten_nodes
+
+    for priority, rule_id in enumerate(target_rule_ids):
+        _register(rule_id, priority)
+    manager.run(working_graph)
+    total_matched_nodes = sum(int(item["matched_nodes"]) for item in applied_rules)
+    total_rewritten_nodes = sum(int(item["rewritten_nodes"]) for item in applied_rules)
 
     report = {
         "schema_version": 1,
@@ -118,4 +127,3 @@ def run_preprocess_pipeline(
         },
     }
     return working_graph, report
-

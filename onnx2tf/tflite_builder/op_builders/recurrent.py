@@ -463,6 +463,345 @@ def build_attention_op(node: Any, ctx: Any) -> None:
     build_multi_head_attention_op(proxy_node, ctx)
 
 
+def _build_static_forward_lstm_with_explicit_state(
+    *,
+    node: Any,
+    ctx: Any,
+    original_inputs: List[str],
+    W: np.ndarray,
+    R: np.ndarray,
+    B: np.ndarray,
+    seq_dim: int,
+    batch_dim: int,
+    hidden_size: int,
+    y_name: str,
+    y_h_name: str,
+    y_c_name: str,
+) -> bool:
+    initial_h_name = _input_name(original_inputs, 5)
+    initial_c_name = _input_name(original_inputs, 6)
+    if initial_h_name == "" or initial_c_name == "":
+        return False
+    folded_branch_constants = {
+        str(v)
+        for v in ctx.model_ir.metadata.get(
+            "branch_folded_constant_tensor_names",
+            [],
+        )
+    }
+    for state_name in [initial_h_name, initial_c_name]:
+        if (
+            ctx.get_constant_array(state_name) is not None
+            and str(state_name) not in folded_branch_constants
+        ):
+            return False
+    if str(node.attrs.get("direction", "forward")).lower() != "forward":
+        return False
+    if int(seq_dim) <= 0 or int(batch_dim) <= 0:
+        return False
+    if _input_name(original_inputs, 4) != "" or _input_name(original_inputs, 7) != "":
+        return False
+    if float(node.attrs.get("clip", 0.0)) != 0.0:
+        return False
+    if int(node.attrs.get("input_forget", 0)) != 0:
+        return False
+    raw_activations = node.attrs.get("activations", [])
+    if isinstance(raw_activations, (str, bytes)):
+        raw_activations = [raw_activations]
+    activations = [str(v).lower() for v in list(raw_activations)]
+    if activations and activations != ["sigmoid", "tanh", "tanh"]:
+        return False
+
+    x_name = _input_name(original_inputs, 0)
+    input_size = int(W.shape[2])
+    compute_dtype = str(ctx.get_tensor_dtype(x_name)).upper()
+    if compute_dtype != "FLOAT32":
+        return False
+
+    ctx.ensure_tensor(initial_h_name)
+    ctx.ensure_tensor(initial_c_name)
+
+    def add_const(suffix: str, values: np.ndarray) -> str:
+        return ctx.add_const_tensor(
+            f"{node.name}_runtime_state_{suffix}",
+            np.asarray(values),
+        )
+
+    def add_tensor(suffix: str, shape: List[int], dtype: str = "FLOAT32") -> str:
+        return ctx.add_intermediate_tensor(
+            f"{node.name}_runtime_state_{suffix}",
+            dtype=dtype,
+            shape=[int(v) for v in shape],
+        )
+
+    h_2d_name = add_tensor("h0_2d", [int(batch_dim), int(hidden_size)])
+    c_2d_name = add_tensor("c0_2d", [int(batch_dim), int(hidden_size)])
+    state_2d_shape_name = add_const(
+        "state_2d_shape",
+        np.asarray([int(batch_dim), int(hidden_size)], dtype=np.int32),
+    )
+    for state_input_name, state_output_name in [
+        (initial_h_name, h_2d_name),
+        (initial_c_name, c_2d_name),
+    ]:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[state_input_name, state_2d_shape_name],
+                outputs=[state_output_name],
+                options={
+                    "newShape": [int(batch_dim), int(hidden_size)],
+                    "preserveDynamicShape": True,
+                },
+            )
+        )
+
+    combined_weights = np.concatenate(
+        [np.asarray(W[0], dtype=np.float32), np.asarray(R[0], dtype=np.float32)],
+        axis=1,
+    )
+    combined_bias = np.asarray(B[0, : 4 * hidden_size], dtype=np.float32) + np.asarray(
+        B[0, 4 * hidden_size :],
+        dtype=np.float32,
+    )
+    combined_weights_name = add_const("weights", combined_weights)
+    combined_bias_name = add_const("bias", combined_bias)
+    split_axis_name = add_const("gate_axis", np.asarray(1, dtype=np.int32))
+
+    step_outputs: List[str] = []
+    for step_index in range(int(seq_dim)):
+        x_step_3d_name = add_tensor(
+            f"step{step_index}_x_3d",
+            [1, int(batch_dim), int(input_size)],
+        )
+        x_step_2d_name = add_tensor(
+            f"step{step_index}_x_2d",
+            [int(batch_dim), int(input_size)],
+        )
+        begin_name = add_const(
+            f"step{step_index}_begin",
+            np.asarray([int(step_index), 0, 0], dtype=np.int32),
+        )
+        size_name = add_const(
+            f"step{step_index}_size",
+            np.asarray([1, int(batch_dim), int(input_size)], dtype=np.int32),
+        )
+        x_step_shape_name = add_const(
+            f"step{step_index}_x_shape",
+            np.asarray([int(batch_dim), int(input_size)], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SLICE",
+                inputs=[x_name, begin_name, size_name],
+                outputs=[x_step_3d_name],
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[x_step_3d_name, x_step_shape_name],
+                outputs=[x_step_2d_name],
+                options={"newShape": [int(batch_dim), int(input_size)]},
+            )
+        )
+
+        xh_name = add_tensor(
+            f"step{step_index}_xh",
+            [int(batch_dim), int(input_size + hidden_size)],
+        )
+        gates_matmul_name = add_tensor(
+            f"step{step_index}_gates_matmul",
+            [int(batch_dim), int(4 * hidden_size)],
+        )
+        gates_name = add_tensor(
+            f"step{step_index}_gates",
+            [int(batch_dim), int(4 * hidden_size)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=[x_step_2d_name, h_2d_name],
+                outputs=[xh_name],
+                options={"axis": 1, "fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="BATCH_MATMUL",
+                inputs=[xh_name, combined_weights_name],
+                outputs=[gates_matmul_name],
+                options={"adjX": False, "adjY": True, "asymmetricQuantizeInputs": False},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[gates_matmul_name, combined_bias_name],
+                outputs=[gates_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+
+        gate_names = [
+            add_tensor(
+                f"step{step_index}_gate_{gate_tag}",
+                [int(batch_dim), int(hidden_size)],
+            )
+            for gate_tag in ["i", "o", "f", "c"]
+        ]
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SPLIT",
+                inputs=[split_axis_name, gates_name],
+                outputs=gate_names,
+                options={"numSplits": 4},
+            )
+        )
+        activated_gate_names: List[str] = []
+        for gate_tag, gate_name, activation in zip(
+            ["i", "o", "f", "c"],
+            gate_names,
+            ["LOGISTIC", "LOGISTIC", "LOGISTIC", "TANH"],
+        ):
+            activated_name = add_tensor(
+                f"step{step_index}_{gate_tag}_activated",
+                [int(batch_dim), int(hidden_size)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type=activation,
+                    inputs=[gate_name],
+                    outputs=[activated_name],
+                )
+            )
+            activated_gate_names.append(activated_name)
+
+        i_name, o_name, f_name, c_candidate_name = activated_gate_names
+        retained_c_name = add_tensor(
+            f"step{step_index}_retained_c",
+            [int(batch_dim), int(hidden_size)],
+        )
+        candidate_c_name = add_tensor(
+            f"step{step_index}_candidate_c",
+            [int(batch_dim), int(hidden_size)],
+        )
+        next_c_name = add_tensor(
+            f"step{step_index}_c",
+            [int(batch_dim), int(hidden_size)],
+        )
+        tanh_c_name = add_tensor(
+            f"step{step_index}_tanh_c",
+            [int(batch_dim), int(hidden_size)],
+        )
+        next_h_name = add_tensor(
+            f"step{step_index}_h",
+            [int(batch_dim), int(hidden_size)],
+        )
+        for lhs_name, rhs_name, output_name in [
+            (f_name, c_2d_name, retained_c_name),
+            (i_name, c_candidate_name, candidate_c_name),
+        ]:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="MUL",
+                    inputs=[lhs_name, rhs_name],
+                    outputs=[output_name],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[retained_c_name, candidate_c_name],
+                outputs=[next_c_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="TANH",
+                inputs=[next_c_name],
+                outputs=[tanh_c_name],
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[o_name, tanh_c_name],
+                outputs=[next_h_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+
+        step_output_name = add_tensor(
+            f"step{step_index}_output",
+            [1, int(batch_dim), int(hidden_size)],
+        )
+        step_output_shape_name = add_const(
+            f"step{step_index}_output_shape",
+            np.asarray([1, int(batch_dim), int(hidden_size)], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[next_h_name, step_output_shape_name],
+                outputs=[step_output_name],
+                options={"newShape": [1, int(batch_dim), int(hidden_size)]},
+            )
+        )
+        step_outputs.append(step_output_name)
+        h_2d_name = next_h_name
+        c_2d_name = next_c_name
+
+    sequence_3d_name = step_outputs[0]
+    if len(step_outputs) > 1:
+        sequence_3d_name = add_tensor(
+            "sequence_3d",
+            [int(seq_dim), int(batch_dim), int(hidden_size)],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=step_outputs,
+                outputs=[sequence_3d_name],
+                options={"axis": 0, "fusedActivationFunction": "NONE"},
+            )
+        )
+
+    y_shape = [int(seq_dim), 1, int(batch_dim), int(hidden_size)]
+    y_shape_name = add_const("y_shape", np.asarray(y_shape, dtype=np.int32))
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[sequence_3d_name, y_shape_name],
+            outputs=[y_name],
+            options={"newShape": y_shape, "preserveDynamicShape": True},
+        )
+    )
+    y_tensor = ctx.model_ir.tensors[y_name]
+    y_tensor.shape = list(y_shape)
+    y_tensor.shape_signature = list(y_shape)
+
+    state_shape = [1, int(batch_dim), int(hidden_size)]
+    state_shape_name = add_const("output_state_shape", np.asarray(state_shape, dtype=np.int32))
+    for output_name, state_name in [(y_h_name, h_2d_name), (y_c_name, c_2d_name)]:
+        if output_name == "":
+            continue
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[state_name, state_shape_name],
+                outputs=[output_name],
+                options={"newShape": state_shape, "preserveDynamicShape": True},
+            )
+        )
+        output_tensor = ctx.model_ir.tensors[output_name]
+        output_tensor.shape = list(state_shape)
+        output_tensor.shape_signature = list(state_shape)
+    return True
+
+
 def build_lstm_op(node: Any, ctx: Any) -> None:
     original_inputs = _get_original_node_inputs(node, ctx)
     x_name = _input_name(original_inputs, 0)
@@ -631,6 +970,31 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
             reference = np.zeros((int(batch_dim), int(hidden_size)), dtype=np.float32)
             return _add_zero_variable_state(f"{state_tag}_state", reference)
 
+        constant_state = ctx.get_constant_array(state_input_name)
+        if constant_state is not None:
+            constant_state = np.asarray(constant_state, dtype=np.float32)
+            expected_shape = (
+                int(expected_num_directions),
+                int(batch_dim),
+                int(hidden_size),
+            )
+            if int(constant_state.size) == int(np.prod(expected_shape)):
+                constant_state = constant_state.reshape(expected_shape)
+                direction_state = np.asarray(
+                    constant_state[int(dir_index)],
+                    dtype=np.float32,
+                )
+                if not np.any(direction_state):
+                    # TFLite sequence-LSTM state inputs are mutable variable
+                    # tensors. Feeding them from runtime SPLIT/RESHAPE ops
+                    # leaves the variable storage uninitialized at invoke
+                    # time. A constant ONNX zero state is exactly represented
+                    # by a producer-free zero-initialized variable tensor.
+                    return _add_zero_variable_state(
+                        f"{state_tag}_dir{dir_index}_state",
+                        direction_state,
+                    )
+
         slice_input_name = state_input_name
         state_shape = [int(v) for v in ctx.get_tensor_shape(state_input_name)]
         if len(state_shape) != 3:
@@ -724,6 +1088,21 @@ def build_lstm_op(node: Any, ctx: Any) -> None:
         ),
         fallback=1,
     )
+    if _build_static_forward_lstm_with_explicit_state(
+        node=node,
+        ctx=ctx,
+        original_inputs=original_inputs,
+        W=W,
+        R=R,
+        B=B,
+        seq_dim=int(seq_dim),
+        batch_dim=int(batch_dim),
+        hidden_size=int(hidden_size),
+        y_name=y_name,
+        y_h_name=y_h_name,
+        y_c_name=y_c_name,
+    ):
+        return
     y_tensor = ctx.model_ir.tensors.get(y_name, None)
     if y_tensor is not None:
         y_tensor.shape = [int(seq_dim), int(expected_num_directions), int(batch_dim), int(hidden_size)]

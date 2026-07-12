@@ -8,6 +8,7 @@ import onnx
 from onnx import numpy_helper
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
+from onnx2tf.utils.onnxruntime_compat import stable_topological_sort_graphs
 
 
 _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF = [
@@ -115,6 +116,7 @@ class _WrappedBranchNode:
     attrs: Dict[str, Any]
     inputs: List[_WrappedIO]
     outputs: List[_WrappedIO]
+    inputs_are_remapped: bool = True
 
 
 @dataclass
@@ -125,38 +127,126 @@ class _GraphNodeList:
     output: List[Any] = field(default_factory=list)
 
 
-def is_supported_if_nms_guard_pattern(node: Any) -> bool:
+@dataclass
+class _IfNmsGuardMatch:
+    else_graph: Any
+    nms_node: Any
+    boxes_name: str
+    scores_name: str
+    indices_name: str
+
+
+def _match_if_nms_guard_pattern(node: Any) -> Optional[_IfNmsGuardMatch]:
     then_graph = node.attrs.get("then_branch", None)
     else_graph = node.attrs.get("else_branch", None)
     if then_graph is None or else_graph is None:
-        return False
+        return None
     if not hasattr(then_graph, "node") or not hasattr(else_graph, "node"):
-        return False
+        return None
     if len(node.inputs) != 1 or len(node.outputs) != 1:
-        return False
+        return None
     if len(then_graph.node) != 0:
-        return False
-    else_ops = [str(n.op_type) for n in else_graph.node]
-    if else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE:
-        return True
-    if else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE_WITH_OFFSET_SLICE:
-        return True
-    if else_ops != _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF:
-        return False
+        return None
 
-    nested_if = else_graph.node[-1]
-    nested_attrs = {a.name: a for a in nested_if.attribute}
-    if "then_branch" not in nested_attrs or "else_branch" not in nested_attrs:
-        return False
-    nested_then = nested_attrs["then_branch"].g
-    nested_else = nested_attrs["else_branch"].g
-    if len(nested_then.node) != 1 or len(nested_else.node) != 1:
-        return False
-    if str(nested_then.node[0].op_type) != "Squeeze":
-        return False
-    if str(nested_else.node[0].op_type) != "Identity":
-        return False
-    return True
+    allowed_ops = {
+        "ReduceMax",
+        "Cast",
+        "Equal",
+        "Unsqueeze",
+        "Add",
+        "Mul",
+        "Slice",
+        "NonMaxSuppression",
+        "Gather",
+        "Squeeze",
+        "If",
+    }
+    if any(str(graph_node.op_type) not in allowed_ops for graph_node in else_graph.node):
+        return None
+
+    reduce_nodes = [n for n in else_graph.node if str(n.op_type) == "ReduceMax"]
+    cast_nodes = [n for n in else_graph.node if str(n.op_type) == "Cast"]
+    nms_nodes = [n for n in else_graph.node if str(n.op_type) == "NonMaxSuppression"]
+    if len(reduce_nodes) != 1 or len(cast_nodes) != 1 or len(nms_nodes) != 1:
+        return None
+    reduce_node = reduce_nodes[0]
+    cast_node = cast_nodes[0]
+    nms_node = nms_nodes[0]
+    if (
+        len(reduce_node.input) != 1
+        or len(cast_node.input) != 1
+        or len(nms_node.input) < 2
+        or len(nms_node.output) != 1
+    ):
+        return None
+
+    producers = {
+        str(output_name): graph_node
+        for graph_node in else_graph.node
+        for output_name in graph_node.output
+        if str(output_name) != ""
+    }
+    score_source = str(nms_node.input[1])
+    visited: set[str] = set()
+    while score_source not in visited:
+        visited.add(score_source)
+        producer = producers.get(score_source, None)
+        if producer is None or str(producer.op_type) != "Unsqueeze" or len(producer.input) < 1:
+            break
+        score_source = str(producer.input[0])
+    if score_source == "" or score_source in producers:
+        return None
+
+    gather_nodes = [
+        graph_node
+        for graph_node in else_graph.node
+        if str(graph_node.op_type) == "Gather"
+        and len(graph_node.input) >= 1
+        and str(graph_node.input[0]) == str(nms_node.output[0])
+    ]
+    if len(gather_nodes) != 1 or len(gather_nodes[0].output) != 1:
+        return None
+    gathered_name = str(gather_nodes[0].output[0])
+    graph_output_name = str(else_graph.output[0].name) if len(else_graph.output) == 1 else ""
+    terminal = producers.get(graph_output_name, None)
+    if terminal is None:
+        return None
+    if str(terminal.op_type) == "Squeeze":
+        if len(terminal.input) < 1 or str(terminal.input[0]) != gathered_name:
+            return None
+    elif str(terminal.op_type) == "If":
+        nested_attrs = {a.name: a for a in terminal.attribute}
+        if "then_branch" not in nested_attrs or "else_branch" not in nested_attrs:
+            return None
+        nested_then = nested_attrs["then_branch"].g
+        nested_else = nested_attrs["else_branch"].g
+        nested_ops = {
+            str(branch.node[0].op_type)
+            for branch in (nested_then, nested_else)
+            if len(branch.node) == 1
+        }
+        if nested_ops != {"Squeeze", "Identity"}:
+            return None
+        if any(
+            len(branch.node[0].input) < 1
+            or str(branch.node[0].input[0]) != gathered_name
+            for branch in (nested_then, nested_else)
+        ):
+            return None
+    else:
+        return None
+
+    return _IfNmsGuardMatch(
+        else_graph=else_graph,
+        nms_node=nms_node,
+        boxes_name=str(reduce_node.input[0]),
+        scores_name=str(score_source),
+        indices_name=str(cast_node.input[0]),
+    )
+
+
+def is_supported_if_nms_guard_pattern(node: Any) -> bool:
+    return _match_if_nms_guard_pattern(node) is not None
 
 
 def _onnx_dim_to_int(dim_proto: Any) -> int:
@@ -212,6 +302,7 @@ def _apply_value_info_hint_to_tensor(
     tensor_name: str,
     value_info: Any,
     ctx: Any,
+    preserve_produced_dtype: bool = False,
 ) -> None:
     if value_info is None:
         return
@@ -222,10 +313,20 @@ def _apply_value_info_hint_to_tensor(
         return
 
     tensor = ctx.model_ir.tensors[tensor_name]
-    if hinted_dtype is not None:
+    has_runtime_producer = bool(
+        preserve_produced_dtype
+        and any(
+            str(tensor_name) in {str(name) for name in op.outputs}
+            for op in ctx.model_ir.operators
+        )
+    )
+    if hinted_dtype is not None and not has_runtime_producer:
         tensor.dtype = str(hinted_dtype)
         if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
             ctx.dtype_map[str(tensor_name)] = str(hinted_dtype)
+
+    if has_runtime_producer:
+        return
 
     hinted_norm_shape = [int(v) if int(v) > 0 else 1 for v in hinted_shape]
     hinted_signature = [int(v) if int(v) > 0 else -1 for v in hinted_shape]
@@ -486,9 +587,16 @@ def is_supported_if_generic_branch_mux_pattern(node: Any, ctx: Any = None) -> bo
     return True
 
 
-def _ensure_graph_initializers(graph: Any, ctx: Any) -> None:
+def _ensure_graph_initializers(
+    graph: Any,
+    ctx: Any,
+    *,
+    name_remap: Optional[Dict[str, str]] = None,
+) -> None:
+    remap = name_remap if isinstance(name_remap, dict) else {}
     for initializer in graph.initializer:
-        name = str(initializer.name)
+        original_name = str(initializer.name)
+        name = remap.get(original_name, original_name)
         if name in ctx.model_ir.tensors:
             continue
         value = np.asarray(numpy_helper.to_array(initializer))
@@ -509,6 +617,8 @@ def _to_tflite_attr_value(attr: Any) -> Any:
         return attr.s.decode("utf-8")
     if attr_type == int(onnx.AttributeProto.STRINGS):
         return [v.decode("utf-8") for v in attr.strings]
+    if attr_type == int(onnx.AttributeProto.TENSOR):
+        return np.asarray(numpy_helper.to_array(attr.t))
     if attr_type == int(onnx.AttributeProto.GRAPH):
         return attr.g
     if attr_type == int(onnx.AttributeProto.GRAPHS):
@@ -537,6 +647,44 @@ def _constant_node_to_array(node_proto: Any) -> np.ndarray:
     )
 
 
+def _clone_graph_with_captured_name_remap(
+    graph: Any,
+    name_remap: Dict[str, str],
+) -> Any:
+    """Remap lexical captures without renaming tensors local to the graph."""
+    cloned_graph = onnx.GraphProto()
+    cloned_graph.CopyFrom(graph)
+    local_names = {
+        str(value.name)
+        for value in list(cloned_graph.input) + list(cloned_graph.initializer)
+        if str(value.name) != ""
+    }
+    local_names.update(
+        str(output_name)
+        for graph_node in cloned_graph.node
+        for output_name in graph_node.output
+        if str(output_name) != ""
+    )
+    for graph_node in cloned_graph.node:
+        for input_index, input_name in enumerate(graph_node.input):
+            normalized_name = str(input_name)
+            if normalized_name not in local_names and normalized_name in name_remap:
+                graph_node.input[input_index] = str(name_remap[normalized_name])
+        for attr in graph_node.attribute:
+            if int(attr.type) == int(onnx.AttributeProto.GRAPH):
+                attr.g.CopyFrom(
+                    _clone_graph_with_captured_name_remap(attr.g, name_remap)
+                )
+            elif int(attr.type) == int(onnx.AttributeProto.GRAPHS):
+                remapped_graphs = [
+                    _clone_graph_with_captured_name_remap(nested_graph, name_remap)
+                    for nested_graph in attr.graphs
+                ]
+                del attr.graphs[:]
+                attr.graphs.extend(remapped_graphs)
+    return cloned_graph
+
+
 def _wrap_node(
     node_proto: Any,
     *,
@@ -549,6 +697,8 @@ def _wrap_node(
     for attr in node_proto.attribute:
         converted = _to_tflite_attr_value(attr)
         if converted is not None:
+            if isinstance(converted, onnx.GraphProto) and len(remap_in) > 0:
+                converted = _clone_graph_with_captured_name_remap(converted, remap_in)
             attrs[str(attr.name)] = converted
 
     return _WrappedBranchNode(
@@ -713,7 +863,11 @@ def _const_fold_slice(
                 end_i += dim
             start_i = min(max(start_i, -1), dim - 1)
             end_i = min(max(end_i, -1), dim - 1)
-        slices[axis_i] = slice(start_i, end_i, step_i)
+        # ONNX clamps a sufficiently negative end to the virtual position
+        # immediately before index 0. Python spells that boundary as None for
+        # a negative step; slice(..., -1, -1) would instead be empty.
+        python_end = None if step_i < 0 and end_i == -1 else end_i
+        slices[axis_i] = slice(start_i, python_end, step_i)
     return np.asarray(x[tuple(slices)])
 
 
@@ -819,6 +973,24 @@ def _lower_graph_nodes(
         if value_name != "":
             value_info_map[value_name] = value_info
 
+    def _record_branch_constant(output_name: str, value: np.ndarray) -> None:
+        result = np.asarray(value)
+        if output_name in ctx.model_ir.tensors:
+            output_tensor = ctx.model_ir.tensors[output_name]
+            output_tensor.data = result
+            output_tensor.dtype = _tflite_dtype_from_np_dtype(result.dtype)
+            output_tensor.shape = [int(v) for v in result.shape]
+            output_tensor.shape_signature = [int(v) for v in result.shape]
+            ctx.constants[output_name] = result
+        else:
+            ctx.add_const_tensor(output_name, result)
+        folded_names = ctx.model_ir.metadata.setdefault(
+            "branch_folded_constant_tensor_names",
+            [],
+        )
+        if str(output_name) not in folded_names:
+            folded_names.append(str(output_name))
+
     for graph_node in graph.node:
         op_type = str(graph_node.op_type)
         for input_name in graph_node.input:
@@ -830,6 +1002,7 @@ def _lower_graph_nodes(
                 tensor_name=mapped_name,
                 value_info=value_info_map.get(original_name, None),
                 ctx=ctx,
+                preserve_produced_dtype=True,
             )
         for output_name in graph_node.output:
             original_name = str(output_name)
@@ -859,6 +1032,135 @@ def _lower_graph_nodes(
             else:
                 ctx.add_const_tensor(out_name, const_value)
             continue
+
+        if op_type == "ConstantOfShape" and len(graph_node.input) == 1 and len(graph_node.output) == 1:
+            shape_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            shape_value = ctx.get_constant_array(shape_name)
+            if shape_value is not None:
+                target_shape = [int(v) for v in np.asarray(shape_value).reshape(-1)]
+                if all(int(v) >= 0 for v in target_shape):
+                    fill_value = np.asarray(0.0, dtype=np.float32)
+                    for attr in graph_node.attribute:
+                        if str(attr.name) == "value" and attr.HasField("t"):
+                            candidate = np.asarray(numpy_helper.to_array(attr.t)).reshape(-1)
+                            if candidate.size > 0:
+                                fill_value = np.asarray(candidate[0], dtype=candidate.dtype)
+                            break
+                    result = np.full(target_shape, fill_value.item(), dtype=fill_value.dtype)
+                    out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                    _record_branch_constant(out_name, result)
+                    continue
+
+        if op_type == "Shape" and len(graph_node.input) == 1 and len(graph_node.output) == 1:
+            input_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            input_tensor = ctx.model_ir.tensors.get(str(input_name), None)
+            if input_tensor is not None:
+                input_shape = [int(v) for v in list(input_tensor.shape)]
+                input_signature = (
+                    [int(v) for v in list(input_tensor.shape_signature)]
+                    if input_tensor.shape_signature is not None
+                    else [int(v) for v in input_shape]
+                )
+                dynamic_input_names = {
+                    str(v)
+                    for v in ctx.model_ir.metadata.get(
+                        "onnx_dynamic_input_tensor_names", []
+                    )
+                    if str(v) != ""
+                }
+                shape_is_static = all(int(v) > 0 for v in input_shape)
+                signature_is_static = (
+                    len(input_shape) == len(input_signature)
+                    and all(int(v) > 0 for v in input_signature)
+                )
+                if shape_is_static and (
+                    signature_is_static or len(dynamic_input_names) == 0
+                ):
+                    start = 0
+                    end = len(input_shape)
+                    for attr in graph_node.attribute:
+                        if str(attr.name) == "start":
+                            start = int(attr.i)
+                        elif str(attr.name) == "end":
+                            end = int(attr.i)
+                    if start < 0:
+                        start += len(input_shape)
+                    if end < 0:
+                        end += len(input_shape)
+                    start = max(0, min(int(start), len(input_shape)))
+                    end = max(0, min(int(end), len(input_shape)))
+                    result = np.asarray(input_shape[start:end], dtype=np.int64)
+                    out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                    _record_branch_constant(out_name, result)
+                    continue
+
+        if op_type == "Size" and len(graph_node.input) == 1 and len(graph_node.output) == 1:
+            input_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            input_value = ctx.get_constant_array(input_name)
+            if input_value is not None:
+                out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                _record_branch_constant(
+                    out_name,
+                    np.asarray(np.asarray(input_value).size, dtype=np.int64),
+                )
+                continue
+
+        if op_type == "Not" and len(graph_node.input) == 1 and len(graph_node.output) == 1:
+            input_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            input_value = ctx.get_constant_array(input_name)
+            if input_value is not None:
+                out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                _record_branch_constant(
+                    out_name,
+                    np.logical_not(np.asarray(input_value, dtype=np.bool_)),
+                )
+                continue
+
+        if op_type == "Reshape" and len(graph_node.input) >= 2 and len(graph_node.output) == 1:
+            data_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            shape_name = remap_in.get(str(graph_node.input[1]), str(graph_node.input[1]))
+            data_value = ctx.get_constant_array(data_name)
+            shape_value = ctx.get_constant_array(shape_name)
+            if data_value is not None and shape_value is not None:
+                target_shape = [int(v) for v in np.asarray(shape_value).reshape(-1)]
+                allowzero = any(
+                    str(attr.name) == "allowzero" and int(attr.i) != 0
+                    for attr in graph_node.attribute
+                )
+                if not allowzero:
+                    input_shape = [int(v) for v in np.asarray(data_value).shape]
+                    target_shape = [
+                        int(input_shape[idx]) if int(v) == 0 and idx < len(input_shape) else int(v)
+                        for idx, v in enumerate(target_shape)
+                    ]
+                try:
+                    result = np.asarray(data_value).reshape(target_shape)
+                except Exception:
+                    result = None
+                if result is not None:
+                    out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                    _record_branch_constant(out_name, result)
+                    continue
+
+        if op_type == "Transpose" and len(graph_node.input) == 1 and len(graph_node.output) == 1:
+            data_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            data_value = ctx.get_constant_array(data_name)
+            if data_value is not None:
+                perm = None
+                for attr in graph_node.attribute:
+                    if str(attr.name) == "perm":
+                        perm = [int(v) for v in attr.ints]
+                        break
+                if perm is None:
+                    perm = list(reversed(range(int(np.asarray(data_value).ndim))))
+                try:
+                    result = np.transpose(np.asarray(data_value), axes=perm)
+                except Exception:
+                    result = None
+                if result is not None:
+                    out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                    _record_branch_constant(out_name, result)
+                    continue
 
         if op_type == "Concat" and len(graph_node.output) == 1:
             concat_inputs = [
@@ -964,6 +1266,12 @@ def _lower_graph_nodes(
                         ctx.constants[out_name] = result
                     else:
                         ctx.add_const_tensor(out_name, result)
+                    folded_names = ctx.model_ir.metadata.setdefault(
+                        "branch_folded_constant_tensor_names",
+                        [],
+                    )
+                    if str(out_name) not in folded_names:
+                        folded_names.append(str(out_name))
                     continue
 
         if op_type == "Squeeze" and len(graph_node.output) == 1 and len(graph_node.input) >= 1:
@@ -1002,6 +1310,12 @@ def _lower_graph_nodes(
                         ctx.constants[out_name] = np.asarray(result)
                     else:
                         ctx.add_const_tensor(out_name, np.asarray(result))
+                    folded_names = ctx.model_ir.metadata.setdefault(
+                        "branch_folded_constant_tensor_names",
+                        [],
+                    )
+                    if str(out_name) not in folded_names:
+                        folded_names.append(str(out_name))
                     continue
 
         if op_type == "Gather" and len(graph_node.input) >= 2 and len(graph_node.output) == 1:
@@ -1619,6 +1933,42 @@ def _resolve_if_branch_output_name(
     )
 
 
+def _build_if_branch_tensor_remap(
+    *,
+    graph: Any,
+    prefix: str,
+    graph_output_remap: Dict[str, str],
+) -> Dict[str, str]:
+    """Give every branch-local tensor a deterministic, branch-specific name."""
+    remap: Dict[str, str] = {}
+    for initializer_index, initializer in enumerate(
+        list(getattr(graph, "initializer", []))
+    ):
+        initializer_name = str(getattr(initializer, "name", ""))
+        if initializer_name != "":
+            remap[initializer_name] = (
+                f"{prefix}_initializer_{initializer_index}"
+            )
+    for node_index, graph_node in enumerate(list(getattr(graph, "node", []))):
+        for output_index, output_name_obj in enumerate(
+            list(getattr(graph_node, "output", []))
+        ):
+            output_name = str(output_name_obj)
+            if output_name != "":
+                remap[output_name] = (
+                    f"{prefix}_internal_{node_index}_{output_index}"
+                )
+
+    # Public branch outputs keep the existing stable names used by the mux.
+    remap.update(
+        {
+            str(original_name): str(remapped_name)
+            for original_name, remapped_name in graph_output_remap.items()
+        }
+    )
+    return remap
+
+
 def _build_if_generic_branch_mux(node: Any, ctx: Any) -> None:
     if not is_supported_if_generic_branch_mux_pattern(node, ctx):
         raise NotImplementedError(
@@ -1631,9 +1981,6 @@ def _build_if_generic_branch_mux(node: Any, ctx: Any) -> None:
 
     then_graph = node.attrs["then_branch"]
     else_graph = node.attrs["else_branch"]
-    _ensure_graph_initializers(then_graph, ctx)
-    _ensure_graph_initializers(else_graph, ctx)
-
     then_output_remap: Dict[str, str] = {}
     else_output_remap: Dict[str, str] = {}
     node_name = str(node.name) if str(getattr(node, "name", "")) != "" else "if"
@@ -1644,15 +1991,38 @@ def _build_if_generic_branch_mux(node: Any, ctx: Any) -> None:
         then_output_remap[then_output_name] = f"{node_name}_if_then_output_{output_index}"
         else_output_remap[else_output_name] = f"{node_name}_if_else_output_{output_index}"
 
+    then_tensor_remap = _build_if_branch_tensor_remap(
+        graph=then_graph,
+        prefix=f"{node_name}_if_then",
+        graph_output_remap=then_output_remap,
+    )
+    else_tensor_remap = _build_if_branch_tensor_remap(
+        graph=else_graph,
+        prefix=f"{node_name}_if_else",
+        graph_output_remap=else_output_remap,
+    )
+    _ensure_graph_initializers(
+        then_graph,
+        ctx,
+        name_remap=then_tensor_remap,
+    )
+    _ensure_graph_initializers(
+        else_graph,
+        ctx,
+        name_remap=else_tensor_remap,
+    )
+
     _lower_graph_nodes(
         graph=then_graph,
         ctx=ctx,
-        output_name_remap=then_output_remap,
+        input_name_remap=then_tensor_remap,
+        output_name_remap=then_tensor_remap,
     )
     _lower_graph_nodes(
         graph=else_graph,
         ctx=ctx,
-        output_name_remap=else_output_remap,
+        input_name_remap=else_tensor_remap,
+        output_name_remap=else_tensor_remap,
     )
 
     for output_index, output_obj in enumerate(node.outputs):
@@ -1917,42 +2287,22 @@ def build_if_op(node: Any, ctx: Any) -> None:
         output_name = node.outputs[0].name
 
         then_graph = node.attrs["then_branch"]
-        else_graph = node.attrs["else_branch"]
+        nms_match = _match_if_nms_guard_pattern(node)
+        if nms_match is None:
+            raise NotImplementedError(
+                f"If NMS guard pattern details are unsupported. node={node.name}"
+            )
+        branch_model = onnx.ModelProto()
+        branch_model.graph.CopyFrom(nms_match.else_graph)
+        stable_topological_sort_graphs(branch_model)
+        else_graph = branch_model.graph
+        nms_node = nms_match.nms_node
         _ensure_graph_initializers(then_graph, ctx)
         _ensure_graph_initializers(else_graph, ctx)
 
-        else_ops = [str(n.op_type) for n in else_graph.node]
-        if else_ops == _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF:
-            unsqueeze_scores_idx = 3
-            nms_idx = 9
-        elif else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE_WITH_OFFSET_SLICE:
-            unsqueeze_scores_idx = 4
-            nms_idx = 11
-        elif else_ops == _IF_NMS_GUARD_ELSE_OPS_SIMPLE:
-            unsqueeze_scores_idx = 2
-            nms_idx = 8
-        else:
-            raise NotImplementedError(
-                f"If pattern details are not supported by flatbuffer_direct built-in lowering. node={node.name}"
-            )
-
-        reduce_max_node = else_graph.node[0]
-        cast_node = else_graph.node[1]
-        unsqueeze_scores_node = else_graph.node[unsqueeze_scores_idx]
-        nms_node = else_graph.node[nms_idx]
-        if (
-            str(reduce_max_node.op_type) != "ReduceMax"
-            or str(cast_node.op_type) != "Cast"
-            or str(unsqueeze_scores_node.op_type) != "Unsqueeze"
-            or str(nms_node.op_type) != "NonMaxSuppression"
-        ):
-            raise NotImplementedError(
-                f"If pattern details are not supported by flatbuffer_direct built-in lowering. node={node.name}"
-            )
-
-        boxes_name = str(reduce_max_node.input[0])
-        idxs_name = str(cast_node.input[0])
-        scores_name = str(unsqueeze_scores_node.input[0])
+        boxes_name = str(nms_match.boxes_name)
+        idxs_name = str(nms_match.indices_name)
+        scores_name = str(nms_match.scores_name)
         ctx.ensure_tensor(boxes_name)
         ctx.ensure_tensor(scores_name)
         ctx.ensure_tensor(idxs_name)
@@ -2400,7 +2750,7 @@ def _build_loop_while(node: Any, ctx: Any) -> None:
     body_subgraph = ModelIR(name=f"{node.name}_while_body")
 
     # Build subgraph-local contexts with copied shape/dtype knowledge.
-    from onnx2tf.tflite_builder.lower_from_onnx2tf import LoweringContext
+    from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
 
     cond_ctx = LoweringContext(
         model_ir=cond_subgraph,

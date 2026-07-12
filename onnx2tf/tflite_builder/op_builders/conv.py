@@ -2281,6 +2281,20 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
             int(nhwc_output_shape[3]),
         ]
 
+    use_dynamic_output_shape = (
+        len(original_output_signature) != 4
+        or any(int(v) <= 0 for v in list(original_output_signature))
+    )
+    if int(group) != 1 and bool(use_dynamic_output_shape):
+        raise NotImplementedError(
+            "Grouped ConvTranspose requires static output shape in flatbuffer_direct. "
+            f"op={node.name} output_signature={original_output_signature} group={group}"
+        )
+    # TRANSPOSE_CONV itself uses VALID padding and produces the uncropped
+    # extent. Keep the explicit crop for dynamic shapes as well: folding
+    # pads/output_padding into the requested output shape changes which border
+    # is removed and spatially shifts the ONNX result.
+
     x_nhwc = ctx.add_intermediate_tensor(
         f"{node.name}_input_nhwc",
         dtype=ctx.get_tensor_dtype(input_name),
@@ -2294,31 +2308,6 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         allow_elide_inverse_chain=True,
     )
 
-    use_dynamic_output_shape = (
-        len(original_output_signature) != 4
-        or any(int(v) <= 0 for v in list(original_output_signature))
-    )
-    if int(group) != 1 and bool(use_dynamic_output_shape):
-        raise NotImplementedError(
-            "Grouped ConvTranspose requires static output shape in flatbuffer_direct. "
-            f"op={node.name} output_signature={original_output_signature} group={group}"
-        )
-    if use_dynamic_output_shape and needs_spatial_crop:
-        pads_are_symmetric = (
-            int(pad_top) == int(pad_bottom)
-            and int(pad_left) == int(pad_right)
-        )
-        if (not pads_are_symmetric) or any(int(v) != 0 for v in output_padding):
-            raise NotImplementedError(
-                "ConvTranspose with explicit pads requires static output shape in flatbuffer_direct "
-                "unless pads are symmetric and output_padding is zero. "
-                f"op={node.name} output_signature={original_output_signature} "
-                f"pads={raw_pads} output_padding={output_padding}"
-            )
-        # For symmetric explicit pads, dynamic output-shape math below already
-        # accounts for pads. Skip explicit crop to keep the shape dynamic.
-        needs_spatial_crop = False
-        nhwc_transpose_conv_output_shape = [int(v) for v in list(nhwc_output_shape)]
     if use_dynamic_output_shape:
         kernel_shape_attr = node.attrs.get("kernel_shape", None)
         if kernel_shape_attr is None:
@@ -2329,8 +2318,22 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         pads = [int(v) for v in list(node.attrs.get("pads", [0, 0, 0, 0]))]
         eff_kh = (int(kernel_h) - 1) * int(dilations[0]) + 1
         eff_kw = (int(kernel_w) - 1) * int(dilations[1]) + 1
-        adjust_h = int(eff_kh + int(output_padding[0]) - int(pads[0]) - int(pads[2]))
-        adjust_w = int(eff_kw + int(output_padding[1]) - int(pads[1]) - int(pads[3]))
+        if needs_spatial_crop:
+            adjust_h = int(eff_kh)
+            adjust_w = int(eff_kw)
+        else:
+            adjust_h = int(
+                eff_kh
+                + int(output_padding[0])
+                - int(pads[0])
+                - int(pads[2])
+            )
+            adjust_w = int(
+                eff_kw
+                + int(output_padding[1])
+                - int(pads[1])
+                - int(pads[3])
+            )
 
         shape_vec = ctx.add_intermediate_tensor(
             f"{node.name}_transpose_conv_input_shape_vec",
@@ -2623,18 +2626,49 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
             f"{node.name}_transpose_conv_crop_begin",
             np.asarray([0, int(pad_top), int(pad_left), 0], dtype=np.int32),
         )
-        crop_end_name = ctx.add_const_tensor(
-            f"{node.name}_transpose_conv_crop_end",
-            np.asarray(
-                [
-                    int(nhwc_transpose_conv_output_shape[0]),
-                    int(nhwc_transpose_conv_output_shape[1]) - int(pad_bottom) + int(output_padding[0]),
-                    int(nhwc_transpose_conv_output_shape[2]) - int(pad_right) + int(output_padding[1]),
-                    int(nhwc_transpose_conv_output_shape[3]),
-                ],
-                dtype=np.int32,
-            ),
-        )
+        if use_dynamic_output_shape:
+            crop_end_adjustment_name = ctx.add_const_tensor(
+                f"{node.name}_transpose_conv_crop_end_adjustment",
+                np.asarray(
+                    [
+                        0,
+                        -int(pad_bottom) + int(output_padding[0]),
+                        -int(pad_right) + int(output_padding[1]),
+                        0,
+                    ],
+                    dtype=np.int32,
+                ),
+            )
+            crop_end_name = ctx.add_intermediate_tensor(
+                f"{node.name}_transpose_conv_crop_end",
+                dtype="INT32",
+                shape=[4],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="ADD",
+                    inputs=[out_shape_name, crop_end_adjustment_name],
+                    outputs=[crop_end_name],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+        else:
+            crop_end_name = ctx.add_const_tensor(
+                f"{node.name}_transpose_conv_crop_end",
+                np.asarray(
+                    [
+                        int(nhwc_transpose_conv_output_shape[0]),
+                        int(nhwc_transpose_conv_output_shape[1])
+                        - int(pad_bottom)
+                        + int(output_padding[0]),
+                        int(nhwc_transpose_conv_output_shape[2])
+                        - int(pad_right)
+                        + int(output_padding[1]),
+                        int(nhwc_transpose_conv_output_shape[3]),
+                    ],
+                    dtype=np.int32,
+                ),
+            )
         crop_stride_name = ctx.add_const_tensor(
             f"{node.name}_transpose_conv_crop_stride",
             np.asarray([1, 1, 1, 1], dtype=np.int32),
@@ -2749,9 +2783,21 @@ def _build_conv3d_op(node: Any, ctx: Any) -> None:
         )
 
     group = int(node.attrs.get("group", 1))
-    if group != 1:
+    in_channels = int(input_shape[1])
+    out_channels = int(weights.shape[0])
+    weight_in_channels_per_group = int(weights.shape[1])
+    if (
+        group <= 0
+        or in_channels <= 0
+        or in_channels % group != 0
+        or out_channels % group != 0
+        or weight_in_channels_per_group != (in_channels // group)
+    ):
         raise NotImplementedError(
-            f"Conv3D currently supports group=1 only. op={node.name} group={group}"
+            "Conv3D group configuration is inconsistent. "
+            f"op={node.name} group={group} input_channels={in_channels} "
+            f"output_channels={out_channels} "
+            f"weight_input_channels_per_group={weight_in_channels_per_group}"
         )
 
     strides = [int(v) for v in list(node.attrs.get("strides", [1, 1, 1]))]
@@ -2888,14 +2934,6 @@ def _build_conv3d_op(node: Any, ctx: Any) -> None:
             )
             x_ndhwc_conv = x_ndhwc_padded
 
-    # ONNX Conv3D weights are OI(DHW); TFLite CONV_3D expects DHWIO.
-    w_conv = np.transpose(weights, (2, 3, 4, 1, 0))
-    w_name = ctx.add_const_tensor(
-        f"{node.name}_conv3d_filter",
-        w_conv.astype(np.float32),
-    )
-
-    out_channels = int(weights.shape[0])
     bias_values = None
     if len(node.inputs) >= 3:
         bias_values = ctx.get_constant_array(node.inputs[2].name)
@@ -2907,33 +2945,115 @@ def _build_conv3d_op(node: Any, ctx: Any) -> None:
             "Conv3D bias size must match output channels. "
             f"op={node.name} bias_size={int(bias_values.size)} out_channels={out_channels}"
         )
-    b_name = ctx.add_const_tensor(
-        f"{node.name}_conv3d_bias",
-        bias_values,
-    )
-
     y_ndhwc = ctx.add_intermediate_tensor(
         f"{node.name}_output_ndhwc",
         dtype=ctx.get_tensor_dtype(output_name),
         shape=ndhwc_output_shape,
     )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="CONV_3D",
-            inputs=[x_ndhwc_conv, w_name, b_name],
-            outputs=[y_ndhwc],
-            options={
-                "padding": padding,
-                "strideD": int(strides[0]),
-                "strideH": int(strides[1]),
-                "strideW": int(strides[2]),
-                "dilationDFactor": int(dilations[0]),
-                "dilationHFactor": int(dilations[1]),
-                "dilationWFactor": int(dilations[2]),
-                "fusedActivationFunction": "NONE",
-            },
+    conv_options = {
+        "padding": padding,
+        "strideD": int(strides[0]),
+        "strideH": int(strides[1]),
+        "strideW": int(strides[2]),
+        "dilationDFactor": int(dilations[0]),
+        "dilationHFactor": int(dilations[1]),
+        "dilationWFactor": int(dilations[2]),
+        "fusedActivationFunction": "NONE",
+    }
+    if group == 1:
+        # ONNX Conv3D weights are OI(DHW); TFLite CONV_3D expects DHWIO.
+        w_name = ctx.add_const_tensor(
+            f"{node.name}_conv3d_filter",
+            np.transpose(weights, (2, 3, 4, 1, 0)).astype(np.float32),
         )
-    )
+        b_name = ctx.add_const_tensor(
+            f"{node.name}_conv3d_bias",
+            bias_values,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONV_3D",
+                inputs=[x_ndhwc_conv, w_name, b_name],
+                outputs=[y_ndhwc],
+                options=dict(conv_options),
+            )
+        )
+    else:
+        input_channels_per_group = int(in_channels // group)
+        output_channels_per_group = int(out_channels // group)
+        x_group_source_shape = [
+            int(v) for v in ctx.model_ir.tensors[x_ndhwc_conv].shape
+        ]
+        y_group_shape = list(ndhwc_output_shape)
+        y_group_shape[4] = int(output_channels_per_group)
+        grouped_outputs: list[str] = []
+        for group_index in range(group):
+            x_group_shape = list(x_group_source_shape)
+            x_group_shape[4] = int(input_channels_per_group)
+            x_group = ctx.add_intermediate_tensor(
+                f"{node.name}_group_{group_index}_input",
+                dtype=ctx.get_tensor_dtype(x_ndhwc_conv),
+                shape=x_group_shape,
+            )
+            begin_name = ctx.add_const_tensor(
+                f"{node.name}_group_{group_index}_slice_begin",
+                np.asarray(
+                    [0, 0, 0, 0, group_index * input_channels_per_group],
+                    dtype=np.int32,
+                ),
+            )
+            size_name = ctx.add_const_tensor(
+                f"{node.name}_group_{group_index}_slice_size",
+                np.asarray(
+                    [-1, -1, -1, -1, input_channels_per_group],
+                    dtype=np.int32,
+                ),
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SLICE",
+                    inputs=[x_ndhwc_conv, begin_name, size_name],
+                    outputs=[x_group],
+                )
+            )
+
+            output_start = int(group_index * output_channels_per_group)
+            output_stop = int(output_start + output_channels_per_group)
+            w_group = np.transpose(
+                weights[output_start:output_stop],
+                (2, 3, 4, 1, 0),
+            )
+            w_group_name = ctx.add_const_tensor(
+                f"{node.name}_group_{group_index}_conv3d_filter",
+                w_group.astype(np.float32),
+            )
+            b_group_name = ctx.add_const_tensor(
+                f"{node.name}_group_{group_index}_conv3d_bias",
+                bias_values[output_start:output_stop],
+            )
+            y_group = ctx.add_intermediate_tensor(
+                f"{node.name}_group_{group_index}_output",
+                dtype=ctx.get_tensor_dtype(output_name),
+                shape=y_group_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CONV_3D",
+                    inputs=[x_group, w_group_name, b_group_name],
+                    outputs=[y_group],
+                    options=dict(conv_options),
+                )
+            )
+            grouped_outputs.append(y_group)
+
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CONCATENATION",
+                inputs=grouped_outputs,
+                outputs=[y_ndhwc],
+                options={"axis": 4, "fusedActivationFunction": "NONE"},
+            )
+        )
     ctx.model_ir.tensors[y_ndhwc].shape_signature = [int(v) for v in ndhwc_output_signature]
 
     make_transpose(

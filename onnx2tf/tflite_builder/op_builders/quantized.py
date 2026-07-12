@@ -124,6 +124,208 @@ def _set_tensor_quantization(
     )
 
 
+def _add_scalar_onnx_requantization(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    input_is_scaled_quant_units: bool = False,
+    wrap_on_overflow: bool = False,
+) -> bool:
+    """Requantize float data with ONNX round-then-saturate semantics.
+
+    TFLite's quantized kernels use fixed-point requantizers whose rounding can
+    differ by one quantum from ONNX Runtime.  A one-quantum error in an early
+    QLinearConv can be amplified by the following quantized layers.  For the
+    mixed UINT8-activation/INT8-weight compatibility path, keep the declared
+    quantized boundary but make the scalar requantization arithmetic explicit.
+    """
+
+    output_tensor = ctx.model_ir.tensors.get(output_name)
+    quantization = (
+        output_tensor.quantization
+        if output_tensor is not None
+        and isinstance(output_tensor.quantization, QuantParamIR)
+        else None
+    )
+    if (
+        output_tensor is None
+        or quantization is None
+        or len(quantization.scale) != 1
+        or len(quantization.zero_point) != 1
+    ):
+        return False
+
+    output_dtype = str(output_tensor.dtype).upper()
+    dtype_limits = {
+        "INT8": (-128.0, 127.0),
+        "UINT8": (0.0, 255.0),
+        "INT16": (-32768.0, 32767.0),
+        "UINT16": (0.0, 65535.0),
+    }
+    if output_dtype not in dtype_limits:
+        return False
+
+    output_shape = list(output_tensor.shape)
+    output_signature = (
+        list(output_tensor.shape_signature)
+        if output_tensor.shape_signature is not None
+        else list(output_shape)
+    )
+
+    def intermediate(suffix: str) -> str:
+        name = ctx.add_intermediate_tensor(
+            f"{output_name}_onnx_requant_{suffix}",
+            dtype="FLOAT32",
+            shape=output_shape,
+        )
+        ctx.model_ir.tensors[name].shape_signature = list(output_signature)
+        return name
+
+    zero_name = ctx.add_const_tensor(
+        f"{output_name}_onnx_requant_zero",
+        np.asarray(float(quantization.zero_point[0]), dtype=np.float32),
+    )
+    qmin, qmax = dtype_limits[output_dtype]
+    scaled_name = input_name
+    rounded_name = intermediate("rounded")
+    shifted_name = intermediate("shifted")
+    if not bool(input_is_scaled_quant_units):
+        scale_name = ctx.add_const_tensor(
+            f"{output_name}_onnx_requant_scale",
+            np.asarray(float(quantization.scale[0]), dtype=np.float32),
+        )
+        scaled_name = intermediate("scaled")
+        ctx.add_operator(
+            OperatorIR(
+                op_type="DIV",
+                inputs=[input_name, scale_name],
+                outputs=[scaled_name],
+                options={
+                    "fusedActivationFunction": "NONE",
+                    "preserveDivisionForOnnxRequantization": True,
+                },
+            )
+        )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ROUND",
+            inputs=[scaled_name],
+            outputs=[rounded_name],
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[rounded_name, zero_name],
+            outputs=[shifted_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    cast_input_name = shifted_name
+    if bool(wrap_on_overflow):
+        qmin_name = ctx.add_const_tensor(
+            f"{output_name}_onnx_requant_min",
+            np.asarray(qmin, dtype=np.float32),
+        )
+        modulus_name = ctx.add_const_tensor(
+            f"{output_name}_onnx_requant_modulus",
+            np.asarray(qmax - qmin + 1.0, dtype=np.float32),
+        )
+        offset_name = intermediate("wrap_offset")
+        quotient_name = intermediate("wrap_quotient")
+        cycles_name = intermediate("wrap_cycles")
+        cycle_span_name = intermediate("wrap_cycle_span")
+        wrapped_offset_name = intermediate("wrapped_offset")
+        wrapped_name = intermediate("wrapped")
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[shifted_name, qmin_name],
+                outputs=[offset_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="DIV",
+                inputs=[offset_name, modulus_name],
+                outputs=[quotient_name],
+                options={
+                    "fusedActivationFunction": "NONE",
+                    "preserveDivisionForOnnxRequantization": True,
+                },
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="FLOOR",
+                inputs=[quotient_name],
+                outputs=[cycles_name],
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[cycles_name, modulus_name],
+                outputs=[cycle_span_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[offset_name, cycle_span_name],
+                outputs=[wrapped_offset_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[wrapped_offset_name, qmin_name],
+                outputs=[wrapped_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        cast_input_name = wrapped_name
+    else:
+        qmin_name = ctx.add_const_tensor(
+            f"{output_name}_onnx_requant_min",
+            np.asarray(qmin, dtype=np.float32),
+        )
+        qmax_name = ctx.add_const_tensor(
+            f"{output_name}_onnx_requant_max",
+            np.asarray(qmax, dtype=np.float32),
+        )
+        lower_clamped_name = intermediate("lower_clamped")
+        clamped_name = intermediate("clamped")
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MAXIMUM",
+                inputs=[shifted_name, qmin_name],
+                outputs=[lower_clamped_name],
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MINIMUM",
+                inputs=[lower_clamped_name, qmax_name],
+                outputs=[clamped_name],
+            )
+        )
+        cast_input_name = clamped_name
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CAST",
+            inputs=[cast_input_name],
+            outputs=[output_name],
+            options={"inDataType": "FLOAT32", "outDataType": output_dtype},
+        )
+    )
+    return True
+
+
 def _promote_internal_uint8_tensor_to_int8(ctx: Any, tensor_name: str) -> None:
     if str(tensor_name) in set(ctx.graph_output_names):
         return
@@ -671,11 +873,27 @@ def _resolve_qlinear_conv_padding_and_explicit_pads(
         raw_pads = [0, 0, 0, 0]
     pads = [int(raw_pads[0]), int(raw_pads[1]), int(raw_pads[2]), int(raw_pads[3])]
     pad_top, pad_left, pad_bottom, pad_right = pads
-    pads_axes_opposite_same = bool((pad_top == pad_bottom) and (pad_left == pad_right))
+    strides = [int(v) for v in list(node.attrs.get("strides", [1, 1]))]
+    dilations = [int(v) for v in list(node.attrs.get("dilations", [1, 1]))]
+    kernel = [int(v) for v in list(node.attrs.get("kernel_shape", [1, 1]))]
+    explicit_pads_match_same_upper = False
+    if strides == [1, 1] and len(kernel) == 2 and len(dilations) == 2:
+        effective_h = (int(kernel[0]) - 1) * int(dilations[0]) + 1
+        effective_w = (int(kernel[1]) - 1) * int(dilations[1]) + 1
+        same_top = (effective_h - 1) // 2
+        same_bottom = (effective_h - 1) - same_top
+        same_left = (effective_w - 1) // 2
+        same_right = (effective_w - 1) - same_left
+        explicit_pads_match_same_upper = pads == [
+            same_top,
+            same_left,
+            same_bottom,
+            same_right,
+        ]
 
     if auto_pad == "NOTSET":
         if (
-            pads_axes_opposite_same
+            explicit_pads_match_same_upper
             and len(input_shape_nchw) == 4
             and len(output_shape_nchw) == 4
             and list(input_shape_nchw[2:]) == list(output_shape_nchw[2:])
@@ -731,13 +949,22 @@ def build_quantize_linear_op(node: Any, ctx: Any) -> None:
         quantized_dimension=qdim,
     )
 
-    ctx.add_operator(
-        OperatorIR(
-            op_type="QUANTIZE",
-            inputs=[input_name],
-            outputs=[output_name],
-        )
+    use_onnx_requantization = (
+        np.asarray(y_zero_point).dtype == np.dtype(np.uint8)
+        and str(ctx.get_tensor_dtype(output_name)).upper() == "INT8"
     )
+    if not use_onnx_requantization or not _add_scalar_onnx_requantization(
+        ctx=ctx,
+        input_name=input_name,
+        output_name=output_name,
+    ):
+        ctx.add_operator(
+            OperatorIR(
+                op_type="QUANTIZE",
+                inputs=[input_name],
+                outputs=[output_name],
+            )
+        )
 
 
 def build_dequantize_linear_op(node: Any, ctx: Any) -> None:
@@ -835,7 +1062,12 @@ def _build_qlinear_binary_op(node: Any, ctx: Any, op_type: str) -> None:
         quantized_dimension=0 if np.asarray(c_scale).size <= 1 else _normalize_axis(1, out_rank),
     )
 
-    if str(op_type).upper() != "MUL":
+    op_type_upper = str(op_type).upper()
+    use_float_binary_path = (
+        op_type_upper == "MUL"
+        or (a_name not in ctx.constants and b_name not in ctx.constants)
+    )
+    if not use_float_binary_path:
         ctx.add_operator(
             OperatorIR(
                 op_type=op_type,
@@ -846,8 +1078,11 @@ def _build_qlinear_binary_op(node: Any, ctx: Any, op_type: str) -> None:
         )
         return
 
-    # Prefer float-path lowering for QLinearMul to match ONNX quantized
-    # multiply semantics more closely across runtimes.
+    # TFLite's quantized binary kernels use fixed-point requantization whose
+    # tie handling can differ by one quantum from ONNX Runtime.  Preserve the
+    # ONNX dequantize -> arithmetic -> round -> saturate contract explicitly;
+    # an early one-quantum residual error can otherwise be amplified by later
+    # quantized convolutions.
     a_f_name = ctx.add_intermediate_tensor(
         f"{output_name}_{str(op_type).lower()}_a_f32",
         dtype="FLOAT32",
@@ -885,13 +1120,22 @@ def _build_qlinear_binary_op(node: Any, ctx: Any, op_type: str) -> None:
             options={"fusedActivationFunction": "NONE"},
         )
     )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="QUANTIZE",
-            inputs=[out_f_name],
-            outputs=[output_name],
+    use_explicit_onnx_requantization = (
+        op_type_upper == "ADD"
+        and _add_scalar_onnx_requantization(
+            ctx=ctx,
+            input_name=out_f_name,
+            output_name=output_name,
         )
     )
+    if not use_explicit_onnx_requantization:
+        ctx.add_operator(
+            OperatorIR(
+                op_type="QUANTIZE",
+                inputs=[out_f_name],
+                outputs=[output_name],
+            )
+        )
 
 
 def build_qlinear_add_op(node: Any, ctx: Any) -> None:
@@ -1112,7 +1356,6 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
             )
             x_nhwc_conv = x_nhwc_padded
 
-    in_channels = int(nchw_input[1])
     out_channels = int(weights.shape[0])
     weight_in_channels_per_group = int(weights.shape[1])
     # Keep depthwise detection aligned with op_registry validator:
@@ -1192,21 +1435,45 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
         bias_values = np.asarray(bias_values, dtype=np.int32).reshape(-1)
     else:
         bias_values = np.zeros((out_channels,), dtype=np.int32)
-    bias_q_name = ctx.add_const_tensor(
-        f"{node.name}_conv_bias_q",
-        bias_values,
-    )
     x_scales, _ = _normalize_quant_params(scale=x_scale, zero_point=x_zero)
     w_scales, _ = _normalize_quant_params(scale=w_scale, zero_point=w_zero)
     if len(w_scales) == 1:
         bias_scales = [float(x_scales[0] * w_scales[0])]
     else:
         bias_scales = [float(x_scales[0] * ws) for ws in w_scales]
-    ctx.model_ir.tensors[bias_q_name].quantization = QuantParamIR(
-        scale=bias_scales,
-        zero_point=[0 for _ in range(len(bias_scales))],
-        quantized_dimension=0,
+    # TFLite's quantized convolution kernels use a fixed-point requantizer whose
+    # tie handling can differ by one output quantum from ONNX Runtime's
+    # QLinearConv implementation. A single early difference can be amplified by
+    # later quantized layers. Keep quantized graph boundaries, but evaluate the
+    # exact integer accumulator through float builtins before applying explicit
+    # ONNX round-then-saturate requantization.
+    use_float_requantization_compatibility = (
+        np.issubdtype(np.asarray(x_zero).dtype, np.integer)
+        and np.issubdtype(np.asarray(y_zero).dtype, np.integer)
+        and np.issubdtype(np.asarray(w_zero).dtype, np.integer)
     )
+
+    if use_float_requantization_compatibility:
+        bias_scales_array = np.asarray(bias_scales, dtype=np.float32).reshape(-1)
+        if bias_scales_array.size == 1 and bias_values.size > 1:
+            bias_scales_array = np.repeat(
+                bias_scales_array,
+                repeats=int(bias_values.size),
+            )
+        bias_name_for_conv = ctx.add_const_tensor(
+            f"{node.name}_conv_bias_f32",
+            np.asarray(bias_values, dtype=np.float32),
+        )
+    else:
+        bias_name_for_conv = ctx.add_const_tensor(
+            f"{node.name}_conv_bias_q",
+            bias_values,
+        )
+        ctx.model_ir.tensors[bias_name_for_conv].quantization = QuantParamIR(
+            scale=bias_scales,
+            zero_point=[0 for _ in range(len(bias_scales))],
+            quantized_dimension=0,
+        )
 
     y_nhwc = ctx.add_intermediate_tensor(
         f"{node.name}_output_nhwc",
@@ -1216,13 +1483,146 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
     ctx.model_ir.tensors[y_nhwc].quantization = ctx.model_ir.tensors[output_name].quantization
     ctx.model_ir.tensors[y_nhwc].shape_signature = [int(v) for v in nhwc_output_signature]
     y_nhwc_conv = y_nhwc
+    x_name_for_conv = x_nhwc_conv
+    w_name_for_conv = w_q_name
+    y_nhwc_accumulator = y_nhwc
+    if use_float_requantization_compatibility:
+        x_cast_name = ctx.add_intermediate_tensor(
+            f"{node.name}_input_nhwc_q_f32",
+            dtype="FLOAT32",
+            shape=list(ctx.model_ir.tensors[x_nhwc_conv].shape),
+        )
+        ctx.model_ir.tensors[x_cast_name].shape_signature = (
+            list(ctx.model_ir.tensors[x_nhwc_conv].shape_signature)
+            if ctx.model_ir.tensors[x_nhwc_conv].shape_signature is not None
+            else list(ctx.model_ir.tensors[x_nhwc_conv].shape)
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[x_nhwc_conv],
+                outputs=[x_cast_name],
+                options={
+                    "inDataType": str(ctx.get_tensor_dtype(x_nhwc_conv)).upper(),
+                    "outDataType": "FLOAT32",
+                },
+            )
+        )
+        x_quantization = ctx.model_ir.tensors[x_nhwc_conv].quantization
+        x_zero_points = (
+            list(x_quantization.zero_point)
+            if isinstance(x_quantization, QuantParamIR)
+            else [0]
+        )
+        if len(x_zero_points) != 1:
+            raise NotImplementedError(
+                "QLinearConv mixed UINT8/INT8 compatibility requires a scalar "
+                f"input zero point. op={node.name} zero_points={x_zero_points}"
+            )
+        x_name_for_conv = x_cast_name
+        if int(x_zero_points[0]) != 0:
+            x_zero_name = ctx.add_const_tensor(
+                f"{node.name}_input_zero_f32",
+                np.asarray(float(x_zero_points[0]), dtype=np.float32),
+            )
+            x_name_for_conv = ctx.add_intermediate_tensor(
+                f"{node.name}_input_centered_f32",
+                dtype="FLOAT32",
+                shape=list(ctx.model_ir.tensors[x_nhwc_conv].shape),
+            )
+            ctx.model_ir.tensors[x_name_for_conv].shape_signature = list(
+                ctx.model_ir.tensors[x_cast_name].shape_signature
+                or ctx.model_ir.tensors[x_cast_name].shape
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SUB",
+                    inputs=[x_cast_name, x_zero_name],
+                    outputs=[x_name_for_conv],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+
+        weight_tensor = ctx.model_ir.tensors[w_q_name]
+        weight_quantization = weight_tensor.quantization
+        weight_zero_points = (
+            list(weight_quantization.zero_point)
+            if isinstance(weight_quantization, QuantParamIR)
+            else [0]
+        )
+        weight_shape = list(weight_tensor.shape)
+        weight_cast_name = ctx.add_intermediate_tensor(
+            f"{node.name}_filter_q_f32",
+            dtype="FLOAT32",
+            shape=weight_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[w_q_name],
+                outputs=[weight_cast_name],
+                options={
+                    "inDataType": str(weight_tensor.dtype).upper(),
+                    "outDataType": "FLOAT32",
+                    "preserveRuntimeCastForQuantizedAccumulator": True,
+                },
+            )
+        )
+        w_name_for_conv = weight_cast_name
+        if any(int(v) != 0 for v in weight_zero_points):
+            if len(weight_zero_points) == 1:
+                weight_zero_values = np.asarray(
+                    float(weight_zero_points[0]),
+                    dtype=np.float32,
+                )
+            else:
+                quantized_dimension = int(weight_quantization.quantized_dimension)
+                zero_shape = [1 for _ in range(len(weight_shape))]
+                zero_shape[quantized_dimension] = len(weight_zero_points)
+                weight_zero_values = np.asarray(
+                    weight_zero_points,
+                    dtype=np.float32,
+                ).reshape(zero_shape)
+            weight_zero_name = ctx.add_const_tensor(
+                f"{node.name}_filter_zero_f32",
+                weight_zero_values,
+            )
+            w_name_for_conv = ctx.add_intermediate_tensor(
+                f"{node.name}_filter_centered_f32",
+                dtype="FLOAT32",
+                shape=weight_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SUB",
+                    inputs=[weight_cast_name, weight_zero_name],
+                    outputs=[w_name_for_conv],
+                    options={"fusedActivationFunction": "NONE"},
+                )
+            )
+        y_nhwc_accumulator = ctx.add_intermediate_tensor(
+            f"{node.name}_output_nhwc_accumulator_f32",
+            dtype="FLOAT32",
+            shape=list(nhwc_output_shape),
+        )
+        ctx.model_ir.tensors[y_nhwc_accumulator].shape_signature = [
+            int(v) for v in nhwc_output_signature
+        ]
+        y_nhwc_conv = ctx.add_intermediate_tensor(
+            f"{node.name}_output_nhwc_f32",
+            dtype="FLOAT32",
+            shape=list(nhwc_output_shape),
+        )
+        ctx.model_ir.tensors[y_nhwc_conv].shape_signature = [
+            int(v) for v in nhwc_output_signature
+        ]
 
     if is_depthwise:
         ctx.add_operator(
             OperatorIR(
                 op_type="DEPTHWISE_CONV_2D",
-                inputs=[x_nhwc_conv, w_q_name, bias_q_name],
-                outputs=[y_nhwc_conv],
+                inputs=[x_name_for_conv, w_name_for_conv, bias_name_for_conv],
+                outputs=[y_nhwc_accumulator],
                 options={
                     "padding": padding,
                     "strideH": int(strides[0]),
@@ -1239,8 +1639,8 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
         ctx.add_operator(
             OperatorIR(
                 op_type="CONV_2D",
-                inputs=[x_nhwc_conv, w_q_name, bias_q_name],
-                outputs=[y_nhwc_conv],
+                inputs=[x_name_for_conv, w_name_for_conv, bias_name_for_conv],
+                outputs=[y_nhwc_accumulator],
                 options={
                     "padding": padding,
                     "strideH": int(strides[0]),
@@ -1252,6 +1652,39 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
                 version=3,
             )
         )
+    if use_float_requantization_compatibility:
+        output_quantization = ctx.model_ir.tensors[y_nhwc].quantization
+        output_scale = float(output_quantization.scale[0])
+        requant_multiplier_name = ctx.add_const_tensor(
+            f"{node.name}_accumulator_requant_multiplier",
+            np.asarray(
+                bias_scales_array / np.float32(output_scale),
+                dtype=np.float32,
+            ).reshape(
+                () if int(bias_scales_array.size) == 1 else (-1,)
+            ),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[y_nhwc_accumulator, requant_multiplier_name],
+                outputs=[y_nhwc_conv],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        if not _add_scalar_onnx_requantization(
+            ctx=ctx,
+            input_name=y_nhwc_conv,
+            output_name=y_nhwc,
+            input_is_scaled_quant_units=True,
+        ):
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="QUANTIZE",
+                    inputs=[y_nhwc_conv],
+                    outputs=[y_nhwc],
+                )
+            )
     make_transpose(
         ctx,
         y_nhwc,
@@ -1765,11 +2198,58 @@ def _build_qlinear_fc_like_op(
         zero_point=[0 for _ in range(len(bias_scales))],
         quantized_dimension=0,
     )
+    use_float_requantization_compatibility = (
+        np.issubdtype(np.asarray(a_zero).dtype, np.integer)
+        and np.issubdtype(np.asarray(y_zero).dtype, np.integer)
+        and np.issubdtype(np.asarray(b_zero).dtype, np.integer)
+    )
+    w_name_for_fc = w_q_name
+    bias_name_for_fc = bias_q_name
     y_fc_name = output_name
+    if use_float_requantization_compatibility:
+        a_fc_name = ctx.add_intermediate_tensor(
+            f"{node.name}_fc_input_f32",
+            dtype="FLOAT32",
+            shape=list(ctx.get_tensor_shape(a_name)),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="DEQUANTIZE",
+                inputs=[a_name],
+                outputs=[a_fc_name],
+            )
+        )
+        w_name_for_fc = ctx.add_intermediate_tensor(
+            f"{node.name}_fc_weights_f32",
+            dtype="FLOAT32",
+            shape=list(ctx.get_tensor_shape(w_q_name)),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="DEQUANTIZE",
+                inputs=[w_q_name],
+                outputs=[w_name_for_fc],
+            )
+        )
+        bias_scales_array = np.asarray(bias_scales, dtype=np.float32).reshape(-1)
+        if bias_scales_array.size == 1 and bias_values.size > 1:
+            bias_scales_array = np.repeat(
+                bias_scales_array,
+                repeats=int(bias_values.size),
+            )
+        bias_name_for_fc = ctx.add_const_tensor(
+            f"{node.name}_fc_bias_f32",
+            np.asarray(bias_values, dtype=np.float32) * bias_scales_array,
+        )
+        y_fc_name = ctx.add_intermediate_tensor(
+            f"{node.name}_fc_output_f32",
+            dtype="FLOAT32",
+            shape=list(ctx.get_tensor_shape(output_name)),
+        )
     ctx.add_operator(
         OperatorIR(
             op_type="FULLY_CONNECTED",
-            inputs=[a_fc_name, w_q_name, bias_q_name],
+            inputs=[a_fc_name, w_name_for_fc, bias_name_for_fc],
             outputs=[y_fc_name],
             options={
                 "fusedActivationFunction": "NONE",
@@ -1780,6 +2260,19 @@ def _build_qlinear_fc_like_op(
             version=4,
         )
     )
+    if use_float_requantization_compatibility:
+        if not _add_scalar_onnx_requantization(
+            ctx=ctx,
+            input_name=y_fc_name,
+            output_name=output_name,
+        ):
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="QUANTIZE",
+                    inputs=[y_fc_name],
+                    outputs=[output_name],
+                )
+            )
 
 def build_qlinear_matmul_op(node: Any, ctx: Any) -> None:
     _build_qlinear_fc_like_op(
@@ -2011,6 +2504,14 @@ def build_qlinear_average_pool_op(node: Any, ctx: Any) -> None:
         and len(output_shape) == 4
         and np.asarray(x_scale).size <= 1
         and np.asarray(y_scale).size <= 1
+        and np.array_equal(
+            np.asarray(x_scale).reshape(-1),
+            np.asarray(y_scale).reshape(-1),
+        )
+        and np.array_equal(
+            np.asarray(x_zero).reshape(-1),
+            np.asarray(y_zero).reshape(-1),
+        )
     )
     if not can_use_quantized_pool:
         _lower_via_dequantize_avgpool_quantize()
@@ -2192,6 +2693,18 @@ def build_qlinear_global_average_pool_op(node: Any, ctx: Any) -> None:
         if len(input_shape) != 4 or len(output_shape) != 4:
             return False
         if np.asarray(x_scale).size > 1 or np.asarray(y_scale).size > 1:
+            return False
+        # TFLite's quantized AVERAGE_POOL_2D preserves the input integer
+        # encoding; it does not requantize between distinct input/output
+        # scales or zero points. QLinearGlobalAveragePool explicitly permits
+        # different encodings, so use the float MEAN bridge in that case.
+        if not np.array_equal(
+            np.asarray(x_scale).reshape(-1),
+            np.asarray(y_scale).reshape(-1),
+        ) or not np.array_equal(
+            np.asarray(x_zero).reshape(-1),
+            np.asarray(y_zero).reshape(-1),
+        ):
             return False
 
         if channels_last:
@@ -2658,10 +3171,16 @@ def build_qlinear_softmax_op(node: Any, ctx: Any) -> None:
         )
     )
 
-    ctx.add_operator(
-        OperatorIR(
-            op_type="QUANTIZE",
-            inputs=[softmax_out],
-            outputs=[output_name],
+    if not _add_scalar_onnx_requantization(
+        ctx=ctx,
+        input_name=softmax_out,
+        output_name=output_name,
+        wrap_on_overflow=True,
+    ):
+        ctx.add_operator(
+            OperatorIR(
+                op_type="QUANTIZE",
+                inputs=[softmax_out],
+                outputs=[output_name],
+            )
         )
-    )

@@ -1,10 +1,11 @@
 import numpy as np
-from onnx import TensorProto, helper
+from onnx import TensorProto, helper, numpy_helper
 
 from onnx2tf.tflite_builder.accuracy_evaluator import (
     _FLOAT_METRIC_THRESHOLDS,
     _QUANT_METRIC_THRESHOLDS,
     _build_seeded_input_distribution_overrides,
+    _build_static_control_input_overrides,
     _build_eval_inputs_for_sample,
     _collect_onnx_input_specs,
     _generate_seeded_input,
@@ -12,6 +13,7 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
     _judge_metrics,
     _max_abs_error,
     _MetricAccumulator,
+    _prepare_onnx_graph_for_onnxruntime,
     _resolve_tflite_evaluation_pass,
 )
 
@@ -108,6 +110,38 @@ def test_build_seeded_input_distribution_overrides_prefers_uniform_for_image_to_
     assert overrides == {"input": "uniform_0_1"}
 
 
+def test_build_seeded_input_distribution_overrides_detects_image_normalization_prefix(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("ONNX2TF_EVAL_FLOAT_RANDOM_DISTRIBUTION", raising=False)
+    mean = numpy_helper.from_array(
+        np.asarray([0.4, 0.45, 0.5], dtype=np.float32).reshape(3, 1, 1),
+        name="mean",
+    )
+    std = numpy_helper.from_array(
+        np.asarray([0.2, 0.25, 0.3], dtype=np.float32).reshape(3, 1, 1),
+        name="std",
+    )
+    graph = helper.make_graph(
+        [
+            helper.make_node("Squeeze", ["input"], ["squeezed"], axes=[0]),
+            helper.make_node("Sub", ["squeezed", "mean"], ["centered"]),
+            helper.make_node("Div", ["centered", "std"], ["normalized"]),
+            helper.make_node("ReduceMean", ["normalized"], ["output"], keepdims=0),
+        ],
+        "normalized_image_classifier",
+        [helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 3, 32, 48])],
+        [helper.make_tensor_value_info("output", TensorProto.FLOAT, [])],
+        initializer=[mean, std],
+    )
+    model = helper.make_model(graph)
+    overrides = _build_seeded_input_distribution_overrides(
+        onnx_graph=model,
+        input_specs=_collect_onnx_input_specs(model),
+    )
+    assert overrides == {"input": "uniform_0_1"}
+
+
 def test_build_eval_inputs_for_sample_uses_uniform_override_for_nchw_image_input() -> None:
     inputs = _build_eval_inputs_for_sample(
         input_specs=[
@@ -164,6 +198,111 @@ def test_build_eval_inputs_for_sample_fills_mask_like_input_with_ones() -> None:
     )
 
 
+def test_build_static_control_input_overrides_infers_topk_k_from_output_shape() -> None:
+    data = helper.make_tensor_value_info("data", TensorProto.FLOAT, [1, 8400])
+    k = helper.make_tensor_value_info("k", TensorProto.INT64, [1])
+    values = helper.make_tensor_value_info("values", TensorProto.FLOAT, [1, 1250])
+    indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [1, 1250])
+    topk = helper.make_node(
+        "TopK",
+        ["data", "k"],
+        ["values", "indices"],
+        axis=1,
+        largest=1,
+        sorted=1,
+    )
+    model = helper.make_model(
+        helper.make_graph([topk], "topk_control_input", [data, k], [values, indices]),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+    input_specs = _collect_onnx_input_specs(model)
+
+    overrides = _build_static_control_input_overrides(
+        onnx_graph=model,
+        input_specs=input_specs,
+    )
+    inputs = _build_eval_inputs_for_sample(
+        input_specs=input_specs,
+        custom_inputs={},
+        sample_index=0,
+        rng=np.random.default_rng(0),
+        generated_input_overrides=overrides,
+    )
+
+    np.testing.assert_array_equal(inputs["k"], np.asarray([1250], dtype=np.int64))
+
+
+def test_build_static_control_input_overrides_uses_audio_sample_rate() -> None:
+    sample_rate = helper.make_tensor_value_info("sr", TensorProto.INT64, [])
+    output = helper.make_tensor_value_info("output", TensorProto.INT64, [])
+    model = helper.make_model(
+        helper.make_graph(
+            [helper.make_node("Identity", ["sr"], ["output"])],
+            "sample_rate_control_input",
+            [sample_rate],
+            [output],
+        )
+    )
+    input_specs = _collect_onnx_input_specs(model)
+
+    overrides = _build_static_control_input_overrides(
+        onnx_graph=model,
+        input_specs=input_specs,
+    )
+
+    np.testing.assert_array_equal(
+        overrides["sr"],
+        np.asarray(16000, dtype=np.int64),
+    )
+
+
+def test_prepare_onnx_graph_for_onnxruntime_upgrades_legacy_default_opset() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2])
+    model = helper.make_model(
+        helper.make_graph(
+            [helper.make_node("Relu", ["x"], ["y"])],
+            "legacy_opset",
+            [x],
+            [y],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 6)],
+    )
+
+    prepared = _prepare_onnx_graph_for_onnxruntime(model)
+
+    assert next(opset.version for opset in model.opset_import if opset.domain == "") == 6
+    assert next(opset.version for opset in prepared.opset_import if opset.domain == "") == 7
+
+
+def test_prepare_onnx_graph_for_onnxruntime_preserves_standard_opset20_gelu() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4])
+    model = helper.make_model(
+        helper.make_graph(
+            [
+                helper.make_node(
+                    "Gelu",
+                    ["x"],
+                    ["y"],
+                    approximate="none",
+                )
+            ],
+            "standard_gelu",
+            [x],
+            [y],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 20)],
+    )
+
+    prepared = _prepare_onnx_graph_for_onnxruntime(model)
+
+    assert prepared.graph.node[0].domain == ""
+    assert [attr.name for attr in prepared.graph.node[0].attribute] == [
+        "approximate"
+    ]
+
+
 def test_collect_onnx_input_specs_uses_unit_time_axis_for_rank5_image_sequence() -> None:
     pixel_values = helper.make_tensor_value_info(
         "pixel_values",
@@ -185,6 +324,35 @@ def test_collect_onnx_input_specs_uses_unit_time_axis_for_rank5_image_sequence()
     specs = dict((name, shape) for name, _dtype, shape in _collect_onnx_input_specs(model))
     assert specs["pixel_values"] == (1, 1, 3, 512, 512)
     assert specs["pixel_attention_mask"] == (1, 1, 512, 512)
+
+
+def test_collect_onnx_input_specs_reuses_shared_symbolic_batch_across_axes() -> None:
+    data = helper.make_tensor_value_info(
+        "data",
+        TensorProto.FLOAT,
+        ["batch_size", "seq_length", 3],
+    )
+    initial_h = helper.make_tensor_value_info(
+        "initial_h",
+        TensorProto.FLOAT,
+        [1, "batch_size", 5],
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [helper.make_node("GRU", ["data"], ["sequence"])],
+            "shared_batch",
+            [initial_h, data],
+            [],
+        ),
+    )
+
+    specs = {
+        name: shape
+        for name, _dtype, shape in _collect_onnx_input_specs(model)
+    }
+
+    assert specs["data"] == (1, 1, 3)
+    assert specs["initial_h"] == (1, 1, 5)
 
 
 def test_collect_onnx_input_specs_uses_longer_sequence_axis_for_rank3_feature_tensor() -> None:

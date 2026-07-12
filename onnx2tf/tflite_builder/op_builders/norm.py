@@ -603,18 +603,217 @@ def build_batch_normalization_op(node: Any, ctx: Any) -> None:
     var_name = node.inputs[4].name
     output_name = node.outputs[0].name
 
-    ctx.ensure_tensor(input_name)
+    for tensor_name in [input_name, scale_name, bias_name, mean_name, var_name]:
+        ctx.ensure_tensor(tensor_name)
     ctx.ensure_tensor(output_name)
 
     scale = ctx.get_constant_array(scale_name)
     bias = ctx.get_constant_array(bias_name)
     mean = ctx.get_constant_array(mean_name)
     var = ctx.get_constant_array(var_name)
-    if scale is None or bias is None or mean is None or var is None:
-        raise NotImplementedError(
-            "BatchNormalization requires constant scale/bias/mean/var in flatbuffer_direct. "
-            f"op={node.name}"
+    all_parameters_constant = all(
+        value is not None for value in [scale, bias, mean, var]
+    )
+
+    input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if input_tensor is not None and output_tensor is not None:
+        output_tensor.shape = [int(v) for v in input_shape]
+        output_tensor.shape_signature = (
+            [int(v) for v in list(input_tensor.shape_signature)]
+            if input_tensor.shape_signature is not None
+            else [int(v) for v in input_shape]
         )
+
+    if not all_parameters_constant:
+        input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
+        output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
+        compute_dtype = input_dtype
+        np_compute_dtype = _float_numpy_dtype(compute_dtype)
+        eps = float(node.attrs.get("epsilon", 1e-5))
+        input_rank = len(input_shape)
+
+        scale_shape = [int(v) for v in ctx.get_tensor_shape(scale_name)]
+        scale_size = (
+            int(np.asarray(scale).size)
+            if scale is not None
+            else (
+                int(np.prod(scale_shape, dtype=np.int64))
+                if len(scale_shape) > 0 and all(int(v) > 0 for v in scale_shape)
+                else -1
+            )
+        )
+        channel_axis = 0
+        if input_rank >= 3:
+            channel_axis = _infer_channel_axis_from_tensor_layout(
+                input_shape=input_shape,
+                scale_size=int(scale_size),
+                logical_layout=input_tensor.logical_layout if input_tensor is not None else "UNKNOWN",
+            )
+        elif input_rank == 2:
+            channel_axis = 1
+
+        coeff_shape = [1] * max(input_rank, 1)
+        if input_rank >= 2:
+            channel_dim = int(input_shape[channel_axis])
+            coeff_shape[channel_axis] = channel_dim if channel_dim > 0 else -1
+        elif scale_size > 0:
+            coeff_shape = [int(scale_size)]
+
+        def _parameter_for_broadcast(parameter_name: str, label: str) -> str:
+            parameter_dtype = str(ctx.get_tensor_dtype(parameter_name)).upper()
+            runtime_name = str(parameter_name)
+            if parameter_dtype != compute_dtype:
+                cast_name = ctx.add_intermediate_tensor(
+                    f"{node.name}_bn_{label}_cast",
+                    dtype=compute_dtype,
+                    shape=[int(v) for v in ctx.get_tensor_shape(parameter_name)],
+                )
+                ctx.add_operator(
+                    OperatorIR(
+                        op_type="CAST",
+                        inputs=[parameter_name],
+                        outputs=[cast_name],
+                        options={"inDataType": parameter_dtype, "outDataType": compute_dtype},
+                    )
+                )
+                runtime_name = cast_name
+            runtime_shape = [int(v) for v in ctx.get_tensor_shape(runtime_name)]
+            if runtime_shape == coeff_shape or input_rank <= 1:
+                return runtime_name
+            shape_name = ctx.add_const_tensor(
+                f"{node.name}_bn_{label}_shape",
+                np.asarray(coeff_shape, dtype=np.int32),
+            )
+            reshaped_name = ctx.add_intermediate_tensor(
+                f"{node.name}_bn_{label}_broadcast",
+                dtype=compute_dtype,
+                shape=[int(v) if int(v) > 0 else 1 for v in coeff_shape],
+            )
+            reshaped_tensor = ctx.model_ir.tensors.get(reshaped_name, None)
+            if reshaped_tensor is not None:
+                reshaped_tensor.shape_signature = [int(v) for v in coeff_shape]
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="RESHAPE",
+                    inputs=[runtime_name, shape_name],
+                    outputs=[reshaped_name],
+                    options={
+                        "newShape": [int(v) for v in coeff_shape],
+                        "preserveDynamicShape": any(int(v) < 0 for v in coeff_shape),
+                    },
+                )
+            )
+            return reshaped_name
+
+        scale_runtime = _parameter_for_broadcast(scale_name, "scale")
+        bias_runtime = _parameter_for_broadcast(bias_name, "bias")
+        mean_runtime = _parameter_for_broadcast(mean_name, "mean")
+        var_runtime = _parameter_for_broadcast(var_name, "var")
+
+        eps_name = ctx.add_const_tensor(
+            f"{node.name}_bn_epsilon",
+            np.asarray(eps, dtype=np_compute_dtype),
+        )
+        var_eps_name = ctx.add_intermediate_tensor(
+            f"{node.name}_bn_var_eps",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in coeff_shape],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[var_runtime, eps_name],
+                outputs=[var_eps_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        std_name = ctx.add_intermediate_tensor(
+            f"{node.name}_bn_std",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in coeff_shape],
+        )
+        ctx.add_operator(
+            OperatorIR(op_type="SQRT", inputs=[var_eps_name], outputs=[std_name])
+        )
+        mul_name = ctx.add_intermediate_tensor(
+            f"{node.name}_bn_mul",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in coeff_shape],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="DIV",
+                inputs=[scale_runtime, std_name],
+                outputs=[mul_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        mean_mul_name = ctx.add_intermediate_tensor(
+            f"{node.name}_bn_mean_mul",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in coeff_shape],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[mean_runtime, mul_name],
+                outputs=[mean_mul_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        add_name = ctx.add_intermediate_tensor(
+            f"{node.name}_bn_add",
+            dtype=compute_dtype,
+            shape=[int(v) if int(v) > 0 else 1 for v in coeff_shape],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SUB",
+                inputs=[bias_runtime, mean_mul_name],
+                outputs=[add_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        scaled_name = ctx.add_intermediate_tensor(
+            f"{node.name}_bn_scaled",
+            dtype=compute_dtype,
+            shape=input_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[input_name, mul_name],
+                outputs=[scaled_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        pre_output_name = output_name
+        if output_dtype != compute_dtype:
+            pre_output_name = ctx.add_intermediate_tensor(
+                f"{node.name}_bn_pre_output",
+                dtype=compute_dtype,
+                shape=input_shape,
+            )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[scaled_name, add_name],
+                outputs=[pre_output_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+        if pre_output_name != output_name:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[pre_output_name],
+                    outputs=[output_name],
+                    options={"inDataType": compute_dtype, "outDataType": output_dtype},
+                )
+            )
+        return
 
     scale = np.asarray(scale, dtype=np.float32).reshape(-1)
     bias = np.asarray(bias, dtype=np.float32).reshape(-1)
@@ -627,7 +826,6 @@ def build_batch_normalization_op(node: Any, ctx: Any) -> None:
 
     input_shape = ctx.get_tensor_shape(input_name)
     input_rank = len(input_shape)
-    input_tensor = ctx.model_ir.tensors.get(input_name, None)
     if input_rank >= 3:
         channel_axis = _infer_channel_axis_from_tensor_layout(
             input_shape=[int(v) for v in list(input_shape)],

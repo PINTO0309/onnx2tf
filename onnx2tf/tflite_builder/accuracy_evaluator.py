@@ -16,6 +16,7 @@ from onnx2tf.utils.tempdir_cleanup import (
     cleanup_managed_tempdir,
     make_managed_tempdir,
 )
+from onnx2tf.utils.onnxruntime_compat import prepare_onnx_graph_for_onnxruntime
 
 if TYPE_CHECKING:
     from ai_edge_litert.interpreter import Interpreter as LiteRTInterpreter
@@ -336,7 +337,11 @@ def _collect_nondeterministic_onnx_output_reasons(
     }
 
 
-def _create_tflite_interpreter(model_path: str) -> "LiteRTInterpreter":
+def _create_tflite_interpreter(
+    model_path: str,
+    *,
+    preserve_all_tensors: bool = False,
+) -> "LiteRTInterpreter":
     from ai_edge_litert.interpreter import (
         Interpreter,
         OpResolverType,
@@ -347,7 +352,7 @@ def _create_tflite_interpreter(model_path: str) -> "LiteRTInterpreter":
         # runtime crashes on some dynamic-shape models.
         return Interpreter(
             model_path=model_path,
-            experimental_preserve_all_tensors=True,
+            experimental_preserve_all_tensors=bool(preserve_all_tensors),
             experimental_op_resolver_type=OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES,
         )
     except TypeError:
@@ -374,8 +379,43 @@ def _load_custom_input_data(
     return custom_inputs
 
 
+def _parse_shape_hint_map(
+    shape_hints: Optional[Sequence[str]],
+) -> Dict[str, List[int]]:
+    parsed: Dict[str, List[int]] = {}
+    for hint in list(shape_hints or []):
+        parts = str(hint).rsplit(":", 1)
+        if len(parts) != 2:
+            continue
+        try:
+            values = [int(value) for value in parts[1].split(",")]
+        except Exception:
+            continue
+        if len(values) > 0 and all(int(value) > 0 for value in values):
+            parsed[str(parts[0])] = values
+    return parsed
+
+
+def _lookup_shape_hint(
+    input_name: str,
+    shape_hint_map: Dict[str, List[int]],
+) -> Optional[List[int]]:
+    direct = shape_hint_map.get(str(input_name), None)
+    if direct is not None:
+        return list(direct)
+    canonical_name = re.sub(r"[^0-9a-z]+", "_", str(input_name).lower()).strip("_")
+    matches = [
+        values
+        for hint_name, values in shape_hint_map.items()
+        if re.sub(r"[^0-9a-z]+", "_", str(hint_name).lower()).strip("_")
+        == canonical_name
+    ]
+    return list(matches[0]) if len(matches) == 1 else None
+
+
 def _collect_onnx_input_specs(
     onnx_graph: onnx.ModelProto,
+    shape_hints: Optional[Sequence[str]] = None,
 ) -> List[Tuple[str, np.dtype, Tuple[int, ...]]]:
     def _canonical_input_name_local(name: str) -> str:
         pieces: List[str] = []
@@ -432,6 +472,10 @@ def _collect_onnx_input_specs(
         name for name in graph_input_names
         if _is_length_like_input_name_local(name)
     ]
+    graph_has_recurrent_sequence_op = any(
+        str(node.op_type) in {"GRU", "LSTM", "RNN"}
+        for node in onnx_graph.graph.node
+    )
 
     def _has_related_length_like_input(input_name: str) -> bool:
         base = _strip_length_like_suffix_local(input_name)
@@ -465,6 +509,12 @@ def _collect_onnx_input_specs(
         known_dims: List[int],
     ) -> int:
         if int(axis) == 0:
+            return 1
+        if bool(graph_has_recurrent_sequence_op) and int(rank) == 3:
+            # The direct recurrent lowerers currently materialize their
+            # dynamic sequence placeholder at one step. Validate that supported
+            # default instance instead of inventing a longer sequence that the
+            # serialized unrolled graph cannot represent.
             return 1
         default_dim = _dynamic_dim_default()
         feature_dims = {40, 64, 80, 128, 256}
@@ -535,7 +585,21 @@ def _collect_onnx_input_specs(
 
         return int(default_dim)
 
+    shape_hint_map = _parse_shape_hint_map(shape_hints)
+
     initializer_names = {initializer.name for initializer in onnx_graph.graph.initializer}
+    symbolic_dim_values: Dict[str, int] = {}
+    # A symbol used on axis 0 anywhere in the public inputs represents the
+    # shared batch dimension. Resolve it before walking individual inputs so
+    # input order cannot assign a conflicting non-batch default elsewhere.
+    for graph_input in onnx_graph.graph.input:
+        if graph_input.name in initializer_names:
+            continue
+        for axis, dim in enumerate(graph_input.type.tensor_type.shape.dim):
+            dim_param = str(dim.dim_param).strip()
+            if dim_param != "" and int(axis) == 0:
+                symbolic_dim_values[dim_param] = 1
+
     input_specs: List[Tuple[str, np.dtype, Tuple[int, ...]]] = []
     for graph_input in onnx_graph.graph.input:
         if graph_input.name in initializer_names:
@@ -543,28 +607,79 @@ def _collect_onnx_input_specs(
         tensor_type = graph_input.type.tensor_type
         np_dtype = np.dtype(onnx.helper.tensor_dtype_to_np_dtype(tensor_type.elem_type))
         raw_shape: List[int] = []
+        dim_params: List[str] = []
         for dim in tensor_type.shape.dim:
             if dim.HasField("dim_value") and int(dim.dim_value) > 0:
                 raw_shape.append(int(dim.dim_value))
             else:
                 raw_shape.append(0)
+            dim_params.append(str(dim.dim_param).strip())
 
         shape: List[int] = []
         rank = int(len(raw_shape))
+        input_shape_hint = _lookup_shape_hint(
+            str(graph_input.name),
+            shape_hint_map,
+        )
+        if input_shape_hint is not None and len(input_shape_hint) != rank:
+            input_shape_hint = None
         for axis, dim_value in enumerate(raw_shape):
             if int(dim_value) > 0:
                 shape.append(int(dim_value))
             else:
-                shape.append(
-                    _resolve_dynamic_dim(
+                dim_param = dim_params[int(axis)]
+                resolved_dim = (
+                    int(input_shape_hint[int(axis)])
+                    if input_shape_hint is not None
+                    else (
+                        symbolic_dim_values.get(dim_param, None)
+                        if dim_param != ""
+                        else None
+                    )
+                )
+                if resolved_dim is None:
+                    resolved_dim = _resolve_dynamic_dim(
                         input_name=str(graph_input.name),
                         rank=int(rank),
                         axis=int(axis),
                         known_dims=[int(v) for v in list(raw_shape)],
                     )
-                )
+                    if dim_param != "":
+                        symbolic_dim_values[dim_param] = int(resolved_dim)
+                shape.append(int(resolved_dim))
         input_specs.append((graph_input.name, np_dtype, tuple(shape)))
     return input_specs
+
+
+def _apply_shape_hints_to_runtime_graph_inputs(
+    onnx_graph: onnx.ModelProto,
+    shape_hints: Optional[Sequence[str]],
+) -> None:
+    """Restore explicit evaluation shapes on a runtime-only ONNX graph copy."""
+
+    if not shape_hints:
+        return
+    parsed = _parse_shape_hint_map(shape_hints)
+
+    for graph_input in onnx_graph.graph.input:
+        hint_shape = _lookup_shape_hint(str(graph_input.name), parsed)
+        dims = graph_input.type.tensor_type.shape.dim
+        if hint_shape is None or len(hint_shape) != len(dims):
+            continue
+        for dim, hint_value in zip(dims, hint_shape):
+            current_value = (
+                int(dim.dim_value)
+                if dim.HasField("dim_value") and int(dim.dim_value) > 0
+                else -1
+            )
+            # Optimizer shape materialization commonly replaces dynamic dims
+            # with one. On this evaluation-only copy, an explicit positive
+            # hint is authoritative for dynamic or singleton placeholders.
+            if current_value <= 0 or (
+                current_value == 1 and int(hint_value) != 1
+            ):
+                dim.ClearField("dim_param")
+                dim.dim_value = int(hint_value)
 
 
 def _generate_seeded_input(
@@ -782,6 +897,56 @@ def _build_seeded_input_distribution_overrides(
         return {}
 
     output_specs = _collect_onnx_output_specs(onnx_graph)
+    initializer_names = {
+        str(initializer.name)
+        for initializer in onnx_graph.graph.initializer
+        if str(initializer.name) != ""
+    }
+    constant_names = set(initializer_names)
+    consumers: Dict[str, List[onnx.NodeProto]] = {}
+    for graph_node in onnx_graph.graph.node:
+        if str(graph_node.op_type) == "Constant":
+            constant_names.update(
+                str(output_name)
+                for output_name in graph_node.output
+                if str(output_name) != ""
+            )
+        for input_name in graph_node.input:
+            if str(input_name) != "":
+                consumers.setdefault(str(input_name), []).append(graph_node)
+
+    def has_image_normalization_prefix(input_name: str) -> bool:
+        queue: List[Tuple[str, int]] = [(str(input_name), 0)]
+        visited: set[str] = set()
+        normalization_ops: set[str] = set()
+        traversable_ops = {
+            "Identity",
+            "Cast",
+            "Squeeze",
+            "Unsqueeze",
+            "Sub",
+            "Div",
+        }
+        while queue:
+            tensor_name, depth = queue.pop(0)
+            if tensor_name in visited or int(depth) > 8:
+                continue
+            visited.add(tensor_name)
+            for consumer in consumers.get(tensor_name, []):
+                op_type = str(consumer.op_type)
+                if op_type not in traversable_ops:
+                    continue
+                if op_type in {"Sub", "Div"} and any(
+                    str(candidate_name) in constant_names
+                    for candidate_name in consumer.input
+                    if str(candidate_name) != tensor_name
+                ):
+                    normalization_ops.add(op_type)
+                for output_name in consumer.output:
+                    if str(output_name) != "":
+                        queue.append((str(output_name), int(depth) + 1))
+        return {"Sub", "Div"}.issubset(normalization_ops)
+
     overrides: Dict[str, str] = {}
     for input_name, input_dtype, input_shape in input_specs:
         if not np.issubdtype(np.dtype(input_dtype), np.floating):
@@ -793,9 +958,139 @@ def _build_seeded_input_distribution_overrides(
             and _is_likely_image_tensor_shape(output_shape)
             and _shape_matches_with_dynamic_wildcards(input_shape, output_shape)
             for _, output_dtype, output_shape in output_specs
-        ):
+        ) or has_image_normalization_prefix(str(input_name)):
             overrides[str(input_name)] = "uniform_0_1"
     return overrides
+
+
+def _build_static_control_input_overrides(
+    *,
+    onnx_graph: onnx.ModelProto,
+    input_specs: Sequence[Tuple[str, np.dtype, Tuple[int, ...]]],
+) -> Dict[str, np.ndarray]:
+    """Derive deterministic values for graph inputs that control output shape."""
+    input_spec_map = {
+        str(name): (np.dtype(dtype), tuple(int(v) for v in shape))
+        for name, dtype, shape in input_specs
+    }
+    static_shapes: Dict[str, Tuple[int, ...]] = {}
+    for value_info in itertools.chain(
+        onnx_graph.graph.input,
+        onnx_graph.graph.value_info,
+        onnx_graph.graph.output,
+    ):
+        tensor_type = value_info.type.tensor_type
+        shape: List[int] = []
+        for dim in tensor_type.shape.dim:
+            shape.append(
+                int(dim.dim_value)
+                if dim.HasField("dim_value") and int(dim.dim_value) > 0
+                else 0
+            )
+        static_shapes[str(value_info.name)] = tuple(shape)
+
+    candidates: Dict[str, np.ndarray] = {}
+    conflicts: set[str] = set()
+    sample_rate_names = {
+        "sr",
+        "sample_rate",
+        "sampling_rate",
+        "sample_rate_hz",
+        "sampling_rate_hz",
+    }
+    for input_name, (input_dtype, input_shape) in input_spec_map.items():
+        if _canonical_input_name(input_name) not in sample_rate_names:
+            continue
+        if not np.issubdtype(input_dtype, np.integer):
+            continue
+        if int(np.prod(input_shape, dtype=np.int64)) > 1:
+            continue
+        candidates[input_name] = np.full(input_shape, 16000, dtype=input_dtype)
+
+    for node in onnx_graph.graph.node:
+        if str(node.op_type) != "TopK" or len(node.input) < 2 or len(node.output) < 1:
+            continue
+        k_name = str(node.input[1])
+        if k_name not in input_spec_map:
+            continue
+        k_dtype, k_shape = input_spec_map[k_name]
+        if not np.issubdtype(k_dtype, np.integer):
+            continue
+        output_shape = static_shapes.get(str(node.output[0]), ())
+        if len(output_shape) == 0:
+            continue
+        axis = -1
+        for attr in node.attribute:
+            if str(attr.name) == "axis":
+                axis = int(attr.i)
+                break
+        if axis < 0:
+            axis += len(output_shape)
+        if axis < 0 or axis >= len(output_shape):
+            continue
+        k_value = int(output_shape[axis])
+        if k_value <= 0:
+            continue
+        input_shape = static_shapes.get(str(node.input[0]), ())
+        if (
+            len(input_shape) == len(output_shape)
+            and int(input_shape[axis]) > 0
+            and k_value > int(input_shape[axis])
+        ):
+            continue
+        candidate = np.full(k_shape, k_value, dtype=k_dtype)
+        previous = candidates.get(k_name)
+        if previous is not None and not np.array_equal(previous, candidate):
+            conflicts.add(k_name)
+            continue
+        candidates[k_name] = candidate
+
+    for name in conflicts:
+        candidates.pop(name, None)
+    return candidates
+
+
+def _prepare_onnx_graph_for_onnxruntime(
+    onnx_graph: onnx.ModelProto,
+) -> onnx.ModelProto:
+    prepared, _ = prepare_onnx_graph_for_onnxruntime(onnx_graph)
+    return prepared
+
+
+def _create_onnx_inference_session(onnx_graph: onnx.ModelProto) -> Any:
+    import onnxruntime as ort
+
+    try:
+        return ort.InferenceSession(
+            onnx_graph.SerializeToString(),
+            providers=["CPUExecutionProvider"],
+        )
+    except Exception as initial_error:
+        error_text = str(initial_error)
+        if "Unsupported model IR version" in error_text:
+            fallback_graph = onnx.ModelProto()
+            fallback_graph.CopyFrom(onnx_graph)
+            fallback_graph.ir_version = min(int(fallback_graph.ir_version), 10)
+            try:
+                return ort.InferenceSession(
+                    fallback_graph.SerializeToString(),
+                    providers=["CPUExecutionProvider"],
+                )
+            except Exception as downgraded_error:
+                initial_error = downgraded_error
+                error_text = str(downgraded_error)
+
+        is_nested_lstm_rank_failure = (
+            "LSTM" in error_text
+            and "First input tensor must have rank 3" in error_text
+            and "Graph attribute inferencing failed" in error_text
+        )
+        if not is_nested_lstm_rank_failure:
+            raise initial_error
+
+        from onnx2tf.utils.onnx_reference_compat import create_reference_evaluator
+
+        return create_reference_evaluator(onnx_graph)
 
 
 def _extract_sample_from_custom(
@@ -842,9 +1137,11 @@ def _build_eval_inputs_for_sample(
     rng: np.random.Generator,
     force_zero_generated_inputs: bool = False,
     distribution_overrides: Optional[Dict[str, str]] = None,
+    generated_input_overrides: Optional[Dict[str, np.ndarray]] = None,
 ) -> Dict[str, np.ndarray]:
     onnx_inputs: Dict[str, np.ndarray] = {}
     distribution_overrides = distribution_overrides or {}
+    generated_input_overrides = generated_input_overrides or {}
     for input_name, input_dtype, input_shape in input_specs:
         custom_data = custom_inputs.get(input_name)
         if custom_data is None:
@@ -852,6 +1149,13 @@ def _build_eval_inputs_for_sample(
         if custom_data is not None:
             sample = _extract_sample_from_custom(
                 data=custom_data,
+                sample_index=sample_index,
+                expected_shape=input_shape,
+                np_dtype=input_dtype,
+            )
+        elif input_name in generated_input_overrides:
+            sample = _extract_sample_from_custom(
+                data=generated_input_overrides[input_name],
                 sample_index=sample_index,
                 expected_shape=input_shape,
                 np_dtype=input_dtype,
@@ -1451,6 +1755,7 @@ def evaluate_onnx_tflite_outputs(
     num_samples: int = 10,
     seed: int = 0,
     custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+    shape_hints: Optional[Sequence[str]] = None,
     rtol: float = 1.0e-4,
     atol: float = 1.0e-4,
     compare_mode: str = "auto",
@@ -1474,9 +1779,21 @@ def evaluate_onnx_tflite_outputs(
 
     rng = np.random.default_rng(seed=int(seed))
     custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
-    input_specs = _collect_onnx_input_specs(onnx_graph)
+    onnx_runtime_graph = _prepare_onnx_graph_for_onnxruntime(onnx_graph)
+    _apply_shape_hints_to_runtime_graph_inputs(
+        onnx_runtime_graph,
+        shape_hints,
+    )
+    input_specs = _collect_onnx_input_specs(
+        onnx_runtime_graph,
+        shape_hints=shape_hints,
+    )
     distribution_overrides = _build_seeded_input_distribution_overrides(
-        onnx_graph=onnx_graph,
+        onnx_graph=onnx_runtime_graph,
+        input_specs=input_specs,
+    )
+    generated_input_overrides = _build_static_control_input_overrides(
+        onnx_graph=onnx_runtime_graph,
         input_specs=input_specs,
     )
     onnx_input_names = [name for name, _, _ in input_specs]
@@ -1496,22 +1813,7 @@ def evaluate_onnx_tflite_outputs(
         if output_name in nondeterministic_output_reasons
     ]
 
-    try:
-        onnx_session = ort.InferenceSession(
-            onnx_graph.SerializeToString(),
-            providers=["CPUExecutionProvider"],
-        )
-    except Exception as ex:
-        err = str(ex)
-        if "Unsupported model IR version" not in err:
-            raise
-        fallback_graph = onnx.ModelProto()
-        fallback_graph.CopyFrom(onnx_graph)
-        fallback_graph.ir_version = min(int(fallback_graph.ir_version), 10)
-        onnx_session = ort.InferenceSession(
-            fallback_graph.SerializeToString(),
-            providers=["CPUExecutionProvider"],
-        )
+    onnx_session = _create_onnx_inference_session(onnx_runtime_graph)
     interpreter = _create_tflite_interpreter(model_path=tflite_path)
     interpreter.allocate_tensors()
     tflite_input_details = interpreter.get_input_details()
@@ -1576,6 +1878,7 @@ def evaluate_onnx_tflite_outputs(
                 rng=rng,
                 force_zero_generated_inputs=bool(force_zero_generated_inputs),
                 distribution_overrides=distribution_overrides,
+                generated_input_overrides=generated_input_overrides,
             )
 
             onnx_outputs = onnx_session.run(onnx_output_names, onnx_inputs)
@@ -1804,27 +2107,10 @@ def _onnx_inference_worker(
     result_queue: Any,
 ) -> None:
     try:
-        import onnxruntime as ort
-
         onnx_graph = onnx.load_from_string(payload["onnx_graph_serialized"])
         onnx_output_names = [str(v) for v in payload["onnx_output_names"]]
         onnx_inputs = _load_onnx_inputs_from_payload(payload)
-        try:
-            onnx_session = ort.InferenceSession(
-                onnx_graph.SerializeToString(),
-                providers=["CPUExecutionProvider"],
-            )
-        except Exception as ex:
-            err = str(ex)
-            if "Unsupported model IR version" not in err:
-                raise
-            fallback_graph = onnx.ModelProto()
-            fallback_graph.CopyFrom(onnx_graph)
-            fallback_graph.ir_version = min(int(fallback_graph.ir_version), 10)
-            onnx_session = ort.InferenceSession(
-                fallback_graph.SerializeToString(),
-                providers=["CPUExecutionProvider"],
-            )
+        onnx_session = _create_onnx_inference_session(onnx_graph)
         onnx_outputs = onnx_session.run(onnx_output_names, onnx_inputs)
         use_memmap_outputs = bool(payload.get("use_memmap_outputs", False))
         if use_memmap_outputs:
@@ -2066,6 +2352,7 @@ def evaluate_onnx_tflite_outputs_isolated(
     num_samples: int = 10,
     seed: int = 0,
     custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+    shape_hints: Optional[Sequence[str]] = None,
     rtol: float = 1.0e-4,
     atol: float = 1.0e-4,
     compare_mode: str = "auto",
@@ -2088,9 +2375,21 @@ def evaluate_onnx_tflite_outputs_isolated(
 
     rng = np.random.default_rng(seed=int(seed))
     custom_inputs = _load_custom_input_data(custom_input_op_name_np_data_path)
-    input_specs = _collect_onnx_input_specs(onnx_graph)
+    onnx_runtime_graph = _prepare_onnx_graph_for_onnxruntime(onnx_graph)
+    _apply_shape_hints_to_runtime_graph_inputs(
+        onnx_runtime_graph,
+        shape_hints,
+    )
+    input_specs = _collect_onnx_input_specs(
+        onnx_runtime_graph,
+        shape_hints=shape_hints,
+    )
     distribution_overrides = _build_seeded_input_distribution_overrides(
-        onnx_graph=onnx_graph,
+        onnx_graph=onnx_runtime_graph,
+        input_specs=input_specs,
+    )
+    generated_input_overrides = _build_static_control_input_overrides(
+        onnx_graph=onnx_runtime_graph,
         input_specs=input_specs,
     )
     onnx_input_names = [name for name, _, _ in input_specs]
@@ -2109,7 +2408,7 @@ def evaluate_onnx_tflite_outputs_isolated(
         for output_name in onnx_output_names
         if output_name in nondeterministic_output_reasons
     ]
-    onnx_graph_serialized = onnx_graph.SerializeToString()
+    onnx_graph_serialized = onnx_runtime_graph.SerializeToString()
     use_worker_output_memmap, worker_output_memmap_dir = _resolve_eval_memmap_config(
         onnx_graph=onnx_graph,
         onnx_output_names=onnx_output_names,
@@ -2170,6 +2469,7 @@ def evaluate_onnx_tflite_outputs_isolated(
                 rng=rng,
                 force_zero_generated_inputs=bool(force_zero_generated_inputs),
                 distribution_overrides=distribution_overrides,
+                generated_input_overrides=generated_input_overrides,
             )
 
             onnx_input_manifest: Optional[Dict[str, Dict[str, Any]]] = None

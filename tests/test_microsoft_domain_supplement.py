@@ -84,6 +84,24 @@ def _make_group_norm_model(*, domain: str = "") -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=opsets)
 
 
+def _make_gelu_model(*, opset: int, include_approximate: bool = True) -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", onnx.TensorProto.FLOAT, [1, 4])
+    y = helper.make_tensor_value_info("y", onnx.TensorProto.FLOAT, [1, 4])
+    attrs = {"approximate": "none"} if include_approximate else {}
+    gelu = helper.make_node(
+        "Gelu",
+        ["x"],
+        ["y"],
+        name="GeluNode",
+        **attrs,
+    )
+    graph = helper.make_graph([gelu], "gelu_graph", [x], [y])
+    return helper.make_model(
+        graph,
+        opset_imports=[helper.make_operatorsetid("", int(opset))],
+    )
+
+
 def test_supplement_microsoft_domain_for_fused_matmul_default_domain() -> None:
     model = _make_fused_matmul_model(domain="")
 
@@ -131,6 +149,27 @@ def test_supplement_microsoft_domain_for_group_norm_default_domain() -> None:
         opset.domain == "com.microsoft" and int(opset.version) == 1
         for opset in model.opset_import
     )
+
+
+def test_supplement_microsoft_domain_preserves_standard_opset20_gelu() -> None:
+    model = _make_gelu_model(opset=20)
+
+    rewritten = _supplement_microsoft_domain_for_selected_ops(onnx_model=model)
+
+    assert rewritten == {}
+    assert model.graph.node[0].domain == ""
+    assert [(attr.name, helper.get_attribute_value(attr)) for attr in model.graph.node[0].attribute] == [
+        ("approximate", b"none"),
+    ]
+
+
+def test_supplement_microsoft_domain_keeps_legacy_default_gelu_compatibility() -> None:
+    model = _make_gelu_model(opset=19, include_approximate=False)
+
+    rewritten = _supplement_microsoft_domain_for_selected_ops(onnx_model=model)
+
+    assert rewritten == {"Gelu": 1}
+    assert model.graph.node[0].domain == "com.microsoft"
 
 
 def test_prepare_runtime_checks_applies_domain_supplement_on_copy() -> None:

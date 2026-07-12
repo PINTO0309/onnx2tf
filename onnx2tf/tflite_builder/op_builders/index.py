@@ -826,19 +826,56 @@ def build_gather_op(node: Any, ctx: Any) -> None:
                 int(v) if int(v) >= 0 else 1 for v in reshape_target_signature
             ]
         reshape_const_shape = [int(v) for v in reshape_target_signature]
-        reshape_options_shape = (
-            []
-            if any(int(v) < 0 for v in reshape_const_shape)
-            else [int(v) for v in reshape_const_shape]
-        )
-        gather_out_shape_const = ctx.add_const_tensor(
-            f"{output_name}_gather_scalar_reshape_shape",
-            np.asarray(reshape_const_shape, dtype=np.int32),
-        )
+        reshape_options_shape: list[int] = []
+        if sum(int(v) < 0 for v in reshape_const_shape) > 1:
+            params_runtime_shape_name = ctx.add_intermediate_tensor(
+                f"{output_name}_gather_scalar_params_shape",
+                dtype="INT32",
+                shape=[input_rank],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SHAPE",
+                    inputs=[params_name],
+                    outputs=[params_runtime_shape_name],
+                )
+            )
+            retained_axes = [
+                int(dim_idx)
+                for dim_idx in range(input_rank)
+                if int(dim_idx) != int(axis)
+            ]
+            retained_axes_name = ctx.add_const_tensor(
+                f"{output_name}_gather_scalar_retained_axes",
+                np.asarray(retained_axes, dtype=np.int32),
+            )
+            gather_out_shape_input = ctx.add_intermediate_tensor(
+                f"{output_name}_gather_scalar_runtime_reshape_shape",
+                dtype="INT32",
+                shape=[len(retained_axes)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="GATHER",
+                    inputs=[params_runtime_shape_name, retained_axes_name],
+                    outputs=[gather_out_shape_input],
+                    options={"axis": 0, "batchDims": 0},
+                )
+            )
+        else:
+            reshape_options_shape = (
+                []
+                if any(int(v) < 0 for v in reshape_const_shape)
+                else [int(v) for v in reshape_const_shape]
+            )
+            gather_out_shape_input = ctx.add_const_tensor(
+                f"{output_name}_gather_scalar_reshape_shape",
+                np.asarray(reshape_const_shape, dtype=np.int32),
+            )
         ctx.add_operator(
             OperatorIR(
                 op_type="RESHAPE",
-                inputs=[gather_output_name, gather_out_shape_const],
+                inputs=[gather_output_name, gather_out_shape_input],
                 outputs=[output_name],
                 options={
                     "newShape": reshape_options_shape,
@@ -2266,6 +2303,7 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(output_name)
 
     data_shape = [int(v) for v in ctx.get_tensor_shape(data_name)]
+    data_meta_shape = _tensor_shape_with_signature(ctx, data_name)
     indices_shape = [int(v) for v in ctx.get_tensor_shape(indices_name)]
     indices_meta_shape = _tensor_shape_with_signature(ctx, indices_name)
     updates_meta_shape = _tensor_shape_with_signature(ctx, updates_name)
@@ -2313,10 +2351,10 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
         )
 
     axis_dim_name = ""
-    if int(data_shape[axis]) > 0:
+    if int(data_meta_shape[axis]) > 0:
         axis_dim_name = ctx.add_const_tensor(
             f"{output_name}_scatter_elements_axis_dim",
-            np.asarray(int(data_shape[axis]), dtype=np.int32),
+            np.asarray(int(data_meta_shape[axis]), dtype=np.int32),
         )
     else:
         data_shape_name = ctx.add_intermediate_tensor(
@@ -2617,13 +2655,16 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
             dtype="INT32",
             shape=[int(v) for v in coord_shape_meta] + [1],
         )
+        coord_expanded_option_shape = [int(v) for v in coord_shape_meta] + [1]
+        if sum(int(value) < 0 for value in coord_expanded_option_shape) > 1:
+            coord_expanded_option_shape = []
         ctx.add_operator(
             OperatorIR(
                 op_type="RESHAPE",
                 inputs=[coord_base_name, indices_shape_plus_one_name],
                 outputs=[coord_expanded_name],
                 options={
-                    "newShape": [int(v) for v in list(coord_shape_meta)] + [1],
+                    "newShape": coord_expanded_option_shape,
                 },
             )
         )
@@ -2726,10 +2767,10 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
     )
 
     shape_for_scatter = ""
-    if rank > 0 and all(int(dim) > 0 for dim in data_shape):
+    if rank > 0 and all(int(dim) > 0 for dim in data_meta_shape):
         shape_for_scatter = ctx.add_const_tensor(
             f"{output_name}_scatter_elements_shape",
-            np.asarray(data_shape, dtype=np.int32),
+            np.asarray(data_meta_shape, dtype=np.int32),
         )
     else:
         shape_for_scatter = ctx.add_intermediate_tensor(
@@ -2746,7 +2787,6 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
             )
         )
 
-    data_meta_shape = _tensor_shape_with_signature(ctx, data_name)
     scattered_updates_name = ctx.add_intermediate_tensor(
         f"{output_name}_scatter_elements_updates_scattered",
         dtype=data_dtype,
@@ -4510,6 +4550,28 @@ def build_argmax_op(node: Any, ctx: Any) -> None:
         )
 
     keepdims = bool(int(node.attrs.get("keepdims", 1)))
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor is not None and input_tensor.shape_signature is not None
+        else [int(v) for v in list(input_shape)]
+    )
+    reduced_shape = [
+        int(dim) for idx, dim in enumerate(input_shape) if idx != axis
+    ]
+    reduced_signature = [
+        int(dim) for idx, dim in enumerate(input_signature) if idx != axis
+    ]
+    if keepdims:
+        reduced_shape.insert(int(axis), 1)
+        reduced_signature.insert(int(axis), 1)
+    if len(reduced_shape) == 0:
+        reduced_shape = [1]
+        reduced_signature = [1]
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.shape = [int(v) if int(v) > 0 else 1 for v in reduced_shape]
+        output_tensor.shape_signature = [int(v) for v in reduced_signature]
     argmax_mode = str(getattr(ctx, "argmax_mode", "none"))
     output_dtype = _prefer_int32_index_output_dtype(
         ctx=ctx,
@@ -4562,15 +4624,15 @@ def build_argmax_op(node: Any, ctx: Any) -> None:
 
     argmax_output_name = output_name
     if keepdims:
-        reduced_shape = [
+        squeezed_shape = [
             int(dim) for idx, dim in enumerate(input_shape) if idx != axis
         ]
-        if len(reduced_shape) == 0:
-            reduced_shape = [1]
+        if len(squeezed_shape) == 0:
+            squeezed_shape = [1]
         argmax_output_name = ctx.add_intermediate_tensor(
             f"{output_name}_argmax",
             dtype=output_dtype,
-            shape=reduced_shape,
+            shape=squeezed_shape,
         )
 
     axis_name = ctx.add_const_tensor(
@@ -4623,6 +4685,28 @@ def build_argmin_op(node: Any, ctx: Any) -> None:
         )
 
     keepdims = bool(int(node.attrs.get("keepdims", 1)))
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor is not None and input_tensor.shape_signature is not None
+        else [int(v) for v in list(input_shape)]
+    )
+    reduced_shape = [
+        int(dim) for idx, dim in enumerate(input_shape) if idx != axis
+    ]
+    reduced_signature = [
+        int(dim) for idx, dim in enumerate(input_signature) if idx != axis
+    ]
+    if keepdims:
+        reduced_shape.insert(int(axis), 1)
+        reduced_signature.insert(int(axis), 1)
+    if len(reduced_shape) == 0:
+        reduced_shape = [1]
+        reduced_signature = [1]
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.shape = [int(v) if int(v) > 0 else 1 for v in reduced_shape]
+        output_tensor.shape_signature = [int(v) for v in reduced_signature]
     output_dtype = _prefer_int32_index_output_dtype(
         ctx=ctx,
         tensor_name=output_name,
@@ -4631,15 +4715,15 @@ def build_argmin_op(node: Any, ctx: Any) -> None:
 
     argmin_output_name = output_name
     if keepdims:
-        reduced_shape = [
+        squeezed_shape = [
             int(dim) for idx, dim in enumerate(input_shape) if idx != axis
         ]
-        if len(reduced_shape) == 0:
-            reduced_shape = [1]
+        if len(squeezed_shape) == 0:
+            squeezed_shape = [1]
         argmin_output_name = ctx.add_intermediate_tensor(
             f"{output_name}_argmin",
             dtype=output_dtype,
-            shape=reduced_shape,
+            shape=squeezed_shape,
         )
 
     axis_name = ctx.add_const_tensor(
@@ -5344,6 +5428,15 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(indices_name)
     ctx.ensure_tensor(output_name)
 
+    # GatherElements preserves the data tensor dtype. In particular, an ONNX
+    # INT64-producing Cast is normalized to INT32 by the TFLite Cast builder;
+    # leaving this output at its original INT64 placeholder would make a
+    # following RESHAPE reinterpret the INT32 buffer as packed INT64 values.
+    data_dtype = str(ctx.get_tensor_dtype(data_name)).upper()
+    ctx.model_ir.tensors[output_name].dtype = data_dtype
+    if hasattr(ctx, "dtype_map") and isinstance(ctx.dtype_map, dict):
+        ctx.dtype_map[str(output_name)] = data_dtype
+
     data_shape = [int(v) for v in ctx.get_tensor_shape(data_name)]
     indices_shape = [int(v) for v in ctx.get_tensor_shape(indices_name)]
     output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
@@ -5368,6 +5461,8 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
     data_rank_unknown = _rank_is_unknown_placeholder(data_name, data_shape)
     indices_rank_unknown = _rank_is_unknown_placeholder(indices_name, indices_shape)
     output_rank_unknown = _rank_is_unknown_placeholder(output_name, output_shape)
+    if output_shape == [1] and len(indices_shape) > 1:
+        output_rank_unknown = True
 
     if data_rank_unknown and not indices_rank_unknown:
         data_shape = [int(v) for v in list(indices_shape)]
@@ -5391,6 +5486,13 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
             indices_tensor.shape = [int(v) for v in list(indices_shape)]
             indices_tensor.shape_signature = [int(v) for v in list(indices_signature)]
         indices_rank_unknown = False
+    if output_rank_unknown and not indices_rank_unknown:
+        output_shape = [int(v) for v in list(indices_shape)]
+        output_signature = [int(v) for v in list(indices_signature)]
+        if output_tensor is not None:
+            output_tensor.shape = [int(v) for v in list(output_shape)]
+            output_tensor.shape_signature = [int(v) for v in list(output_signature)]
+        output_rank_unknown = False
     replace_to_pseudo_operators = getattr(ctx, "replace_to_pseudo_operators", set())
     rtpo_gathernd = "gathernd" in set(replace_to_pseudo_operators or set())
     if len(data_shape) != len(indices_shape) and not data_rank_unknown and not indices_rank_unknown:
@@ -5404,6 +5506,13 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
             f"op={node.name} indices_shape={indices_shape} output_shape={output_shape}"
         )
     if data_rank_unknown and indices_rank_unknown and output_rank_unknown:
+        if bool(getattr(ctx, "allow_custom_ops", False)):
+            from onnx2tf.tflite_builder.op_builders.custom import (
+                build_custom_passthrough_op,
+            )
+
+            build_custom_passthrough_op(node, ctx)
+            return
         raise NotImplementedError(
             "GatherElements requires resolvable rank in flatbuffer_direct. "
             f"op={node.name} data_shape={data_shape} indices_shape={indices_shape} output_shape={output_shape}"
@@ -5426,6 +5535,30 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
         raise NotImplementedError(
             f"GatherElements axis out of range in flatbuffer_direct. op={node.name} axis={axis} rank={rank}"
         )
+
+    if int(output_signature[axis]) < 0:
+        unsupported_dynamic_dims = [
+            int(dim)
+            for dim in range(rank)
+            if int(dim) != int(axis)
+            and int(output_signature[dim]) != 1
+            and int(output_shape[dim]) != 1
+        ]
+        if unsupported_dynamic_dims:
+            if bool(getattr(ctx, "allow_custom_ops", False)):
+                from onnx2tf.tflite_builder.op_builders.custom import (
+                    build_custom_passthrough_op,
+                )
+
+                build_custom_passthrough_op(node, ctx)
+                return
+            first_dim = int(unsupported_dynamic_dims[0])
+            raise NotImplementedError(
+                "GatherElements with dynamic gather-axis currently supports only "
+                "non-axis dimensions with size=1. "
+                f"op={node.name} axis={axis} dim={first_dim} "
+                f"output_shape={output_shape} output_signature={output_signature}"
+            )
 
     indices_i32_name = indices_name
     indices_dtype = str(ctx.get_tensor_dtype(indices_name)).upper()

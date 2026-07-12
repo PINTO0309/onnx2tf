@@ -15,6 +15,7 @@ from onnx.serialization import ProtoSerializer
 
 import onnx2tf.gs as gs
 from onnx2tf.utils.logging import info
+from onnx2tf.utils.onnxruntime_compat import prepare_onnx_graph_for_onnxruntime
 from onnx2tf.utils.tempdir_cleanup import make_managed_tempdir
 
 try:
@@ -170,7 +171,7 @@ def _parse_value_hints(
     for hint in value_hints:
         if not isinstance(hint, str):
             continue
-        parts = hint.split(":", 1)
+        parts = hint.rsplit(":", 1)
         if len(parts) != 2:
             continue
         key = parts[0].strip()
@@ -289,6 +290,8 @@ def dummy_onnx_inference(
         value_hints = _DEFAULT_DUMMY_VALUE_HINTS
     if ort is None:
         raise ImportError("onnxruntime is required for dummy_onnx_inference.")
+
+    onnx_graph, _ = prepare_onnx_graph_for_onnxruntime(onnx_graph)
 
     domain: str = onnx_graph.domain
     ir_version: int = onnx_graph.ir_version
@@ -465,32 +468,9 @@ def dummy_onnx_inference(
     new_onnx_graph = gs.export_onnx(graph=gs_graph, do_type_check=False, **meta_data)
     if metadata_props is not None:
         new_onnx_graph.metadata_props.extend(metadata_props)
-    ms_domain_rewrite_targets = {
-        "FusedConv",
-        "FusedMatMul",
-        "Gelu",
-        "GroupNorm",
-        "Inverse",
-        "MultiHeadAttention",
-        "QGemm",
-        "QLinearAdd",
-        "QLinearAveragePool",
-        "QLinearConcat",
-        "QLinearGlobalAveragePool",
-        "QLinearLeakyRelu",
-        "QLinearMul",
-        "QLinearSoftmax",
-        "QLinearSigmoid",
-    }
-    rewritten_ms_domains = False
-    for node in new_onnx_graph.graph.node:
-        if node.op_type in ms_domain_rewrite_targets and node.domain in ["", "ai.onnx"]:
-            node.domain = "com.microsoft"
-            rewritten_ms_domains = True
-    if rewritten_ms_domains and not any(
-        opset.domain == "com.microsoft" for opset in new_onnx_graph.opset_import
-    ):
-        new_onnx_graph.opset_import.append(onnx.helper.make_operatorsetid("com.microsoft", 1))
+    # ONNX GraphSurgeon does not preserve node domains on export. Reapply the
+    # shared ORT compatibility mapping to the graph that is actually executed.
+    new_onnx_graph, _ = prepare_onnx_graph_for_onnxruntime(new_onnx_graph)
 
     tmp_onnx_path = ""
     tmp_onnx_external_weights_path = ""
@@ -570,7 +550,7 @@ def dummy_onnx_inference(
     else:
         shape_hints_dict = {}
         for hint in shape_hints:
-            parts = hint.split(":")
+            parts = hint.rsplit(":", 1)
             if len(parts) == 2:
                 shape_hints_dict[parts[0]] = [int(val) for val in parts[1].split(",")]
         for i, (input_name, original_shape) in enumerate(zip(input_names, input_sizes)):

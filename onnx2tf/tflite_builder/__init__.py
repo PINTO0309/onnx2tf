@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import json
 import os
-import threading
 from typing import Any, Dict, List, Optional
 
+from onnx2tf.tflite_builder.core.contracts import ConversionRequest, ConversionResult
+from onnx2tf.tflite_builder.core.progress import (
+    ProgressSpinner as _ProgressSpinner,
+    create_progress_bar as _create_progress_bar,
+)
+from onnx2tf.tflite_builder.core.validation import run_model_ir_validation_pipeline
 from onnx2tf.tflite_builder.ir import (
     clone_model_ir_with_float16,
     clone_model_ir_with_float32,
@@ -96,59 +101,6 @@ def _format_write_timing_line(
         f"write={float(timing.get('file_write_sec', 0.0)):.3f}s "
         f"size={mb:.2f}MB"
     )
-
-
-def _create_progress_bar(
-    *,
-    total: int,
-    desc: str,
-    enabled: bool,
-):
-    if not enabled or int(total) <= 0:
-        return None
-    try:
-        from tqdm.auto import tqdm
-    except Exception:
-        return None
-    return tqdm(
-        total=int(total),
-        desc=str(desc),
-        dynamic_ncols=True,
-    )
-
-
-class _ProgressSpinner:
-    def __init__(self, progress_bar: Any) -> None:
-        self._progress_bar = progress_bar
-        self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-
-    def start(self) -> None:
-        self.stop()
-        if self._progress_bar is None:
-            return
-        self._stop_event = threading.Event()
-        self._progress_bar.set_postfix_str("|", refresh=True)
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        thread = self._thread
-        if thread is not None:
-            self._stop_event.set()
-            thread.join(timeout=0.5)
-        self._thread = None
-        if self._progress_bar is not None:
-            self._progress_bar.set_postfix_str("", refresh=True)
-
-    def _run(self) -> None:
-        frames = ["|", "/", "-", "\\"]
-        frame_index = 0
-        while not self._stop_event.wait(0.1):
-            if self._progress_bar is None:
-                return
-            frame_index = (frame_index + 1) % len(frames)
-            self._progress_bar.set_postfix_str(frames[frame_index], refresh=True)
 
 
 def _build_export_progress_labels(
@@ -287,36 +239,23 @@ def _set_reduced_precision_support_metadata(
 
 
 def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
+    request = ConversionRequest.from_kwargs(kwargs)
     _reject_unsupported_quantization(**kwargs)
 
-    output_folder_path = kwargs.get("output_folder_path", "saved_model")
-    output_file_name = kwargs.get("output_file_name", "model")
-    onnx_graph = kwargs.get("onnx_graph", None)
-    output_weights = bool(kwargs.get("output_weights", False))
+    output_folder_path = request.output_folder_path
+    output_file_name = request.output_file_name
+    onnx_graph = request.onnx_graph
+    output_weights = request.artifacts.weights
     quant_type = kwargs.get("quant_type", "per-channel")
     input_quant_dtype = kwargs.get("input_quant_dtype", "int8")
     output_quant_dtype = kwargs.get("output_quant_dtype", "int8")
-    output_dynamic_range_quantized_tflite = bool(
-        kwargs.get("output_dynamic_range_quantized_tflite", False)
-    )
-    output_integer_quantized_tflite = bool(
-        kwargs.get("output_integer_quantized_tflite", False)
-    )
-    output_saved_model_from_model_ir = bool(
-        kwargs.get("output_saved_model_from_model_ir", False)
-    )
-    output_pytorch_from_model_ir = bool(
-        kwargs.get("output_pytorch_from_model_ir", False)
-    )
-    output_torchscript_from_model_ir = bool(
-        kwargs.get("output_torchscript_from_model_ir", False)
-    )
-    output_dynamo_onnx_from_model_ir = bool(
-        kwargs.get("output_dynamo_onnx_from_model_ir", False)
-    )
-    output_exported_program_from_model_ir = bool(
-        kwargs.get("output_exported_program_from_model_ir", False)
-    )
+    output_dynamic_range_quantized_tflite = request.artifacts.dynamic_range_quantized_tflite
+    output_integer_quantized_tflite = request.artifacts.integer_quantized_tflite
+    output_saved_model_from_model_ir = request.artifacts.saved_model
+    output_pytorch_from_model_ir = request.artifacts.pytorch
+    output_torchscript_from_model_ir = request.artifacts.torchscript
+    output_dynamo_onnx_from_model_ir = request.artifacts.dynamo_onnx
+    output_exported_program_from_model_ir = request.artifacts.exported_program
     if (
         output_torchscript_from_model_ir
         or output_dynamo_onnx_from_model_ir
@@ -358,9 +297,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     enable_accumulation_type_float16 = bool(
         kwargs.get("enable_accumulation_type_float16", False)
     )
-    force_split_manifest = bool(kwargs.get("force_split_manifest", False))
+    force_split_manifest = request.artifacts.split_manifest
     split_plan_requested = bool(force_split_manifest)
-    report_op_coverage = bool(kwargs.get("report_op_coverage", False))
+    report_op_coverage = request.artifacts.op_coverage_report
     custom_input_op_name_np_data_path = kwargs.get(
         "custom_input_op_name_np_data_path",
         None,
@@ -641,6 +580,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             model_ir, _ = rewrite_model_ir_unroll_recurrent_ops(
                 model_ir=model_ir,
             )
+        run_model_ir_validation_pipeline(model_ir)
     except Exception as ex:
         try:
             _write_coverage_report(str(ex))
@@ -820,6 +760,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         model_ir_fp32_tflite = clone_model_ir_with_float32(model_ir_fp32)
         _optimize_constant_input_scatter_nd_chains(model_ir_fp32_tflite)
         _optimize_constant_binary_elementwise_chains(model_ir_fp32_tflite)
+        run_model_ir_validation_pipeline(model_ir_fp32_tflite)
         write_model_file(
             schema_tflite=schema_tflite,
             model_ir=model_ir_fp32_tflite,
@@ -866,6 +807,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             output_tflite_path: str,
             timing: Dict[str, Any],
         ) -> None:
+            run_model_ir_validation_pipeline(model_ir)
             tmp_path = f"{output_tflite_path}.tmp"
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
@@ -1050,6 +992,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         model_ir_fp16_tflite = clone_model_ir_with_float16(model_ir_fp16)
         _optimize_constant_input_scatter_nd_chains(model_ir_fp16_tflite)
         _optimize_constant_binary_elementwise_chains(model_ir_fp16_tflite)
+        run_model_ir_validation_pipeline(model_ir_fp16_tflite)
         write_model_file(
             schema_tflite=schema_tflite,
             model_ir=model_ir_fp16_tflite,
@@ -1078,6 +1021,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 min_abs_max=quant_controls["min_abs_max"],
                 scale_floor=quant_controls["scale_floor"],
             )
+            run_model_ir_validation_pipeline(dynamic_model_ir)
             dynamic_range_path = os.path.join(
                 output_folder_path,
                 f"{output_file_name}_dynamic_range_quant.tflite",
@@ -1415,4 +1359,4 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         outputs["custom_ops_used"] = custom_ops_used
     if len(custom_op_nodes) > 0:
         outputs["custom_op_nodes"] = custom_op_nodes
-    return outputs
+    return ConversionResult.from_legacy_dict(outputs).to_legacy_dict()

@@ -3,6 +3,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
 
+import pytest
+
 from onnx2tf.utils import flatbuffer_direct_bulk_runner as bulk_runner
 from onnx2tf.utils.flatbuffer_direct_bulk_runner import (
     run_flatbuffer_direct_bulk_verification,
@@ -66,7 +68,8 @@ def test_flatbuffer_direct_bulk_runner_preserves_sorted_discovery_order(
     assert [entry["model_path"] for entry in state["entries"]] == sorted(
         [str(model_a.resolve()), str(model_b.resolve())]
     )
-    assert calls == sorted([str(model_a.resolve()), str(model_b.resolve())])
+    assert [Path(path).name for path in calls] == ["a.onnx", "b.onnx"]
+    assert all(Path(path).parent.parent.name == "runs" for path in calls)
 
 
 def test_flatbuffer_direct_bulk_runner_skips_missing_models_cleanly(
@@ -106,7 +109,8 @@ def test_flatbuffer_direct_bulk_runner_skips_missing_models_cleanly(
     )
     assert [entry["classification"] for entry in state["entries"]] == ["pass", "missing_model"]
     assert state["entries"][1]["strict_pass"] is False
-    assert calls == [str(existing)]
+    assert [Path(path).name for path in calls] == ["a.onnx"]
+    assert Path(calls[0]).parent.parent.name == "runs"
 
 
 def test_flatbuffer_direct_bulk_runner_resume_skips_completed_entries(
@@ -188,6 +192,211 @@ def test_flatbuffer_direct_bulk_runner_marks_pass_only_when_both_reports_pass(
     entry = state["entries"][0]
     assert entry["classification"] == "pass"
     assert entry["strict_pass"] is True
+
+
+def test_flatbuffer_direct_bulk_runner_records_stable_failure_signature_and_timing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    model = tmp_path / "broken.onnx"
+    _write_dummy(model)
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        return type(
+            "CP",
+            (),
+            {
+                "returncode": 1,
+                "stdout": "",
+                "stderr": f"Traceback\nValueError: failed in {cwd}/temporary.bin",
+            },
+        )()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        min_nodes=None,
+        max_nodes=None,
+        include_pytorch_artifacts=False,
+        recursive=False,
+    )
+    entry = state["entries"][0]
+    assert entry["classification"] == "conversion_error"
+    assert "ValueError: failed in <PATH>/temporary.bin" in entry["error_signature"]
+    assert len(entry["error_signature_sha256"]) == 64
+
+    summary = state["summary"]
+    assert summary["filters"] == {
+        "min_nodes": None,
+        "max_nodes": None,
+        "recursive": False,
+        "include_pytorch_artifacts": False,
+    }
+    assert summary["timing"]["total_duration_sec"] >= 0.0
+    assert summary["failed_models"][0]["error_signature_sha256"] == entry[
+        "error_signature_sha256"
+    ]
+
+
+def test_flatbuffer_direct_bulk_runner_filters_node_count_tier(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from onnx import TensorProto, helper, save
+
+    def _model(path, count):
+        x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+        previous = "x"
+        nodes = []
+        for index in range(count):
+            output = f"v{index}"
+            nodes.append(helper.make_node("Relu", [previous], [output]))
+            previous = output
+        y = helper.make_tensor_value_info(previous, TensorProto.FLOAT, [1])
+        save(helper.make_model(helper.make_graph(nodes, "g", [x], [y])), path)
+
+    _model(tmp_path / "small.onnx", 2)
+    _model(tmp_path / "medium.onnx", 55)
+    calls = []
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        calls.append(cmd)
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        stem = Path(cmd[cmd.index("-i") + 1]).stem
+        _write_accuracy_report(
+            path=artifact_dir / f"{stem}_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        _write_accuracy_report(
+            path=artifact_dir / f"{stem}_pytorch_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        min_nodes=50,
+        max_nodes=199,
+    )
+    assert [entry["model"] for entry in state["entries"]] == ["medium.onnx"]
+    assert len(calls) == 1
+
+
+def test_flatbuffer_direct_bulk_runner_enforces_max_abs_one_tenth(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    model = tmp_path / "accuracy.onnx"
+    _write_dummy(model)
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        stem = Path(cmd[cmd.index("-i") + 1]).stem
+        for suffix, max_abs in [("accuracy_report", 0.10001), ("pytorch_accuracy_report", 0.01)]:
+            path = artifact_dir / f"{stem}_{suffix}.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps({"evaluation_pass": True, "overall_metrics": {"max_abs": max_abs}}),
+                encoding="utf-8",
+            )
+        return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+    )
+    entry = state["entries"][0]
+    assert entry["classification"] == "tflite_fail"
+    assert entry["tflite_max_abs"] == 0.10001
+
+
+def test_flatbuffer_direct_bulk_runner_tflite_only_does_not_require_pytorch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    model = tmp_path / "core.onnx"
+    _write_dummy(model)
+    commands = []
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        commands.append(cmd)
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        stem = Path(cmd[cmd.index("-i") + 1]).stem
+        _write_accuracy_report(
+            path=artifact_dir / f"{stem}_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+    )
+    assert state["entries"][0]["classification"] == "pass"
+    assert "-fdopt" not in commands[0]
+
+
+def test_flatbuffer_direct_bulk_runner_stages_model_before_conversion(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    model = tmp_path / "immutable.onnx"
+    original = b"original corpus bytes"
+    model.write_bytes(original)
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        staged = Path(cmd[cmd.index("-i") + 1])
+        assert staged != model
+        assert staged.parent == Path(cwd)
+        staged.write_bytes(b"converter mutation")
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        _write_accuracy_report(
+            path=artifact_dir / "immutable_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+    )
+    assert state["entries"][0]["classification"] == "pass"
+    assert model.read_bytes() == original
+
+
+def test_flatbuffer_direct_bulk_runner_root_only_excludes_nested_models(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_model = tmp_path / "root.onnx"
+    nested_model = tmp_path / "nested" / "nested.onnx"
+    _write_dummy(root_model)
+    _write_dummy(nested_model)
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        _write_accuracy_report(
+            path=artifact_dir / "root_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+        recursive=False,
+    )
+    assert [entry["model"] for entry in state["entries"]] == ["root.onnx"]
 
 
 def test_flatbuffer_direct_bulk_runner_marks_tflite_failure(
@@ -536,3 +745,259 @@ def test_flatbuffer_direct_bulk_runner_summary_lists_failed_models_only(
     assert len(failed_models) == 1
     assert failed_models[0]["model"] == "fail.onnx"
     assert failed_models[0]["classification"] == "tflite_fail"
+
+
+def test_regression_profile_runs_recorded_tier_zero_to_three_successes_and_failures(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from onnx import TensorProto, helper, save
+
+    def _model(path: Path, count: int) -> None:
+        x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+        previous = "x"
+        nodes = []
+        for index in range(count):
+            output = f"v{index}"
+            nodes.append(helper.make_node("Relu", [previous], [output]))
+            previous = output
+        y = helper.make_tensor_value_info(previous, TensorProto.FLOAT, [1])
+        save(helper.make_model(helper.make_graph(nodes, "g", [x], [y])), path)
+
+    _model(tmp_path / "baseline_pass.onnx", 2)
+    _model(tmp_path / "known_failure.onnx", 2)
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "test-tier0-3-all-models",
+                "min_nodes": 1,
+                "max_nodes": 999,
+                "models": [
+                    {
+                        "tier": 0,
+                        "model": "baseline_pass.onnx",
+                        "baseline_classification": "pass",
+                    },
+                    {
+                        "tier": 0,
+                        "model": "known_failure.onnx",
+                        "baseline_classification": "conversion_error",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: List[str] = []
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        model_path = Path(cmd[cmd.index("-i") + 1])
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        calls.append(model_path.name)
+        _write_accuracy_report(
+            path=artifact_dir / f"{model_path.stem}_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+        regression_profile=str(profile_path),
+    )
+
+    assert calls == ["baseline_pass.onnx", "known_failure.onnx"]
+    assert [entry["model"] for entry in state["entries"]] == [
+        "baseline_pass.onnx",
+        "known_failure.onnx",
+    ]
+    profile_filter = state["summary"]["filters"]["regression_profile"]
+    assert profile_filter["model_count"] == 2
+    assert profile_filter["tiers"] == [0]
+    assert profile_filter["baseline_classification_counts"] == {
+        "conversion_error": 1,
+        "pass": 1,
+    }
+    assert "model_names" not in profile_filter
+    assert state["summary"]["filters"]["max_nodes"] == 999
+    assert state["summary"]["filters"]["recursive"] is False
+
+
+def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from onnx import TensorProto, helper, save
+
+    def _model(path: Path) -> None:
+        x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+        y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
+        node = helper.make_node("Relu", ["x"], ["y"])
+        save(helper.make_model(helper.make_graph([node], "g", [x], [y])), path)
+
+    _model(tmp_path / "active.onnx")
+    _model(tmp_path / "timed_out.onnx")
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 1,
+                "max_nodes": 49,
+                "models": [
+                    {
+                        "tier": 0,
+                        "model": "active.onnx",
+                        "baseline_classification": "pass",
+                        "shape_hints": ["input:0:1,16,16,3"],
+                        "overwrite_input_shape": ["image:1,3,16,16"],
+                        "keep_shape_absolutely_input_names": ["state:0"],
+                    },
+                    {
+                        "tier": 0,
+                        "model": "timed_out.onnx",
+                        "baseline_classification": "timeout",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: List[str] = []
+    commands: List[List[str]] = []
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        model_path = Path(cmd[cmd.index("-i") + 1])
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        calls.append(model_path.name)
+        commands.append(list(cmd))
+        _write_accuracy_report(
+            path=artifact_dir / f"{model_path.stem}_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+        regression_profile=str(profile_path),
+    )
+
+    assert calls == ["active.onnx"]
+    assert commands[0][commands[0].index("-sh") + 1] == "input:0:1,16,16,3"
+    assert commands[0][commands[0].index("-ois") + 1] == "image:1,3,16,16"
+    assert commands[0][commands[0].index("-kat") + 1] == "state:0"
+    assert [entry["model"] for entry in state["entries"]] == ["active.onnx"]
+    profile_filter = state["summary"]["filters"]["regression_profile"]
+    assert profile_filter["model_count"] == 2
+    assert profile_filter["active_model_count"] == 1
+    assert profile_filter["excluded_model_count"] == 1
+    assert profile_filter["excluded_baseline_classification_counts"] == {
+        "timeout": 1,
+    }
+
+
+def test_regression_profile_accepts_tier_four_models(tmp_path) -> None:
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 1000,
+                "max_nodes": 1999,
+                "models": [{"tier": 4, "model": "large.onnx"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    profile = bulk_runner._load_regression_profile(str(profile_path))
+    assert profile["tiers"] == [4]
+    assert profile["max_nodes"] == 1999
+
+
+def test_regression_profile_rejects_tier_five_models(tmp_path) -> None:
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 2000,
+                "max_nodes": 4000,
+                "models": [{"tier": 5, "model": "huge.onnx"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="only Tier 0-4 models"):
+        bulk_runner._load_regression_profile(str(profile_path))
+
+
+def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> None:
+    profile_path = (
+        Path(__file__).resolve().parents[1]
+        / "docs"
+        / "baselines"
+        / "flatbuffer_direct_active_tier0_4.json"
+    )
+    profile = bulk_runner._load_regression_profile(str(profile_path))
+
+    assert profile["model_count"] == 420
+    assert profile["active_model_count"] == 394
+    assert profile["excluded_model_count"] == 26
+    assert profile["excluded_baseline_classification_counts"] == {"timeout": 26}
+    assert profile["tiers"] == [0, 1, 2, 3, 4]
+    assert profile["min_nodes"] == 1
+    assert profile["max_nodes"] == 1999
+    assert profile["baseline_classification_counts"] == {
+        "missing_tflite_report": 19,
+        "pass": 343,
+        "tflite_fail": 32,
+        "timeout": 26,
+    }
+    assert profile["model_options"]["silero_vad.onnx"] == {
+        "keep_shape_absolutely_input_names": ["input", "state", "sr"],
+    }
+    assert profile["model_options"]["tiny_decoder_11.onnx"] == {
+        "shape_hints": [
+            "tokens:1,1",
+            "audio_features:1,1500,384",
+            "kv_cache:8,1,1,384",
+            "offset:1",
+        ],
+        "keep_shape_absolutely_input_names": [
+            "tokens",
+            "audio_features",
+            "kv_cache",
+            "offset",
+        ],
+    }
+    assert profile["model_options"]["d3net_dnn_double_44.onnx"] == {
+        "keep_shape_absolutely_input_names": ["input"],
+    }
+    assert profile["model_options"]["G_180000.onnx"] == {
+        "overwrite_input_shape": ["specs:1,257,73"],
+        "keep_shape_absolutely_input_names": [
+            "specs",
+            "lengths",
+            "sid_src",
+            "sid_tgt",
+        ],
+    }
+    assert profile["model_options"]["LibreRFDETRn.onnx"] == {
+        "overwrite_input_shape": ["input:1,3,384,384"],
+    }
+    assert profile["model_options"]["conv_tasnet.onnx"] == {
+        "keep_shape_absolutely_input_names": ["onnx::Unsqueeze_0"],
+    }
+    for model_name in ["best.onnx", "best_org.onnx"]:
+        assert profile["model_options"][model_name] == {
+            "overwrite_input_shape": ["images:1,3,512,640"],
+        }

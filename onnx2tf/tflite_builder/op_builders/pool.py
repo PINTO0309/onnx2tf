@@ -955,7 +955,23 @@ def _build_avgpool1d_op(
     proxy_attrs["kernel_shape"] = [1, int(kernel_raw[0])]
     proxy_attrs["strides"] = [1, int(strides_raw[0])]
     proxy_attrs["dilations"] = [1, 1]
-    if auto_pad in {"NOTSET", "VALID"}:
+    dynamic_ceil_same_upper = (
+        len(input_signature) == 3
+        and int(input_signature[2]) < 0
+        and int(node.attrs.get("ceil_mode", 0)) == 1
+        and auto_pad == "NOTSET"
+        and int(pad_left) == 0
+        and int(pad_right) == 0
+        and int(kernel_raw[0]) == int(strides_raw[0])
+    )
+    if dynamic_ceil_same_upper:
+        # For kernel==stride, ONNX ceil-mode pooling without explicit pads has
+        # the same window starts and right-edge padding as SAME_UPPER. Keeping
+        # this dynamic avoids freezing an exclude-pad divisor calculated from
+        # the placeholder length (usually 1) into the TFLite graph.
+        proxy_attrs["auto_pad"] = "SAME_UPPER"
+        proxy_attrs.pop("pads", None)
+    elif auto_pad in {"NOTSET", "VALID"}:
         proxy_attrs["pads"] = [0, int(pad_left), 0, int(pad_right)]
 
     proxy_node = _PoolNodeProxy(

@@ -140,6 +140,28 @@ def _set_dummy_inference_defaults(
     set_dummy_value_hints(value_hints)
 
 
+def _merge_runtime_shape_hints(
+    *,
+    shape_hints: Optional[List[str]],
+    overwrite_input_shape: Optional[List[str]],
+) -> Optional[List[str]]:
+    """Use explicit input-shape overrides for runtime validation as well."""
+
+    merged: List[str] = []
+    positions: Dict[str, int] = {}
+    for raw_hint in list(shape_hints or []) + list(overwrite_input_shape or []):
+        hint = str(raw_hint)
+        parts = hint.rsplit(':', 1)
+        input_name = str(parts[0]) if len(parts) == 2 else ''
+        if input_name != '' and input_name in positions:
+            merged[positions[input_name]] = hint
+            continue
+        if input_name != '':
+            positions[input_name] = len(merged)
+        merged.append(hint)
+    return merged if merged else None
+
+
 def _require_tensorflow_for_feature(feature: str) -> None:
     require_tensorflow(str(feature))
 
@@ -347,9 +369,23 @@ def _supplement_microsoft_domain_for_selected_ops(
     if not target_ops:
         return {}
 
+    default_opset = max(
+        (
+            int(opset.version)
+            for opset in onnx_model.opset_import
+            if str(opset.domain) in {'', 'ai.onnx'}
+        ),
+        default=0,
+    )
+
     rewritten_counts: Dict[str, int] = {}
     for node in onnx_model.graph.node:
         if node.op_type not in target_ops:
+            continue
+        # Gelu became a standard ONNX operator in opset 20. Re-tagging a
+        # standard Gelu as com.microsoft::Gelu changes its schema and makes
+        # the standard `approximate` attribute invalid in ONNX Runtime.
+        if str(node.op_type) == 'Gelu' and int(default_opset) >= 20:
             continue
         # Only supplement nodes that are effectively default domain.
         if node.domain not in ['', 'ai.onnx']:
@@ -596,6 +632,80 @@ def _prepare_onnx_graph_for_runtime_checks(
     except Exception:
         pass
     return prepared
+
+
+def _sanitize_onnx_graph_names_inplace(
+    *,
+    onnx_model: onnx.ModelProto,
+    rewrite_leading_slash: bool,
+) -> None:
+    """Apply public name sanitization recursively, including outer captures."""
+
+    def sanitize_name(name: str) -> str:
+        sanitized = str(name).replace(':', '__')
+        if rewrite_leading_slash:
+            sanitized = re.sub(r'^/', 'wa/', sanitized)
+        return sanitized
+
+    def visit_graph(graph_proto: onnx.GraphProto) -> None:
+        for value_info in [
+            *graph_proto.input,
+            *graph_proto.output,
+            *graph_proto.value_info,
+        ]:
+            value_info.name = sanitize_name(value_info.name)
+        for initializer in graph_proto.initializer:
+            initializer.name = sanitize_name(initializer.name)
+        for initializer in graph_proto.sparse_initializer:
+            initializer.values.name = sanitize_name(initializer.values.name)
+            initializer.indices.name = sanitize_name(initializer.indices.name)
+        for node_proto in graph_proto.node:
+            node_proto.name = sanitize_name(node_proto.name)
+            for index, input_name in enumerate(node_proto.input):
+                node_proto.input[index] = sanitize_name(input_name)
+            for index, output_name in enumerate(node_proto.output):
+                node_proto.output[index] = sanitize_name(output_name)
+            for attribute in node_proto.attribute:
+                if attribute.type == onnx.AttributeProto.GRAPH:
+                    visit_graph(attribute.g)
+                elif attribute.type == onnx.AttributeProto.GRAPHS:
+                    for child_graph in attribute.graphs:
+                        visit_graph(child_graph)
+
+    visit_graph(onnx_model.graph)
+
+
+def _run_onnxsim_inplace_safely(
+    *,
+    input_onnx_file_path: str,
+    append_param: List[str],
+) -> str:
+    """Run onnxsim without exposing the source model to a partial write."""
+
+    source_path = os.path.abspath(str(input_onnx_file_path))
+    source_dir = os.path.dirname(source_path)
+    source_stem = os.path.basename(source_path)
+    file_descriptor, staging_path = tempfile.mkstemp(
+        prefix=f'.{source_stem}.onnx2tf_onnxsim_',
+        suffix='.onnx',
+        dir=source_dir,
+    )
+    os.close(file_descriptor)
+    os.unlink(staging_path)
+    try:
+        result = subprocess.check_output(
+            [
+                'onnxsim',
+                source_path,
+                staging_path,
+            ] + list(append_param),
+            stderr=subprocess.PIPE,
+        ).decode('utf-8')
+        os.replace(staging_path, source_path)
+        return result
+    finally:
+        if os.path.exists(staging_path):
+            os.unlink(staging_path)
 
 
 def _is_tf_saved_model_verbose_line(line: str) -> bool:
@@ -876,7 +986,7 @@ def _complete_custom_inputs_for_graph(
     else:
         shape_hints_dict = {}
         for hint in shape_hints:
-            parts = hint.split(':')
+            parts = hint.rsplit(':', 1)
             if len(parts) == 2:
                 input_name = parts[0]
                 shape_values = [int(val) for val in parts[1].split(',')]
@@ -2001,8 +2111,12 @@ def convert(
     if verbosity is None:
         verbosity = 'debug'
     set_log_level('error' if non_verbose else verbosity)
-    _set_dummy_inference_defaults(
+    runtime_shape_hints = _merge_runtime_shape_hints(
         shape_hints=shape_hints,
+        overwrite_input_shape=overwrite_input_shape,
+    )
+    _set_dummy_inference_defaults(
+        shape_hints=runtime_shape_hints,
         value_hints=value_hints,
     )
 
@@ -2485,6 +2599,7 @@ def convert(
                 'num_samples': eval_num_samples_local,
                 'seed': 0,
                 'custom_input_op_name_np_data_path': custom_input_op_name_np_data_path,
+                'shape_hints': runtime_shape_hints,
                 'rtol': eval_rtol,
                 'atol': eval_atol,
                 'compare_mode': eval_compare_mode,
@@ -3880,6 +3995,9 @@ def convert(
                             numpy_file_path,
                         ]
                     )
+            if runtime_shape_hints is not None:
+                for shape_hint in runtime_shape_hints:
+                    command.extend(["--shape_hint", str(shape_hint)])
             if not bool(onnxruntime_output_memmap):
                 command.append('--disable_onnxruntime_output_memmap')
             if (
@@ -4901,14 +5019,10 @@ def convert(
                     if overwrite_input_shape is not None else []
                 append_param = append_param + ['--no-large-tensor', '10MB'] \
                     if no_large_tensor else append_param
-                result = subprocess.check_output(
-                    [
-                        'onnxsim',
-                        f'{input_onnx_file_path}',
-                        f'{input_onnx_file_path}'
-                    ] + append_param,
-                    stderr=subprocess.PIPE
-                ).decode('utf-8')
+                result = _run_onnxsim_inplace_safely(
+                    input_onnx_file_path=f'{input_onnx_file_path}',
+                    append_param=append_param,
+                )
                 info(result)
             info(Color.GREEN(f'Model optimizing complete!'))
         except Exception as e:
@@ -5686,6 +5800,12 @@ def convert(
         onnx_graph = gs.export_onnx(graph=graph, do_type_check=False, **meta_data)
         if metadata_props is not None:
             onnx_graph.metadata_props.extend(metadata_props)
+        _sanitize_onnx_graph_names_inplace(
+            onnx_model=onnx_graph,
+            rewrite_leading_slash=bool(
+                output_signaturedefs or output_integer_quantized_tflite
+            ),
+        )
     except Exception as ex:
         # Workaround for SequenceConstruct terminating abnormally with gs.py export
         pass
