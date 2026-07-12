@@ -42,7 +42,10 @@ from onnx2tf.tflite_builder.passes.attention_layout import (
     run_qkv_attention_bridge_cleanup,
     run_qkv_attention_prefix_cleanup,
 )
-from onnx2tf.tflite_builder.passes.pad_layout import run_pad_layout_cleanup
+from onnx2tf.tflite_builder.passes.pad_layout import (
+    run_normalization_pad_layout_cleanup,
+    run_pad_layout_cleanup,
+)
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_builders.norm import build_instance_normalization_op
 from onnx2tf.tflite_builder.op_builders.control import (
@@ -19556,7 +19559,9 @@ def test_flatbuffer_direct_transpose_norm_subgraph_pad_prepost_nhwc_chain_with_e
     )
 
 
-def test_flatbuffer_direct_transpose_instancenorm_mirror_pad_prepost_nhwc_chain_optimized() -> None:
+def test_flatbuffer_direct_transpose_instancenorm_mirror_pad_prepost_nhwc_chain_optimized(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("transpose_instancenorm_mirror_pad_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
@@ -19734,8 +19739,24 @@ def test_flatbuffer_direct_transpose_instancenorm_mirror_pad_prepost_nhwc_chain_
         OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_instancenorm_pad_prepost_nhwc_chains(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict[str, Any]] = []
+    stats = run_normalization_pad_layout_cleanup(model_ir, diagnostics=diagnostics)
     assert stats["optimized_transpose_instancenorm_pad_prepost_nhwc_chains"] == 1
+    assert refresh_count == 1
+    assert [event["code"] for event in diagnostics] == [
+        "layout.instancenorm_pad_prepost_nhwc",
+        "layout.flatten_globalnorm_pad_prepost_nhwc",
+    ]
+    assert [event["status"] for event in diagnostics] == ["changed", "skipped"]
 
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("TRANSPOSE") == 0
@@ -19955,7 +19976,9 @@ def test_flatbuffer_direct_transpose_instancenorm_posttranspose_bias_add_nhwc_ch
     assert list(model_ir.tensors["inst_out"].shape) == [1, 4, 5, 3]
 
 
-def test_flatbuffer_direct_transpose_flatten_globalnorm_pad_prepost_nhwc_chain_optimized() -> None:
+def test_flatbuffer_direct_transpose_flatten_globalnorm_pad_prepost_nhwc_chain_optimized(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("transpose_flatten_globalnorm_pad_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
@@ -20203,8 +20226,27 @@ def test_flatbuffer_direct_transpose_flatten_globalnorm_pad_prepost_nhwc_chain_o
         OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict[str, Any]] = []
+    stats = run_normalization_pad_layout_cleanup(
+        model_ir,
+        include_instance=False,
+        diagnostics=diagnostics,
+    )
     assert stats["optimized_transpose_flatten_globalnorm_pad_prepost_nhwc_chains"] == 1
+    assert refresh_count == 1
+    assert [event["code"] for event in diagnostics] == [
+        "layout.flatten_globalnorm_pad_prepost_nhwc"
+    ]
+    assert [event["status"] for event in diagnostics] == ["changed"]
     assert sum(1 for op in model_ir.operators if str(op.op_type) == "TRANSPOSE") == 0
 
     reshape1_op = next(op for op in model_ir.operators if str(op.op_type) == "RESHAPE" and list(op.outputs) == ["flat"])

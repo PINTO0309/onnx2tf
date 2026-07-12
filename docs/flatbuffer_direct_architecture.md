@@ -168,6 +168,18 @@ on irrelevant graphs, and indexed topology guards prevent transactional
 snapshots unless the corresponding direct, unary, or normalization region can
 exist. Existing compatibility wrappers remain available.
 
+Decomposed InstanceNorm-Pad and flattened global-normalization-Pad propagation
+use `run_normalization_pad_layout_cleanup`. The two unchanged pair positions
+register `layout.instancenorm_pad_prepost_nhwc` then
+`layout.flatten_globalnorm_pad_prepost_nhwc`; two later recovery positions
+enable only the flatten spec. The first pair remains inside its convergence
+loop and consumes the runner's per-pass statistics exactly as before. Both
+rewrites now use indexed input/output mutation, structural transpose and
+adapter changes, and LayoutState-aware pruning. Their model-only preflight
+requires the common Transpose/Pad/Mean capability, while state guards trace the
+actual upstream graph and distinguish rank-4 InstanceNorm decomposition from
+the two-Reshape flattened normalization form before snapshotting.
+
 Attention-specific layout propagation lives in
 `passes/attention_layout.py`. Its first family member reconciles parallel
 channel Mean and ReduceMax branches before Concat/MirrorPad/Conv. The pass is

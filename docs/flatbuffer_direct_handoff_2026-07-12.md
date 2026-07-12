@@ -1189,6 +1189,45 @@ InstanceNorm→global-norm sequence and the two standalone global-norm recovery
 calls. Group only the two exact pairs; retain the standalone calls and first
 make both implementations differential-index aware.
 
+That unit is complete. `run_normalization_pad_layout_cleanup` owns the two
+exact InstanceNorm→flatten/globalnorm pairs, while the two late flatten-only
+positions invoke the same runner with the InstanceNorm spec disabled. The
+convergence-loop pair still reads both individual rewrite counters from the
+combined result, so its stopping behavior is unchanged.
+
+Both implementations now use the shared ModelIRGraphIndex and LayoutState for
+input/output rewrites, transpose removal, legacy adapter insertion, and tensor
+pruning. Stable `LAYOUT_PLAN` IDs are
+`layout.instancenorm_pad_prepost_nhwc` and
+`layout.flatten_globalnorm_pad_prepost_nhwc`. Preflight requires common
+Transpose/Pad/Mean capability; precise guards traverse the indexed upstream
+region and require the relevant normalization operators before taking a
+transaction snapshot.
+
+Sequential verification completed with:
+
+- `4 passed, 756 deselected` for direct Pad-Mul regression plus InstanceNorm,
+  flattened global-norm, and residual-Add Pad cases;
+- `24 passed` for architecture and deterministic pass-efficiency checks;
+- `1080 passed, 5 deselected, 2 warnings in 137.16s` for the corrected full
+  direct suite;
+- Tier 2 `osnet025_Nx3x256x128.onnx` `-cotof` evaluation with every output
+  compared, `evaluation_pass=true`, maximum absolute error
+  `2.193450927734375e-05`, and zero normalization-Pad snapshots.
+
+The first broad run detected one accidental indexed-removal edit in the
+unmigrated Pad→Mul→Transpose→Add helper. It was reverted to its legacy local
+deletion before this checkpoint, its focused regression passed, and the full
+suite above then passed. No partial GraphIndex dependency remains in that
+helper.
+
+All temporary model outputs, logs, and metrics were deleted. Validation stayed
+single-process and sequential, with no added dependency or TensorFlow import.
+
+The next target should be selected from a fresh AST call-frequency inventory;
+the remaining Pad→Mul helper may be migrated only as its own complete indexed
+unit, not through isolated mechanical edits.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

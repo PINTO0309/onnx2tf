@@ -99,6 +99,7 @@ from onnx2tf.tflite_builder.passes.pad_layout import (
     _optimize_transpose_pad_prepost_nhwc_chains as _optimize_transpose_pad_prepost_nhwc_chains_pass,
     _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains as _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains_pass,
     repair_channel_last_inputs_for_channel_first_pad,
+    run_normalization_pad_layout_cleanup,
     run_pad_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.quantized_layout import (
@@ -65091,13 +65092,18 @@ def lower_onnx_to_ir(
                     "optimized_transpose_instancenorm_posttranspose_bias_add_nhwc_chains", 0
                 )
             )
+            normalization_pad_stats = run_normalization_pad_layout_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
             rewritten_instnorm_pad = int(
-                _optimize_transpose_instancenorm_pad_prepost_nhwc_chains(model_ir).get(
+                normalization_pad_stats.get(
                     "optimized_transpose_instancenorm_pad_prepost_nhwc_chains", 0
                 )
             )
             rewritten_flat_globalnorm_pad = int(
-                _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains(model_ir).get(
+                normalization_pad_stats.get(
                     "optimized_transpose_flatten_globalnorm_pad_prepost_nhwc_chains", 0
                 )
             )
@@ -65180,8 +65186,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_swish_qdq_nhwc_islands(model_ir)
     # Late recovery passes can recreate Conv->InstNorm(NCHW)->Pad wrappers.
     _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(model_ir)
-    _optimize_transpose_instancenorm_pad_prepost_nhwc_chains(model_ir)
-    _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains(model_ir)
+    run_normalization_pad_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_instancenorm_residual_add_to_single_post_adapter_nhwc_chains(model_ir)
     _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(model_ir)
     _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(model_ir)
@@ -65631,7 +65640,13 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains(model_ir)
+    run_normalization_pad_layout_cleanup(
+        model_ir,
+        include_instance=False,
+        include_flatten=True,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     # Very late terminal bridge/transpose rewrites above can still stale out
     # RESHAPE constant inputs. Re-resolve once immediately before final sort.
     _resolve_dynamic_reshape_shapes(
@@ -65833,7 +65848,13 @@ def lower_onnx_to_ir(
     # one more strict TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const) fragment.
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
     _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(model_ir)
-    _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains(model_ir)
+    run_normalization_pad_layout_cleanup(
+        model_ir,
+        include_instance=False,
+        include_flatten=True,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     # Some late boundary/layout repairs can still recreate the DEA/SiNet
     # mixed NHWC/NCHW SA branch around REDUCE_MAX->CONCAT->MIRROR_PAD.
     run_mixed_attention_layout_cleanup(
