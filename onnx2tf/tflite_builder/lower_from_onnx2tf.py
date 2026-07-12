@@ -115,6 +115,7 @@ from onnx2tf.tflite_builder.passes.quantized_prelu import (
 )
 from onnx2tf.tflite_builder.passes.quantized_reshape import (
     _optimize_dequant_reshape_quantize_chains as _optimize_dequant_reshape_quantize_chains_pass,
+    run_quantized_reshape_cleanup,
 )
 from onnx2tf.tflite_builder.passes.high_rank_binary import (
     coalesce_static_high_rank_binary_operators,
@@ -62826,7 +62827,11 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _optimize_dequant_transposeconv_quantize_chains(model_ir)
-        _optimize_dequant_reshape_quantize_chains(model_ir)
+        run_quantized_reshape_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
         _optimize_dequant_maxpool_quantize_chains(model_ir)
         _optimize_dequant_softmax_quantize_chains(model_ir)
@@ -62959,7 +62964,11 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _optimize_dequant_transposeconv_quantize_chains(model_ir)
-        _optimize_dequant_reshape_quantize_chains(model_ir)
+        run_quantized_reshape_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
         _optimize_dequant_maxpool_quantize_chains(model_ir)
         _optimize_dequant_softmax_quantize_chains(model_ir)
@@ -63095,7 +63104,11 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _optimize_dequant_transposeconv_quantize_chains(model_ir)
-        _optimize_dequant_reshape_quantize_chains(model_ir)
+        run_quantized_reshape_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
         _optimize_dequant_maxpool_quantize_chains(model_ir)
         _optimize_dequant_softmax_quantize_chains(model_ir)

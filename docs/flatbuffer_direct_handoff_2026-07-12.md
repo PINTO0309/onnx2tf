@@ -1534,6 +1534,31 @@ LayoutState aware, replace its three raw calls with one-spec ordered runner
 calls, and add relevant-no-op snapshot coverage before running the numeric
 corpus gate.
 
+That indexed checkpoint is complete. The implementation now uses the shared
+GraphIndex for consumer lookup, Reshape input/output rewiring, and structural
+DQ/Q removal, with LayoutState-aware pruning. All three raw production calls
+were replaced in place by `run_quantized_reshape_cleanup`, registered as
+`layout.dequant_reshape_quantize` in `LAYOUT_PLAN`; their position after
+TransposeConv fusion remains unchanged. Model-only preflight requires the
+three relevant op types, and the indexed guard proves exclusive edges,
+protected float intermediates, matching non-float dtype, and identical
+per-tensor quantization before snapshotting.
+
+Sequential verification completed with:
+
+- `5 passed, 24 deselected` for success, mismatched-quantization no-op,
+  diagnostics, architecture, and irrelevant preflight coverage; success used
+  one index build and one snapshot, while the relevant no-op used zero
+  snapshots;
+- `1092 passed, 5 deselected, 2 warnings in 140.85s` for the full direct suite;
+- Tier 0 `zfnet512-12-int8.onnx` `-cotof` evaluation with every output
+  compared, `evaluation_pass=true`, and maximum absolute error
+  `1.862645149230957e-08`.
+
+The temporary 83 MB Tier 0 output directory was deleted. Validation remained
+single-process and sequential, and no dependency or TensorFlow import was
+added. Rerun the raw-family inventory before choosing the next unit.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

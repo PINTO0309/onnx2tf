@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
-from onnx2tf.tflite_builder.lower_from_onnx2tf import (
-    _optimize_dequant_reshape_quantize_chains,
+from onnx2tf.tflite_builder.passes.quantized_reshape import (
+    run_quantized_reshape_cleanup,
 )
 
 
@@ -59,10 +60,19 @@ def _model(*, output_scale: float) -> ModelIR:
     return model_ir
 
 
-def test_dequant_reshape_quantize_characterization() -> None:
+def test_dequant_reshape_quantize_characterization(monkeypatch) -> None:
     model_ir = _model(output_scale=0.1)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _optimize_dequant_reshape_quantize_chains(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict] = []
+    stats = run_quantized_reshape_cleanup(model_ir, diagnostics=diagnostics)
 
     assert stats == {"folded_dequant_reshape_quantize_chains": 1}
     assert [op.op_type for op in model_ir.operators] == ["RESHAPE"]
@@ -71,12 +81,18 @@ def test_dequant_reshape_quantize_characterization() -> None:
     assert model_ir.tensors["yq"].dtype == "INT8"
     assert model_ir.tensors["yq"].quantization is not None
     assert model_ir.tensors["yq"].quantization.scale == [0.1]
+    assert refresh_count == 1
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "layout.dequant_reshape_quantize"
+    assert diagnostics[0]["status"] == "changed"
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
 
 
 def test_dequant_reshape_quantize_rejects_mismatched_quantization() -> None:
     model_ir = _model(output_scale=0.2)
 
-    stats = _optimize_dequant_reshape_quantize_chains(model_ir)
+    diagnostics: list[dict] = []
+    stats = run_quantized_reshape_cleanup(model_ir, diagnostics=diagnostics)
 
     assert stats == {"folded_dequant_reshape_quantize_chains": 0}
     assert [op.op_type for op in model_ir.operators] == [
@@ -84,3 +100,7 @@ def test_dequant_reshape_quantize_rejects_mismatched_quantization() -> None:
         "RESHAPE",
         "QUANTIZE",
     ]
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["status"] == "skipped"
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 0

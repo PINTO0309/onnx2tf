@@ -448,6 +448,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_qkv_attention_bridge_cleanup",
         "run_qkv_attention_prefix_cleanup",
         "run_quantized_prelu_cleanup",
+        "run_quantized_reshape_cleanup",
         "run_pad_layout_cleanup",
         "run_pad_mul_layout_cleanup",
         "run_normalization_pad_layout_cleanup",
@@ -467,7 +468,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 79
+    assert len(calls) == 82
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -557,6 +558,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_quantized_prelu_cleanup"
     ]
     assert len(quantized_prelu_calls) == 3
+
+    quantized_reshape_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_quantized_reshape_cleanup"
+    ]
+    assert len(quantized_reshape_calls) == 3
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:
@@ -793,6 +802,12 @@ def test_quantized_reshape_rewrite_has_single_owner() -> None:
         if isinstance(node, ast.Name)
     }
     assert f"{function_name}_pass" in wrapper_names
+    lowerer_names = {
+        node.id
+        for node in ast.walk(ast.parse(lowering_path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Name)
+    }
+    assert "run_quantized_reshape_cleanup" in lowerer_names
 
 
 def test_pytorch_pure_utilities_do_not_import_torch() -> None:

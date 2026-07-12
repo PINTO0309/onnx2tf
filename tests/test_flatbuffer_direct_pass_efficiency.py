@@ -42,6 +42,9 @@ from onnx2tf.tflite_builder.passes.quantization_cleanup import (
 from onnx2tf.tflite_builder.passes.quantized_prelu import (
     run_quantized_prelu_cleanup,
 )
+from onnx2tf.tflite_builder.passes.quantized_reshape import (
+    run_quantized_reshape_cleanup,
+)
 from onnx2tf.tflite_builder.passes.pad_layout import (
     run_normalization_pad_layout_cleanup,
     run_pad_layout_cleanup,
@@ -165,9 +168,10 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_redundant_cast_cleanup(model_ir, diagnostics=diagnostics)
     run_terminal_quantize_dequantize_cleanup(model_ir, diagnostics=diagnostics)
     run_quantized_prelu_cleanup(model_ir, diagnostics=diagnostics)
+    run_quantized_reshape_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 41
+    assert len(diagnostics) == 42
     assert all(event["status"] == "skipped" for event in diagnostics)
     assert all(
         event["metrics"]

@@ -446,6 +446,14 @@ protecting observable float intermediates and preserving output shape metadata.
 The three production calls remain after their corresponding quantized
 TransposeConv fusion, so this family does not reorder that dependency. The
 legacy lowerer symbol is a thin compatibility wrapper.
+All three production positions call `run_quantized_reshape_cleanup`, registered
+as `layout.dequant_reshape_quantize` in `LAYOUT_PLAN`. The exact indexed guard
+proves the exclusive DQ→Reshape→Q topology, protected intermediates, matching
+non-float dtype, and identical per-tensor quantization before snapshotting.
+Consumer lookup, Reshape input/output mutation, structural DQ/Q removal, and
+pruning share one differential `ModelIRGraphIndex` and `LayoutState`; a
+model-only three-op capability scan avoids state construction on unrelated
+graphs.
 
 Squeeze/Reshape identity cleanup also uses the differential graph index. It
 normalizes explicit or inferred squeeze axes, proves the squeezed and restored
