@@ -928,6 +928,35 @@ sites. Move it into the graph-cleanup family, make it differential-index and
 LayoutState aware, then run both specs in their existing order through one
 group. Do not merge calls separated by other rewrites.
 
+The Squeeze/Unary/Reshape passthrough now lives in
+`passes/graph_cleanup.py`. Its strict unary allowlist, axis-0 normalization,
+shape compatibility, single-consumer, model-output, and fan-out guards are
+preserved. Single-path rewrites retain only the unary operator. Fan-out rewrites
+use indexed remove/reinsert to produce `unary(4D) → Squeeze(3D)` before the
+remaining rank-3 consumers.
+
+All six locations where the legacy pass immediately preceded Squeeze/Reshape
+identity cleanup now invoke one runner with
+`include_unary_passthrough=True`. Stable ID
+`cleanup.squeeze_unary_reshape_passthrough` runs at priority 10, followed by
+`cleanup.squeeze_reshape_identity` at priority 20, sharing one index,
+LayoutState, preflight, and transaction boundary. The other two identity calls
+remain identity-only because no unary pass preceded them.
+
+Verification completed with:
+
+- `8 passed, 32 deselected` for single-path folding, fan-out reorder, axis
+  rejection, one-index behavior, implementation ownership, and production
+  wiring;
+- `1079 passed, 5 deselected, 2 warnings in 136.77s` for the full sequential
+  direct suite.
+
+The next data-driven target is mixed-attention layout, which had six skipped
+invocations in the Tier 0 sample. Audit the legacy passes immediately adjacent
+to those six runner calls and group only a generic attention-layout operation
+that is present at every same-order site. If adjacency differs, retain the six
+calls and select another high-count family instead.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

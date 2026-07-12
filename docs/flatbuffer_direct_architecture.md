@@ -255,6 +255,16 @@ eight call positions remain separate because intervening rewrites can expose
 new round trips; each invocation shares the session LayoutState and avoids its
 transaction snapshot unless a Squeeze has exactly one Reshape consumer.
 
+The adjacent `Squeeze(axis=0) → unary → shape-restoring Reshape` passthrough is
+now owned by the same graph-cleanup family. Single-path chains collapse to the
+unary operator; fan-out chains reorder to `unary(4D) → Squeeze(3D)` so existing
+rank-3 consumers remain valid. Indexed input/output mutation and structural
+remove/reinsert operations preserve topology without map rebuilds. At the six
+production sites where this pass immediately preceded identity cleanup, the
+runner registers `cleanup.squeeze_unary_reshape_passthrough` at priority 10 and
+identity cleanup at priority 20 in one state/index group. The two standalone
+identity sites remain identity-only, and the legacy unary helper is a wrapper.
+
 Consecutive duplicate Transpose/Reshape cleanup calls are executed by
 `run_duplicate_fanout_cleanup`. The runner registers stable
 `cleanup.duplicate_*` pass IDs in `POST_LOWERING_CLEANUP` order, shares one

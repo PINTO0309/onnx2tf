@@ -75,6 +75,42 @@ def _consecutive_mul_model(
     return model_ir
 
 
+def _squeeze_unary_reshape_model(
+    *,
+    fanout: bool = False,
+    squeeze_axes: list[int] | None = None,
+) -> ModelIR:
+    model_ir = ModelIR("squeeze_unary_reshape")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"] + (["side"] if fanout else [])
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 3, 4]),
+        "squeezed": _tensor("squeezed", [2, 3, 4]),
+        "unary": _tensor("unary", [2, 3, 4]),
+        "shape": _tensor(
+            "shape",
+            [4],
+            dtype="INT32",
+            data=np.asarray([1, 2, 3, 4], dtype=np.int32),
+        ),
+        "y": _tensor("y", [1, 2, 3, 4]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            "SQUEEZE",
+            ["x"],
+            ["squeezed"],
+            options={"squeezeDims": list(squeeze_axes or [0])},
+        ),
+        OperatorIR("RELU", ["squeezed"], ["unary"]),
+        OperatorIR("RESHAPE", ["unary", "shape"], ["y"]),
+    ]
+    if fanout:
+        model_ir.tensors["side"] = _tensor("side", [2, 3, 4])
+        model_ir.operators.append(OperatorIR("IDENTITY", ["unary"], ["side"]))
+    return model_ir
+
+
 def test_duplicate_transpose_cleanup_uses_one_incremental_index_refresh(
     monkeypatch,
 ) -> None:
@@ -582,6 +618,86 @@ def test_squeeze_reshape_cleanup_uses_one_incremental_index_refresh(
     assert model_ir.operators[0].inputs == ["x"]
     assert "squeezed" not in model_ir.tensors
     assert "reshaped" not in model_ir.tensors
+
+
+def test_ordered_squeeze_group_folds_unary_passthrough_with_one_index(
+    monkeypatch,
+) -> None:
+    model_ir = _squeeze_unary_reshape_model()
+    layout_state = LayoutState.from_model_ir(model_ir)
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_squeeze_reshape_identity_cleanup(
+        model_ir,
+        include_unary_passthrough=True,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {
+        "optimized_squeeze_reshape_identity_chains": 0,
+        "optimized_squeeze_unary_reshape_passthrough_chains": 1,
+    }
+    assert refresh_count == 1
+    assert [op.op_type for op in model_ir.operators] == ["RELU"]
+    assert model_ir.operators[0].inputs == ["x"]
+    assert model_ir.operators[0].outputs == ["y"]
+    assert set(model_ir.tensors) == {"x", "y"}
+    assert layout_state.validate_against_model_ir(model_ir) == []
+    assert [event["code"] for event in diagnostics] == [
+        "cleanup.squeeze_unary_reshape_passthrough",
+        "cleanup.squeeze_reshape_identity",
+    ]
+    assert [event["status"] for event in diagnostics] == ["changed", "skipped"]
+
+
+def test_ordered_squeeze_group_preserves_unary_fanout_via_reordered_squeeze() -> None:
+    model_ir = _squeeze_unary_reshape_model(fanout=True)
+
+    stats = run_squeeze_reshape_identity_cleanup(
+        model_ir,
+        include_unary_passthrough=True,
+    )
+
+    assert stats["optimized_squeeze_unary_reshape_passthrough_chains"] == 1
+    assert [op.op_type for op in model_ir.operators] == [
+        "RELU",
+        "SQUEEZE",
+        "IDENTITY",
+    ]
+    assert model_ir.operators[0].inputs == ["x"]
+    assert model_ir.operators[0].outputs == ["y"]
+    assert model_ir.operators[1].inputs == ["y"]
+    assert model_ir.operators[1].outputs == ["unary"]
+    assert model_ir.operators[2].inputs == ["unary"]
+
+
+def test_ordered_squeeze_group_rejects_nonzero_squeeze_axis() -> None:
+    model_ir = _squeeze_unary_reshape_model(squeeze_axes=[1])
+
+    stats = run_squeeze_reshape_identity_cleanup(
+        model_ir,
+        include_unary_passthrough=True,
+    )
+
+    assert stats == {
+        "optimized_squeeze_reshape_identity_chains": 0,
+        "optimized_squeeze_unary_reshape_passthrough_chains": 0,
+    }
+    assert [op.op_type for op in model_ir.operators] == [
+        "SQUEEZE",
+        "RELU",
+        "RESHAPE",
+    ]
 
 
 def test_ordered_squeeze_reshape_cleanup_updates_layout_with_one_index(

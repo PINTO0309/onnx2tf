@@ -27,6 +27,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _read_transpose_perm,
     _replace_tensor_inputs,
     _set_operator_inputs,
+    _set_operator_outputs,
 )
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -833,6 +834,196 @@ def run_consecutive_mul_constants_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
+def _optimize_squeeze_unary_reshape_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Fold Squeeze(axis=0) -> unary -> shape-restoring Reshape."""
+
+    rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    unary_ops = {
+        "RELU",
+        "RELU6",
+        "RELU_0_TO_1",
+        "LEAKY_RELU",
+        "LOGISTIC",
+        "TANH",
+        "ABS",
+        "NEG",
+        "SQRT",
+        "EXP",
+        "CAST",
+        "FLOOR",
+        "CEIL",
+        "ROUND",
+        "HARD_SWISH",
+    }
+
+    def _shape_list(name: str) -> Optional[List[int]]:
+        tensor = model_ir.tensors.get(str(name), None)
+        if tensor is None or tensor.shape is None:
+            return None
+        return [int(dim) for dim in tensor.shape]
+
+    def _shape_compatible(lhs: List[int], rhs: List[int]) -> bool:
+        return len(lhs) == len(rhs) and all(
+            int(left) < 0 or int(right) < 0 or int(left) == int(right)
+            for left, right in zip(lhs, rhs)
+        )
+
+    while True:
+        changed = False
+        consumers = graph_index.consumers
+
+        for squeeze_idx, squeeze_op in enumerate(model_ir.operators):
+            if (
+                str(squeeze_op.op_type) != "SQUEEZE"
+                or len(squeeze_op.inputs) != 1
+                or len(squeeze_op.outputs) != 1
+            ):
+                continue
+
+            squeeze_in_name = str(squeeze_op.inputs[0])
+            squeeze_out_name = str(squeeze_op.outputs[0])
+            squeeze_users = [
+                int(index) for index in consumers.get(squeeze_out_name, [])
+            ]
+            if len(squeeze_users) != 1:
+                continue
+
+            unary_idx = int(squeeze_users[0])
+            unary_op = model_ir.operators[unary_idx]
+            if (
+                str(unary_op.op_type) not in unary_ops
+                or len(unary_op.inputs) != 1
+                or len(unary_op.outputs) != 1
+                or str(unary_op.inputs[0]) != squeeze_out_name
+            ):
+                continue
+
+            unary_out_name = str(unary_op.outputs[0])
+            unary_users = [int(index) for index in consumers.get(unary_out_name, [])]
+            reshape_user_indices = [
+                user_idx
+                for user_idx in unary_users
+                if (
+                    str(model_ir.operators[user_idx].op_type) == "RESHAPE"
+                    and len(model_ir.operators[user_idx].inputs) >= 1
+                    and len(model_ir.operators[user_idx].outputs) == 1
+                    and str(model_ir.operators[user_idx].inputs[0]) == unary_out_name
+                )
+            ]
+            if len(reshape_user_indices) != 1:
+                continue
+
+            reshape_idx = int(reshape_user_indices[0])
+            reshape_op = model_ir.operators[reshape_idx]
+            reshape_out_name = str(reshape_op.outputs[0])
+            in_shape = _shape_list(squeeze_in_name)
+            squeezed_shape = _shape_list(squeeze_out_name)
+            reshape_out_shape = _shape_list(reshape_out_name)
+            if in_shape is None or squeezed_shape is None or reshape_out_shape is None:
+                continue
+            if len(in_shape) != len(squeezed_shape) + 1 or len(in_shape) < 1:
+                continue
+            if int(in_shape[0]) != 1:
+                continue
+            if not _shape_compatible(squeezed_shape, in_shape[1:]):
+                continue
+            if not _shape_compatible(reshape_out_shape, in_shape):
+                continue
+
+            squeeze_options = (
+                dict(squeeze_op.options)
+                if isinstance(squeeze_op.options, dict)
+                else {}
+            )
+            if "squeezeDims" in squeeze_options:
+                raw_axes = np.asarray(
+                    squeeze_options.get("squeezeDims", []),
+                    dtype=np.int64,
+                ).reshape(-1)
+                normalized_axes = _normalize_squeeze_axes_for_rank(
+                    [int(axis) for axis in raw_axes.tolist()],
+                    len(in_shape),
+                )
+                if normalized_axes is None or normalized_axes != [0]:
+                    continue
+
+            if len(unary_users) == 1:
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=unary_op,
+                    new_inputs=[squeeze_in_name],
+                    graph_index=graph_index,
+                )
+                _set_operator_outputs(
+                    model_ir=model_ir,
+                    op=unary_op,
+                    new_outputs=[reshape_out_name],
+                    graph_index=graph_index,
+                )
+                for op_ref in (reshape_op, squeeze_op):
+                    remove_idx = graph_index.operator_index(op_ref)
+                    if remove_idx is not None:
+                        graph_index.remove_operator(remove_idx)
+            else:
+                if unary_out_name in model_ir.outputs:
+                    continue
+                if reshape_out_name == unary_out_name:
+                    continue
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=unary_op,
+                    new_inputs=[squeeze_in_name],
+                    graph_index=graph_index,
+                )
+                _set_operator_outputs(
+                    model_ir=model_ir,
+                    op=unary_op,
+                    new_outputs=[reshape_out_name],
+                    graph_index=graph_index,
+                )
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=squeeze_op,
+                    new_inputs=[reshape_out_name],
+                    graph_index=graph_index,
+                )
+                _set_operator_outputs(
+                    model_ir=model_ir,
+                    op=squeeze_op,
+                    new_outputs=[unary_out_name],
+                    graph_index=graph_index,
+                )
+                current_reshape_idx = graph_index.operator_index(reshape_op)
+                if current_reshape_idx is not None:
+                    graph_index.remove_operator(current_reshape_idx)
+                current_squeeze_idx = graph_index.operator_index(squeeze_op)
+                if current_squeeze_idx is None:
+                    continue
+                squeeze_ref = graph_index.remove_operator(current_squeeze_idx)
+                current_unary_idx = graph_index.operator_index(unary_op)
+                if current_unary_idx is None:
+                    continue
+                graph_index.insert_operator(current_unary_idx + 1, squeeze_ref)
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    return {
+        "optimized_squeeze_unary_reshape_passthrough_chains": int(rewritten)
+    }
+
+
 def _optimize_squeeze_reshape_identity_chains(
     model_ir: ModelIR,
     *,
@@ -970,6 +1161,7 @@ def _optimize_squeeze_reshape_identity_chains(
 def run_squeeze_reshape_identity_cleanup(
     model_ir: ModelIR,
     *,
+    include_unary_passthrough: bool = False,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, int]:
@@ -977,6 +1169,12 @@ def run_squeeze_reshape_identity_cleanup(
 
     def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
         return preflight_required_op_types(candidate_model, {"SQUEEZE", "RESHAPE"})
+
+    def _has_unary_candidate(pass_state: ModelIRPassState) -> bool:
+        return any(
+            str(op.op_type) == "SQUEEZE" and len(op.outputs) == 1
+            for op in pass_state.model_ir.operators
+        )
 
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
         for op in pass_state.model_ir.operators:
@@ -1001,19 +1199,49 @@ def run_squeeze_reshape_identity_cleanup(
             "changed": bool(stats.get("optimized_squeeze_reshape_identity_chains", 0)),
         }
 
-    details, _ = run_model_ir_pass_group(
-        model_ir,
-        specs=[
+    def _run_unary(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_squeeze_unary_reshape_passthrough_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("optimized_squeeze_unary_reshape_passthrough_chains", 0)
+            ),
+        }
+
+    specs: List[PassSpec[ModelIRPassState]] = []
+    if include_unary_passthrough:
+        specs.append(
             PassSpec(
-                pass_id="cleanup.squeeze_reshape_identity",
+                pass_id="cleanup.squeeze_unary_reshape_passthrough",
                 phase=PassPhase.POST_LOWERING_CLEANUP,
-                callback=_run,
-                precondition=_has_candidate,
+                priority=10,
+                callback=_run_unary,
+                precondition=_has_unary_candidate,
                 transactional=True,
             )
-        ],
+        )
+    specs.append(
+        PassSpec(
+            pass_id="cleanup.squeeze_reshape_identity",
+            phase=PassPhase.POST_LOWERING_CLEANUP,
+            priority=20,
+            callback=_run,
+            precondition=_has_candidate,
+            transactional=True,
+        )
+    )
+    default_details = {"optimized_squeeze_reshape_identity_chains": 0}
+    if include_unary_passthrough:
+        default_details["optimized_squeeze_unary_reshape_passthrough_chains"] = 0
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=specs,
         layout_state=layout_state,
-        default_details={"optimized_squeeze_reshape_identity_chains": 0},
+        default_details=default_details,
         diagnostics=diagnostics,
         preflight=_preflight,
     )

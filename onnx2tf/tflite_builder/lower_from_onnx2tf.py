@@ -112,6 +112,7 @@ from onnx2tf.tflite_builder.passes.high_rank_matmul import (
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_fold_consecutive_mul_constants_chains as _optimize_fold_consecutive_mul_constants_chains_pass,
     _optimize_maximum_with_zero_input2_to_relu as _optimize_maximum_with_zero_input2_to_relu_pass,
+    _optimize_squeeze_unary_reshape_passthrough_chains as _optimize_squeeze_unary_reshape_passthrough_chains_pass,
     _optimize_squeeze_reshape_identity_chains as _optimize_squeeze_reshape_identity_chains_pass,
     _optimize_maximum_minimum_relu0to1_chains as _optimize_maximum_minimum_relu0to1_chains_pass,
     _optimize_duplicate_reshape_fanout as _optimize_duplicate_reshape_fanout_pass,
@@ -27938,192 +27939,10 @@ def _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains(
     }
 
 
-def _optimize_squeeze_unary_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Remove redundant SQUEEZE(axis=0) -> UNARY -> RESHAPE chains.
-
-    Target:
-      x[1,H,W,C] --SQUEEZE(axis=0)--> s[H,W,C] --UNARY--> u[H,W,C] --RESHAPE([1,H,W,C])--> y
-
-    Rewrite:
-      x[1,H,W,C] --UNARY--> y
-    """
-    rewritten = 0
-    unary_ops = {
-        "RELU",
-        "RELU6",
-        "RELU_0_TO_1",
-        "LEAKY_RELU",
-        "LOGISTIC",
-        "TANH",
-        "ABS",
-        "NEG",
-        "SQRT",
-        "EXP",
-        "CAST",
-        "FLOOR",
-        "CEIL",
-        "ROUND",
-        "HARD_SWISH",
-    }
-
-    def _shape_list(name: str) -> Optional[List[int]]:
-        tensor = model_ir.tensors.get(str(name), None)
-        if tensor is None or tensor.shape is None:
-            return None
-        return [int(v) for v in list(tensor.shape)]
-
-    def _dims_compatible(a: int, b: int) -> bool:
-        if int(a) < 0 or int(b) < 0:
-            return True
-        return int(a) == int(b)
-
-    def _shape_compatible(a: List[int], b: List[int]) -> bool:
-        if len(a) != len(b):
-            return False
-        return all(_dims_compatible(int(x), int(y)) for x, y in zip(a, b))
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for squeeze_idx, squeeze_op in enumerate(model_ir.operators):
-            if str(squeeze_op.op_type) != "SQUEEZE" or len(squeeze_op.inputs) != 1 or len(squeeze_op.outputs) != 1:
-                continue
-
-            squeeze_in_name = str(squeeze_op.inputs[0])
-            squeeze_out_name = str(squeeze_op.outputs[0])
-            squeeze_users = [int(v) for v in consumers.get(squeeze_out_name, [])]
-            if len(squeeze_users) != 1:
-                continue
-
-            unary_idx = int(squeeze_users[0])
-            unary_op = model_ir.operators[int(unary_idx)]
-            if (
-                str(unary_op.op_type) not in unary_ops
-                or len(unary_op.inputs) != 1
-                or len(unary_op.outputs) != 1
-                or str(unary_op.inputs[0]) != squeeze_out_name
-            ):
-                continue
-
-            unary_out_name = str(unary_op.outputs[0])
-            unary_users = [int(v) for v in consumers.get(unary_out_name, [])]
-            reshape_user_indices: List[int] = []
-            for user_idx in unary_users:
-                user_op = model_ir.operators[int(user_idx)]
-                if (
-                    str(user_op.op_type) == "RESHAPE"
-                    and len(user_op.inputs) >= 1
-                    and len(user_op.outputs) == 1
-                    and str(user_op.inputs[0]) == unary_out_name
-                ):
-                    reshape_user_indices.append(int(user_idx))
-            if len(reshape_user_indices) != 1:
-                continue
-
-            reshape_idx = int(reshape_user_indices[0])
-            reshape_op = model_ir.operators[int(reshape_idx)]
-            if (
-                str(reshape_op.op_type) != "RESHAPE"
-                or len(reshape_op.inputs) < 1
-                or len(reshape_op.outputs) != 1
-                or str(reshape_op.inputs[0]) != unary_out_name
-            ):
-                continue
-
-            reshape_out_name = str(reshape_op.outputs[0])
-            in_shape = _shape_list(squeeze_in_name)
-            squeezed_shape = _shape_list(squeeze_out_name)
-            reshape_out_shape = _shape_list(reshape_out_name)
-            if in_shape is None or squeezed_shape is None or reshape_out_shape is None:
-                continue
-            if len(in_shape) != len(squeezed_shape) + 1 or len(in_shape) < 1:
-                continue
-            if int(in_shape[0]) != 1:
-                continue
-            if not _shape_compatible(squeezed_shape, in_shape[1:]):
-                continue
-            if not _shape_compatible(reshape_out_shape, in_shape):
-                continue
-
-            squeeze_options = dict(squeeze_op.options) if isinstance(squeeze_op.options, dict) else {}
-            if "squeezeDims" in squeeze_options:
-                raw_axes = np.asarray(squeeze_options.get("squeezeDims", []), dtype=np.int64).reshape(-1)
-                normalized_axes = _normalize_squeeze_axes_for_rank(
-                    [int(v) for v in raw_axes.tolist()],
-                    len(in_shape),
-                )
-                if normalized_axes is None or [int(v) for v in normalized_axes] != [0]:
-                    continue
-
-            if len(unary_users) == 1:
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=unary_op,
-                    new_inputs=[squeeze_in_name],
-                )
-                _set_operator_outputs(
-                    model_ir=model_ir,
-                    op=unary_op,
-                    new_outputs=[reshape_out_name],
-                )
-                for remove_idx in sorted([int(squeeze_idx), int(reshape_idx)], reverse=True):
-                    del model_ir.operators[int(remove_idx)]
-            else:
-                # Fanout case:
-                #   squeeze -> unary -> (reshape + other users)
-                # Reorder into:
-                #   unary(4D) -> squeeze(3D fanout), and remove reshape.
-                if unary_out_name in model_outputs:
-                    continue
-                if reshape_out_name == unary_out_name:
-                    continue
-
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=unary_op,
-                    new_inputs=[squeeze_in_name],
-                )
-                _set_operator_outputs(
-                    model_ir=model_ir,
-                    op=unary_op,
-                    new_outputs=[reshape_out_name],
-                )
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=squeeze_op,
-                    new_inputs=[reshape_out_name],
-                )
-                _set_operator_outputs(
-                    model_ir=model_ir,
-                    op=squeeze_op,
-                    new_outputs=[unary_out_name],
-                )
-
-                # Maintain topological order: unary must run before squeeze.
-                squeeze_op_ref = squeeze_op
-                del model_ir.operators[int(reshape_idx)]
-                adjusted_unary_idx = int(unary_idx)
-                if int(reshape_idx) < adjusted_unary_idx:
-                    adjusted_unary_idx -= 1
-                del model_ir.operators[int(squeeze_idx)]
-                if int(squeeze_idx) < adjusted_unary_idx:
-                    adjusted_unary_idx -= 1
-                model_ir.operators.insert(int(adjusted_unary_idx) + 1, squeeze_op_ref)
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"optimized_squeeze_unary_reshape_passthrough_chains": int(rewritten)}
-
-
+def _optimize_squeeze_unary_reshape_passthrough_chains(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    return _optimize_squeeze_unary_reshape_passthrough_chains_pass(model_ir)
 def _optimize_squeeze_reshape_identity_chains(
     model_ir: ModelIR,
 ) -> Dict[str, int]:
@@ -65042,9 +64861,9 @@ def lower_onnx_to_ir(
         _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
         _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
         _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir)
-        _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
         run_squeeze_reshape_identity_cleanup(
             model_ir,
+            include_unary_passthrough=True,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
@@ -65156,9 +64975,9 @@ def lower_onnx_to_ir(
         _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
         _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
         _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir)
-        _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
         run_squeeze_reshape_identity_cleanup(
             model_ir,
+            include_unary_passthrough=True,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
@@ -65271,16 +65090,16 @@ def lower_onnx_to_ir(
         _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
         _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
         _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir)
-        _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
         run_squeeze_reshape_identity_cleanup(
             model_ir,
+            include_unary_passthrough=True,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
         _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir)
-        _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
         run_squeeze_reshape_identity_cleanup(
             model_ir,
+            include_unary_passthrough=True,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
@@ -65369,9 +65188,9 @@ def lower_onnx_to_ir(
     )
     _optimize_fuse_conv_activation_chains(model_ir)
     _resolve_dynamic_reshape_shapes(model_ir)
-    _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
     run_squeeze_reshape_identity_cleanup(
         model_ir,
+        include_unary_passthrough=True,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
@@ -65558,9 +65377,9 @@ def lower_onnx_to_ir(
                 <= 0
             ):
                 break
-        _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
         run_squeeze_reshape_identity_cleanup(
             model_ir,
+            include_unary_passthrough=True,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )

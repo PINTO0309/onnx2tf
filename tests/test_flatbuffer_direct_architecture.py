@@ -382,6 +382,7 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
     function_names = {
         "_optimize_fold_consecutive_mul_constants_chains",
         "_optimize_squeeze_reshape_identity_chains",
+        "_optimize_squeeze_unary_reshape_passthrough_chains",
         "_optimize_maximum_minimum_relu0to1_chains",
         "_optimize_maximum_with_zero_input2_to_relu",
         "_optimize_duplicate_reshape_fanout",
