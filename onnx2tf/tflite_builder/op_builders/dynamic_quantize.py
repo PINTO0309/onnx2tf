@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
-from onnx2tf.tflite_builder.op_builders.quantized import _propagate_shape
+from onnx2tf.tflite_builder.op_builders.quantized_common import _propagate_shape
 
 
 def build_dynamic_quantize_linear_op(node: Any, ctx: Any) -> None:

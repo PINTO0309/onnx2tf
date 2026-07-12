@@ -329,6 +329,24 @@ existing ONNX-compatible scalar requantization selection. A two-node Q/DQ
 fixture fixes the pre-extraction ModelIR fingerprint at
 `333343018c7bb32db3138cefdf4007353140b044472017ae6c3b4cce762e8f91`.
 
+QLinearConv is isolated in `op_builders/qlinear_conv.py`. Its family owns
+quantized convolution validation, weight/bias preparation, padding resolution,
+layout-boundary construction, and output requantization. The mixed UINT8
+activation / INT8 filter fixture fixes its pre-extraction ModelIR fingerprint
+at `c752a5b1e31744e65d483733f55a688f2189d6bf11436cabd498cfc6a2ef5019`.
+
+ConvInteger is isolated in `op_builders/conv_integer.py`, with its
+zero-point subtraction, filter preparation, padding, layout, and INT32 output
+contract fixed at the pre-extraction fingerprint
+`587f53091ce42815e43946d7b73324fe31ec7d5aeb1c3d2d749097351106dfb5`.
+
+After the last builder extraction, the old combined
+`op_builders/quantized.py` module was replaced by
+`op_builders/quantized_common.py`. It contains only shared quantization,
+shape/signature, padding, and requantization primitives; no `build_*` function
+remains there. Every quantized op-family imports those primitives explicitly,
+and the common module is included in the TensorFlow-free import boundary.
+
 `dynamics_rife_sim.onnx` remains an active non-pass with the normalized reason
 `invalid_onnx_concat_spatial_mismatch_64_128`. The source passes the structural
 ONNX checker but ONNX Runtime rejects it during shape inference at

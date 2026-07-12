@@ -6,7 +6,7 @@ import numpy as np
 from onnx import TensorProto, helper, numpy_helper
 
 from onnx2tf.tflite_builder.lower_from_onnx2tf import lower_onnx_to_ir
-from onnx2tf.tflite_builder.op_builders.quantized import (
+from onnx2tf.tflite_builder.op_builders.quantized_common import (
     _feeds_max_pool_through_quantized_passthrough,
 )
 

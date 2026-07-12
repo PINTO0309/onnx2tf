@@ -179,6 +179,26 @@ and QLinearConcat tests completed with `12 passed, 761 deselected`. The full
 sequential direct regression completed with `981 passed, 5 deselected, 2
 warnings in 122.78s`.
 
+QLinearConv was moved mechanically to `op_builders/qlinear_conv.py`. The
+mixed UINT8 activation / INT8 filter fixture retains its pre-extraction
+fingerprint
+`c752a5b1e31744e65d483733f55a688f2189d6bf11436cabd498cfc6a2ef5019`
+(17 operators, 29 tensors). Focused mixed-dtype runtime, filter layout,
+explicit/symbolic padding, dynamic-batch, and unknown-rank checks pass through
+the new import path.
+
+ConvInteger was moved mechanically to `op_builders/conv_integer.py`. Its
+pre-extraction fingerprint remains
+`587f53091ce42815e43946d7b73324fe31ec7d5aeb1c3d2d749097351106dfb5`
+(7 operators, 13 tensors), and its focused builtin lowering check remains
+unchanged. With all builders extracted, `op_builders/quantized.py` was renamed
+to `op_builders/quantized_common.py`; it now exposes only shared quantization,
+shape, padding, and requantization primitives. All family imports and the
+TensorFlow-free architecture boundary use the new common-module name. The
+complete quantized family fingerprint/architecture set completed with `26
+passed`, and the full sequential direct regression completed with `985 passed,
+5 deselected, 2 warnings in 121.63s`.
+
 `campp_vin.onnx` is promoted from an historical accuracy failure to a normal
 pass. Its concretized dynamic-time artifact fails during XNNPACK reshape
 preparation, so isolated evaluation now retries once, sequentially, with the

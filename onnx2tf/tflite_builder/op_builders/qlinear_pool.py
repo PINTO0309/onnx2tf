@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
-from onnx2tf.tflite_builder.op_builders.quantized import (
+from onnx2tf.tflite_builder.op_builders.quantized_common import (
     _infer_pool_output_hw_for_qlinear,
     _normalize_axis,
     _promote_internal_uint8_tensor_to_int8,

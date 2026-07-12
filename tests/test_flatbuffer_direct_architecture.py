@@ -14,6 +14,11 @@ DEPENDENCY_SCOPED_FILES = [
     / "onnx2tf"
     / "tflite_builder"
     / "op_builders"
+    / "quantized_common.py",
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "op_builders"
     / "dynamic_quantize.py",
     REPO_ROOT
     / "onnx2tf"
@@ -40,6 +45,16 @@ DEPENDENCY_SCOPED_FILES = [
     / "tflite_builder"
     / "op_builders"
     / "quantize_linear.py",
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "op_builders"
+    / "qlinear_conv.py",
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "op_builders"
+    / "conv_integer.py",
     REPO_ROOT
     / "onnx2tf"
     / "tflite_builder"
@@ -116,7 +131,7 @@ def test_dynamic_quantize_builder_stays_in_family_module() -> None:
         / "onnx2tf"
         / "tflite_builder"
         / "op_builders"
-        / "quantized.py"
+        / "quantized_common.py"
     )
     family_source = family_path.read_text(encoding="utf-8")
     legacy_source = legacy_path.read_text(encoding="utf-8")
@@ -148,7 +163,7 @@ def test_qlinear_fc_builders_stay_in_family_module() -> None:
         / "onnx2tf"
         / "tflite_builder"
         / "op_builders"
-        / "quantized.py"
+        / "quantized_common.py"
     )
     family_source = family_path.read_text(encoding="utf-8")
     legacy_source = legacy_path.read_text(encoding="utf-8")
@@ -181,7 +196,7 @@ def test_qlinear_binary_builders_stay_in_family_module() -> None:
         / "onnx2tf"
         / "tflite_builder"
         / "op_builders"
-        / "quantized.py"
+        / "quantized_common.py"
     )
     family_source = family_path.read_text(encoding="utf-8")
     legacy_source = legacy_path.read_text(encoding="utf-8")
@@ -214,7 +229,7 @@ def test_qlinear_activation_builders_stay_in_family_module() -> None:
         / "onnx2tf"
         / "tflite_builder"
         / "op_builders"
-        / "quantized.py"
+        / "quantized_common.py"
     )
     family_source = family_path.read_text(encoding="utf-8")
     legacy_source = legacy_path.read_text(encoding="utf-8")
@@ -251,7 +266,7 @@ def test_qlinear_concat_builder_stays_in_family_module() -> None:
         / "onnx2tf"
         / "tflite_builder"
         / "op_builders"
-        / "quantized.py"
+        / "quantized_common.py"
     )
     family_source = family_path.read_text(encoding="utf-8")
     legacy_source = legacy_path.read_text(encoding="utf-8")
@@ -283,7 +298,7 @@ def test_quantize_linear_builders_stay_in_family_module() -> None:
         / "onnx2tf"
         / "tflite_builder"
         / "op_builders"
-        / "quantized.py"
+        / "quantized_common.py"
     )
     family_source = family_path.read_text(encoding="utf-8")
     legacy_source = legacy_path.read_text(encoding="utf-8")
@@ -303,6 +318,70 @@ def test_quantize_linear_builders_stay_in_family_module() -> None:
     assert expected.isdisjoint(legacy_functions)
 
 
+def test_qlinear_conv_builder_stays_in_family_module() -> None:
+    family_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "op_builders"
+        / "qlinear_conv.py"
+    )
+    legacy_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "op_builders"
+        / "quantized_common.py"
+    )
+    family_source = family_path.read_text(encoding="utf-8")
+    legacy_source = legacy_path.read_text(encoding="utf-8")
+    family_functions = {
+        node.name
+        for node in ast.parse(family_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    legacy_functions = {
+        node.name
+        for node in ast.parse(legacy_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    assert "build_qlinear_conv_op" in family_functions
+    assert "build_qlinear_conv_op" not in legacy_functions
+
+
+def test_conv_integer_builder_stays_in_family_module() -> None:
+    family_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "op_builders"
+        / "conv_integer.py"
+    )
+    legacy_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "op_builders"
+        / "quantized_common.py"
+    )
+    family_source = family_path.read_text(encoding="utf-8")
+    legacy_source = legacy_path.read_text(encoding="utf-8")
+    family_functions = {
+        node.name
+        for node in ast.parse(family_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    legacy_functions = {
+        node.name
+        for node in ast.parse(legacy_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    assert "build_conv_integer_op" in family_functions
+    assert "build_conv_integer_op" not in legacy_functions
+
+
 def test_qlinear_pool_builders_stay_in_family_module() -> None:
     family_path = (
         REPO_ROOT
@@ -316,7 +395,7 @@ def test_qlinear_pool_builders_stay_in_family_module() -> None:
         / "onnx2tf"
         / "tflite_builder"
         / "op_builders"
-        / "quantized.py"
+        / "quantized_common.py"
     )
     family_source = family_path.read_text(encoding="utf-8")
     legacy_source = legacy_path.read_text(encoding="utf-8")

@@ -170,9 +170,8 @@ from onnx2tf.tflite_builder.op_builders.control import (
     is_supported_loop_static_unroll_pattern,
     is_supported_loop_while_pattern,
 )
-from onnx2tf.tflite_builder.op_builders.quantized import (
+from onnx2tf.tflite_builder.op_builders.conv_integer import (
     build_conv_integer_op,
-    build_qlinear_conv_op,
 )
 from onnx2tf.tflite_builder.op_builders.quantize_linear import (
     build_dequantize_linear_op,
@@ -191,6 +190,9 @@ from onnx2tf.tflite_builder.op_builders.qlinear_binary import (
 )
 from onnx2tf.tflite_builder.op_builders.qlinear_concat import (
     build_qlinear_concat_op,
+)
+from onnx2tf.tflite_builder.op_builders.qlinear_conv import (
+    build_qlinear_conv_op,
 )
 from onnx2tf.tflite_builder.op_builders.qlinear_activation import (
     build_qlinear_leaky_relu_op,
