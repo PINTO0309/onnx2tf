@@ -1625,6 +1625,19 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "tflite_max_abs": 0.0001087188720703125,
         "overwrite_input_shape": ["input:1,3,384,384"],
     }
+    bertsquad_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "bertsquad-12-int8.onnx"
+    )
+    assert bertsquad_entry["baseline_classification"] == "tflite_fail"
+    assert bertsquad_entry["baseline_reason"] == (
+        "onnxruntime_u8s8_matmulinteger_cpu_saturation"
+    )
+    assert bertsquad_entry["error_signature_sha256"] == (
+        "6ff24c95a66de18bc32f4c9ad1ab3d41d714213b5849f3fb3a156aa652896105"
+    )
+    assert bertsquad_entry["tflite_max_abs"] == 1.8257164359092712
     assert profile["model_options"]["conv_tasnet.onnx"] == {
         "keep_shape_absolutely_input_names": ["onnx::Unsqueeze_0"],
     }

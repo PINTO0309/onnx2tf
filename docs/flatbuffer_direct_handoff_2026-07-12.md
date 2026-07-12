@@ -44,7 +44,7 @@ similarity `0.9994290428305682`.
 The managed Tier 0–4 profile now records 367 passes, 6
 `missing_tflite_report`, 21 `tflite_fail`, and 26 excluded historical timeouts.
 There are 27 active non-passes. The next failure without an explicit normalized
-cause is the Tier 4 model `bertsquad-12-int8.onnx`; earlier failures in managed order
+cause is the Tier 4 model `campp_vin.onnx`; earlier failures in managed order
 now have documented quantization/runtime semantics.
 
 `rf-detr-nano.onnx` is promoted from its historical conversion failure to a
@@ -63,6 +63,20 @@ fixed-seed run compares both `dets` and `labels` with no skip:
 similarity `0.9999999999986449`. The model uses the existing explicit input
 shape `input:1,3,384,384`; its source graph has 770 nodes and the lowered graph
 has 722 nodes.
+
+`bertsquad-12-int8.onnx` remains an active failure with normalized reason
+`onnxruntime_u8s8_matmulinteger_cpu_saturation`. The direct implementation's
+first U8×S8 MatMulInteger result matches an explicit INT32 NumPy product and
+ONNX `ReferenceEvaluator` exactly. ONNX Runtime's CPUExecutionProvider differs
+from that same product by `max_abs=11772`, mean absolute error
+`326.5231577555339`, over 24,453 elements, identically at every graph
+optimization level from disabled through all. This divergence starts at the
+first encoder MatMulInteger even though the preceding DynamicQuantizeLinear
+differs at only two of 196,608 UINT8 elements by one. The final no-skip report
+has `max_abs=1.8257164359092712`, `rmse=1.2055165591872465`, and cosine
+similarity `0.9637255350014788`. Emulating a host-specific saturating CPU
+kernel would violate portable ONNX integer-matmul semantics, so the exact
+lowering is retained and the previous failure-signature hash remains fixed.
 
 `best.onnx` and `best_org.onnx` remain failures rather than receiving a relaxed
 tolerance. Both simplify to the same 516-node Q/DQ graph and produce identical
@@ -85,7 +99,7 @@ final postprocessor TopK amplify this discontinuity to final label maxima of
 `27.0` and `20.0`. Both baseline entries record
 `user_approved_topk_index_instability_from_near_tied_scores`; no model-name
 lowering rule, global tolerance relaxation, or forced index ordering was added.
-The next cause-unclassified model is `bertsquad-12-int8.onnx`.
+The next cause-unclassified model is `campp_vin.onnx`.
 
 Those GridSample siblings remain normal threshold failures. Their upstream
 feature tensors agree to roughly `1e-4`, and the generated grid agrees except

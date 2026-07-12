@@ -520,6 +520,14 @@ passed, 7 conversion errors, 4 timeouts, 2 accuracy failures, and 5 missing
 reports. Median and maximum durations were 28.100 and 121.826 seconds. All 12
 passing models remained below the required `1e-1` maximum absolute error.
 
+`bertsquad-12-int8.onnx` remains a managed accuracy failure because ONNX
+Runtime's CPU U8×S8 MatMulInteger kernel does not match the exact ONNX integer
+product. At the first encoder MatMulInteger, direct TFLite, an explicit INT32
+NumPy product, and ONNX `ReferenceEvaluator` agree exactly, while ONNX Runtime
+differs by as much as 11,772 regardless of graph optimization level. The
+converter retains portable exact semantics rather than emulating this
+host-specific saturation behavior.
+
 The root-only Tier 5 gate at commit `95aa61b` contains 34 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier5_root_95aa61b.json`: 6
 passed, 4 conversion errors, 10 timeouts, 2 accuracy failures, and 12 missing

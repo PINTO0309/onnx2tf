@@ -2563,9 +2563,9 @@
       "tier": 4,
       "model": "bertsquad-12-int8.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
+      "baseline_reason": "onnxruntime_u8s8_matmulinteger_cpu_saturation",
       "error_signature_sha256": "6ff24c95a66de18bc32f4c9ad1ab3d41d714213b5849f3fb3a156aa652896105",
-      "tflite_max_abs": 1.964650273323059
+      "tflite_max_abs": 1.8257164359092712
     },
     {
       "tier": 4,
