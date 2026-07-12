@@ -256,7 +256,9 @@ plumbing.
 The common runner can append normalized internal events to
 `ConversionSession.diagnostics`. Every event carries the stable pass ID,
 phase, status, iteration count, changed flag, cycle flag, and precondition-skip
-flag. Transactional invariant failures use `PassInvariantError`, a
+flag. A conversion-wide `sequence` and stable-ID-specific `invocation` number
+distinguish repeated recovery-sweep calls without changing their execution
+order. Transactional invariant failures use `PassInvariantError`, a
 `RuntimeError`-compatible type that retains the pass ID, phase, iteration, and
 complete validator problem list after rollback. Failure events record the same
 problem list before re-raising. These diagnostics are conversion-session state

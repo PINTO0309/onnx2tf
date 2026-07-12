@@ -440,6 +440,8 @@ def test_model_ir_pass_group_stops_and_records_two_state_cycle() -> None:
         "changed": True,
         "stopped_by_cycle": True,
         "skipped_by_precondition": False,
+        "sequence": 1,
+        "invocation": 1,
     }
 
 
@@ -485,6 +487,8 @@ def test_model_ir_pass_group_runs_specs_and_normalizes_details() -> None:
             "changed": False,
             "stopped_by_cycle": False,
             "skipped_by_precondition": False,
+            "sequence": 1,
+            "invocation": 1,
         },
         {
             "stage": "model_ir_pass",
@@ -496,6 +500,8 @@ def test_model_ir_pass_group_runs_specs_and_normalizes_details() -> None:
             "changed": False,
             "stopped_by_cycle": False,
             "skipped_by_precondition": True,
+            "sequence": 2,
+            "invocation": 1,
         },
     ]
 
@@ -543,8 +549,35 @@ def test_model_ir_pass_group_records_typed_invariant_failure() -> None:
             "stopped_by_cycle": False,
             "skipped_by_precondition": False,
             "problems": list(caught.value.problems),
+            "sequence": 1,
+            "invocation": 1,
         }
     ]
+
+
+def test_model_ir_pass_diagnostics_number_repeated_invocations() -> None:
+    model_ir = _add_model_ir()
+    diagnostics = [
+        {"stage": "lowering", "code": "existing", "message": "preserved"}
+    ]
+    spec = PassSpec(
+        pass_id="cleanup.repeated",
+        phase=PassPhase.POST_LOWERING_CLEANUP,
+        callback=lambda state: {"changed": False},
+    )
+
+    run_model_ir_pass_group(model_ir, specs=[spec], diagnostics=diagnostics)
+    run_model_ir_pass_group(model_ir, specs=[spec], diagnostics=diagnostics)
+
+    assert diagnostics[0] == {
+        "stage": "lowering",
+        "code": "existing",
+        "message": "preserved",
+    }
+    assert diagnostics[1]["sequence"] == 1
+    assert diagnostics[1]["invocation"] == 1
+    assert diagnostics[2]["sequence"] == 2
+    assert diagnostics[2]["invocation"] == 2
 
 
 def test_dispatcher_records_onnx_provenance() -> None:

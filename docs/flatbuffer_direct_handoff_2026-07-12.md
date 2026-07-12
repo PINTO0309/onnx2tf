@@ -662,6 +662,25 @@ session-owned invocation counter/phase event contract, without reordering
 calls, so diagnostics distinguish repeated invocations of the same stable pass
 ID. This should remain internal and must not alter report schemas.
 
+Pass diagnostics now include a conversion-wide `sequence` and a stable-ID-local
+`invocation` number. Numbering spans separate runner groups, ignores existing
+non-pass diagnostics, and therefore distinguishes all repeated recovery sweeps
+without introducing a global manager or changing call order. The fields remain
+internal to `ConversionSession.diagnostics`.
+
+Verification completed with:
+
+- `20 passed` for all core contracts, including repeated invocation numbering;
+- `1037 passed, 5 deselected, 2 warnings in 130.65s` for the full sequential
+  direct suite.
+
+The next implementation unit should migrate one additional small, generic,
+already-characterized cleanup into this runner contract. Prefer the adjacent
+`Maximum(x, 0) → Relu` canonicalization: it has a single production call and
+can share the scalar constant reader, differential index, precondition,
+transaction, LayoutState, and diagnostics patterns established by the
+zero-to-one clamp pass. Preserve its raw legacy helper and exact terminal order.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work
