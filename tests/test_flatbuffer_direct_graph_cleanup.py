@@ -13,6 +13,7 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_duplicate_reshape_fanout,
     _optimize_duplicate_transpose_fanout,
     run_clamp_cleanup,
+    run_consecutive_mul_constants_cleanup,
     run_duplicate_fanout_cleanup,
     run_maximum_zero_relu_cleanup,
     run_squeeze_reshape_identity_cleanup,
@@ -34,6 +35,44 @@ def _tensor(
         data=data,
         is_variable=data is None,
     )
+
+
+def _consecutive_mul_model(
+    first_constant: np.ndarray,
+    second_constant: np.ndarray,
+    *,
+    extra_mid_consumer: bool = False,
+) -> ModelIR:
+    model_ir = ModelIR("consecutive_mul_constants")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["out"] + (["side"] if extra_mid_consumer else [])
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 3]),
+        "c0": _tensor(
+            "c0",
+            list(first_constant.shape),
+            data=first_constant,
+        ),
+        "mid": _tensor("mid", [1, 3]),
+        "c1": _tensor(
+            "c1",
+            list(second_constant.shape),
+            data=second_constant,
+        ),
+        "out": _tensor("out", [1, 3]),
+    }
+    model_ir.tensors["c0"].quantization = {
+        "scale": [0.25],
+        "zero_point": [0],
+    }
+    model_ir.operators = [
+        OperatorIR("MUL", ["c0", "x"], ["mid"]),
+        OperatorIR("MUL", ["mid", "c1"], ["out"]),
+    ]
+    if extra_mid_consumer:
+        model_ir.tensors["side"] = _tensor("side", [1, 3])
+        model_ir.operators.append(OperatorIR("IDENTITY", ["mid"], ["side"]))
+    return model_ir
 
 
 def test_duplicate_transpose_cleanup_uses_one_incremental_index_refresh(
@@ -406,6 +445,90 @@ def test_ordered_maximum_zero_relu_cleanup_skips_snapshot_without_maximum(
     assert stats == {"rewritten_maximum_with_zero_input2_to_relu": 0}
     assert snapshot_count == 0
     assert model_ir.operators[0].op_type == "ADD"
+
+
+def test_ordered_consecutive_mul_constants_cleanup_folds_with_one_index(
+    monkeypatch,
+) -> None:
+    model_ir = _consecutive_mul_model(
+        np.asarray([2.0, 3.0, 4.0], dtype=np.float32),
+        np.asarray(0.5, dtype=np.float32),
+    )
+    layout_state = LayoutState.from_model_ir(model_ir)
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_consecutive_mul_constants_cleanup(
+        model_ir,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_fold_consecutive_mul_constants_chains": 1}
+    assert refresh_count == 1
+    assert len(model_ir.operators) == 1
+    assert model_ir.operators[0].op_type == "MUL"
+    assert model_ir.operators[0].inputs[0] == "x"
+    fused_name = model_ir.operators[0].inputs[1]
+    np.testing.assert_array_equal(
+        model_ir.tensors[fused_name].data,
+        np.asarray([1.0, 1.5, 2.0], dtype=np.float32),
+    )
+    assert model_ir.tensors[fused_name].quantization == {
+        "scale": [0.25],
+        "zero_point": [0],
+    }
+    assert {"c0", "c1", "mid"}.isdisjoint(model_ir.tensors)
+    assert layout_state.validate_against_model_ir(model_ir) == []
+    assert diagnostics[0]["code"] == "canonicalize.fold_consecutive_mul_constants"
+    assert diagnostics[0]["status"] == "changed"
+
+
+def test_ordered_consecutive_mul_constants_cleanup_preserves_fanout() -> None:
+    model_ir = _consecutive_mul_model(
+        np.asarray(2.0, dtype=np.float32),
+        np.asarray(3.0, dtype=np.float32),
+        extra_mid_consumer=True,
+    )
+
+    stats = run_consecutive_mul_constants_cleanup(model_ir)
+
+    assert stats == {"optimized_fold_consecutive_mul_constants_chains": 0}
+    assert [op.op_type for op in model_ir.operators] == ["MUL", "MUL", "IDENTITY"]
+    assert model_ir.operators[1].inputs == ["mid", "c1"]
+
+
+@pytest.mark.parametrize(
+    ("first_constant", "second_constant"),
+    [
+        (
+            np.asarray(2, dtype=np.int32),
+            np.asarray(3.0, dtype=np.float32),
+        ),
+        (
+            np.asarray(np.inf, dtype=np.float32),
+            np.asarray(3.0, dtype=np.float32),
+        ),
+    ],
+)
+def test_ordered_consecutive_mul_constants_cleanup_rejects_unsafe_constants(
+    first_constant: np.ndarray,
+    second_constant: np.ndarray,
+) -> None:
+    model_ir = _consecutive_mul_model(first_constant, second_constant)
+
+    stats = run_consecutive_mul_constants_cleanup(model_ir)
+
+    assert stats == {"optimized_fold_consecutive_mul_constants_chains": 0}
+    assert [op.op_type for op in model_ir.operators] == ["MUL", "MUL"]
 
 
 def test_squeeze_reshape_cleanup_uses_one_incremental_index_refresh(

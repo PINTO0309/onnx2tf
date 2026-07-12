@@ -704,6 +704,35 @@ constants`, redundant integer Cast cleanup, and terminal Q/DQ cleanup for
 existing generic fixtures and differential-index readiness; select the
 smallest family with complete positive and guard coverage.
 
+The audit selected consecutive floating Mul constant folding. Its implementation
+now lives in `passes/graph_cleanup.py`; the legacy lowerer symbol delegates to
+it. The strict binary arity, exclusive intermediate consumer, model-output,
+floating path/constant dtype, NumPy broadcast, finite-result, quantization, and
+unique-name semantics are preserved. The rewrite now uses one differential
+index for consumer/producer lookup, surviving-input mutation, and structural
+operator removal. It registers the fused tensor in LayoutState before pruning.
+
+All three existing call positions—including the fallback IR path—now invoke
+`run_consecutive_mul_constants_cleanup` with stable ID
+`canonicalize.fold_consecutive_mul_constants`. The fallback builds its own
+LayoutState but contributes to the same session diagnostics; the other two use
+the session-owned LayoutState. Call order was not collapsed.
+
+Verification completed with:
+
+- `6 passed, 28 deselected` for positive fusion, one-index behavior, fan-out,
+  integer/non-finite constant guards, ownership, and all 23 production runner
+  diagnostic call sites;
+- `1043 passed, 5 deselected, 2 warnings in 132.21s` for the full sequential
+  direct suite.
+
+The next migration should address redundant Cast cleanup as one cohesive
+family, but characterization must come first. Build compact ModelIR fixtures
+for INT64→INT32 collapse, UINT64→UINT32 collapse, 32→64 alias passthrough,
+fan-out, public-output, and mixed non-Cast consumer guards. Only after these
+digests/structures are fixed should the two Cast implementations move from the
+lowerer and share indexed mutation helpers.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

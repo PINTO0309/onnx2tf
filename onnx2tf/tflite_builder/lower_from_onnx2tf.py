@@ -110,12 +110,14 @@ from onnx2tf.tflite_builder.passes.high_rank_matmul import (
     _compress_static_high_rank_batch_matmul as _compress_static_high_rank_batch_matmul_pass,
 )
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
+    _optimize_fold_consecutive_mul_constants_chains as _optimize_fold_consecutive_mul_constants_chains_pass,
     _optimize_maximum_with_zero_input2_to_relu as _optimize_maximum_with_zero_input2_to_relu_pass,
     _optimize_squeeze_reshape_identity_chains as _optimize_squeeze_reshape_identity_chains_pass,
     _optimize_maximum_minimum_relu0to1_chains as _optimize_maximum_minimum_relu0to1_chains_pass,
     _optimize_duplicate_reshape_fanout as _optimize_duplicate_reshape_fanout_pass,
     _optimize_duplicate_transpose_fanout as _optimize_duplicate_transpose_fanout_pass,
     run_clamp_cleanup,
+    run_consecutive_mul_constants_cleanup,
     run_duplicate_fanout_cleanup,
     run_maximum_zero_relu_cleanup,
     run_squeeze_reshape_identity_cleanup,
@@ -9662,172 +9664,10 @@ def _optimize_yolo_decode_mul_square_anchor_chains(model_ir: ModelIR) -> Dict[st
     return {"optimized_yolo_decode_mul_square_anchor_chains": int(rewritten)}
 
 
-def _optimize_fold_consecutive_mul_constants_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold consecutive floating-point MUL chains with constant side inputs.
-
-    Target:
-      X --MUL(c0)--> A --MUL(c1)--> Y
-
-    Rewrite:
-      X --MUL(c0 * c1)--> Y
-
-    Safety:
-    - Both MULs must be strict binary single-output operators.
-    - `A` must be consumed only by the second MUL and must not be a model output.
-    - Constant tensors must be floating-point and broadcastable.
-    - Data/output tensors on the path must be floating-point.
-    """
-    rewritten = 0
-
-    def _unique_tensor_name(base: str) -> str:
-        name = str(base)
-        suffix = 1
-        while name in model_ir.tensors:
-            name = f"{base}_{suffix}"
-            suffix += 1
-        return name
-
-    def _is_constant_tensor(tensor_name: str) -> bool:
-        tensor = model_ir.tensors.get(str(tensor_name), None)
-        return tensor is not None and tensor.data is not None
-
-    def _is_float_tensor_name(tensor_name: str) -> bool:
-        tensor = model_ir.tensors.get(str(tensor_name), None)
-        if tensor is None:
-            return False
-        dtype = str(tensor.dtype).upper()
-        return dtype.startswith("FLOAT")
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for second_mul_idx, second_mul_op in enumerate(model_ir.operators):
-            if str(second_mul_op.op_type) != "MUL" or len(second_mul_op.inputs) != 2 or len(second_mul_op.outputs) != 1:
-                continue
-
-            second_in0 = str(second_mul_op.inputs[0])
-            second_in1 = str(second_mul_op.inputs[1])
-            second_const_name: Optional[str] = None
-            mid_name: Optional[str] = None
-            second_const_input_index = -1
-            mid_input_index = -1
-            if _is_constant_tensor(second_in0):
-                second_const_name = second_in0
-                mid_name = second_in1
-                second_const_input_index = 0
-                mid_input_index = 1
-            elif _is_constant_tensor(second_in1):
-                second_const_name = second_in1
-                mid_name = second_in0
-                second_const_input_index = 1
-                mid_input_index = 0
-            if second_const_name is None or mid_name is None:
-                continue
-            if mid_name in model_outputs:
-                continue
-
-            mid_users = sorted({int(v) for v in consumers.get(mid_name, [])})
-            if mid_users != [int(second_mul_idx)]:
-                continue
-
-            first_mul_idx = producers.get(mid_name, None)
-            if first_mul_idx is None:
-                continue
-            first_mul_op = model_ir.operators[int(first_mul_idx)]
-            if str(first_mul_op.op_type) != "MUL" or len(first_mul_op.inputs) != 2 or len(first_mul_op.outputs) != 1:
-                continue
-            if str(first_mul_op.outputs[0]) != str(mid_name):
-                continue
-
-            first_in0 = str(first_mul_op.inputs[0])
-            first_in1 = str(first_mul_op.inputs[1])
-            first_const_name: Optional[str] = None
-            data_name: Optional[str] = None
-            if _is_constant_tensor(first_in0):
-                first_const_name = first_in0
-                data_name = first_in1
-            elif _is_constant_tensor(first_in1):
-                first_const_name = first_in1
-                data_name = first_in0
-            if first_const_name is None or data_name is None:
-                continue
-
-            second_output_name = str(second_mul_op.outputs[0])
-            if not _is_float_tensor_name(data_name):
-                continue
-            if not _is_float_tensor_name(mid_name):
-                continue
-            if not _is_float_tensor_name(second_output_name):
-                continue
-
-            first_const_tensor = model_ir.tensors.get(first_const_name, None)
-            second_const_tensor = model_ir.tensors.get(second_const_name, None)
-            if first_const_tensor is None or first_const_tensor.data is None:
-                continue
-            if second_const_tensor is None or second_const_tensor.data is None:
-                continue
-            first_const_data = np.asarray(first_const_tensor.data)
-            second_const_data = np.asarray(second_const_tensor.data)
-            if not np.issubdtype(first_const_data.dtype, np.floating):
-                continue
-            if not np.issubdtype(second_const_data.dtype, np.floating):
-                continue
-
-            fused_dtype = np.result_type(first_const_data.dtype, second_const_data.dtype)
-            if not np.issubdtype(fused_dtype, np.floating):
-                continue
-            try:
-                fused_const_data = (
-                    first_const_data.astype(fused_dtype, copy=False)
-                    * second_const_data.astype(fused_dtype, copy=False)
-                )
-            except Exception:
-                continue
-            if not np.all(np.isfinite(fused_const_data)):
-                continue
-
-            fused_const_name = _unique_tensor_name(f"{first_const_name}_mulfused")
-            fused_shape, fused_signature = normalize_onnx_shape(list(fused_const_data.shape))
-            model_ir.tensors[fused_const_name] = TensorIR(
-                name=fused_const_name,
-                dtype=tflite_dtype_from_numpy(fused_const_data.dtype),
-                shape=[int(v) for v in fused_shape],
-                shape_signature=[int(v) for v in fused_signature],
-                data=fused_const_data,
-                is_variable=False,
-                quantization=_clone_quantization(
-                    first_const_tensor.quantization
-                    if first_const_tensor.quantization is not None
-                    else second_const_tensor.quantization
-                ),
-            )
-
-            new_inputs = [str(v) for v in list(second_mul_op.inputs)]
-            new_inputs[int(mid_input_index)] = str(data_name)
-            new_inputs[int(second_const_input_index)] = str(fused_const_name)
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=second_mul_op,
-                new_inputs=new_inputs,
-            )
-
-            del model_ir.operators[int(first_mul_idx)]
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if rewritten > 0:
-        _prune_unused_tensors(model_ir)
-    return {"optimized_fold_consecutive_mul_constants_chains": int(rewritten)}
-
-
+def _optimize_fold_consecutive_mul_constants_chains(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    return _optimize_fold_consecutive_mul_constants_chains_pass(model_ir)
 def _optimize_leading_input_transpose_passthrough_chains(
     model_ir: ModelIR,
 ) -> Dict[str, int]:
@@ -65765,7 +65605,11 @@ def lower_onnx_to_ir(
     _set_post_progress_desc("core cleanup passes")
     _optimize_fuse_pseudo_leakyrelu_chains(model_ir)
     _optimize_yolo_decode_mul_square_anchor_chains(model_ir)
-    _optimize_fold_consecutive_mul_constants_chains(model_ir)
+    run_consecutive_mul_constants_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _sanitize_terminal_transpose_before_dequantize(model_ir)
     _optimize_terminal_quantize_dequantize(model_ir)
     _optimize_fold_conv_mul_add_affine_chains(
@@ -66519,7 +66363,10 @@ def lower_onnx_to_ir(
             _reconcile_static_tensor_shapes(fallback_ir)
         _topologically_sort_operators(fallback_ir)
         _rewrite_constant_divisors_to_multiplicative_reciprocals(fallback_ir)
-        _optimize_fold_consecutive_mul_constants_chains(fallback_ir)
+        run_consecutive_mul_constants_cleanup(
+            fallback_ir,
+            diagnostics=session.diagnostics,
+        )
         _restore_precision_sensitive_reciprocal_divisions(fallback_ir)
         fallback_unbound_repair_stats = (
             _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
@@ -66608,7 +66455,11 @@ def lower_onnx_to_ir(
         return fallback_ir
 
     _rewrite_constant_divisors_to_multiplicative_reciprocals(model_ir)
-    _optimize_fold_consecutive_mul_constants_chains(model_ir)
+    run_consecutive_mul_constants_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _restore_precision_sensitive_reciprocal_divisions(model_ir)
     _set_post_progress_desc("topological sort")
     _topologically_sort_operators(model_ir)

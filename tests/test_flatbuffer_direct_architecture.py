@@ -351,6 +351,7 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
         / "graph_cleanup.py"
     )
     function_names = {
+        "_optimize_fold_consecutive_mul_constants_chains",
         "_optimize_squeeze_reshape_identity_chains",
         "_optimize_maximum_minimum_relu0to1_chains",
         "_optimize_maximum_with_zero_input2_to_relu",
@@ -393,6 +394,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     runner_names = {
         "run_boundary_input_layout_cleanup",
         "run_clamp_cleanup",
+        "run_consecutive_mul_constants_cleanup",
         "run_duplicate_fanout_cleanup",
         "run_mixed_attention_layout_cleanup",
         "run_maximum_zero_relu_cleanup",
@@ -408,7 +410,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 20
+    assert len(calls) == 23
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"

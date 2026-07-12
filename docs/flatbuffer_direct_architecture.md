@@ -209,6 +209,17 @@ pruning, transaction rollback, precondition skip, and internal diagnostics use
 the same contracts as scalar zero-to-one clamp cleanup. The legacy lowerer
 symbol delegates to the family implementation.
 
+Consecutive floating Mul constant folding is also owned by
+`passes/graph_cleanup.py`. It requires two strict binary Mul operators, an
+exclusive non-output intermediate, floating path tensors, broadcast-compatible
+floating constants, and a finite fused value. The implementation shares one
+differential index, updates the surviving Mul input slots through indexed
+mutation, removes the first Mul structurally, preserves constant quantization,
+and registers the new fused tensor in LayoutState before pruning. All three
+production and fallback positions call `run_consecutive_mul_constants_cleanup`
+with stable ID `canonicalize.fold_consecutive_mul_constants`; their relative
+order is unchanged and the legacy lowerer helper remains a wrapper.
+
 Squeeze/Reshape identity cleanup also uses the differential graph index. It
 normalizes explicit or inferred squeeze axes, proves the squeezed and restored
 shapes, rewires only consumers of the round-trip output, then removes both

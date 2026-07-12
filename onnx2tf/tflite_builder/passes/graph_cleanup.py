@@ -25,7 +25,13 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _replace_tensor_inputs,
     _set_operator_inputs,
 )
-from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
+from onnx2tf.tflite_builder.ir import (
+    ModelIR,
+    OperatorIR,
+    TensorIR,
+    normalize_onnx_shape,
+)
+from onnx2tf.tflite_builder.tensor_buffer_builder import tflite_dtype_from_numpy
 
 
 def _optimize_duplicate_transpose_fanout(
@@ -563,6 +569,227 @@ def run_maximum_zero_relu_cleanup(
         ],
         layout_state=layout_state,
         default_details={"rewritten_maximum_with_zero_input2_to_relu": 0},
+        diagnostics=diagnostics,
+    )
+    return {str(key): int(value) for key, value in details.items()}
+
+
+def _optimize_fold_consecutive_mul_constants_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Fold strict floating-point Mul(data, const) chains."""
+
+    rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+
+    def _unique_tensor_name(base: str) -> str:
+        name = str(base)
+        suffix = 1
+        while name in model_ir.tensors:
+            name = f"{base}_{suffix}"
+            suffix += 1
+        return name
+
+    def _is_constant_tensor(tensor_name: str) -> bool:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        return tensor is not None and tensor.data is not None
+
+    def _is_float_tensor_name(tensor_name: str) -> bool:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        return tensor is not None and str(tensor.dtype).upper().startswith("FLOAT")
+
+    while True:
+        changed = False
+        consumers = graph_index.consumers
+        producers = graph_index.producers
+        model_outputs = set(str(name) for name in model_ir.outputs)
+
+        for second_mul_idx, second_mul_op in enumerate(model_ir.operators):
+            if (
+                str(second_mul_op.op_type) != "MUL"
+                or len(second_mul_op.inputs) != 2
+                or len(second_mul_op.outputs) != 1
+            ):
+                continue
+
+            second_in0 = str(second_mul_op.inputs[0])
+            second_in1 = str(second_mul_op.inputs[1])
+            second_const_name: Optional[str] = None
+            mid_name: Optional[str] = None
+            second_const_input_index = -1
+            mid_input_index = -1
+            if _is_constant_tensor(second_in0):
+                second_const_name = second_in0
+                mid_name = second_in1
+                second_const_input_index = 0
+                mid_input_index = 1
+            elif _is_constant_tensor(second_in1):
+                second_const_name = second_in1
+                mid_name = second_in0
+                second_const_input_index = 1
+                mid_input_index = 0
+            if second_const_name is None or mid_name is None:
+                continue
+            if mid_name in model_outputs:
+                continue
+
+            mid_users = sorted({int(index) for index in consumers.get(mid_name, [])})
+            if mid_users != [int(second_mul_idx)]:
+                continue
+
+            first_mul_idx = producers.get(mid_name, None)
+            if first_mul_idx is None:
+                continue
+            first_mul_op = model_ir.operators[int(first_mul_idx)]
+            if (
+                str(first_mul_op.op_type) != "MUL"
+                or len(first_mul_op.inputs) != 2
+                or len(first_mul_op.outputs) != 1
+                or str(first_mul_op.outputs[0]) != mid_name
+            ):
+                continue
+
+            first_in0 = str(first_mul_op.inputs[0])
+            first_in1 = str(first_mul_op.inputs[1])
+            first_const_name: Optional[str] = None
+            data_name: Optional[str] = None
+            if _is_constant_tensor(first_in0):
+                first_const_name = first_in0
+                data_name = first_in1
+            elif _is_constant_tensor(first_in1):
+                first_const_name = first_in1
+                data_name = first_in0
+            if first_const_name is None or data_name is None:
+                continue
+
+            second_output_name = str(second_mul_op.outputs[0])
+            if not all(
+                _is_float_tensor_name(name)
+                for name in (data_name, mid_name, second_output_name)
+            ):
+                continue
+
+            first_const_tensor = model_ir.tensors.get(first_const_name, None)
+            second_const_tensor = model_ir.tensors.get(second_const_name, None)
+            if first_const_tensor is None or first_const_tensor.data is None:
+                continue
+            if second_const_tensor is None or second_const_tensor.data is None:
+                continue
+            first_const_data = np.asarray(first_const_tensor.data)
+            second_const_data = np.asarray(second_const_tensor.data)
+            if not np.issubdtype(first_const_data.dtype, np.floating):
+                continue
+            if not np.issubdtype(second_const_data.dtype, np.floating):
+                continue
+
+            fused_dtype = np.result_type(first_const_data.dtype, second_const_data.dtype)
+            if not np.issubdtype(fused_dtype, np.floating):
+                continue
+            try:
+                fused_const_data = (
+                    first_const_data.astype(fused_dtype, copy=False)
+                    * second_const_data.astype(fused_dtype, copy=False)
+                )
+            except Exception:
+                continue
+            if not np.all(np.isfinite(fused_const_data)):
+                continue
+
+            fused_const_name = _unique_tensor_name(f"{first_const_name}_mulfused")
+            fused_shape, fused_signature = normalize_onnx_shape(
+                list(fused_const_data.shape)
+            )
+            model_ir.tensors[fused_const_name] = TensorIR(
+                name=fused_const_name,
+                dtype=tflite_dtype_from_numpy(fused_const_data.dtype),
+                shape=[int(dim) for dim in fused_shape],
+                shape_signature=[int(dim) for dim in fused_signature],
+                data=fused_const_data,
+                is_variable=False,
+                quantization=_clone_quantization(
+                    first_const_tensor.quantization
+                    if first_const_tensor.quantization is not None
+                    else second_const_tensor.quantization
+                ),
+            )
+            if layout_state is not None:
+                layout_state.set(
+                    fused_const_name,
+                    logical=model_ir.tensors[fused_const_name].logical_layout,
+                    physical=model_ir.tensors[fused_const_name].physical_layout,
+                )
+
+            new_inputs = [str(name) for name in second_mul_op.inputs]
+            new_inputs[int(mid_input_index)] = str(data_name)
+            new_inputs[int(second_const_input_index)] = str(fused_const_name)
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=second_mul_op,
+                new_inputs=new_inputs,
+                graph_index=graph_index,
+            )
+            graph_index.remove_operator(int(first_mul_idx))
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    if rewritten > 0:
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+    return {"optimized_fold_consecutive_mul_constants_chains": int(rewritten)}
+
+
+def run_consecutive_mul_constants_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run guarded consecutive floating Mul folding transactionally."""
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        for op in pass_state.model_ir.operators:
+            if str(op.op_type) != "MUL" or len(op.outputs) != 1:
+                continue
+            for consumer_idx in pass_state.graph_index.consumer_indices(
+                str(op.outputs[0])
+            ):
+                consumer = pass_state.model_ir.operators[int(consumer_idx)]
+                if str(consumer.op_type) == "MUL":
+                    return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_fold_consecutive_mul_constants_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("optimized_fold_consecutive_mul_constants_chains", 0)
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="canonicalize.fold_consecutive_mul_constants",
+                phase=PassPhase.CANONICALIZE,
+                callback=_run,
+                precondition=_has_candidate,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={"optimized_fold_consecutive_mul_constants_chains": 0},
         diagnostics=diagnostics,
     )
     return {str(key): int(value) for key, value in details.items()}
