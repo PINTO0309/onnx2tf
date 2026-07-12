@@ -230,6 +230,13 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         / "passes"
         / "channel_slice_layout.py"
     )
+    boundary_chains_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "boundary_input_chains.py"
+    )
 
     def _functions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -275,6 +282,19 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
     pass_functions = _functions(channel_slice_path)
     assert channel_slice_functions <= set(pass_functions)
     for function_name in channel_slice_functions:
+        wrapper = lowering_functions[function_name]
+        wrapper_names = {
+            node.id for node in ast.walk(wrapper) if isinstance(node, ast.Name)
+        }
+        assert f"{function_name}_pass" in wrapper_names
+
+    boundary_chain_functions = {
+        "_optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains",
+        "_optimize_boundary_input_transpose_batchmatmul_chains",
+    }
+    pass_functions = _functions(boundary_chains_path)
+    assert boundary_chain_functions <= set(pass_functions)
+    for function_name in boundary_chain_functions:
         wrapper = lowering_functions[function_name]
         wrapper_names = {
             node.id for node in ast.walk(wrapper) if isinstance(node, ast.Name)

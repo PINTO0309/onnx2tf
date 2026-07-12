@@ -81,10 +81,27 @@ Verification completed with:
 - `992 passed, 5 deselected, 2 warnings in 125.00s` for the full sequential
   direct suite.
 
-The next extraction candidate is the earlier boundary input Mul/Sum/Reshape
-and BatchMatMul pair. Their mutation and constant-vector dependencies now have
-canonical core owners, so they can move as a small boundary-input chain family
-while retaining legacy wrappers.
+The boundary input Mul/Sum/Reshape and BatchMatMul rewrites now live in
+`passes/boundary_input_chains.py`. The two legacy lowerer entry points are thin
+delegating wrappers. The move retains the original fan-out, model-output,
+permutation, constant-shape, axis, and metadata guards and reuses canonical
+graph mutation and constant-vector helpers from `core/model_ir_utils.py`.
+Focused ModelIR fixtures cover the positive rewrite paths, including NHWC
+constant rotation, reduction-axis remapping, intermediate metadata updates,
+and BatchMatMul input rewiring.
+
+Verification completed with:
+
+- `18 passed` for architecture and boundary-input-chain tests, including
+  fan-out and shared-input no-op guards;
+- `996 passed, 5 deselected, 2 warnings in 124.71s` for the full sequential
+  direct suite.
+
+The next extraction candidate should be selected from the remaining layout
+rewrite families in `lower_from_onnx2tf.py`, favoring a cohesive group whose
+generic graph helpers already have canonical core owners. Preserve the legacy
+symbols as wrappers and add both semantic-guard fixtures and the existing full
+direct-suite gate before committing.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

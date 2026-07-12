@@ -59,6 +59,14 @@ rewrite. Constant-vector reads/writes, operator input/output mutation,
 broadcast checks, metadata permutation, and lineage recording remain shared
 core utilities. Legacy function names delegate to the family module.
 
+Boundary input normalization chains live in
+`passes/boundary_input_chains.py`. The module owns the guarded
+Transpose/Mul/Sum/Reshape NHWC rewrite and the exclusive
+Transpose/BatchMatMul boundary rewrite. Both passes retain their fan-out,
+model-output, permutation, constant-shape, axis, and metadata guards. Their
+legacy lowerer names are delegating wrappers, while graph mutation and
+constant-vector access use the canonical `core/model_ir_utils.py` helpers.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither
