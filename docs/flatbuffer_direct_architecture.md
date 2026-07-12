@@ -153,6 +153,11 @@ three compatible branches with a single Split. Both require fully known,
 compatible dimensions and exact consumers before changing ModelIR, and both
 preserve the legacy lowerer entry points.
 
+Shared pre-Transpose QKV slicing is normalized in the same attention module.
+The pass proves a single shared permutation and compatible Slice begin/size
+vectors, rewrites those vectors into NCHW order, preserves shared constants by
+cloning, and removes only the now-redundant adapter.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

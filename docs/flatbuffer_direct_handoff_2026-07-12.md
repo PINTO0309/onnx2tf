@@ -302,9 +302,22 @@ Verification completed with:
 - `1010 passed, 5 deselected, 2 warnings in 125.91s` for the full sequential
   direct suite.
 
-The next characterized attention increment is the shared pre-transpose QKV
-Slice rewrite. Keep the uncharacterized SA/PA MirrorPad mega-pattern in the
-lowerer until a focused semantic fixture exists.
+The shared pre-Transpose QKV Slice rewrite now also belongs to
+`passes/attention_layout.py`. Its implementation and nested begin/size helper
+moved intact behind the legacy wrapper. The characterization fixes the shared
+permutation, NCHW Slice-vector remapping, cloned shared constants, tensor
+metadata, quantization, and removal of only the redundant transpose.
+
+Verification completed with:
+
+- `17 passed, 758 deselected` for focused architecture and shared
+  pre-Transpose QKV slicing;
+- `1010 passed, 5 deselected, 2 warnings in 125.56s` for the full sequential
+  direct suite.
+
+The next characterized attention increment is the weighted-sum NHWC bridge.
+Keep the uncharacterized SA/PA MirrorPad mega-pattern in the lowerer until a
+focused semantic fixture exists.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

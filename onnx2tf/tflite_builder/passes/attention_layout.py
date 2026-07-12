@@ -7,12 +7,15 @@ import numpy as np
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _build_tensor_consumer_map,
     _build_tensor_producer_map,
+    _clone_quantization,
     _is_fully_known_positive_shape,
     _permute_tensor_metadata_if_rank_matches,
+    _permute_shape,
     _prune_unused_tensors,
     _read_const_ints_from_tensor,
     _read_transpose_perm,
     _replace_operator_input_at,
+    _replace_tensor_inputs,
     _set_operator_inputs,
     _write_const_ints_to_tensor,
 )
@@ -639,3 +642,271 @@ def _optimize_attention_qkv_slice_to_split_chains(
 
     _prune_unused_tensors(model_ir)
     return {"optimized_attention_qkv_slice_to_split_chains": int(rewritten)}
+
+
+def _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """
+    Hoist sibling NHWC->NCHW transposes on Q/K/V branches to a single
+    pre-slice transpose on the shared source tensor.
+
+    Target (rank-4):
+      src_nhwc --SLICE(c-range for q)--> q_nhwc --RESHAPE--> q_nchw_like --SOFTMAX
+      src_nhwc --SLICE(c-range for k)--> k_nhwc --T(0,3,1,2)--> k_nchw
+      src_nhwc --SLICE(c-range for v)--> v_nhwc --RELU--> v_relu_nhwc --T(0,3,1,2)--> v_nchw
+
+    Rewrite:
+      src_nhwc --T(0,3,1,2)--> src_nchw
+      SLICE begin/size are remapped to NCHW indexing for q/k/v slices.
+      Drop per-branch transposes on k and v-relu branches.
+    """
+    rewritten = 0
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+
+    def _unique_tensor_name(base: str) -> str:
+        candidate = str(base)
+        serial = 1
+        while candidate in model_ir.tensors:
+            candidate = f"{base}_{serial}"
+            serial += 1
+        return candidate
+
+    def _permute_begin_or_size_nhwc_to_nchw(values: List[int]) -> List[int]:
+        # [N,H,W,C] -> [N,C,H,W]
+        return [int(values[0]), int(values[3]), int(values[1]), int(values[2])]
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+        producers = _build_tensor_producer_map(model_ir)
+        model_outputs = set(str(v) for v in model_ir.outputs)
+
+        for k_transpose_idx, k_transpose_op in enumerate(model_ir.operators):
+            if (
+                str(k_transpose_op.op_type) != "TRANSPOSE"
+                or len(k_transpose_op.inputs) < 2
+                or len(k_transpose_op.outputs) != 1
+                or _read_transpose_perm(model_ir, k_transpose_op) != perm_nhwc_to_nchw
+            ):
+                continue
+
+            k_slice_out_name = str(k_transpose_op.inputs[0])
+            k_transpose_out_name = str(k_transpose_op.outputs[0])
+            shared_perm_name = str(k_transpose_op.inputs[1])
+            if k_slice_out_name in model_outputs or k_transpose_out_name in model_outputs:
+                continue
+
+            k_slice_idx = producers.get(k_slice_out_name, None)
+            if k_slice_idx is None:
+                continue
+            k_slice_op = model_ir.operators[int(k_slice_idx)]
+            if (
+                str(k_slice_op.op_type) != "SLICE"
+                or len(k_slice_op.inputs) < 3
+                or len(k_slice_op.outputs) != 1
+                or str(k_slice_op.outputs[0]) != k_slice_out_name
+            ):
+                continue
+
+            src_name = str(k_slice_op.inputs[0])
+            if src_name in model_outputs:
+                continue
+            src_users = [int(v) for v in consumers.get(src_name, [])]
+            if len(src_users) < 3:
+                continue
+
+            slice_user_indices = []
+            for user_idx in src_users:
+                user_op = model_ir.operators[int(user_idx)]
+                if (
+                    str(user_op.op_type) == "SLICE"
+                    and len(user_op.inputs) >= 3
+                    and len(user_op.outputs) == 1
+                    and str(user_op.inputs[0]) == src_name
+                ):
+                    slice_user_indices.append(int(user_idx))
+            if len(slice_user_indices) != 3 or set(int(v) for v in src_users) != set(slice_user_indices):
+                continue
+
+            slice_by_out_name: Dict[str, Dict[str, Any]] = {}
+            valid_slices = True
+            for slice_idx in slice_user_indices:
+                slice_op = model_ir.operators[int(slice_idx)]
+                begin_name = str(slice_op.inputs[1])
+                size_name = str(slice_op.inputs[2])
+                begin_vals = _read_const_ints_from_tensor(model_ir.tensors.get(begin_name, None))
+                size_vals = _read_const_ints_from_tensor(model_ir.tensors.get(size_name, None))
+                if begin_vals is None or size_vals is None or len(begin_vals) != 4 or len(size_vals) != 4:
+                    valid_slices = False
+                    break
+                out_name = str(slice_op.outputs[0])
+                slice_by_out_name[out_name] = {
+                    "idx": int(slice_idx),
+                    "begin_name": begin_name,
+                    "size_name": size_name,
+                    "begin_vals": [int(v) for v in list(begin_vals)],
+                    "size_vals": [int(v) for v in list(size_vals)],
+                }
+            if not valid_slices:
+                continue
+
+            if k_slice_out_name not in slice_by_out_name:
+                continue
+            if set(int(v) for v in consumers.get(k_slice_out_name, [])) != {int(k_transpose_idx)}:
+                continue
+
+            v_relu_idx: Optional[int] = None
+            v_transpose_idx: Optional[int] = None
+            v_transpose_out_name = ""
+            v_relu_out_name = ""
+            v_slice_out_name = ""
+            q_slice_out_name = ""
+            for out_name, meta in list(slice_by_out_name.items()):
+                if out_name == k_slice_out_name:
+                    continue
+                user_indices = [int(v) for v in consumers.get(str(out_name), [])]
+                if len(user_indices) == 1:
+                    only_user_idx = int(user_indices[0])
+                    only_user_op = model_ir.operators[int(only_user_idx)]
+                    if (
+                        str(only_user_op.op_type) == "RESHAPE"
+                        and len(only_user_op.outputs) == 1
+                    ):
+                        reshape_out_name = str(only_user_op.outputs[0])
+                        softmax_users = [int(v) for v in consumers.get(reshape_out_name, [])]
+                        if len(softmax_users) == 1:
+                            softmax_op = model_ir.operators[int(softmax_users[0])]
+                            if str(softmax_op.op_type) == "SOFTMAX":
+                                q_slice_out_name = str(out_name)
+                                continue
+                if len(user_indices) == 1:
+                    relu_candidate_idx = int(user_indices[0])
+                    relu_candidate_op = model_ir.operators[int(relu_candidate_idx)]
+                    if (
+                        str(relu_candidate_op.op_type) == "RELU"
+                        and len(relu_candidate_op.outputs) == 1
+                    ):
+                        relu_out_name = str(relu_candidate_op.outputs[0])
+                        relu_users = [int(v) for v in consumers.get(relu_out_name, [])]
+                        if len(relu_users) == 1:
+                            t_idx = int(relu_users[0])
+                            t_op = model_ir.operators[int(t_idx)]
+                            if (
+                                str(t_op.op_type) == "TRANSPOSE"
+                                and len(t_op.inputs) >= 2
+                                and len(t_op.outputs) == 1
+                                and str(t_op.inputs[0]) == relu_out_name
+                                and _read_transpose_perm(model_ir, t_op) == perm_nhwc_to_nchw
+                                and str(t_op.outputs[0]) not in model_outputs
+                            ):
+                                v_slice_out_name = str(out_name)
+                                v_relu_idx = int(relu_candidate_idx)
+                                v_relu_out_name = relu_out_name
+                                v_transpose_idx = int(t_idx)
+                                v_transpose_out_name = str(t_op.outputs[0])
+                                continue
+
+            if (
+                q_slice_out_name == ""
+                or v_slice_out_name == ""
+                or v_relu_idx is None
+                or v_transpose_idx is None
+                or v_relu_out_name == ""
+                or v_transpose_out_name == ""
+            ):
+                continue
+
+            src_tensor = model_ir.tensors.get(src_name, None)
+            if src_tensor is None or src_tensor.shape is None or len(list(src_tensor.shape)) != 4:
+                continue
+
+            src_shape_nhwc = [int(v) for v in list(src_tensor.shape)]
+            src_shape_nchw = _permute_shape(src_shape_nhwc, perm_nhwc_to_nchw)
+            if src_shape_nchw is None:
+                continue
+            src_sig_nhwc = (
+                [int(v) for v in list(src_tensor.shape_signature)]
+                if src_tensor.shape_signature is not None
+                else [int(v) for v in list(src_shape_nhwc)]
+            )
+            src_sig_nchw = _permute_shape(src_sig_nhwc, perm_nhwc_to_nchw)
+            if src_sig_nchw is None:
+                src_sig_nchw = [int(v) for v in list(src_shape_nchw)]
+
+            shared_nchw_name = _unique_tensor_name(f"{src_name}_qkv_nchw")
+            model_ir.tensors[shared_nchw_name] = TensorIR(
+                name=shared_nchw_name,
+                dtype=str(src_tensor.dtype),
+                shape=[int(v) for v in list(src_shape_nchw)],
+                shape_signature=[int(v) for v in list(src_sig_nchw)],
+                data=None,
+                is_variable=False,
+                quantization=_clone_quantization(src_tensor.quantization),
+            )
+
+            shared_transpose_op = OperatorIR(
+                op_type="TRANSPOSE",
+                inputs=[str(src_name), str(shared_perm_name)],
+                outputs=[str(shared_nchw_name)],
+            )
+
+            for _, branch_meta in list(slice_by_out_name.items()):
+                branch_slice_op = model_ir.operators[int(branch_meta["idx"])]
+                begin_name = str(branch_meta["begin_name"])
+                size_name = str(branch_meta["size_name"])
+                begin_vals = [int(v) for v in list(branch_meta["begin_vals"])]
+                size_vals = [int(v) for v in list(branch_meta["size_vals"])]
+                mapped_begin = _permute_begin_or_size_nhwc_to_nchw(begin_vals)
+                mapped_size = _permute_begin_or_size_nhwc_to_nchw(size_vals)
+                if not (
+                    _write_const_ints_to_tensor(model_ir.tensors.get(begin_name, None), mapped_begin)
+                    or _read_const_ints_from_tensor(model_ir.tensors.get(begin_name, None)) == mapped_begin
+                ):
+                    valid_slices = False
+                    break
+                if not (
+                    _write_const_ints_to_tensor(model_ir.tensors.get(size_name, None), mapped_size)
+                    or _read_const_ints_from_tensor(model_ir.tensors.get(size_name, None)) == mapped_size
+                ):
+                    valid_slices = False
+                    break
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=branch_slice_op,
+                    new_inputs=[str(shared_nchw_name), begin_name, size_name],
+                )
+                out_name = str(branch_slice_op.outputs[0])
+                _permute_tensor_metadata_if_rank_matches(
+                    model_ir.tensors.get(out_name, None),
+                    perm_nhwc_to_nchw,
+                )
+            if not valid_slices:
+                continue
+
+            _permute_tensor_metadata_if_rank_matches(
+                model_ir.tensors.get(v_relu_out_name, None),
+                perm_nhwc_to_nchw,
+            )
+
+            _replace_tensor_inputs(model_ir, k_transpose_out_name, k_slice_out_name)
+            _replace_tensor_inputs(model_ir, v_transpose_out_name, v_relu_out_name)
+
+            remove_indices = sorted([int(k_transpose_idx), int(v_transpose_idx)], reverse=True)
+            for remove_idx in remove_indices:
+                del model_ir.operators[int(remove_idx)]
+
+            insert_index = min(int(v) for v in list(slice_user_indices))
+            removed_before_insert = sum(1 for v in remove_indices if int(v) < int(insert_index))
+            adjusted_insert_index = int(insert_index) - int(removed_before_insert)
+            model_ir.operators.insert(int(adjusted_insert_index), shared_transpose_op)
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"optimized_attention_qkv_shared_pretranspose_slice_nchw_chains": int(rewritten)}
