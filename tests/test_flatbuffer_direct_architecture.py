@@ -340,6 +340,7 @@ def test_attention_layout_rewrites_have_single_owner() -> None:
         / "attention_layout.py"
     )
     function_names = {
+        "_optimize_transpose_conv_attention_nhwc_propagation_chains",
         "_optimize_attention_qkv_gather_reshape_transpose_hoist_chains",
         "_optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains",
         "_optimize_attention_qkv_shared_pretranspose_slice_nchw_chains",

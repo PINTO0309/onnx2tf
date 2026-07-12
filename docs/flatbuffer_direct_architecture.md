@@ -169,6 +169,12 @@ shared transpose after proving axis and shape equivalence, and preserves every
 branch output contract. The moved implementation removes one pre-existing
 unused local without changing graph semantics.
 
+Conv-based attention NHWC propagation is also owned by
+`passes/attention_layout.py`. Its guarded variants cover basic reduction
+attention, expanded HardSigmoid gates, HardSwish activation, and self-HardSwish
+Mean chains. Each nested matcher proves the full region and legacy consumers
+before any transpose removal or coefficient/axis rewrite.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

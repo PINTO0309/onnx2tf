@@ -340,10 +340,23 @@ Verification completed with:
 - `1010 passed, 5 deselected, 2 warnings in 125.59s` for the full sequential
   direct suite.
 
-The remaining characterized attention families are the much larger Conv-based
-and CSP propagation passes. Treat them as separate checkpoints. Keep
-uncharacterized attention mega-patterns in the lowerer until semantic fixtures
-exist.
+The Conv-based attention NHWC propagation family now lives in
+`passes/attention_layout.py`. Its implementation and nested matchers moved
+intact behind the legacy wrapper. Four characterization topologies preserve
+the basic reduction branch, expanded HardSigmoid gate, HardSwish activation,
+self-HardSwish/Mean chain, fan-out adapters, constants, axes, metadata,
+quantization, and output rewiring.
+
+Verification completed with:
+
+- `20 passed, 755 deselected` for focused architecture and all Conv-attention
+  variants;
+- `1010 passed, 5 deselected, 2 warnings in 125.58s` for the full sequential
+  direct suite.
+
+The remaining characterized large attention family is CSP propagation. Treat
+it as a separate checkpoint. Keep uncharacterized attention mega-patterns in
+the lowerer until semantic fixtures exist.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
