@@ -39353,8 +39353,8 @@ def test_flatbuffer_direct_scatterelements_dynamic_data_uses_runtime_shape() -> 
         for op in model_ir.operators
     ) == 2
     assert any(
-        str(op.op_type) == "SHAPE"
-        and list(op.inputs) == ["data"]
+        str(op.op_type) == "MAXIMUM"
+        and len(op.inputs) == 2
         and len(op.outputs) == 1
         and str(op.outputs[0]) in scatter_shape_inputs
         for op in model_ir.operators
@@ -39382,6 +39382,30 @@ def test_flatbuffer_direct_scatterelements_dynamic_data_uses_runtime_shape() -> 
         actual = interpreter.get_tensor(interpreter.get_output_details()[0]["index"])
         expected = np.asarray([[10, 21], [30, 11], [20, 31]], dtype=np.float32)
         np.testing.assert_array_equal(actual, expected)
+
+        for detail in interpreter.get_input_details():
+            interpreter.resize_tensor_input(detail["index"], [0, 2], strict=False)
+        interpreter.allocate_tensors()
+        by_name = {
+            detail["name"]: detail for detail in interpreter.get_input_details()
+        }
+        interpreter.set_tensor(
+            by_name["data"]["index"],
+            np.empty((0, 2), dtype=np.float32),
+        )
+        interpreter.set_tensor(
+            by_name["indices"]["index"],
+            np.empty((0, 2), dtype=np.int64),
+        )
+        interpreter.set_tensor(
+            by_name["updates"]["index"],
+            np.empty((0, 2), dtype=np.float32),
+        )
+        interpreter.invoke()
+        actual_empty = interpreter.get_tensor(
+            interpreter.get_output_details()[0]["index"]
+        )
+        assert actual_empty.shape == (0, 2)
 
 
 def test_flatbuffer_direct_scatterelements_multi_dynamic_reshape_options_are_valid() -> None:

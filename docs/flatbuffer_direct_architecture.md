@@ -92,8 +92,8 @@ The profile fixes root-only discovery, the 1–1,999 node range, all 420 managed
 historical model records, and inference concurrency of one. Models classified
 as `timeout` in the current managed baseline remain recorded for provenance but
 are automatically excluded from subsequent runs. The active run therefore
-contains 394 models: 350 expected passes and 44 expected non-passes, excluding
-26 recorded timeouts. The active non-passes are 33 accuracy failures and 11
+contains 394 models: 351 expected passes and 43 expected non-passes, excluding
+26 recorded timeouts. The active non-passes are 33 accuracy failures and 10
 missing reports. Tier 5 models cannot be added because the profile loader
 rejects tiers above 4 and node ranges above 1,999.
 
@@ -425,6 +425,19 @@ TopK axis transpose is needed. A fixed-seed one-sample sequential run compares
 all three outputs without skips, with maximum absolute error `0` and cosine
 similarity `1`. Its managed profile uses `eval_num_samples: 1` and
 `accuracy_only: true`; ten sequential samples exceed 180 seconds.
+
+`fasterrcnn_test4_new.onnx` is also promoted from a missing report to a pass.
+For its fixed-seed input the two ROI-level ScatterElements nodes operate on
+empty `(0,256,7,7)` data, indices, and updates. Empty ScatterElements is valid
+and must return an empty tensor, but LiteRT's reference SCATTER_ND kernel raises
+`SIGFPE` when its shape contains zero. Dynamic ScatterElements lowering now
+clamps only the internal SCATTER_ND shape vector to a minimum of one. The final
+combination with the original data restores every zero-sized dimension; for
+non-empty inputs the clamp is an identity. A local runtime test covers both a
+non-empty value case and a zero-sized input, and the real one-sample managed
+run compares all three outputs without skips, with maximum absolute error `0`
+and cosine similarity `1`. Its profile uses `eval_num_samples: 1` and
+`accuracy_only: true`.
 
 `conv_tasnet.onnx` remains an active missing-report model with the normalized
 reason `invalid_onnx_scatterelements_rank_mismatch_4_6`. Its terminal

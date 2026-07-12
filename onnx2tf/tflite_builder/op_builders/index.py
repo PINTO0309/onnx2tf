@@ -6,6 +6,9 @@ from typing import Any, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
+from onnx2tf.tflite_builder.op_builders.scatter_utils import (
+    add_zero_safe_runtime_scatter_shape,
+)
 from onnx2tf.tflite_builder.op_builders.shared import _clone_quantization, make_transpose
 from onnx2tf.utils.logging import warn
 
@@ -2773,18 +2776,11 @@ def build_scatter_elements_op(node: Any, ctx: Any) -> None:
             np.asarray(data_meta_shape, dtype=np.int32),
         )
     else:
-        shape_for_scatter = ctx.add_intermediate_tensor(
-            f"{output_name}_scatter_elements_shape",
-            dtype="INT32",
-            shape=[int(rank)] if int(rank) > 0 else [1],
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="SHAPE",
-                inputs=[data_name],
-                outputs=[shape_for_scatter],
-                options={"outType": "INT32"},
-            )
+        shape_for_scatter = add_zero_safe_runtime_scatter_shape(
+            ctx=ctx,
+            data_name=data_name,
+            name_prefix=f"{output_name}_scatter_elements_shape",
+            rank=int(rank),
         )
 
     scattered_updates_name = ctx.add_intermediate_tensor(
