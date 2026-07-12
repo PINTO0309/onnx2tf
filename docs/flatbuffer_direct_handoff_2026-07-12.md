@@ -1559,6 +1559,30 @@ The temporary 83 MB Tier 0 output directory was deleted. Validation remained
 single-process and sequential, and no dependency or TensorFlow import was
 added. Rerun the raw-family inventory before choosing the next unit.
 
+The next adjacent pair is singleton-channel MaxPool layout cleanup: the
+Reshape/MaxPool/Binary/Cast bridge and the strict SuperPoint-style NMS MaxPool
+ladder. A compact success fixture and post-pool fan-out no-op first fixed the
+shorter bridge's rewiring, metadata, and removal contract. The NMS matcher is a
+strict approximately 700-line topology; its positive gate is reserved for the
+actual SuperPoint corpus model rather than duplicating that graph as a large
+handwritten fixture.
+
+Both implementation bodies (1,017 lines total) moved unchanged to
+`passes/singleton_maxpool_layout.py`; the lowerer retains thin compatibility
+wrappers, and the pair remains adjacent at all three production positions. No
+algorithm or call order changed.
+
+Sequential verification completed with:
+
+- `2 passed` for short-chain success and fan-out no-op characterization;
+- `3 passed, 23 deselected` including the ownership architecture contract;
+- `1095 passed, 5 deselected, 2 warnings in 141.39s` for the full direct suite.
+
+The next checkpoint must make both implementations differential-index and
+LayoutState aware as one ordered pair. Its integration gate must capture
+runner diagnostics for a root SuperPoint model to prove which spec changes,
+then run `-cotof` sequentially.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

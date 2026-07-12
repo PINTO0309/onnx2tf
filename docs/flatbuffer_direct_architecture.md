@@ -257,6 +257,16 @@ defined by producer/consumer topology, reduction semantics, permutations, and
 padding pairs—not by model names—and rewrites axes only after the entire
 region is proven.
 
+Singleton-channel MaxPool layout cleanup lives in
+`passes/singleton_maxpool_layout.py`. The module owns the repeated
+Reshape→MaxPool→Reshape/Binary/Cast bridge cleanup and the complete strict
+SuperPoint-style singleton NMS MaxPool ladder. Both implementations preserve
+their rank-4 singleton layout, fan-out, public-output, binary/logical topology,
+and terminal NCHW adapter guards. Shared shape, constant, quantization, graph
+mutation, and pruning helpers remain canonical; both legacy lowerer symbols
+are thin compatibility wrappers. The two rewrites remain adjacent in their
+three production positions.
+
 The mixed attention MirrorPad pass is the first post-lowering rewrite migrated
 to the differential ModelIR index. It builds producer/consumer state once,
 updates input edges through indexed lineage helpers, and removes the redundant

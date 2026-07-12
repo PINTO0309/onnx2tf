@@ -810,6 +810,41 @@ def test_quantized_reshape_rewrite_has_single_owner() -> None:
     assert "run_quantized_reshape_cleanup" in lowerer_names
 
 
+def test_singleton_maxpool_rewrites_have_single_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "singleton_maxpool_layout.py"
+    )
+    function_names = {
+        "_optimize_singleton_layout_reshape_maxpool_binary_cast_chains",
+        "_optimize_singleton_nms_maxpool_nhwc_chains",
+    }
+
+    def _functions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+    lowering_functions = _functions(lowering_path)
+    assert function_names <= set(_functions(pass_path))
+    for function_name in function_names:
+        wrapper_names = {
+            node.id
+            for node in ast.walk(lowering_functions[function_name])
+            if isinstance(node, ast.Name)
+        }
+        assert f"{function_name}_pass" in wrapper_names
+
+
 def test_pytorch_pure_utilities_do_not_import_torch() -> None:
     offenders = []
     for path in PYTORCH_PURE_UTILITY_FILES:
