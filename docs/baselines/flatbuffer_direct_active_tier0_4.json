@@ -2499,9 +2499,11 @@
     {
       "tier": 3,
       "model": "yolo11x-obb.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "f520b28d4b025834dacc97c0c39c78740f977618c54631634dddeec0752da35d"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 6.103515625e-05,
+      "overwrite_input_shape": [
+        "input_image:1,3,1024,1024"
+      ]
     },
     {
       "tier": 3,

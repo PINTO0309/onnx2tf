@@ -92,8 +92,8 @@ The profile fixes root-only discovery, the 1–1,999 node range, all 420 managed
 historical model records, and inference concurrency of one. Models classified
 as `timeout` in the current managed baseline remain recorded for provenance but
 are automatically excluded from subsequent runs. The active run therefore
-contains 394 models: 347 expected passes and 47 expected non-passes, excluding
-26 recorded timeouts. The active non-passes are 32 accuracy failures and 15
+contains 394 models: 348 expected passes and 46 expected non-passes, excluding
+26 recorded timeouts. The active non-passes are 32 accuracy failures and 14
 missing reports. Tier 5 models cannot be added because the profile loader
 rejects tiers above 4 and node ranges above 1,999.
 
@@ -419,6 +419,12 @@ width previously remained unresolved placeholders; no converter rewrite was
 required. Sequential fixed-seed evaluation reports maximum absolute errors of
 `0.0008544921875` and `0.0081634521484375`, respectively, with cosine
 similarity above `0.9999999999995` for both models.
+
+`yolo11x-obb.onnx` is likewise promoted from a missing report to a pass by
+fixing its symbolic batch dimension with `input_image:1,3,1024,1024`. The
+sequential fixed-seed comparison reports maximum absolute error
+`6.103515625e-05`, RMSE `2.986316236369173e-06`, and cosine similarity
+`0.9999999999999999`. No converter rewrite was required.
 
 The root-only Tier 4 gate at commit `0a8ee88` contains 30 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier4_root_0a8ee88.json`: 12
