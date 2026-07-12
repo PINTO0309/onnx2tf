@@ -1,6 +1,47 @@
 # flatbuffer_direct refactor handoff — 2026-07-12
 
-## Current checkpoint — `fb-refactor2` at `c3c5ff7`
+## Current checkpoint — `fb-refactor2` at `5b0a098`
+
+Commit `5b0a098` recovers `encoder.onnx` by replacing dynamic rank-4
+`GridSample` custom fallback with a TensorFlow-free builtin lowering.
+
+- Runtime image N/C/H/W are read with `SHAPE`; no static spatial dimensions
+  are fabricated.
+- The image is transposed and flattened once. Runtime batch/spatial offsets and
+  global indices gather only the required samples.
+- Bilinear/linear and nearest interpolation are supported for zeros and border
+  padding with both align-corners modes. Zeros padding uses per-neighbor masks,
+  avoiding a dynamic padded-image allocation.
+- NaN coordinates retain the existing ONNX Runtime-compatible `-1`
+  normalization.
+- The implementation is isolated in
+  `op_builders/grid_sample_utils.py` (1,237 lines), below the 2,000-line source
+  limit; no new package was introduced.
+
+Sequential `encoder.onnx` verification compared its only output with no skip:
+
+- `evaluation_pass=true`;
+- `max_abs=1.9293278455734253e-05`;
+- `rmse=2.1648828175950605e-07`;
+- cosine similarity `0.9999999999964916`;
+- all 24 GridSample nodes use builtin operators; no unresolved custom op
+  remains.
+
+The expanded affected suite completed with `879 passed, 5 deselected,
+2 warnings in 90.32s`. The three new dynamic numerical cases cover
+bilinear/zeros/align-corners, bilinear/border/half-pixel, and
+nearest/zeros/half-pixel. Static GridSample, validation, managed profile, and
+the prior Mask R-CNN tests are included in the same suite. The five deselected
+optional-environment tests and two expected float16 warnings are unchanged.
+
+The managed Tier 0–4 profile now records 353 passes, 8
+`missing_tflite_report`, 33 `tflite_fail`, and 26 excluded historical timeouts.
+There are 41 active non-passes remaining. The next actionable missing-report
+model in managed order is `tiny_decoder_11.onnx`; its four recorded shape hints
+and `keep_shape_absolutely_input_names` options must be retained during
+reproduction.
+
+## Previous checkpoint — `fb-refactor2` at `c3c5ff7`
 
 This section supersedes the older `fb-refactor` checkpoint retained below for
 historical context. The active implementation branch is `fb-refactor2`, and
