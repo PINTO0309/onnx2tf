@@ -443,6 +443,15 @@ names are protected, and only indexed consumers of a duplicate output are
 rewired before structural removal. Its instrumentation likewise permits only
 the initial index refresh.
 
+Core layout-Transpose chain cleanup is mechanically isolated in
+`passes/layout_transpose.py`. The family owns identity-permutation and inverse-
+permutation helpers plus elimination of identity Transposes, strict inverse
+pairs, inverse fan-out branches, and composition of consecutive pairs. It
+preserves public outputs, explicit layout-boundary markers, and the specialized
+Softmax chain. All three function ASTs are identical to their former lowerer
+definitions; the lowerer re-exports both shared helpers and retains a thin
+optimizer wrapper at the original thirteen call sites.
+
 General consecutive Reshape passthrough cleanup is also owned by
 `passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,
 fan-out-safe bypass of a second Reshape, and strict single-user chain collapse,

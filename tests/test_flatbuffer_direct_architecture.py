@@ -431,6 +431,57 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
     assert "run_squeeze_reshape_identity_cleanup" in lowerer_names
 
 
+def test_layout_transpose_cleanup_has_single_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "layout_transpose.py"
+    )
+    pass_tree = ast.parse(pass_path.read_text(encoding="utf-8"))
+    pass_functions = {
+        node.name
+        for node in pass_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert {
+        "_is_identity_perm",
+        "_is_inverse_perm",
+        "_optimize_layout_transpose_chains",
+    } <= pass_functions
+
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowering_functions = {
+        node.name: node
+        for node in lowering_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    wrapper_names = {
+        node.id
+        for node in ast.walk(
+            lowering_functions["_optimize_layout_transpose_chains"]
+        )
+        if isinstance(node, ast.Name)
+    }
+    assert "_optimize_layout_transpose_chains_pass" in wrapper_names
+    imports = [
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "onnx2tf.tflite_builder.passes.layout_transpose"
+    ]
+    assert len(imports) == 1
+    assert {alias.name for alias in imports[0].names} == {
+        "_is_identity_perm",
+        "_is_inverse_perm",
+        "_optimize_layout_transpose_chains",
+    }
+
+
 def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

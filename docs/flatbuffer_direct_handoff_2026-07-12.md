@@ -1811,6 +1811,29 @@ single-process and sequential, with no new dependency or TensorFlow import.
 Rerun the raw post-lowering inventory before selecting the next family. Do not
 create a pull request; commit and push only at a coherent checkpoint.
 
+The next mechanical split is complete. The 285-line central layout-Transpose
+chain cleanup and its canonical `_is_identity_perm` / `_is_inverse_perm`
+helpers moved unchanged into `passes/layout_transpose.py`. The family preserves
+identity removal, strict inverse-pair removal, inverse fan-out bypass,
+consecutive-pair composition, public-output protection, explicit boundary
+markers, and the specialized Softmax chain. All three old/new AST comparisons
+are identical. The lowerer re-exports the two helpers for its remaining 19
+references and retains a thin optimizer wrapper at all thirteen call sites,
+without a circular import.
+
+Sequential verification completed with:
+
+- `2 passed` for inverse fan-out removal and observable-bridge protection;
+- `1 passed` for family/helper ownership and compatibility re-export;
+- `1108 passed, 5 deselected, 2 warnings in 146.90s` for the full direct suite.
+
+No algorithm, call order, artifact, dependency, or TensorFlow boundary changed.
+The next checkpoint should make all four mutation modes differential-index and
+`LayoutState` aware, introduce a stable transactional runner with model-only
+Transpose preflight and indexed candidate detection, and replace all thirteen
+raw production calls. Do not create a pull request; commit and push only at a
+coherent checkpoint.
+
 The next mechanical split is complete. The 193-line fully static
 4D→2D Reshape/Concat/2D→4D Reshape rewrite moved unchanged into
 `passes/singleton_reshape_layout.py`. Its NHWC singleton-spatial, batch/channel,
