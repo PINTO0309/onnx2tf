@@ -17,6 +17,7 @@ from onnx2tf.utils.tempdir_cleanup import (
     make_managed_tempdir,
 )
 from onnx2tf.utils.onnxruntime_compat import prepare_onnx_graph_for_onnxruntime
+from onnx2tf.utils.runtime_memory import reclaim_unused_process_memory
 
 if TYPE_CHECKING:
     from ai_edge_litert.interpreter import Interpreter as LiteRTInterpreter
@@ -341,12 +342,18 @@ def _create_tflite_interpreter(
     model_path: str,
     *,
     preserve_all_tensors: bool = False,
+    use_default_delegates: bool = False,
 ) -> "LiteRTInterpreter":
     from ai_edge_litert.interpreter import (
         Interpreter,
         OpResolverType,
     )
 
+    if bool(use_default_delegates):
+        return Interpreter(
+            model_path=model_path,
+            experimental_preserve_all_tensors=bool(preserve_all_tensors),
+        )
     try:
         # Disable default delegates (e.g. XNNPACK) during evaluation to reduce
         # runtime crashes on some dynamic-shape models.
@@ -357,6 +364,15 @@ def _create_tflite_interpreter(
         )
     except TypeError:
         return Interpreter(model_path=model_path)
+
+
+def _all_input_shapes_are_static(
+    input_specs: Sequence[Tuple[str, np.dtype, Sequence[int]]],
+) -> bool:
+    return all(
+        all(int(dim) > 0 for dim in input_shape)
+        for _, _, input_shape in input_specs
+    )
 
 
 def _load_custom_input_data(
@@ -989,7 +1005,14 @@ def _build_static_control_input_overrides(
             )
         static_shapes[str(value_info.name)] = tuple(shape)
 
-    candidates: Dict[str, np.ndarray] = {}
+    from onnx2tf.tflite_builder.eval_input_overrides import (
+        build_attention_control_input_overrides,
+    )
+
+    candidates: Dict[str, np.ndarray] = build_attention_control_input_overrides(
+        onnx_graph=onnx_graph,
+        input_specs=input_specs,
+    )
     conflicts: set[str] = set()
     sample_rate_names = {
         "sr",
@@ -1764,8 +1787,6 @@ def evaluate_onnx_tflite_outputs(
     onnxruntime_output_memmap: bool = True,
     onnxruntime_output_memmap_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
-    import onnxruntime as ort
-
     if int(num_samples) <= 0:
         raise ValueError(f"num_samples must be > 0. got: {num_samples}")
     rtol = float(rtol)
@@ -1814,7 +1835,11 @@ def evaluate_onnx_tflite_outputs(
     ]
 
     onnx_session = _create_onnx_inference_session(onnx_runtime_graph)
-    interpreter = _create_tflite_interpreter(model_path=tflite_path)
+    use_default_delegates = _all_input_shapes_are_static(input_specs)
+    interpreter = _create_tflite_interpreter(
+        model_path=tflite_path,
+        use_default_delegates=use_default_delegates,
+    )
     interpreter.allocate_tensors()
     tflite_input_details = interpreter.get_input_details()
     tflite_output_details = interpreter.get_output_details()
@@ -2107,10 +2132,24 @@ def _onnx_inference_worker(
     result_queue: Any,
 ) -> None:
     try:
-        onnx_graph = onnx.load_from_string(payload["onnx_graph_serialized"])
         onnx_output_names = [str(v) for v in payload["onnx_output_names"]]
         onnx_inputs = _load_onnx_inputs_from_payload(payload)
-        onnx_session = _create_onnx_inference_session(onnx_graph)
+        onnx_graph_path = str(payload.get("onnx_graph_path", "")).strip()
+        if onnx_graph_path != "":
+            import onnxruntime as ort
+
+            try:
+                onnx_session = ort.InferenceSession(
+                    onnx_graph_path,
+                    providers=["CPUExecutionProvider"],
+                )
+            except Exception:
+                onnx_session = _create_onnx_inference_session(
+                    onnx.load(onnx_graph_path)
+                )
+        else:
+            onnx_graph = onnx.load_from_string(payload["onnx_graph_serialized"])
+            onnx_session = _create_onnx_inference_session(onnx_graph)
         onnx_outputs = onnx_session.run(onnx_output_names, onnx_inputs)
         use_memmap_outputs = bool(payload.get("use_memmap_outputs", False))
         if use_memmap_outputs:
@@ -2160,9 +2199,11 @@ def _tflite_inference_worker(
         onnx_output_names = [str(v) for v in payload["onnx_output_names"]]
         onnx_inputs = _load_onnx_inputs_from_payload(payload)
         compare_mode = str(payload["compare_mode"])
+        use_default_delegates = bool(payload.get("use_default_delegates", False))
 
         interpreter = _create_tflite_interpreter(
             model_path=str(payload["tflite_path"]),
+            use_default_delegates=use_default_delegates,
         )
         interpreter.allocate_tensors()
         tflite_input_details = interpreter.get_input_details()
@@ -2344,6 +2385,29 @@ def _run_worker_in_subprocess(
     return result
 
 
+def _run_tflite_worker_with_delegate_fallback(
+    *,
+    payload: Dict[str, Any],
+    timeout_sec: int,
+) -> Dict[str, Any]:
+    try:
+        return _run_worker_in_subprocess(
+            worker=_tflite_inference_worker,
+            payload=payload,
+            timeout_sec=timeout_sec,
+        )
+    except RuntimeError:
+        if not bool(payload.get("use_default_delegates", False)):
+            raise
+        fallback_payload = dict(payload)
+        fallback_payload["use_default_delegates"] = False
+        return _run_worker_in_subprocess(
+            worker=_tflite_inference_worker,
+            payload=fallback_payload,
+            timeout_sec=timeout_sec,
+        )
+
+
 def evaluate_onnx_tflite_outputs_isolated(
     *,
     onnx_graph: onnx.ModelProto,
@@ -2408,7 +2472,29 @@ def evaluate_onnx_tflite_outputs_isolated(
         for output_name in onnx_output_names
         if output_name in nondeterministic_output_reasons
     ]
-    onnx_graph_serialized = onnx_runtime_graph.SerializeToString()
+    worker_onnx_dir = make_managed_tempdir(
+        prefix="onnx2tf_eval_onnx_",
+        stale_prefixes=["onnx2tf_eval_onnx_"],
+    )
+    worker_onnx_path = os.path.join(worker_onnx_dir, "model.onnx")
+    worker_graph_bytes = int(onnx_runtime_graph.ByteSize())
+    if worker_graph_bytes < 1_500_000_000:
+        # Inline tensors let ORT mmap/load ordinary sub-2GB models directly.
+        # This is substantially faster than resolving hundreds of external
+        # tensor slices for medium-large models.
+        onnx.save_model(onnx_runtime_graph, worker_onnx_path)
+    else:
+        onnx.save_model(
+            onnx_runtime_graph,
+            worker_onnx_path,
+            save_as_external_data=True,
+            all_tensors_to_one_file=True,
+            location="model.data",
+            size_threshold=1024,
+            convert_attribute=False,
+        )
+    del onnx_runtime_graph
+    reclaim_unused_process_memory()
     use_worker_output_memmap, worker_output_memmap_dir = _resolve_eval_memmap_config(
         onnx_graph=onnx_graph,
         onnx_output_names=onnx_output_names,
@@ -2421,6 +2507,7 @@ def evaluate_onnx_tflite_outputs_isolated(
         fallback_dir=worker_output_memmap_dir,
     )
     use_worker_input_memmap = bool(worker_input_memmap_dir is not None)
+    use_default_delegates = _all_input_shapes_are_static(input_specs)
 
     runtime_compare_mode = str(compare_mode).lower()
     if runtime_compare_mode == "auto":
@@ -2496,7 +2583,7 @@ def evaluate_onnx_tflite_outputs_isolated(
                 onnx_result = _run_worker_in_subprocess(
                     worker=_onnx_inference_worker,
                     payload={
-                        "onnx_graph_serialized": onnx_graph_serialized,
+                        "onnx_graph_path": worker_onnx_path,
                         "onnx_output_names": onnx_output_names,
                         **worker_input_payload,
                         "use_memmap_outputs": bool(use_worker_output_memmap),
@@ -2505,14 +2592,14 @@ def evaluate_onnx_tflite_outputs_isolated(
                     },
                     timeout_sec=per_worker_timeout,
                 )
-                tflite_result = _run_worker_in_subprocess(
-                    worker=_tflite_inference_worker,
+                tflite_result = _run_tflite_worker_with_delegate_fallback(
                     payload={
                         "tflite_path": str(tflite_path),
                         "onnx_input_names": onnx_input_names,
                         "onnx_output_names": onnx_output_names,
                         **worker_input_payload,
                         "compare_mode": runtime_compare_mode,
+                        "use_default_delegates": use_default_delegates,
                         "use_memmap_outputs": bool(use_worker_output_memmap),
                         "memmap_dir": worker_output_memmap_dir,
                         "memmap_file_prefix": f"tflite_sample{sample_index}",
@@ -2626,6 +2713,8 @@ def evaluate_onnx_tflite_outputs_isolated(
                     _cleanup_memmap_manifest(tflite_manifest)
                 if bool(use_worker_input_memmap):
                     _cleanup_memmap_manifest(onnx_input_manifest)
+
+    cleanup_managed_tempdir(worker_onnx_dir)
 
     os.makedirs(os.path.dirname(output_report_path) or ".", exist_ok=True)
     overall_metrics = total_metrics.to_dict()

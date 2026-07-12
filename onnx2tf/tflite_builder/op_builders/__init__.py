@@ -166,25 +166,42 @@ from onnx2tf.tflite_builder.op_builders.control import (
     is_supported_if_nms_guard_pattern,
     is_supported_if_nested_reducemin_add_branch_pattern,
     is_supported_if_sequenceconstruct_add_branch_pattern,
+    is_supported_loop_arange_scan_pattern,
     is_supported_loop_static_unroll_pattern,
     is_supported_loop_while_pattern,
 )
-from onnx2tf.tflite_builder.op_builders.quantized import (
+from onnx2tf.tflite_builder.op_builders.conv_integer import (
     build_conv_integer_op,
+)
+from onnx2tf.tflite_builder.op_builders.quantize_linear import (
     build_dequantize_linear_op,
+    build_quantize_linear_op,
+)
+from onnx2tf.tflite_builder.op_builders.dynamic_quantize import (
     build_dynamic_quantize_linear_op,
+)
+from onnx2tf.tflite_builder.op_builders.qlinear_fc import (
     build_qgemm_op,
-    build_qlinear_add_op,
-    build_qlinear_average_pool_op,
-    build_qlinear_concat_op,
-    build_qlinear_conv_op,
-    build_qlinear_global_average_pool_op,
-    build_qlinear_leaky_relu_op,
     build_qlinear_matmul_op,
+)
+from onnx2tf.tflite_builder.op_builders.qlinear_binary import (
+    build_qlinear_add_op,
     build_qlinear_mul_op,
+)
+from onnx2tf.tflite_builder.op_builders.qlinear_concat import (
+    build_qlinear_concat_op,
+)
+from onnx2tf.tflite_builder.op_builders.qlinear_conv import (
+    build_qlinear_conv_op,
+)
+from onnx2tf.tflite_builder.op_builders.qlinear_activation import (
+    build_qlinear_leaky_relu_op,
     build_qlinear_sigmoid_op,
     build_qlinear_softmax_op,
-    build_quantize_linear_op,
+)
+from onnx2tf.tflite_builder.op_builders.qlinear_pool import (
+    build_qlinear_average_pool_op,
+    build_qlinear_global_average_pool_op,
 )
 
 __all__ = [
@@ -334,6 +351,7 @@ __all__ = [
     "is_supported_if_nms_guard_pattern",
     "is_supported_if_nested_reducemin_add_branch_pattern",
     "is_supported_if_sequenceconstruct_add_branch_pattern",
+    "is_supported_loop_arange_scan_pattern",
     "is_supported_loop_static_unroll_pattern",
     "is_supported_loop_while_pattern",
     "build_conv_integer_op",

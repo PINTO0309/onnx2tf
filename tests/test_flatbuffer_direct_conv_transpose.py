@@ -4,11 +4,11 @@ from pathlib import Path
 
 import numpy as np
 import onnx
-import onnx2tf
 import onnxruntime as ort
 from ai_edge_litert.interpreter import Interpreter
 from onnx import TensorProto, helper, numpy_helper
 
+import onnx2tf
 from onnx2tf.tflite_builder.lower_from_onnx2tf import lower_onnx_to_ir
 
 
@@ -138,3 +138,66 @@ def test_dynamic_conv_transpose_crop_matches_onnx(tmp_path: Path) -> None:
         actual = np.transpose(actual, [0, 3, 1, 2])
 
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+
+
+def test_dynamic_conv_transpose_preserves_empty_batch(tmp_path: Path) -> None:
+    x = helper.make_tensor_value_info(
+        "x", TensorProto.FLOAT, ["batch", 2, "height", "width"]
+    )
+    y = helper.make_tensor_value_info(
+        "y", TensorProto.FLOAT, ["batch", 3, "out_height", "out_width"]
+    )
+    weights = numpy_helper.from_array(
+        np.ones((2, 3, 2, 2), dtype=np.float32),
+        name="weights",
+    )
+    bias = numpy_helper.from_array(
+        np.zeros((3,), dtype=np.float32),
+        name="bias",
+    )
+    node = helper.make_node(
+        "ConvTranspose",
+        ["x", "weights", "bias"],
+        ["y"],
+        strides=[2, 2],
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [node],
+            "dynamic_conv_transpose_empty_batch",
+            [x],
+            [y],
+            initializer=[weights, bias],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 17)],
+    )
+    model.ir_version = 10
+    model_path = tmp_path / "dynamic_conv_transpose_empty_batch.onnx"
+    onnx.save(model, model_path)
+
+    onnx2tf.convert(
+        input_onnx_file_path=str(model_path),
+        output_folder_path=str(tmp_path),
+        disable_strict_mode=True,
+        verbosity="error",
+        tflite_backend="flatbuffer_direct",
+    )
+
+    interpreter = Interpreter(
+        model_path=str(
+            tmp_path / "dynamic_conv_transpose_empty_batch_float32.tflite"
+        ),
+        num_threads=1,
+    )
+    input_detail = interpreter.get_input_details()[0]
+    interpreter.resize_tensor_input(input_detail["index"], [0, 4, 4, 2])
+    interpreter.allocate_tensors()
+    interpreter.set_tensor(
+        input_detail["index"],
+        np.empty((0, 4, 4, 2), dtype=np.float32),
+    )
+    interpreter.invoke()
+
+    output_detail = interpreter.get_output_details()[0]
+    assert output_detail["shape_signature"].tolist() == [-1, -1, -1, 3]
+    assert interpreter.get_tensor(output_detail["index"]).shape == (0, 8, 8, 3)

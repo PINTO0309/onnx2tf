@@ -6,6 +6,9 @@ from typing import Any
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
+from onnx2tf.tflite_builder.op_builders.pad_utils import (
+    add_zero_safe_constant_pad_operator,
+)
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 
@@ -2295,6 +2298,47 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
     # pads/output_padding into the requested output shape changes which border
     # is removed and spatially shifts the ONNX result.
 
+    nhwc_output_signature = [int(v) for v in list(nhwc_output_shape)]
+    if len(original_output_signature) == 4:
+        nhwc_output_signature = [
+            int(original_output_signature[0]),
+            int(original_output_signature[2]),
+            int(original_output_signature[3]),
+            int(original_output_signature[1]),
+        ]
+    elif len(input_signature) == 4:
+        nhwc_output_signature = [
+            int(input_signature[0]),
+            -1,
+            -1,
+            int(nhwc_output_shape[3]),
+        ]
+    if use_dynamic_output_shape and len(input_signature) == 4:
+        # The explicit TRANSPOSE_CONV output-shape tensor is computed from the
+        # runtime input. Preserve that same contract on every generated data
+        # tensor. Otherwise a placeholder shape such as [1, 1, 1, C] can turn
+        # an empty batch into a statically non-empty downstream RESHAPE.
+        if int(input_signature[0]) <= 0:
+            nhwc_output_signature[0] = -1
+        if int(input_signature[2]) <= 0:
+            nhwc_output_signature[1] = -1
+        if int(input_signature[3]) <= 0:
+            nhwc_output_signature[2] = -1
+
+    nhwc_raw_output_signature = [int(v) for v in nhwc_output_signature]
+    if needs_spatial_crop:
+        # Cropping only changes the spatial extent, not whether it is dynamic.
+        nhwc_raw_output_signature[1] = (
+            -1
+            if int(nhwc_output_signature[1]) <= 0
+            else int(nhwc_transpose_conv_output_shape[1])
+        )
+        nhwc_raw_output_signature[2] = (
+            -1
+            if int(nhwc_output_signature[2]) <= 0
+            else int(nhwc_transpose_conv_output_shape[2])
+        )
+
     x_nhwc = ctx.add_intermediate_tensor(
         f"{node.name}_input_nhwc",
         dtype=ctx.get_tensor_dtype(input_name),
@@ -2507,6 +2551,9 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         dtype=ctx.get_tensor_dtype(output_name),
         shape=nhwc_transpose_conv_output_shape,
     )
+    ctx.model_ir.tensors[y_nhwc].shape_signature = [
+        int(v) for v in nhwc_raw_output_signature
+    ]
     if int(group) == 1:
         w_deconv = np.transpose(weights_effective, (1, 2, 3, 0)).astype(np.float32)
         w_name = ctx.add_const_tensor(
@@ -2678,6 +2725,9 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
             dtype=ctx.get_tensor_dtype(output_name),
             shape=nhwc_output_shape,
         )
+        ctx.model_ir.tensors[y_cropped_nhwc].shape_signature = [
+            int(v) for v in nhwc_output_signature
+        ]
         ctx.add_operator(
             OperatorIR(
                 op_type="STRIDED_SLICE",
@@ -2719,6 +2769,9 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
             dtype=ctx.get_tensor_dtype(output_name),
             shape=nhwc_output_shape,
         )
+        ctx.model_ir.tensors[y_bias_nhwc].shape_signature = [
+            int(v) for v in nhwc_output_signature
+        ]
         ctx.add_operator(
             OperatorIR(
                 op_type="ADD",
@@ -2729,26 +2782,6 @@ def build_conv_transpose_op(node: Any, ctx: Any) -> None:
         )
         y_final_nhwc = y_bias_nhwc
 
-    output_signature = (
-        list(output_tensor.shape_signature)
-        if output_tensor.shape_signature is not None
-        else list(output_shape)
-    )
-    nhwc_output_signature = list(nhwc_output_shape)
-    if len(output_signature) == 4:
-        nhwc_output_signature = [
-            int(output_signature[0]),
-            int(output_signature[2]),
-            int(output_signature[3]),
-            int(output_signature[1]),
-        ]
-    elif len(input_signature) == 4:
-        nhwc_output_signature = [
-            int(input_signature[0]),
-            -1,
-            -1,
-            int(nhwc_output_shape[3]),
-        ]
     ctx.model_ir.tensors[y_final_nhwc].shape_signature = [int(v) for v in nhwc_output_signature]
 
     make_transpose(
@@ -3252,12 +3285,13 @@ def build_conv2d_or_depthwise_op(node: Any, ctx: Any) -> None:
                     dtype=np.int32,
                 ),
             )
-            ctx.add_operator(
-                OperatorIR(
-                    op_type="PAD",
-                    inputs=[x_nhwc_conv, pads_name],
-                    outputs=[x_nhwc_padded],
-                )
+            add_zero_safe_constant_pad_operator(
+                ctx=ctx,
+                input_name=x_nhwc_conv,
+                pads_name=pads_name,
+                output_name=x_nhwc_padded,
+                pads_begin=[0, pad_top, pad_left, 0],
+                pads_end=[0, pad_bottom, pad_right, 0],
             )
             x_nhwc_conv = x_nhwc_padded
 

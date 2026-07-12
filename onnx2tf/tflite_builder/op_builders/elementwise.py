@@ -7,6 +7,10 @@ import copy
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
+from onnx2tf.tflite_builder.op_builders.inverse_utils import (
+    add_partial_pivot_swap,
+    add_sign_preserving_pivot_guard,
+)
 from onnx2tf.tflite_builder.op_builders.shared import (
     make_transpose,
     materialize_broadcast_operand_for_gpu_delegate,
@@ -435,6 +439,16 @@ def _emit_static_high_rank_binary(
 
     padded_input_shapes: list[list[int]] = []
     for input_name in input_names:
+        input_tensor = ctx.model_ir.tensors.get(str(input_name))
+        input_signature = (
+            list(input_tensor.shape_signature)
+            if input_tensor is not None and input_tensor.shape_signature is not None
+            else []
+        )
+        if any(int(dim) < 0 for dim in input_signature):
+            # Placeholder dimensions do not preserve element counts at runtime;
+            # a static coalescing RESHAPE would therefore be invalid.
+            return False
         input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
         if len(input_shape) > rank or any(int(v) <= 0 for v in input_shape):
             return False
@@ -1760,7 +1774,12 @@ def _prepare_passthrough_unary_runtime(
     input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
     output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
     op_tag = str(getattr(node, "op_type", getattr(node, "op", "unary"))).lower()
-    if input_dtype == output_dtype:
+    requires_wide_integer_sign_adapter = (
+        op_tag == "sign"
+        and input_dtype in {"INT64", "UINT64"}
+        and output_dtype == input_dtype
+    )
+    if input_dtype == output_dtype and not requires_wide_integer_sign_adapter:
         return str(input_name), str(output_name)
 
     def _add_cast(
@@ -1783,7 +1802,11 @@ def _prepare_passthrough_unary_runtime(
         )
 
     if _is_integer_dtype(input_dtype) and _is_integer_dtype(output_dtype):
-        work_dtype = _normalize_unary_integer_work_dtype(input_dtype)
+        work_dtype = (
+            "FLOAT32"
+            if requires_wide_integer_sign_adapter
+            else _normalize_unary_integer_work_dtype(input_dtype)
+        )
         runtime_input_name = str(input_name)
         runtime_output_name = str(output_name)
         src_tensor = ctx.model_ir.tensors.get(str(input_name), None)
@@ -2261,13 +2284,6 @@ def build_inverse_op(node: Any, ctx: Any) -> None:
             identity.astype(np_dtype),
         )
 
-        eps_name = _add_scalar_const(
-            ctx,
-            f"{compute_output_name}_inverse_eps",
-            float(1e-6),
-            compute_dtype,
-        )
-
         def _slice_matrix_row(src_name: str, row: int, suffix: str) -> str:
             begin = [0 for _ in range(rank)]
             size = [-1 for _ in range(rank)]
@@ -2415,15 +2431,29 @@ def build_inverse_op(node: Any, ctx: Any) -> None:
                 elim_mask_arr,
             )
 
+            matrix_state, inverse_state = add_partial_pivot_swap(
+                ctx=ctx,
+                matrix_name=matrix_state,
+                inverse_name=inverse_state,
+                current_row_mask_name=row_mask_name,
+                name_prefix=f"{compute_output_name}_inverse_iter{row_idx}_partial_pivot",
+                row_index=row_idx,
+                rows=rows,
+                dtype=compute_dtype,
+                prefix_shape=prefix_shape,
+                matrix_shape=matrix_shape,
+                row_shape=row_shape,
+            )
+
             row_a = _slice_matrix_row(matrix_state, row_idx, f"iter{row_idx}_row_a")
             row_inv = _slice_matrix_row(inverse_state, row_idx, f"iter{row_idx}_row_inv")
             pivot = _slice_matrix_scalar(matrix_state, row_idx, row_idx, f"iter{row_idx}_pivot")
-            pivot_safe = _binary_tensor(
-                "ADD",
-                pivot,
-                eps_name,
-                scalar_shape,
-                f"iter{row_idx}_pivot_safe",
+            pivot_safe = add_sign_preserving_pivot_guard(
+                ctx=ctx,
+                pivot_name=pivot,
+                name_prefix=f"{compute_output_name}_inverse_iter{row_idx}_pivot",
+                dtype=compute_dtype,
+                shape=scalar_shape,
             )
 
             row_a_norm = _binary_tensor(

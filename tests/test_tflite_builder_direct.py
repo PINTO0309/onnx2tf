@@ -1432,6 +1432,18 @@ def _make_sign_after_int64_add_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
 
 
+def _make_direct_int64_sign_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT64, [1, 5])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [1, 5])
+    graph = helper.make_graph(
+        [helper.make_node("Sign", ["x"], ["y"], name="DirectInt64Sign")],
+        "direct_int64_sign_graph",
+        [x],
+        [y],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
 def _make_unique_axis0_rank2_output0_only_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.INT32, [6, 2])
     y = helper.make_tensor_value_info("y", TensorProto.INT64, ["M", 2])
@@ -3874,6 +3886,34 @@ def _make_pad_dynamic_pads_model() -> onnx.ModelProto:
         initializer=[width_index, pad_limit, pad_zeros],
     )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_pad_dynamic_zero_batch_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info(
+        "x",
+        TensorProto.FLOAT,
+        ["batch", 2],
+    )
+    y = helper.make_tensor_value_info(
+        "y",
+        TensorProto.FLOAT,
+        ["batch", 4],
+    )
+    pads = numpy_helper.from_array(
+        np.asarray([0, 1, 0, 1], dtype=np.int64),
+        name="pads",
+    )
+    graph = helper.make_graph(
+        [helper.make_node("Pad", ["x", "pads"], ["y"], name="PadNode")],
+        "pad_dynamic_zero_batch_graph",
+        [x],
+        [y],
+        initializer=[pads],
+    )
+    return helper.make_model(
+        graph,
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
 
 
 def _make_pad_reflect_model() -> onnx.ModelProto:
@@ -14172,6 +14212,39 @@ def test_flatbuffer_direct_rank6_binary_broadcast_coalesces_equivalent_axes() ->
     np.testing.assert_allclose(actual, sample_input * sample_scale, rtol=0.0, atol=1.0e-6)
 
 
+def test_flatbuffer_direct_dynamic_high_rank_binary_skips_static_coalescing() -> None:
+    x = helper.make_tensor_value_info(
+        "x",
+        TensorProto.FLOAT,
+        ["N", "A", "B", "C", "D"],
+    )
+    scale = helper.make_tensor_value_info(
+        "scale",
+        TensorProto.FLOAT,
+        [1, 1, 1, 3, 2],
+    )
+    y = helper.make_tensor_value_info(
+        "y",
+        TensorProto.FLOAT,
+        ["N", "A", "B", 3, 2],
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [helper.make_node("Mul", ["x", "scale"], ["y"], name="DynamicRank5Mul")],
+            "dynamic_rank5_mul",
+            [x, scale],
+            [y],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+    model_ir = lower_onnx_to_ir(
+        model,
+        output_file_name="dynamic_rank5_binary_no_static_coalescing",
+    )
+    assert [str(op.op_type) for op in model_ir.operators] == ["MUL"]
+    assert not any("coalesced" in name for name in model_ir.tensors)
+
+
 def test_flatbuffer_direct_softmax_default_axis_respects_opset11() -> None:
     model = _make_softmax_default_axis_opset11_model()
     model_ir = lower_onnx_to_ir(
@@ -14562,7 +14635,67 @@ def test_flatbuffer_direct_dynamic_quantize_linear_lowering() -> None:
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("REDUCE_MAX") == 2
+    assert op_types.count("ROUND") == 2
     assert op_types.count("CUSTOM") == 0
+
+
+@pytest.mark.parametrize(
+    ("sample_input", "expected_y"),
+    [
+        (
+            np.asarray(
+                [[0.0, 0.5, 1.5], [2.5, 3.5, 255.0]],
+                dtype=np.float32,
+            ),
+            np.asarray([[0, 0, 2], [2, 4, 255]], dtype=np.uint8),
+        ),
+        (
+            np.asarray(
+                [[-127.0, 128.0, 0.5], [1.5, -0.5, -1.5]],
+                dtype=np.float32,
+            ),
+            np.asarray([[0, 255, 127], [129, 127, 125]], dtype=np.uint8),
+        ),
+    ],
+    ids=["zero_zero_point", "odd_nonzero_zero_point"],
+)
+def test_flatbuffer_direct_dynamic_quantize_linear_uses_nearest_even_rounding(
+    sample_input: np.ndarray,
+    expected_y: np.ndarray,
+) -> None:
+    model = _make_dynamic_quantize_linear_model()
+    sample_inputs = {"x": sample_input}
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "dynamic_quantize_nearest_even", model)
+        tflite_path = _convert(model_path, tmpdir, "flatbuffer_direct")
+        onnx_outputs = _run_onnx_and_collect_outputs(
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            output_names=["y", "y_scale", "y_zero"],
+        )
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["y", "y_scale", "y_zero"],
+        )
+
+    np.testing.assert_array_equal(
+        onnx_outputs["y"],
+        expected_y,
+    )
+    np.testing.assert_array_equal(tflite_outputs["y"], onnx_outputs["y"])
+    np.testing.assert_allclose(
+        np.asarray(tflite_outputs["y_scale"]).reshape(-1),
+        np.asarray(onnx_outputs["y_scale"]).reshape(-1),
+        rtol=0.0,
+        atol=1e-7,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(tflite_outputs["y_zero"]).reshape(-1),
+        np.asarray(onnx_outputs["y_zero"]).reshape(-1),
+    )
 
 
 def test_flatbuffer_direct_shape_lowering() -> None:
@@ -14954,6 +15087,58 @@ def test_flatbuffer_direct_pad_dynamic_pads_lowering() -> None:
     pads_cast = producers.get(pads_vector_name)
     assert pads_cast is not None
     assert str(pads_cast.op_type) == "CAST"
+
+
+def test_flatbuffer_direct_pad_dynamic_batch_uses_zero_safe_wrapper() -> None:
+    model = _make_pad_dynamic_zero_batch_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="pad_dynamic_zero_batch_lowering_test",
+        allow_custom_ops=False,
+    )
+
+    pad_op = next(op for op in model_ir.operators if str(op.op_type) == "PAD")
+    assert str(pad_op.outputs[0]).endswith("_zero_safe_pad_output")
+    final_op = next(
+        op
+        for op in model_ir.operators
+        if list(op.outputs) == ["y"]
+    )
+    assert str(final_op.op_type) == "ADD"
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "FILL" in op_types
+    assert "SLICE" in op_types
+
+
+def test_flatbuffer_direct_pad_dynamic_zero_batch_invocation_is_safe() -> None:
+    model = _make_pad_dynamic_zero_batch_model()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "pad_dynamic_zero_batch", model)
+        output_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(model_path, output_dir, "flatbuffer_direct")
+        interpreter = Interpreter(model_path=tflite_path)
+        input_detail = interpreter.get_input_details()[0]
+        empty_shape = [int(value) for value in input_detail["shape"]]
+        empty_shape[0] = 0
+        interpreter.resize_tensor_input(
+            int(input_detail["index"]),
+            empty_shape,
+            strict=False,
+        )
+        interpreter.allocate_tensors()
+        input_detail = interpreter.get_input_details()[0]
+        interpreter.set_tensor(
+            int(input_detail["index"]),
+            np.zeros(empty_shape, dtype=input_detail["dtype"]),
+        )
+        interpreter.invoke()
+        output_detail = interpreter.get_output_details()[0]
+        actual = interpreter.get_tensor(int(output_detail["index"]))
+
+    assert actual.shape[0] == 0
+    assert actual.size == 0
 
 
 def test_flatbuffer_direct_pad_reflect_lowering() -> None:
@@ -15843,13 +16028,31 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_zero_copy_dims_pass() -> None
 
 def test_flatbuffer_direct_reconcile_bilstm_chain_and_resolve_reshape_zero_copy_dims() -> None:
     model_ir = ModelIR("reshape_zero_copy_bilstm_chain_fixup_test")
-    model_ir.inputs = ["x"]
+    model_ir.inputs = ["source"]
     model_ir.outputs = ["y"]
+    model_ir.tensors["source"] = TensorIR(
+        name="source",
+        dtype="FLOAT32",
+        shape=[25, 1, 2, 256],
+        shape_signature=[25, 1, 2, 256],
+    )
+    model_ir.tensors["runtime_shape"] = TensorIR(
+        name="runtime_shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+    )
     model_ir.tensors["x"] = TensorIR(
         name="x",
         dtype="FLOAT32",
-        shape=[25, 1, 512],
-        shape_signature=[25, 1, 512],
+        shape=[1, 1, 1],
+        shape_signature=[1, 1, 1],
+    )
+    model_ir.tensors["fw_w_i"] = TensorIR(
+        name="fw_w_i",
+        dtype="FLOAT32",
+        shape=[256, 512],
+        shape_signature=[256, 512],
     )
     model_ir.tensors["merged"] = TensorIR(
         name="merged",
@@ -15930,8 +16133,19 @@ def test_flatbuffer_direct_reconcile_bilstm_chain_and_resolve_reshape_zero_copy_
     model_ir.operators.extend(
         [
             OperatorIR(
+                op_type="RESHAPE",
+                inputs=["source", "runtime_shape"],
+                outputs=["x"],
+                options={
+                    "newShape": [],
+                    "onnxRawNewShape": [0, 0, -1],
+                    "allowZero": False,
+                    "preserveDynamicShape": True,
+                },
+            ),
+            OperatorIR(
                 op_type="BIDIRECTIONAL_SEQUENCE_LSTM",
-                inputs=["x"],
+                inputs=["x", "fw_w_i"],
                 outputs=["merged"],
                 options={"timeMajor": True},
             ),
@@ -15979,6 +16193,8 @@ def test_flatbuffer_direct_reconcile_bilstm_chain_and_resolve_reshape_zero_copy_
     stats_resolve = _resolve_dynamic_reshape_shapes(model_ir)
     assert stats_reconcile["reconciled_static_tensor_shapes"] > 0
     assert stats_resolve["resolved_dynamic_reshape_shapes"] == 1
+    assert list(model_ir.tensors["x"].shape) == [25, 1, 512]
+    assert _shape_signature(model_ir.tensors["x"]) == [25, 1, 512]
     assert list(model_ir.tensors["transpose_out"].shape) == [25, 1, 2, 256]
     assert list(model_ir.tensors["y"].shape) == [25, 1, 512]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [25, 1, 512]
@@ -29700,6 +29916,94 @@ def test_flatbuffer_direct_singleton_channel_layout_transpose_rewritten_to_resha
     assert len(list(reshape_op.inputs)) == 2
 
 
+def test_dynamic_batch_singleton_transpose_reshape_keeps_unknown_batch() -> None:
+    model_ir = ModelIR("dynamic_batch_singleton_transpose")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["x_nchw"]
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 91],
+        shape_signature=[-1, 1, 1, 91],
+    )
+    model_ir.tensors["perm"] = TensorIR(
+        name="perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 91, 1, 1],
+        shape_signature=[-1, 91, 1, 1],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["x_nhwc", "perm"],
+            outputs=["x_nchw"],
+        )
+    ]
+
+    stats = _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
+
+    assert stats["rewritten_singleton_channel_layout_transpose_to_reshape"] == 1
+    reshape_op = model_ir.operators[0]
+    assert reshape_op.options["newShape"] == [-1, 91, 1, 1]
+    shape_tensor = model_ir.tensors[str(reshape_op.inputs[1])]
+    np.testing.assert_array_equal(
+        shape_tensor.data,
+        np.asarray([-1, 91, 1, 1], dtype=np.int32),
+    )
+
+
+def test_late_dynamic_batch_reopens_static_layout_reshape() -> None:
+    model_ir = ModelIR("late_dynamic_batch_layout_reshape")
+    model_ir.tensors["input"] = TensorIR(
+        name="input",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 91],
+        shape_signature=[-1, 1, 1, 91],
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 91, 1, 1], dtype=np.int32),
+    )
+    model_ir.tensors["output"] = TensorIR(
+        name="output",
+        dtype="FLOAT32",
+        shape=[1, 91, 1, 1],
+        shape_signature=[1, 91, 1, 1],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["input", "shape"],
+            outputs=["output"],
+            options={
+                "newShape": [1, 91, 1, 1],
+                "layoutTransposeAsReshape": True,
+            },
+        )
+    ]
+
+    stats = _resolve_dynamic_reshape_shapes(model_ir)
+
+    assert stats["resolved_dynamic_reshape_shapes"] == 1
+    assert model_ir.operators[0].options["newShape"] == [-1, 91, 1, 1]
+    assert model_ir.operators[0].options["preserveDynamicShape"]
+    np.testing.assert_array_equal(
+        model_ir.tensors["shape"].data,
+        np.asarray([-1, 91, 1, 1], dtype=np.int32),
+    )
+    assert model_ir.tensors["output"].shape_signature == [-1, 91, 1, 1]
+
+
 def test_flatbuffer_direct_singleton_spatial_layout_transpose_rewritten_to_reshape() -> None:
     model_ir = ModelIR("singleton_spatial_transpose_to_reshape_test")
     model_ir.inputs = ["x_nhwc", "y_nchw"]
@@ -29849,7 +30153,7 @@ def test_flatbuffer_direct_dynamic_batch_singleton_reshape_transpose_collapses_t
     assert reshape_stats["rewritten_consecutive_reshape_passthrough_chains"] == 1
     assert [str(op.op_type) for op in model_ir.operators] == ["RESHAPE"]
     assert list(model_ir.operators[0].inputs) == ["x", "y_reshape_shape"]
-    assert model_ir.operators[0].options.get("newShape") == [1, 1, 1, 288]
+    assert model_ir.operators[0].options.get("newShape") == [-1, 1, 1, 288]
 
 
 def test_flatbuffer_direct_non_singleton_order_change_transpose_not_rewritten_to_reshape() -> None:
@@ -39087,6 +39391,23 @@ def test_flatbuffer_direct_sign_after_int64_add_preserves_unary_runtime_dtype_ma
     assert len(final_cast_ops) == 1
 
 
+def test_flatbuffer_direct_direct_int64_sign_uses_float_sign_adapter() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_direct_int64_sign_model(),
+        output_file_name="direct_int64_sign_ir_test",
+    )
+    assert [str(op.op_type) for op in model_ir.operators] == [
+        "CAST",
+        "SIGN",
+        "CAST",
+    ]
+    sign_op = model_ir.operators[1]
+    assert model_ir.tensors[str(sign_op.inputs[0])].dtype == "FLOAT32"
+    assert model_ir.tensors[str(sign_op.outputs[0])].dtype == "FLOAT32"
+    assert model_ir.tensors["x"].dtype == "INT64"
+    assert model_ir.tensors["y"].dtype == "INT64"
+
+
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_abs_after_int64_add_builtin_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -39139,6 +39460,35 @@ def test_flatbuffer_direct_sign_after_int64_add_builtin_smoke() -> None:
 
         expected = np.sign(x + np.asarray([[1, -2, 3, -4]], dtype=np.int64)).astype(np.int64)
         np.testing.assert_array_equal(out, expected)
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_direct_int64_sign_builtin_extreme_values() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(
+            tmpdir,
+            "direct_int64_sign",
+            _make_direct_int64_sign_model(),
+        )
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            "flatbuffer_direct",
+        )
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        values = np.asarray(
+            [[np.iinfo(np.int64).min, -1, 0, 1, np.iinfo(np.int64).max]],
+            dtype=np.int64,
+        )
+        input_detail = interpreter.get_input_details()[0]
+        interpreter.set_tensor(input_detail["index"], values)
+        interpreter.invoke()
+        actual = interpreter.get_tensor(interpreter.get_output_details()[0]["index"])
+        np.testing.assert_array_equal(
+            actual,
+            np.asarray([[-1, -1, 0, 1, 1]], dtype=np.int64),
+        )
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
@@ -39231,8 +39581,8 @@ def test_flatbuffer_direct_scatterelements_dynamic_data_uses_runtime_shape() -> 
         for op in model_ir.operators
     ) == 2
     assert any(
-        str(op.op_type) == "SHAPE"
-        and list(op.inputs) == ["data"]
+        str(op.op_type) == "MAXIMUM"
+        and len(op.inputs) == 2
         and len(op.outputs) == 1
         and str(op.outputs[0]) in scatter_shape_inputs
         for op in model_ir.operators
@@ -39260,6 +39610,30 @@ def test_flatbuffer_direct_scatterelements_dynamic_data_uses_runtime_shape() -> 
         actual = interpreter.get_tensor(interpreter.get_output_details()[0]["index"])
         expected = np.asarray([[10, 21], [30, 11], [20, 31]], dtype=np.float32)
         np.testing.assert_array_equal(actual, expected)
+
+        for detail in interpreter.get_input_details():
+            interpreter.resize_tensor_input(detail["index"], [0, 2], strict=False)
+        interpreter.allocate_tensors()
+        by_name = {
+            detail["name"]: detail for detail in interpreter.get_input_details()
+        }
+        interpreter.set_tensor(
+            by_name["data"]["index"],
+            np.empty((0, 2), dtype=np.float32),
+        )
+        interpreter.set_tensor(
+            by_name["indices"]["index"],
+            np.empty((0, 2), dtype=np.int64),
+        )
+        interpreter.set_tensor(
+            by_name["updates"]["index"],
+            np.empty((0, 2), dtype=np.float32),
+        )
+        interpreter.invoke()
+        actual_empty = interpreter.get_tensor(
+            interpreter.get_output_details()[0]["index"]
+        )
+        assert actual_empty.shape == (0, 2)
 
 
 def test_flatbuffer_direct_scatterelements_multi_dynamic_reshape_options_are_valid() -> None:
@@ -39390,6 +39764,95 @@ def _make_loop_static_unroll_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
 
 
+def _make_loop_static_scan_model() -> onnx.ModelProto:
+    start_input = helper.make_tensor_value_info("scan_start", TensorProto.INT32, [])
+    final = helper.make_tensor_value_info("loop_final", TensorProto.INT32, [])
+    scan = helper.make_tensor_value_info("loop_scan", TensorProto.INT32, [3])
+    trip_count = numpy_helper.from_array(np.asarray(3, dtype=np.int64), name="scan_trip_count")
+    cond_init = numpy_helper.from_array(np.asarray(True, dtype=np.bool_), name="scan_cond_init")
+    delta = numpy_helper.from_array(np.asarray(1, dtype=np.int32), name="scan_delta")
+    body_graph = helper.make_graph(
+        [
+            helper.make_node("Identity", ["cond"], ["cond_out"], name="ScanCondIdentity"),
+            helper.make_node("Add", ["state_in", "scan_delta"], ["state_out"], name="ScanStep"),
+            helper.make_node("Identity", ["state_in"], ["scan_out"], name="ScanValue"),
+        ],
+        "loop_static_scan_body",
+        [
+            helper.make_tensor_value_info("i", TensorProto.INT64, []),
+            helper.make_tensor_value_info("cond", TensorProto.BOOL, []),
+            helper.make_tensor_value_info("state_in", TensorProto.INT32, []),
+        ],
+        [
+            helper.make_tensor_value_info("cond_out", TensorProto.BOOL, []),
+            helper.make_tensor_value_info("state_out", TensorProto.INT32, []),
+            helper.make_tensor_value_info("scan_out", TensorProto.INT32, []),
+        ],
+    )
+    loop_node = helper.make_node(
+        "Loop",
+        ["scan_trip_count", "scan_cond_init", "scan_start"],
+        ["loop_final", "loop_scan"],
+        name="LoopStaticScan",
+        body=body_graph,
+    )
+    graph = helper.make_graph(
+        [loop_node],
+        "loop_static_scan_graph",
+        [start_input],
+        [final, scan],
+        initializer=[trip_count, cond_init, delta],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
+def _make_loop_dynamic_arange_scan_model() -> onnx.ModelProto:
+    trip_input = helper.make_tensor_value_info("trip_count", TensorProto.INT64, [])
+    start_input = helper.make_tensor_value_info("start", TensorProto.INT32, [])
+    final = helper.make_tensor_value_info("final", TensorProto.INT32, [])
+    scan = helper.make_tensor_value_info("range_values", TensorProto.INT32, ["N"])
+    cond_init = numpy_helper.from_array(np.asarray(True, dtype=np.bool_), name="cond_init")
+    delta = numpy_helper.from_array(
+        np.asarray(1, dtype=np.int32),
+        name="tf/arange/delta:0",
+    )
+    body_graph = helper.make_graph(
+        [
+            helper.make_node("Identity", ["cond"], ["cond_out"], name="ArangeCond"),
+            helper.make_node("Add", ["prev", "tf/arange/delta:0"], ["current"], name="ArangeStep"),
+            helper.make_node("Identity", ["prev"], ["range"], name="ArangeScan"),
+        ],
+        "dynamic_arange_body",
+        [
+            helper.make_tensor_value_info("i", TensorProto.INT64, []),
+            helper.make_tensor_value_info("cond", TensorProto.BOOL, []),
+            helper.make_tensor_value_info("prev", TensorProto.INT32, []),
+        ],
+        [
+            helper.make_tensor_value_info("cond_out", TensorProto.BOOL, []),
+            helper.make_tensor_value_info("current", TensorProto.INT32, []),
+            helper.make_tensor_value_info("range", TensorProto.INT32, []),
+        ],
+    )
+    loop_node = helper.make_node(
+        "Loop",
+        ["trip_count", "cond_init", "start"],
+        ["final", "range_values"],
+        name="tf/arange_loop",
+        body=body_graph,
+    )
+    return helper.make_model(
+        helper.make_graph(
+            [loop_node],
+            "dynamic_arange_graph",
+            [trip_input, start_input],
+            [final, scan],
+            initializer=[cond_init, delta],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 16)],
+    )
+
+
 def _make_loop_while_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("loop_x", TensorProto.FLOAT, [3])
     counter = helper.make_tensor_value_info("loop_counter", TensorProto.INT64, [])
@@ -39450,6 +39913,106 @@ def test_flatbuffer_direct_loop_static_unroll_lowers_to_builtin_ops_without_cust
     assert len(model_ir.subgraphs) == 2
     out_tensor = model_ir.tensors["loop_y"]
     assert list(out_tensor.shape) == [3]
+
+
+def test_flatbuffer_direct_loop_static_scan_unrolls_and_stacks_scan_values() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_loop_static_scan_model(),
+        output_file_name="loop_static_scan_builtin",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "WHILE" not in op_types
+    assert op_types.count("CONCATENATION") == 1
+    assert list(model_ir.tensors["loop_scan"].shape) == [3]
+
+
+@pytest.mark.skipif(
+    not _requires_flatbuffer_tools(),
+    reason="flatbuffer_direct requires bundled schema artifacts",
+)
+def test_flatbuffer_direct_loop_static_scan_tflite_runtime_values() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_ir = lower_onnx_to_ir(
+            _make_loop_static_scan_model(),
+            output_file_name="loop_static_scan_runtime",
+        )
+        model_bytes = serialize_model(
+            schema_tflite=load_schema_module(tmpdir),
+            model_ir=model_ir,
+        )
+        interpreter = Interpreter(model_content=bytes(model_bytes))
+        interpreter.allocate_tensors()
+        input_detail = interpreter.get_input_details()[0]
+        interpreter.set_tensor(
+            input_detail["index"],
+            np.asarray([0], dtype=np.int32).reshape(input_detail["shape"]),
+        )
+        interpreter.invoke()
+        outputs = {
+            detail["name"]: interpreter.get_tensor(detail["index"])
+            for detail in interpreter.get_output_details()
+        }
+        np.testing.assert_array_equal(
+            np.asarray(outputs["loop_final"]).reshape(-1),
+            np.asarray([3], dtype=np.int32),
+        )
+        np.testing.assert_array_equal(
+            np.asarray(outputs["loop_scan"]).reshape(-1),
+            np.asarray([0, 1, 2], dtype=np.int32),
+        )
+
+
+def test_flatbuffer_direct_loop_dynamic_arange_scan_lowers_to_range() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_loop_dynamic_arange_scan_model(),
+        output_file_name="loop_dynamic_arange_scan",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "WHILE" not in op_types
+    assert op_types.count("RANGE") == 1
+    assert list(model_ir.tensors["range_values"].shape_signature or []) == [-1]
+
+
+@pytest.mark.skipif(
+    not _requires_flatbuffer_tools(),
+    reason="flatbuffer_direct requires bundled schema artifacts",
+)
+def test_flatbuffer_direct_loop_dynamic_arange_scan_tflite_runtime_values() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_ir = lower_onnx_to_ir(
+            _make_loop_dynamic_arange_scan_model(),
+            output_file_name="loop_dynamic_arange_runtime",
+        )
+        model_bytes = serialize_model(
+            schema_tflite=load_schema_module(tmpdir),
+            model_ir=model_ir,
+        )
+        interpreter = Interpreter(model_content=bytes(model_bytes))
+        interpreter.allocate_tensors()
+        inputs = {detail["name"]: detail for detail in interpreter.get_input_details()}
+        interpreter.set_tensor(
+            inputs["trip_count"]["index"],
+            np.asarray([4], dtype=np.int64).reshape(inputs["trip_count"]["shape"]),
+        )
+        interpreter.set_tensor(
+            inputs["start"]["index"],
+            np.asarray([2], dtype=np.int32).reshape(inputs["start"]["shape"]),
+        )
+        interpreter.invoke()
+        outputs = {
+            detail["name"]: interpreter.get_tensor(detail["index"])
+            for detail in interpreter.get_output_details()
+        }
+        np.testing.assert_array_equal(
+            np.asarray(outputs["final"]).reshape(-1),
+            np.asarray([6], dtype=np.int32),
+        )
+        np.testing.assert_array_equal(
+            np.asarray(outputs["range_values"]).reshape(-1),
+            np.asarray([2, 3, 4, 5], dtype=np.int32),
+        )
 
 
 def test_flatbuffer_direct_loop_while_lowers_to_builtin_ops_without_custom() -> None:

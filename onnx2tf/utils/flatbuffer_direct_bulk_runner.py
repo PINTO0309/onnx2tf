@@ -216,7 +216,7 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
     tiers: List[int] = []
     baseline_classification_counts: Dict[str, int] = {}
     excluded_baseline_classification_counts: Dict[str, int] = {}
-    model_options: Dict[str, Dict[str, List[str]]] = {}
+    model_options: Dict[str, Dict[str, Any]] = {}
     for entry in model_entries:
         if not isinstance(entry, dict):
             raise ValueError(f"Invalid regression profile model entry. path={path}")
@@ -229,7 +229,7 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
             )
         model_names.append(model_name)
         tiers.append(tier)
-        normalized_options: Dict[str, List[str]] = {}
+        normalized_options: Dict[str, Any] = {}
         for option_name in (
             "shape_hints",
             "overwrite_input_shape",
@@ -251,6 +251,26 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
                 normalized_options[option_name] = [
                     str(value) for value in raw_values
                 ]
+        raw_eval_num_samples = entry.get("eval_num_samples", None)
+        if raw_eval_num_samples is not None:
+            if (
+                isinstance(raw_eval_num_samples, bool)
+                or not isinstance(raw_eval_num_samples, int)
+                or int(raw_eval_num_samples) <= 0
+            ):
+                raise ValueError(
+                    "Regression profile eval_num_samples must be a positive integer. "
+                    f"path={path} model={model_name!r}"
+                )
+            normalized_options["eval_num_samples"] = int(raw_eval_num_samples)
+        raw_accuracy_only = entry.get("accuracy_only", None)
+        if raw_accuracy_only is not None:
+            if not isinstance(raw_accuracy_only, bool):
+                raise ValueError(
+                    "Regression profile accuracy_only must be a boolean. "
+                    f"path={path} model={model_name!r}"
+                )
+            normalized_options["accuracy_only"] = bool(raw_accuracy_only)
         if normalized_options:
             model_options[model_name] = normalized_options
         baseline_classification = str(
@@ -870,6 +890,12 @@ def run_flatbuffer_direct_bulk_verification(
                 run_dir=run_dir,
             )
 
+            per_model_options = (
+                profile.get("model_options", {}).get(model_name, {})
+                if profile is not None
+                else {}
+            )
+            accuracy_only = bool(per_model_options.get("accuracy_only", False))
             cmd = [
                 *command_prefix,
                 "-i",
@@ -878,13 +904,9 @@ def run_flatbuffer_direct_bulk_verification(
                 str(artifact_dir),
                 "-tb",
                 "flatbuffer_direct",
-                "-cotof",
+                "--eval_with_onnx" if accuracy_only else "-cotof",
             ]
             if profile is not None:
-                per_model_options = profile.get("model_options", {}).get(
-                    model_name,
-                    {},
-                )
                 shape_hints_for_model = per_model_options.get("shape_hints", [])
                 if shape_hints_for_model:
                     cmd.extend(["-sh", *shape_hints_for_model])
@@ -900,6 +922,12 @@ def run_flatbuffer_direct_bulk_verification(
                 )
                 if keep_shape_names:
                     cmd.extend(["-kat", *keep_shape_names])
+                eval_num_samples = per_model_options.get(
+                    "eval_num_samples",
+                    None,
+                )
+                if eval_num_samples is not None:
+                    cmd.extend(["-ens", str(int(eval_num_samples))])
             if include_pytorch_artifacts:
                 cmd.extend(["-fdopt", "-fdots", "-fdodo", "-fdoep"])
             if int(native_pytorch_generation_timeout_sec) > 0:

@@ -177,3 +177,49 @@ def test_split_and_qlinear_unary_restore_shortened_rank_metadata() -> None:
     assert shape_map["rhs"] == [-1, -1, 8, 8]
     assert shape_map["rhs_act"] == [-1, -1, 8, 8]
     assert shape_map["y"] == [-1, -1, 8, 8]
+
+
+def test_gather_chain_recovers_scalar_rank_without_value_info() -> None:
+    rows = helper.make_tensor_value_info(
+        "rows", TensorProto.INT64, ["count", 4]
+    )
+    iteration = helper.make_tensor_value_info(
+        "iteration", TensorProto.INT64, []
+    )
+    output = helper.make_tensor_value_info(
+        "output", TensorProto.INT64, [1]
+    )
+    coordinate = numpy_helper.from_array(
+        np.asarray(0, dtype=np.int64),
+        name="coordinate",
+    )
+    axes = numpy_helper.from_array(
+        np.asarray([0], dtype=np.int64),
+        name="axes",
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [
+                helper.make_node(
+                    "Gather", ["rows", "iteration"], ["row"], axis=0
+                ),
+                helper.make_node(
+                    "Gather", ["row", "coordinate"], ["scalar"], axis=0
+                ),
+                helper.make_node(
+                    "Unsqueeze", ["scalar", "axes"], ["output"]
+                ),
+            ],
+            "gather_scalar_rank_recovery",
+            [rows, iteration],
+            [output],
+            initializer=[coordinate, axes],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 17)],
+    )
+
+    shape_map, dtype_map = _extract_tensor_info(model)
+
+    assert shape_map["row"] == [4]
+    assert shape_map["scalar"] == []
+    assert dtype_map["scalar"] == "INT64"

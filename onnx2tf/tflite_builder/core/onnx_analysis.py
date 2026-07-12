@@ -6,10 +6,9 @@ import numpy as np
 import onnx
 from onnx import numpy_helper
 
-from onnx2tf.utils.onnx_litert_runtime import check_model_has_external_data
 from onnx2tf.tflite_builder.ir import normalize_onnx_shape
 from onnx2tf.tflite_builder.tensor_buffer_builder import tflite_dtype_from_numpy
-
+from onnx2tf.utils.onnx_litert_runtime import check_model_has_external_data
 
 _ONNX_TYPE_TO_TFLITE_DTYPE = {
     onnx.TensorProto.FLOAT: "FLOAT32",
@@ -79,6 +78,106 @@ def _node_attr_ints(node: onnx.NodeProto, attr_name: str) -> List[int]:
         if attr.type == onnx.AttributeProto.INT:
             return [int(attr.i)]
     return []
+
+
+def _merge_graph_tensor_info(
+    *,
+    graph: onnx.GraphProto,
+    shape_map: Dict[str, List[Any]],
+    dtype_map: Dict[str, str],
+) -> None:
+    """Merge explicit and semantically recoverable metadata for one graph."""
+
+    def _fill_value_info(value_info: Any) -> None:
+        if not value_info.type.HasField("tensor_type"):
+            return
+        name = str(value_info.name)
+        tensor_type = value_info.type.tensor_type
+        dims: List[Any] = []
+        if tensor_type.HasField("shape"):
+            for dim in tensor_type.shape.dim:
+                if dim.HasField("dim_value") and dim.dim_value >= 0:
+                    dims.append(int(dim.dim_value))
+                else:
+                    dims.append(-1)
+        shape_map[name] = dims
+        dtype_map[name] = _dtype_from_onnx_elem_type(tensor_type.elem_type)
+
+    for value_info in graph.input:
+        _fill_value_info(value_info)
+    for value_info in graph.value_info:
+        _fill_value_info(value_info)
+    for value_info in graph.output:
+        _fill_value_info(value_info)
+
+    constants: Dict[str, np.ndarray] = {}
+    for initializer in graph.initializer:
+        value = np.asarray(numpy_helper.to_array(initializer))
+        constants[str(initializer.name)] = value
+        shape_map[str(initializer.name)] = list(value.shape)
+        dtype_map[str(initializer.name)] = tflite_dtype_from_numpy(value.dtype)
+    for node in graph.node:
+        if str(node.op_type) != "Constant" or len(node.output) < 1:
+            continue
+        value_attr = next(
+            (attr for attr in node.attribute if str(attr.name) == "value"),
+            None,
+        )
+        if value_attr is None:
+            continue
+        try:
+            value = np.asarray(numpy_helper.to_array(value_attr.t))
+        except Exception:
+            continue
+        output_name = str(node.output[0])
+        constants[output_name] = value
+        shape_map[output_name] = list(value.shape)
+        dtype_map[output_name] = tflite_dtype_from_numpy(value.dtype)
+
+    # ONNX shape inference does not always populate intermediate value_info in
+    # control-flow bodies. Recover Gather ranks directly from its specification:
+    # output_shape = data[:axis] + indices.shape + data[axis + 1:].  Recording
+    # an empty list is significant here; it tells later Unsqueeze lowering that
+    # a rank-1 Gather with a scalar index produced a logical scalar rather than
+    # an unknown rank-one placeholder.
+    max_gather_iterations = max(1, len(graph.node))
+    for _ in range(max_gather_iterations):
+        changed = False
+        for node in graph.node:
+            if (
+                str(node.op_type) != "Gather"
+                or len(node.input) < 2
+                or len(node.output) < 1
+            ):
+                continue
+            data_name = str(node.input[0])
+            indices_name = str(node.input[1])
+            output_name = str(node.output[0])
+            if output_name == "" or output_name in shape_map:
+                continue
+            data_shape = shape_map.get(data_name, None)
+            indices_shape = shape_map.get(indices_name, None)
+            if indices_shape is None:
+                indices_value = constants.get(indices_name, None)
+                if indices_value is not None:
+                    indices_shape = list(np.asarray(indices_value).shape)
+            if data_shape is None or indices_shape is None or len(data_shape) == 0:
+                continue
+            axis = _node_attr_int(node, "axis", 0)
+            if axis < 0:
+                axis += len(data_shape)
+            if axis < 0 or axis >= len(data_shape):
+                continue
+            shape_map[output_name] = (
+                list(data_shape[:axis])
+                + list(indices_shape)
+                + list(data_shape[axis + 1 :])
+            )
+            if data_name in dtype_map and output_name not in dtype_map:
+                dtype_map[output_name] = dtype_map[data_name]
+            changed = True
+        if not changed:
+            break
 
 
 def _infer_missing_tensor_ranks_with_axis_constraints(
@@ -333,32 +432,11 @@ def _extract_tensor_info(
     shape_map: Dict[str, List[Any]] = {}
     dtype_map: Dict[str, str] = {}
 
-    def _fill_value_info(value_info):
-        if not value_info.type.HasField("tensor_type"):
-            return
-        name = value_info.name
-        tensor_type = value_info.type.tensor_type
-        dims: List[Any] = []
-        if tensor_type.HasField("shape"):
-            for d in tensor_type.shape.dim:
-                if d.HasField("dim_value") and d.dim_value >= 0:
-                    dims.append(int(d.dim_value))
-                else:
-                    dims.append(-1)
-        shape_map[name] = dims
-        dtype_map[name] = _dtype_from_onnx_elem_type(tensor_type.elem_type)
-
-    for vi in onnx_graph.graph.input:
-        _fill_value_info(vi)
-    for vi in onnx_graph.graph.value_info:
-        _fill_value_info(vi)
-    for vi in onnx_graph.graph.output:
-        _fill_value_info(vi)
-
-    for ini in onnx_graph.graph.initializer:
-        arr = numpy_helper.to_array(ini)
-        shape_map[ini.name] = list(arr.shape)
-        dtype_map[ini.name] = tflite_dtype_from_numpy(arr.dtype)
+    _merge_graph_tensor_info(
+        graph=onnx_graph.graph,
+        shape_map=shape_map,
+        dtype_map=dtype_map,
+    )
 
     _infer_missing_tensor_ranks_with_axis_constraints(
         onnx_graph=onnx_graph,

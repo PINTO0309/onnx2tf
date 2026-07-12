@@ -1,12 +1,21 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
 import copy
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import onnx
 
+from onnx2tf.tflite_builder.core.shape_resolution import static_shape_vector_length
 from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR, normalize_onnx_shape
+from onnx2tf.tflite_builder.op_builders.grid_sample_utils import (
+    build_dynamic_rank4_grid_sample,
+)
+from onnx2tf.tflite_builder.op_builders.pad_utils import (
+    finish_zero_safe_batch_pad,
+    prepare_zero_safe_batch_pad,
+)
+from onnx2tf.tflite_builder.op_builders.resize_utils import resolve_resize_flags
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 _BICUBIC_MATRIX_CACHE: Dict[Tuple[int, int, str, float, bool], np.ndarray] = {}
@@ -3118,11 +3127,6 @@ def build_compress_op(node: Any, ctx: Any) -> None:
 
     data_shape = [int(v) for v in ctx.get_tensor_shape(data_name)]
     data_tensor = ctx.model_ir.tensors.get(data_name, None)
-    data_signature = (
-        [int(v) for v in list(data_tensor.shape_signature)]
-        if data_tensor is not None and data_tensor.shape_signature is not None
-        else [int(v) for v in list(data_shape)]
-    )
     output_tensor = ctx.model_ir.tensors.get(output_name, None)
     output_signature = (
         [int(v) for v in list(output_tensor.shape_signature)]
@@ -4803,6 +4807,18 @@ def build_constant_of_shape_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(shape_name)
     ctx.ensure_tensor(output_name)
 
+    output_rank = static_shape_vector_length(
+        ctx.model_ir.tensors.get(shape_name, None)
+    )
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if (
+        output_rank is not None
+        and output_tensor is not None
+        and len(list(output_tensor.shape)) != int(output_rank)
+    ):
+        output_tensor.shape = [1 for _ in range(int(output_rank))]
+        output_tensor.shape_signature = [-1 for _ in range(int(output_rank))]
+
     shape_dtype = str(ctx.get_tensor_dtype(shape_name)).upper()
     fill_dims_name = shape_name
     if shape_dtype not in {"INT32", "INT64"}:
@@ -5557,6 +5573,23 @@ def build_pad_op(node: Any, ctx: Any) -> None:
                 pad_output_tensor.shape = inferred_shape
                 pad_output_tensor.shape_signature = inferred_signature
 
+    zero_safe_pad_plan = None
+    if mode == "constant" and pads_begin is not None and pads_end is not None:
+        zero_safe_pad_plan = prepare_zero_safe_batch_pad(
+            ctx=ctx,
+            input_name=input_for_pad,
+            output_name=output_name,
+            pads_begin=pads_begin,
+            pads_end=pads_end,
+        )
+        if zero_safe_pad_plan is not None:
+            input_for_pad = zero_safe_pad_plan.input_name
+    pad_output_name = (
+        zero_safe_pad_plan.pad_output_name
+        if zero_safe_pad_plan is not None
+        else output_name
+    )
+
     if mode == "edge":
         if pads_begin is None or pads_end is None:
             raise NotImplementedError(
@@ -5619,7 +5652,7 @@ def build_pad_op(node: Any, ctx: Any) -> None:
                 OperatorIR(
                     op_type="PADV2",
                     inputs=[input_for_pad, pads_name, pad_constant_tensor_name],
-                    outputs=[output_name],
+                    outputs=[pad_output_name],
                 )
             )
         else:
@@ -5627,7 +5660,7 @@ def build_pad_op(node: Any, ctx: Any) -> None:
                 OperatorIR(
                     op_type="PAD",
                     inputs=[input_for_pad, pads_name],
-                    outputs=[output_name],
+                    outputs=[pad_output_name],
                 )
             )
     else:
@@ -5638,6 +5671,12 @@ def build_pad_op(node: Any, ctx: Any) -> None:
                 outputs=[output_name],
                 options={"mode": "REFLECT"},
             )
+        )
+    if zero_safe_pad_plan is not None:
+        finish_zero_safe_batch_pad(
+            ctx=ctx,
+            output_name=output_name,
+            plan=zero_safe_pad_plan,
         )
 
 
@@ -7262,18 +7301,6 @@ def _extract_resize_onnx_hw_hints(
     return onnx_sizes_hw, onnx_scales_hw
 
 
-def _resolve_resize_flags(node: Any) -> tuple[str, str, bool, bool]:
-    mode = str(node.attrs.get("mode", "nearest")).lower()
-    default_ctm = "asymmetric" if str(getattr(node, "op", "")) == "Upsample" else "half_pixel"
-    ctm = str(node.attrs.get("coordinate_transformation_mode", default_ctm)).lower()
-    align_corners = bool(ctm == "align_corners")
-    half_pixel_centers = bool(ctm in {"half_pixel", "pytorch_half_pixel"})
-    if mode == "nearest" and ctm == "asymmetric":
-        align_corners = False
-        half_pixel_centers = False
-    return mode, ctm, align_corners, half_pixel_centers
-
-
 def _add_resize_builtin_with_integer_linear_compatibility(
     *,
     ctx: Any,
@@ -7875,12 +7902,6 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
     interpolation_mode = str(node.attrs.get("mode", "bilinear")).lower()
     padding_mode = str(node.attrs.get("padding_mode", "zeros")).lower()
     use_border_padding = padding_mode == "border"
-    flattened_axis_size_2d = int(w * h) if use_border_padding else int((w + 2) * (h + 2))
-    flattened_axis_size_3d = (
-        int(d * h * w)
-        if use_border_padding
-        else int((d + 2) * (h + 2) * (w + 2))
-    )
 
     image_dtype = str(ctx.get_tensor_dtype(image_name)).upper()
     grid_dtype = str(ctx.get_tensor_dtype(grid_name)).upper()
@@ -7889,6 +7910,34 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         "FLOAT32"
         if image_dtype == "FLOAT32" or grid_dtype == "FLOAT32"
         else "FLOAT16"
+    )
+    if image_rank == 4 and any(
+        int(value) <= 0 for value in [*image_signature, *output_signature]
+    ):
+        build_dynamic_rank4_grid_sample(
+            ctx=ctx,
+            image_name=image_name,
+            grid_name=grid_name,
+            output_name=output_name,
+            image_signature=image_signature,
+            grid_signature=grid_signature,
+            output_signature=output_signature,
+            image_dtype=image_dtype,
+            grid_dtype=grid_dtype,
+            output_dtype=output_dtype,
+            compute_dtype=compute_dtype,
+            align_corners=align_corners,
+            interpolation_mode=interpolation_mode,
+            padding_mode=padding_mode,
+        )
+        return
+    flattened_axis_size_2d = (
+        int(w * h) if use_border_padding else int((w + 2) * (h + 2))
+    )
+    flattened_axis_size_3d = (
+        int(d * h * w)
+        if use_border_padding
+        else int((d + 2) * (h + 2) * (w + 2))
     )
     compute_np_dtype = np.float16 if compute_dtype == "FLOAT16" else np.float32
     replace_to_pseudo_operators = getattr(ctx, "replace_to_pseudo_operators", set())
@@ -9887,7 +9936,10 @@ def build_resize_op(node: Any, ctx: Any) -> None:
         if in_quant is not None:
             ctx.model_ir.tensors[output_name].quantization = _clone_quantization(in_quant)
 
-    mode, coordinate_transformation_mode, align_corners, half_pixel_centers = _resolve_resize_flags(node)
+    mode, coordinate_transformation_mode, align_corners, half_pixel_centers = resolve_resize_flags(
+        node=node,
+        onnx_model=getattr(ctx, "onnx_model", None),
+    )
     tflite_op = "RESIZE_NEAREST_NEIGHBOR" if mode == "nearest" else "RESIZE_BILINEAR"
     if input_rank == 5:
         if mode == "cubic":

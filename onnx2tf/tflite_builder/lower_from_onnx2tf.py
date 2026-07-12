@@ -11,6 +11,7 @@ from onnx import numpy_helper
 
 from onnx2tf.utils.onnx_graph_repair import (
     repair_missing_torchvision_nms_guard_captures,
+    repair_missing_torchvision_paste_masks_loop_captures,
 )
 from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
 from onnx2tf.tflite_builder.core.node import NodeView as _NodeWrap
@@ -35,6 +36,9 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
 from onnx2tf.tflite_builder.core.progress import (
     ProgressSpinner as _ProgressSpinner,
     create_progress_bar as _create_progress_bar,
+)
+from onnx2tf.tflite_builder.core.shape_resolution import (
+    preserve_rewritten_output_dynamic_axes,
 )
 from onnx2tf.tflite_builder.core.onnx_analysis import (
     _align_boundary_signature_to_current_shape,
@@ -76,6 +80,12 @@ from onnx2tf.tflite_builder.passes.precision import (
 )
 from onnx2tf.tflite_builder.passes.pad_layout import (
     repair_channel_last_inputs_for_channel_first_pad,
+)
+from onnx2tf.tflite_builder.passes.quantized_layout import (
+    repair_channel_last_convinteger_input_transposes,
+)
+from onnx2tf.tflite_builder.passes.high_rank_binary import (
+    coalesce_static_high_rank_binary_operators,
 )
 from onnx2tf.tflite_builder.passes.constant_fold import (
     _optimize_constant_binary_elementwise_chains,
@@ -196,6 +206,10 @@ def _set_operator_outputs(
         new_name = str(normalized_new_outputs[index])
         if old_name == new_name:
             continue
+        preserve_rewritten_output_dynamic_axes(
+            source_tensor=model_ir.tensors.get(old_name, None),
+            target_tensor=model_ir.tensors.get(new_name, None),
+        )
         _append_tensor_lineage_event(
             model_ir=model_ir,
             event={
@@ -970,6 +984,52 @@ def _resolve_dynamic_reshape_shapes(
     for op in model_ir.operators:
         if str(op.op_type) != "RESHAPE":
             continue
+        if bool(op.options.get("layoutTransposeAsReshape", False)):
+            input_tensor = (
+                model_ir.tensors.get(str(op.inputs[0]), None)
+                if len(op.inputs) > 0
+                else None
+            )
+            output_tensor = (
+                model_ir.tensors.get(str(op.outputs[0]), None)
+                if len(op.outputs) == 1
+                else None
+            )
+            input_signature = (
+                [int(v) for v in list(input_tensor.shape_signature)]
+                if input_tensor is not None
+                and input_tensor.shape_signature is not None
+                else []
+            )
+            output_shape = (
+                [int(v) for v in list(output_tensor.shape)]
+                if output_tensor is not None
+                else []
+            )
+            if (
+                len(input_signature) == len(output_shape)
+                and len(output_shape) > 0
+                and int(input_signature[0]) <= 0
+                and all(int(v) > 0 for v in output_shape[1:])
+            ):
+                dynamic_target = [-1, *output_shape[1:]]
+                op.options["newShape"] = list(dynamic_target)
+                op.options["preserveDynamicShape"] = True
+                if output_tensor is not None:
+                    output_signature = (
+                        [int(v) for v in list(output_tensor.shape_signature)]
+                        if output_tensor.shape_signature is not None
+                        else list(output_shape)
+                    )
+                    if len(output_signature) == len(dynamic_target):
+                        output_signature[0] = -1
+                        output_tensor.shape_signature = output_signature
+                if len(op.inputs) >= 2:
+                    shape_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+                    if shape_tensor is not None and shape_tensor.data is not None:
+                        shape_tensor.data = np.asarray(dynamic_target, dtype=np.int32)
+                resolved_count += 1
+                continue
         if bool(op.options.get("preserveDynamicShape", False)):
             continue
         if len(op.inputs) < 1 or len(op.outputs) != 1:
@@ -1270,9 +1330,6 @@ def _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
             rewritten_ops.append(op)
             continue
 
-        if len(input_signature) != 1:
-            rewritten_ops.append(op)
-            continue
         if output_signature != [-1, 1] and output_signature != [1, -1]:
             rewritten_ops.append(op)
             continue
@@ -1281,6 +1338,22 @@ def _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
             and list(op.options.get("newShape", [])) not in ([], [1, 1])
         ):
             rewritten_ops.append(op)
+            continue
+
+        if len(input_signature) != 1:
+            # Late Squeeze/Unsqueeze folding can remove the rank-1 intermediate
+            # while retaining its two-dimensional output contract. In that
+            # case SHAPE(input) would expose stale higher-rank metadata. Keep
+            # the one runtime-inferred extent directly instead; TFLite RESHAPE
+            # accepts one -1 independently of the input rank.
+            inferred_shape = [int(v) for v in output_signature]
+            shape_tensor.data = np.asarray(inferred_shape, dtype=np.int32)
+            shape_tensor.dtype = "INT32"
+            shape_tensor.shape = [int(len(inferred_shape))]
+            shape_tensor.shape_signature = [int(len(inferred_shape))]
+            op.options["newShape"] = []
+            rewritten_ops.append(op)
+            rewritten += 1
             continue
 
         runtime_shape_name = _unique_tensor_name(f"{output_name}_runtime_shape")
@@ -3094,6 +3167,12 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
     shape propagation and syncs `shape` / `shape_signature` for common TFLite ops.
     """
     updated_tensors = 0
+    producer_by_output = {
+        str(output_name): op
+        for op in model_ir.operators
+        for output_name in op.outputs
+        if str(output_name) != ""
+    }
 
     def _update_tensor_shape(
         tensor_name: str,
@@ -3310,6 +3389,66 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                 and len(inputs) >= 1 and len(outputs) == 1:
                 input_tensor = model_ir.tensors.get(inputs[0], None)
                 output_tensor = model_ir.tensors.get(outputs[0], None)
+                input_producer = producer_by_output.get(inputs[0], None)
+                input_weight_tensor = (
+                    model_ir.tensors.get(inputs[1], None)
+                    if len(inputs) >= 2
+                    else None
+                )
+                if (
+                    input_tensor is not None
+                    and input_producer is not None
+                    and str(input_producer.op_type) == "RESHAPE"
+                    and len(input_producer.inputs) >= 1
+                    and list(
+                        input_producer.options.get("onnxRawNewShape", [])
+                    ) == [0, 0, -1]
+                    and not bool(input_producer.options.get("allowZero", False))
+                    and input_weight_tensor is not None
+                    and len(list(input_weight_tensor.shape)) == 2
+                ):
+                    reshape_source_tensor = model_ir.tensors.get(
+                        str(input_producer.inputs[0]),
+                        None,
+                    )
+                    if (
+                        reshape_source_tensor is not None
+                        and len(list(reshape_source_tensor.shape)) >= 2
+                        and _is_fully_known_positive_shape(
+                            list(reshape_source_tensor.shape)
+                        )
+                    ):
+                        source_shape = [
+                            int(v) for v in list(reshape_source_tensor.shape)
+                        ]
+                        source_signature = (
+                            [
+                                int(v)
+                                for v in list(
+                                    reshape_source_tensor.shape_signature
+                                )
+                            ]
+                            if reshape_source_tensor.shape_signature is not None
+                            and len(list(reshape_source_tensor.shape_signature))
+                            == len(source_shape)
+                            else list(source_shape)
+                        )
+                        inferred_input_shape = [
+                            int(source_shape[0]),
+                            int(source_shape[1]),
+                            int(input_weight_tensor.shape[1]),
+                        ]
+                        inferred_input_signature = [
+                            int(source_signature[0]),
+                            int(source_signature[1]),
+                            int(input_weight_tensor.shape[1]),
+                        ]
+                        changed |= _update_tensor_shape(
+                            inputs[0],
+                            inferred_input_shape,
+                            inferred_input_signature,
+                        )
+                        input_tensor = model_ir.tensors.get(inputs[0], None)
                 if (
                     input_tensor is None
                     or output_tensor is None
@@ -58095,13 +58234,16 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
         ):
             continue
 
+        reshape_target = [int(v) for v in output_shape]
+        if int(output_signature[0]) < 0:
+            reshape_target[0] = -1
         reshape_shape_name = _unique_tensor_name(f"{output_name}_reshape_shape")
         model_ir.tensors[reshape_shape_name] = TensorIR(
             name=reshape_shape_name,
             dtype="INT32",
-            shape=[len(output_shape)],
-            shape_signature=[len(output_shape)],
-            data=np.asarray(output_shape, dtype=np.int32),
+            shape=[len(reshape_target)],
+            shape_signature=[len(reshape_target)],
+            data=np.asarray(reshape_target, dtype=np.int32),
             is_variable=False,
             quantization=None,
         )
@@ -58109,7 +58251,7 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
         op.op_type = "RESHAPE"
         op.inputs = [input_name, reshape_shape_name]
         op.options = {
-            "newShape": [int(v) for v in output_shape],
+            "newShape": [int(v) for v in reshape_target],
             "layoutTransposeAsReshape": True,
             "layoutTransposePerm": [int(v) for v in perm],
         }
@@ -59675,6 +59817,17 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
             except Exception:
                 concrete_values = []
             if concrete_values and all(int(v) > 0 for v in concrete_values):
+                return False
+            if (
+                bool(options.get("layoutTransposeAsReshape", False))
+                and concrete_values
+                and int(concrete_values[0]) == -1
+                and all(int(v) > 0 for v in concrete_values[1:])
+            ):
+                # A singleton-only layout transpose may preserve a dynamic
+                # batch with one leading -1. Bypassing an earlier reshape is
+                # safe because both reshapes preserve the total element count
+                # and the inferred dimension remains the leading batch.
                 return False
         raw_shape = options.get("onnxRawNewShape", None)
         if raw_shape is not None:
@@ -63063,6 +63216,14 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
       - keep legacy external NCHW users through local NHWC->NCHW adapters
     """
     rewritten = 0
+    channel_last_hint_names = {
+        str(v)
+        for v in model_ir.metadata.get(
+            "assume_channel_last_layout_tensor_names",
+            [],
+        )
+        if str(v) != ""
+    }
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     mean_axes_remapped_marker = "__convpool_output_nhwc_axes_remapped__"
@@ -63194,6 +63355,13 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
             if not valid:
                 continue
 
+            channel_last_hint_names.add(str(pre_input_name))
+            boundary_name_set = set(str(v) for v in boundary_legacy_users)
+            for op_idx in sorted(list(subgraph_indices)):
+                out_name = str(model_ir.operators[int(op_idx)].outputs[0])
+                if out_name not in boundary_name_set:
+                    channel_last_hint_names.add(out_name)
+
             # Rewire subgraph from pre_output -> pre_input.
             for op_idx in sorted(list(subgraph_indices)):
                 op = model_ir.operators[int(op_idx)]
@@ -63244,6 +63412,7 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
                         outputs=[str(adapter_output_name)],
                     )
                 )
+                channel_last_hint_names.add(str(adapter_output_name))
                 for op_idx in sorted(list(subgraph_indices)):
                     op = model_ir.operators[int(op_idx)]
                     _set_operator_inputs(
@@ -63273,6 +63442,7 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
                     valid = False
                     break
                 boundary_nhwc_name = _unique_tensor_name(f"{boundary_name}__to_nhwc")
+                channel_last_hint_names.add(str(boundary_nhwc_name))
                 producer_op = model_ir.operators[int(producer_idx)]
                 _set_operator_outputs(
                     model_ir=model_ir,
@@ -63553,6 +63723,9 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
 
             # Remove leading transpose.
             del model_ir.operators[int(pre_idx)]
+            model_ir.metadata["assume_channel_last_layout_tensor_names"] = sorted(
+                channel_last_hint_names
+            )
             rewritten += 1
             changed = True
             break
@@ -68129,7 +68302,7 @@ def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, in
         for concat_idx, concat_op in enumerate(model_ir.operators):
             if (
                 str(concat_op.op_type) != "CONCATENATION"
-                or len(concat_op.inputs) < 3
+                or len(concat_op.inputs) < 2
                 or len(concat_op.outputs) != 1
             ):
                 continue
@@ -68164,7 +68337,27 @@ def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, in
                 key=lambda item: int(item[1]),
             )
             if int(canonical_count) < 2:
-                continue
+                output_tensor = model_ir.tensors.get(
+                    str(concat_op.outputs[0]),
+                    None,
+                )
+                output_shape = (
+                    [int(v) for v in list(output_tensor.shape)]
+                    if output_tensor is not None
+                    else []
+                )
+                if (
+                    len(output_shape) != 4
+                    or any(int(v) <= 0 for v in output_shape)
+                ):
+                    continue
+                output_spatial = (
+                    int(output_shape[2]),
+                    int(output_shape[3]),
+                )
+                if output_spatial not in spatial_counts:
+                    continue
+                canonical_spatial = output_spatial
             height, width = [int(v) for v in canonical_spatial]
 
             nhwc_input_indices: List[int] = []
@@ -76105,6 +76298,7 @@ def lower_onnx_to_ir(
     protected_boundary_tensor_names: Optional[List[str]] = None,
 ) -> ModelIR:
     repair_missing_torchvision_nms_guard_captures(onnx_graph)
+    repair_missing_torchvision_paste_masks_loop_captures(onnx_graph)
     onnx_graph = _infer_shapes_with_fallback(onnx_graph)
 
     shape_map, dtype_map = _extract_tensor_info(onnx_graph)
@@ -77631,6 +77825,18 @@ def lower_onnx_to_ir(
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
     _topologically_sort_operators(model_ir)
     infer_model_ir_logical_layouts(model_ir)
+    final_convinteger_layout_stats = repair_channel_last_convinteger_input_transposes(
+        model_ir
+    )
+    if int(
+        final_convinteger_layout_stats.get(
+            "repaired_channel_last_convinteger_input_transposes",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+        _topologically_sort_operators(model_ir)
+        infer_model_ir_logical_layouts(model_ir)
     final_instancenorm_repair_stats = _repair_decomposed_instance_normalization_layouts(model_ir)
     if int(final_instancenorm_repair_stats.get("repaired_decomposed_instance_normalization_layouts", 0)) > 0:
         _reconcile_static_tensor_shapes(model_ir)
@@ -77769,6 +77975,7 @@ def lower_onnx_to_ir(
         )
         _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
         _reconcile_static_tensor_shapes(model_ir)
+    coalesce_static_high_rank_binary_operators(model_ir)
     _realign_dynamic_boundary_shape_signature_map(model_ir)
     _topologically_sort_operators(model_ir)
     return model_ir
