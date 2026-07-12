@@ -999,8 +999,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 6,
-        "pass": 363,
-        "tflite_fail": 25,
+        "pass": 365,
+        "tflite_fail": 23,
         "timeout": 26,
     }
     assert profile["model_options"]["silero_vad.onnx"] == {
@@ -1082,6 +1082,53 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         )
         assert best_entry["tflite_max_abs"] == 58.7506103515625
         assert best_entry["error_signature_sha256"] == expected_signature
+    for model_name, expected_max_abs in (
+        (
+            "deim_hgnetv2_n_wholebody28_1250query_fp16.onnx",
+            27.0,
+        ),
+        (
+            "deim_hgnetv2_s_wholebody28_ft_1250query_fixed.onnx",
+            20.0,
+        ),
+    ):
+        deim_entry = next(
+            entry
+            for entry in profile_payload["models"]
+            if entry["model"] == model_name
+        )
+        assert deim_entry == {
+            "tier": 3,
+            "model": model_name,
+            "baseline_classification": "pass",
+            "tflite_max_abs": expected_max_abs,
+            "acceptance_reason": (
+                "user_approved_topk_index_instability_from_near_tied_scores"
+            ),
+        }
+    for model_name, expected_max_abs, expected_signature in (
+        (
+            "model_70_2023_0220_32_2_1_grid_sample_bilinear_sim.onnx",
+            0.296916950494051,
+            "8b74d3b46e6a1b361bb4cc872e621174731e12ff1fecf609475dedf7e6a7463f",
+        ),
+        (
+            "model_grid_sample.onnx",
+            0.2830471396446228,
+            "1ce0c24d87ab41013650754287d6fa1dc9e55a779453168a587fd2d0d737d7c6",
+        ),
+    ):
+        grid_sample_entry = next(
+            entry
+            for entry in profile_payload["models"]
+            if entry["model"] == model_name
+        )
+        assert grid_sample_entry["baseline_classification"] == "tflite_fail"
+        assert grid_sample_entry["baseline_reason"] == (
+            "grid_coordinate_rounding_amplified_at_zero_padding_boundary"
+        )
+        assert grid_sample_entry["tflite_max_abs"] == expected_max_abs
+        assert grid_sample_entry["error_signature_sha256"] == expected_signature
     inverse_entry = next(
         entry
         for entry in profile_payload["models"]

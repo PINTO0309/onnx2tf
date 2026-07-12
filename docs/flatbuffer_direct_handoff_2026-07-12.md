@@ -41,11 +41,11 @@ additional lowering rule. Both outputs were compared with no skip:
 `mean_abs=3.4909796139056033e-06`, `rmse=7.162934073986925e-05`, and cosine
 similarity `0.9994290428305682`.
 
-The managed Tier 0–4 profile now records 363 passes, 6
-`missing_tflite_report`, 25 `tflite_fail`, and 26 excluded historical timeouts.
-There are 31 active non-passes. The next accuracy failures without an explicit
-normalized cause are the two `deim_hgnetv2_*` models in Tier 3; earlier failures
-in managed order now have documented quantization/runtime semantics.
+The managed Tier 0–4 profile now records 365 passes, 6
+`missing_tflite_report`, 23 `tflite_fail`, and 26 excluded historical timeouts.
+There are 29 active non-passes. The next accuracy failures without an explicit
+normalized cause are the two GridSample models named below; earlier failures in
+managed order now have documented quantization/runtime semantics.
 
 `best.onnx` and `best_org.onnx` remain failures rather than receiving a relaxed
 tolerance. Both simplify to the same 516-node Q/DQ graph and produce identical
@@ -57,6 +57,32 @@ rounding outlier (`max_abs=0.13601922988891602` over a
 backbone and detector decode. The managed reason is now
 `qdq_rounding_outliers_amplified_by_detector_decode`; each model retains its
 previous normalized failure-signature hash.
+
+The two DEIM variants are treated as accepted successes by explicit user
+direction despite the normal metric-threshold judgement remaining false.
+Before the first decoder TopK, the small fp16 variant differs by normal fp16
+backbone increments while the larger variant's score head is within
+`max_abs=0.000110626220703125`. Near-tied score ordering then changes TopK
+indices by as much as `1909` and `4205`, respectively. Query gathering and the
+final postprocessor TopK amplify this discontinuity to final label maxima of
+`27.0` and `20.0`. Both baseline entries record
+`user_approved_topk_index_instability_from_near_tied_scores`; no model-name
+lowering rule, global tolerance relaxation, or forced index ordering was added.
+The next cause-unclassified
+models are `model_70_2023_0220_32_2_1_grid_sample_bilinear_sim.onnx` and
+`model_grid_sample.onnx`.
+
+Those GridSample siblings remain normal threshold failures. Their upstream
+feature tensors agree to roughly `1e-4`, and the generated grid agrees except
+for sparse coordinates (`max_abs=0.010283231735229492`). With
+`align_corners=1` and zero padding, those coordinates cross the discontinuous
+inside/outside boundary and the three GridSample outputs amplify the difference
+before decoding. The final no-skip metrics are `max_abs=0.296916950494051`,
+`rmse=0.007787096662049418`, cosine `0.9998945091127481` for `model_70`, and
+`max_abs=0.2830471396446228`, `rmse=0.0074818409992842005`, cosine
+`0.9999115783578202` for `model_grid_sample`. Both now use the normalized reason
+`grid_coordinate_rounding_amplified_at_zero_padding_boundary` while retaining
+their previous failure-signature hashes.
 
 Validation completed in the core `uv` environment, with one pytest process and
 no parallel workers:
