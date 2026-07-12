@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
 import copy
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import onnx
 
+from onnx2tf.tflite_builder.core.shape_resolution import static_shape_vector_length
 from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR, normalize_onnx_shape
+from onnx2tf.tflite_builder.op_builders.pad_utils import (
+    finish_zero_safe_batch_pad,
+    prepare_zero_safe_batch_pad,
+)
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 _BICUBIC_MATRIX_CACHE: Dict[Tuple[int, int, str, float, bool], np.ndarray] = {}
@@ -4803,6 +4808,18 @@ def build_constant_of_shape_op(node: Any, ctx: Any) -> None:
     ctx.ensure_tensor(shape_name)
     ctx.ensure_tensor(output_name)
 
+    output_rank = static_shape_vector_length(
+        ctx.model_ir.tensors.get(shape_name, None)
+    )
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if (
+        output_rank is not None
+        and output_tensor is not None
+        and len(list(output_tensor.shape)) != int(output_rank)
+    ):
+        output_tensor.shape = [1 for _ in range(int(output_rank))]
+        output_tensor.shape_signature = [-1 for _ in range(int(output_rank))]
+
     shape_dtype = str(ctx.get_tensor_dtype(shape_name)).upper()
     fill_dims_name = shape_name
     if shape_dtype not in {"INT32", "INT64"}:
@@ -5557,6 +5574,23 @@ def build_pad_op(node: Any, ctx: Any) -> None:
                 pad_output_tensor.shape = inferred_shape
                 pad_output_tensor.shape_signature = inferred_signature
 
+    zero_safe_pad_plan = None
+    if mode == "constant" and pads_begin is not None and pads_end is not None:
+        zero_safe_pad_plan = prepare_zero_safe_batch_pad(
+            ctx=ctx,
+            input_name=input_for_pad,
+            output_name=output_name,
+            pads_begin=pads_begin,
+            pads_end=pads_end,
+        )
+        if zero_safe_pad_plan is not None:
+            input_for_pad = zero_safe_pad_plan.input_name
+    pad_output_name = (
+        zero_safe_pad_plan.pad_output_name
+        if zero_safe_pad_plan is not None
+        else output_name
+    )
+
     if mode == "edge":
         if pads_begin is None or pads_end is None:
             raise NotImplementedError(
@@ -5619,7 +5653,7 @@ def build_pad_op(node: Any, ctx: Any) -> None:
                 OperatorIR(
                     op_type="PADV2",
                     inputs=[input_for_pad, pads_name, pad_constant_tensor_name],
-                    outputs=[output_name],
+                    outputs=[pad_output_name],
                 )
             )
         else:
@@ -5627,7 +5661,7 @@ def build_pad_op(node: Any, ctx: Any) -> None:
                 OperatorIR(
                     op_type="PAD",
                     inputs=[input_for_pad, pads_name],
-                    outputs=[output_name],
+                    outputs=[pad_output_name],
                 )
             )
     else:
@@ -5638,6 +5672,12 @@ def build_pad_op(node: Any, ctx: Any) -> None:
                 outputs=[output_name],
                 options={"mode": "REFLECT"},
             )
+        )
+    if zero_safe_pad_plan is not None:
+        finish_zero_safe_batch_pad(
+            ctx=ctx,
+            output_name=output_name,
+            plan=zero_safe_pad_plan,
         )
 
 

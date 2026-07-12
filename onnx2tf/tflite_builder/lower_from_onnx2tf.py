@@ -11,6 +11,7 @@ from onnx import numpy_helper
 
 from onnx2tf.utils.onnx_graph_repair import (
     repair_missing_torchvision_nms_guard_captures,
+    repair_missing_torchvision_paste_masks_loop_captures,
 )
 from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
 from onnx2tf.tflite_builder.core.node import NodeView as _NodeWrap
@@ -35,6 +36,9 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
 from onnx2tf.tflite_builder.core.progress import (
     ProgressSpinner as _ProgressSpinner,
     create_progress_bar as _create_progress_bar,
+)
+from onnx2tf.tflite_builder.core.shape_resolution import (
+    preserve_rewritten_output_dynamic_axes,
 )
 from onnx2tf.tflite_builder.core.onnx_analysis import (
     _align_boundary_signature_to_current_shape,
@@ -202,6 +206,10 @@ def _set_operator_outputs(
         new_name = str(normalized_new_outputs[index])
         if old_name == new_name:
             continue
+        preserve_rewritten_output_dynamic_axes(
+            source_tensor=model_ir.tensors.get(old_name, None),
+            target_tensor=model_ir.tensors.get(new_name, None),
+        )
         _append_tensor_lineage_event(
             model_ir=model_ir,
             event={
@@ -976,6 +984,52 @@ def _resolve_dynamic_reshape_shapes(
     for op in model_ir.operators:
         if str(op.op_type) != "RESHAPE":
             continue
+        if bool(op.options.get("layoutTransposeAsReshape", False)):
+            input_tensor = (
+                model_ir.tensors.get(str(op.inputs[0]), None)
+                if len(op.inputs) > 0
+                else None
+            )
+            output_tensor = (
+                model_ir.tensors.get(str(op.outputs[0]), None)
+                if len(op.outputs) == 1
+                else None
+            )
+            input_signature = (
+                [int(v) for v in list(input_tensor.shape_signature)]
+                if input_tensor is not None
+                and input_tensor.shape_signature is not None
+                else []
+            )
+            output_shape = (
+                [int(v) for v in list(output_tensor.shape)]
+                if output_tensor is not None
+                else []
+            )
+            if (
+                len(input_signature) == len(output_shape)
+                and len(output_shape) > 0
+                and int(input_signature[0]) <= 0
+                and all(int(v) > 0 for v in output_shape[1:])
+            ):
+                dynamic_target = [-1, *output_shape[1:]]
+                op.options["newShape"] = list(dynamic_target)
+                op.options["preserveDynamicShape"] = True
+                if output_tensor is not None:
+                    output_signature = (
+                        [int(v) for v in list(output_tensor.shape_signature)]
+                        if output_tensor.shape_signature is not None
+                        else list(output_shape)
+                    )
+                    if len(output_signature) == len(dynamic_target):
+                        output_signature[0] = -1
+                        output_tensor.shape_signature = output_signature
+                if len(op.inputs) >= 2:
+                    shape_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+                    if shape_tensor is not None and shape_tensor.data is not None:
+                        shape_tensor.data = np.asarray(dynamic_target, dtype=np.int32)
+                resolved_count += 1
+                continue
         if bool(op.options.get("preserveDynamicShape", False)):
             continue
         if len(op.inputs) < 1 or len(op.outputs) != 1:
@@ -58180,13 +58234,16 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
         ):
             continue
 
+        reshape_target = [int(v) for v in output_shape]
+        if int(output_signature[0]) < 0:
+            reshape_target[0] = -1
         reshape_shape_name = _unique_tensor_name(f"{output_name}_reshape_shape")
         model_ir.tensors[reshape_shape_name] = TensorIR(
             name=reshape_shape_name,
             dtype="INT32",
-            shape=[len(output_shape)],
-            shape_signature=[len(output_shape)],
-            data=np.asarray(output_shape, dtype=np.int32),
+            shape=[len(reshape_target)],
+            shape_signature=[len(reshape_target)],
+            data=np.asarray(reshape_target, dtype=np.int32),
             is_variable=False,
             quantization=None,
         )
@@ -58194,7 +58251,7 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
         op.op_type = "RESHAPE"
         op.inputs = [input_name, reshape_shape_name]
         op.options = {
-            "newShape": [int(v) for v in output_shape],
+            "newShape": [int(v) for v in reshape_target],
             "layoutTransposeAsReshape": True,
             "layoutTransposePerm": [int(v) for v in perm],
         }
@@ -59760,6 +59817,17 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
             except Exception:
                 concrete_values = []
             if concrete_values and all(int(v) > 0 for v in concrete_values):
+                return False
+            if (
+                bool(options.get("layoutTransposeAsReshape", False))
+                and concrete_values
+                and int(concrete_values[0]) == -1
+                and all(int(v) > 0 for v in concrete_values[1:])
+            ):
+                # A singleton-only layout transpose may preserve a dynamic
+                # batch with one leading -1. Bypassing an earlier reshape is
+                # safe because both reshapes preserve the total element count
+                # and the inferred dimension remains the leading batch.
                 return False
         raw_shape = options.get("onnxRawNewShape", None)
         if raw_shape is not None:
@@ -76230,6 +76298,7 @@ def lower_onnx_to_ir(
     protected_boundary_tensor_names: Optional[List[str]] = None,
 ) -> ModelIR:
     repair_missing_torchvision_nms_guard_captures(onnx_graph)
+    repair_missing_torchvision_paste_masks_loop_captures(onnx_graph)
     onnx_graph = _infer_shapes_with_fallback(onnx_graph)
 
     shape_map, dtype_map = _extract_tensor_info(onnx_graph)

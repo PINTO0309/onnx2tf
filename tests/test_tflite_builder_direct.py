@@ -3888,6 +3888,34 @@ def _make_pad_dynamic_pads_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_pad_dynamic_zero_batch_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info(
+        "x",
+        TensorProto.FLOAT,
+        ["batch", 2],
+    )
+    y = helper.make_tensor_value_info(
+        "y",
+        TensorProto.FLOAT,
+        ["batch", 4],
+    )
+    pads = numpy_helper.from_array(
+        np.asarray([0, 1, 0, 1], dtype=np.int64),
+        name="pads",
+    )
+    graph = helper.make_graph(
+        [helper.make_node("Pad", ["x", "pads"], ["y"], name="PadNode")],
+        "pad_dynamic_zero_batch_graph",
+        [x],
+        [y],
+        initializer=[pads],
+    )
+    return helper.make_model(
+        graph,
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+
+
 def _make_pad_reflect_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 6])
@@ -14999,6 +15027,58 @@ def test_flatbuffer_direct_pad_dynamic_pads_lowering() -> None:
     pads_cast = producers.get(pads_vector_name)
     assert pads_cast is not None
     assert str(pads_cast.op_type) == "CAST"
+
+
+def test_flatbuffer_direct_pad_dynamic_batch_uses_zero_safe_wrapper() -> None:
+    model = _make_pad_dynamic_zero_batch_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="pad_dynamic_zero_batch_lowering_test",
+        allow_custom_ops=False,
+    )
+
+    pad_op = next(op for op in model_ir.operators if str(op.op_type) == "PAD")
+    assert str(pad_op.outputs[0]).endswith("_zero_safe_pad_output")
+    final_op = next(
+        op
+        for op in model_ir.operators
+        if list(op.outputs) == ["y"]
+    )
+    assert str(final_op.op_type) == "ADD"
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "FILL" in op_types
+    assert "SLICE" in op_types
+
+
+def test_flatbuffer_direct_pad_dynamic_zero_batch_invocation_is_safe() -> None:
+    model = _make_pad_dynamic_zero_batch_model()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "pad_dynamic_zero_batch", model)
+        output_dir = os.path.join(tmpdir, "out")
+        tflite_path = _convert(model_path, output_dir, "flatbuffer_direct")
+        interpreter = Interpreter(model_path=tflite_path)
+        input_detail = interpreter.get_input_details()[0]
+        empty_shape = [int(value) for value in input_detail["shape"]]
+        empty_shape[0] = 0
+        interpreter.resize_tensor_input(
+            int(input_detail["index"]),
+            empty_shape,
+            strict=False,
+        )
+        interpreter.allocate_tensors()
+        input_detail = interpreter.get_input_details()[0]
+        interpreter.set_tensor(
+            int(input_detail["index"]),
+            np.zeros(empty_shape, dtype=input_detail["dtype"]),
+        )
+        interpreter.invoke()
+        output_detail = interpreter.get_output_details()[0]
+        actual = interpreter.get_tensor(int(output_detail["index"]))
+
+    assert actual.shape[0] == 0
+    assert actual.size == 0
 
 
 def test_flatbuffer_direct_pad_reflect_lowering() -> None:
@@ -29776,6 +29856,94 @@ def test_flatbuffer_direct_singleton_channel_layout_transpose_rewritten_to_resha
     assert len(list(reshape_op.inputs)) == 2
 
 
+def test_dynamic_batch_singleton_transpose_reshape_keeps_unknown_batch() -> None:
+    model_ir = ModelIR("dynamic_batch_singleton_transpose")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["x_nchw"]
+    model_ir.tensors["x_nhwc"] = TensorIR(
+        name="x_nhwc",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 91],
+        shape_signature=[-1, 1, 1, 91],
+    )
+    model_ir.tensors["perm"] = TensorIR(
+        name="perm",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+    )
+    model_ir.tensors["x_nchw"] = TensorIR(
+        name="x_nchw",
+        dtype="FLOAT32",
+        shape=[1, 91, 1, 1],
+        shape_signature=[-1, 91, 1, 1],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["x_nhwc", "perm"],
+            outputs=["x_nchw"],
+        )
+    ]
+
+    stats = _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
+
+    assert stats["rewritten_singleton_channel_layout_transpose_to_reshape"] == 1
+    reshape_op = model_ir.operators[0]
+    assert reshape_op.options["newShape"] == [-1, 91, 1, 1]
+    shape_tensor = model_ir.tensors[str(reshape_op.inputs[1])]
+    np.testing.assert_array_equal(
+        shape_tensor.data,
+        np.asarray([-1, 91, 1, 1], dtype=np.int32),
+    )
+
+
+def test_late_dynamic_batch_reopens_static_layout_reshape() -> None:
+    model_ir = ModelIR("late_dynamic_batch_layout_reshape")
+    model_ir.tensors["input"] = TensorIR(
+        name="input",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 91],
+        shape_signature=[-1, 1, 1, 91],
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[4],
+        shape_signature=[4],
+        data=np.asarray([1, 91, 1, 1], dtype=np.int32),
+    )
+    model_ir.tensors["output"] = TensorIR(
+        name="output",
+        dtype="FLOAT32",
+        shape=[1, 91, 1, 1],
+        shape_signature=[1, 91, 1, 1],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["input", "shape"],
+            outputs=["output"],
+            options={
+                "newShape": [1, 91, 1, 1],
+                "layoutTransposeAsReshape": True,
+            },
+        )
+    ]
+
+    stats = _resolve_dynamic_reshape_shapes(model_ir)
+
+    assert stats["resolved_dynamic_reshape_shapes"] == 1
+    assert model_ir.operators[0].options["newShape"] == [-1, 91, 1, 1]
+    assert model_ir.operators[0].options["preserveDynamicShape"]
+    np.testing.assert_array_equal(
+        model_ir.tensors["shape"].data,
+        np.asarray([-1, 91, 1, 1], dtype=np.int32),
+    )
+    assert model_ir.tensors["output"].shape_signature == [-1, 91, 1, 1]
+
+
 def test_flatbuffer_direct_singleton_spatial_layout_transpose_rewritten_to_reshape() -> None:
     model_ir = ModelIR("singleton_spatial_transpose_to_reshape_test")
     model_ir.inputs = ["x_nhwc", "y_nchw"]
@@ -29925,7 +30093,7 @@ def test_flatbuffer_direct_dynamic_batch_singleton_reshape_transpose_collapses_t
     assert reshape_stats["rewritten_consecutive_reshape_passthrough_chains"] == 1
     assert [str(op.op_type) for op in model_ir.operators] == ["RESHAPE"]
     assert list(model_ir.operators[0].inputs) == ["x", "y_reshape_shape"]
-    assert model_ir.operators[0].options.get("newShape") == [1, 1, 1, 288]
+    assert model_ir.operators[0].options.get("newShape") == [-1, 1, 1, 288]
 
 
 def test_flatbuffer_direct_non_singleton_order_change_transpose_not_rewritten_to_reshape() -> None:

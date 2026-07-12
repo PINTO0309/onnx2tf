@@ -6,12 +6,18 @@ from typing import Any, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR
+from onnx2tf.tflite_builder.op_builders.roi_align_utils import (
+    add_masked_roi_align_neighbor,
+    add_memory_efficient_roi_align_source,
+)
 from onnx2tf.tflite_builder.op_builders.scatter_utils import (
     add_zero_safe_runtime_scatter_shape,
 )
-from onnx2tf.tflite_builder.op_builders.shared import _clone_quantization, make_transpose
+from onnx2tf.tflite_builder.op_builders.shared import (
+    _clone_quantization,
+    make_transpose,
+)
 from onnx2tf.utils.logging import warn
-
 
 _DTYPE_TO_NP = {
     "FLOAT16": np.float16,
@@ -3281,51 +3287,19 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
             )
         )
 
-    gathered_input_name = ctx.add_intermediate_tensor(
-        f"{output_name}_roialign_input_gathered",
-        dtype=compute_dtype,
-        shape=[int(roi_count_meta), int(channels), int(in_h), int(in_w)],
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="GATHER",
-            inputs=[input_compute_name, batch_indices_i32_name],
-            outputs=[gathered_input_name],
-            options={
-                "axis": 0,
-                "batchDims": 0,
-            },
+    flattened_input_name, batch_offsets_name = (
+        add_memory_efficient_roi_align_source(
+            ctx=ctx,
+            input_name=input_compute_name,
+            batch_indices_name=batch_indices_i32_name,
+            output_name=output_name,
+            compute_dtype=compute_dtype,
+            batch_meta=max(int(input_shape[0]), 1),
+            roi_count_meta=roi_count_meta,
+            channels=channels,
+            height=in_h,
+            width=in_w,
         )
-    )
-
-    padded_input_name = ctx.add_intermediate_tensor(
-        f"{output_name}_roialign_input_padded",
-        dtype=compute_dtype,
-        shape=[int(roi_count_meta), int(channels), int(in_h + 2), int(in_w + 2)],
-    )
-    paddings_name = ctx.add_const_tensor(
-        f"{output_name}_roialign_paddings",
-        np.asarray([[0, 0], [0, 0], [1, 1], [1, 1]], dtype=np.int32),
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="PAD",
-            inputs=[gathered_input_name, paddings_name],
-            outputs=[padded_input_name],
-        )
-    )
-
-    flattened_input_name = ctx.add_intermediate_tensor(
-        f"{output_name}_roialign_input_flattened",
-        dtype=compute_dtype,
-        shape=[int(roi_count_meta), int(channels), int((in_h + 2) * (in_w + 2))],
-    )
-    _add_reshape_operator(
-        ctx=ctx,
-        input_name=padded_input_name,
-        output_name=flattened_input_name,
-        new_shape=[-1, int(channels), int((in_h + 2) * (in_w + 2))],
-        preserve_dynamic_shape=True,
     )
 
     neg_one_name = ctx.add_const_tensor(
@@ -3351,10 +3325,6 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
     in_h_plus_one_name = ctx.add_const_tensor(
         f"{output_name}_roialign_in_h_plus_one",
         np.asarray(float(in_h + 1), dtype=compute_np_dtype),
-    )
-    width_pad_i32_name = ctx.add_const_tensor(
-        f"{output_name}_roialign_width_pad_i32",
-        np.asarray(int(in_w + 2), dtype=np.int32),
     )
 
     x_clip_low_name = ctx.add_intermediate_tensor(
@@ -3556,62 +3526,6 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
         )
     )
 
-    def _build_linear_index(y_idx_name: str, x_idx_name: str, tag: str) -> str:
-        y_mul_name = ctx.add_intermediate_tensor(
-            f"{output_name}_roialign_{tag}_y_mul",
-            dtype="INT32",
-            shape=[int(roi_count_meta), int(pooled_h), int(pooled_w)],
-        )
-        linear_name = ctx.add_intermediate_tensor(
-            f"{output_name}_roialign_{tag}_linear",
-            dtype="INT32",
-            shape=[int(roi_count_meta), int(pooled_h), int(pooled_w)],
-        )
-        _add_binary_op(
-            ctx=ctx,
-            op_type="MUL",
-            lhs_name=y_idx_name,
-            rhs_name=width_pad_i32_name,
-            output_name=y_mul_name,
-        )
-        _add_binary_op(
-            ctx=ctx,
-            op_type="ADD",
-            lhs_name=y_mul_name,
-            rhs_name=x_idx_name,
-            output_name=linear_name,
-        )
-        return linear_name
-
-    idx_00_name = _build_linear_index(y0_i32_name, x0_i32_name, "idx00")
-    idx_01_name = _build_linear_index(y0_i32_name, x1_i32_name, "idx01")
-    idx_10_name = _build_linear_index(y1_i32_name, x0_i32_name, "idx10")
-    idx_11_name = _build_linear_index(y1_i32_name, x1_i32_name, "idx11")
-
-    def _build_gather(linear_index_name: str, tag: str) -> str:
-        gathered_name = ctx.add_intermediate_tensor(
-            f"{output_name}_roialign_{tag}_gather",
-            dtype=compute_dtype,
-            shape=[int(roi_count_meta), int(channels), int(pooled_h), int(pooled_w)],
-        )
-        ctx.add_operator(
-            OperatorIR(
-                op_type="GATHER",
-                inputs=[flattened_input_name, linear_index_name],
-                outputs=[gathered_name],
-                options={
-                    "axis": 2,
-                    "batchDims": 1,
-                },
-            )
-        )
-        return gathered_name
-
-    gathered_00_name = _build_gather(idx_00_name, "v00")
-    gathered_01_name = _build_gather(idx_01_name, "v01")
-    gathered_10_name = _build_gather(idx_10_name, "v10")
-    gathered_11_name = _build_gather(idx_11_name, "v11")
-
     wx_name = ctx.add_intermediate_tensor(
         f"{output_name}_roialign_wx",
         dtype=compute_dtype,
@@ -3710,89 +3624,43 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
         output_name=w11_name,
     )
 
-    def _expand_weight(weight_name: str, tag: str) -> str:
-        expanded_name = ctx.add_intermediate_tensor(
-            f"{output_name}_roialign_{tag}_expanded",
-            dtype=compute_dtype,
-            shape=[int(roi_count_meta), 1, int(pooled_h), int(pooled_w)],
-        )
-        _add_reshape_operator(
-            ctx=ctx,
-            input_name=weight_name,
-            output_name=expanded_name,
-            new_shape=[-1, 1, int(pooled_h), int(pooled_w)],
-            preserve_dynamic_shape=True,
-        )
-        return expanded_name
-
-    w00_expanded_name = _expand_weight(w00_name, "w00")
-    w01_expanded_name = _expand_weight(w01_name, "w01")
-    w10_expanded_name = _expand_weight(w10_name, "w10")
-    w11_expanded_name = _expand_weight(w11_name, "w11")
-
-    weighted_00_name = ctx.add_intermediate_tensor(
-        f"{output_name}_roialign_weighted_00",
-        dtype=compute_dtype,
-        shape=[int(roi_count_meta), int(channels), int(pooled_h), int(pooled_w)],
+    neighbor_args = {
+        "ctx": ctx,
+        "flattened_input_name": flattened_input_name,
+        "batch_offsets_name": batch_offsets_name,
+        "output_name": output_name,
+        "compute_dtype": compute_dtype,
+        "roi_count_meta": roi_count_meta,
+        "pooled_h": pooled_h,
+        "pooled_w": pooled_w,
+        "channels": channels,
+        "input_h": in_h,
+        "input_w": in_w,
+    }
+    weighted_00_name = add_masked_roi_align_neighbor(
+        **neighbor_args,
+        x_padded_index_name=x0_i32_name,
+        y_padded_index_name=y0_i32_name,
+        weight_name=w00_name,
+        tag="v00",
     )
-    weighted_01_name = ctx.add_intermediate_tensor(
-        f"{output_name}_roialign_weighted_01",
-        dtype=compute_dtype,
-        shape=[int(roi_count_meta), int(channels), int(pooled_h), int(pooled_w)],
+    weighted_01_name = add_masked_roi_align_neighbor(
+        **neighbor_args,
+        x_padded_index_name=x1_i32_name,
+        y_padded_index_name=y0_i32_name,
+        weight_name=w01_name,
+        tag="v01",
     )
-    weighted_10_name = ctx.add_intermediate_tensor(
-        f"{output_name}_roialign_weighted_10",
-        dtype=compute_dtype,
-        shape=[int(roi_count_meta), int(channels), int(pooled_h), int(pooled_w)],
-    )
-    weighted_11_name = ctx.add_intermediate_tensor(
-        f"{output_name}_roialign_weighted_11",
-        dtype=compute_dtype,
-        shape=[int(roi_count_meta), int(channels), int(pooled_h), int(pooled_w)],
-    )
-    _add_binary_op(
-        ctx=ctx,
-        op_type="MUL",
-        lhs_name=gathered_00_name,
-        rhs_name=w00_expanded_name,
-        output_name=weighted_00_name,
-    )
-    _add_binary_op(
-        ctx=ctx,
-        op_type="MUL",
-        lhs_name=gathered_01_name,
-        rhs_name=w01_expanded_name,
-        output_name=weighted_01_name,
-    )
-    _add_binary_op(
-        ctx=ctx,
-        op_type="MUL",
-        lhs_name=gathered_10_name,
-        rhs_name=w10_expanded_name,
-        output_name=weighted_10_name,
-    )
-    _add_binary_op(
-        ctx=ctx,
-        op_type="MUL",
-        lhs_name=gathered_11_name,
-        rhs_name=w11_expanded_name,
-        output_name=weighted_11_name,
-    )
-
+    sampled_shape_nhwc = [
+        int(roi_count_meta),
+        int(pooled_h),
+        int(pooled_w),
+        int(channels),
+    ]
     weighted_top_name = ctx.add_intermediate_tensor(
         f"{output_name}_roialign_weighted_top",
         dtype=compute_dtype,
-        shape=[int(roi_count_meta), int(channels), int(pooled_h), int(pooled_w)],
-    )
-    weighted_bottom_name = ctx.add_intermediate_tensor(
-        f"{output_name}_roialign_weighted_bottom",
-        dtype=compute_dtype,
-        shape=[int(roi_count_meta), int(channels), int(pooled_h), int(pooled_w)],
-    )
-    sampled_name = ctx.add_intermediate_tensor(
-        f"{output_name}_roialign_sampled",
-        dtype=compute_dtype,
-        shape=[int(roi_count_meta), int(channels), int(pooled_h), int(pooled_w)],
+        shape=sampled_shape_nhwc,
     )
     _add_binary_op(
         ctx=ctx,
@@ -3801,34 +3669,46 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
         rhs_name=weighted_01_name,
         output_name=weighted_top_name,
     )
-    _add_binary_op(
-        ctx=ctx,
-        op_type="ADD",
-        lhs_name=weighted_10_name,
-        rhs_name=weighted_11_name,
-        output_name=weighted_bottom_name,
+    weighted_10_name = add_masked_roi_align_neighbor(
+        **neighbor_args,
+        x_padded_index_name=x0_i32_name,
+        y_padded_index_name=y1_i32_name,
+        weight_name=w10_name,
+        tag="v10",
+    )
+    weighted_top_left_name = ctx.add_intermediate_tensor(
+        f"{output_name}_roialign_weighted_top_left",
+        dtype=compute_dtype,
+        shape=sampled_shape_nhwc,
     )
     _add_binary_op(
         ctx=ctx,
         op_type="ADD",
         lhs_name=weighted_top_name,
-        rhs_name=weighted_bottom_name,
-        output_name=sampled_name,
+        rhs_name=weighted_10_name,
+        output_name=weighted_top_left_name,
+    )
+    weighted_11_name = add_masked_roi_align_neighbor(
+        **neighbor_args,
+        x_padded_index_name=x1_i32_name,
+        y_padded_index_name=y1_i32_name,
+        weight_name=w11_name,
+        tag="v11",
+    )
+    sampled_nhwc_name = ctx.add_intermediate_tensor(
+        f"{output_name}_roialign_sampled_nhwc",
+        dtype=compute_dtype,
+        shape=sampled_shape_nhwc,
+    )
+    _add_binary_op(
+        ctx=ctx,
+        op_type="ADD",
+        lhs_name=weighted_top_left_name,
+        rhs_name=weighted_11_name,
+        output_name=sampled_nhwc_name,
     )
 
-    output_compute_name = sampled_name
     if int(sampling_ratio) > 1:
-        sampled_nhwc_name = ctx.add_intermediate_tensor(
-            f"{output_name}_roialign_sampled_nhwc",
-            dtype=compute_dtype,
-            shape=[int(roi_count_meta), int(pooled_h), int(pooled_w), int(channels)],
-        )
-        make_transpose(
-            ctx=ctx,
-            input_name=sampled_name,
-            output_name=sampled_nhwc_name,
-            perm_values=[0, 2, 3, 1],
-        )
         pooled_nhwc_name = ctx.add_intermediate_tensor(
             f"{output_name}_roialign_pooled_nhwc",
             dtype=compute_dtype,
@@ -3857,6 +3737,23 @@ def build_roi_align_op(node: Any, ctx: Any) -> None:
         make_transpose(
             ctx=ctx,
             input_name=pooled_nhwc_name,
+            output_name=output_compute_name,
+            perm_values=[0, 3, 1, 2],
+        )
+    else:
+        output_compute_name = ctx.add_intermediate_tensor(
+            f"{output_name}_roialign_sampled_nchw",
+            dtype=compute_dtype,
+            shape=[
+                int(roi_count_meta),
+                int(channels),
+                int(pooled_h),
+                int(pooled_w),
+            ],
+        )
+        make_transpose(
+            ctx=ctx,
+            input_name=sampled_nhwc_name,
             output_name=output_compute_name,
             perm_values=[0, 3, 1, 2],
         )

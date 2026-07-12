@@ -8,11 +8,11 @@ import onnxruntime as ort
 import pytest
 from onnx import TensorProto, helper, numpy_helper
 
-from onnx2tf.utils.onnxruntime_compat import prepare_onnx_graph_for_onnxruntime
 from onnx2tf.onnx2tf import (
     _run_onnxsim_inplace_safely,
     _sanitize_onnx_graph_names_inplace,
 )
+from onnx2tf.utils.onnxruntime_compat import prepare_onnx_graph_for_onnxruntime
 
 
 def _grid_sample_model(*, opset: int, include_inverse: bool):
@@ -142,6 +142,122 @@ def _missing_arange_delta_capture_model() -> onnx.ModelProto:
             initializer=[trip_count, condition, start],
         ),
         opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+    model.ir_version = 10
+    return model
+
+
+def _missing_torchvision_paste_masks_capture_model() -> onnx.ModelProto:
+    raw_masks = helper.make_tensor_value_info(
+        "raw_masks",
+        TensorProto.FLOAT,
+        [2, 1, 2, 2],
+    )
+    boxes = helper.make_tensor_value_info("boxes", TensorProto.FLOAT, [2, 4])
+    boxes_out = helper.make_tensor_value_info(
+        "boxes_out",
+        TensorProto.FLOAT,
+        [2, 4],
+    )
+    masks_out = helper.make_tensor_value_info(
+        "masks_out",
+        TensorProto.FLOAT,
+        [2, 4, 4],
+    )
+    pads = numpy_helper.from_array(
+        np.asarray([0, 0, 1, 1, 0, 0, 1, 1], dtype=np.int64),
+        name="pads",
+    )
+    condition = numpy_helper.from_array(np.asarray(True), name="condition")
+    carried = numpy_helper.from_array(
+        np.zeros((0, 4, 4), dtype=np.float32),
+        name="carried",
+    )
+    coordinate_indices = [
+        numpy_helper.from_array(
+            np.asarray(index, dtype=np.int64),
+            name=f"coordinate_{index}",
+        )
+        for index in range(4)
+    ]
+    body = helper.make_graph(
+        [
+            helper.make_node(
+                "Gather",
+                ["padded_masks", "iteration"],
+                ["mask_item"],
+                axis=0,
+            ),
+            helper.make_node(
+                "Gather",
+                ["missing_expanded_boxes", "iteration"],
+                ["box_item"],
+                axis=0,
+            ),
+            *[
+                helper.make_node(
+                    "Gather",
+                    ["box_item", f"coordinate_{index}"],
+                    [f"box_coordinate_{index}"],
+                    axis=0,
+                )
+                for index in range(4)
+            ],
+            helper.make_node("Identity", ["cond"], ["cond_out"]),
+            helper.make_node(
+                "Concat",
+                ["previous_masks", "mask_item"],
+                ["next_masks"],
+                axis=0,
+            ),
+        ],
+        "paste_masks_body",
+        [
+            helper.make_tensor_value_info("iteration", TensorProto.INT64, []),
+            helper.make_tensor_value_info("cond", TensorProto.BOOL, []),
+            helper.make_tensor_value_info(
+                "previous_masks",
+                TensorProto.FLOAT,
+                [None, 4, 4],
+            ),
+        ],
+        [
+            helper.make_tensor_value_info("cond_out", TensorProto.BOOL, []),
+            helper.make_tensor_value_info(
+                "next_masks",
+                TensorProto.FLOAT,
+                [None, 4, 4],
+            ),
+        ],
+        initializer=coordinate_indices,
+    )
+    nodes = [
+        helper.make_node("Identity", ["boxes"], ["boxes_out"]),
+        helper.make_node("Pad", ["raw_masks", "pads"], ["padded_masks"]),
+        helper.make_node("Shape", ["padded_masks"], ["mask_shape"]),
+        helper.make_node(
+            "Gather",
+            ["mask_shape", "coordinate_0"],
+            ["trip_count"],
+            axis=0,
+        ),
+        helper.make_node(
+            "Loop",
+            ["trip_count", "condition", "carried"],
+            ["masks_out"],
+            name="paste_masks_loop",
+            body=body,
+        ),
+    ]
+    model = helper.make_model(
+        helper.make_graph(
+            nodes,
+            "missing_paste_masks_capture",
+            [raw_masks, boxes],
+            [boxes_out, masks_out],
+            initializer=[pads, condition, carried, *coordinate_indices],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 14)],
     )
     model.ir_version = 10
     return model
@@ -709,3 +825,69 @@ def test_prepare_onnxruntime_repairs_missing_arange_default_delta_capture() -> N
         providers=["CPUExecutionProvider"],
     ).run(None, {})[0]
     np.testing.assert_array_equal(actual, np.asarray([0, 1, 2], dtype=np.int32))
+
+
+def test_prepare_onnxruntime_repairs_missing_paste_masks_box_capture() -> None:
+    model = _missing_torchvision_paste_masks_capture_model()
+    with pytest.raises(onnx.checker.ValidationError):
+        onnx.checker.check_model(model)
+
+    prepared, rewritten = prepare_onnx_graph_for_onnxruntime(model)
+
+    assert rewritten["TorchVisionPasteMasksLoopCaptures"] == 1
+    onnx.checker.check_model(prepared)
+    repair_cast = next(
+        node
+        for node in prepared.graph.node
+        if str(node.name) == "paste_masks_loop_repair_paste_masks_cast"
+    )
+    assert list(repair_cast.output) == ["missing_expanded_boxes"]
+    prepared.graph.output.append(
+        helper.make_tensor_value_info(
+            "missing_expanded_boxes",
+            TensorProto.INT64,
+            [2, 4],
+        )
+    )
+    actual = ort.InferenceSession(
+        prepared.SerializeToString(),
+        providers=["CPUExecutionProvider"],
+    ).run(
+        ["missing_expanded_boxes"],
+        {
+            "raw_masks": np.ones((2, 1, 2, 2), dtype=np.float32),
+            "boxes": np.asarray(
+                [[2.0, 2.0, 6.0, 6.0], [1.0, 2.0, 5.0, 6.0]],
+                dtype=np.float32,
+            ),
+        },
+    )[0]
+    np.testing.assert_array_equal(
+        actual,
+        np.asarray([[0, 0, 8, 8], [-1, 0, 7, 8]], dtype=np.int64),
+    )
+
+
+def test_prepare_onnxruntime_does_not_guess_ambiguous_paste_masks_capture() -> None:
+    model = _missing_torchvision_paste_masks_capture_model()
+    pads = next(
+        initializer
+        for initializer in model.graph.initializer
+        if str(initializer.name) == "pads"
+    )
+    pads.CopyFrom(
+        numpy_helper.from_array(
+            np.asarray([0, 0, 1, 2, 0, 0, 1, 1], dtype=np.int64),
+            name="pads",
+        )
+    )
+
+    prepared, rewritten = prepare_onnx_graph_for_onnxruntime(model)
+
+    assert "TorchVisionPasteMasksLoopCaptures" not in rewritten
+    assert all(
+        str(node.name) != "paste_masks_loop_repair_paste_masks_cast"
+        for node in prepared.graph.node
+    )
+    with pytest.raises(onnx.checker.ValidationError):
+        onnx.checker.check_model(prepared)

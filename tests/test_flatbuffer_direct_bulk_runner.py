@@ -998,8 +998,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 10,
-        "pass": 351,
+        "missing_tflite_report": 9,
+        "pass": 352,
         "tflite_fail": 33,
         "timeout": 26,
     }
@@ -1033,6 +1033,17 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert string_normalizer_entry["error_signature_sha256"] == (
         "2623d1f687770e4aade4749af32963fca446f80b3dd131e7061bcb13ae225722"
     )
+    maskrcnn_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "maskrcnn_resnet50_fpn.onnx"
+    )
+    assert maskrcnn_entry == {
+        "tier": 3,
+        "model": "maskrcnn_resnet50_fpn.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 0.0,
+    }
     ssd_mobilenet_entry = next(
         entry
         for entry in profile_payload["models"]

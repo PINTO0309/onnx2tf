@@ -7,9 +7,12 @@ import numpy as np
 import onnx
 from onnx import numpy_helper
 
+from onnx2tf.tflite_builder.core.onnx_analysis import _merge_graph_tensor_info
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
+from onnx2tf.tflite_builder.op_builders.control_utils import (
+    tensor_shape_is_statically_proven,
+)
 from onnx2tf.utils.onnxruntime_compat import stable_topological_sort_graphs
-
 
 _IF_NMS_GUARD_ELSE_OPS_WITH_NESTED_IF = [
     "ReduceMax",
@@ -1056,25 +1059,9 @@ def _lower_graph_nodes(
             input_tensor = ctx.model_ir.tensors.get(str(input_name), None)
             if input_tensor is not None:
                 input_shape = [int(v) for v in list(input_tensor.shape)]
-                input_signature = (
-                    [int(v) for v in list(input_tensor.shape_signature)]
-                    if input_tensor.shape_signature is not None
-                    else [int(v) for v in input_shape]
-                )
-                dynamic_input_names = {
-                    str(v)
-                    for v in ctx.model_ir.metadata.get(
-                        "onnx_dynamic_input_tensor_names", []
-                    )
-                    if str(v) != ""
-                }
-                shape_is_static = all(int(v) > 0 for v in input_shape)
-                signature_is_static = (
-                    len(input_shape) == len(input_signature)
-                    and all(int(v) > 0 for v in input_signature)
-                )
-                if shape_is_static and (
-                    signature_is_static or len(dynamic_input_names) == 0
+                if tensor_shape_is_statically_proven(
+                    ctx=ctx,
+                    tensor_name=input_name,
                 ):
                     start = 0
                     end = len(input_shape)
@@ -3059,6 +3046,14 @@ def _build_loop_while(node: Any, ctx: Any) -> None:
     # Build subgraph-local contexts with copied shape/dtype knowledge.
     from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
 
+    body_shape_map = dict(ctx.shape_map)
+    body_dtype_map = dict(ctx.dtype_map)
+    _merge_graph_tensor_info(
+        graph=body_graph,
+        shape_map=body_shape_map,
+        dtype_map=body_dtype_map,
+    )
+
     cond_ctx = LoweringContext(
         model_ir=cond_subgraph,
         shape_map=dict(ctx.shape_map),
@@ -3075,8 +3070,8 @@ def _build_loop_while(node: Any, ctx: Any) -> None:
     )
     body_ctx = LoweringContext(
         model_ir=body_subgraph,
-        shape_map=dict(ctx.shape_map),
-        dtype_map=dict(ctx.dtype_map),
+        shape_map=body_shape_map,
+        dtype_map=body_dtype_map,
         constants={},
         onnx_model=getattr(ctx, "onnx_model", None),
         allow_custom_ops=bool(getattr(ctx, "allow_custom_ops", False)),

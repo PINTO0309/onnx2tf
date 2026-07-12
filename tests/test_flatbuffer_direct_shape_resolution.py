@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
 from onnx2tf.tflite_builder.core.shape_resolution import (
+    preserve_rewritten_output_dynamic_axes,
     shape_hint_only_adds_singleton_or_dynamic_axes,
+    static_shape_vector_length,
 )
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+from onnx2tf.tflite_builder.lower_from_onnx2tf import _set_operator_outputs
 
 
 def test_detects_hint_that_only_adds_singleton_or_dynamic_axes() -> None:
@@ -120,3 +123,95 @@ def test_context_does_not_preserve_dynamic_producer_rank() -> None:
 
     assert model_ir.tensors["value"].shape == [1, 1, 12543]
     assert model_ir.tensors["value"].shape_signature == [-1, -1, 12543]
+
+
+def test_reads_static_shape_vector_length() -> None:
+    tensor = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+    )
+    assert static_shape_vector_length(tensor) == 2
+
+
+def test_rejects_dynamic_shape_vector_length() -> None:
+    tensor = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    assert static_shape_vector_length(tensor) is None
+
+
+def test_rewritten_output_preserves_dynamic_source_axes() -> None:
+    source = TensorIR(
+        name="source",
+        dtype="FLOAT32",
+        shape=[1, 28, 28, 256],
+        shape_signature=[-1, -1, -1, 256],
+    )
+    target = TensorIR(
+        name="target",
+        dtype="FLOAT32",
+        shape=[1, 28, 28, 256],
+        shape_signature=[1, 28, 28, 256],
+    )
+
+    assert preserve_rewritten_output_dynamic_axes(
+        source_tensor=source,
+        target_tensor=target,
+    )
+    assert target.shape_signature == [-1, -1, -1, 256]
+
+
+def test_rewritten_output_rejects_rank_mismatch() -> None:
+    source = TensorIR(
+        name="source",
+        dtype="FLOAT32",
+        shape=[1, 4],
+        shape_signature=[-1, 4],
+    )
+    target = TensorIR(
+        name="target",
+        dtype="FLOAT32",
+        shape=[4],
+        shape_signature=[4],
+    )
+
+    assert not preserve_rewritten_output_dynamic_axes(
+        source_tensor=source,
+        target_tensor=target,
+    )
+    assert target.shape_signature == [4]
+
+
+def test_set_operator_outputs_preserves_dynamic_source_axes() -> None:
+    model_ir = ModelIR("rewritten_output")
+    model_ir.tensors["source"] = TensorIR(
+        name="source",
+        dtype="FLOAT32",
+        shape=[1, 28, 28, 256],
+        shape_signature=[-1, -1, -1, 256],
+    )
+    model_ir.tensors["target"] = TensorIR(
+        name="target",
+        dtype="FLOAT32",
+        shape=[1, 28, 28, 256],
+        shape_signature=[1, 28, 28, 256],
+    )
+    operator = OperatorIR(
+        op_type="ADD",
+        inputs=["lhs", "rhs"],
+        outputs=["source"],
+    )
+
+    _set_operator_outputs(
+        model_ir=model_ir,
+        op=operator,
+        new_outputs=["target"],
+    )
+
+    assert operator.outputs == ["target"]
+    assert model_ir.tensors["target"].shape_signature == [-1, -1, -1, 256]

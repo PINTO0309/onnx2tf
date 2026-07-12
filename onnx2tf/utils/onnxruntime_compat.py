@@ -9,8 +9,8 @@ from onnx import numpy_helper
 from onnx2tf.utils.onnx_graph_repair import (
     repair_missing_arange_loop_delta_captures,
     repair_missing_torchvision_nms_guard_captures,
+    repair_missing_torchvision_paste_masks_loop_captures,
 )
-
 
 _MICROSOFT_CONTRIB_OPS = {
     "FusedConv",
@@ -793,6 +793,10 @@ def prepare_onnx_graph_for_onnxruntime(
 
     rewritten = repair_missing_arange_loop_delta_captures(prepared)
     for op_type, count in repair_missing_torchvision_nms_guard_captures(
+        prepared
+    ).items():
+        rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
+    for op_type, count in repair_missing_torchvision_paste_masks_loop_captures(
         prepared
     ).items():
         rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
