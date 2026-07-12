@@ -262,6 +262,14 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         node.id for node in ast.walk(wrapper) if isinstance(node, ast.Name)
     }
     assert "_optimize_boundary_input_layout_transposes_pass" in wrapper_names
+    lowerer_names = {
+        node.id
+        for node in ast.walk(
+            ast.parse(lowering_path.read_text(encoding="utf-8"))
+        )
+        if isinstance(node, ast.Name)
+    }
+    assert "run_boundary_input_layout_cleanup" in lowerer_names
 
     graph_helpers = {
         "_broadcast_static_shapes",

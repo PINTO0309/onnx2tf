@@ -59,6 +59,13 @@ lineage-aware input replacement are canonical utilities in
 `core/model_ir_utils.py`; reporting, precision, and layout passes do not keep
 private copies.
 
+The lowerer invokes this rewrite through `run_boundary_input_layout_cleanup`,
+registered as `layout.boundary_input_adapter` in `LAYOUT_PLAN`. It shares one
+ModelIRPassState, uses indexed consumers and structural removal, synchronizes
+pruned adapter tensors with the session LayoutState, and validates the public
+input contract transactionally. A topology precondition avoids snapshots on
+graphs without synthetic boundary adapters.
+
 Channel-slice layout propagation and boundary StridedSlice/QDQ/Concat cleanup
 live together in `passes/channel_slice_layout.py`. The family owns the guarded
 boundary channel-slice rewrite, internal NHWC propagation, Mul/Add bridge

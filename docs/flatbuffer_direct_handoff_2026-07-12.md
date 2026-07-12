@@ -519,9 +519,24 @@ Verification completed with:
 - `1025 passed, 5 deselected, 2 warnings in 128.05s` for the full sequential
   direct suite.
 
-Next, migrate another small layout-sensitive pass into a shared ordered group,
-then factor common precondition and pass-result aggregation helpers only after
-two independent groups demonstrate the same need.
+Boundary input adapter cleanup is now the second independent layout-sensitive
+ordered group. The lowerer calls `run_boundary_input_layout_cleanup`, whose
+stable ID is `layout.boundary_input_adapter` in `LAYOUT_PLAN`. The pass uses
+indexed consumer replacement and operator removal, retains the Gather/Slice
+safety guards and public input metadata, removes pruned internal tensors from
+the session LayoutState, and validates through ModelIRPassState. Its focused
+fixture requires one initial graph-index refresh.
+
+Verification completed with:
+
+- `20 passed, 757 deselected` for focused boundary runner, public-contract,
+  GatherND no-op, LayoutState, and architecture behavior;
+- `1026 passed, 5 deselected, 2 warnings in 128.23s` for the full sequential
+  direct suite.
+
+Two independent ordered layout groups now use the same state/transaction
+pattern. The next refactor can extract shared result aggregation and runner
+construction helpers without guessing an abstraction from a single caller.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

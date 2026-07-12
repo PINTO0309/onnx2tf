@@ -1,17 +1,25 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Optional
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
     _prune_unused_tensors,
     _read_transpose_perm,
     _replace_tensor_inputs,
 )
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR
 
 
-def _optimize_boundary_input_layout_transposes(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_boundary_input_layout_transposes(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Elide synthetic input-boundary layout adapters inserted as:
       input --TRANSPOSE--> input_onnx_ncx_internal
@@ -23,11 +31,12 @@ def _optimize_boundary_input_layout_transposes(model_ir: ModelIR) -> Dict[str, i
     - Rewrites only when input/internal tensor metadata already match exactly.
     """
     removed = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         model_inputs = set(str(v) for v in model_ir.inputs)
         model_outputs = set(str(v) for v in model_ir.outputs)
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         changed = False
 
         for op_idx, op in enumerate(model_ir.operators):
@@ -93,9 +102,14 @@ def _optimize_boundary_input_layout_transposes(model_ir: ModelIR) -> Dict[str, i
 
             # Redirect all internal users to model input without changing
             # external input tensor metadata.
-            _replace_tensor_inputs(model_ir, output_name, input_name)
+            _replace_tensor_inputs(
+                model_ir,
+                output_name,
+                input_name,
+                graph_index=graph_index,
+            )
 
-            del model_ir.operators[int(op_idx)]
+            graph_index.remove_operator(op_idx)
             removed += 1
             changed = True
             break
@@ -103,5 +117,54 @@ def _optimize_boundary_input_layout_transposes(model_ir: ModelIR) -> Dict[str, i
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"removed_boundary_input_layout_transpose": int(removed)}
+
+
+def run_boundary_input_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Run guarded boundary-adapter removal as an ordered layout pass."""
+
+    state = ModelIRPassState(model_ir, layout_state=layout_state)
+    manager = state.create_ordered_manager()
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        model_inputs = set(str(name) for name in pass_state.model_ir.inputs)
+        return any(
+            str(op.op_type) == "TRANSPOSE"
+            and len(op.inputs) >= 2
+            and len(op.outputs) == 1
+            and str(op.inputs[0]) in model_inputs
+            and str(op.outputs[0]).endswith("_onnx_ncx_internal")
+            for op in pass_state.model_ir.operators
+        )
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_boundary_input_layout_transposes(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("removed_boundary_input_layout_transpose", 0)),
+        }
+
+    manager.register(
+        PassSpec(
+            pass_id="layout.boundary_input_adapter",
+            phase=PassPhase.LAYOUT_PLAN,
+            callback=_run,
+            precondition=_has_candidate,
+            transactional=True,
+        )
+    )
+    details = {"removed_boundary_input_layout_transpose": 0}
+    for result in manager.run(state):
+        for key, value in result.details.items():
+            if key not in {"changed", "skipped_by_precondition"}:
+                details[str(key)] = int(value)
+    return details

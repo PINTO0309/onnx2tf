@@ -137,6 +137,7 @@ from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
 )
 from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     _optimize_boundary_input_layout_transposes as _optimize_boundary_input_layout_transposes_pass,
+    run_boundary_input_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.boundary_input_chains import (
     _optimize_boundary_input_transpose_batchmatmul_chains as _optimize_boundary_input_transpose_batchmatmul_chains_pass,
@@ -66030,7 +66031,10 @@ def lower_onnx_to_ir(
     _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(model_ir)
     _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(model_ir)
     _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
-    _optimize_boundary_input_layout_transposes(model_ir)
+    run_boundary_input_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     # Boundary input layout recovery can recreate input-head PAD wrappers.
     _optimize_transpose_pad_prepost_nhwc_chains(model_ir)
     _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(model_ir)
