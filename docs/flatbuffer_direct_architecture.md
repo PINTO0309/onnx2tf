@@ -188,6 +188,23 @@ the sequential run remained inside the pure-NumPy QLinearConv loop after more
 than 90 seconds. No host-SIMD emulation or slow evaluator substitution is added
 to the production pipeline.
 
+`text_recognition_CRNN_CN_2021nov_int8.onnx` now executes through both
+bidirectional LSTMs. Its second LSTM is preceded by a runtime Reshape with the
+ONNX target `[0, 0, -1]`. Stale metadata previously described the result as
+`[1,1,1]`, although the upstream tensor is `[25,1,2,256]` and the LSTM weights
+require an input width of 512. This produced a 6,400-to-256 element Reshape
+failure after the LSTM. The centralized shape reconciliation pass now resolves
+that contract to `[25,1,512]` from the source tensor and the LSTM input-weight
+shape, then propagates the sequence length through the bidirectional output.
+The normal sequential `-cotof` path consequently completes and emits its
+reports. The model remains an active accuracy non-pass with the normalized
+reason `qlinear_matmul_single_quantum_outlier`: both LSTMs are within
+`6.7e-6`, while the final QLinearMatMul has one-quantum maximum error that
+propagates to a final maximum absolute error of `0.14842605590820312`. Mean
+absolute error is `1.3509051097190739e-5`, RMSE is
+`0.0011565761101850747`, and cosine similarity is
+`0.9999999968466379`.
+
 The root-only Tier 2 gate at commit `ad1d508` contains 113 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier2_root_ad1d508.json`: 80
 passed, 4 conversion errors, 3 timeouts, 6 accuracy failures, and 20 missing

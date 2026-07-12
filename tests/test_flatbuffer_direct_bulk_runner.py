@@ -1035,6 +1035,19 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "da92ac2e2f0e69a6b68654c2152fadfadb079a20d73aaf8b33fc3a81af4afc15"
     )
     assert version_rfb_entry["tflite_max_abs"] == 0.14972958900034428
+    crnn_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "text_recognition_CRNN_CN_2021nov_int8.onnx"
+    )
+    assert crnn_entry["baseline_classification"] == "tflite_fail"
+    assert crnn_entry["baseline_reason"] == (
+        "qlinear_matmul_single_quantum_outlier"
+    )
+    assert crnn_entry["error_signature_sha256"] == (
+        "42f6b758e04d423511002b64e18281c40f1c2fe6eb72f20065608fb10bca90a1"
+    )
+    assert crnn_entry["tflite_max_abs"] == 0.14842605590820312
     assert profile["model_options"]["tiny_decoder_11.onnx"] == {
         "shape_hints": [
             "tokens:1,1",

@@ -15843,13 +15843,31 @@ def test_flatbuffer_direct_resolve_dynamic_reshape_zero_copy_dims_pass() -> None
 
 def test_flatbuffer_direct_reconcile_bilstm_chain_and_resolve_reshape_zero_copy_dims() -> None:
     model_ir = ModelIR("reshape_zero_copy_bilstm_chain_fixup_test")
-    model_ir.inputs = ["x"]
+    model_ir.inputs = ["source"]
     model_ir.outputs = ["y"]
+    model_ir.tensors["source"] = TensorIR(
+        name="source",
+        dtype="FLOAT32",
+        shape=[25, 1, 2, 256],
+        shape_signature=[25, 1, 2, 256],
+    )
+    model_ir.tensors["runtime_shape"] = TensorIR(
+        name="runtime_shape",
+        dtype="INT32",
+        shape=[3],
+        shape_signature=[3],
+    )
     model_ir.tensors["x"] = TensorIR(
         name="x",
         dtype="FLOAT32",
-        shape=[25, 1, 512],
-        shape_signature=[25, 1, 512],
+        shape=[1, 1, 1],
+        shape_signature=[1, 1, 1],
+    )
+    model_ir.tensors["fw_w_i"] = TensorIR(
+        name="fw_w_i",
+        dtype="FLOAT32",
+        shape=[256, 512],
+        shape_signature=[256, 512],
     )
     model_ir.tensors["merged"] = TensorIR(
         name="merged",
@@ -15930,8 +15948,19 @@ def test_flatbuffer_direct_reconcile_bilstm_chain_and_resolve_reshape_zero_copy_
     model_ir.operators.extend(
         [
             OperatorIR(
+                op_type="RESHAPE",
+                inputs=["source", "runtime_shape"],
+                outputs=["x"],
+                options={
+                    "newShape": [],
+                    "onnxRawNewShape": [0, 0, -1],
+                    "allowZero": False,
+                    "preserveDynamicShape": True,
+                },
+            ),
+            OperatorIR(
                 op_type="BIDIRECTIONAL_SEQUENCE_LSTM",
-                inputs=["x"],
+                inputs=["x", "fw_w_i"],
                 outputs=["merged"],
                 options={"timeMajor": True},
             ),
@@ -15979,6 +16008,8 @@ def test_flatbuffer_direct_reconcile_bilstm_chain_and_resolve_reshape_zero_copy_
     stats_resolve = _resolve_dynamic_reshape_shapes(model_ir)
     assert stats_reconcile["reconciled_static_tensor_shapes"] > 0
     assert stats_resolve["resolved_dynamic_reshape_shapes"] == 1
+    assert list(model_ir.tensors["x"].shape) == [25, 1, 512]
+    assert _shape_signature(model_ir.tensors["x"]) == [25, 1, 512]
     assert list(model_ir.tensors["transpose_out"].shape) == [25, 1, 2, 256]
     assert list(model_ir.tensors["y"].shape) == [25, 1, 512]
     assert np.asarray(model_ir.tensors["reshape_shape"].data).reshape(-1).tolist() == [25, 1, 512]

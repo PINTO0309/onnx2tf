@@ -3094,6 +3094,12 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
     shape propagation and syncs `shape` / `shape_signature` for common TFLite ops.
     """
     updated_tensors = 0
+    producer_by_output = {
+        str(output_name): op
+        for op in model_ir.operators
+        for output_name in op.outputs
+        if str(output_name) != ""
+    }
 
     def _update_tensor_shape(
         tensor_name: str,
@@ -3310,6 +3316,66 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                 and len(inputs) >= 1 and len(outputs) == 1:
                 input_tensor = model_ir.tensors.get(inputs[0], None)
                 output_tensor = model_ir.tensors.get(outputs[0], None)
+                input_producer = producer_by_output.get(inputs[0], None)
+                input_weight_tensor = (
+                    model_ir.tensors.get(inputs[1], None)
+                    if len(inputs) >= 2
+                    else None
+                )
+                if (
+                    input_tensor is not None
+                    and input_producer is not None
+                    and str(input_producer.op_type) == "RESHAPE"
+                    and len(input_producer.inputs) >= 1
+                    and list(
+                        input_producer.options.get("onnxRawNewShape", [])
+                    ) == [0, 0, -1]
+                    and not bool(input_producer.options.get("allowZero", False))
+                    and input_weight_tensor is not None
+                    and len(list(input_weight_tensor.shape)) == 2
+                ):
+                    reshape_source_tensor = model_ir.tensors.get(
+                        str(input_producer.inputs[0]),
+                        None,
+                    )
+                    if (
+                        reshape_source_tensor is not None
+                        and len(list(reshape_source_tensor.shape)) >= 2
+                        and _is_fully_known_positive_shape(
+                            list(reshape_source_tensor.shape)
+                        )
+                    ):
+                        source_shape = [
+                            int(v) for v in list(reshape_source_tensor.shape)
+                        ]
+                        source_signature = (
+                            [
+                                int(v)
+                                for v in list(
+                                    reshape_source_tensor.shape_signature
+                                )
+                            ]
+                            if reshape_source_tensor.shape_signature is not None
+                            and len(list(reshape_source_tensor.shape_signature))
+                            == len(source_shape)
+                            else list(source_shape)
+                        )
+                        inferred_input_shape = [
+                            int(source_shape[0]),
+                            int(source_shape[1]),
+                            int(input_weight_tensor.shape[1]),
+                        ]
+                        inferred_input_signature = [
+                            int(source_signature[0]),
+                            int(source_signature[1]),
+                            int(input_weight_tensor.shape[1]),
+                        ]
+                        changed |= _update_tensor_shape(
+                            inputs[0],
+                            inferred_input_shape,
+                            inferred_input_signature,
+                        )
+                        input_tensor = model_ir.tensors.get(inputs[0], None)
                 if (
                     input_tensor is None
                     or output_tensor is None
