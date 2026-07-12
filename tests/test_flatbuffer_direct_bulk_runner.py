@@ -1035,6 +1035,20 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "f1495fb3c58cf0f48521281b92113fa31d9dd301329f552c0cd80dcbc1687c3a"
     )
     assert arcfaceresnet_entry["tflite_max_abs"] == 0.3681950643658638
+    dynamics_rife_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "dynamics_rife_sim.onnx"
+    )
+    assert dynamics_rife_entry["baseline_classification"] == (
+        "missing_tflite_report"
+    )
+    assert dynamics_rife_entry["baseline_reason"] == (
+        "invalid_onnx_concat_spatial_mismatch_64_128"
+    )
+    assert dynamics_rife_entry["error_signature_sha256"] == (
+        "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109"
+    )
     nanodet_entry = next(
         entry
         for entry in profile_payload["models"]

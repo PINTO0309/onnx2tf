@@ -221,6 +221,18 @@ result is `docs/baselines/flatbuffer_direct_tier2_root_ad1d508.json`: 80
 passed, 4 conversion errors, 3 timeouts, 6 accuracy failures, and 20 missing
 reports. Median and maximum durations were 7.124 and 120.360 seconds.
 
+`dynamics_rife_sim.onnx` remains an active non-pass with the normalized reason
+`invalid_onnx_concat_spatial_mismatch_64_128`. The source passes the structural
+ONNX checker but ONNX Runtime rejects it during shape inference at
+`Concat_378`: six inputs declare 128x128 spatial dimensions while
+`onnx::Concat_193` declares 64x64, and the node concatenates only along the
+channel axis. The direct TFLite artifact preserves the same mismatch and
+LiteRT rejects allocation at the corresponding CONCATENATION. Removing
+intermediate value-info and clearing graph-output shapes does not make ONNX
+Runtime accept the structurally inconsistent node. The converter does not
+guess which branch should be resized because no valid ONNX reference exists
+to prove the required `1e-1` accuracy ceiling.
+
 `arcfaceresnet100-11-int8.onnx` also uses the normalized reason
 `onnxruntime_u8s8_saturating_pair_accumulation`. Its preprocessing and the
 first two QLinearConv boundaries are exact. The first divergence occurs at
