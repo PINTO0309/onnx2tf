@@ -496,6 +496,14 @@ pruning and layout reconciliation use the invocation's `LayoutState`. Thus the
 rewrite no longer rebuilds a consumer map for every iteration or mutates the
 operator list outside the structural index API.
 
+The adjacent unary fan-out bridge rewrite is also mechanically owned by
+`passes/layout_transpose.py`. It folds one pre-Transpose and one unary op into
+a representative inverse-post branch, coalesces additional inverse-post
+branches, and preserves non-Transpose legacy consumers through one adapter.
+The 149-line implementation moved with an identical AST, while the lowerer
+retains only a thin compatibility wrapper. Its seven production positions are
+intentionally unchanged pending the separate indexed-runner migration.
+
 General consecutive Reshape passthrough cleanup is also owned by
 `passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,
 fan-out-safe bypass of a second Reshape, and strict single-user chain collapse,

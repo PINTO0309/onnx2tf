@@ -2805,3 +2805,23 @@ optional-environment exclusions and known warnings documented above. No new
 dependency was added, TensorFlow was not imported for this work, inference ran
 with one process at a time, and generated SuperPoint artifacts/metrics under
 `/tmp/onnx2tf_transpose_unary_superpoint*` were removed after inspection.
+
+### Mechanical unary fan-out bridge extraction
+
+The next adjacent rule,
+`_optimize_transpose_unary_fanout_inverse_post_bridges`, was first protected by
+two characterization tests: one verifies coalescing multiple inverse-post
+branches, and one verifies preservation of a legacy NCHW consumer through a
+single adapter Transpose. The tests were committed and pushed independently as
+`4f94b94` before implementation movement.
+
+The complete 149-line implementation then moved without semantic edits from
+the lowerer into `passes/layout_transpose.py`; an AST comparison against
+`4f94b94` is identical. The lowerer now contains only a compatibility wrapper,
+and all seven raw production call positions remain in their original order for
+the next differential-index checkpoint. Focused family/ownership validation
+passed 13 tests, followed by the complete direct selection:
+
+```text
+1120 passed, 5 deselected, 2 warnings in 151.29s
+```

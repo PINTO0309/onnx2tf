@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _build_tensor_consumer_map,
     _clone_quantization,
     _invert_perm,
     _permute_tensor_metadata_if_rank_matches,
@@ -703,6 +704,156 @@ def run_transpose_unary_passthrough_cleanup(
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
+
+
+def _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Eliminate transpose wrappers around unary fanout branches with inverse post-transpose consumers.
+
+    Target:
+      X --TRANSPOSE(P)--> A --(RELU|RELU6|LOGISTIC|TANH)--> B
+      B --TRANSPOSE(inv(P))--> Y0
+      B --TRANSPOSE(inv(P))--> Y1
+      ...
+      (optionally: B also has non-transpose legacy consumers)
+
+    Rewrite:
+      X --(UNARY)--> Y0
+      (all uses of Y1... are rewired to Y0)
+      If legacy consumers exist:
+        keep one adapter TRANSPOSE(P): Y0 -> B for legacy consumers.
+
+    Safety:
+    - Pre-transpose output is consumed only by the unary op.
+    - Inverse-post transpose consumers must use inv(P).
+    - Fanout post-transpose outputs are not graph outputs.
+    - If non-transpose legacy consumers exist, preserve B via one adapter.
+    """
+    rewritten = 0
+    unary_ops = {"RELU", "RELU6", "RELU_0_TO_1", "HARD_SWISH", "LEAKY_RELU", "LOGISTIC", "TANH", "GELU"}
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+        model_outputs = set(str(v) for v in model_ir.outputs)
+
+        for pre_idx, pre_op in enumerate(model_ir.operators):
+            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+                continue
+
+            pre_input_name = str(pre_op.inputs[0])
+            pre_output_name = str(pre_op.outputs[0])
+            if pre_output_name in model_outputs:
+                continue
+
+            perm_pre = _read_transpose_perm(model_ir, pre_op)
+            if perm_pre is None:
+                continue
+            perm_post_expected = _invert_perm(perm_pre)
+            if perm_post_expected is None:
+                continue
+
+            unary_users = [int(v) for v in consumers.get(pre_output_name, [])]
+            if len(unary_users) != 1:
+                continue
+            unary_idx = int(unary_users[0])
+            unary_op = model_ir.operators[unary_idx]
+            if str(unary_op.op_type) not in unary_ops:
+                continue
+            if len(unary_op.inputs) != 1 or len(unary_op.outputs) != 1:
+                continue
+            if str(unary_op.inputs[0]) != pre_output_name:
+                continue
+
+            unary_output_name = str(unary_op.outputs[0])
+            if unary_output_name in model_outputs:
+                continue
+            output_users = [int(v) for v in consumers.get(unary_output_name, [])]
+            if len(output_users) == 0:
+                continue
+
+            post_indices: List[int] = []
+            post_output_names: List[str] = []
+            legacy_users: List[int] = []
+            valid_users = True
+            for user_idx in output_users:
+                user_op = model_ir.operators[int(user_idx)]
+                if (
+                    str(user_op.op_type) == "TRANSPOSE"
+                    and len(user_op.inputs) >= 2
+                    and len(user_op.outputs) == 1
+                    and str(user_op.inputs[0]) == unary_output_name
+                ):
+                    perm_post = _read_transpose_perm(model_ir, user_op)
+                    if perm_post is None or perm_post != perm_post_expected:
+                        valid_users = False
+                        break
+                    post_output_name = str(user_op.outputs[0])
+                    if post_output_name in model_outputs:
+                        valid_users = False
+                        break
+                    post_indices.append(int(user_idx))
+                    post_output_names.append(post_output_name)
+                else:
+                    legacy_users.append(int(user_idx))
+            if not valid_users or len(post_indices) == 0:
+                continue
+
+            representative_output_name = str(post_output_names[0])
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=unary_op,
+                new_inputs=[pre_input_name],
+            )
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=unary_op,
+                new_outputs=[representative_output_name],
+            )
+
+            for post_output_name in post_output_names[1:]:
+                _replace_tensor_inputs(model_ir, post_output_name, representative_output_name)
+
+            old_unary_tensor = model_ir.tensors.get(unary_output_name, None)
+            representative_tensor = model_ir.tensors.get(representative_output_name, None)
+            if old_unary_tensor is not None and representative_tensor is not None:
+                representative_tensor.dtype = str(old_unary_tensor.dtype)
+                representative_tensor.quantization = _clone_quantization(old_unary_tensor.quantization)
+
+            if len(legacy_users) > 0:
+                keep_post_idx = int(post_indices[0])
+                keep_post_op = model_ir.operators[keep_post_idx]
+                keep_perm_name = str(keep_post_op.inputs[1])
+                keep_perm_tensor = model_ir.tensors.get(keep_perm_name, None)
+                if keep_perm_tensor is not None:
+                    keep_perm_tensor.data = np.asarray(perm_pre, dtype=np.int32)
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=keep_post_op,
+                    new_inputs=[representative_output_name, keep_perm_name],
+                )
+                _set_operator_outputs(
+                    model_ir=model_ir,
+                    op=keep_post_op,
+                    new_outputs=[unary_output_name],
+                )
+                remove_post_indices = [int(v) for v in post_indices[1:]]
+            else:
+                remove_post_indices = [int(v) for v in post_indices]
+
+            remove_indices = sorted(list({int(pre_idx), *remove_post_indices}), reverse=True)
+            for remove_idx in remove_indices:
+                del model_ir.operators[int(remove_idx)]
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"rewritten_transpose_unary_fanout_inverse_post_bridges": int(rewritten)}
 
 
 def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(
