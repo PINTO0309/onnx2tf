@@ -21785,7 +21785,13 @@ def _repair_nchw_channel_shuffle_concat_gathers(model_ir: ModelIR) -> Dict[str, 
 
 
 def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]:
-    """Restore axis=1 for NCHW concat feeding an NHWC Conv adapter."""
+    """Restore axis=1 for NCHW concat feeding an NHWC Conv adapter.
+
+    Quantized Conv lowering can place PAD/CAST/SUB after the layout transpose
+    and QUANTIZE before it. Those operators preserve the relevant layout, so
+    trace through them instead of requiring CONCAT->TRANSPOSE->CONV to be
+    adjacent.
+    """
 
     repaired = 0
     producers = _build_tensor_producer_map(model_ir)
@@ -21799,17 +21805,34 @@ def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]
             continue
         data_input_index = 2 if conv_type == "TRANSPOSE_CONV" else 0
         filter_input_index = 1
-        transpose_output_name = str(conv_op.inputs[data_input_index])
-        transpose_idx = producers.get(transpose_output_name, None)
-        if transpose_idx is None:
-            continue
-        transpose_op = model_ir.operators[int(transpose_idx)]
-        if (
-            str(transpose_op.op_type) != "TRANSPOSE"
-            or len(transpose_op.inputs) < 2
-            or len(transpose_op.outputs) != 1
-            or _read_transpose_perm(model_ir, transpose_op) != [0, 2, 3, 1]
-        ):
+        conv_data_name = str(conv_op.inputs[data_input_index])
+        transpose_output_name = str(conv_data_name)
+        post_transpose_output_names: List[str] = []
+        transpose_op: Optional[OperatorIR] = None
+        while True:
+            transpose_idx = producers.get(transpose_output_name, None)
+            if transpose_idx is None:
+                break
+            candidate_op = model_ir.operators[int(transpose_idx)]
+            if (
+                str(candidate_op.op_type) == "TRANSPOSE"
+                and len(candidate_op.inputs) >= 2
+                and len(candidate_op.outputs) == 1
+                and _read_transpose_perm(model_ir, candidate_op)
+                == [0, 2, 3, 1]
+            ):
+                transpose_op = candidate_op
+                break
+            if (
+                str(candidate_op.op_type) not in {"PAD", "CAST", "SUB"}
+                or len(candidate_op.inputs) < 1
+                or len(candidate_op.outputs) != 1
+                or str(candidate_op.outputs[0]) != transpose_output_name
+            ):
+                break
+            post_transpose_output_names.append(transpose_output_name)
+            transpose_output_name = str(candidate_op.inputs[0])
+        if transpose_op is None:
             continue
         concat_output_name = str(transpose_op.inputs[0])
         shape_passthrough_output_names: List[str] = []
@@ -21817,7 +21840,8 @@ def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]
         while concat_idx is not None:
             candidate_op = model_ir.operators[int(concat_idx)]
             if (
-                str(candidate_op.op_type) not in {"RELU", "RELU6"}
+                str(candidate_op.op_type)
+                not in {"RELU", "RELU6", "QUANTIZE", "DEQUANTIZE", "CAST"}
                 or len(candidate_op.inputs) != 1
                 or len(candidate_op.outputs) != 1
                 or str(candidate_op.outputs[0]) != concat_output_name
@@ -21890,7 +21914,7 @@ def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]
         ]
         transpose_tensor.shape = list(nhwc_shape)
         transpose_tensor.shape_signature = list(nhwc_shape)
-        if conv_type == "CONV_2D":
+        if conv_type == "CONV_2D" and len(post_transpose_output_names) == 0:
             conv_output_tensor.shape = [
                 int(nhwc_shape[0]),
                 int(nhwc_shape[1]),

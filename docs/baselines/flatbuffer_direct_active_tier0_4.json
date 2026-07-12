@@ -1846,9 +1846,13 @@
     {
       "tier": 2,
       "model": "text_detection_en_ppocrv3_2023may_int8.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "d2419f5996661ce1089fb5a585c9afde6adca1ff6229bc795b4a2ab85ee06bb7"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "tflite_fail",
+      "tflite_max_abs": 0.7411765307188034,
+      "overwrite_input_shape": [
+        "x:1,3,480,640"
+      ],
+      "error_signature_sha256": "70b5455f472dbbc6067111117087dfd042b249969d88555128fe4aaf1ae9c64a"
     },
     {
       "tier": 2,

@@ -1,11 +1,31 @@
 import numpy as np
 from onnx import TensorProto, helper
 
+from onnx2tf.onnx2tf import _merge_runtime_shape_hints
 from onnx2tf.tflite_builder.accuracy_evaluator import (
     _adapt_input_layout_for_tflite_input,
     _apply_shape_hints_to_runtime_graph_inputs,
     _collect_onnx_input_specs,
 )
+
+
+def test_runtime_shape_hints_include_overwrite_input_shape() -> None:
+    merged = _merge_runtime_shape_hints(
+        shape_hints=[
+            "x:1,3,224,224",
+            "import/tokens:0:1,16",
+        ],
+        overwrite_input_shape=[
+            "x:1,3,480,640",
+            "mask:1,16",
+        ],
+    )
+
+    assert merged == [
+        "x:1,3,480,640",
+        "import/tokens:0:1,16",
+        "mask:1,16",
+    ]
 
 
 def _detail(shape_signature):

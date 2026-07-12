@@ -410,6 +410,73 @@ def test_repair_restores_nchw_concat_axis_through_relu_before_conv() -> None:
     assert model_ir.tensors["conv_out"].shape == [1, 7, 7, 192]
 
 
+def test_repair_restores_qlinear_concat_axis_through_quantized_conv_prefix() -> None:
+    model_ir = ModelIR("stale_qlinear_concat_conv_axis")
+    model_ir.inputs = ["a", "b", "c", "d"]
+    model_ir.outputs = ["conv_out"]
+    for name in model_ir.inputs:
+        _tensor(model_ir, name, [1, 24, 8, 8])
+    _tensor(model_ir, "concat", [1, 24, 8, 32])
+    _tensor(model_ir, "quantized", [1, 24, 8, 32])
+    _tensor(
+        model_ir,
+        "perm",
+        [4],
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    _tensor(model_ir, "transposed", [1, 8, 32, 24])
+    _tensor(model_ir, "padded", [1, 10, 34, 24])
+    _tensor(model_ir, "cast", [1, 10, 34, 24])
+    _tensor(model_ir, "zero", [1], data=np.asarray([0.0], dtype=np.float32))
+    _tensor(model_ir, "centered", [1, 10, 34, 24])
+    _tensor(
+        model_ir,
+        "pads",
+        [4, 2],
+        data=np.asarray([[0, 0], [1, 1], [1, 1], [0, 0]], dtype=np.int32),
+    )
+    _tensor(
+        model_ir,
+        "filter",
+        [24, 3, 3, 96],
+        data=np.ones((24, 3, 3, 96), dtype=np.float32),
+    )
+    _tensor(
+        model_ir,
+        "bias",
+        [24],
+        data=np.zeros((24,), dtype=np.float32),
+    )
+    _tensor(model_ir, "conv_out", [1, 8, 32, 24])
+    model_ir.operators = [
+        OperatorIR(
+            "CONCATENATION",
+            ["a", "b", "c", "d"],
+            ["concat"],
+            {"axis": 3, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR("QUANTIZE", ["concat"], ["quantized"]),
+        OperatorIR("TRANSPOSE", ["quantized", "perm"], ["transposed"]),
+        OperatorIR("PAD", ["transposed", "pads"], ["padded"]),
+        OperatorIR("CAST", ["padded"], ["cast"]),
+        OperatorIR("SUB", ["cast", "zero"], ["centered"]),
+        OperatorIR(
+            "CONV_2D",
+            ["centered", "filter", "bias"],
+            ["conv_out"],
+            {"padding": "VALID", "strideH": 1, "strideW": 1},
+        ),
+    ]
+
+    stats = _repair_nchw_concat_transpose_conv_axes(model_ir)
+
+    assert stats == {"repaired_nchw_concat_transpose_conv_axes": 1}
+    assert model_ir.operators[0].options["axis"] == 1
+    assert model_ir.tensors["concat"].shape == [1, 96, 8, 8]
+    assert model_ir.tensors["quantized"].shape == [1, 96, 8, 8]
+    assert model_ir.tensors["transposed"].shape == [1, 8, 8, 96]
+
+
 def test_repair_restores_nchw_concat_axis_before_transpose_conv() -> None:
     model_ir = ModelIR("stale_concat_transpose_conv_axis")
     model_ir.inputs = ["left", "right"]

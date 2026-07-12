@@ -140,6 +140,28 @@ def _set_dummy_inference_defaults(
     set_dummy_value_hints(value_hints)
 
 
+def _merge_runtime_shape_hints(
+    *,
+    shape_hints: Optional[List[str]],
+    overwrite_input_shape: Optional[List[str]],
+) -> Optional[List[str]]:
+    """Use explicit input-shape overrides for runtime validation as well."""
+
+    merged: List[str] = []
+    positions: Dict[str, int] = {}
+    for raw_hint in list(shape_hints or []) + list(overwrite_input_shape or []):
+        hint = str(raw_hint)
+        parts = hint.rsplit(':', 1)
+        input_name = str(parts[0]) if len(parts) == 2 else ''
+        if input_name != '' and input_name in positions:
+            merged[positions[input_name]] = hint
+            continue
+        if input_name != '':
+            positions[input_name] = len(merged)
+        merged.append(hint)
+    return merged if merged else None
+
+
 def _require_tensorflow_for_feature(feature: str) -> None:
     require_tensorflow(str(feature))
 
@@ -2075,8 +2097,12 @@ def convert(
     if verbosity is None:
         verbosity = 'debug'
     set_log_level('error' if non_verbose else verbosity)
-    _set_dummy_inference_defaults(
+    runtime_shape_hints = _merge_runtime_shape_hints(
         shape_hints=shape_hints,
+        overwrite_input_shape=overwrite_input_shape,
+    )
+    _set_dummy_inference_defaults(
+        shape_hints=runtime_shape_hints,
         value_hints=value_hints,
     )
 
@@ -2559,7 +2585,7 @@ def convert(
                 'num_samples': eval_num_samples_local,
                 'seed': 0,
                 'custom_input_op_name_np_data_path': custom_input_op_name_np_data_path,
-                'shape_hints': shape_hints,
+                'shape_hints': runtime_shape_hints,
                 'rtol': eval_rtol,
                 'atol': eval_atol,
                 'compare_mode': eval_compare_mode,
@@ -3955,8 +3981,8 @@ def convert(
                             numpy_file_path,
                         ]
                     )
-            if shape_hints is not None:
-                for shape_hint in shape_hints:
+            if runtime_shape_hints is not None:
+                for shape_hint in runtime_shape_hints:
                     command.extend(["--shape_hint", str(shape_hint)])
             if not bool(onnxruntime_output_memmap):
                 command.append('--disable_onnxruntime_output_memmap')
