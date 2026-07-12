@@ -397,6 +397,21 @@ selects the existing `--eval_with_onnx` path so the much heavier intermediate
 operator report is not generated for this model. Inference remains strictly
 single-process.
 
+`encoder.onnx` remains a missing-report model for a narrower, explicit reason.
+Unlike `new_encoder.onnx`, its 24 GridSample image tensors retain dynamic
+spatial dimensions (`unk__*`) derived from the `spatial_shapes` input. The
+built-in GridSample decomposition requires static batch, channel, and input
+spatial dimensions, so conversion correctly preserves functionality through
+the `ONNX_GRIDSAMPLE` custom-op fallback. The evaluation control builder now
+also handles this graph form: when no feature Split sizes exist, it derives a
+spatial pyramid from the known sequence length only if the non-degenerate
+factorization is unique. For sequence length `11097` and four levels this is
+`[[72,116],[36,58],[18,29],[9,15]]`; ambiguous totals remain untouched. This
+allows ONNX Runtime evaluation to proceed, after which explicit evaluation
+reports the expected unresolved custom op. Default `-cotof` continues to skip
+that unsupported runtime comparison and retains error signature
+`603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109`.
+
 `conv_tasnet.onnx` remains an active missing-report model with the normalized
 reason `invalid_onnx_scatterelements_rank_mismatch_4_6`. Its terminal
 `/decoder/ScatterElements` receives FLOAT data and updates shaped

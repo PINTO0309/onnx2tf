@@ -95,6 +95,52 @@ def test_builds_static_multiscale_attention_control_values() -> None:
     assert "values" not in overrides
 
 
+def test_deduplicates_equivalent_split_pyramid_candidates() -> None:
+    model = _attention_control_model()
+    duplicate = onnx.NodeProto()
+    duplicate.CopyFrom(model.graph.node[0])
+    duplicate.name = "duplicate_split"
+    duplicate.output[:] = ["duplicate0", "duplicate1", "duplicate2", "duplicate3"]
+    model.graph.node.append(duplicate)
+
+    overrides = build_attention_control_input_overrides(
+        onnx_graph=model,
+        input_specs=[
+            ("spatial_shapes", np.dtype(np.float32), (4, 2)),
+            ("values", np.dtype(np.float32), (2, 11097, 256)),
+        ],
+    )
+
+    np.testing.assert_array_equal(
+        overrides["spatial_shapes"],
+        np.asarray(
+            [[72, 116], [36, 58], [18, 29], [9, 15]],
+            dtype=np.float32,
+        ),
+    )
+
+
+def test_derives_spatial_shapes_from_unique_sequence_pyramid_total() -> None:
+    model = _attention_control_model()
+    del model.graph.node[0]
+
+    overrides = build_attention_control_input_overrides(
+        onnx_graph=model,
+        input_specs=[
+            ("spatial_shapes", np.dtype(np.float32), (4, 2)),
+            ("values", np.dtype(np.float32), (2, 11097, 256)),
+        ],
+    )
+
+    np.testing.assert_array_equal(
+        overrides["spatial_shapes"],
+        np.asarray(
+            [[72, 116], [36, 58], [18, 29], [9, 15]],
+            dtype=np.float32,
+        ),
+    )
+
+
 def test_does_not_guess_non_pyramidal_spatial_shapes() -> None:
     model = _attention_control_model()
     initializer = next(

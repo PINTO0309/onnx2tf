@@ -56,6 +56,51 @@ def _pyramid_spatial_shapes(split_sizes: Sequence[int]) -> np.ndarray | None:
     return np.asarray(candidates[0], dtype=np.int64)
 
 
+def _pyramid_spatial_shapes_from_total(
+    *,
+    sequence_length: int,
+    level_count: int,
+) -> np.ndarray | None:
+    total = int(sequence_length)
+    levels = int(level_count)
+    if total <= 0 or levels < 2:
+        return None
+
+    def _levels(height: int, width: int) -> list[tuple[int, int]]:
+        shapes: list[tuple[int, int]] = []
+        for _ in range(levels):
+            shapes.append((int(height), int(width)))
+            height = int((height + 1) // 2)
+            width = int((width + 1) // 2)
+        return shapes
+
+    # Require both final pyramid dimensions to remain greater than one. This
+    # rejects degenerate 1xN factorizations that are mathematically possible
+    # but do not describe a multi-scale image feature pyramid.
+    minimum_base_dimension = int(2 ** (levels - 1) + 1)
+    candidates: list[list[tuple[int, int]]] = []
+    for height in range(
+        minimum_base_dimension,
+        int(np.sqrt(total)) + 1,
+    ):
+        low = max(int(height), minimum_base_dimension)
+        high = int(total // height)
+        while low <= high:
+            width = int((low + high) // 2)
+            shapes = _levels(height, width)
+            candidate_total = int(sum(h * w for h, w in shapes))
+            if candidate_total < total:
+                low = int(width + 1)
+            elif candidate_total > total:
+                high = int(width - 1)
+            else:
+                candidates.append(shapes)
+                break
+    if len(candidates) != 1:
+        return None
+    return np.asarray(candidates[0], dtype=np.int64)
+
+
 def _spatial_shape_candidate(
     *,
     model: onnx.ModelProto,
@@ -81,9 +126,21 @@ def _spatial_shape_candidate(
         spatial_shapes = _pyramid_spatial_shapes(sizes)
         if spatial_shapes is not None:
             candidates.append(spatial_shapes)
-    if len(candidates) != 1:
+    if not candidates:
+        for sequence_length in sorted(known_lengths):
+            spatial_shapes = _pyramid_spatial_shapes_from_total(
+                sequence_length=int(sequence_length),
+                level_count=int(level_count),
+            )
+            if spatial_shapes is not None:
+                candidates.append(spatial_shapes)
+    unique_candidates = {
+        tuple(tuple(int(value) for value in row) for row in candidate.tolist()): candidate
+        for candidate in candidates
+    }
+    if len(unique_candidates) != 1:
         return None
-    return candidates[0]
+    return next(iter(unique_candidates.values()))
 
 
 def build_attention_control_input_overrides(
@@ -97,12 +154,15 @@ def build_attention_control_input_overrides(
         str(name): (np.dtype(dtype), tuple(int(value) for value in shape))
         for name, dtype, shape in input_specs
     }
-    sequence_lengths = {
-        int(dimension)
-        for _, shape in input_spec_map.values()
-        for dimension in shape
-        if int(dimension) > 1
-    }
+    sequence_lengths: set[int] = set()
+    for input_name, (_, shape) in input_spec_map.items():
+        canonical_name = _canonical_name(input_name)
+        if "spatialshape" in canonical_name or "validratio" in canonical_name:
+            continue
+        if len(shape) >= 3 and int(shape[-2]) > 1:
+            sequence_lengths.add(int(shape[-2]))
+        elif len(shape) == 2 and int(shape[-1]) > 1:
+            sequence_lengths.add(int(shape[-1]))
     consumers: Dict[str, list[onnx.NodeProto]] = {}
     for node in onnx_graph.graph.node:
         for input_name in node.input:
