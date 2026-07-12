@@ -1885,6 +1885,31 @@ differential index, add an exact transactional runner, and replace all eight
 raw production calls. Do not create a pull request; commit and push only at a
 coherent checkpoint.
 
+That indexed Transpose/Gather checkpoint is now complete. All eight production
+positions call `run_transpose_gather_axis_cleanup`, using stable ID
+`layout.transpose_gather_axis_nhwc` in `LAYOUT_PLAN`. Model-only
+Transpose+Gather preflight and an exact indexed pre/Gather/post guard precede
+the transaction. Gather input/output retargeting, axis mutation, shared
+pre-Transpose preservation, post-Transpose removal, and pruning use one
+differential index and `LayoutState`.
+
+Sequential verification completed with:
+
+- `7 passed` for indexed success/nonzero-`batchDims` guard, legacy strict/shared
+  behavior, ordered diagnostics, ownership, and irrelevant preflight;
+- an AST mutation audit showing zero raw production calls, exactly eight runner
+  calls, and no direct operator deletion/insertion or local graph-map rebuild;
+- Tier 1 `superpoint.onnx`, where all eight runtime positions were guard-skipped
+  with zero snapshots, followed by `-cotof` with every output compared,
+  `evaluation_pass=true`, and maximum absolute error
+  `1.6666017472743988e-06`;
+- `1114 passed, 5 deselected, 2 warnings in 145.76s` for the full direct suite.
+
+The generated SuperPoint output and metrics were deleted. Validation remained
+single-process and sequential, with no new dependency or TensorFlow import.
+Rerun the raw post-lowering inventory before selecting the next family. Do not
+create a pull request; commit and push only at a coherent checkpoint.
+
 The next mechanical split is complete. The 193-line fully static
 4D→2D Reshape/Concat/2D→4D Reshape rewrite moved unchanged into
 `passes/singleton_reshape_layout.py`. Its NHWC singleton-spatial, batch/channel,

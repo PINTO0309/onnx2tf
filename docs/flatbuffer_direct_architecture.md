@@ -467,7 +467,15 @@ NHWC→NCHW-Transpose→Gather→NCHW→NHWC-Transpose axis remapping. It remaps
 Gather axis into NHWC, preserves `batchDims=0`, retargets the final output, and
 removes the pre-Transpose only when it has no remaining users. Its 134-line
 implementation moved with an identical AST; all eight production positions
-still call the compatibility wrapper in their original order.
+retain their original order.
+
+Production now calls `run_transpose_gather_axis_cleanup`, registered as
+`layout.transpose_gather_axis_nhwc` in `LAYOUT_PLAN`, at all eight positions.
+Model-only Transpose+Gather preflight and an exact indexed pre/Gather/post guard
+avoid snapshots for unrelated, fan-out, or nonzero-`batchDims` graphs. Gather
+input/output retargeting, axis mutation, conditional pre-Transpose retention,
+post-Transpose removal, and pruning share one differential index and
+`LayoutState`; the legacy helper remains a compatibility wrapper.
 
 General consecutive Reshape passthrough cleanup is also owned by
 `passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,

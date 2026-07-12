@@ -97,6 +97,7 @@ from onnx2tf.tflite_builder.passes.layout_transpose import (
     _optimize_layout_transpose_chains as _optimize_layout_transpose_chains_pass,
     _optimize_transpose_gather_transpose_axis_remap_nhwc_chains as _optimize_transpose_gather_transpose_axis_remap_nhwc_chains_pass,
     run_layout_transpose_cleanup,
+    run_transpose_gather_axis_cleanup,
 )
 from onnx2tf.tflite_builder.passes.pad_layout import (
     _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains as _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains_pass,
@@ -59860,7 +59861,11 @@ def lower_onnx_to_ir(
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
         _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
         _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
-        _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir)
+        run_transpose_gather_axis_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
@@ -59993,7 +59998,11 @@ def lower_onnx_to_ir(
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
         _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
         _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
-        _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir)
+        run_transpose_gather_axis_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
@@ -60127,7 +60136,11 @@ def lower_onnx_to_ir(
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
         _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
         _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
-        _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir)
+        run_transpose_gather_axis_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
@@ -60308,7 +60321,11 @@ def lower_onnx_to_ir(
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
         _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
         _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
-        _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir)
+        run_transpose_gather_axis_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
@@ -60380,7 +60397,11 @@ def lower_onnx_to_ir(
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
         _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
         _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
-        _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir)
+        run_transpose_gather_axis_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_layout_transpose_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -60791,7 +60812,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(model_ir)
     _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
     _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
-    _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir)
+    run_transpose_gather_axis_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(model_ir)
     _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
     _optimize_gather_axis0_singleton_to_reshape_input_chains(model_ir)
@@ -61103,7 +61128,11 @@ def lower_onnx_to_ir(
         )
     _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains(model_ir)
     _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
-    _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir)
+    run_transpose_gather_axis_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_constant_input_fold_cleanup(
         model_ir,
         layout_state=session.layout_state,
@@ -61124,7 +61153,11 @@ def lower_onnx_to_ir(
     # NHWC->NCHW->NHWC MUL/ADD wrappers (repair_perm tensors).
     # Fold them again before final shape/topology reconciliation.
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
-    _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir)
+    run_transpose_gather_axis_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_constant_input_fold_cleanup(
         model_ir,
         layout_state=session.layout_state,

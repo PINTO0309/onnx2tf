@@ -5,8 +5,6 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _prune_unused_tensors,
     _read_transpose_perm,
@@ -439,6 +437,9 @@ def run_layout_transpose_cleanup(
 
 def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
 ) -> Dict[str, int]:
     """
     Remove NHWC<->NCHW transpose wrappers around GATHER by remapping axis.
@@ -454,13 +455,14 @@ def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(
     where a_nhwc = perm_nhwc_to_nchw[a_nchw].
     """
     optimized = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for gather_idx, gather_op in enumerate(model_ir.operators):
@@ -540,6 +542,7 @@ def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(
                 model_ir=model_ir,
                 op=gather_op,
                 new_inputs=gather_inputs,
+                graph_index=graph_index,
             )
             gather_options["axis"] = int(remapped_axis)
             gather_options["batchDims"] = 0
@@ -548,6 +551,7 @@ def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(
                 model_ir=model_ir,
                 op=gather_op,
                 new_outputs=[str(post_output_name)],
+                graph_index=graph_index,
             )
 
             remove_indices: List[int] = [int(post_idx)]
@@ -559,7 +563,7 @@ def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(
             if len(remaining_pre_users) == 0 and pre_out_name not in model_outputs:
                 remove_indices.append(int(pre_idx))
             for remove_idx in sorted(remove_indices, reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             optimized += 1
             changed = True
@@ -569,5 +573,90 @@ def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(
             break
 
     if optimized > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_gather_transpose_axis_remap_nhwc_chains": int(optimized)}
+
+
+def run_transpose_gather_axis_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run strict NHWC Transpose/Gather axis remapping."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"TRANSPOSE", "GATHER"}
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            required.discard(str(operator.op_type))
+            if len(required) == 0:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        for gather_op in candidate_model.operators:
+            if (
+                str(gather_op.op_type) != "GATHER"
+                or len(gather_op.inputs) < 2
+                or len(gather_op.outputs) != 1
+                or int(gather_op.options.get("batchDims", 0)) != 0
+            ):
+                continue
+            pre_op = pass_state.graph_index.producer(str(gather_op.inputs[0]))
+            if (
+                pre_op is None
+                or str(pre_op.op_type) != "TRANSPOSE"
+                or _read_transpose_perm(candidate_model, pre_op) != [0, 3, 1, 2]
+            ):
+                continue
+            users = pass_state.graph_index.consumer_indices(str(gather_op.outputs[0]))
+            if len(users) != 1:
+                continue
+            post_op = candidate_model.operators[int(users[0])]
+            if (
+                str(post_op.op_type) == "TRANSPOSE"
+                and _read_transpose_perm(candidate_model, post_op) == [0, 2, 3, 1]
+            ):
+                return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_transpose_gather_transpose_axis_remap_nhwc_chains",
+                    0,
+                )
+            ),
+        }
+
+    default_details = {
+        "optimized_transpose_gather_transpose_axis_remap_nhwc_chains": 0,
+    }
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.transpose_gather_axis_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details=default_details,
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
