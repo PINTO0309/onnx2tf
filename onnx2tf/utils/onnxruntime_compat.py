@@ -825,6 +825,12 @@ def prepare_onnx_graph_for_onnxruntime(
         if str(node.domain) not in {"", "ai.onnx"}:
             continue
         is_contrib = str(node.op_type) in _MICROSOFT_CONTRIB_OPS
+        if (
+            str(node.op_type) == "Gelu"
+            and default_opset is not None
+            and int(default_opset) >= 20
+        ):
+            is_contrib = False
         is_legacy_grid_sample = (
             str(node.op_type) == "GridSample"
             and default_opset is not None

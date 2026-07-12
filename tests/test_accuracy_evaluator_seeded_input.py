@@ -251,6 +251,34 @@ def test_prepare_onnx_graph_for_onnxruntime_upgrades_legacy_default_opset() -> N
     assert next(opset.version for opset in prepared.opset_import if opset.domain == "") == 7
 
 
+def test_prepare_onnx_graph_for_onnxruntime_preserves_standard_opset20_gelu() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4])
+    model = helper.make_model(
+        helper.make_graph(
+            [
+                helper.make_node(
+                    "Gelu",
+                    ["x"],
+                    ["y"],
+                    approximate="none",
+                )
+            ],
+            "standard_gelu",
+            [x],
+            [y],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 20)],
+    )
+
+    prepared = _prepare_onnx_graph_for_onnxruntime(model)
+
+    assert prepared.graph.node[0].domain == ""
+    assert [attr.name for attr in prepared.graph.node[0].attribute] == [
+        "approximate"
+    ]
+
+
 def test_collect_onnx_input_specs_uses_unit_time_axis_for_rank5_image_sequence() -> None:
     pixel_values = helper.make_tensor_value_info(
         "pixel_values",

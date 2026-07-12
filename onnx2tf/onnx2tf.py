@@ -369,9 +369,23 @@ def _supplement_microsoft_domain_for_selected_ops(
     if not target_ops:
         return {}
 
+    default_opset = max(
+        (
+            int(opset.version)
+            for opset in onnx_model.opset_import
+            if str(opset.domain) in {'', 'ai.onnx'}
+        ),
+        default=0,
+    )
+
     rewritten_counts: Dict[str, int] = {}
     for node in onnx_model.graph.node:
         if node.op_type not in target_ops:
+            continue
+        # Gelu became a standard ONNX operator in opset 20. Re-tagging a
+        # standard Gelu as com.microsoft::Gelu changes its schema and makes
+        # the standard `approximate` attribute invalid in ONNX Runtime.
+        if str(node.op_type) == 'Gelu' and int(default_opset) >= 20:
             continue
         # Only supplement nodes that are effectively default domain.
         if node.domain not in ['', 'ai.onnx']:
