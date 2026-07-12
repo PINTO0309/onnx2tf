@@ -1,6 +1,6 @@
 # flatbuffer_direct refactor handoff — 2026-07-12
 
-## Current checkpoint — `fb-refactor2` after `286a0e7`
+## Current checkpoint — `fb-refactor2` after `df2ca4f`
 
 The opset-aware Resize lowering and numerically stable Inverse lowering recover
 `onnx_dense_optimized.onnx` and its byte-identical `_org` counterpart without a
@@ -41,11 +41,19 @@ additional lowering rule. Both outputs were compared with no skip:
 `mean_abs=3.4909796139056033e-06`, `rmse=7.162934073986925e-05`, and cosine
 similarity `0.9994290428305682`.
 
-The managed Tier 0–4 profile now records 365 passes, 6
-`missing_tflite_report`, 23 `tflite_fail`, and 26 excluded historical timeouts.
-There are 29 active non-passes. The next accuracy failures without an explicit
-normalized cause are the two GridSample models named below; earlier failures in
-managed order now have documented quantization/runtime semantics.
+The managed Tier 0–4 profile now records 366 passes, 6
+`missing_tflite_report`, 22 `tflite_fail`, and 26 excluded historical timeouts.
+There are 28 active non-passes. The next failure without an explicit normalized
+cause is the Tier 4 model `LibreRFDETRn.onnx`; earlier failures in managed order
+now have documented quantization/runtime semantics.
+
+`rf-detr-nano.onnx` is promoted from its historical conversion failure to a
+normal accuracy pass without a model-specific workaround. Its sequential
+fixed-seed run compares both `pred_boxes` and `pred_logits` with no skip:
+`evaluation_pass=true`, `max_abs=0.000102996826171875`,
+`mean_abs=5.465599675581121e-06`, `rmse=1.015673578580791e-05`, and cosine
+similarity `0.9999999999986942`. The source graph has 770 nodes and the lowered
+graph has 722 nodes, keeping this recovery inside the Tier 3 active gate.
 
 `best.onnx` and `best_org.onnx` remain failures rather than receiving a relaxed
 tolerance. Both simplify to the same 516-node Q/DQ graph and produce identical
@@ -68,9 +76,7 @@ final postprocessor TopK amplify this discontinuity to final label maxima of
 `27.0` and `20.0`. Both baseline entries record
 `user_approved_topk_index_instability_from_near_tied_scores`; no model-name
 lowering rule, global tolerance relaxation, or forced index ordering was added.
-The next cause-unclassified
-models are `model_70_2023_0220_32_2_1_grid_sample_bilinear_sim.onnx` and
-`model_grid_sample.onnx`.
+The next cause-unclassified model is `LibreRFDETRn.onnx`.
 
 Those GridSample siblings remain normal threshold failures. Their upstream
 feature tensors agree to roughly `1e-4`, and the generated grid agrees except

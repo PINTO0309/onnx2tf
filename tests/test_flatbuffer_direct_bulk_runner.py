@@ -999,8 +999,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 6,
-        "pass": 365,
-        "tflite_fail": 23,
+        "pass": 366,
+        "tflite_fail": 22,
         "timeout": 26,
     }
     assert profile["model_options"]["silero_vad.onnx"] == {
@@ -1391,6 +1391,17 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "743900046d8e38c14684c26f9df0c0fcd60a95f014698a135d2162ef77b8ae05"
     )
     assert rtdetrv4_entry["tflite_max_abs"] == 79.0
+    rf_detr_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "rf-detr-nano.onnx"
+    )
+    assert rf_detr_entry == {
+        "tier": 3,
+        "model": "rf-detr-nano.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 0.000102996826171875,
+    }
     new_encoder_entry = next(
         entry
         for entry in profile_payload["models"]
