@@ -416,6 +416,18 @@ call `run_terminal_quantize_dequantize_cleanup` with stable ID
 have one owner while lowerer symbols remain compatibility wrappers. Runtime
 rounding equivalence is a mandatory integration gate.
 
+Quantized PReLU bridge and fusion ownership lives in
+`passes/quantized_prelu.py`. It contains the four repeatedly adjacent
+Transpose→Dequantize→PReLU→Quantize/Transpose and
+Dequantize→PReLU→Quantize/DepthwiseConv→Quantize rewrites. The implementations
+retain their linearity, inverse-permutation, public-output, per-tensor
+quantization, dtype, alpha remapping/quantization, and depthwise weight/bias
+guards. Canonical quantization and graph mutation helpers come from
+`core/model_ir_utils.py`; inverse-permutation validation comes from `ir.py`.
+The legacy lowerer symbols are thin compatibility wrappers. The later
+Dequantize→Reshape→Quantize rewrite remains separate because a TransposeConv
+fusion occurs between it and this four-pass block at every production site.
+
 Squeeze/Reshape identity cleanup also uses the differential graph index. It
 normalizes explicit or inferred squeeze axes, proves the squeezed and restored
 shapes, rewires only consumers of the round-trip output, then removes both

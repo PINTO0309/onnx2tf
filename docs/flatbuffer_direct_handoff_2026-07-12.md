@@ -1457,6 +1457,32 @@ used as evidence for this pass; the exact ModelIR fixtures and full conversion
 suite are the applicable gate. No temporary inference output was created, and
 no dependency or TensorFlow import was added.
 
+The next repeated unit was narrowed to the four contiguous quantized PReLU
+rewrites. `dequant_reshape_quantize` was intentionally excluded because every
+production sequence runs `dequant_transposeconv_quantize` before it; grouping
+across that boundary would change ordering. Four new characterization fixtures
+first fixed the two Transpose/DQ/PReLU bridge contracts, direct quantized PReLU
+fusion, and quantized PReLU+DepthwiseConv alpha/weight/bias behavior.
+
+The four implementation bodies (639 lines total) then moved unchanged to
+`passes/quantized_prelu.py`. Existing lowerer names remain thin compatibility
+wrappers. The module imports canonical per-tensor quantization, alpha/weight
+quantization, graph mutation, pruning, and transpose-reading helpers; inverse
+permutation validation reuses the existing IR implementation. No production
+call order or rewrite algorithm changed.
+
+Sequential verification completed with:
+
+- `4 passed` for the new semantic characterization fixtures;
+- `5 passed, 21 deselected` including the implementation-ownership
+  architecture contract;
+- `1088 passed, 5 deselected, 2 warnings in 139.26s` for the full direct suite.
+
+The next checkpoint should make all four implementations differential-index
+and LayoutState aware, then replace each of the three production quadruples
+with one ordered runner while retaining isolated include flags for compatibility
+tests.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work
