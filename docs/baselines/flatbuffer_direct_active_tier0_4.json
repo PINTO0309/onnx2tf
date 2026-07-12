@@ -1365,9 +1365,10 @@
     {
       "tier": 2,
       "model": "afhq_generator.v11.quant.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "5cffac4d76bbe85c93972a7b65928c8ff2d6e6dc6e955866d81c4960f895ce63"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "dynamic_quantization_rounding_amplified_by_decoder",
+      "error_signature_sha256": "516b1d24be24fbe12ff074541d5800538fb37be131282c52c85c6db8edf48e50",
+      "tflite_max_abs": 0.22717905044555664
     },
     {
       "tier": 2,

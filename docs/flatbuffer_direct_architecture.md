@@ -93,7 +93,7 @@ historical model records, and inference concurrency of one. Models classified
 as `timeout` in the current managed baseline remain recorded for provenance but
 are automatically excluded from subsequent runs. The active run therefore
 contains 394 models: 348 expected passes and 46 expected non-passes, excluding
-26 recorded timeouts. The active non-passes are 32 accuracy failures and 14
+26 recorded timeouts. The active non-passes are 33 accuracy failures and 13
 missing reports. Tier 5 models cannot be added because the profile loader
 rejects tiers above 4 and node ranges above 1,999.
 
@@ -221,6 +221,19 @@ The root-only Tier 2 gate at commit `ad1d508` contains 113 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier2_root_ad1d508.json`: 80
 passed, 4 conversion errors, 3 timeouts, 6 accuracy failures, and 20 missing
 reports. Median and maximum durations were 7.124 and 120.360 seconds.
+
+`afhq_generator.v11.quant.onnx` now executes and produces a comparison report.
+The layout planner records channel-last provenance through elementwise and
+decomposed DynamicQuantizeLinear regions, and a bounded quantized-layout pass
+removes stale ConvInteger NCHW-to-NHWC input bridges only when that provenance
+proves the input is already NHWC. This eliminates the double transpose and
+improves the fixed-seed maximum error from `2.7819780111312866` to
+`0.22717905044555664`, while cosine similarity improves from
+`0.7283386855698387` to `0.999042264918951`. The remaining error begins as
+small dynamic-quantization rounding differences and grows progressively
+through the decoder; no model-specific InstanceNormalization or GAN rewrite is
+applied. The model is therefore an active non-pass with normalized reason
+`dynamic_quantization_rounding_amplified_by_decoder`.
 
 `dynamics_rife_sim.onnx` remains an active non-pass with the normalized reason
 `invalid_onnx_concat_spatial_mismatch_64_128`. The source passes the structural

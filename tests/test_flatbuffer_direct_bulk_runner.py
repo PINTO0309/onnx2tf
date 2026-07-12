@@ -957,9 +957,9 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 14,
+        "missing_tflite_report": 13,
         "pass": 348,
-        "tflite_fail": 32,
+        "tflite_fail": 33,
         "timeout": 26,
     }
     assert profile["model_options"]["silero_vad.onnx"] == {
@@ -1035,6 +1035,21 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "f1495fb3c58cf0f48521281b92113fa31d9dd301329f552c0cd80dcbc1687c3a"
     )
     assert arcfaceresnet_entry["tflite_max_abs"] == 0.3681950643658638
+    afhq_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "afhq_generator.v11.quant.onnx"
+    )
+    assert afhq_entry == {
+        "tier": 2,
+        "model": "afhq_generator.v11.quant.onnx",
+        "baseline_classification": "tflite_fail",
+        "baseline_reason": "dynamic_quantization_rounding_amplified_by_decoder",
+        "error_signature_sha256": (
+            "516b1d24be24fbe12ff074541d5800538fb37be131282c52c85c6db8edf48e50"
+        ),
+        "tflite_max_abs": 0.22717905044555664,
+    }
     dynamics_rife_entry = next(
         entry
         for entry in profile_payload["models"]

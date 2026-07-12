@@ -77,6 +77,9 @@ from onnx2tf.tflite_builder.passes.precision import (
 from onnx2tf.tflite_builder.passes.pad_layout import (
     repair_channel_last_inputs_for_channel_first_pad,
 )
+from onnx2tf.tflite_builder.passes.quantized_layout import (
+    repair_channel_last_convinteger_input_transposes,
+)
 from onnx2tf.tflite_builder.passes.constant_fold import (
     _optimize_constant_binary_elementwise_chains,
     _optimize_constant_input_cast_chains,
@@ -63142,6 +63145,14 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
       - keep legacy external NCHW users through local NHWC->NCHW adapters
     """
     rewritten = 0
+    channel_last_hint_names = {
+        str(v)
+        for v in model_ir.metadata.get(
+            "assume_channel_last_layout_tensor_names",
+            [],
+        )
+        if str(v) != ""
+    }
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     mean_axes_remapped_marker = "__convpool_output_nhwc_axes_remapped__"
@@ -63273,6 +63284,13 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
             if not valid:
                 continue
 
+            channel_last_hint_names.add(str(pre_input_name))
+            boundary_name_set = set(str(v) for v in boundary_legacy_users)
+            for op_idx in sorted(list(subgraph_indices)):
+                out_name = str(model_ir.operators[int(op_idx)].outputs[0])
+                if out_name not in boundary_name_set:
+                    channel_last_hint_names.add(out_name)
+
             # Rewire subgraph from pre_output -> pre_input.
             for op_idx in sorted(list(subgraph_indices)):
                 op = model_ir.operators[int(op_idx)]
@@ -63323,6 +63341,7 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
                         outputs=[str(adapter_output_name)],
                     )
                 )
+                channel_last_hint_names.add(str(adapter_output_name))
                 for op_idx in sorted(list(subgraph_indices)):
                     op = model_ir.operators[int(op_idx)]
                     _set_operator_inputs(
@@ -63352,6 +63371,7 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
                     valid = False
                     break
                 boundary_nhwc_name = _unique_tensor_name(f"{boundary_name}__to_nhwc")
+                channel_last_hint_names.add(str(boundary_nhwc_name))
                 producer_op = model_ir.operators[int(producer_idx)]
                 _set_operator_outputs(
                     model_ir=model_ir,
@@ -63632,6 +63652,9 @@ def _optimize_convpool_output_transpose_nhwc_passthrough_chains(
 
             # Remove leading transpose.
             del model_ir.operators[int(pre_idx)]
+            model_ir.metadata["assume_channel_last_layout_tensor_names"] = sorted(
+                channel_last_hint_names
+            )
             rewritten += 1
             changed = True
             break
@@ -77730,6 +77753,18 @@ def lower_onnx_to_ir(
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
     _topologically_sort_operators(model_ir)
     infer_model_ir_logical_layouts(model_ir)
+    final_convinteger_layout_stats = repair_channel_last_convinteger_input_transposes(
+        model_ir
+    )
+    if int(
+        final_convinteger_layout_stats.get(
+            "repaired_channel_last_convinteger_input_transposes",
+            0,
+        )
+    ) > 0:
+        _reconcile_static_tensor_shapes(model_ir)
+        _topologically_sort_operators(model_ir)
+        infer_model_ir_logical_layouts(model_ir)
     final_instancenorm_repair_stats = _repair_decomposed_instance_normalization_layouts(model_ir)
     if int(final_instancenorm_repair_stats.get("repaired_decomposed_instance_normalization_layouts", 0)) > 0:
         _reconcile_static_tensor_shapes(model_ir)
