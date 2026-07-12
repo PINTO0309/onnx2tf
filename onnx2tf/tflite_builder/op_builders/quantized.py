@@ -508,10 +508,6 @@ def build_dynamic_quantize_linear_op(node: Any, ctx: Any) -> None:
         f"{y_name}_dql_qmax_f",
         np.asarray(255.0, dtype=compute_np_dtype),
     )
-    half_f_name = ctx.add_const_tensor(
-        f"{y_name}_dql_half_f",
-        np.asarray(0.5, dtype=compute_np_dtype),
-    )
     eps_f_name = ctx.add_const_tensor(
         f"{y_name}_dql_eps_f",
         np.asarray(1e-8, dtype=compute_np_dtype),
@@ -709,17 +705,16 @@ def build_dynamic_quantize_linear_op(node: Any, ctx: Any) -> None:
             options={},
         )
     )
-    zp_plus_half_name = ctx.add_intermediate_tensor(
-        f"{y_name}_dql_zp_plus_half",
+    zp_rounded_f_name = ctx.add_intermediate_tensor(
+        f"{y_name}_dql_zp_rounded_f32",
         dtype=compute_dtype,
         shape=scalar_shape,
     )
     ctx.add_operator(
         OperatorIR(
-            op_type="ADD",
-            inputs=[zp_clip_name, half_f_name],
-            outputs=[zp_plus_half_name],
-            options={"fusedActivationFunction": "NONE"},
+            op_type="ROUND",
+            inputs=[zp_clip_name],
+            outputs=[zp_rounded_f_name],
         )
     )
     zp_i32_name = ctx.add_intermediate_tensor(
@@ -730,27 +725,11 @@ def build_dynamic_quantize_linear_op(node: Any, ctx: Any) -> None:
     ctx.add_operator(
         OperatorIR(
             op_type="CAST",
-            inputs=[zp_plus_half_name],
+            inputs=[zp_rounded_f_name],
             outputs=[zp_i32_name],
             options={
                 "inDataType": compute_dtype,
                 "outDataType": "INT32",
-            },
-        )
-    )
-    zp_rounded_f_name = ctx.add_intermediate_tensor(
-        f"{y_name}_dql_zp_rounded_f32",
-        dtype=compute_dtype,
-        shape=scalar_shape,
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="CAST",
-            inputs=[zp_i32_name],
-            outputs=[zp_rounded_f_name],
-            options={
-                "inDataType": "INT32",
-                "outDataType": compute_dtype,
             },
         )
     )
@@ -780,6 +759,18 @@ def build_dynamic_quantize_linear_op(node: Any, ctx: Any) -> None:
             options={"fusedActivationFunction": "NONE"},
         )
     )
+    x_rounded_f_name = ctx.add_intermediate_tensor(
+        f"{y_name}_dql_x_rounded_f32",
+        dtype=compute_dtype,
+        shape=x_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ROUND",
+            inputs=[x_div_scale_name],
+            outputs=[x_rounded_f_name],
+        )
+    )
     x_plus_zp_name = ctx.add_intermediate_tensor(
         f"{y_name}_dql_x_plus_zp",
         dtype=compute_dtype,
@@ -788,7 +779,7 @@ def build_dynamic_quantize_linear_op(node: Any, ctx: Any) -> None:
     ctx.add_operator(
         OperatorIR(
             op_type="ADD",
-            inputs=[x_div_scale_name, zp_rounded_f_name],
+            inputs=[x_rounded_f_name, zp_rounded_f_name],
             outputs=[x_plus_zp_name],
             options={"fusedActivationFunction": "NONE"},
         )
@@ -819,19 +810,6 @@ def build_dynamic_quantize_linear_op(node: Any, ctx: Any) -> None:
             options={},
         )
     )
-    x_plus_half_name = ctx.add_intermediate_tensor(
-        f"{y_name}_dql_x_plus_half",
-        dtype=compute_dtype,
-        shape=x_shape,
-    )
-    ctx.add_operator(
-        OperatorIR(
-            op_type="ADD",
-            inputs=[x_clip_name, half_f_name],
-            outputs=[x_plus_half_name],
-            options={"fusedActivationFunction": "NONE"},
-        )
-    )
     x_i32_name = ctx.add_intermediate_tensor(
         f"{y_name}_dql_x_i32",
         dtype="INT32",
@@ -840,7 +818,7 @@ def build_dynamic_quantize_linear_op(node: Any, ctx: Any) -> None:
     ctx.add_operator(
         OperatorIR(
             op_type="CAST",
-            inputs=[x_plus_half_name],
+            inputs=[x_clip_name],
             outputs=[x_i32_name],
             options={
                 "inDataType": compute_dtype,

@@ -1263,11 +1263,13 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "tier": 2,
         "model": "afhq_generator.v11.quant.onnx",
         "baseline_classification": "tflite_fail",
-        "baseline_reason": "dynamic_quantization_rounding_amplified_by_decoder",
+        "baseline_reason": (
+            "instance_normalization_drift_amplified_by_dynamic_quantization_decoder"
+        ),
         "error_signature_sha256": (
             "516b1d24be24fbe12ff074541d5800538fb37be131282c52c85c6db8edf48e50"
         ),
-        "tflite_max_abs": 0.22717905044555664,
+        "tflite_max_abs": 0.21375656127929688,
     }
     dynamics_rife_entry = next(
         entry
@@ -1637,7 +1639,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert bertsquad_entry["error_signature_sha256"] == (
         "6ff24c95a66de18bc32f4c9ad1ab3d41d714213b5849f3fb3a156aa652896105"
     )
-    assert bertsquad_entry["tflite_max_abs"] == 1.8257164359092712
+    assert bertsquad_entry["tflite_max_abs"] == 2.001576066017151
     campp_vin_entry = next(
         entry
         for entry in profile_payload["models"]

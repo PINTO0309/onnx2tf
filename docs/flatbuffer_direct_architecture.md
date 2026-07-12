@@ -246,11 +246,17 @@ removes stale ConvInteger NCHW-to-NHWC input bridges only when that provenance
 proves the input is already NHWC. This eliminates the double transpose and
 improves the fixed-seed maximum error from `2.7819780111312866` to
 `0.22717905044555664`, while cosine similarity improves from
-`0.7283386855698387` to `0.999042264918951`. The remaining error begins as
-small dynamic-quantization rounding differences and grows progressively
-through the decoder; no model-specific InstanceNormalization or GAN rewrite is
-applied. The model is therefore an active non-pass with normalized reason
-`dynamic_quantization_rounding_amplified_by_decoder`.
+`0.7283386855698387` to `0.999042264918951`. DynamicQuantizeLinear now rounds
+`x / scale` to nearest-even before adding the integer zero point, matching ONNX
+Runtime even when adding a large zero point would erase a just-below-half
+fraction in FLOAT32. The model's input quantization consequently matches
+exactly, and the first remaining mismatch moves to a later quantizer after an
+InstanceNormalization difference of at most `4.76837158203125e-07`. Sparse
+one-quantum decisions are still amplified through the decoder; the final
+maximum error is `0.21375656127929688` with cosine similarity
+`0.999052579433886`. No model-specific normalization or GAN rewrite is applied.
+The normalized reason is now
+`instance_normalization_drift_amplified_by_dynamic_quantization_decoder`.
 
 `dynamics_rife_sim.onnx` remains an active non-pass with the normalized reason
 `invalid_onnx_concat_spatial_mismatch_64_128`. The source passes the structural
@@ -534,7 +540,9 @@ product. At the first encoder MatMulInteger, direct TFLite, an explicit INT32
 NumPy product, and ONNX `ReferenceEvaluator` agree exactly, while ONNX Runtime
 differs by as much as 11,772 regardless of graph optimization level. The
 converter retains portable exact semantics rather than emulating this
-host-specific saturation behavior.
+host-specific saturation behavior. After correcting DynamicQuantizeLinear's
+round-before-zero-point order, its fixed-seed final maximum error is
+`2.001576066017151`; the failure classification and signature remain unchanged.
 
 The root-only Tier 5 gate at commit `95aa61b` contains 34 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier5_root_95aa61b.json`: 6

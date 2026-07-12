@@ -14635,7 +14635,67 @@ def test_flatbuffer_direct_dynamic_quantize_linear_lowering() -> None:
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("REDUCE_MAX") == 2
+    assert op_types.count("ROUND") == 2
     assert op_types.count("CUSTOM") == 0
+
+
+@pytest.mark.parametrize(
+    ("sample_input", "expected_y"),
+    [
+        (
+            np.asarray(
+                [[0.0, 0.5, 1.5], [2.5, 3.5, 255.0]],
+                dtype=np.float32,
+            ),
+            np.asarray([[0, 0, 2], [2, 4, 255]], dtype=np.uint8),
+        ),
+        (
+            np.asarray(
+                [[-127.0, 128.0, 0.5], [1.5, -0.5, -1.5]],
+                dtype=np.float32,
+            ),
+            np.asarray([[0, 255, 127], [129, 127, 125]], dtype=np.uint8),
+        ),
+    ],
+    ids=["zero_zero_point", "odd_nonzero_zero_point"],
+)
+def test_flatbuffer_direct_dynamic_quantize_linear_uses_nearest_even_rounding(
+    sample_input: np.ndarray,
+    expected_y: np.ndarray,
+) -> None:
+    model = _make_dynamic_quantize_linear_model()
+    sample_inputs = {"x": sample_input}
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "dynamic_quantize_nearest_even", model)
+        tflite_path = _convert(model_path, tmpdir, "flatbuffer_direct")
+        onnx_outputs = _run_onnx_and_collect_outputs(
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            output_names=["y", "y_scale", "y_zero"],
+        )
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["y", "y_scale", "y_zero"],
+        )
+
+    np.testing.assert_array_equal(
+        onnx_outputs["y"],
+        expected_y,
+    )
+    np.testing.assert_array_equal(tflite_outputs["y"], onnx_outputs["y"])
+    np.testing.assert_allclose(
+        np.asarray(tflite_outputs["y_scale"]).reshape(-1),
+        np.asarray(onnx_outputs["y_scale"]).reshape(-1),
+        rtol=0.0,
+        atol=1e-7,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(tflite_outputs["y_zero"]).reshape(-1),
+        np.asarray(onnx_outputs["y_zero"]).reshape(-1),
+    )
 
 
 def test_flatbuffer_direct_shape_lowering() -> None:

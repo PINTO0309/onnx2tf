@@ -70,12 +70,34 @@ ONNX `ReferenceEvaluator` exactly. ONNX Runtime's CPUExecutionProvider differs
 from that same product by `max_abs=11772`, mean absolute error
 `326.5231577555339`, over 24,453 elements, identically at every graph
 optimization level from disabled through all. This divergence starts at the
-first encoder MatMulInteger even though the preceding DynamicQuantizeLinear
-differs at only two of 196,608 UINT8 elements by one. The final no-skip report
-has `max_abs=1.8257164359092712`, `rmse=1.2055165591872465`, and cosine
-similarity `0.9637255350014788`. Emulating a host-specific saturating CPU
-kernel would violate portable ONNX integer-matmul semantics, so the exact
-lowering is retained and the previous failure-signature hash remains fixed.
+first encoder MatMulInteger even though the then-current preceding
+DynamicQuantizeLinear differed at only two of 196,608 UINT8 elements by one.
+That pre-correction final report had `max_abs=1.8257164359092712`. Emulating a
+host-specific saturating CPU kernel would violate portable ONNX integer-matmul
+semantics, so the exact lowering is retained and the previous failure-signature
+hash remains fixed.
+
+DynamicQuantizeLinear now uses nearest-even `ROUND` for both zero-point and
+data quantization, and rounds `x / scale` before adding the integer zero point.
+The previous `+0.5` then CAST path was half-up, and adding a large zero point
+before rounding could erase a just-below-half fraction in FLOAT32. Synthetic
+tests cover exact half values with both zero and odd nonzero zero points. Of
+the active Tier 0–4 corpus, only `afhq_generator.v11.quant.onnx` and
+`bertsquad-12-int8.onnx` contain this op; the only other occurrence is the
+excluded Tier 4 timeout `vision_encoder_uint8.onnx`.
+
+For `afhq_generator.v11.quant.onnx`, input DynamicQuantizeLinear now agrees at
+every element and the first residual mismatch moves after an
+InstanceNormalization difference of `4.76837158203125e-07`. Later quantization
+boundaries still amplify sparse one-quantum differences through the decoder.
+The final no-skip result improves from baseline `max_abs=0.22717905044555664`
+to `0.21375656127929688`, with RMSE `0.03692099507463561` and cosine similarity
+`0.999052579433886`; it remains a normal threshold failure with reason
+`instance_normalization_drift_amplified_by_dynamic_quantization_decoder`.
+The corrected BERT path remains dominated by ONNX Runtime's saturating CPU
+MatMulInteger behavior; its no-skip fixed-seed maximum is now
+`2.001576066017151`, with RMSE `1.2972128029177183` and cosine similarity
+`0.9616353624777596`.
 
 `campp_vin.onnx` is promoted from an historical accuracy failure to a normal
 pass. Its concretized dynamic-time artifact fails during XNNPACK reshape
@@ -125,6 +147,10 @@ their previous failure-signature hashes.
 Validation completed in the core `uv` environment, with one pytest process and
 no parallel workers:
 
+- `963 passed, 5 deselected, 2 warnings` after the DynamicQuantizeLinear
+  nearest-even and round-before-zero-point correction;
+- `5 passed, 782 deselected` for the focused DynamicQuantizeLinear runtime and
+  managed-profile checks;
 - `961 passed, 5 deselected, 2 warnings` across the direct builder, op
   coverage, all `flatbuffer_direct` regression modules, and all accuracy
   evaluator modules after the delegate fallback change;

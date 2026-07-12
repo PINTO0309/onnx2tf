@@ -1354,9 +1354,9 @@
       "tier": 2,
       "model": "afhq_generator.v11.quant.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "dynamic_quantization_rounding_amplified_by_decoder",
+      "baseline_reason": "instance_normalization_drift_amplified_by_dynamic_quantization_decoder",
       "error_signature_sha256": "516b1d24be24fbe12ff074541d5800538fb37be131282c52c85c6db8edf48e50",
-      "tflite_max_abs": 0.22717905044555664
+      "tflite_max_abs": 0.21375656127929688
     },
     {
       "tier": 2,
@@ -2565,7 +2565,7 @@
       "baseline_classification": "tflite_fail",
       "baseline_reason": "onnxruntime_u8s8_matmulinteger_cpu_saturation",
       "error_signature_sha256": "6ff24c95a66de18bc32f4c9ad1ab3d41d714213b5849f3fb3a156aa652896105",
-      "tflite_max_abs": 1.8257164359092712
+      "tflite_max_abs": 2.001576066017151
     },
     {
       "tier": 4,
