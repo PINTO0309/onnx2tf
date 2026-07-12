@@ -5,7 +5,7 @@ import hashlib
 import json
 import math
 from dataclasses import asdict, dataclass, field, is_dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -213,7 +213,8 @@ class ModelIRPassState:
         assert self.layout_state is not None
         self.layout_state.sync_from_model_ir(target)
 
-    def create_ordered_manager(self) -> OrderedPassManager["ModelIRPassState"]:
+    @classmethod
+    def create_ordered_manager(cls) -> OrderedPassManager["ModelIRPassState"]:
         return OrderedPassManager[ModelIRPassState](
             fingerprint=lambda state: state.fingerprint(),
             validator=lambda state: state.validate(),
@@ -229,6 +230,7 @@ def run_model_ir_pass_group(
     layout_state: Optional[LayoutState] = None,
     default_details: Optional[Mapping[str, Any]] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    preflight: Optional[Callable[[ModelIR], bool]] = None,
 ) -> Tuple[Dict[str, Any], List[PassResult]]:
     """Run ordered ModelIR specs with shared state and normalized diagnostics."""
 
@@ -252,28 +254,41 @@ def run_model_ir_pass_group(
             }
         )
 
-    state = ModelIRPassState(model_ir, layout_state=layout_state)
-    manager = state.create_ordered_manager()
-    for spec in specs:
+    manager = ModelIRPassState.create_ordered_manager()
+    for spec in list(specs):
         manager.register(spec)
-    try:
-        results = manager.run(state)
-    except PassInvariantError as error:
-        _record_event(
-            {
-                "stage": "model_ir_pass",
-                "code": error.pass_id,
-                "message": "invariant validation failed; transaction rolled back",
-                "phase": error.phase,
-                "status": "failed",
-                "iterations": error.iterations,
-                "changed": False,
-                "stopped_by_cycle": False,
-                "skipped_by_precondition": False,
-                "problems": list(error.problems),
-            }
-        )
-        raise
+    if preflight is not None and not preflight(model_ir):
+        results = [
+            PassResult(
+                pass_id=spec.pass_id,
+                phase=spec.phase.name.lower(),
+                iterations=0,
+                changed=False,
+                stopped_by_cycle=False,
+                details={"skipped_by_precondition": True},
+            )
+            for spec in manager.ordered_specs()
+        ]
+    else:
+        state = ModelIRPassState(model_ir, layout_state=layout_state)
+        try:
+            results = manager.run(state)
+        except PassInvariantError as error:
+            _record_event(
+                {
+                    "stage": "model_ir_pass",
+                    "code": error.pass_id,
+                    "message": "invariant validation failed; transaction rolled back",
+                    "phase": error.phase,
+                    "status": "failed",
+                    "iterations": error.iterations,
+                    "changed": False,
+                    "stopped_by_cycle": False,
+                    "skipped_by_precondition": False,
+                    "problems": list(error.problems),
+                }
+            )
+            raise
     for result in results:
         skipped = bool(result.details.get("skipped_by_precondition", False))
         status = (

@@ -793,6 +793,33 @@ and visited operator count for no-candidate and one-candidate graphs. Use it to
 identify remaining avoidable full scans and deep copies; retain the existing
 host-level Tier timing gates for actual performance acceptance.
 
+All nine current ModelIR runner families now provide a broad model-only
+preflight. If false, `run_model_ir_pass_group` validates/registers and orders the
+specs, returns their normal `skipped_by_precondition` results, and records the
+same stable diagnostics without constructing ModelIRPassState, ModelIRGraphIndex,
+or LayoutState. A true preflight still proceeds to the existing precise
+state-level precondition and transactional validator.
+
+Deterministic instrumentation uses a 256-operator identity graph rather than
+wall-clock assertions. Across every production runner, the no-candidate path
+requires zero index refreshes, zero snapshots, and zero fingerprints. A single
+Maximum-zero candidate requires exactly one index build and one snapshot and no
+fingerprint, while a custom preflight proves exactly one 256-operator visit.
+
+Verification completed with:
+
+- `45 passed, 18 deselected` for preflight instrumentation, core contracts,
+  and every migrated cleanup family;
+- `1071 passed, 5 deselected, 2 warnings in 134.34s` for the full sequential
+  direct suite.
+
+The next efficiency unit should reduce repeated broad scans across adjacent
+runner calls. Inventory contiguous runner sequences and introduce a small
+per-session operator-type summary/version only if mutations can invalidate it
+differentially; do not cache stale topology. Alternatively, migrate an adjacent
+pair into one semantically cohesive group when there is no intervening rewrite,
+as done for Cast cleanup. Measure refresh/snapshot counts before and after.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

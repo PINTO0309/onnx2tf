@@ -132,16 +132,19 @@ def run_boundary_input_layout_cleanup(
 ) -> Dict[str, int]:
     """Run guarded boundary-adapter removal as an ordered layout pass."""
 
-    def _has_candidate(pass_state: ModelIRPassState) -> bool:
-        model_inputs = set(str(name) for name in pass_state.model_ir.inputs)
+    def _preflight(candidate_model: ModelIR) -> bool:
+        model_inputs = set(str(name) for name in candidate_model.inputs)
         return any(
             str(op.op_type) == "TRANSPOSE"
             and len(op.inputs) >= 2
             and len(op.outputs) == 1
             and str(op.inputs[0]) in model_inputs
             and str(op.outputs[0]).endswith("_onnx_ncx_internal")
-            for op in pass_state.model_ir.operators
+            for op in candidate_model.operators
         )
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        return _preflight(pass_state.model_ir)
 
     def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
         stats = _optimize_boundary_input_layout_transposes(
@@ -168,5 +171,6 @@ def run_boundary_input_layout_cleanup(
         layout_state=layout_state,
         default_details={"removed_boundary_input_layout_transpose": 0},
         diagnostics=diagnostics,
+        preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

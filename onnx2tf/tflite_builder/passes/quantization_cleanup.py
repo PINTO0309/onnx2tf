@@ -151,13 +151,16 @@ def run_terminal_quantize_dequantize_cleanup(
 ) -> Dict[str, int]:
     """Run exact-grid terminal Q/DQ cleanup transactionally."""
 
-    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+    def _preflight(candidate_model: ModelIR) -> bool:
         return any(
             str(op.op_type) == "QUANTIZE"
             and len(op.inputs) == 1
             and len(op.outputs) == 1
-            for op in pass_state.model_ir.operators
+            for op in candidate_model.operators
         )
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        return _preflight(pass_state.model_ir)
 
     def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
         stats = _optimize_terminal_quantize_dequantize(
@@ -186,5 +189,6 @@ def run_terminal_quantize_dequantize_cleanup(
         layout_state=layout_state,
         default_details={"removed_terminal_quantize_dequantize_pairs": 0},
         diagnostics=diagnostics,
+        preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

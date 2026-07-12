@@ -215,6 +215,23 @@ def run_redundant_cast_cleanup(
 ) -> Dict[str, int]:
     """Run widening-alias then narrowing-chain Cast cleanup in fixed order."""
 
+    def _preflight(candidate_model: ModelIR) -> bool:
+        relevant_pairs = {
+            ("INT32", "INT64"),
+            ("UINT32", "UINT64"),
+            ("INT64", "INT32"),
+            ("UINT64", "UINT32"),
+        }
+        return any(
+            str(op.op_type) == "CAST"
+            and (
+                str(op.options.get("inDataType", "")).upper(),
+                str(op.options.get("outDataType", "")).upper(),
+            )
+            in relevant_pairs
+            for op in candidate_model.operators
+        )
+
     def _has_widening_alias_candidate(pass_state: ModelIRPassState) -> bool:
         return any(
             str(op.op_type) == "CAST"
@@ -294,5 +311,6 @@ def run_redundant_cast_cleanup(
             "optimized_redundant_int64_to_int32_cast_chains": 0,
         },
         diagnostics=diagnostics,
+        preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

@@ -275,6 +275,15 @@ and performs no fingerprint, snapshot, callback, or validation work. The
 duplicate cleanup group uses cheap candidate scans so transactional deep copies
 are reserved for graphs that may actually change.
 
+Each current ModelIR runner also supplies a broader model-only `preflight` to
+`run_model_ir_pass_group`. A false preflight emits the same ordered zero-iteration
+skip results and diagnostics for every registered spec but does not construct
+ModelIRPassState, GraphIndex, or LayoutState. The state-level precondition remains
+the second, more precise semantic gate after a broad candidate is found. This
+keeps irrelevant recovery sweeps to one cheap operator-type/topology scan and
+eliminates repeated index builds and tensor-layout synchronization on large
+no-candidate graphs.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

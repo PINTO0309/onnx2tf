@@ -282,8 +282,8 @@ def run_mixed_attention_layout_cleanup(
 ) -> Dict[str, int]:
     """Run the mixed reduction/MirrorPad rewrite as an ordered layout pass."""
 
-    def _has_candidate(pass_state: ModelIRPassState) -> bool:
-        op_types = {str(op.op_type) for op in pass_state.model_ir.operators}
+    def _preflight(candidate_model: ModelIR) -> bool:
+        op_types = {str(op.op_type) for op in candidate_model.operators}
         return {
             "MEAN",
             "REDUCE_MAX",
@@ -292,6 +292,9 @@ def run_mixed_attention_layout_cleanup(
             "TRANSPOSE",
             "CONV_2D",
         }.issubset(op_types)
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        return _preflight(pass_state.model_ir)
 
     def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
         stats = _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(
@@ -325,6 +328,7 @@ def run_mixed_attention_layout_cleanup(
             "optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains": 0,
         },
         diagnostics=diagnostics,
+        preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
 

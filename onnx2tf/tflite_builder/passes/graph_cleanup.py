@@ -249,6 +249,18 @@ def run_duplicate_fanout_cleanup(
 ) -> Dict[str, int]:
     """Run duplicate layout-adapter cleanup as one ordered transaction group."""
 
+    def _preflight(candidate_model: ModelIR) -> bool:
+        reshape_count = 0
+        transpose_count = 0
+        for op in candidate_model.operators:
+            if str(op.op_type) == "RESHAPE":
+                reshape_count += 1
+            elif include_transpose and str(op.op_type) == "TRANSPOSE":
+                transpose_count += 1
+            if reshape_count >= 2 or transpose_count >= 2:
+                return True
+        return False
+
     def _run_transpose(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
         stats = _optimize_duplicate_transpose_fanout(
             pass_state.model_ir,
@@ -327,6 +339,7 @@ def run_duplicate_fanout_cleanup(
         layout_state=layout_state,
         default_details=default_details,
         diagnostics=diagnostics,
+        preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
 
@@ -438,6 +451,10 @@ def run_clamp_cleanup(
 ) -> Dict[str, int]:
     """Run scalar zero-to-one clamp canonicalization transactionally."""
 
+    def _preflight(candidate_model: ModelIR) -> bool:
+        op_types = {str(op.op_type) for op in candidate_model.operators}
+        return {"MAXIMUM", "MINIMUM"}.issubset(op_types)
+
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
         for op in pass_state.model_ir.operators:
             if str(op.op_type) != "MINIMUM" or len(op.inputs) != 2:
@@ -479,6 +496,7 @@ def run_clamp_cleanup(
         layout_state=layout_state,
         default_details={"rewritten_maximum_minimum_relu0to1_chains": 0},
         diagnostics=diagnostics,
+        preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
 
@@ -537,6 +555,9 @@ def run_maximum_zero_relu_cleanup(
 ) -> Dict[str, int]:
     """Run guarded Maximum(data, zero) canonicalization transactionally."""
 
+    def _preflight(candidate_model: ModelIR) -> bool:
+        return any(str(op.op_type) == "MAXIMUM" for op in candidate_model.operators)
+
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
         return any(
             str(op.op_type) == "MAXIMUM"
@@ -570,6 +591,7 @@ def run_maximum_zero_relu_cleanup(
         layout_state=layout_state,
         default_details={"rewritten_maximum_with_zero_input2_to_relu": 0},
         diagnostics=diagnostics,
+        preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
 
@@ -752,6 +774,16 @@ def run_consecutive_mul_constants_cleanup(
 ) -> Dict[str, int]:
     """Run guarded consecutive floating Mul folding transactionally."""
 
+    def _preflight(candidate_model: ModelIR) -> bool:
+        mul_count = 0
+        for op in candidate_model.operators:
+            if str(op.op_type) != "MUL":
+                continue
+            mul_count += 1
+            if mul_count >= 2:
+                return True
+        return False
+
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
         for op in pass_state.model_ir.operators:
             if str(op.op_type) != "MUL" or len(op.outputs) != 1:
@@ -791,6 +823,7 @@ def run_consecutive_mul_constants_cleanup(
         layout_state=layout_state,
         default_details={"optimized_fold_consecutive_mul_constants_chains": 0},
         diagnostics=diagnostics,
+        preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
 
@@ -937,6 +970,10 @@ def run_squeeze_reshape_identity_cleanup(
 ) -> Dict[str, int]:
     """Run guarded Squeeze/Reshape round-trip removal transactionally."""
 
+    def _preflight(candidate_model: ModelIR) -> bool:
+        op_types = {str(op.op_type) for op in candidate_model.operators}
+        return {"SQUEEZE", "RESHAPE"}.issubset(op_types)
+
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
         for op in pass_state.model_ir.operators:
             if str(op.op_type) != "SQUEEZE" or len(op.outputs) != 1:
@@ -974,5 +1011,6 @@ def run_squeeze_reshape_identity_cleanup(
         layout_state=layout_state,
         default_details={"optimized_squeeze_reshape_identity_chains": 0},
         diagnostics=diagnostics,
+        preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
