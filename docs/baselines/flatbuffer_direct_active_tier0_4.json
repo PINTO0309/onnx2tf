@@ -2143,9 +2143,9 @@
       "tier": 3,
       "model": "dequantize_linear.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
+      "baseline_reason": "onnxruntime_qdq_fusion_and_float_conv_decode_amplification",
       "error_signature_sha256": "aca9525029ba7a608c692da1d3944c7ba88e2c55d50b7b54a6bc35b237aa2a42",
-      "tflite_max_abs": 61.597930908203125
+      "tflite_max_abs": 81.25048828125
     },
     {
       "tier": 3,

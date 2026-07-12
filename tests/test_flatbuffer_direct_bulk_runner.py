@@ -1117,6 +1117,19 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "3d19e30742aaefcf03909adb23b0cfcbe24641b67bd5183d4c50f5998d8cb8ed"
     )
     assert yolov5s_entry["tflite_max_abs"] == 0.32965087890625
+    dequantize_linear_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "dequantize_linear.onnx"
+    )
+    assert dequantize_linear_entry["baseline_classification"] == "tflite_fail"
+    assert dequantize_linear_entry["baseline_reason"] == (
+        "onnxruntime_qdq_fusion_and_float_conv_decode_amplification"
+    )
+    assert dequantize_linear_entry["error_signature_sha256"] == (
+        "aca9525029ba7a608c692da1d3944c7ba88e2c55d50b7b54a6bc35b237aa2a42"
+    )
+    assert dequantize_linear_entry["tflite_max_abs"] == 81.25048828125
     version_rfb_entry = next(
         entry
         for entry in profile_payload["models"]

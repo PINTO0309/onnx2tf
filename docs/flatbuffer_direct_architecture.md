@@ -368,6 +368,24 @@ result is `docs/baselines/flatbuffer_direct_tier3_root_c838b42.json`: 22
 passed, 15 conversion errors, 17 timeouts, 1 accuracy failure, and 16 missing
 reports. Median and maximum durations were 17.248 and 120.662 seconds.
 
+`dequantize_linear.onnx` remains an active non-pass with the normalized reason
+`onnxruntime_qdq_fusion_and_float_conv_decode_amplification`. Its input
+QuantizeLinear uses an equivalent signed internal representation and the
+following DequantizeLinear is exact. The first and second float Conv boundaries
+differ by only `1.1444091796875e-5` and `5.340576171875e-5`, respectively, so
+the failure is not an input layout or per-channel scale-axis mismatch. Small
+float Conv and requantization differences accumulate through 63 Conv stages and
+are amplified by the terminal detector decode; the current managed-seed final
+maximum absolute error is `81.25048828125`. ONNX Runtime's Basic graph retains
+550 nodes including 63 Conv, 264 DequantizeLinear, and 110 QuantizeLinear,
+whereas Extended optimization reduces it to 146 nodes by forming 63
+QLinearConv, 16 QLinearConcat, and 6 QLinearAdd nodes. For the same manual input,
+the direct artifact differs from the Extended graph by maximum `58.7506103515625`
+and from the optimization-disabled graph by `22.74102783203125`; the two ONNX
+Runtime paths differ by `59.61541748046875`. Emulating one host optimizer's
+quantized fusion would therefore neither reproduce the unfused ONNX path nor
+meet the `1e-1` ceiling, so the portable explicit-Q/DQ lowering is retained.
+
 The root-only Tier 4 gate at commit `0a8ee88` contains 30 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier4_root_0a8ee88.json`: 12
 passed, 7 conversion errors, 4 timeouts, 2 accuracy failures, and 5 missing
