@@ -1853,7 +1853,7 @@
       "tier": 2,
       "model": "text_detection_en_ppocrv3_2023may_int8.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
+      "baseline_reason": "int8_requantization_outliers_amplified_by_transpose_conv",
       "tflite_max_abs": 0.7411765307188034,
       "overwrite_input_shape": [
         "x:1,3,480,640"

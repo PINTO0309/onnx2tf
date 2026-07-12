@@ -263,6 +263,22 @@ permuted branch. LiteRT allocation and inference then complete; maximum
 absolute error improved from `3.234160177409649` to
 `2.384185791015625e-7`, with all metric gates passing.
 
+`text_detection_en_ppocrv3_2023may_int8.onnx` remains active with the
+normalized reason
+`int8_requantization_outliers_amplified_by_transpose_conv`. Under its recorded
+`x:1,3,480,640` input contract, the first INT8-activation/INT8-weight
+QLinearConv differs from ONNX Runtime at only two of 614,400 elements by one
+quantum. The final output differs at 16 of 307,200 pixels, concentrated in one
+small spatial cluster, but the model's two final stride-2 ConvTranspose stages
+amplify six of those pixels above `1e-1` and produce maximum error
+`0.7411765307188034`. Mean absolute error remains
+`9.280535896323273e-6` and RMSE `0.0022202128069130776`. An isolated first-Conv
+comparison shows both LiteRT and ONNX Runtime one-quantum tie differences from
+ONNX ReferenceEvaluator. Using LiteRT's native fixed-point quantized Conv for
+all QLinearConv nodes reduced the maximum only to `0.7137255659326911` while
+worsening mean error and cosine similarity, so the explicit ONNX-style
+requantization remains the less degrading general implementation.
+
 `yolox_nano.onnx` remains an active Tier 2 non-pass with the normalized reason
 `float_conv_accumulation_amplified_by_exp_stride`. The normal sequential
 comparison satisfies the aggregate metric gate with mean absolute error

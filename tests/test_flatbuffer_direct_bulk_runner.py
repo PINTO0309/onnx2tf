@@ -1057,6 +1057,20 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "baseline_classification": "pass",
         "tflite_max_abs": 2.384185791015625e-07,
     }
+    ppocrv3_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "text_detection_en_ppocrv3_2023may_int8.onnx"
+    )
+    assert ppocrv3_entry["baseline_classification"] == "tflite_fail"
+    assert ppocrv3_entry["baseline_reason"] == (
+        "int8_requantization_outliers_amplified_by_transpose_conv"
+    )
+    assert ppocrv3_entry["error_signature_sha256"] == (
+        "70b5455f472dbbc6067111117087dfd042b249969d88555128fe4aaf1ae9c64a"
+    )
+    assert ppocrv3_entry["overwrite_input_shape"] == ["x:1,3,480,640"]
+    assert ppocrv3_entry["tflite_max_abs"] == 0.7411765307188034
     version_rfb_entry = next(
         entry
         for entry in profile_payload["models"]
