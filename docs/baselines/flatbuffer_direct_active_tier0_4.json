@@ -873,8 +873,8 @@
       "tier": 1,
       "model": "efficientnet-lite4-11-int8.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "dce65798acf0e7e25f223874b2d81b2b78289e84041bbcd84ec21dbcfc30f10b",
+      "baseline_reason": "onnxruntime_u8s8_saturating_pair_accumulation",
+      "error_signature_sha256": "da92ac2e2f0e69a6b68654c2152fadfadb079a20d73aaf8b33fc3a81af4afc15",
       "tflite_max_abs": 0.013500540517270565
     },
     {

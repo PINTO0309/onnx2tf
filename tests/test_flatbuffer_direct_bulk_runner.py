@@ -1010,6 +1010,18 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "overwrite_input_shape": ["inputs:1,300,300,3"],
         "keep_shape_absolutely_input_names": ["inputs"],
     }
+    efficientnet_lite4_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "efficientnet-lite4-11-int8.onnx"
+    )
+    assert efficientnet_lite4_entry["baseline_classification"] == "tflite_fail"
+    assert efficientnet_lite4_entry["baseline_reason"] == (
+        "onnxruntime_u8s8_saturating_pair_accumulation"
+    )
+    assert efficientnet_lite4_entry["error_signature_sha256"] == (
+        "da92ac2e2f0e69a6b68654c2152fadfadb079a20d73aaf8b33fc3a81af4afc15"
+    )
     assert profile["model_options"]["tiny_decoder_11.onnx"] == {
         "shape_hints": [
             "tokens:1,1",

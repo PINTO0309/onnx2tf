@@ -157,6 +157,23 @@ missing values heuristically would not provide a trustworthy ONNX reference,
 so the generated TFLite artifact is not promoted without the required
 accuracy comparison.
 
+`efficientnet-lite4-11-int8.onnx` remains an active Tier 1 accuracy non-pass
+with the normalized reason
+`onnxruntime_u8s8_saturating_pair_accumulation`. Its input Transpose and
+QuantizeLinear outputs match exactly, while the first QLinearConv is the first
+divergent tensor. The model combines UINT8 activations with INT8 weights. On
+the validation host, ONNX Runtime's CPU kernel performs saturating signed
+16-bit pair accumulation for this U8S8 path, whereas the direct TFLite
+compatibility lowering computes the mathematical integer convolution before
+requantization. A minimal 520-channel reproduction using activation `255` and
+weight `-127` yields mathematical accumulator output `129`, but ONNX Runtime
+returns `212`, consistent with clipping each two-product sum to `-32768` before
+the final accumulation. Emulating that host-specific SIMD behavior with a
+large expanded graph would degrade portability and pipeline efficiency, so no
+such approximation is emitted. The fixed-seed final output remains below the
+required `1e-1` maximum absolute-error ceiling, but it stays a non-pass because
+the stricter cosine-similarity gate is not satisfied.
+
 The root-only Tier 2 gate at commit `ad1d508` contains 113 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier2_root_ad1d508.json`: 80
 passed, 4 conversion errors, 3 timeouts, 6 accuracy failures, and 20 missing
