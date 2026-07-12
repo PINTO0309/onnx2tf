@@ -288,6 +288,13 @@ handling, rewiring, and pruning remain unchanged. The legacy lowerer symbols
 are thin compatibility wrappers, so the family module is the single
 implementation owner while public test imports continue to work.
 
+The same family also owns the fully static 4D→2D Reshape/Concat/2D→4D Reshape
+rewrite that keeps the concatenation directly in NHWC. Its rank, singleton
+spatial, batch/channel, axis, single-consumer, and public-output guards remain
+unchanged, as do its inserted side-input Reshape and metadata propagation. The
+193-line implementation moved mechanically with an identical AST; both legacy
+production positions still call the thin lowerer wrapper in the same order.
+
 Production uses one ordered pass group for that family, with stable IDs
 `layout.singleton_reshape_unary_passthrough` and
 `layout.consecutive_inverse_singleton_reshapes`. A model-only preflight scans

@@ -1713,6 +1713,27 @@ TensorFlow import. Rerun the raw post-lowering inventory before selecting the
 next family. Do not create a pull request; commit and push only at a coherent
 checkpoint.
 
+The next mechanical split is complete. The 193-line fully static
+4D→2D Reshape/Concat/2D→4D Reshape rewrite moved unchanged into
+`passes/singleton_reshape_layout.py`. Its NHWC singleton-spatial, batch/channel,
+Concat-axis, single-consumer, public-output, inserted side-Reshape, dtype, and
+quantization behavior is unchanged. The old and new function ASTs are
+identical, both production call sites remain in place through a thin
+compatibility wrapper, and the singleton-Reshape ownership contract includes
+the implementation.
+
+Sequential verification completed with:
+
+- `2 passed` for the existing positive rewrite and architecture ownership;
+- `1101 passed, 5 deselected, 2 warnings in 144.16s` for the full direct suite.
+
+No algorithm, call order, artifact, dependency, or TensorFlow boundary changed.
+The next checkpoint should make this rewrite differential-index and
+`LayoutState` aware, add a stable transactional runner with model-only and
+indexed topology guards, replace both raw production calls, and verify a root
+model sequentially. Do not create a pull request; commit and push only at a
+coherent checkpoint.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work
