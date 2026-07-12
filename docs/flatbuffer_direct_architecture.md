@@ -220,6 +220,18 @@ production and fallback positions call `run_consecutive_mul_constants_cleanup`
 with stable ID `canonicalize.fold_consecutive_mul_constants`; their relative
 order is unchanged and the legacy lowerer helper remains a wrapper.
 
+Redundant integer Cast cleanup is isolated in `passes/cast_cleanup.py`. The
+first ordered spec removes exclusive INT32/UINT32-to-64-bit alias casts while
+retargeting the producer output and all downstream Cast input metadata. The
+second collapses immediate INT64/UINT64-to-32-bit narrowing chains by retargeting
+the first Cast. `run_redundant_cast_cleanup` fixes this original order with
+priorities 10 and 20 and stable IDs `cleanup.cast_widening_alias` and
+`cleanup.cast_narrowing_chain`. Both specs share one differential index,
+LayoutState-aware pruning, transaction validation, and diagnostics. Public
+aliases/outputs, fan-out, non-Cast consumers, signed/unsigned dtype pairing,
+shape signatures, and quantization remain guarded. The two legacy lowerer
+symbols are wrappers, and both terminal sweep pairs are one-to-one group calls.
+
 Squeeze/Reshape identity cleanup also uses the differential graph index. It
 normalizes explicit or inferred squeeze axes, proves the squeezed and restored
 shapes, rewires only consumers of the round-trip output, then removes both

@@ -733,6 +733,35 @@ fan-out, public-output, and mixed non-Cast consumer guards. Only after these
 digests/structures are fixed should the two Cast implementations move from the
 lowerer and share indexed mutation helpers.
 
+Redundant integer Cast cleanup now lives in `passes/cast_cleanup.py`. Compact
+fixtures characterize signed and unsigned variants of both transformations:
+immediate 64→32 narrowing collapse and exclusive 32→64 alias removal. They also
+fix fan-out, public intermediate/output, mixed non-Cast consumer, shape,
+quantization, downstream `inDataType`, and no-op behavior.
+
+`run_redundant_cast_cleanup` registers widening-alias cleanup first at priority
+10 (`cleanup.cast_widening_alias`) and narrowing cleanup second at priority 20
+(`cleanup.cast_narrowing_chain`), exactly matching the former call order. The
+two specs share one ModelIRGraphIndex and LayoutState, use indexed input/output
+mutation and structural removal, and validate transactionally. Both terminal
+sweep pairs were replaced one-for-one by the group; the legacy lowerer symbols
+remain wrappers.
+
+Verification completed with:
+
+- `12 passed, 17 deselected` for the Cast family fixtures, one-index behavior,
+  implementation ownership, and all 25 ordered production call sites;
+- `1 passed, 758 deselected` for the existing Div/Shape/Cast integration model;
+- `1054 passed, 5 deselected, 2 warnings in 134.75s` for the full sequential
+  direct suite.
+
+The next safe unit is terminal Quantize/Dequantize cleanup, but it sits on an
+accuracy-sensitive rounding boundary. Before migrating it, add ModelIR fixtures
+for exact-grid positive collapse and no-op cases covering unequal scale/zero
+point, public quantized input, shared quantized output, nonterminal float output,
+and non-Dequantize producer. Retain the existing runtime rounding test as the
+mandatory integration gate.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

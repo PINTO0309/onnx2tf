@@ -122,6 +122,11 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     run_maximum_zero_relu_cleanup,
     run_squeeze_reshape_identity_cleanup,
 )
+from onnx2tf.tflite_builder.passes.cast_cleanup import (
+    _optimize_redundant_int32_to_int64_passthrough_cast_chains as _optimize_redundant_int32_to_int64_passthrough_cast_chains_pass,
+    _optimize_redundant_int64_to_int32_cast_chains as _optimize_redundant_int64_to_int32_cast_chains_pass,
+    run_redundant_cast_cleanup,
+)
 from onnx2tf.tflite_builder.passes.attention_layout import (
     _optimize_transpose_csp_attention_nhwc_chains as _optimize_transpose_csp_attention_nhwc_chains_pass,
     _optimize_transpose_conv_attention_nhwc_propagation_chains as _optimize_transpose_conv_attention_nhwc_propagation_chains_pass,
@@ -50158,175 +50163,16 @@ def _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir: Mode
     return {"rewritten_singleton_layout_reshape_maxpool_binary_cast_chains": int(rewritten)}
 
 
-def _optimize_redundant_int64_to_int32_cast_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Remove redundant CAST chains:
-      CAST(* -> INT64)  -> CAST(INT64  -> INT32)
-      CAST(* -> UINT64) -> CAST(UINT64 -> UINT32)
-
-    This pattern appears in integer control/index subgraphs where upstream
-    lowering temporarily widens to INT64 and the immediate consumer narrows
-    back to 32-bit. Keep the first CAST and retarget it to the second cast
-    output dtype, then remove the second CAST.
-    """
-    rewritten = 0
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for cast2_idx, cast2_op in enumerate(model_ir.operators):
-            if str(cast2_op.op_type) != "CAST" or len(cast2_op.inputs) != 1 or len(cast2_op.outputs) != 1:
-                continue
-
-            mid_name = str(cast2_op.inputs[0])
-            cast2_out_name = str(cast2_op.outputs[0])
-            if mid_name in model_outputs or cast2_out_name in model_outputs:
-                continue
-
-            cast2_in_dtype = str(cast2_op.options.get("inDataType", "")).upper()
-            cast2_out_dtype = str(cast2_op.options.get("outDataType", "")).upper()
-            target_dtype = ""
-            if cast2_in_dtype == "INT64" and cast2_out_dtype == "INT32":
-                target_dtype = "INT32"
-            elif cast2_in_dtype == "UINT64" and cast2_out_dtype == "UINT32":
-                target_dtype = "UINT32"
-            if target_dtype == "":
-                continue
-
-            cast1_idx = producers.get(mid_name, None)
-            if cast1_idx is None or int(cast1_idx) == int(cast2_idx):
-                continue
-            cast1_op = model_ir.operators[int(cast1_idx)]
-            if str(cast1_op.op_type) != "CAST" or len(cast1_op.inputs) != 1 or len(cast1_op.outputs) != 1:
-                continue
-            if str(cast1_op.outputs[0]) != mid_name:
-                continue
-
-            mid_users = [int(v) for v in consumers.get(mid_name, [])]
-            if len(mid_users) != 1 or int(mid_users[0]) != int(cast2_idx):
-                continue
-
-            cast1_out_dtype = str(cast1_op.options.get("outDataType", "")).upper()
-            if cast1_out_dtype != cast2_in_dtype:
-                continue
-
-            cast1_op.options["outDataType"] = target_dtype
-            mid_tensor = model_ir.tensors.get(mid_name, None)
-            if mid_tensor is not None:
-                mid_tensor.dtype = target_dtype
-                src_tensor = model_ir.tensors.get(str(cast1_op.inputs[0]), None)
-                if src_tensor is not None:
-                    mid_tensor.quantization = _clone_quantization(src_tensor.quantization)
-
-            _replace_tensor_inputs(
-                model_ir=model_ir,
-                src_name=cast2_out_name,
-                dst_name=mid_name,
-            )
-            del model_ir.operators[int(cast2_idx)]
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if rewritten > 0:
-        _prune_unused_tensors(model_ir)
-    return {"optimized_redundant_int64_to_int32_cast_chains": int(rewritten)}
-
-
-def _optimize_redundant_int32_to_int64_passthrough_cast_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Remove redundant widening aliases:
-      producer(INT32/UINT32) -> CAST(*32 -> *64 alias) -> CAST(*64 -> final)
-
-    Keep the public alias tensor name on the producer output, but preserve the
-    32-bit work dtype so downstream non-64-bit CAST consumers read the actual
-    runtime dtype. This avoids unnecessary INT64 tensors in shape/index unary
-    subgraphs such as Shape->Gather->Sign->Cast(float).
-    """
-    rewritten = 0
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for widen_idx, widen_op in enumerate(model_ir.operators):
-            if str(widen_op.op_type) != "CAST" or len(widen_op.inputs) != 1 or len(widen_op.outputs) != 1:
-                continue
-
-            work_name = str(widen_op.inputs[0])
-            alias_name = str(widen_op.outputs[0])
-            if alias_name in model_outputs:
-                continue
-
-            widen_in_dtype = str(widen_op.options.get("inDataType", "")).upper()
-            widen_out_dtype = str(widen_op.options.get("outDataType", "")).upper()
-            if (widen_in_dtype, widen_out_dtype) not in {
-                ("INT32", "INT64"),
-                ("UINT32", "UINT64"),
-            }:
-                continue
-
-            work_users = [int(v) for v in consumers.get(work_name, [])]
-            if len(work_users) != 1 or int(work_users[0]) != int(widen_idx):
-                continue
-
-            alias_users = [int(v) for v in consumers.get(alias_name, [])]
-            if len(alias_users) <= 0:
-                continue
-            if not all(str(model_ir.operators[int(user_idx)].op_type) == "CAST" for user_idx in alias_users):
-                continue
-
-            producer_idx = producers.get(work_name, None)
-            if producer_idx is None or int(producer_idx) == int(widen_idx):
-                continue
-            producer_op = model_ir.operators[int(producer_idx)]
-            if len(producer_op.outputs) != 1 or str(producer_op.outputs[0]) != work_name:
-                continue
-
-            work_tensor = model_ir.tensors.get(work_name, None)
-            alias_tensor = model_ir.tensors.get(alias_name, None)
-            if alias_tensor is None:
-                continue
-
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=producer_op,
-                new_outputs=[alias_name],
-            )
-            alias_tensor.dtype = widen_in_dtype
-            if work_tensor is not None:
-                alias_tensor.shape = [int(v) for v in list(work_tensor.shape)]
-                alias_tensor.shape_signature = (
-                    [int(v) for v in list(work_tensor.shape_signature)]
-                    if work_tensor.shape_signature is not None
-                    else [int(v) for v in list(work_tensor.shape)]
-                )
-                alias_tensor.quantization = _clone_quantization(work_tensor.quantization)
-
-            for alias_user_idx in alias_users:
-                alias_user = model_ir.operators[int(alias_user_idx)]
-                alias_user.options["inDataType"] = widen_in_dtype
-
-            del model_ir.operators[int(widen_idx)]
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if rewritten > 0:
-        _prune_unused_tensors(model_ir)
-    return {"optimized_redundant_int32_to_int64_passthrough_cast_chains": int(rewritten)}
-
-
+def _optimize_redundant_int64_to_int32_cast_chains(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    return _optimize_redundant_int64_to_int32_cast_chains_pass(model_ir)
+def _optimize_redundant_int32_to_int64_passthrough_cast_chains(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    return _optimize_redundant_int32_to_int64_passthrough_cast_chains_pass(
+        model_ir
+    )
 def _optimize_singleton_nms_maxpool_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
     """
     Collapse SuperPoint-like singleton-channel NMS MAX_POOL reshape ladders into NHWC.
@@ -66264,8 +66110,11 @@ def lower_onnx_to_ir(
     _optimize_constant_input_pad_chains(model_ir)
     _optimize_constant_input_pool_chains(model_ir)
     _optimize_constant_input_cast_chains(model_ir)
-    _optimize_redundant_int32_to_int64_passthrough_cast_chains(model_ir)
-    _optimize_redundant_int64_to_int32_cast_chains(model_ir)
+    run_redundant_cast_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _replace_expand_dims_and_squeeze_with_reshape(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     _advance_post_progress()
@@ -66280,8 +66129,11 @@ def lower_onnx_to_ir(
     _optimize_constant_input_pad_chains(model_ir)
     _optimize_constant_input_pool_chains(model_ir)
     _optimize_constant_input_cast_chains(model_ir)
-    _optimize_redundant_int32_to_int64_passthrough_cast_chains(model_ir)
-    _optimize_redundant_int64_to_int32_cast_chains(model_ir)
+    run_redundant_cast_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains(model_ir)
     # Very late terminal bridge/transpose rewrites above can still stale out
     # RESHAPE constant inputs. Re-resolve once immediately before final sort.
