@@ -327,6 +327,8 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         "_optimize_internal_transpose_channel_slice_nhwc_propagation_chains",
         "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
         "_optimize_transpose_channel_slice_dual_add_bridges_strict",
+        "_optimize_transpose_slice_muladd_conv_mergeadd_strict",
+        "_optimize_transpose_slice_muladd_mergeadd_posttranspose_strict",
         "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
     }
     pass_functions = _functions(channel_slice_path)

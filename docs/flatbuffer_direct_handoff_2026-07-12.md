@@ -1373,6 +1373,27 @@ single-process and sequential, with no dependency or TensorFlow import added.
 Rerun the AST call-frequency inventory before selecting the next complete raw
 family.
 
+The next inventory selected the three adjacent channel-slice rewrites repeated
+at the same three late-recovery positions: strict dual-Add,
+slice-MulAdd/Conv/merge-Add, and slice-MulAdd/merge-Add/post-Transpose. As the
+first mechanical checkpoint, the latter two implementation bodies (1,116
+lines total) moved unchanged from `lower_from_onnx2tf.py` to
+`passes/channel_slice_layout.py`. Their existing public/private lowerer names
+remain thin delegating wrappers, and the canonical producer-map utility is now
+imported by the owning module. No rewrite order or algorithm changed.
+
+Sequential verification completed with:
+
+- `6 passed, 755 deselected` for all existing strict slice-MulAdd semantic and
+  signature-regression fixtures;
+- the channel-slice ownership architecture fixture;
+- `1082 passed, 5 deselected, 2 warnings in 138.51s` for the full direct suite.
+
+The next checkpoint must migrate all three adjacent rewrites together to a
+shared ordered runner. First make each implementation differential-index and
+LayoutState aware, then add exact per-pattern preconditions; do not replace
+only their structural deletions.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

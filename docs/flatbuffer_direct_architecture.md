@@ -70,7 +70,12 @@ Channel-slice layout propagation and boundary StridedSlice/QDQ/Concat cleanup
 live together in `passes/channel_slice_layout.py`. The family owns the guarded
 boundary channel-slice rewrite, internal NHWC propagation, Mul/Add bridge
 rewrites, strict dual-Add bridges, and the StridedSlice/QDQ/Concat round-trip
-rewrite. Constant-vector reads/writes, operator input/output mutation,
+rewrite. The strict slice-MulAdd/Conv/merge-Add and
+slice-MulAdd/merge-Add/post-Transpose implementations are also owned by this
+module; their legacy lowerer symbols are thin compatibility wrappers. This
+places the three adjacent late channel-slice rewrites under one ownership
+boundary before their ordered indexed migration. Constant-vector reads/writes,
+operator input/output mutation,
 broadcast checks, metadata permutation, and lineage recording remain shared
 core utilities. Legacy function names delegate to the family module.
 
