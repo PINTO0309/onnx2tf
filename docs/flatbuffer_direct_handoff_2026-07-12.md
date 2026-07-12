@@ -1,5 +1,84 @@
 # flatbuffer_direct refactor handoff — 2026-07-12
 
+## Current checkpoint — `fb-refactor2` at `c3c5ff7`
+
+This section supersedes the older `fb-refactor` checkpoint retained below for
+historical context. The active implementation branch is `fb-refactor2`, and
+commit `c3c5ff7` recovers the managed
+`maskrcnn_resnet50_fpn.onnx` conversion without adding dependencies or using
+TensorFlow in the direct path.
+
+### Completed since the older checkpoint
+
+- Repaired the malformed TorchVision paste-masks Loop capture using a guarded
+  semantic pattern. The repair reconstructs `expand_boxes` from the padded and
+  source mask dimensions and is shared by direct lowering and ONNX Runtime
+  evaluation. Ambiguous patterns remain untouched.
+- Added zero-batch-safe floating-point Pad lowering. It temporarily supplies a
+  safe batch to LiteRT Pad and restores the true runtime output shape, including
+  batch zero, without changing non-empty results.
+- Replaced RoiAlign's per-ROI full feature-map duplication with a single NHWC
+  flatten and four masked neighbor gathers. This removes the Mask R-CNN path
+  that attempted to allocate roughly 25 GB for a 612-ROI feature level.
+- Preserved dynamic axes through output retargeting, singleton layout
+  transpose-to-reshape conversion, late reshape recovery, ConvTranspose
+  intermediates, and consecutive dynamic-batch layout reshapes.
+- Merged explicit control-flow-body metadata into Loop lowering and recovered
+  missing Gather ranks from ONNX semantics. In particular, rank-1 data gathered
+  by a scalar index remains a logical scalar before Unsqueeze.
+- Split the new control, Pad, and RoiAlign helpers into focused modules well
+  below the 2,000-line source limit.
+- Promoted the managed Tier 0–4 profile from 351 to 352 expected passes. The
+  active profile now contains 352 passes, 9 `missing_tflite_report` records,
+  33 `tflite_fail` records, and 26 excluded historical timeouts.
+
+### Verification at this checkpoint
+
+- Final sequential Mask R-CNN run:
+  - classification: `pass`;
+  - duration: `17.98s`;
+  - compared outputs: 4 of 4;
+  - skipped outputs: 0;
+  - `evaluation_pass=true`;
+  - `max_abs=0.0`.
+- Main affected suite: `868 passed, 5 deselected, 2 warnings in 88.50s`.
+  The five deselections are the previously documented optional TensorFlow and
+  incompatible external Python 3.10 Torch environment tests. The warnings are
+  the existing expected float16 overflow warnings.
+- Additional focused run after repairing the dynamic reshape interaction:
+  `6 passed, 751 deselected`.
+- `git diff --check`, undefined-name checks, import checks for the new modules,
+  Python compilation, and managed baseline JSON parsing all passed.
+- Every inference run used the `uv` environment and one active process at a
+  time. No ProcessPool or parallel pytest worker was used.
+
+### Remaining work after `c3c5ff7`
+
+- Continue improving the remaining 42 active Tier 0–4 non-passes (9 missing
+  reports and 33 accuracy failures), one model at a time in tier order.
+- Run the complete sequential Tier 0–4 corpus before the final audit; the
+  focused Mask R-CNN run and affected suites do not replace that corpus gate.
+- Complete the original artifact-matrix, optional TensorFlow boundary,
+  PyTorch-family exporter, performance/RSS, public-contract, and
+  requirement-by-requirement audits.
+- Tier 5 remains intentionally excluded until the Tier 0–4 core contract is
+  stable.
+
+### First action on the next resume
+
+1. Confirm `fb-refactor2` is clean and synchronized with
+   `origin/fb-refactor2`.
+2. Select the next `missing_tflite_report` entry from
+   `docs/baselines/flatbuffer_direct_active_tier0_4.json`, preserving tier and
+   model order.
+3. Reproduce it with a one-model temporary regression profile,
+   `ONNX2TF_EVAL_IN_PROCESS=1`, fixed seed, and inference concurrency one.
+4. Fix only a general semantic boundary with a synthetic unit test, then rerun
+   the model and the affected suite before promoting its baseline.
+
+No pull request should be created. Future checkpoints end at commit and push to
+`fb-refactor2`.
+
 This is the checkpoint for pausing work on `fb-refactor`. The worktree was
 clean at the start of this handoff, and all implementation changes described
 below were already pushed to `origin/fb-refactor` as commit `5944292`.
