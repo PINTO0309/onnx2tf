@@ -1071,6 +1071,19 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     )
     assert ppocrv3_entry["overwrite_input_shape"] == ["x:1,3,480,640"]
     assert ppocrv3_entry["tflite_max_abs"] == 0.7411765307188034
+    yolov5s_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "yolov5s.onnx"
+    )
+    assert yolov5s_entry["baseline_classification"] == "tflite_fail"
+    assert yolov5s_entry["baseline_reason"] == (
+        "float16_decode_rounding_boundary"
+    )
+    assert yolov5s_entry["error_signature_sha256"] == (
+        "3d19e30742aaefcf03909adb23b0cfcbe24641b67bd5183d4c50f5998d8cb8ed"
+    )
+    assert yolov5s_entry["tflite_max_abs"] == 0.32965087890625
     version_rfb_entry = next(
         entry
         for entry in profile_payload["models"]

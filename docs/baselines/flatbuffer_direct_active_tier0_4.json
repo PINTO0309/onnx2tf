@@ -1953,7 +1953,7 @@
       "tier": 2,
       "model": "yolov5s.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
+      "baseline_reason": "float16_decode_rounding_boundary",
       "error_signature_sha256": "3d19e30742aaefcf03909adb23b0cfcbe24641b67bd5183d4c50f5998d8cb8ed",
       "tflite_max_abs": 0.32965087890625
     },

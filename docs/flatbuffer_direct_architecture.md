@@ -279,6 +279,23 @@ all QLinearConv nodes reduced the maximum only to `0.7137255659326911` while
 worsening mean error and cosine similarity, so the explicit ONNX-style
 requantization remains the less degrading general implementation.
 
+`yolov5s.onnx` remains active with the normalized reason
+`float16_decode_rounding_boundary`. Its public input, intermediate graph, and
+decoded `[1,25200,85]` output use FLOAT16 in ONNX, while the compatibility
+float32 TFLite artifact intentionally exposes FLOAT32 inputs and outputs. The
+confidence and class fields remain close, but the decoded coordinate fields
+combine small convolution differences with large coordinate magnitudes. The
+fixed-seed comparison has maximum absolute error `0.32965087890625`, mean
+absolute error `0.0015324083874539186`, RMSE `0.012606690502504028`, and cosine
+similarity `0.9999999759961475`. Adding only a FLOAT16 round-trip at the public
+output reduced mean error to `6.284908615017916e-5` but quantized the remaining
+outliers to an adjacent half-precision value, increasing maximum error to
+`0.5`. Reproducing FLOAT16 storage after every node increased maximum error to
+`1.5` because LiteRT and ONNX Runtime convolution accumulation differences
+then crossed additional half-precision boundaries. Both experiments were
+rejected: they cannot satisfy the independent `1e-1` ceiling and would impose
+extra CAST operators on every FLOAT16 model.
+
 `yolox_nano.onnx` remains an active Tier 2 non-pass with the normalized reason
 `float_conv_accumulation_amplified_by_exp_stride`. The normal sequential
 comparison satisfies the aggregate metric gate with mean absolute error
