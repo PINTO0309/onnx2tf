@@ -1834,6 +1834,35 @@ Transpose preflight and indexed candidate detection, and replace all thirteen
 raw production calls. Do not create a pull request; commit and push only at a
 coherent checkpoint.
 
+That indexed central layout-Transpose checkpoint is now complete. All thirteen
+production positions call `run_layout_transpose_cleanup`, using stable ID
+`layout.transpose_chain_cleanup` in `LAYOUT_PLAN`. Model-only Transpose
+preflight and an indexed identity-or-consecutive guard precede the transaction.
+Identity removal, strict inverse-pair removal, inverse fan-out bypass, and
+non-inverse composition use one differential index for edge mutation and
+structural removal, with `LayoutState`-aware pruning. The runner explicitly
+excludes the `iterations` diagnostic from its changed decision.
+
+Sequential verification completed with:
+
+- `9 passed` for identity, strict inverse, non-inverse composition, isolated
+  non-identity guard, existing fan-out/output protection, ordered diagnostics,
+  ownership, and irrelevant preflight;
+- an AST mutation audit showing zero raw production calls, exactly thirteen
+  runner calls, and no direct operator deletion or local consumer-map rebuild;
+- Tier 2 OSNet with all thirteen events guard-skipped and zero snapshots, plus
+  `-cotof` maximum absolute error `2.193450927734375e-05`;
+- Tier 1 `superpoint.onnx`, where thirteen positions produced three changed and
+  ten guard-skipped events with exactly three snapshots, followed by `-cotof`
+  with every output compared, `evaluation_pass=true`, and maximum absolute
+  error `1.6666017472743988e-06`;
+- `1112 passed, 5 deselected, 2 warnings in 148.20s` for the full direct suite.
+
+The generated OSNet/SuperPoint outputs and metrics were deleted. Validation
+remained single-process and sequential, with no new dependency or TensorFlow
+import. Rerun the raw post-lowering inventory before selecting the next family.
+Do not create a pull request; commit and push only at a coherent checkpoint.
+
 The next mechanical split is complete. The 193-line fully static
 4D→2D Reshape/Concat/2D→4D Reshape rewrite moved unchanged into
 `passes/singleton_reshape_layout.py`. Its NHWC singleton-spatial, batch/channel,

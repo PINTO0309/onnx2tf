@@ -64,6 +64,9 @@ from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     run_hard_activation_passthrough_cleanup,
     run_input_unary_passthrough_cleanup,
 )
+from onnx2tf.tflite_builder.passes.layout_transpose import (
+    run_layout_transpose_cleanup,
+)
 
 
 def _identity_chain(operator_count: int) -> ModelIR:
@@ -185,9 +188,10 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_flatten_concat_reshape_cleanup(model_ir, diagnostics=diagnostics)
     run_singleton_spatial_reshape_cleanup(model_ir, diagnostics=diagnostics)
     run_singleton_channel_transpose_cleanup(model_ir, diagnostics=diagnostics)
+    run_layout_transpose_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 51
+    assert len(diagnostics) == 52
     assert all(event["status"] == "skipped" for event in diagnostics)
     assert all(
         event["metrics"]

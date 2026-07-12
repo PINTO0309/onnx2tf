@@ -95,6 +95,7 @@ from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
     _is_inverse_perm,
     _optimize_layout_transpose_chains as _optimize_layout_transpose_chains_pass,
+    run_layout_transpose_cleanup,
 )
 from onnx2tf.tflite_builder.passes.pad_layout import (
     _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains as _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains_pass,
@@ -59951,7 +59952,11 @@ def lower_onnx_to_ir(
         # removes redundant NHWC/NCHW adapters in multi-branch heads.
         enable_duplicate_transpose_fanout_optimizations = not has_qdq_ops
 
-        _optimize_layout_transpose_chains(model_ir)
+        run_layout_transpose_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_quant_dequant_bridges(model_ir)
         run_boundary_input_batchmatmul_cleanup(
             model_ir,
@@ -60348,7 +60353,11 @@ def lower_onnx_to_ir(
         _optimize_dequant_softmax_quantize_chains(model_ir)
         _optimize_dequant_logistic_quantize_chains(model_ir)
         _canonicalize_softmax_transpose_chains(model_ir)
-        _optimize_layout_transpose_chains(model_ir)
+        run_layout_transpose_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir)
         _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir)
         _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir)
@@ -60503,7 +60512,11 @@ def lower_onnx_to_ir(
         _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
         _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
         _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir)
-        _optimize_layout_transpose_chains(model_ir)
+        run_layout_transpose_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir)
         _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir)
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
@@ -60647,7 +60660,11 @@ def lower_onnx_to_ir(
     _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
     _optimize_transpose_pre_add_nhwc_chains(model_ir)
-    _optimize_layout_transpose_chains(model_ir)
+    run_layout_transpose_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(model_ir)
     _optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir)
     _optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)
@@ -60676,7 +60693,11 @@ def lower_onnx_to_ir(
     )
     # Final transpose-only sweep after boundary rewrites. This removes
     # inverse/identity pairs introduced late by localized layout adapters.
-    _optimize_layout_transpose_chains(model_ir)
+    run_layout_transpose_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_gather_transpose_nhwc_channel_chains(model_ir)
     if optimize_layout_transpose_chains:
         # Boundary/layout recovery can still recreate NCHW wrappers around MEAN.
@@ -60700,7 +60721,11 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
-        _optimize_layout_transpose_chains(model_ir)
+        run_layout_transpose_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_singleton_channel_transpose_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -60886,7 +60911,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains(model_ir)
     _optimize_transpose_layernorm_stats_nhwc_propagation_chains(model_ir)
     _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains(model_ir)
-    _optimize_layout_transpose_chains(model_ir)
+    run_layout_transpose_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     if optimize_layout_transpose_chains:
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
     _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(model_ir)
@@ -60948,7 +60977,11 @@ def lower_onnx_to_ir(
     _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
     _optimize_transpose_pre_add_nhwc_chains(model_ir)
-    _optimize_layout_transpose_chains(model_ir)
+    run_layout_transpose_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_slice_prepost_nhwc_passthrough_chains(model_ir)
     # Keep pre-concat NHWC relayout at terminal stage as late strict rewrites
     # can recreate CONCAT(axis=1)+post-transpose wrappers.
@@ -61049,7 +61082,11 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     if optimize_layout_transpose_chains:
-        _optimize_layout_transpose_chains(model_ir)
+        run_layout_transpose_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     _realign_dynamic_boundary_shape_signature_map(model_ir)
@@ -61096,7 +61133,11 @@ def lower_onnx_to_ir(
         # bridges on legacy branches. Fold them again in this final stage.
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         if optimize_layout_transpose_chains:
-            _optimize_layout_transpose_chains(model_ir)
+            run_layout_transpose_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+            )
         _reconcile_static_tensor_shapes(model_ir)
     # Keep this at absolute end of optimization pipeline: several late
     # shape/layout repair passes can recreate the exact tail pattern.
@@ -61149,7 +61190,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_concat_unary_fanout_conv_nhwc_chains(model_ir)
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     if optimize_layout_transpose_chains:
-        _optimize_layout_transpose_chains(model_ir)
+        run_layout_transpose_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     # Keep QKV bridge reductions at the terminal stage: some late strict
     # transpose/add/slice rewrites above can recreate this exact motif.
     run_qkv_attention_bridge_cleanup(
@@ -61172,13 +61217,21 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     if optimize_layout_transpose_chains:
-        _optimize_layout_transpose_chains(model_ir)
+        run_layout_transpose_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     # Absolute-end cleanup: late bridge rewrites can recreate strict
     # pre/post CONCAT transpose wrappers and SHAPE-extract transposes.
     _optimize_transpose_pre_concat_nhwc_chains(model_ir)
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     if optimize_layout_transpose_chains:
-        _optimize_layout_transpose_chains(model_ir)
+        run_layout_transpose_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains(model_ir)
     _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
     _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir)

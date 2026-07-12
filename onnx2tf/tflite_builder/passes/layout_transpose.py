@@ -1,16 +1,23 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
     _prune_unused_tensors,
     _read_transpose_perm,
     _replace_tensor_inputs,
     _set_operator_inputs,
 )
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 def _is_identity_perm(perm: List[int]) -> bool:
     return perm == [int(i) for i in range(len(perm))]
@@ -28,7 +35,12 @@ def _is_inverse_perm(perm_a: List[int], perm_b: List[int]) -> bool:
             return False
     return True
 
-def _optimize_layout_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_layout_transpose_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate redundant TRANSPOSE chains introduced by channel-first/channel-last bridging.
 
@@ -44,6 +56,7 @@ def _optimize_layout_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
     removed_inverse_pairs = 0
     removed_inverse_fanout_branches = 0
     composed_consecutive_pairs = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     iterations = 0
     preserve_layout_boundary_marker = "__preserve_layout_boundary__"
     rank4_perm_nhwc_to_nchw = [0, 3, 1, 2]
@@ -73,7 +86,7 @@ def _optimize_layout_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
     while True:
         iterations += 1
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
 
         # 1) Remove identity transpose.
         for op_idx, op in enumerate(model_ir.operators):
@@ -88,8 +101,13 @@ def _optimize_layout_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
             transposed_input = op.inputs[0]
             if transposed_output in model_ir.outputs:
                 continue
-            _replace_tensor_inputs(model_ir, transposed_output, transposed_input)
-            del model_ir.operators[op_idx]
+            _replace_tensor_inputs(
+                model_ir,
+                transposed_output,
+                transposed_input,
+                graph_index=graph_index,
+            )
+            graph_index.remove_operator(op_idx)
             removed_identity += 1
             changed = True
             break
@@ -132,9 +150,14 @@ def _optimize_layout_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
             if transpose_1_output in model_ir.outputs or transpose_2_output in model_ir.outputs:
                 continue
 
-            _replace_tensor_inputs(model_ir, transpose_2_output, transpose_1_input)
+            _replace_tensor_inputs(
+                model_ir,
+                transpose_2_output,
+                transpose_1_input,
+                graph_index=graph_index,
+            )
             for remove_idx in sorted([op_idx, next_op_idx], reverse=True):
-                del model_ir.operators[remove_idx]
+                graph_index.remove_operator(remove_idx)
             removed_inverse_pairs += 1
             changed = True
             break
@@ -180,8 +203,13 @@ def _optimize_layout_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
                     if bridge_tensor in model_ir.outputs or post_output in model_ir.outputs:
                         continue
 
-                    _replace_tensor_inputs(model_ir, post_output, str(op.inputs[0]))
-                    del model_ir.operators[int(post_idx)]
+                    _replace_tensor_inputs(
+                        model_ir,
+                        post_output,
+                        str(op.inputs[0]),
+                        graph_index=graph_index,
+                    )
+                    graph_index.remove_operator(int(post_idx))
                     removed_inverse_fanout_branches += 1
                     changed = True
                     break
@@ -296,8 +324,9 @@ def _optimize_layout_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
                     model_ir=model_ir,
                     op=next_op,
                     new_inputs=[str(op.inputs[0]), str(new_perm_name)],
+                    graph_index=graph_index,
                 )
-                del model_ir.operators[int(op_idx)]
+                graph_index.remove_operator(int(op_idx))
                 composed_consecutive_pairs += 1
                 changed = True
                 break
@@ -305,7 +334,9 @@ def _optimize_layout_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
             if not changed:
                 break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {
         "iterations": int(iterations),
         "removed_identity_transpose": int(removed_identity),
@@ -314,3 +345,89 @@ def _optimize_layout_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
         "composed_consecutive_transpose_pairs": int(composed_consecutive_pairs),
     }
 
+
+def run_layout_transpose_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run identity, inverse, fan-out, and composed Transpose cleanup."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            if str(operator.op_type) == "TRANSPOSE":
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        for transpose_op in candidate_model.operators:
+            if (
+                str(transpose_op.op_type) != "TRANSPOSE"
+                or len(transpose_op.inputs) < 2
+                or len(transpose_op.outputs) != 1
+            ):
+                continue
+            perm_pre = _read_transpose_perm(candidate_model, transpose_op)
+            if perm_pre is None:
+                continue
+            if _is_identity_perm(perm_pre):
+                return True
+            bridge_name = str(transpose_op.outputs[0])
+            for user_index in pass_state.graph_index.consumer_indices(bridge_name):
+                post_op = candidate_model.operators[int(user_index)]
+                if (
+                    str(post_op.op_type) != "TRANSPOSE"
+                    or len(post_op.inputs) < 2
+                    or len(post_op.outputs) != 1
+                    or str(post_op.inputs[0]) != bridge_name
+                ):
+                    continue
+                perm_post = _read_transpose_perm(candidate_model, post_op)
+                if perm_post is not None and len(perm_pre) == len(perm_post):
+                    return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_layout_transpose_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        changed_count = sum(
+            int(stats.get(key, 0))
+            for key in (
+                "removed_identity_transpose",
+                "removed_inverse_transpose_pairs",
+                "removed_inverse_transpose_fanout_branches",
+                "composed_consecutive_transpose_pairs",
+            )
+        )
+        return {**stats, "changed": bool(changed_count)}
+
+    default_details = {
+        "iterations": 0,
+        "removed_identity_transpose": 0,
+        "removed_inverse_transpose_pairs": 0,
+        "removed_inverse_transpose_fanout_branches": 0,
+        "composed_consecutive_transpose_pairs": 0,
+    }
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.transpose_chain_cleanup",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details=default_details,
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}

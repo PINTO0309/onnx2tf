@@ -450,7 +450,17 @@ pairs, inverse fan-out branches, and composition of consecutive pairs. It
 preserves public outputs, explicit layout-boundary markers, and the specialized
 Softmax chain. All three function ASTs are identical to their former lowerer
 definitions; the lowerer re-exports both shared helpers and retains a thin
-optimizer wrapper at the original thirteen call sites.
+optimizer wrapper for compatibility.
+
+All thirteen production positions now call `run_layout_transpose_cleanup`,
+registered as `layout.transpose_chain_cleanup` in `LAYOUT_PLAN`. Model-only
+Transpose preflight and an indexed identity-or-consecutive candidate guard
+avoid state/snapshot construction for unrelated or isolated non-identity
+Transposes. Identity removal, strict inverse-pair removal, fan-out branch
+bypass, and pair composition share one differential index per invocation;
+permutation tensor updates, edge rewrites, structural removals, and pruning are
+validated transactionally against `LayoutState`. The runner derives `changed`
+only from rewrite counters, never from the diagnostic iteration count.
 
 General consecutive Reshape passthrough cleanup is also owned by
 `passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,
