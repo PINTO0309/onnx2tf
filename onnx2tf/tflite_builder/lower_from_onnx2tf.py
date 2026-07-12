@@ -167,6 +167,7 @@ from onnx2tf.tflite_builder.passes.boundary_input_layout import (
 from onnx2tf.tflite_builder.passes.boundary_input_chains import (
     _optimize_boundary_input_transpose_batchmatmul_chains as _optimize_boundary_input_transpose_batchmatmul_chains_pass,
     _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains as _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains_pass,
+    run_boundary_input_batchmatmul_cleanup,
 )
 from onnx2tf.tflite_builder.passes.channel_slice_layout import (
     _optimize_boundary_input_transpose_channel_slice_blocks as _optimize_boundary_input_transpose_channel_slice_blocks_pass,
@@ -64544,7 +64545,11 @@ def lower_onnx_to_ir(
 
         _optimize_layout_transpose_chains(model_ir)
         _optimize_transpose_quant_dequant_bridges(model_ir)
-        _optimize_boundary_input_transpose_batchmatmul_chains(model_ir)
+        run_boundary_input_batchmatmul_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_input_unary_passthrough_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -64668,7 +64673,11 @@ def lower_onnx_to_ir(
         )
         # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
         _optimize_transpose_quant_dequant_bridges(model_ir)
-        _optimize_boundary_input_transpose_batchmatmul_chains(model_ir)
+        run_boundary_input_batchmatmul_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_input_unary_passthrough_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -64793,7 +64802,11 @@ def lower_onnx_to_ir(
         _optimize_concat_pre_quantize_dequantize(model_ir)
         _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
         _optimize_transpose_quant_dequant_bridges(model_ir)
-        _optimize_boundary_input_transpose_batchmatmul_chains(model_ir)
+        run_boundary_input_batchmatmul_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_input_unary_passthrough_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -64961,7 +64974,11 @@ def lower_onnx_to_ir(
         _optimize_concat_pre_quantize_dequantize(model_ir)
         _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
         _optimize_transpose_quant_dequant_bridges(model_ir)
-        _optimize_boundary_input_transpose_batchmatmul_chains(model_ir)
+        run_boundary_input_batchmatmul_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_input_unary_passthrough_cleanup(
             model_ir,
             layout_state=session.layout_state,

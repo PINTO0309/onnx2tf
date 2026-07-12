@@ -82,6 +82,16 @@ model-output, permutation, constant-shape, axis, and metadata guards. Their
 legacy lowerer names are delegating wrappers, while graph mutation and
 constant-vector access use the canonical `core/model_ir_utils.py` helpers.
 
+The BatchMatMul rewrite executes through
+`run_boundary_input_batchmatmul_cleanup`, registered as
+`layout.boundary_input_batchmatmul` in `LAYOUT_PLAN`. Its shared candidate
+matcher proves the boundary permutation, exclusive model-input adapter, and
+BatchMatMul-only fan-out before a transaction is opened. Input rewiring and
+Transpose removal update one `ModelIRGraphIndex` differentially, while unused
+adapter tensors are removed from the shared `LayoutState`. The four production
+retry positions remain separate and in their original order so intervening
+layout rewrites can expose a later candidate.
+
 Generic input-boundary passthrough folding lives in
 `passes/input_passthrough_layout.py`. It moves strictly linear chains of
 layout-agnostic unary and constant-side binary operations across a synthetic

@@ -1316,6 +1316,33 @@ invocations and the three Pad-Mul invocations. Migrate whichever forms the next
 complete adjacent family, preserving every current call location and order;
 do not make a partial structural-rewrite migration.
 
+The four boundary-input BatchMatMul invocations are now migrated as one
+complete family. Every retry position calls
+`run_boundary_input_batchmatmul_cleanup` without changing its surrounding
+pass order. The stable `LAYOUT_PLAN` pass ID is
+`layout.boundary_input_batchmatmul`. A shared exact matcher guards the
+exclusive model-input Transpose, accepted NCX boundary permutation,
+model-output protection, and BatchMatMul-only fan-out before snapshotting.
+Consumer rewiring and structural deletion update one `ModelIRGraphIndex`
+differentially, and pruning synchronizes the session `LayoutState`. The legacy
+helper remains available through the existing compatibility wrapper.
+
+Sequential verification completed with:
+
+- `28 passed` for boundary-chain behavior, runner diagnostics, architecture,
+  and pass-efficiency coverage; the successful fixture required exactly one
+  full GraphIndex build and one transactional snapshot;
+- `1 passed, 760 deselected` for the rank-4 MatMul boundary conversion fixture;
+- Tier 0 `batch_matmul.onnx` `-cotof` evaluation with every output compared,
+  `evaluation_pass=true`, and maximum absolute error `0.0`;
+- `1081 passed, 5 deselected, 2 warnings in 137.98s` for the full direct suite.
+
+The temporary Tier 0 output directory was deleted. Validation remained
+single-process and sequential, and no dependency or TensorFlow import was
+added. The next raw-family inventory should now consider the three Pad-Mul
+invocations, but only migrate the full structural unit after confirming their
+surrounding ordering and the earlier regression guard.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

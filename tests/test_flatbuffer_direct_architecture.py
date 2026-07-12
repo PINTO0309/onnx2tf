@@ -299,6 +299,7 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         if isinstance(node, ast.Name)
     }
     assert "run_boundary_input_layout_cleanup" in lowerer_names
+    assert "run_boundary_input_batchmatmul_cleanup" in lowerer_names
 
     graph_helpers = {
         "_broadcast_static_shapes",
@@ -430,6 +431,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     )
     runner_names = {
         "run_boundary_input_layout_cleanup",
+        "run_boundary_input_batchmatmul_cleanup",
         "run_clamp_cleanup",
         "run_constant_input_fold_cleanup",
         "run_consecutive_mul_constants_cleanup",
@@ -457,7 +459,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 64
+    assert len(calls) == 68
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -507,6 +509,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         )
     ]
     assert len(reshape_only_duplicate_calls) == 4
+
+    boundary_batchmatmul_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_boundary_input_batchmatmul_cleanup"
+    ]
+    assert len(boundary_batchmatmul_calls) == 4
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:

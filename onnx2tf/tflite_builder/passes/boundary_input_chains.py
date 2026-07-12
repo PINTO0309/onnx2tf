@@ -1,9 +1,16 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _build_tensor_consumer_map,
     _permute_tensor_metadata_if_rank_matches,
@@ -14,6 +21,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_inputs,
     _write_const_ints_to_tensor,
 )
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, normalize_onnx_shape
 
 
@@ -198,7 +206,63 @@ def _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains(
     return {"rewritten_boundary_input_transpose_mul_sum_reshape_nhwc_chains": int(rewritten)}
 
 
-def _optimize_boundary_input_transpose_batchmatmul_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _find_boundary_input_transpose_batchmatmul_chain(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+) -> Optional[Tuple[int, str, str, List[int]]]:
+    """Return one fully guarded boundary BatchMatMul rewrite candidate."""
+
+    ncx_boundary_perms = {
+        (0, 2, 1),
+        (0, 3, 1, 2),
+        (0, 4, 1, 2, 3),
+    }
+    model_inputs = set(str(value) for value in model_ir.inputs)
+    model_outputs = set(str(value) for value in model_ir.outputs)
+
+    for pre_idx, pre_op in enumerate(model_ir.operators):
+        if (
+            str(pre_op.op_type) != "TRANSPOSE"
+            or len(pre_op.inputs) < 2
+            or len(pre_op.outputs) != 1
+        ):
+            continue
+
+        pre_input_name = str(pre_op.inputs[0])
+        pre_output_name = str(pre_op.outputs[0])
+        if pre_input_name not in model_inputs or pre_output_name in model_outputs:
+            continue
+
+        perm_pre = _read_transpose_perm(model_ir, pre_op)
+        if perm_pre is None:
+            continue
+        if tuple(int(value) for value in perm_pre) not in ncx_boundary_perms:
+            continue
+
+        pre_input_users = graph_index.consumer_indices(pre_input_name)
+        if set(pre_input_users) != {int(pre_idx)}:
+            continue
+
+        pre_users = graph_index.consumer_indices(pre_output_name)
+        if len(pre_users) == 0:
+            continue
+        if not all(
+            str(model_ir.operators[int(user_idx)].op_type) == "BATCH_MATMUL"
+            for user_idx in pre_users
+        ):
+            continue
+
+        return int(pre_idx), pre_input_name, pre_output_name, pre_users
+
+    return None
+
+
+def _optimize_boundary_input_transpose_batchmatmul_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Elide input-boundary transpose wrappers that only feed BATCH_MATMUL.
 
@@ -217,80 +281,113 @@ def _optimize_boundary_input_transpose_batchmatmul_chains(model_ir: ModelIR) -> 
       layout adaptation (rank 3/4/5).
     """
     rewritten = 0
-    ncx_boundary_perms = {
-        (0, 2, 1),
-        (0, 3, 1, 2),
-        (0, 4, 1, 2, 3),
-    }
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_inputs = set(str(v) for v in model_ir.inputs)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if (
-                str(pre_op.op_type) != "TRANSPOSE"
-                or len(pre_op.inputs) < 2
-                or len(pre_op.outputs) != 1
-            ):
-                continue
-
-            pre_input_name = str(pre_op.inputs[0])
-            pre_output_name = str(pre_op.outputs[0])
-            if pre_input_name not in model_inputs:
-                continue
-            if pre_output_name in model_outputs:
-                continue
-
-            perm_pre = _read_transpose_perm(model_ir, pre_op)
-            if perm_pre is None:
-                continue
-            if tuple(int(v) for v in list(perm_pre)) not in ncx_boundary_perms:
-                continue
-
-            pre_input_users = [int(v) for v in consumers.get(pre_input_name, [])]
-            if set(pre_input_users) != {int(pre_idx)}:
-                continue
-
-            pre_users = [int(v) for v in consumers.get(pre_output_name, [])]
-            if len(pre_users) == 0:
-                continue
-            if not all(
-                str(model_ir.operators[int(user_idx)].op_type) == "BATCH_MATMUL"
-                for user_idx in pre_users
-            ):
-                continue
-
-            for user_idx in pre_users:
-                user_op = model_ir.operators[int(user_idx)]
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=user_op,
-                    new_inputs=[
-                        pre_input_name if str(v) == pre_output_name else str(v)
-                        for v in list(user_op.inputs)
-                    ],
-                )
-
-            input_tensor = model_ir.tensors.get(pre_input_name, None)
-            internal_tensor = model_ir.tensors.get(pre_output_name, None)
-            if input_tensor is not None and internal_tensor is not None:
-                if internal_tensor.shape is not None:
-                    input_tensor.shape = [int(v) for v in list(internal_tensor.shape)]
-                if internal_tensor.shape_signature is not None:
-                    input_tensor.shape_signature = [
-                        int(v) for v in list(internal_tensor.shape_signature)
-                    ]
-
-            del model_ir.operators[int(pre_idx)]
-            rewritten += 1
-            changed = True
+        candidate = _find_boundary_input_transpose_batchmatmul_chain(
+            model_ir,
+            graph_index,
+        )
+        if candidate is None:
             break
+        pre_idx, pre_input_name, pre_output_name, pre_users = candidate
 
-        if not changed:
-            break
+        for user_idx in pre_users:
+            user_op = model_ir.operators[int(user_idx)]
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=user_op,
+                new_inputs=[
+                    pre_input_name if str(value) == pre_output_name else str(value)
+                    for value in user_op.inputs
+                ],
+                graph_index=graph_index,
+            )
 
-    _prune_unused_tensors(model_ir)
+        input_tensor = model_ir.tensors.get(pre_input_name, None)
+        internal_tensor = model_ir.tensors.get(pre_output_name, None)
+        if input_tensor is not None and internal_tensor is not None:
+            if internal_tensor.shape is not None:
+                input_tensor.shape = [int(value) for value in internal_tensor.shape]
+            if internal_tensor.shape_signature is not None:
+                input_tensor.shape_signature = [
+                    int(value) for value in internal_tensor.shape_signature
+                ]
+
+        graph_index.remove_operator(pre_idx)
+        rewritten += 1
+
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"rewritten_boundary_input_transpose_batchmatmul_chains": int(rewritten)}
+
+
+def run_boundary_input_batchmatmul_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run boundary BatchMatMul adapter removal as an ordered layout pass."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        model_inputs = set(str(value) for value in candidate_model.inputs)
+        has_boundary_transpose = False
+        has_batchmatmul = False
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            if str(operator.op_type) == "BATCH_MATMUL":
+                has_batchmatmul = True
+            elif (
+                str(operator.op_type) == "TRANSPOSE"
+                and len(operator.inputs) >= 2
+                and len(operator.outputs) == 1
+                and str(operator.inputs[0]) in model_inputs
+            ):
+                has_boundary_transpose = True
+            if has_boundary_transpose and has_batchmatmul:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        return (
+            _find_boundary_input_transpose_batchmatmul_chain(
+                pass_state.model_ir,
+                pass_state.graph_index,
+            )
+            is not None
+        )
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_boundary_input_transpose_batchmatmul_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "rewritten_boundary_input_transpose_batchmatmul_chains",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.boundary_input_batchmatmul",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={
+            "rewritten_boundary_input_transpose_batchmatmul_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}

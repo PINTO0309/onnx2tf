@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.boundary_input_chains import (
     _optimize_boundary_input_transpose_batchmatmul_chains,
     _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains,
+    run_boundary_input_batchmatmul_cleanup,
 )
 
 
@@ -110,7 +112,7 @@ def test_boundary_mul_sum_reshape_chain_moves_to_nhwc() -> None:
     assert "perm" not in model_ir.tensors
 
 
-def test_boundary_batchmatmul_chain_removes_exclusive_transpose() -> None:
+def test_boundary_batchmatmul_chain_removes_exclusive_transpose(monkeypatch) -> None:
     model_ir = ModelIR("boundary_batchmatmul")
     model_ir.inputs = ["x", "rhs"]
     model_ir.outputs = ["y"]
@@ -139,7 +141,20 @@ def test_boundary_batchmatmul_chain_removes_exclusive_transpose() -> None:
         ),
     ]
 
-    stats = _optimize_boundary_input_transpose_batchmatmul_chains(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict] = []
+    stats = run_boundary_input_batchmatmul_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
 
     assert stats == {"rewritten_boundary_input_transpose_batchmatmul_chains": 1}
     assert len(model_ir.operators) == 1
@@ -148,6 +163,11 @@ def test_boundary_batchmatmul_chain_removes_exclusive_transpose() -> None:
     assert model_ir.tensors["x"].shape == [1, 3, 2, 2]
     assert "x_internal" not in model_ir.tensors
     assert "perm" not in model_ir.tensors
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "layout.boundary_input_batchmatmul"
+    assert diagnostics[0]["status"] == "changed"
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
+    assert refresh_count == 1
 
 
 def test_boundary_mul_sum_reshape_chain_preserves_fanout() -> None:
