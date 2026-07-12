@@ -32,6 +32,32 @@ def _build_tensor_producer_map(model_ir: ModelIR) -> Dict[str, int]:
     return producers
 
 
+def _is_fully_known_positive_shape(shape: Optional[List[int]]) -> bool:
+    if shape is None or len(shape) == 0:
+        return False
+    return all(int(dim) > 0 for dim in shape)
+
+
+def _prune_unused_tensors(model_ir: ModelIR) -> None:
+    used_tensor_names = set(model_ir.inputs + model_ir.outputs)
+    for op in model_ir.operators:
+        used_tensor_names.update(op.inputs)
+        used_tensor_names.update(op.outputs)
+    unused_tensor_names = [
+        name for name in model_ir.tensors if name not in used_tensor_names
+    ]
+    if unused_tensor_names:
+        _append_tensor_lineage_event(
+            model_ir=model_ir,
+            event={
+                "kind": "prune_unused_tensors",
+                "removed_names": [str(name) for name in unused_tensor_names],
+            },
+        )
+    for name in unused_tensor_names:
+        del model_ir.tensors[name]
+
+
 def _topologically_sort_operators(model_ir: ModelIR) -> Dict[str, int]:
     """
     Reorder operators so every producer appears before its consumers.

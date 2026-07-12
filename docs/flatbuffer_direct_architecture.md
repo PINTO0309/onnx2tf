@@ -36,6 +36,13 @@ tracing, downstream correspondence inference, and JSON writers have one owner
 in the reporting module. The module is part of the TensorFlow-free dependency
 boundary.
 
+Static rank-greater-than-five BatchMatMul compression lives in
+`passes/high_rank_matmul.py`. `lower_from_onnx2tf.py` keeps the legacy helper
+name as a delegating wrapper for compatibility. The pass uses the canonical
+shape predicate and tensor-pruning utility from `core/model_ir_utils.py`.
+Precision, constant-fold, layout, and high-rank passes share that pruning
+implementation so lineage events and unused-tensor removal have one owner.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

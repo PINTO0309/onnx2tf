@@ -29,11 +29,26 @@ The five deselections and two FLOAT16 warnings are the same optional-environment
 and expected-warning set documented below. No report schema, output path,
 public signature, or direct conversion behavior changed.
 
-The next refactoring step is to group the 204 `_optimize_*` functions in
-`lower_from_onnx2tf.py` by semantic pass phase and select a low-coupling layout
-family for the first mechanical extraction. Preserve function re-exports while
-tests still import legacy helpers directly. Do not create a pull request;
-commit and push completed checkpoints only.
+Static high-rank BatchMatMul compression has also moved to
+`passes/high_rank_matmul.py`. The legacy
+`_compress_static_high_rank_batch_matmul` symbol remains a thin wrapper, so
+existing tests and downstream imports continue to work. Its two dependencies,
+`_is_fully_known_positive_shape` and `_prune_unused_tensors`, now have one
+canonical implementation in `core/model_ir_utils.py`; the duplicate lowerer,
+precision-pass, and constant-fold definitions were removed. A focused utility
+test fixes deterministic pruning and lineage-event behavior, and an
+architecture test fixes pass/helper ownership without a source-line gate.
+
+Verification after this extraction completed with:
+
+- `15 passed` for architecture and common ModelIR utility tests;
+- `989 passed, 5 deselected, 2 warnings in 122.64s` for the full sequential
+  direct suite.
+
+The next low-coupling layout extraction should move the boundary input layout
+transpose pass after first relocating its generic transpose-read and tensor
+input-replacement helpers into a shared graph-mutation utility. Preserve the
+legacy helper re-exports during that move.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

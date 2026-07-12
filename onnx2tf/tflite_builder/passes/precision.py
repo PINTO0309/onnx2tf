@@ -5,6 +5,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.model_ir_utils import _prune_unused_tensors
+
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
@@ -20,24 +22,6 @@ def _build_tensor_consumer_map(model_ir: ModelIR) -> Dict[str, List[int]]:
         for input_name in op.inputs:
             consumers.setdefault(input_name, []).append(op_index)
     return consumers
-
-
-def _prune_unused_tensors(model_ir: ModelIR) -> None:
-    used = set(model_ir.inputs + model_ir.outputs)
-    for op in model_ir.operators:
-        used.update(op.inputs)
-        used.update(op.outputs)
-    removed = [name for name in model_ir.tensors if name not in used]
-    if removed:
-        events = model_ir.metadata.setdefault("tensor_lineage_events", [])
-        if isinstance(events, list):
-            events.append({
-                "kind": "prune_unused_tensors",
-                "removed_names": [str(name) for name in removed],
-                "event_index": len(events),
-            })
-    for name in removed:
-        del model_ir.tensors[name]
 
 
 def _rewrite_constant_divisors_to_multiplicative_reciprocals(

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _is_fully_known_positive_shape,
+    _prune_unused_tensors,
+)
 from onnx2tf.tflite_builder.ir import ModelIR
 
 _TFLITE_DTYPE_TO_NUMPY_DTYPE = {
@@ -23,12 +27,6 @@ _TFLITE_DTYPE_TO_NUMPY_DTYPE = {
 }
 
 
-def _is_fully_known_positive_shape(shape: Optional[List[int]]) -> bool:
-    if shape is None or len(shape) == 0:
-        return False
-    return all(int(dim) > 0 for dim in shape)
-
-
 def _append_tensor_lineage_event(*, model_ir: ModelIR, event: Dict[str, Any]) -> None:
     events = model_ir.metadata.setdefault("tensor_lineage_events", [])
     if not isinstance(events, list):
@@ -37,24 +35,6 @@ def _append_tensor_lineage_event(*, model_ir: ModelIR, event: Dict[str, Any]) ->
     normalized = dict(event)
     normalized["event_index"] = len(events)
     events.append(normalized)
-
-
-def _prune_unused_tensors(model_ir: ModelIR) -> None:
-    used = set(model_ir.inputs + model_ir.outputs)
-    for op in model_ir.operators:
-        used.update(op.inputs)
-        used.update(op.outputs)
-    removed = [name for name in model_ir.tensors if name not in used]
-    if removed:
-        _append_tensor_lineage_event(
-            model_ir=model_ir,
-            event={
-                "kind": "prune_unused_tensors",
-                "removed_names": [str(name) for name in removed],
-            },
-        )
-    for name in removed:
-        del model_ir.tensors[name]
 
 
 def _cast_const_array_to_tflite_dtype(

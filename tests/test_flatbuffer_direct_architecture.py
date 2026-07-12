@@ -146,6 +146,61 @@ def test_reporting_implementation_stays_out_of_lowering_module() -> None:
         assert delegate_name in referenced_names
 
 
+def test_high_rank_matmul_pass_and_prune_utility_have_single_owners() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "high_rank_matmul.py"
+    )
+    common_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "core"
+        / "model_ir_utils.py"
+    )
+    precision_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "precision.py"
+    )
+    constant_fold_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "constant_fold.py"
+    )
+
+    def _functions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+    lowering_functions = _functions(lowering_path)
+    pass_functions = _functions(pass_path)
+    common_functions = _functions(common_path)
+    assert "_compress_static_high_rank_batch_matmul" in pass_functions
+    wrapper = lowering_functions["_compress_static_high_rank_batch_matmul"]
+    wrapper_names = {
+        node.id for node in ast.walk(wrapper) if isinstance(node, ast.Name)
+    }
+    assert "_compress_static_high_rank_batch_matmul_pass" in wrapper_names
+
+    assert "_prune_unused_tensors" in common_functions
+    assert "_is_fully_known_positive_shape" in common_functions
+    for path in (lowering_path, precision_path, constant_fold_path):
+        functions = _functions(path)
+        assert "_prune_unused_tensors" not in functions
+        assert "_is_fully_known_positive_shape" not in functions
+
+
 def test_pytorch_pure_utilities_do_not_import_torch() -> None:
     offenders = []
     for path in PYTORCH_PURE_UTILITY_FILES:
