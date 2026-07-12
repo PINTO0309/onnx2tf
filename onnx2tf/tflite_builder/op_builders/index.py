@@ -4550,6 +4550,28 @@ def build_argmax_op(node: Any, ctx: Any) -> None:
         )
 
     keepdims = bool(int(node.attrs.get("keepdims", 1)))
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor is not None and input_tensor.shape_signature is not None
+        else [int(v) for v in list(input_shape)]
+    )
+    reduced_shape = [
+        int(dim) for idx, dim in enumerate(input_shape) if idx != axis
+    ]
+    reduced_signature = [
+        int(dim) for idx, dim in enumerate(input_signature) if idx != axis
+    ]
+    if keepdims:
+        reduced_shape.insert(int(axis), 1)
+        reduced_signature.insert(int(axis), 1)
+    if len(reduced_shape) == 0:
+        reduced_shape = [1]
+        reduced_signature = [1]
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.shape = [int(v) if int(v) > 0 else 1 for v in reduced_shape]
+        output_tensor.shape_signature = [int(v) for v in reduced_signature]
     argmax_mode = str(getattr(ctx, "argmax_mode", "none"))
     output_dtype = _prefer_int32_index_output_dtype(
         ctx=ctx,
@@ -4602,15 +4624,15 @@ def build_argmax_op(node: Any, ctx: Any) -> None:
 
     argmax_output_name = output_name
     if keepdims:
-        reduced_shape = [
+        squeezed_shape = [
             int(dim) for idx, dim in enumerate(input_shape) if idx != axis
         ]
-        if len(reduced_shape) == 0:
-            reduced_shape = [1]
+        if len(squeezed_shape) == 0:
+            squeezed_shape = [1]
         argmax_output_name = ctx.add_intermediate_tensor(
             f"{output_name}_argmax",
             dtype=output_dtype,
-            shape=reduced_shape,
+            shape=squeezed_shape,
         )
 
     axis_name = ctx.add_const_tensor(
@@ -4663,6 +4685,28 @@ def build_argmin_op(node: Any, ctx: Any) -> None:
         )
 
     keepdims = bool(int(node.attrs.get("keepdims", 1)))
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor is not None and input_tensor.shape_signature is not None
+        else [int(v) for v in list(input_shape)]
+    )
+    reduced_shape = [
+        int(dim) for idx, dim in enumerate(input_shape) if idx != axis
+    ]
+    reduced_signature = [
+        int(dim) for idx, dim in enumerate(input_signature) if idx != axis
+    ]
+    if keepdims:
+        reduced_shape.insert(int(axis), 1)
+        reduced_signature.insert(int(axis), 1)
+    if len(reduced_shape) == 0:
+        reduced_shape = [1]
+        reduced_signature = [1]
+    output_tensor = ctx.model_ir.tensors.get(output_name, None)
+    if output_tensor is not None:
+        output_tensor.shape = [int(v) if int(v) > 0 else 1 for v in reduced_shape]
+        output_tensor.shape_signature = [int(v) for v in reduced_signature]
     output_dtype = _prefer_int32_index_output_dtype(
         ctx=ctx,
         tensor_name=output_name,
@@ -4671,15 +4715,15 @@ def build_argmin_op(node: Any, ctx: Any) -> None:
 
     argmin_output_name = output_name
     if keepdims:
-        reduced_shape = [
+        squeezed_shape = [
             int(dim) for idx, dim in enumerate(input_shape) if idx != axis
         ]
-        if len(reduced_shape) == 0:
-            reduced_shape = [1]
+        if len(squeezed_shape) == 0:
+            squeezed_shape = [1]
         argmin_output_name = ctx.add_intermediate_tensor(
             f"{output_name}_argmin",
             dtype=output_dtype,
-            shape=reduced_shape,
+            shape=squeezed_shape,
         )
 
     axis_name = ctx.add_const_tensor(
@@ -5417,6 +5461,8 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
     data_rank_unknown = _rank_is_unknown_placeholder(data_name, data_shape)
     indices_rank_unknown = _rank_is_unknown_placeholder(indices_name, indices_shape)
     output_rank_unknown = _rank_is_unknown_placeholder(output_name, output_shape)
+    if output_shape == [1] and len(indices_shape) > 1:
+        output_rank_unknown = True
 
     if data_rank_unknown and not indices_rank_unknown:
         data_shape = [int(v) for v in list(indices_shape)]
@@ -5440,6 +5486,13 @@ def build_gather_elements_op(node: Any, ctx: Any) -> None:
             indices_tensor.shape = [int(v) for v in list(indices_shape)]
             indices_tensor.shape_signature = [int(v) for v in list(indices_signature)]
         indices_rank_unknown = False
+    if output_rank_unknown and not indices_rank_unknown:
+        output_shape = [int(v) for v in list(indices_shape)]
+        output_signature = [int(v) for v in list(indices_signature)]
+        if output_tensor is not None:
+            output_tensor.shape = [int(v) for v in list(output_shape)]
+            output_tensor.shape_signature = [int(v) for v in list(output_signature)]
+        output_rank_unknown = False
     replace_to_pseudo_operators = getattr(ctx, "replace_to_pseudo_operators", set())
     rtpo_gathernd = "gathernd" in set(replace_to_pseudo_operators or set())
     if len(data_shape) != len(indices_shape) and not data_rank_unknown and not indices_rank_unknown:

@@ -513,6 +513,10 @@ def _validate_gather_elements(node: Any, ctx: Any) -> None:
     data_rank_unknown = _rank_is_unknown_placeholder(data_name, data_shape)
     indices_rank_unknown = _rank_is_unknown_placeholder(indices_name, indices_shape)
     output_rank_unknown = _rank_is_unknown_placeholder(output_name, output_shape)
+    if output_shape == [1] and len(indices_shape) > 1:
+        # GatherElements output rank is defined by indices. Some exporters
+        # retain a rank-one placeholder even after the indices rank is known.
+        output_rank_unknown = True
 
     if (
         len(data_shape) != len(indices_shape)

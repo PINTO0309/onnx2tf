@@ -1770,6 +1770,102 @@ def _rewrite_dynamic_reshape_shape_allowzero_copy_dim0(
     return fixed_shape_name
 
 
+def _build_constant_reshape_shape_with_runtime_zero_copies(
+    *,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    raw_new_shape: list[int],
+) -> tuple[str, list[int]] | None:
+    """Materialize ONNX allowzero=0 copy-dim semantics for dynamic inputs."""
+    input_tensor = ctx.model_ir.tensors.get(input_name, None)
+    if input_tensor is None:
+        return None
+    input_signature = (
+        [int(v) for v in list(input_tensor.shape_signature)]
+        if input_tensor.shape_signature is not None
+        else [int(v) for v in list(input_tensor.shape)]
+    )
+    dynamic_zero_axes = [
+        int(axis)
+        for axis, dim in enumerate(raw_new_shape)
+        if int(dim) == 0
+        and int(axis) < len(input_signature)
+        and int(input_signature[axis]) < 0
+    ]
+    if len(dynamic_zero_axes) == 0:
+        return None
+
+    input_shape_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reshape_runtime_input_shape",
+        dtype="INT32",
+        shape=[max(len(input_signature), 1)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SHAPE",
+            inputs=[input_name],
+            outputs=[input_shape_name],
+            options={"outType": "INT32"},
+        )
+    )
+
+    pieces: list[str] = []
+    output_signature: list[int] = []
+    for axis, raw_dim in enumerate(raw_new_shape):
+        dim = int(raw_dim)
+        if dim == 0:
+            if axis >= len(input_signature):
+                return None
+            output_signature.append(int(input_signature[axis]))
+            begin_name = ctx.add_const_tensor(
+                f"{output_name}_reshape_runtime_dim_{axis}_begin",
+                np.asarray([axis], dtype=np.int32),
+            )
+            size_name = ctx.add_const_tensor(
+                f"{output_name}_reshape_runtime_dim_{axis}_size",
+                np.asarray([1], dtype=np.int32),
+            )
+            piece_name = ctx.add_intermediate_tensor(
+                f"{output_name}_reshape_runtime_dim_{axis}",
+                dtype="INT32",
+                shape=[1],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SLICE",
+                    inputs=[input_shape_name, begin_name, size_name],
+                    outputs=[piece_name],
+                )
+            )
+            pieces.append(piece_name)
+        else:
+            output_signature.append(dim)
+            pieces.append(
+                ctx.add_const_tensor(
+                    f"{output_name}_reshape_runtime_dim_{axis}",
+                    np.asarray([dim], dtype=np.int32),
+                )
+            )
+
+    if len(pieces) == 1:
+        return pieces[0], output_signature
+    shape_name = ctx.add_intermediate_tensor(
+        f"{output_name}_reshape_runtime_shape",
+        dtype="INT32",
+        shape=[len(pieces)],
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=pieces,
+            outputs=[shape_name],
+            options={"axis": 0, "fusedActivationFunction": "NONE"},
+        )
+    )
+    return shape_name, output_signature
+
+
 def build_reshape_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     shape_name = node.inputs[1].name
@@ -1789,6 +1885,7 @@ def build_reshape_op(node: Any, ctx: Any) -> None:
     raw_new_shape: list[int] = []
     new_shape: list[int] = []
     reshape_shape_input_name = shape_name
+    runtime_zero_shape: tuple[str, list[int]] | None = None
     semantic_input_shape = getattr(node.inputs[0], "shape", None)
     semantic_output_shape = getattr(node.outputs[0], "shape", None)
     semantic_input_rank = (
@@ -1810,12 +1907,26 @@ def build_reshape_op(node: Any, ctx: Any) -> None:
 
     if shape_values is not None:
         raw_new_shape = [int(v) for v in np.asarray(shape_values).reshape(-1).tolist()]
+        if not bool(allowzero) and 0 in raw_new_shape:
+            runtime_zero_shape = _build_constant_reshape_shape_with_runtime_zero_copies(
+                ctx=ctx,
+                input_name=input_name,
+                output_name=output_name,
+                raw_new_shape=raw_new_shape,
+            )
         boundary_shape_hint = _reshape_shape_preserving_boundary_hint(
             ctx=ctx,
             tensor_name=output_name,
             raw_new_shape=raw_new_shape,
         )
-        if boundary_shape_hint is not None:
+        if runtime_zero_shape is not None:
+            reshape_shape_input_name, output_signature = runtime_zero_shape
+            output_tensor.shape_signature = [int(v) for v in output_signature]
+            output_tensor.shape = [
+                int(v) if int(v) > 0 else 1 for v in output_signature
+            ]
+            new_shape = []
+        elif boundary_shape_hint is not None:
             new_shape = [int(dim) for dim in boundary_shape_hint]
         else:
             new_shape = _resolve_reshape_shape_with_static_dims(
@@ -1827,10 +1938,11 @@ def build_reshape_op(node: Any, ctx: Any) -> None:
         if len(new_shape) > 0 and all(int(dim) >= 0 for dim in new_shape):
             output_tensor.shape = [int(dim) for dim in new_shape]
             output_tensor.shape_signature = [int(dim) for dim in new_shape]
-        reshape_shape_input_name = ctx.add_const_tensor(
-            f"{output_name}_reshape_shape",
-            np.asarray(new_shape, dtype=np.int32),
-        )
+        if runtime_zero_shape is None:
+            reshape_shape_input_name = ctx.add_const_tensor(
+                f"{output_name}_reshape_shape",
+                np.asarray(new_shape, dtype=np.int32),
+            )
     else:
         inferred_template = _infer_static_template_from_dynamic_reshape_shape_input(
             ctx=ctx,
@@ -1891,6 +2003,8 @@ def build_reshape_op(node: Any, ctx: Any) -> None:
         "onnxRawNewShape": raw_new_shape,
         "allowZero": bool(allowzero),
     }
+    if runtime_zero_shape is not None:
+        reshape_options["preserveDynamicShape"] = True
     if shape_values is not None and boundary_shape_hint is not None:
         reshape_options["onnxBoundaryShapeHint"] = True
     if preserve_semantic_rank:
@@ -1954,8 +2068,21 @@ def build_concat_op(node: Any, ctx: Any) -> None:
 
     output_shape = ctx.get_tensor_shape(output_name)
     axis = int(node.attrs.get("axis", 0))
+    concat_rank = (
+        len(ctx.get_tensor_shape(input_names[0]))
+        if len(input_names) > 0
+        else len(output_shape)
+    )
     if axis < 0:
-        axis += len(output_shape)
+        # ONNX defines Concat axis against its inputs. Output metadata may be
+        # an unresolved rank-one placeholder when upstream contrib operators
+        # interrupted ONNX shape inference.
+        axis += int(concat_rank)
+    if axis < 0 or axis >= int(concat_rank):
+        raise NotImplementedError(
+            f"Concat axis out of range in flatbuffer_direct. "
+            f"op={node.name} axis={axis} rank={concat_rank}"
+        )
 
     def _normalize_concat_dtype(dtype: str) -> str:
         dt = str(dtype).upper()

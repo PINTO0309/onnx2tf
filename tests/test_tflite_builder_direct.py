@@ -7653,6 +7653,82 @@ def _make_dynamic_reshape_allowzero_copy_dim0_rank_preserve_model() -> onnx.Mode
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_constant_reshape_dynamic_zero_copy_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, "S", 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, "S", 4])
+    shape = numpy_helper.from_array(
+        np.asarray([0, 0, 4], dtype=np.int64),
+        name="reshape_shape",
+    )
+    node = helper.make_node(
+        "Reshape",
+        ["x", "reshape_shape"],
+        ["y"],
+        name="ConstantDynamicZeroCopyReshape",
+    )
+    graph = helper.make_graph(
+        [node],
+        "constant_reshape_dynamic_zero_copy_graph",
+        [x],
+        [y],
+        initializer=[shape],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 14)])
+
+
+def _make_negative_axis_concat_placeholder_output_model() -> onnx.ModelProto:
+    x0 = helper.make_tensor_value_info("x0", TensorProto.FLOAT, [1, 3, 4])
+    x1 = helper.make_tensor_value_info("x1", TensorProto.FLOAT, [1, 3, 4])
+    concat_out = helper.make_tensor_value_info("concat_out", TensorProto.FLOAT, [1])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 8])
+    nodes = [
+        helper.make_node(
+            "Concat",
+            ["x0", "x1"],
+            ["concat_out"],
+            name="NegativeAxisConcat",
+            axis=-1,
+        ),
+        helper.make_node("Identity", ["concat_out"], ["y"], name="ConcatIdentity"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "negative_axis_concat_placeholder_output_graph",
+        [x0, x1],
+        [y],
+        value_info=[concat_out],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_argmax_gather_elements_placeholder_rank_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, "N", "M"])
+    arg0 = helper.make_tensor_value_info("arg0", TensorProto.INT64, [1])
+    arg1 = helper.make_tensor_value_info("arg1", TensorProto.INT64, [1])
+    gathered = helper.make_tensor_value_info("gathered", TensorProto.INT64, [1])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [1, "N"])
+    nodes = [
+        helper.make_node("ArgMax", ["x"], ["arg0"], name="ArgMaxLast", axis=2, keepdims=0),
+        helper.make_node("ArgMax", ["x"], ["arg1"], name="ArgMaxMiddle", axis=1, keepdims=0),
+        helper.make_node(
+            "GatherElements",
+            ["arg1", "arg0"],
+            ["gathered"],
+            name="GatherArgMaxIndices",
+            axis=1,
+        ),
+        helper.make_node("Identity", ["gathered"], ["y"], name="GatherIdentity"),
+    ]
+    graph = helper.make_graph(
+        nodes,
+        "argmax_gather_elements_placeholder_rank_graph",
+        [x],
+        [y],
+        value_info=[arg0, arg1, gathered],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_shape_slice_empty_tail_concat_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", 1, 10, 80, 80])
     y = helper.make_tensor_value_info("y", TensorProto.INT64, [4])
@@ -31904,6 +31980,54 @@ def test_flatbuffer_direct_dynamic_reshape_allowzero_copy_dim0_preserves_shape_v
     shape_input_name = str(reshape_op.inputs[1])
     shape_input_tensor = model_ir.tensors[shape_input_name]
     assert _shape_signature(shape_input_tensor) == [4]
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_constant_reshape_zero_copies_dynamic_runtime_dimensions() -> None:
+    model = _make_constant_reshape_dynamic_zero_copy_model()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "constant_reshape_dynamic_zero_copy", model)
+        tflite_path = _convert(
+            model_path=model_path,
+            output_dir=os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+        )
+        sample = np.arange(20, dtype=np.float32).reshape(1, 5, 4)
+        outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs={"x": sample},
+            tensor_names=["y"],
+        )
+        np.testing.assert_array_equal(outputs["y"], sample)
+
+
+def test_flatbuffer_direct_negative_concat_axis_uses_input_rank_when_output_rank_is_placeholder() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_negative_axis_concat_placeholder_output_model(),
+        output_file_name="negative_axis_concat_placeholder_output_test",
+        allow_custom_ops=False,
+    )
+    concat_op = next(
+        op for op in model_ir.operators if str(op.op_type) == "CONCATENATION"
+    )
+    assert int(concat_op.options["axis"]) == 2
+    assert _shape_signature(model_ir.tensors[str(concat_op.outputs[0])]) == [1, 3, 8]
+
+
+def test_flatbuffer_direct_argmax_and_gather_elements_recover_placeholder_output_ranks() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_argmax_gather_elements_placeholder_rank_model(),
+        output_file_name="argmax_gather_elements_placeholder_rank_test",
+        allow_custom_ops=False,
+    )
+    assert _shape_signature(model_ir.tensors["arg0"]) == [1, -1]
+    assert _shape_signature(model_ir.tensors["arg1"]) == [1, -1]
+    gather_op = next(
+        op for op in model_ir.operators if str(op.op_type) == "GATHER_ND"
+    )
+    assert _shape_signature(model_ir.tensors[str(gather_op.outputs[0])]) == [1, -1]
+    assert all(str(op.op_type) != "CUSTOM" for op in model_ir.operators)
 
 
 def test_flatbuffer_direct_slice_shape_outputs_preserve_empty_and_tail_lengths_for_concat() -> None:
