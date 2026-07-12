@@ -142,6 +142,7 @@ from onnx2tf.tflite_builder.passes.attention_layout import (
     _optimize_attention_qkv_slice_replace_gather_reshape_chains as _optimize_attention_qkv_slice_replace_gather_reshape_chains_pass,
     _optimize_attention_qkv_slice_to_split_chains as _optimize_attention_qkv_slice_to_split_chains_pass,
     _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains as _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains_pass,
+    run_conv_attention_layout_cleanup,
     run_mixed_attention_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
@@ -64878,7 +64879,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
         _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir)
+        run_conv_attention_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
         _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
         run_mixed_attention_layout_cleanup(
@@ -64990,7 +64995,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
         _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir)
+        run_conv_attention_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
         _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
         run_mixed_attention_layout_cleanup(
@@ -65111,7 +65120,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
         _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir)
+        run_conv_attention_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
         _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
         run_mixed_attention_layout_cleanup(
@@ -65245,7 +65258,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
         _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir)
+        run_conv_attention_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
         _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
         run_mixed_attention_layout_cleanup(
@@ -65314,7 +65331,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
         _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir)
+        run_conv_attention_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
         _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)

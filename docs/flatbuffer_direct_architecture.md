@@ -175,6 +175,17 @@ precondition guards snapshots; successful rewrites update the session-owned
 LayoutState as logical annotations change, and the shared pass state validates
 graph and layout invariants transactionally.
 
+Generic Conv-attention NHWC propagation is independently registered as
+`layout.conv_attention_nhwc`. Its five production positions remain unchanged;
+it is not grouped with the nearby SiNet-named tail rewrite because the sixth
+mixed-attention recovery call has a different neighborhood and such grouping
+would change the recovery order. The pass performs one model-only scan for the
+common Transpose/Mean/Conv capability before constructing ModelIRPassState. A
+candidate transaction reuses the state-owned `ModelIRGraphIndex` and refreshes
+it once after each complete structural rewrite iteration, replacing the former
+independent producer and consumer map builds. The legacy lowerer function
+remains a compatibility wrapper around the same implementation.
+
 Generic structural deduplication lives in `passes/graph_cleanup.py`. Duplicate
 Transpose fan-out cleanup uses one `ModelIRGraphIndex`, rewires only indexed
 consumers through the lineage-aware bulk input replacement helper, and removes

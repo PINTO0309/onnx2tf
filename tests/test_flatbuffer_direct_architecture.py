@@ -426,6 +426,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_clamp_cleanup",
         "run_constant_input_fold_cleanup",
         "run_consecutive_mul_constants_cleanup",
+        "run_conv_attention_layout_cleanup",
         "run_duplicate_fanout_cleanup",
         "run_mixed_attention_layout_cleanup",
         "run_maximum_zero_relu_cleanup",
@@ -443,7 +444,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 29
+    assert len(calls) == 34
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -572,6 +573,7 @@ def test_attention_layout_rewrites_have_single_owner() -> None:
         )
         if isinstance(node, ast.Name)
     }
+    assert "run_conv_attention_layout_cleanup" in lowerer_names
     assert "run_mixed_attention_layout_cleanup" in lowerer_names
 
 

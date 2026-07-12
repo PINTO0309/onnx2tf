@@ -36,6 +36,7 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.passes.attention_layout import (
+    run_conv_attention_layout_cleanup,
     run_mixed_attention_layout_cleanup,
 )
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
@@ -26034,8 +26035,15 @@ def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized()
         OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir)
+    diagnostics: list[dict[str, Any]] = []
+    stats = run_conv_attention_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
     assert stats["optimized_transpose_conv_attention_nhwc_propagation_chains"] == 1
+    assert diagnostics[0]["code"] == "layout.conv_attention_nhwc"
+    assert diagnostics[0]["status"] == "changed"
+    assert diagnostics[0]["changed"] is True
 
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("TRANSPOSE") == 0

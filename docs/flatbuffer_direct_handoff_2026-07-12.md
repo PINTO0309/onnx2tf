@@ -957,6 +957,47 @@ to those six runner calls and group only a generic attention-layout operation
 that is present at every same-order site. If adjacency differs, retain the six
 calls and select another high-count family instead.
 
+That adjacency audit found two distinct neighborhoods. The first four
+mixed-attention calls are preceded by Conv-attention, SA/PA MirrorPad, and a
+SiNet-named tail rewrite; the fifth appears after a different QKV/split family;
+the sixth is a late standalone recovery. No pass is adjacent in the same order
+at all six sites, so the six calls were deliberately left separate and no
+model-named rewrite was folded into the generic runner.
+
+The independent generic Conv-attention rewrite was instead migrated as the
+next bounded unit. All five existing production positions now call
+`run_conv_attention_layout_cleanup` with the session LayoutState and diagnostic
+sink. Stable pass ID `layout.conv_attention_nhwc` runs in `LAYOUT_PLAN` as one
+transaction. Its broad preflight requires Transpose, Mean, and Conv/Depthwise
+Conv capability before allocating indexed state. Candidate execution reuses
+the state-owned producer/consumer index and refreshes it once per completed
+structural iteration instead of rebuilding two edge maps at every scan. The
+raw lowerer entry point remains a compatibility wrapper, and its four strict
+motif fixtures continue to cover Logistic, HardSigmoid, HardSwish, and the
+two-stage HardSwish/Mean chain.
+
+Verification for this checkpoint completed sequentially in the core `uv`
+environment:
+
+- `4 passed, 779 deselected` for all Conv-attention motif fixtures;
+- `24 passed` for architecture and deterministic pass-efficiency checks;
+- `1079 passed, 5 deselected, 2 warnings in 136.45s` for the full direct suite;
+- real Tier 2 `sinet_320_op.onnx` conversion with `-cotof` passed with no
+  skipped output and maximum absolute error `2.572051016613841e-09`.
+
+The real-model metrics recorded five safe preflight skips for the new pass and
+zero snapshots/fingerprints; other recovery passes had already removed its
+candidate motif. The temporary conversion directory and metrics file were
+deleted after inspection. No package was added, TensorFlow was not imported,
+and no inference process ran concurrently.
+
+The next refactoring unit should inventory the repeated generic QKV attention
+sequence (`gather/reshape hoist`, `slice replacement`, `slice-to-split`, split
+collapse, shared pretranspose, and weighted-sum bridge). Group only exactly
+contiguous same-order sequences, retain isolated calls, and first make each
+selected rewrite differential-index aware. Do not include the neighboring
+SiNet-, CSP-, or model-specific layout rules merely to reduce call count.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

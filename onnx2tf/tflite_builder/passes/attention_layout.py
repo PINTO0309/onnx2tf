@@ -1629,7 +1629,12 @@ def _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(
     return {"optimized_attention_qkv_gather_reshape_transpose_hoist_chains": int(rewritten)}
 
 
-def _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_conv_attention_nhwc_propagation_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Propagate NHWC layout through Conv-attention motifs and remove bridge transposes.
 
@@ -1650,6 +1655,7 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir: ModelIR
       - HardSigmoid expansion: MUL(const)->ADD(const)->MAXIMUM(const)->MINIMUM(const)
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     perm_nhwc_to_nchw_const_name = "__nhwc_to_nchw_perm_rank4__"
@@ -1693,8 +1699,8 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir: ModelIR
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         def _match_hardsigmoid_gate_from_output(gate_output_name: str) -> Optional[Dict[str, Any]]:
@@ -2657,11 +2663,80 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir: ModelIR
                 changed = True
                 break
 
-        if not changed:
+        if changed:
+            # This legacy rewrite still performs several batched input/output
+            # mutations and optional adapter insertion. Refresh once after the
+            # completed transaction iteration instead of rebuilding producer
+            # and consumer maps independently at the next scan.
+            graph_index.refresh()
+        else:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_conv_attention_nhwc_propagation_chains": int(rewritten)}
+
+
+def run_conv_attention_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run generic Conv-attention NHWC propagation transactionally."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        has_transpose = False
+        has_mean = False
+        has_conv = False
+        for visited, op in enumerate(candidate_model.operators, start=1):
+            op_type = str(op.op_type)
+            has_transpose = has_transpose or op_type == "TRANSPOSE"
+            has_mean = has_mean or op_type == "MEAN"
+            has_conv = has_conv or op_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}
+            if has_transpose and has_mean and has_conv:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        return bool(_preflight(pass_state.model_ir).matched)
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_conv_attention_nhwc_propagation_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_transpose_conv_attention_nhwc_propagation_chains",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.conv_attention_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={
+            "optimized_transpose_conv_attention_nhwc_propagation_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
