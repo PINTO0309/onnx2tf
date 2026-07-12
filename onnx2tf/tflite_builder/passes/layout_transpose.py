@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
     _clone_quantization,
     _invert_perm,
     _permute_tensor_metadata_if_rank_matches,
@@ -42,6 +41,18 @@ _TRANSPOSE_UNARY_PASSTHROUGH_OPS = frozenset(
         "EXP",
         "FLOOR",
         "CEIL",
+    }
+)
+_TRANSPOSE_UNARY_FANOUT_OPS = frozenset(
+    {
+        "RELU",
+        "RELU6",
+        "RELU_0_TO_1",
+        "HARD_SWISH",
+        "LEAKY_RELU",
+        "LOGISTIC",
+        "TANH",
+        "GELU",
     }
 )
 
@@ -706,7 +717,12 @@ def run_transpose_unary_passthrough_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_unary_fanout_inverse_post_bridges(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate transpose wrappers around unary fanout branches with inverse post-transpose consumers.
 
@@ -730,11 +746,11 @@ def _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir: ModelIR) -> 
     - If non-transpose legacy consumers exist, preserve B via one adapter.
     """
     rewritten = 0
-    unary_ops = {"RELU", "RELU6", "RELU_0_TO_1", "HARD_SWISH", "LEAKY_RELU", "LOGISTIC", "TANH", "GELU"}
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -758,7 +774,7 @@ def _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir: ModelIR) -> 
                 continue
             unary_idx = int(unary_users[0])
             unary_op = model_ir.operators[unary_idx]
-            if str(unary_op.op_type) not in unary_ops:
+            if str(unary_op.op_type) not in _TRANSPOSE_UNARY_FANOUT_OPS:
                 continue
             if len(unary_op.inputs) != 1 or len(unary_op.outputs) != 1:
                 continue
@@ -804,15 +820,22 @@ def _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir: ModelIR) -> 
                 model_ir=model_ir,
                 op=unary_op,
                 new_inputs=[pre_input_name],
+                graph_index=graph_index,
             )
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=unary_op,
                 new_outputs=[representative_output_name],
+                graph_index=graph_index,
             )
 
             for post_output_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, post_output_name, representative_output_name)
+                _replace_tensor_inputs(
+                    model_ir,
+                    post_output_name,
+                    representative_output_name,
+                    graph_index=graph_index,
+                )
 
             old_unary_tensor = model_ir.tensors.get(unary_output_name, None)
             representative_tensor = model_ir.tensors.get(representative_output_name, None)
@@ -831,11 +854,13 @@ def _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir: ModelIR) -> 
                     model_ir=model_ir,
                     op=keep_post_op,
                     new_inputs=[representative_output_name, keep_perm_name],
+                    graph_index=graph_index,
                 )
                 _set_operator_outputs(
                     model_ir=model_ir,
                     op=keep_post_op,
                     new_outputs=[unary_output_name],
+                    graph_index=graph_index,
                 )
                 remove_post_indices = [int(v) for v in post_indices[1:]]
             else:
@@ -843,7 +868,7 @@ def _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir: ModelIR) -> 
 
             remove_indices = sorted(list({int(pre_idx), *remove_post_indices}), reverse=True)
             for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -852,8 +877,128 @@ def _optimize_transpose_unary_fanout_inverse_post_bridges(model_ir: ModelIR) -> 
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_transpose_unary_fanout_inverse_post_bridges": int(rewritten)}
+
+
+def run_transpose_unary_fanout_bridge_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run inverse-post Transpose cleanup around unary fan-out branches."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        found_transpose = False
+        found_unary = False
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            operator_type = str(operator.op_type)
+            found_transpose = found_transpose or operator_type == "TRANSPOSE"
+            found_unary = (
+                found_unary or operator_type in _TRANSPOSE_UNARY_FANOUT_OPS
+            )
+            if found_transpose and found_unary:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        model_outputs = set(str(name) for name in candidate_model.outputs)
+        for pre_op in candidate_model.operators:
+            if (
+                str(pre_op.op_type) != "TRANSPOSE"
+                or len(pre_op.inputs) < 2
+                or len(pre_op.outputs) != 1
+            ):
+                continue
+            pre_output_name = str(pre_op.outputs[0])
+            if pre_output_name in model_outputs:
+                continue
+            perm_pre = _read_transpose_perm(candidate_model, pre_op)
+            if perm_pre is None:
+                continue
+            expected_post_perm = _invert_perm(perm_pre)
+            if expected_post_perm is None:
+                continue
+            unary_users = pass_state.graph_index.consumer_indices(pre_output_name)
+            if len(unary_users) != 1:
+                continue
+            unary_op = candidate_model.operators[int(unary_users[0])]
+            if (
+                str(unary_op.op_type) not in _TRANSPOSE_UNARY_FANOUT_OPS
+                or len(unary_op.inputs) != 1
+                or len(unary_op.outputs) != 1
+                or str(unary_op.inputs[0]) != pre_output_name
+            ):
+                continue
+            unary_output_name = str(unary_op.outputs[0])
+            if unary_output_name in model_outputs:
+                continue
+            output_users = pass_state.graph_index.consumer_indices(unary_output_name)
+            if len(output_users) == 0:
+                continue
+            post_count = 0
+            valid_users = True
+            for user_index in output_users:
+                user_op = candidate_model.operators[int(user_index)]
+                if (
+                    str(user_op.op_type) != "TRANSPOSE"
+                    or len(user_op.inputs) < 2
+                    or len(user_op.outputs) != 1
+                    or str(user_op.inputs[0]) != unary_output_name
+                ):
+                    continue
+                if (
+                    _read_transpose_perm(candidate_model, user_op)
+                    != expected_post_perm
+                    or str(user_op.outputs[0]) in model_outputs
+                ):
+                    valid_users = False
+                    break
+                post_count += 1
+            if valid_users and post_count > 0:
+                return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_unary_fanout_inverse_post_bridges(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "rewritten_transpose_unary_fanout_inverse_post_bridges",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.transpose_unary_fanout_bridge",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={
+            "rewritten_transpose_unary_fanout_inverse_post_bridges": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(

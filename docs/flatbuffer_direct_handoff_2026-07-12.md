@@ -2825,3 +2825,41 @@ passed 13 tests, followed by the complete direct selection:
 ```text
 1120 passed, 5 deselected, 2 warnings in 151.29s
 ```
+
+### Indexed unary fan-out bridge checkpoint
+
+The extracted fan-out rule now accepts the invocation's
+`ModelIRGraphIndex`/`LayoutState`. All input/output retargeting, branch-user
+coalescing, optional adapter rewiring, and pre/post structural removal update
+the differential index; pruning synchronizes layout state. The old per-loop
+whole-graph consumer-map rebuild and direct operator-list deletion were
+removed.
+
+`run_transpose_unary_fanout_bridge_cleanup` registers stable ID
+`layout.transpose_unary_fanout_bridge` in `LAYOUT_PLAN`. Its model-only
+preflight requires Transpose plus a supported unary, while its indexed guard
+exactly checks the pre→unary edge, inverse post permutations, public-output
+protection, and optional legacy consumers before taking a transactional
+snapshot. All seven production calls now use this runner and route diagnostics
+through the active `ConversionSession`; the compatibility wrapper remains.
+
+Focused runner, characterization, architecture, and irrelevant-graph
+efficiency validation passed 7 tests. Instrumentation proves one initial index
+refresh and one snapshot for a successful rewrite, zero snapshots for an
+indexed rejection, and zero heavy state work on an irrelevant graph.
+
+Tier 1 `superpoint.onnx` exercised a real rewrite: the runner reported one
+changed event and six skipped events across its seven pipeline positions, with
+one snapshot total. Sequential `-tb flatbuffer_direct -cotof` validation passed
+with `max_abs=1.6666e-06`, `rmse=1.62079e-07`, and cosine similarity `1`.
+
+The complete direct regression selection then passed:
+
+```text
+1122 passed, 5 deselected, 2 warnings in 148.80s
+```
+
+The optional-environment deselections and float16 overflow warnings are
+unchanged. No dependency or TensorFlow path was added, all inference remained
+single-process and sequential, and temporary SuperPoint output/metrics under
+`/tmp/onnx2tf_transpose_unary_fanout_superpoint*` were deleted after review.

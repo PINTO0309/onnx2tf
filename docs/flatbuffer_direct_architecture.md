@@ -501,8 +501,19 @@ The adjacent unary fan-out bridge rewrite is also mechanically owned by
 a representative inverse-post branch, coalesces additional inverse-post
 branches, and preserves non-Transpose legacy consumers through one adapter.
 The 149-line implementation moved with an identical AST, while the lowerer
-retains only a thin compatibility wrapper. Its seven production positions are
-intentionally unchanged pending the separate indexed-runner migration.
+retains only a thin compatibility wrapper.
+
+All seven production positions now call
+`run_transpose_unary_fanout_bridge_cleanup`, registered as
+`layout.transpose_unary_fanout_bridge` in `LAYOUT_PLAN`. Model-only preflight
+requires both a Transpose and a supported unary family before building pass
+state. The indexed guard preserves support for any valid inverse permutation,
+verifies the single pre→unary edge, classifies every unary-output consumer as a
+matching inverse post or a legacy consumer, and protects public tensors before
+snapshotting. Edge rewrites, branch coalescing, optional adapter retargeting,
+and structural removal share one differential index and `LayoutState` under a
+transactional invariant check. The implementation no longer rebuilds a global
+consumer map inside its rewrite loop.
 
 General consecutive Reshape passthrough cleanup is also owned by
 `passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,

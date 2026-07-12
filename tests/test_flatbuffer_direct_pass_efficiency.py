@@ -67,6 +67,7 @@ from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     run_layout_transpose_cleanup,
     run_transpose_gather_axis_cleanup,
+    run_transpose_unary_fanout_bridge_cleanup,
     run_transpose_unary_passthrough_cleanup,
 )
 
@@ -192,10 +193,11 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_singleton_channel_transpose_cleanup(model_ir, diagnostics=diagnostics)
     run_layout_transpose_cleanup(model_ir, diagnostics=diagnostics)
     run_transpose_gather_axis_cleanup(model_ir, diagnostics=diagnostics)
+    run_transpose_unary_fanout_bridge_cleanup(model_ir, diagnostics=diagnostics)
     run_transpose_unary_passthrough_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 54
+    assert len(diagnostics) == 55
     assert all(event["status"] == "skipped" for event in diagnostics)
     assert all(
         event["metrics"]
