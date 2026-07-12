@@ -314,6 +314,21 @@ fingerprints are
 and `56aef3cabbed33cabcaba95d36058a37b6a12428102f7e83b0aef334eadbb4ec`,
 respectively. Public builder imports and registry dispatch remain unchanged.
 
+QLinearConcat is isolated in `op_builders/qlinear_concat.py`, including its
+input-group validation, per-input quantization metadata, output shape/signature
+reconciliation, and float-domain concat bridge. Its pre-extraction ModelIR
+fingerprint is
+`924e1470c62f93ba44dde277144d84bf796f40c5123839b59b44e4cd89c5b927`.
+Layout propagation remains a later shared pass and is not duplicated in the
+family builder.
+
+QuantizeLinear and DequantizeLinear are isolated in
+`op_builders/quantize_linear.py`. This family owns Q/DQ axis handling, tensor
+dtype and quantization metadata, UINT8-to-INT8 boundary promotion, and the
+existing ONNX-compatible scalar requantization selection. A two-node Q/DQ
+fixture fixes the pre-extraction ModelIR fingerprint at
+`333343018c7bb32db3138cefdf4007353140b044472017ae6c3b4cce762e8f91`.
+
 `dynamics_rife_sim.onnx` remains an active non-pass with the normalized reason
 `invalid_onnx_concat_spatial_mismatch_64_128`. The source passes the structural
 ONNX checker but ONNX Runtime rejects it during shape inference at

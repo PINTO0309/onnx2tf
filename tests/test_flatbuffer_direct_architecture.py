@@ -34,6 +34,16 @@ DEPENDENCY_SCOPED_FILES = [
     / "onnx2tf"
     / "tflite_builder"
     / "op_builders"
+    / "qlinear_concat.py",
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "op_builders"
+    / "quantize_linear.py",
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "op_builders"
     / "qlinear_pool.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_layout_utils.py",
@@ -224,6 +234,71 @@ def test_qlinear_activation_builders_stay_in_family_module() -> None:
         "build_qlinear_leaky_relu_op",
         "build_qlinear_softmax_op",
     }
+    assert expected <= family_functions
+    assert expected.isdisjoint(legacy_functions)
+
+
+def test_qlinear_concat_builder_stays_in_family_module() -> None:
+    family_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "op_builders"
+        / "qlinear_concat.py"
+    )
+    legacy_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "op_builders"
+        / "quantized.py"
+    )
+    family_source = family_path.read_text(encoding="utf-8")
+    legacy_source = legacy_path.read_text(encoding="utf-8")
+    family_functions = {
+        node.name
+        for node in ast.parse(family_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    legacy_functions = {
+        node.name
+        for node in ast.parse(legacy_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    assert "build_qlinear_concat_op" in family_functions
+    assert "build_qlinear_concat_op" not in legacy_functions
+
+
+def test_quantize_linear_builders_stay_in_family_module() -> None:
+    family_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "op_builders"
+        / "quantize_linear.py"
+    )
+    legacy_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "op_builders"
+        / "quantized.py"
+    )
+    family_source = family_path.read_text(encoding="utf-8")
+    legacy_source = legacy_path.read_text(encoding="utf-8")
+    family_functions = {
+        node.name
+        for node in ast.parse(family_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    legacy_functions = {
+        node.name
+        for node in ast.parse(legacy_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    expected = {"build_quantize_linear_op", "build_dequantize_linear_op"}
     assert expected <= family_functions
     assert expected.isdisjoint(legacy_functions)
 

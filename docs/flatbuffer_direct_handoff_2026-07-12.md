@@ -164,6 +164,21 @@ ModelIR fingerprints are
 checks pass through the new import path. The full sequential direct regression
 completed with `977 passed, 5 deselected, 2 warnings in 123.56s`.
 
+QLinearConcat was then moved mechanically to
+`op_builders/qlinear_concat.py`. Its pre-extraction fingerprint is
+`924e1470c62f93ba44dde277144d84bf796f40c5123839b59b44e4cd89c5b927`
+(6 operators, 7 tensors). The focused lowering and both concat-to-conv layout
+propagation checks pass through the new import path.
+
+QuantizeLinear and DequantizeLinear were moved mechanically to
+`op_builders/quantize_linear.py`. Their shared two-node Q/DQ fixture retains
+the pre-extraction fingerprint
+`333343018c7bb32db3138cefdf4007353140b044472017ae6c3b4cce762e8f91`
+(2 operators, 3 tensors). Focused Q/DQ rounding, per-axis quantization, layout,
+and QLinearConcat tests completed with `12 passed, 761 deselected`. The full
+sequential direct regression completed with `981 passed, 5 deselected, 2
+warnings in 122.78s`.
+
 `campp_vin.onnx` is promoted from an historical accuracy failure to a normal
 pass. Its concretized dynamic-time artifact fails during XNNPACK reshape
 preparation, so isolated evaluation now retries once, sequentially, with the
