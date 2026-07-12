@@ -274,6 +274,17 @@ for 22 operators and 27 tensors. An architecture test enforces the 2,000-line
 limit for the new family module and prevents the builder from returning to the
 legacy file.
 
+QLinearMatMul and QGemm now share the dedicated 238-line
+`op_builders/qlinear_fc.py` family module. This second mechanical extraction
+reduces `op_builders/quantized.py` from 2,850 to 2,634 lines while preserving
+the public builder imports and registry dispatch. Pre-extraction normalized
+ModelIR fingerprints are fixed as executable tests:
+`633d083445fcf765023a948c038c0956c7a0b7646b73bdac0bb65cf4c14173c8`
+for QLinearMatMul and
+`bf71085f2cc3a5981b209b6d5b02cc65ea55a41251465229a5ef1636a319f70f`
+for QGemm; each contains 9 operators and 16 tensors. The CRNN corpus model
+also retains its exact fixed-seed metrics through the new dispatch path.
+
 `dynamics_rife_sim.onnx` remains an active non-pass with the normalized reason
 `invalid_onnx_concat_spatial_mismatch_64_128`. The source passes the structural
 ONNX checker but ONNX Runtime rejects it during shape inference at

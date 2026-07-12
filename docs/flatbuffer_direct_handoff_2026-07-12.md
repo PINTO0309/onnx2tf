@@ -110,6 +110,20 @@ options, and quantization fields is identical at `d97cba6` and after the move:
 module below 2,000 lines and verifies that the implementation is absent from
 the legacy file.
 
+QLinearMatMul and QGemm were then moved mechanically into the dedicated
+238-line `op_builders/qlinear_fc.py` family module, reducing the remaining
+legacy quantized builder from 2,850 to 2,634 lines. Pre-extraction ModelIR
+fingerprints are now executable regression tests:
+`633d083445fcf765023a948c038c0956c7a0b7646b73bdac0bb65cf4c14173c8`
+for QLinearMatMul and
+`bf71085f2cc3a5981b209b6d5b02cc65ea55a41251465229a5ef1636a319f70f`
+for QGemm, each with 9 operators and 16 tensors. The architecture test keeps
+both builders out of the legacy module, enforces the 2,000-line family limit,
+and includes the new module in the TensorFlow-import boundary. Sequential
+one-sample CRNN verification through the new registry path is unchanged at
+`max_abs=0.14842605590820312`, RMSE `0.0011565753987944503`, and cosine
+similarity `0.999999996846642`.
+
 `campp_vin.onnx` is promoted from an historical accuracy failure to a normal
 pass. Its concretized dynamic-time artifact fails during XNNPACK reshape
 preparation, so isolated evaluation now retries once, sequentially, with the
@@ -169,6 +183,8 @@ their previous failure-signature hashes.
 Validation completed in the core `uv` environment, with one pytest process and
 no parallel workers:
 
+- `967 passed, 5 deselected, 2 warnings` after the QLinear FC family
+  extraction, its two pre-extraction fingerprint tests, and architecture test;
 - `964 passed, 5 deselected, 2 warnings` after the DynamicQuantizeLinear
   op-family extraction and architecture boundary test;
 - `963 passed, 5 deselected, 2 warnings` after the DynamicQuantizeLinear
