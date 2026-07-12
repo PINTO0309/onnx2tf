@@ -221,6 +221,19 @@ result is `docs/baselines/flatbuffer_direct_tier2_root_ad1d508.json`: 80
 passed, 4 conversion errors, 3 timeouts, 6 accuracy failures, and 20 missing
 reports. Median and maximum durations were 7.124 and 120.360 seconds.
 
+`arcfaceresnet100-11-int8.onnx` also uses the normalized reason
+`onnxruntime_u8s8_saturating_pair_accumulation`. Its preprocessing and the
+first two QLinearConv boundaries are exact. The first divergence occurs at
+`stage1_unit3_conv1_quant`, whose UINT8 activation input still matches before
+the INT8-weight convolution. When this node is isolated with that exact input,
+the direct TFLite output matches ONNX ReferenceEvaluator at all 200,704
+elements, while ONNX Runtime CPU differs at 29 elements by up to two quanta.
+Those small host-kernel differences accumulate through 103 QLinearConv nodes;
+the current fixed-seed final maximum absolute error is
+`0.3681950643658638`, improved from `0.8229759186506271` but still above the
+required ceiling. As with the other U8S8 cases, the converter does not emulate
+host-specific saturating SIMD pair accumulation.
+
 `yolox_nano.onnx` remains an active Tier 2 non-pass with the normalized reason
 `float_conv_accumulation_amplified_by_exp_stride`. The normal sequential
 comparison satisfies the aggregate metric gate with mean absolute error

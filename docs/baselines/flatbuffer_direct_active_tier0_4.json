@@ -1387,9 +1387,9 @@
       "tier": 2,
       "model": "arcfaceresnet100-11-int8.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
+      "baseline_reason": "onnxruntime_u8s8_saturating_pair_accumulation",
       "error_signature_sha256": "f1495fb3c58cf0f48521281b92113fa31d9dd301329f552c0cd80dcbc1687c3a",
-      "tflite_max_abs": 0.8229759186506271
+      "tflite_max_abs": 0.3681950643658638
     },
     {
       "tier": 2,

@@ -1022,6 +1022,19 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert efficientnet_lite4_entry["error_signature_sha256"] == (
         "da92ac2e2f0e69a6b68654c2152fadfadb079a20d73aaf8b33fc3a81af4afc15"
     )
+    arcfaceresnet_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "arcfaceresnet100-11-int8.onnx"
+    )
+    assert arcfaceresnet_entry["baseline_classification"] == "tflite_fail"
+    assert arcfaceresnet_entry["baseline_reason"] == (
+        "onnxruntime_u8s8_saturating_pair_accumulation"
+    )
+    assert arcfaceresnet_entry["error_signature_sha256"] == (
+        "f1495fb3c58cf0f48521281b92113fa31d9dd301329f552c0cd80dcbc1687c3a"
+    )
+    assert arcfaceresnet_entry["tflite_max_abs"] == 0.3681950643658638
     version_rfb_entry = next(
         entry
         for entry in profile_payload["models"]
