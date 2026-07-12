@@ -152,6 +152,7 @@ from onnx2tf.tflite_builder.passes.singleton_reshape_layout import (
     _optimize_singleton_reshape_concat_post_transpose_nhwc_chains as _optimize_singleton_reshape_concat_post_transpose_nhwc_chains_pass,
     _optimize_singleton_spatial_nhwc_transpose_reshape_flatten as _optimize_singleton_spatial_nhwc_transpose_reshape_flatten_pass,
     run_flatten_concat_reshape_cleanup,
+    run_singleton_channel_transpose_cleanup,
     run_singleton_reshape_layout_cleanup,
     run_singleton_spatial_reshape_cleanup,
 )
@@ -60992,7 +60993,11 @@ def lower_onnx_to_ir(
         )
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
         _optimize_layout_transpose_chains(model_ir)
-        _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
+        run_singleton_channel_transpose_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_singleton_reshape_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -61061,7 +61066,11 @@ def lower_onnx_to_ir(
     # Apply singleton transpose->reshape rewrite regardless of layout-opt mode.
     # This is required for fallback relowering (optimize_layout_transpose_chains=False)
     # where channelwise [1,C,1,1] -> [1,1,1,C] adapters can remain as TRANSPOSE.
-    _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
+    run_singleton_channel_transpose_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_duplicate_fanout_cleanup(
         model_ir,
         include_transpose=False,
@@ -61315,7 +61324,11 @@ def lower_onnx_to_ir(
     # Norm-subgraph fallback rewrites can introduce channelwise
     # [1,C,1,1]->[1,1,1,C] adapters as TRANSPOSE in no-layout mode.
     # Re-canonicalize them to RESHAPE at the very end.
-    _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
+    run_singleton_channel_transpose_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_duplicate_fanout_cleanup(
         model_ir,
         include_transpose=False,
@@ -61341,7 +61354,11 @@ def lower_onnx_to_ir(
     _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir)
     _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
     _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
-    _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
+    run_singleton_channel_transpose_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_duplicate_fanout_cleanup(
         model_ir,
         include_transpose=False,
@@ -61553,7 +61570,10 @@ def lower_onnx_to_ir(
         if int(fallback_norm_stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)) > 0:
             _repair_rank4_binary_layout_mismatch_with_transpose_adapter(fallback_ir)
             _repair_rank4_binary_singleton_broadcast_layout_mismatch(fallback_ir)
-            _optimize_singleton_channel_layout_transpose_to_reshape(fallback_ir)
+            run_singleton_channel_transpose_cleanup(
+                fallback_ir,
+                diagnostics=session.diagnostics,
+            )
             run_duplicate_fanout_cleanup(
                 fallback_ir,
                 include_transpose=False,

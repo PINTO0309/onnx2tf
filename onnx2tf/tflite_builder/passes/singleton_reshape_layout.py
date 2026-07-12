@@ -12,8 +12,6 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _is_fully_known_positive_shape,
     _invert_perm,
@@ -512,7 +510,12 @@ def run_singleton_reshape_layout_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_singleton_channel_layout_transpose_to_reshape(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Replace TRANSPOSE with RESHAPE when permutation is memory-order
     equivalent due to singleton dimensions.
@@ -526,10 +529,11 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
     is an exact reshape.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
-    consumers = _build_tensor_consumer_map(model_ir)
-    producers = _build_tensor_producer_map(model_ir)
+    consumers = graph_index.consumers
+    producers = graph_index.producers
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -792,7 +796,12 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
         )
 
         op.op_type = "RESHAPE"
-        op.inputs = [input_name, reshape_shape_name]
+        _set_operator_inputs(
+            model_ir=model_ir,
+            op=op,
+            new_inputs=[input_name, reshape_shape_name],
+            graph_index=graph_index,
+        )
         op.options = {
             "newShape": [int(v) for v in reshape_target],
             "layoutTransposeAsReshape": True,
@@ -801,7 +810,9 @@ def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -
         rewritten += 1
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_singleton_channel_layout_transpose_to_reshape": int(rewritten)}
 
 
@@ -1632,6 +1643,98 @@ def run_singleton_spatial_reshape_cleanup(
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=specs,
+        layout_state=layout_state,
+        default_details=default_details,
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
+
+
+def run_singleton_channel_transpose_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Canonicalize singleton-safe rank-4 layout Transposes as Reshapes."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            if str(operator.op_type) == "TRANSPOSE":
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        for transpose_op in pass_state.model_ir.operators:
+            if (
+                str(transpose_op.op_type) != "TRANSPOSE"
+                or len(transpose_op.inputs) < 2
+                or len(transpose_op.outputs) != 1
+            ):
+                continue
+            perm = _read_transpose_perm(pass_state.model_ir, transpose_op)
+            if perm is None or len(perm) != 4:
+                continue
+            input_tensor = pass_state.model_ir.tensors.get(str(transpose_op.inputs[0]))
+            output_tensor = pass_state.model_ir.tensors.get(str(transpose_op.outputs[0]))
+            if (
+                input_tensor is None
+                or output_tensor is None
+                or len(list(input_tensor.shape)) != 4
+                or len(list(output_tensor.shape)) != 4
+            ):
+                continue
+            input_shape = [int(value) for value in input_tensor.shape]
+            if perm == [0, 3, 1, 2] and (
+                int(input_shape[3]) == 1
+                or (int(input_shape[1]) == 1 and int(input_shape[2]) == 1)
+            ):
+                return True
+            if perm == [0, 2, 3, 1] and (
+                int(input_shape[1]) == 1
+                or (int(input_shape[2]) == 1 and int(input_shape[3]) == 1)
+            ):
+                return True
+            signature = list(input_tensor.shape_signature or input_tensor.shape)
+            non_singleton_input = [
+                index for index, value in enumerate(signature) if int(value) != 1
+            ]
+            non_singleton_permuted = [
+                index for index in perm if int(signature[int(index)]) != 1
+            ]
+            if non_singleton_input == non_singleton_permuted:
+                return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_singleton_channel_layout_transpose_to_reshape(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("rewritten_singleton_channel_layout_transpose_to_reshape", 0)
+            ),
+        }
+
+    default_details = {
+        "rewritten_singleton_channel_layout_transpose_to_reshape": 0,
+    }
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.singleton_channel_transpose_as_reshape",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
         layout_state=layout_state,
         default_details=default_details,
         diagnostics=diagnostics,

@@ -328,7 +328,15 @@ memory-order equivalence, preserves dynamic batch signatures, remaps shape
 metadata and constant side inputs, and protects the quantized
 Logistic→Concat(axis=1) case. The 291-line implementation moved with an
 identical AST; its five production positions still call a thin lowerer wrapper
-in their original order.
+in their original order for compatibility.
+
+Production now uses `run_singleton_channel_transpose_cleanup`, registered as
+`layout.singleton_channel_transpose_as_reshape` in `LAYOUT_PLAN`, at all five
+positions including fallback IR. Model-only Transpose preflight and a rank-4
+singleton memory-order guard avoid index/snapshot construction on unrelated or
+non-singleton graphs. The callback shares a differential index for producer/
+consumer protection checks and input-edge replacement, synchronizes the added
+shape tensor through `LayoutState`, and leaves the op output identity stable.
 
 Production uses one ordered pass group for that family, with stable IDs
 `layout.singleton_reshape_unary_passthrough` and

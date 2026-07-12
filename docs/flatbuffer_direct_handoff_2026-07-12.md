@@ -1784,6 +1784,33 @@ The next checkpoint should migrate this rewrite to differential index and
 replace all five raw production calls. Do not create a pull request; commit and
 push only at a coherent checkpoint.
 
+That indexed singleton-channel checkpoint is now complete. All five raw
+production calls, including fallback IR, were replaced with
+`run_singleton_channel_transpose_cleanup`, using stable ID
+`layout.singleton_channel_transpose_as_reshape` in `LAYOUT_PLAN`. Model-only
+Transpose preflight and a rank-4 singleton memory-order guard precede the
+transaction. Producer/consumer protection checks and input-edge mutation share
+the differential index, while the added shape tensor and pruning synchronize
+through `LayoutState`.
+
+Sequential verification completed with:
+
+- `14 passed` across indexed positive/non-singleton guard, the nine legacy
+  singleton/dynamic/rejection cases, ordered diagnostics, ownership, and
+  irrelevant preflight;
+- an AST mutation audit showing zero raw production calls, exactly five runner
+  calls, no local graph-map rebuild, and no direct input-edge assignment;
+- Tier 2 `osnet025_Nx3x256x128.onnx`, where four runtime positions produced one
+  changed and three guard-skipped events with exactly one snapshot, followed by
+  `-cotof` with every output compared, `evaluation_pass=true`, and maximum
+  absolute error `2.193450927734375e-05`;
+- `1107 passed, 5 deselected, 2 warnings in 144.73s` for the full direct suite.
+
+The generated OSNet output and metrics were deleted. Validation remained
+single-process and sequential, with no new dependency or TensorFlow import.
+Rerun the raw post-lowering inventory before selecting the next family. Do not
+create a pull request; commit and push only at a coherent checkpoint.
+
 The next mechanical split is complete. The 193-line fully static
 4D→2D Reshape/Concat/2D→4D Reshape rewrite moved unchanged into
 `passes/singleton_reshape_layout.py`. Its NHWC singleton-spatial, batch/channel,
