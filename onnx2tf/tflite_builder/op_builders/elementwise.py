@@ -7,6 +7,10 @@ import copy
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
+from onnx2tf.tflite_builder.op_builders.inverse_utils import (
+    add_partial_pivot_swap,
+    add_sign_preserving_pivot_guard,
+)
 from onnx2tf.tflite_builder.op_builders.shared import (
     make_transpose,
     materialize_broadcast_operand_for_gpu_delegate,
@@ -2280,13 +2284,6 @@ def build_inverse_op(node: Any, ctx: Any) -> None:
             identity.astype(np_dtype),
         )
 
-        eps_name = _add_scalar_const(
-            ctx,
-            f"{compute_output_name}_inverse_eps",
-            float(1e-6),
-            compute_dtype,
-        )
-
         def _slice_matrix_row(src_name: str, row: int, suffix: str) -> str:
             begin = [0 for _ in range(rank)]
             size = [-1 for _ in range(rank)]
@@ -2434,15 +2431,29 @@ def build_inverse_op(node: Any, ctx: Any) -> None:
                 elim_mask_arr,
             )
 
+            matrix_state, inverse_state = add_partial_pivot_swap(
+                ctx=ctx,
+                matrix_name=matrix_state,
+                inverse_name=inverse_state,
+                current_row_mask_name=row_mask_name,
+                name_prefix=f"{compute_output_name}_inverse_iter{row_idx}_partial_pivot",
+                row_index=row_idx,
+                rows=rows,
+                dtype=compute_dtype,
+                prefix_shape=prefix_shape,
+                matrix_shape=matrix_shape,
+                row_shape=row_shape,
+            )
+
             row_a = _slice_matrix_row(matrix_state, row_idx, f"iter{row_idx}_row_a")
             row_inv = _slice_matrix_row(inverse_state, row_idx, f"iter{row_idx}_row_inv")
             pivot = _slice_matrix_scalar(matrix_state, row_idx, row_idx, f"iter{row_idx}_pivot")
-            pivot_safe = _binary_tensor(
-                "ADD",
-                pivot,
-                eps_name,
-                scalar_shape,
-                f"iter{row_idx}_pivot_safe",
+            pivot_safe = add_sign_preserving_pivot_guard(
+                ctx=ctx,
+                pivot_name=pivot,
+                name_prefix=f"{compute_output_name}_inverse_iter{row_idx}_pivot",
+                dtype=compute_dtype,
+                shape=scalar_shape,
             )
 
             row_a_norm = _binary_tensor(

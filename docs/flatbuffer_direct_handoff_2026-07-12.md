@@ -1,6 +1,79 @@
 # flatbuffer_direct refactor handoff — 2026-07-12
 
-## Current checkpoint — `fb-refactor2` after `d278bcf`
+## Current checkpoint — `fb-refactor2` after `53bba37`
+
+The opset-aware Resize lowering and numerically stable Inverse lowering recover
+`onnx_dense_optimized.onnx` and its byte-identical `_org` counterpart without a
+model-name rule or additional dependency.
+
+- ONNX Resize in opset 10 now defaults to asymmetric coordinates, as required
+  by that schema, instead of inheriting the opset 11+ `half_pixel` default.
+- The generic 4×4 through 16×16 Inverse lowering now uses per-batch partial
+  pivoting. At each Gauss–Jordan iteration it selects the largest absolute
+  remaining pivot, swaps the selected row in both the matrix and identity
+  state, and only substitutes a signed epsilon when the chosen pivot is
+  genuinely near zero. Normal pivots are no longer shifted unconditionally.
+- A synthetic opset-10 nearest-neighbor Resize test fixes the coordinate
+  contract, and a batched 8×8 Inverse test requires an actual row swap and
+  checks ONNX Runtime against the generated TFLite artifact.
+
+Both dense models were evaluated sequentially with all seven outputs compared
+and no skip. Their identical fixed-seed result is `evaluation_pass=true`,
+`max_abs=0.00015753507614135742`, `mean_abs=2.2844531542128204e-06`,
+`rmse=5.3903736593740145e-06`, and cosine similarity
+`0.9999999998639824`. The recorded pre-fix baseline maximum was
+`0.8238084316253662`; correcting Resize alone reduced it to
+`0.16955818608403206`, and removing unconditional pivot perturbation reduced
+it to `0.157419` before partial pivoting eliminated the amplified GridSample
+error.
+
+The managed Tier 0–4 profile now records 361 passes, 6
+`missing_tflite_report`, 27 `tflite_fail`, and 26 excluded historical timeouts.
+There are 33 active non-passes. The next accuracy failure without an explicit
+normalized cause is `modnet_old.onnx` in Tier 2; earlier failures in managed
+order already have documented quantization/runtime semantics.
+
+Validation completed in the core `uv` environment, with one pytest process and
+no parallel workers:
+
+- `793 passed, 7 deselected, 2 warnings` across the direct builder, managed
+  profile, architecture/import boundary, and the two new regression files;
+- `28 passed, 772 deselected` for the focused Inverse, Resize, managed profile,
+  and TensorFlow-free checks;
+- `1 passed, 756 deselected` for Compress after removing a pre-existing unused
+  local from the touched Resize module;
+- both dense corpus models passed sequential end-to-end `-cotof` runs.
+
+The seven broad-suite deselections are the optional TensorFlow backend matrix,
+the optional Torch GroupNorm integration test (the core environment exposes an
+incompatible system Python 3.10 Torch binary), and their explicitly named
+companions. No optional dependency was installed for this checkpoint.
+
+## Previous checkpoint — static delegate family after `53bba37`
+
+The static-input delegate capability introduced by `53bba37` also recovers a
+four-model AnimeGAN/face-paint family that previously shared the same unresolved
+accuracy signature:
+
+- `anime-gan-v2.onnx`;
+- `anime-gan-v2_org.onnx`;
+- `face_paint_512_v2_0.onnx`;
+- `model_paint_v2_test.onnx`.
+
+All four fixed-seed sequential runs compared their only output with no skip and
+produced identical metrics: `evaluation_pass=true`,
+`max_abs=0.0017458945512771606`, `mean_abs=0.0003080219994663925`,
+`rmse=0.0003674835052452457`, and cosine similarity
+`0.9999997946255107`. Their previous delegate-free baseline maximum was
+`0.037707426119595766`. No model-specific lowering or tolerance was added.
+
+The managed Tier 0–4 profile now records 359 passes, 6
+`missing_tflite_report`, 29 `tflite_fail`, and 26 excluded historical timeouts.
+There are 35 active non-passes. The next unresolved generic accuracy group in
+managed order is `onnx_dense_optimized.onnx` and its `_org` counterpart; the
+earlier remaining failures already carry explicit normalized reasons.
+
+## Previous checkpoint — `fb-refactor2` at `53bba37`
 
 The current checkpoint recovers `vit_b_encoder.onnx` and removes a general
 large-model evaluation bottleneck without changing conversion semantics.
@@ -51,7 +124,7 @@ diagnostic models, and historical bulk-run directories were removed from
 `/tmp`. Available filesystem space increased from approximately `63 GiB` to
 `157 GiB`; repository models and tracked files were not removed.
 
-## Previous checkpoint — `fb-refactor2` at `d278bcf`
+## Earlier checkpoint — `fb-refactor2` at `d278bcf`
 
 The next checkpoint recovers `tiny_decoder_11.onnx` by making dynamic
 ScatterND negative-index normalization safe for index tensors above rank 4.

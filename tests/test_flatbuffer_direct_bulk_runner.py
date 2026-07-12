@@ -999,14 +999,46 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 6,
-        "pass": 355,
-        "tflite_fail": 33,
+        "pass": 361,
+        "tflite_fail": 27,
         "timeout": 26,
     }
     assert profile["model_options"]["silero_vad.onnx"] == {
         "keep_shape_absolutely_input_names": ["input", "state", "sr"],
     }
     profile_payload = json.loads(profile_path.read_text(encoding="utf-8"))
+    for model_name in (
+        "anime-gan-v2.onnx",
+        "anime-gan-v2_org.onnx",
+        "face_paint_512_v2_0.onnx",
+        "model_paint_v2_test.onnx",
+    ):
+        paint_entry = next(
+            entry
+            for entry in profile_payload["models"]
+            if entry["model"] == model_name
+        )
+        assert paint_entry == {
+            "tier": 1,
+            "model": model_name,
+            "baseline_classification": "pass",
+            "tflite_max_abs": 0.0017458945512771606,
+        }
+    for model_name in (
+        "onnx_dense_optimized.onnx",
+        "onnx_dense_optimized_org.onnx",
+    ):
+        inverse_entry = next(
+            entry
+            for entry in profile_payload["models"]
+            if entry["model"] == model_name
+        )
+        assert inverse_entry == {
+            "tier": 1,
+            "model": model_name,
+            "baseline_classification": "pass",
+            "tflite_max_abs": 0.00015753507614135742,
+        }
     inverse_entry = next(
         entry
         for entry in profile_payload["models"]

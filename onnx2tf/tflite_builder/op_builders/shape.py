@@ -15,6 +15,7 @@ from onnx2tf.tflite_builder.op_builders.pad_utils import (
     finish_zero_safe_batch_pad,
     prepare_zero_safe_batch_pad,
 )
+from onnx2tf.tflite_builder.op_builders.resize_utils import resolve_resize_flags
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 _BICUBIC_MATRIX_CACHE: Dict[Tuple[int, int, str, float, bool], np.ndarray] = {}
@@ -3126,11 +3127,6 @@ def build_compress_op(node: Any, ctx: Any) -> None:
 
     data_shape = [int(v) for v in ctx.get_tensor_shape(data_name)]
     data_tensor = ctx.model_ir.tensors.get(data_name, None)
-    data_signature = (
-        [int(v) for v in list(data_tensor.shape_signature)]
-        if data_tensor is not None and data_tensor.shape_signature is not None
-        else [int(v) for v in list(data_shape)]
-    )
     output_tensor = ctx.model_ir.tensors.get(output_name, None)
     output_signature = (
         [int(v) for v in list(output_tensor.shape_signature)]
@@ -7305,18 +7301,6 @@ def _extract_resize_onnx_hw_hints(
     return onnx_sizes_hw, onnx_scales_hw
 
 
-def _resolve_resize_flags(node: Any) -> tuple[str, str, bool, bool]:
-    mode = str(node.attrs.get("mode", "nearest")).lower()
-    default_ctm = "asymmetric" if str(getattr(node, "op", "")) == "Upsample" else "half_pixel"
-    ctm = str(node.attrs.get("coordinate_transformation_mode", default_ctm)).lower()
-    align_corners = bool(ctm == "align_corners")
-    half_pixel_centers = bool(ctm in {"half_pixel", "pytorch_half_pixel"})
-    if mode == "nearest" and ctm == "asymmetric":
-        align_corners = False
-        half_pixel_centers = False
-    return mode, ctm, align_corners, half_pixel_centers
-
-
 def _add_resize_builtin_with_integer_linear_compatibility(
     *,
     ctx: Any,
@@ -9952,7 +9936,10 @@ def build_resize_op(node: Any, ctx: Any) -> None:
         if in_quant is not None:
             ctx.model_ir.tensors[output_name].quantization = _clone_quantization(in_quant)
 
-    mode, coordinate_transformation_mode, align_corners, half_pixel_centers = _resolve_resize_flags(node)
+    mode, coordinate_transformation_mode, align_corners, half_pixel_centers = resolve_resize_flags(
+        node=node,
+        onnx_model=getattr(ctx, "onnx_model", None),
+    )
     tflite_op = "RESIZE_NEAREST_NEIGHBOR" if mode == "nearest" else "RESIZE_BILINEAR"
     if input_rank == 5:
         if mode == "cubic":
