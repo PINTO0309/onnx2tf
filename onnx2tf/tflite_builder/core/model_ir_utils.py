@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.shape_resolution import (
     preserve_rewritten_output_dynamic_axes,
 )
@@ -85,6 +86,7 @@ def _set_operator_inputs(
     model_ir: ModelIR,
     op: OperatorIR,
     new_inputs: List[str],
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> None:
     old_inputs = [str(value) for value in op.inputs]
     normalized_new_inputs = [str(value) for value in new_inputs]
@@ -100,7 +102,15 @@ def _set_operator_inputs(
                 "source": "set_operator_inputs",
             },
         )
-    op.inputs = normalized_new_inputs
+    operator_index = (
+        graph_index.operator_index(op)
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if operator_index is None:
+        op.inputs = normalized_new_inputs
+    else:
+        graph_index.replace_operator_inputs(operator_index, normalized_new_inputs)
 
 
 def _set_operator_outputs(
@@ -108,6 +118,7 @@ def _set_operator_outputs(
     model_ir: ModelIR,
     op: OperatorIR,
     new_outputs: List[str],
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> None:
     old_outputs = [str(value) for value in op.outputs]
     normalized_new_outputs = [str(value) for value in new_outputs]
@@ -127,7 +138,15 @@ def _set_operator_outputs(
                 "source": "set_operator_outputs",
             },
         )
-    op.outputs = normalized_new_outputs
+    operator_index = (
+        graph_index.operator_index(op)
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if operator_index is None:
+        op.outputs = normalized_new_outputs
+    else:
+        graph_index.replace_operator_outputs(operator_index, normalized_new_outputs)
 
 
 def _replace_operator_input_at(
@@ -136,6 +155,7 @@ def _replace_operator_input_at(
     op: OperatorIR,
     input_index: int,
     new_input_name: str,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> None:
     if int(input_index) < 0 or int(input_index) >= len(op.inputs):
         return
@@ -151,7 +171,17 @@ def _replace_operator_input_at(
                 "source": "replace_operator_input_at",
             },
         )
-    op.inputs[int(input_index)] = new_name
+    operator_index = (
+        graph_index.operator_index(op)
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if operator_index is None:
+        op.inputs[int(input_index)] = new_name
+    else:
+        new_inputs = [str(value) for value in op.inputs]
+        new_inputs[int(input_index)] = new_name
+        graph_index.replace_operator_inputs(operator_index, new_inputs)
 
 
 def _read_const_ints_from_tensor(

@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _build_tensor_consumer_map,
     _build_tensor_producer_map,
@@ -41,6 +42,7 @@ def _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir: ModelI
       - remove the redundant MIRROR_PAD output transpose
     """
     optimized = 0
+    graph_index = ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
 
@@ -91,8 +93,8 @@ def _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir: ModelI
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = {str(v) for v in list(model_ir.outputs)}
 
         for concat_idx, concat_op in enumerate(model_ir.operators):
@@ -225,6 +227,7 @@ def _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir: ModelI
                 op=max_op,
                 input_index=0,
                 new_input_name=str(source_nhwc_name),
+                graph_index=graph_index,
             )
             concat_op.options["axis"] = 3
             _replace_operator_input_at(
@@ -232,6 +235,7 @@ def _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir: ModelI
                 op=conv_op,
                 input_index=0,
                 new_input_name=str(mirror_output_name),
+                graph_index=graph_index,
             )
 
             for tensor_name in [str(max_out_name), str(concat_output_name), str(mirror_output_name)]:
@@ -242,7 +246,7 @@ def _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir: ModelI
             max_input_tensor.logical_layout = "NCHW"
             mean_input_tensor.logical_layout = "NHWC"
 
-            del model_ir.operators[int(post_idx)]
+            graph_index.remove_operator(post_idx)
             optimized += 1
             changed = True
             break

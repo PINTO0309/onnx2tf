@@ -8,10 +8,10 @@ import pytest
 from onnx import TensorProto, helper
 
 from onnx2tf.tflite_builder.core import (
-    ArtifactPlan,
     ConversionRequest,
     ConversionResult,
     ConversionSession,
+    GraphIndex,
     ModelIRGraphIndex,
     OrderedPassManager,
     PassPhase,
@@ -82,6 +82,43 @@ def test_conversion_session_builds_one_graph_index() -> None:
     assert session.tensor_consumer_count == {"x": 1, "y": 1}
 
 
+def test_onnx_graph_index_updates_only_mutated_node_references() -> None:
+    model = _add_onnx_model()
+    node = model.graph.node[0]
+    index = GraphIndex(model)
+    previous_inputs = list(node.input)
+    previous_outputs = list(node.output)
+    node.input[1] = "x"
+    node.output[0] = "w"
+
+    index.update_node(
+        node,
+        previous_inputs=previous_inputs,
+        previous_outputs=previous_outputs,
+    )
+
+    assert index.consumer_count("x") == 2
+    assert index.consumer_count("y") == 0
+    assert index.producer("z") is None
+    assert index.producer("w") is node
+
+    duplicate = helper.make_node("Identity", ["x"], ["w"], name="duplicate")
+    model.graph.node.append(duplicate)
+    duplicate = model.graph.node[-1]
+    index.register_node(duplicate)
+    assert index.producer("w") is duplicate
+    assert index.duplicate_producers["w"] == [node, duplicate]
+
+    index.unregister_node(duplicate)
+    del model.graph.node[-1]
+    assert index.producer("w") is node
+    assert "w" not in index.duplicate_producers
+    refreshed = GraphIndex(model)
+    assert index.producers == refreshed.producers
+    assert index.consumers == refreshed.consumers
+    assert index.duplicate_producers == refreshed.duplicate_producers
+
+
 def test_model_ir_index_and_invariants_detect_duplicate_producer() -> None:
     model_ir = _add_model_ir()
     model_ir.operators.append(OperatorIR(op_type="MUL", inputs=["x", "y"], outputs=["z"]))
@@ -91,6 +128,56 @@ def test_model_ir_index_and_invariants_detect_duplicate_producer() -> None:
         problem.startswith("duplicate_producer:z")
         for problem in validate_model_ir_invariants(model_ir)
     )
+
+
+def test_model_ir_index_incremental_input_output_mutation_matches_refresh() -> None:
+    model_ir = _add_model_ir()
+    model_ir.tensors["w"] = TensorIR(
+        name="w",
+        dtype="FLOAT32",
+        shape=[1, 3],
+        shape_signature=[1, 3],
+    )
+    index = ModelIRGraphIndex(model_ir)
+
+    index.replace_operator_inputs(0, ["x", "x"])
+    index.replace_operator_outputs(0, ["w"])
+
+    assert index.consumer_indices("x") == [0, 0]
+    assert index.consumer_indices("y") == []
+    assert index.producer("z") is None
+    assert index.producer("w") is model_ir.operators[0]
+    refreshed = ModelIRGraphIndex(model_ir)
+    assert index.producers == refreshed.producers
+    assert index.consumers == refreshed.consumers
+    assert index.duplicate_producers == refreshed.duplicate_producers
+
+
+def test_model_ir_index_incremental_insert_remove_shifts_references() -> None:
+    model_ir = _add_model_ir()
+    index = ModelIRGraphIndex(model_ir)
+    identity = OperatorIR(op_type="IDENTITY", inputs=["x"], outputs=["z"])
+
+    index.insert_operator(0, identity)
+
+    assert index.duplicate_producers == {"z": [0, 1]}
+    assert index.consumer_indices("x") == [0, 1]
+    assert index.consumer_indices("y") == [1]
+    refreshed = ModelIRGraphIndex(model_ir)
+    assert index.producers == refreshed.producers
+    assert index.consumers == refreshed.consumers
+    assert index.duplicate_producers == refreshed.duplicate_producers
+
+    removed = index.remove_operator(0)
+
+    assert removed is identity
+    assert index.producers == {"z": 0}
+    assert index.consumer_indices("x") == [0]
+    assert index.consumer_indices("y") == [0]
+    assert index.duplicate_producers == {}
+    refreshed = ModelIRGraphIndex(model_ir)
+    assert index.producers == refreshed.producers
+    assert index.consumers == refreshed.consumers
 
 
 def test_model_ir_invariants_allow_empty_optional_operator_slots() -> None:

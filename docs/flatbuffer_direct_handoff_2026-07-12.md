@@ -373,6 +373,31 @@ owner. Uncharacterized attention mega-patterns remain in the legacy lowerer
 until focused semantic fixtures are added. Re-audit the remaining generic
 layout passes for the next cohesive family.
 
+The first phase-3 GraphIndex enhancement is now implemented. `GraphIndex`
+supports differential ONNX node update/register/unregister notifications.
+`ModelIRGraphIndex` supports indexed input/output replacement and operator
+insert/append/remove while maintaining producer, consumer,
+duplicate-producer, and operator-identity maps. The canonical lineage-aware
+mutation helpers accept an optional index and update graph state atomically.
+
+The mixed Mean/ReduceMax/Concat/MirrorPad attention pass is the first migrated
+consumer: it builds its ModelIR index once, performs input rewrites through the
+indexed helpers, and removes the terminal transpose through the index instead
+of rebuilding producer/consumer maps after a successful rewrite.
+
+Verification completed with:
+
+- `12 passed` for core GraphIndex and invariant tests;
+- `23 passed, 771 deselected` for focused index, mutation-helper,
+  architecture, and migrated-attention integration;
+- `1014 passed, 5 deselected, 2 warnings in 125.18s` for the full sequential
+  direct suite.
+
+Next, migrate another small characterized pass to the same differential index
+contract and measure map-build reductions before extending the API. Structural
+mutations that still bypass the index must continue using `refresh()` until
+they are converted explicitly.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

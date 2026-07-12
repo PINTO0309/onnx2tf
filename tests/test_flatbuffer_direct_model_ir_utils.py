@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _broadcast_static_shapes,
     _build_tensor_consumer_map,
@@ -12,6 +13,9 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _read_transpose_perm,
     _read_const_ints_from_tensor,
     _replace_tensor_inputs,
+    _replace_operator_input_at,
+    _set_operator_inputs,
+    _set_operator_outputs,
     _write_const_ints_to_tensor,
 )
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
@@ -137,6 +141,50 @@ def test_graph_helpers_read_transpose_and_record_input_replacement() -> None:
             "event_index": 0,
         }
     ]
+
+
+def test_graph_mutation_helpers_update_optional_incremental_index() -> None:
+    model_ir = ModelIR("indexed_graph_mutation_test")
+    model_ir.inputs = ["x", "y"]
+    model_ir.outputs = ["z"]
+    model_ir.tensors = {
+        name: _tensor(name)
+        for name in ["x", "y", "z", "w"]
+    }
+    op = OperatorIR(op_type="ADD", inputs=["x", "y"], outputs=["z"])
+    model_ir.operators = [op]
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    _replace_operator_input_at(
+        model_ir=model_ir,
+        op=op,
+        input_index=1,
+        new_input_name="x",
+        graph_index=graph_index,
+    )
+    assert graph_index.consumer_indices("x") == [0, 0]
+    assert graph_index.consumer_indices("y") == []
+
+    _set_operator_outputs(
+        model_ir=model_ir,
+        op=op,
+        new_outputs=["w"],
+        graph_index=graph_index,
+    )
+    assert graph_index.producer("z") is None
+    assert graph_index.producer("w") is op
+
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=op,
+        new_inputs=["y", "x"],
+        graph_index=graph_index,
+    )
+    assert graph_index.consumer_indices("x") == [0]
+    assert graph_index.consumer_indices("y") == [0]
+    refreshed = ModelIRGraphIndex(model_ir)
+    assert graph_index.producers == refreshed.producers
+    assert graph_index.consumers == refreshed.consumers
 
 
 def test_static_shape_and_constant_vector_helpers_are_deterministic() -> None:

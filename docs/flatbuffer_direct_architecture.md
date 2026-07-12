@@ -23,6 +23,14 @@ A pass has a stable ID, phase, priority, maximum iteration count, and explicit
 terminates deterministically. Risky rewrites use the transactional mode and
 must leave the graph unchanged when invariant validation fails.
 
+`GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
+ONNX rewriters notify node input/output updates and node registration/removal;
+ModelIR rewriters can replace inputs/outputs or insert/remove operators while
+producer, consumer, duplicate-producer, and operator-position indices remain
+consistent. A full `refresh()` is retained only for compatibility with
+external mutations that bypass these APIs. Lineage-aware graph mutation
+helpers accept an optional ModelIR index and update it atomically.
+
 Operator additions keep capability validation and lowering in the same
 op-family module. Do not add model-name checks. A model-specific failure should
 be reduced to a semantic graph pattern with explicit guards and a focused ONNX
@@ -146,6 +154,12 @@ channel Mean and ReduceMax branches before Concat/MirrorPad/Conv. The pass is
 defined by producer/consumer topology, reduction semantics, permutations, and
 padding pairs—not by model names—and rewrites axes only after the entire
 region is proven.
+
+The mixed attention MirrorPad pass is the first post-lowering rewrite migrated
+to the differential ModelIR index. It builds producer/consumer state once,
+updates input edges through indexed lineage helpers, and removes the redundant
+transpose through `ModelIRGraphIndex.remove_operator`, avoiding a full edge
+rescan after each successful match.
 
 The attention module also owns the QKV Slice canonicalization pair. One pass
 replaces compatible Slice branches with Gather/Reshape views; the next replaces
