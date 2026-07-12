@@ -6216,7 +6216,7 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
             int(resolved_output_shape[1]),
         ]
 
-    if any(int(v) <= 0 for v in required_static_dims):
+    if rank == 5 and any(int(v) <= 0 for v in required_static_dims):
         raise NodeValidationError(
             reason_code="unsupported_input_shape",
             message=(
@@ -6238,8 +6238,6 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
             and _dims_match_when_known(c, out_c)
             and _dims_match_when_known(out_h, grid_h)
             and _dims_match_when_known(out_w, grid_w)
-            and h >= 1
-            and w >= 1
         ):
             raise NodeValidationError(
                 reason_code="unsupported_input_shape",
@@ -8149,18 +8147,25 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             "RESHAPE",
             "TRANSPOSE",
             "SQUEEZE",
+            "SHAPE",
             "SLICE",
             "ADD",
             "SUB",
             "MUL",
+            "DIV",
             "FLOOR",
             "ROUND",
             "MAXIMUM",
             "MINIMUM",
             "CAST",
             "NOT_EQUAL",
+            "GREATER_EQUAL",
+            "LESS",
+            "LOGICAL_AND",
             "SELECT_V2",
             "GATHER",
+            "CONCATENATION",
+            "RANGE",
         ],
         builder=build_grid_sample_op,
         validation=ValidationSpec(min_inputs=2, max_inputs=2, min_outputs=1, max_outputs=1),

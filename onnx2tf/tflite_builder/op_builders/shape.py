@@ -8,6 +8,9 @@ import onnx
 
 from onnx2tf.tflite_builder.core.shape_resolution import static_shape_vector_length
 from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR, normalize_onnx_shape
+from onnx2tf.tflite_builder.op_builders.grid_sample_utils import (
+    build_dynamic_rank4_grid_sample,
+)
 from onnx2tf.tflite_builder.op_builders.pad_utils import (
     finish_zero_safe_batch_pad,
     prepare_zero_safe_batch_pad,
@@ -7915,12 +7918,6 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
     interpolation_mode = str(node.attrs.get("mode", "bilinear")).lower()
     padding_mode = str(node.attrs.get("padding_mode", "zeros")).lower()
     use_border_padding = padding_mode == "border"
-    flattened_axis_size_2d = int(w * h) if use_border_padding else int((w + 2) * (h + 2))
-    flattened_axis_size_3d = (
-        int(d * h * w)
-        if use_border_padding
-        else int((d + 2) * (h + 2) * (w + 2))
-    )
 
     image_dtype = str(ctx.get_tensor_dtype(image_name)).upper()
     grid_dtype = str(ctx.get_tensor_dtype(grid_name)).upper()
@@ -7929,6 +7926,34 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         "FLOAT32"
         if image_dtype == "FLOAT32" or grid_dtype == "FLOAT32"
         else "FLOAT16"
+    )
+    if image_rank == 4 and any(
+        int(value) <= 0 for value in [*image_signature, *output_signature]
+    ):
+        build_dynamic_rank4_grid_sample(
+            ctx=ctx,
+            image_name=image_name,
+            grid_name=grid_name,
+            output_name=output_name,
+            image_signature=image_signature,
+            grid_signature=grid_signature,
+            output_signature=output_signature,
+            image_dtype=image_dtype,
+            grid_dtype=grid_dtype,
+            output_dtype=output_dtype,
+            compute_dtype=compute_dtype,
+            align_corners=align_corners,
+            interpolation_mode=interpolation_mode,
+            padding_mode=padding_mode,
+        )
+        return
+    flattened_axis_size_2d = (
+        int(w * h) if use_border_padding else int((w + 2) * (h + 2))
+    )
+    flattened_axis_size_3d = (
+        int(d * h * w)
+        if use_border_padding
+        else int((d + 2) * (h + 2) * (w + 2))
     )
     compute_np_dtype = np.float16 if compute_dtype == "FLOAT16" else np.float32
     replace_to_pseudo_operators = getattr(ctx, "replace_to_pseudo_operators", set())
