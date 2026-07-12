@@ -315,9 +315,23 @@ Verification completed with:
 - `1010 passed, 5 deselected, 2 warnings in 125.56s` for the full sequential
   direct suite.
 
-The next characterized attention increment is the weighted-sum NHWC bridge.
-Keep the uncharacterized SA/PA MirrorPad mega-pattern in the lowerer until a
-focused semantic fixture exists.
+The QKV weighted-sum NHWC bridge now also belongs to
+`passes/attention_layout.py`. The exact implementation and its nested constant
+helper moved behind the legacy wrapper. Existing characterization preserves
+the QKV producer topology, scalar weights, reduction/merge chain, cloned
+shared constants, metadata, quantization, and terminal NHWC rewiring.
+
+Verification completed with:
+
+- `17 passed, 758 deselected` for focused architecture and the QKV weighted
+  sum bridge;
+- `1010 passed, 5 deselected, 2 warnings in 125.36s` for the full sequential
+  direct suite.
+
+Before the next attention increment, inventory the remaining attention-named
+passes and select only those with focused characterization. Keep the
+uncharacterized SA/PA MirrorPad mega-pattern in the lowerer until a semantic
+fixture exists.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

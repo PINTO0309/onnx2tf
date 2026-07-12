@@ -340,6 +340,7 @@ def test_attention_layout_rewrites_have_single_owner() -> None:
         / "attention_layout.py"
     )
     function_names = {
+        "_optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains",
         "_optimize_attention_qkv_shared_pretranspose_slice_nchw_chains",
         "_optimize_attention_qkv_slice_replace_gather_reshape_chains",
         "_optimize_attention_qkv_slice_to_split_chains",

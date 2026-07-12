@@ -158,6 +158,11 @@ The pass proves a single shared permutation and compatible Slice begin/size
 vectors, rewrites those vectors into NCHW order, preserves shared constants by
 cloning, and removes only the now-redundant adapter.
 
+The attention weighted-sum bridge is also owned there. It validates the QKV
+branch producers, coefficient constants, reduction and merge topology, then
+rotates only proven layout-sensitive metadata and constants into NHWC while
+preserving shared values through cloned tensors.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

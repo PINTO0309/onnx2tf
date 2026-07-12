@@ -910,3 +910,313 @@ def _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(
 
     _prune_unused_tensors(model_ir)
     return {"optimized_attention_qkv_shared_pretranspose_slice_nchw_chains": int(rewritten)}
+
+
+def _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """
+    Convert NCHW-side weighted-sum attention bridge to NHWC and remove
+    redundant branch transposes.
+
+    Target:
+      k_nhwc --T(0,3,1,2)--> k_nchw
+      soft_nchw --(from SOFTMAX)-->
+      MUL(k_nchw, soft_nchw) -> m_nchw
+      SUM(m_nchw, axis=[3], keepDims=True) -> s_nchw
+      MUL(s_nchw, ones_nchw_const) -> e_nchw
+      e_nchw --T(0,2,3,1)--> e_nhwc
+      MUL(relu_nhwc, e_nhwc) -> out_nhwc
+
+    Rewrite:
+      soft_nchw --T(0,2,3,1)--> soft_nhwc
+      MUL(k_nhwc, soft_nhwc) -> m_nhwc
+      SUM(axis=[2], keepDims=True) -> s_nhwc
+      MUL(s_nhwc, ones_nhwc_const) -> e_nhwc
+      MUL(relu_nhwc, e_nhwc) -> out_nhwc
+      Remove k/e bridge transposes.
+    """
+    rewritten = 0
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+    perm_nchw_to_nhwc = [0, 2, 3, 1]
+
+    def _unique_tensor_name(base: str) -> str:
+        candidate = str(base)
+        serial = 1
+        while candidate in model_ir.tensors:
+            candidate = f"{base}_{serial}"
+            serial += 1
+        return candidate
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+        producers = _build_tensor_producer_map(model_ir)
+        model_outputs = set(str(v) for v in model_ir.outputs)
+
+        for post_t_idx, post_t_op in enumerate(model_ir.operators):
+            if (
+                str(post_t_op.op_type) != "TRANSPOSE"
+                or len(post_t_op.inputs) < 2
+                or len(post_t_op.outputs) != 1
+                or _read_transpose_perm(model_ir, post_t_op) != perm_nchw_to_nhwc
+            ):
+                continue
+
+            expand_nchw_name = str(post_t_op.inputs[0])
+            expand_nhwc_name = str(post_t_op.outputs[0])
+            perm_post_name = str(post_t_op.inputs[1])
+            if expand_nchw_name in model_outputs or expand_nhwc_name in model_outputs:
+                continue
+
+            relu_mul_users = [int(v) for v in consumers.get(expand_nhwc_name, [])]
+            if len(relu_mul_users) != 1:
+                continue
+            relu_mul_idx = int(relu_mul_users[0])
+            relu_mul_op = model_ir.operators[int(relu_mul_idx)]
+            if str(relu_mul_op.op_type) != "MUL" or len(relu_mul_op.inputs) != 2 or len(relu_mul_op.outputs) != 1:
+                continue
+            if str(relu_mul_op.outputs[0]) in model_outputs:
+                continue
+
+            relu_mul_inputs = [str(v) for v in list(relu_mul_op.inputs)]
+            if relu_mul_inputs[0] == expand_nhwc_name:
+                relu_input_name = str(relu_mul_inputs[1])
+                relu_mul_expand_input_index = 0
+            elif relu_mul_inputs[1] == expand_nhwc_name:
+                relu_input_name = str(relu_mul_inputs[0])
+                relu_mul_expand_input_index = 1
+            else:
+                continue
+            relu_prod_idx = producers.get(relu_input_name, None)
+            if relu_prod_idx is None or str(model_ir.operators[int(relu_prod_idx)].op_type) != "RELU":
+                continue
+
+            expand_mul_idx = producers.get(expand_nchw_name, None)
+            if expand_mul_idx is None:
+                continue
+            expand_mul_op = model_ir.operators[int(expand_mul_idx)]
+            if (
+                str(expand_mul_op.op_type) != "MUL"
+                or len(expand_mul_op.inputs) != 2
+                or len(expand_mul_op.outputs) != 1
+                or str(expand_mul_op.outputs[0]) != expand_nchw_name
+            ):
+                continue
+
+            expand_mul_inputs = [str(v) for v in list(expand_mul_op.inputs)]
+            sum_out_name = ""
+            expand_const_name = ""
+            for input_name, other_name in [
+                (str(expand_mul_inputs[0]), str(expand_mul_inputs[1])),
+                (str(expand_mul_inputs[1]), str(expand_mul_inputs[0])),
+            ]:
+                other_tensor = model_ir.tensors.get(other_name, None)
+                if other_tensor is not None and other_tensor.data is not None:
+                    sum_out_name = str(input_name)
+                    expand_const_name = str(other_name)
+                    break
+            if sum_out_name == "" or expand_const_name == "":
+                continue
+            if set(int(v) for v in consumers.get(sum_out_name, [])) != {int(expand_mul_idx)}:
+                continue
+
+            sum_idx = producers.get(sum_out_name, None)
+            if sum_idx is None:
+                continue
+            sum_op = model_ir.operators[int(sum_idx)]
+            if (
+                str(sum_op.op_type) != "SUM"
+                or len(sum_op.inputs) < 2
+                or len(sum_op.outputs) != 1
+                or str(sum_op.outputs[0]) != sum_out_name
+                or not bool(sum_op.options.get("keepDims", False))
+            ):
+                continue
+            sum_axes_name = str(sum_op.inputs[1])
+            sum_axes_vals = _read_const_ints_from_tensor(model_ir.tensors.get(sum_axes_name, None))
+            if sum_axes_vals is None or [int(v) for v in list(sum_axes_vals)] != [3]:
+                continue
+
+            kmul_out_name = str(sum_op.inputs[0])
+            kmul_idx = producers.get(kmul_out_name, None)
+            if kmul_idx is None:
+                continue
+            kmul_op = model_ir.operators[int(kmul_idx)]
+            if (
+                str(kmul_op.op_type) != "MUL"
+                or len(kmul_op.inputs) != 2
+                or len(kmul_op.outputs) != 1
+                or str(kmul_op.outputs[0]) != kmul_out_name
+            ):
+                continue
+
+            kmul_inputs = [str(v) for v in list(kmul_op.inputs)]
+            k_nchw_name = ""
+            soft_nchw_name = ""
+            k_input_index = None
+            soft_input_index = None
+            for idx, input_name in enumerate(kmul_inputs):
+                prod_idx = producers.get(str(input_name), None)
+                if prod_idx is None:
+                    continue
+                prod_op = model_ir.operators[int(prod_idx)]
+                if (
+                    str(prod_op.op_type) == "TRANSPOSE"
+                    and len(prod_op.inputs) >= 2
+                    and len(prod_op.outputs) == 1
+                    and str(prod_op.outputs[0]) == str(input_name)
+                    and _read_transpose_perm(model_ir, prod_op) == perm_nhwc_to_nchw
+                ):
+                    k_nchw_name = str(input_name)
+                    k_input_index = int(idx)
+                    soft_nchw_name = str(kmul_inputs[1 - idx])
+                    soft_input_index = int(1 - idx)
+                    break
+            if (
+                k_nchw_name == ""
+                or soft_nchw_name == ""
+                or k_input_index is None
+                or soft_input_index is None
+            ):
+                continue
+
+            k_pre_t_idx = producers.get(k_nchw_name, None)
+            if k_pre_t_idx is None:
+                continue
+            k_pre_t_op = model_ir.operators[int(k_pre_t_idx)]
+            if (
+                str(k_pre_t_op.op_type) != "TRANSPOSE"
+                or len(k_pre_t_op.inputs) < 2
+                or len(k_pre_t_op.outputs) != 1
+                or str(k_pre_t_op.outputs[0]) != k_nchw_name
+                or _read_transpose_perm(model_ir, k_pre_t_op) != perm_nhwc_to_nchw
+                or str(k_pre_t_op.outputs[0]) in model_outputs
+            ):
+                continue
+            k_nhwc_name = str(k_pre_t_op.inputs[0])
+            if k_nhwc_name in model_outputs:
+                continue
+            if set(int(v) for v in consumers.get(k_nchw_name, [])) != {int(kmul_idx)}:
+                continue
+
+            soft_prod_idx = producers.get(soft_nchw_name, None)
+            if soft_prod_idx is None:
+                continue
+            soft_prod_op = model_ir.operators[int(soft_prod_idx)]
+            if str(soft_prod_op.op_type) != "SOFTMAX":
+                continue
+            if set(int(v) for v in consumers.get(soft_nchw_name, [])) != {int(kmul_idx)}:
+                continue
+
+            if set(int(v) for v in consumers.get(expand_nchw_name, [])) != {int(post_t_idx)}:
+                continue
+
+            expand_const_tensor = model_ir.tensors.get(expand_const_name, None)
+            if expand_const_tensor is None or expand_const_tensor.data is None:
+                continue
+            if set(int(v) for v in consumers.get(expand_const_name, [])) != {int(expand_mul_idx)}:
+                continue
+            expand_const_data = np.asarray(expand_const_tensor.data)
+            if int(expand_const_data.ndim) != 4:
+                continue
+            rotated_const = np.transpose(expand_const_data, axes=perm_nchw_to_nhwc).astype(
+                expand_const_data.dtype,
+                copy=False,
+            )
+
+            kmul_out_tensor = model_ir.tensors.get(kmul_out_name, None)
+            sum_out_tensor = model_ir.tensors.get(sum_out_name, None)
+            expand_out_tensor = model_ir.tensors.get(expand_nchw_name, None)
+            if kmul_out_tensor is None or sum_out_tensor is None or expand_out_tensor is None:
+                continue
+            if (
+                kmul_out_tensor.shape is None
+                or sum_out_tensor.shape is None
+                or expand_out_tensor.shape is None
+                or len(list(kmul_out_tensor.shape)) != 4
+                or len(list(sum_out_tensor.shape)) != 4
+                or len(list(expand_out_tensor.shape)) != 4
+            ):
+                continue
+
+            soft_nhwc_name = _unique_tensor_name(f"{soft_nchw_name}_to_nhwc")
+            soft_nhwc_shape = _permute_shape(
+                [int(v) for v in list(model_ir.tensors[soft_nchw_name].shape)],
+                perm_nchw_to_nhwc,
+            )
+            if soft_nhwc_shape is None:
+                continue
+            soft_nhwc_sig = _permute_shape(
+                (
+                    [int(v) for v in list(model_ir.tensors[soft_nchw_name].shape_signature)]
+                    if model_ir.tensors[soft_nchw_name].shape_signature is not None
+                    else [int(v) for v in list(model_ir.tensors[soft_nchw_name].shape)]
+                ),
+                perm_nchw_to_nhwc,
+            )
+            if soft_nhwc_sig is None:
+                soft_nhwc_sig = [int(v) for v in list(soft_nhwc_shape)]
+            model_ir.tensors[soft_nhwc_name] = TensorIR(
+                name=soft_nhwc_name,
+                dtype=str(model_ir.tensors[soft_nchw_name].dtype),
+                shape=[int(v) for v in list(soft_nhwc_shape)],
+                shape_signature=[int(v) for v in list(soft_nhwc_sig)],
+                data=None,
+                is_variable=False,
+                quantization=_clone_quantization(model_ir.tensors[soft_nchw_name].quantization),
+            )
+            soft_to_nhwc_op = OperatorIR(
+                op_type="TRANSPOSE",
+                inputs=[str(soft_nchw_name), str(perm_post_name)],
+                outputs=[str(soft_nhwc_name)],
+            )
+
+            kmul_new_inputs = [str(v) for v in list(kmul_inputs)]
+            kmul_new_inputs[int(k_input_index)] = str(k_nhwc_name)
+            kmul_new_inputs[int(soft_input_index)] = str(soft_nhwc_name)
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=kmul_op,
+                new_inputs=kmul_new_inputs,
+            )
+
+            if not (
+                _write_const_ints_to_tensor(model_ir.tensors.get(sum_axes_name, None), [2])
+                or _read_const_ints_from_tensor(model_ir.tensors.get(sum_axes_name, None)) == [2]
+            ):
+                continue
+
+            expand_const_tensor.data = np.asarray(rotated_const)
+            expand_const_tensor.shape = [int(v) for v in list(rotated_const.shape)]
+            expand_const_tensor.shape_signature = [int(v) for v in list(rotated_const.shape)]
+
+            _permute_tensor_metadata_if_rank_matches(kmul_out_tensor, perm_nchw_to_nhwc)
+            _permute_tensor_metadata_if_rank_matches(sum_out_tensor, perm_nchw_to_nhwc)
+            _permute_tensor_metadata_if_rank_matches(expand_out_tensor, perm_nchw_to_nhwc)
+
+            _replace_operator_input_at(
+                model_ir=model_ir,
+                op=relu_mul_op,
+                input_index=int(relu_mul_expand_input_index),
+                new_input_name=str(expand_nchw_name),
+            )
+
+            remove_indices = sorted([int(k_pre_t_idx), int(post_t_idx)], reverse=True)
+            for remove_idx in remove_indices:
+                del model_ir.operators[int(remove_idx)]
+
+            insert_index = int(kmul_idx)
+            removed_before_insert = sum(1 for v in remove_indices if int(v) < int(insert_index))
+            adjusted_insert_index = int(insert_index) - int(removed_before_insert)
+            model_ir.operators.insert(int(adjusted_insert_index), soft_to_nhwc_op)
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"optimized_attention_qkv_weighted_sum_bridge_to_nhwc_chains": int(rewritten)}
