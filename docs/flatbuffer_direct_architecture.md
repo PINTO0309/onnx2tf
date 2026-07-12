@@ -67,6 +67,15 @@ model-output, permutation, constant-shape, axis, and metadata guards. Their
 legacy lowerer names are delegating wrappers, while graph mutation and
 constant-vector access use the canonical `core/model_ir_utils.py` helpers.
 
+Generic input-boundary passthrough folding lives in
+`passes/input_passthrough_layout.py`. It moves strictly linear chains of
+layout-agnostic unary and constant-side binary operations across a synthetic
+input transpose, then removes the matching output transpose. Fan-out,
+nonconstant side input, per-axis quantization, noninverse permutation, and
+model-output guards remain part of the pass contract. Permutation inversion is
+a canonical graph utility in `core/model_ir_utils.py`; the legacy lowerer pass
+name remains a delegating wrapper.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

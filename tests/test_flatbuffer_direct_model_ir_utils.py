@@ -6,6 +6,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _broadcast_static_shapes,
     _build_tensor_consumer_map,
     _is_fully_known_positive_shape,
+    _invert_perm,
     _prune_unused_tensors,
     _read_transpose_perm,
     _read_const_ints_from_tensor,
@@ -52,6 +53,12 @@ def test_fully_known_positive_shape_rejects_dynamic_or_empty_shapes() -> None:
     assert _is_fully_known_positive_shape([1, 0, 3]) is False
     assert _is_fully_known_positive_shape([]) is False
     assert _is_fully_known_positive_shape(None) is False
+
+
+def test_invert_perm_rejects_invalid_permutations() -> None:
+    assert _invert_perm([0, 3, 1, 2]) == [0, 2, 3, 1]
+    assert _invert_perm([0, 0, 1]) is None
+    assert _invert_perm([0, 1, 3]) is None
 
 
 def test_graph_helpers_read_transpose_and_record_input_replacement() -> None:

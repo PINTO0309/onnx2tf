@@ -103,6 +103,31 @@ generic graph helpers already have canonical core owners. Preserve the legacy
 symbols as wrappers and add both semantic-guard fixtures and the existing full
 direct-suite gate before committing.
 
+The generic leading-input passthrough rewrite has subsequently moved to
+`passes/input_passthrough_layout.py`. It folds a strictly linear sequence of
+layout-agnostic unary and constant-side binary operators across a synthetic
+input transpose and its inverse output transpose. The implementation is an
+exact mechanical move apart from removing one unused local assignment. The
+legacy lowerer symbol delegates to the pass module.
+
+`_invert_perm` now has one canonical implementation in
+`core/model_ir_utils.py`. Focused tests preserve the positive NHWC rewrite,
+constant rotation and metadata behavior, the main-path fan-out no-op guard,
+and invalid-permutation rejection. Architecture tests fix both pass and helper
+ownership.
+
+Verification completed with:
+
+- `21 passed` for architecture, common ModelIR utilities, and leading-input
+  passthrough behavior;
+- `999 passed, 5 deselected, 2 warnings in 125.65s` for the full sequential
+  direct suite.
+
+The next cohesive extraction can extend `input_passthrough_layout.py` with the
+adjacent ASIN/ERF/HardSwish/HardSigmoid semantic passthrough families. Move one
+guarded family at a time, keep its legacy entry point, and gate each increment
+with focused ModelIR fixtures before the sequential full suite.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

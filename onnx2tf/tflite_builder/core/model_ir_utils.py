@@ -489,6 +489,16 @@ def _is_per_tensor_quantization(quantization: Any) -> bool:
     return count <= 1
 
 
+def _invert_perm(perm: List[int]) -> Optional[List[int]]:
+    rank = len(perm)
+    if sorted(perm) != [int(i) for i in range(rank)]:
+        return None
+    inverse = [0 for _ in range(rank)]
+    for index, value in enumerate(perm):
+        inverse[int(value)] = int(index)
+    return inverse
+
+
 def _permute_shape(shape: Optional[List[int]], perm: List[int]) -> Optional[List[int]]:
     if shape is None:
         return None
