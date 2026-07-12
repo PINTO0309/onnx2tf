@@ -263,6 +263,17 @@ maximum error is `0.21375656127929688` with cosine similarity
 The normalized reason is now
 `instance_normalization_drift_amplified_by_dynamic_quantization_decoder`.
 
+The DynamicQuantizeLinear builder now lives in the dedicated 391-line
+`op_builders/dynamic_quantize.py` family module instead of the legacy combined
+quantized builder. The move reduces `op_builders/quantized.py` from 3,235 to
+2,850 lines without changing dispatch or its ModelIR contract. A normalized
+fingerprint over every operator, tensor, constant buffer, option, shape,
+signature, dtype, and quantization field is identical before and after the
+move: `a83d642e4aa7903f9b34495fec2c1edb5ff8779ba6735bedde382578152657f5`
+for 22 operators and 27 tensors. An architecture test enforces the 2,000-line
+limit for the new family module and prevents the builder from returning to the
+legacy file.
+
 `dynamics_rife_sim.onnx` remains an active non-pass with the normalized reason
 `invalid_onnx_concat_spatial_mismatch_64_128`. The source passes the structural
 ONNX checker but ONNX Runtime rejects it during shape inference at

@@ -10,6 +10,11 @@ DEPENDENCY_SCOPED_ROOTS = [
     for name in ["core", "passes", "op_families"]
 ]
 DEPENDENCY_SCOPED_FILES = [
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "op_builders"
+    / "dynamic_quantize.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_layout_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_utils.py",
@@ -66,3 +71,36 @@ def test_pytorch_pure_utilities_do_not_import_torch() -> None:
                 offenders.append(str(path.relative_to(REPO_ROOT)))
                 break
     assert offenders == []
+
+
+def test_dynamic_quantize_builder_stays_in_bounded_family_module() -> None:
+    family_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "op_builders"
+        / "dynamic_quantize.py"
+    )
+    legacy_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "op_builders"
+        / "quantized.py"
+    )
+    family_source = family_path.read_text(encoding="utf-8")
+    legacy_source = legacy_path.read_text(encoding="utf-8")
+    family_functions = {
+        node.name
+        for node in ast.parse(family_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    legacy_functions = {
+        node.name
+        for node in ast.parse(legacy_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    assert len(family_source.splitlines()) <= 2000
+    assert "build_dynamic_quantize_linear_op" in family_functions
+    assert "build_dynamic_quantize_linear_op" not in legacy_functions

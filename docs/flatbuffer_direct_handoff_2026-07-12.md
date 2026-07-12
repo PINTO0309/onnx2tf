@@ -99,6 +99,17 @@ MatMulInteger behavior; its no-skip fixed-seed maximum is now
 `2.001576066017151`, with RMSE `1.2972128029177183` and cosine similarity
 `0.9616353624777596`.
 
+The now-fixed DynamicQuantizeLinear implementation was mechanically moved to
+`op_builders/dynamic_quantize.py`, a dedicated 391-line op-family module. The
+legacy combined `op_builders/quantized.py` shrinks from 3,235 to 2,850 lines.
+The public builder import and registry dispatch remain unchanged. A normalized
+ModelIR fingerprint covering all operators, tensor metadata, constants,
+options, and quantization fields is identical at `d97cba6` and after the move:
+`a83d642e4aa7903f9b34495fec2c1edb5ff8779ba6735bedde382578152657f5`
+(22 operators, 27 tensors). The architecture regression keeps this family
+module below 2,000 lines and verifies that the implementation is absent from
+the legacy file.
+
 `campp_vin.onnx` is promoted from an historical accuracy failure to a normal
 pass. Its concretized dynamic-time artifact fails during XNNPACK reshape
 preparation, so isolated evaluation now retries once, sequentially, with the
@@ -158,6 +169,8 @@ their previous failure-signature hashes.
 Validation completed in the core `uv` environment, with one pytest process and
 no parallel workers:
 
+- `964 passed, 5 deselected, 2 warnings` after the DynamicQuantizeLinear
+  op-family extraction and architecture boundary test;
 - `963 passed, 5 deselected, 2 warnings` after the DynamicQuantizeLinear
   nearest-even and round-before-zero-point correction;
 - `5 passed, 782 deselected` for the focused DynamicQuantizeLinear runtime and
