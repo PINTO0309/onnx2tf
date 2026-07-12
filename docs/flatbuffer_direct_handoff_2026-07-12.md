@@ -427,9 +427,24 @@ Verification completed with:
 - `1017 passed, 5 deselected, 2 warnings in 126.05s` for the full sequential
   direct suite.
 
-The next incremental-index migration should target a small linear bridge pass
-that currently rebuilds consumer maps inside a fixed-point loop. Preserve its
-existing characterization and instrument the number of full refreshes.
+The guarded Maximum/Minimum clamp fusion now also lives in
+`passes/graph_cleanup.py`. It proves singleton finite constants equal to zero
+and one, exclusive intermediate consumption, and output safety before replacing
+the chain with `Relu0To1`. The surviving operator input and removed producer
+are applied through the differential index, and its instrumented fixture
+requires one initial refresh. `_read_singleton_constant_float` now has one
+canonical implementation in `core/model_ir_utils.py`.
+
+Verification completed with:
+
+- `21 passed, 765 deselected` for focused singleton utility, architecture, and
+  clamp cleanup;
+- `1018 passed, 5 deselected, 2 warnings in 125.98s` for the full sequential
+  direct suite.
+
+Continue with another characterized single-producer linear cleanup before
+migrating multi-branch layout passes. Each migration should prove one initial
+index build and no fixed-point refresh.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

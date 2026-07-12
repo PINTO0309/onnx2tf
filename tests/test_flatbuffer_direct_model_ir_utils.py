@@ -11,6 +11,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _is_singleton_constant_tensor,
     _prune_unused_tensors,
     _read_transpose_perm,
+    _read_singleton_constant_float,
     _read_const_ints_from_tensor,
     _replace_tensor_inputs,
     _replace_operator_input_at,
@@ -89,7 +90,9 @@ def test_singleton_constant_requires_one_materialized_value() -> None:
     }
 
     assert _is_singleton_constant_tensor(model_ir, "scalar") is True
+    assert _read_singleton_constant_float(model_ir, "scalar") == 1.0
     assert _is_singleton_constant_tensor(model_ir, "vector") is False
+    assert _read_singleton_constant_float(model_ir, "vector") is None
     assert _is_singleton_constant_tensor(model_ir, "runtime") is False
     assert _is_singleton_constant_tensor(model_ir, "missing") is False
 

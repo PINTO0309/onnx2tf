@@ -174,6 +174,13 @@ names are protected, and only indexed consumers of a duplicate output are
 rewired before structural removal. Its instrumentation likewise permits only
 the initial index refresh.
 
+Scalar clamp canonicalization is the first linear fusion in
+`passes/graph_cleanup.py`. It replaces the strictly guarded
+`Maximum(x, 0) → Minimum(..., 1)` chain with `Relu0To1`, updates the surviving
+operator through the index-aware input helper, and removes the obsolete
+producer without rebuilding edge maps. Singleton finite-float reading has one
+canonical owner in `core/model_ir_utils.py`.
+
 The attention module also owns the QKV Slice canonicalization pair. One pass
 replaces compatible Slice branches with Gather/Reshape views; the next replaces
 three compatible branches with a single Split. Both require fully known,

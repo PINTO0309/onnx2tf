@@ -30,6 +30,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _quant_scale_count,
     _is_per_tensor_quantization,
     _is_singleton_constant_tensor,
+    _read_singleton_constant_float,
     _invert_perm,
     _permute_shape,
     _shapes_equal,
@@ -108,6 +109,7 @@ from onnx2tf.tflite_builder.passes.high_rank_matmul import (
     _compress_static_high_rank_batch_matmul as _compress_static_high_rank_batch_matmul_pass,
 )
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
+    _optimize_maximum_minimum_relu0to1_chains as _optimize_maximum_minimum_relu0to1_chains_pass,
     _optimize_duplicate_reshape_fanout as _optimize_duplicate_reshape_fanout_pass,
     _optimize_duplicate_transpose_fanout as _optimize_duplicate_transpose_fanout_pass,
 )
@@ -9327,115 +9329,10 @@ def _is_scalar_like_tensor(
     return all(int(dim) == 1 for dim in shape)
 
 
-def _read_singleton_constant_float(
+def _optimize_maximum_minimum_relu0to1_chains(
     model_ir: ModelIR,
-    tensor_name: str,
-) -> Optional[float]:
-    tensor = model_ir.tensors.get(str(tensor_name), None)
-    if tensor is None or tensor.data is None:
-        return None
-    try:
-        array = np.asarray(tensor.data)
-    except Exception:
-        return None
-    if int(array.size) != 1:
-        return None
-    value = float(array.reshape(-1)[0])
-    if not np.isfinite(value):
-        return None
-    return float(value)
-
-
-def _optimize_maximum_minimum_relu0to1_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Replace clamp chains MAXIMUM(0.0) -> MINIMUM(1.0) with RELU_0_TO_1.
-
-    Target:
-      X --MAXIMUM(0.0)--> M --MINIMUM(1.0)--> Y
-
-    Rewrite:
-      X --RELU_0_TO_1--> Y
-
-    Safety:
-    - MAXIMUM and MINIMUM side inputs must be singleton constants.
-    - MAXIMUM output must be consumed only by the matched MINIMUM.
-    """
-    rewritten = 0
-    atol = 1e-6
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for min_idx, min_op in enumerate(model_ir.operators):
-            if str(min_op.op_type) != "MINIMUM" or len(min_op.inputs) != 2 or len(min_op.outputs) != 1:
-                continue
-
-            min_input0 = str(min_op.inputs[0])
-            min_input1 = str(min_op.inputs[1])
-            if _is_singleton_constant_tensor(model_ir, min_input0):
-                min_data_name = str(min_input1)
-                min_const_name = str(min_input0)
-            elif _is_singleton_constant_tensor(model_ir, min_input1):
-                min_data_name = str(min_input0)
-                min_const_name = str(min_input1)
-            else:
-                continue
-            min_const_value = _read_singleton_constant_float(model_ir, min_const_name)
-            if min_const_value is None or not np.isclose(float(min_const_value), 1.0, atol=atol):
-                continue
-            if min_data_name in model_outputs:
-                continue
-
-            max_idx = producers.get(min_data_name, None)
-            if max_idx is None:
-                continue
-            max_op = model_ir.operators[int(max_idx)]
-            if str(max_op.op_type) != "MAXIMUM" or len(max_op.inputs) != 2 or len(max_op.outputs) != 1:
-                continue
-            if str(max_op.outputs[0]) != str(min_data_name):
-                continue
-
-            max_input0 = str(max_op.inputs[0])
-            max_input1 = str(max_op.inputs[1])
-            if _is_singleton_constant_tensor(model_ir, max_input0):
-                max_data_name = str(max_input1)
-                max_const_name = str(max_input0)
-            elif _is_singleton_constant_tensor(model_ir, max_input1):
-                max_data_name = str(max_input0)
-                max_const_name = str(max_input1)
-            else:
-                continue
-            max_const_value = _read_singleton_constant_float(model_ir, max_const_name)
-            if max_const_value is None or not np.isclose(float(max_const_value), 0.0, atol=atol):
-                continue
-
-            max_users = [int(v) for v in consumers.get(str(min_data_name), [])]
-            if len(max_users) != 1 or int(max_users[0]) != int(min_idx):
-                continue
-
-            min_op.op_type = "RELU_0_TO_1"
-            min_op.version = 1
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=min_op,
-                new_inputs=[str(max_data_name)],
-            )
-            min_op.options = {}
-
-            del model_ir.operators[int(max_idx)]
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"rewritten_maximum_minimum_relu0to1_chains": int(rewritten)}
+) -> Dict[str, int]:
+    return _optimize_maximum_minimum_relu0to1_chains_pass(model_ir)
 
 
 def _optimize_maximum_with_zero_input2_to_relu(model_ir: ModelIR) -> Dict[str, int]:

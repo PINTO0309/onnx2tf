@@ -546,6 +546,25 @@ def _is_singleton_constant_tensor(
     return int(array.size) == 1
 
 
+def _read_singleton_constant_float(
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> Optional[float]:
+    tensor = model_ir.tensors.get(str(tensor_name), None)
+    if tensor is None or tensor.data is None:
+        return None
+    try:
+        array = np.asarray(tensor.data)
+    except Exception:
+        return None
+    if int(array.size) != 1:
+        return None
+    value = float(array.reshape(-1)[0])
+    if not np.isfinite(value):
+        return None
+    return float(value)
+
+
 def _invert_perm(perm: List[int]) -> Optional[List[int]]:
     rank = len(perm)
     if sorted(perm) != [int(i) for i in range(rank)]:

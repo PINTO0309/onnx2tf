@@ -268,6 +268,7 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         "_build_tensor_consumer_map",
         "_invert_perm",
         "_is_singleton_constant_tensor",
+        "_read_singleton_constant_float",
         "_permute_tensor_metadata_if_rank_matches",
         "_read_const_ints_from_tensor",
         "_read_transpose_perm",
@@ -340,6 +341,7 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
         / "graph_cleanup.py"
     )
     function_names = {
+        "_optimize_maximum_minimum_relu0to1_chains",
         "_optimize_duplicate_reshape_fanout",
         "_optimize_duplicate_transpose_fanout",
     }
