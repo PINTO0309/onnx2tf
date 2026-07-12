@@ -275,3 +275,135 @@ def repair_missing_torchvision_nms_guard_captures(
 
     repaired = _repair_graph(model.graph)
     return {"TorchVisionNmsGuardCaptures": repaired} if repaired else {}
+
+
+def repair_missing_arange_loop_delta_captures(
+    model: onnx.ModelProto,
+) -> Dict[str, int]:
+    """Restore a pruned default ``delta=1`` capture in tf2onnx arange loops.
+
+    Some optimized tf2onnx graphs retain ``prev + .../arange.../delta:0`` in
+    Loop bodies after pruning the scalar default step from the parent graph.
+    Restrict the repair to the canonical carried-value and scan-output pattern;
+    arbitrary missing Loop captures must remain invalid.
+    """
+
+    def _repair_graph_arange_delta(graph: onnx.GraphProto) -> int:
+        available = {
+            str(value.name)
+            for value in graph.input
+            if str(value.name) != ""
+        } | {
+            str(initializer.name)
+            for initializer in graph.initializer
+            if str(initializer.name) != ""
+        } | {
+            str(output_name)
+            for node in graph.node
+            for output_name in node.output
+            if str(output_name) != ""
+        }
+        candidate_uses: Dict[str, List[Tuple[onnx.NodeProto, onnx.GraphProto]]] = {}
+        child_graphs: List[onnx.GraphProto] = []
+        for node in graph.node:
+            for attribute in node.attribute:
+                nested_graphs: List[onnx.GraphProto] = []
+                if attribute.type == onnx.AttributeProto.GRAPH:
+                    nested_graphs = [attribute.g]
+                elif attribute.type == onnx.AttributeProto.GRAPHS:
+                    nested_graphs = list(attribute.graphs)
+                child_graphs.extend(nested_graphs)
+                if str(node.op_type) != "Loop":
+                    continue
+                for body in nested_graphs:
+                    local = {
+                        str(value.name)
+                        for value in body.input
+                        if str(value.name) != ""
+                    } | {
+                        str(initializer.name)
+                        for initializer in body.initializer
+                        if str(initializer.name) != ""
+                    } | {
+                        str(output_name)
+                        for body_node in body.node
+                        for output_name in body_node.output
+                        if str(output_name) != ""
+                    }
+                    captures = {
+                        str(input_name)
+                        for body_node in body.node
+                        for input_name in body_node.input
+                        if str(input_name) != "" and str(input_name) not in local
+                    }
+                    for capture_name in captures - available:
+                        candidate_uses.setdefault(capture_name, []).append((node, body))
+
+        repaired = 0
+        for capture_name, uses in candidate_uses.items():
+            normalized_name = str(capture_name).lower().replace("__", ":")
+            if "arange" not in normalized_name or "delta" not in normalized_name:
+                continue
+            elem_types: set[int] = set()
+            valid = True
+            for loop_node, body in uses:
+                if (
+                    "arange" not in str(loop_node.name).lower()
+                    or len(loop_node.input) < 3
+                    or len(body.input) < 3
+                    or len(body.output) < 3
+                ):
+                    valid = False
+                    break
+                carried_name = str(body.input[2].name)
+                current_name = str(body.output[1].name)
+                scan_name = str(body.output[2].name)
+                matching_adds = [
+                    body_node
+                    for body_node in body.node
+                    if str(body_node.op_type) == "Add"
+                    and set(str(name) for name in body_node.input)
+                    == {carried_name, capture_name}
+                    and list(body_node.output) == [current_name]
+                ]
+                matching_scans = [
+                    body_node
+                    for body_node in body.node
+                    if str(body_node.op_type) == "Identity"
+                    and list(body_node.input) == [carried_name]
+                    and list(body_node.output) == [scan_name]
+                ]
+                all_capture_users = [
+                    body_node
+                    for body_node in body.node
+                    if capture_name in body_node.input
+                ]
+                if (
+                    len(matching_adds) != 1
+                    or len(matching_scans) != 1
+                    or all_capture_users != matching_adds
+                ):
+                    valid = False
+                    break
+                elem_types.add(int(body.input[2].type.tensor_type.elem_type))
+            if not valid or len(elem_types) != 1:
+                continue
+            try:
+                np_dtype = onnx.helper.tensor_dtype_to_np_dtype(next(iter(elem_types)))
+            except Exception:
+                continue
+            graph.initializer.append(
+                numpy_helper.from_array(
+                    np.asarray(1, dtype=np_dtype),
+                    name=capture_name,
+                )
+            )
+            available.add(capture_name)
+            repaired += 1
+
+        for child_graph in child_graphs:
+            repaired += _repair_graph_arange_delta(child_graph)
+        return repaired
+
+    repaired = _repair_graph_arange_delta(model.graph)
+    return {"ArangeLoopDeltaCaptures": repaired} if repaired else {}

@@ -166,6 +166,7 @@ from onnx2tf.tflite_builder.op_builders.control import (
     is_supported_if_nms_guard_pattern,
     is_supported_if_nested_reducemin_add_branch_pattern,
     is_supported_if_sequenceconstruct_add_branch_pattern,
+    is_supported_loop_arange_scan_pattern,
     is_supported_loop_static_unroll_pattern,
     is_supported_loop_while_pattern,
 )
@@ -334,6 +335,7 @@ __all__ = [
     "is_supported_if_nms_guard_pattern",
     "is_supported_if_nested_reducemin_add_branch_pattern",
     "is_supported_if_sequenceconstruct_add_branch_pattern",
+    "is_supported_loop_arange_scan_pattern",
     "is_supported_loop_static_unroll_pattern",
     "is_supported_loop_while_pattern",
     "build_conv_integer_op",

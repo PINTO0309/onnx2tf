@@ -7,6 +7,7 @@ import onnx
 from onnx import numpy_helper
 
 from onnx2tf.utils.onnx_graph_repair import (
+    repair_missing_arange_loop_delta_captures,
     repair_missing_torchvision_nms_guard_captures,
 )
 
@@ -790,7 +791,11 @@ def prepare_onnx_graph_for_onnxruntime(
     prepared = onnx.ModelProto()
     prepared.CopyFrom(onnx_graph)
 
-    rewritten = repair_missing_torchvision_nms_guard_captures(prepared)
+    rewritten = repair_missing_arange_loop_delta_captures(prepared)
+    for op_type, count in repair_missing_torchvision_nms_guard_captures(
+        prepared
+    ).items():
+        rewritten[op_type] = int(rewritten.get(op_type, 0)) + int(count)
 
     default_opset = _default_domain_opset(prepared)
     if default_opset is not None and int(default_opset) < 7:

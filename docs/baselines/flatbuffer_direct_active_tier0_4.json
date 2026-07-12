@@ -1945,9 +1945,14 @@
     {
       "tier": 2,
       "model": "yolov3-12-int8.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "15d093b203325e1d4c1f2e8d9a3fce0141db4da0245dfa3f5254f006af417a89"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "u8s8_detector_strict_metric_mismatch",
+      "error_signature_sha256": "042bc0ec6020004d0f33640af6ad3197daf7d2e012c2306e64ef42a999b29de9",
+      "tflite_max_abs": 0.09563881158828735,
+      "overwrite_input_shape": [
+        "input_1:1,3,416,416",
+        "image_shape:1,2"
+      ]
     },
     {
       "tier": 2,

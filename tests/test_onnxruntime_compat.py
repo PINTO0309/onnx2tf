@@ -104,6 +104,49 @@ def _missing_torchvision_nms_capture_model() -> onnx.ModelProto:
     return model
 
 
+def _missing_arange_delta_capture_model() -> onnx.ModelProto:
+    trip_count = numpy_helper.from_array(np.asarray(3, dtype=np.int64), name="trip_count")
+    condition = numpy_helper.from_array(np.asarray(True), name="condition")
+    start = numpy_helper.from_array(np.asarray(0, dtype=np.int32), name="start")
+    body = helper.make_graph(
+        [
+            helper.make_node("Identity", ["cond"], ["cond_out"], name="keep_running"),
+            helper.make_node("Add", ["prev", "tf/arange/delta:0"], ["current"], name="step"),
+            helper.make_node("Identity", ["prev"], ["range"], name="scan"),
+        ],
+        "arange_body",
+        [
+            helper.make_tensor_value_info("iteration", TensorProto.INT64, []),
+            helper.make_tensor_value_info("cond", TensorProto.BOOL, []),
+            helper.make_tensor_value_info("prev", TensorProto.INT32, []),
+        ],
+        [
+            helper.make_tensor_value_info("cond_out", TensorProto.BOOL, []),
+            helper.make_tensor_value_info("current", TensorProto.INT32, []),
+            helper.make_tensor_value_info("range", TensorProto.INT32, []),
+        ],
+    )
+    loop = helper.make_node(
+        "Loop",
+        ["trip_count", "condition", "start"],
+        ["final", "range_values"],
+        name="tf/arange_loop",
+        body=body,
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [loop],
+            "missing_arange_delta",
+            [],
+            [helper.make_tensor_value_info("range_values", TensorProto.INT32, [3])],
+            initializer=[trip_count, condition, start],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+    model.ir_version = 10
+    return model
+
+
 def test_prepare_onnxruntime_graph_redomains_legacy_grid_sample_and_inverse() -> None:
     model = _grid_sample_model(opset=10, include_inverse=True)
 
@@ -642,3 +685,27 @@ def test_prepare_onnxruntime_repairs_missing_torchvision_nms_guard_captures() ->
         levels,
         np.asarray([0, 0, 1, 1], dtype=np.int64),
     )
+
+
+def test_prepare_onnxruntime_repairs_missing_arange_default_delta_capture() -> None:
+    model = _missing_arange_delta_capture_model()
+    with pytest.raises(onnx.checker.ValidationError):
+        onnx.checker.check_model(model)
+
+    prepared, rewritten = prepare_onnx_graph_for_onnxruntime(model)
+
+    assert rewritten["ArangeLoopDeltaCaptures"] == 1
+    onnx.checker.check_model(prepared)
+    delta = next(
+        numpy_helper.to_array(initializer)
+        for initializer in prepared.graph.initializer
+        if str(initializer.name) == "tf/arange/delta:0"
+    )
+    assert delta.dtype == np.int32
+    assert delta.shape == ()
+    assert int(delta) == 1
+    actual = ort.InferenceSession(
+        prepared.SerializeToString(),
+        providers=["CPUExecutionProvider"],
+    ).run(None, {})[0]
+    np.testing.assert_array_equal(actual, np.asarray([0, 1, 2], dtype=np.int32))

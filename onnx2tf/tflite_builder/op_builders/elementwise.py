@@ -435,6 +435,16 @@ def _emit_static_high_rank_binary(
 
     padded_input_shapes: list[list[int]] = []
     for input_name in input_names:
+        input_tensor = ctx.model_ir.tensors.get(str(input_name))
+        input_signature = (
+            list(input_tensor.shape_signature)
+            if input_tensor is not None and input_tensor.shape_signature is not None
+            else []
+        )
+        if any(int(dim) < 0 for dim in input_signature):
+            # Placeholder dimensions do not preserve element counts at runtime;
+            # a static coalescing RESHAPE would therefore be invalid.
+            return False
         input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
         if len(input_shape) > rank or any(int(v) <= 0 for v in input_shape):
             return False

@@ -2456,13 +2456,26 @@ def is_supported_loop_static_unroll_pattern(node: Any, ctx: Any) -> bool:
     state_count = int(len(node.inputs) - 2)
     if state_count <= 0:
         return False
-    # Static unroll path supports loop-carried outputs only (no scan outputs).
-    if len(node.outputs) != state_count:
+    scan_count = int(len(node.outputs) - state_count)
+    if scan_count < 0:
         return False
     if len(body.input) != int(2 + state_count):
         return False
-    if len(body.output) != int(1 + state_count):
+    if len(body.output) != int(1 + state_count + scan_count):
         return False
+    if scan_count > 0:
+        if int(trip_count) <= 0 or not bool(_loop_const_cond(node, ctx)):
+            return False
+        body_cond_name = str(body.input[1].name)
+        body_cond_output_name = str(body.output[0].name)
+        condition_passthrough = any(
+            str(body_node.op_type) == "Identity"
+            and list(body_node.input) == [body_cond_name]
+            and list(body_node.output) == [body_cond_output_name]
+            for body_node in body.node
+        )
+        if not condition_passthrough:
+            return False
     return True
 
 
@@ -2483,6 +2496,68 @@ def is_supported_loop_while_pattern(node: Any, ctx: Any) -> bool:
     if len(body.output) != int(1 + state_count):
         return False
     return True
+
+
+def _loop_arange_scan_delta_name(node: Any, ctx: Any) -> Optional[str]:
+    body = node.attrs.get("body", None)
+    if (
+        body is None
+        or len(node.inputs) != 3
+        or len(node.outputs) != 2
+        or len(body.input) != 3
+        or len(body.output) != 3
+        or len(body.node) != 3
+        or _loop_const_cond(node, ctx) is not True
+    ):
+        return None
+    body_cond_name = str(body.input[1].name)
+    carried_name = str(body.input[2].name)
+    condition_name = str(body.output[0].name)
+    current_name = str(body.output[1].name)
+    scan_name = str(body.output[2].name)
+    condition_nodes = [
+        body_node
+        for body_node in body.node
+        if str(body_node.op_type) == "Identity"
+        and list(body_node.input) == [body_cond_name]
+        and list(body_node.output) == [condition_name]
+    ]
+    scan_nodes = [
+        body_node
+        for body_node in body.node
+        if str(body_node.op_type) == "Identity"
+        and list(body_node.input) == [carried_name]
+        and list(body_node.output) == [scan_name]
+    ]
+    add_nodes = [
+        body_node
+        for body_node in body.node
+        if str(body_node.op_type) == "Add"
+        and carried_name in body_node.input
+        and list(body_node.output) == [current_name]
+    ]
+    if len(condition_nodes) != 1 or len(scan_nodes) != 1 or len(add_nodes) != 1:
+        return None
+    add_inputs = [str(name) for name in add_nodes[0].input]
+    if len(add_inputs) != 2:
+        return None
+    delta_name = add_inputs[1] if add_inputs[0] == carried_name else add_inputs[0]
+    pattern_text = f"{node.name} {delta_name}".lower().replace("__", ":")
+    if "arange" not in pattern_text or "delta" not in pattern_text:
+        return None
+    delta_arr = ctx.get_constant_array(delta_name)
+    if delta_arr is not None and int(np.asarray(delta_arr).size) == 1:
+        return delta_name
+    # tf2onnx's default Range step is one. Accept a missing capture only when
+    # the canonical exported capture itself identifies that default delta.
+    normalized_delta_name = delta_name.lower().replace("__", ":")
+    if "arange" in normalized_delta_name and "delta" in normalized_delta_name:
+        return delta_name
+    return None
+
+
+def is_supported_loop_arange_scan_pattern(node: Any, ctx: Any) -> bool:
+    return _loop_arange_scan_delta_name(node, ctx) is not None
 
 
 def _make_unique_tensor_name(*, base_name: str, ctx: Any) -> str:
@@ -2564,8 +2639,14 @@ def _build_loop_static_unroll(node: Any, ctx: Any) -> None:
     trip_count = int(trip_count_opt)
     cond_initial = bool(cond_initial_opt)
     state_input_names = [str(v.name) for v in node.inputs[2:]]
-    state_output_names = [str(v.name) for v in node.outputs]
     state_count = int(len(state_input_names))
+    state_output_names = [str(v.name) for v in node.outputs[:state_count]]
+    scan_output_names = [str(v.name) for v in node.outputs[state_count:]]
+    scan_count = int(len(scan_output_names))
+    scan_iteration_values: List[List[str]] = [
+        [] for _ in range(scan_count)
+    ]
+    body_scan_output_is_scalar: List[bool] = [False for _ in range(scan_count)]
 
     for state_input_name in state_input_names:
         ctx.ensure_tensor(state_input_name)
@@ -2577,6 +2658,14 @@ def _build_loop_static_unroll(node: Any, ctx: Any) -> None:
         body_state_input_names = [str(v.name) for v in body_graph.input[2:2 + state_count]]
         body_cond_output_name = str(body_graph.output[0].name)
         body_state_output_names = [str(v.name) for v in body_graph.output[1:1 + state_count]]
+        body_scan_output_names = [
+            str(v.name)
+            for v in body_graph.output[1 + state_count:1 + state_count + scan_count]
+        ]
+        body_scan_output_is_scalar = [
+            len(value.type.tensor_type.shape.dim) == 0
+            for value in body_graph.output[1 + state_count:1 + state_count + scan_count]
+        ]
 
         for iter_idx in range(int(trip_count)):
             iter_const_name = ctx.add_const_tensor(
@@ -2639,6 +2728,20 @@ def _build_loop_static_unroll(node: Any, ctx: Any) -> None:
                 )
                 next_states.append(str(next_state_name))
 
+            iteration_scan_names: List[str] = []
+            for scan_idx, body_scan_output_name in enumerate(body_scan_output_names):
+                scan_value_name = _make_unique_tensor_name(
+                    base_name=f"{node.name}_loop_scan_{scan_idx}_iter_{iter_idx}",
+                    ctx=ctx,
+                )
+                output_remap[str(body_scan_output_name)] = str(scan_value_name)
+                _register_tensor_remap_metadata(
+                    old_name=str(body_scan_output_name),
+                    new_name=str(scan_value_name),
+                    ctx=ctx,
+                )
+                iteration_scan_names.append(str(scan_value_name))
+
             _lower_graph_nodes(
                 graph=body_graph,
                 ctx=ctx,
@@ -2668,6 +2771,16 @@ def _build_loop_static_unroll(node: Any, ctx: Any) -> None:
                 )
 
             current_states = [str(v) for v in next_states]
+            for scan_idx, scan_value_name in enumerate(iteration_scan_names):
+                if scan_value_name not in ctx.model_ir.tensors:
+                    raise NotImplementedError(
+                        (
+                            "Loop static unroll could not resolve scan output. "
+                            f"node={node.name} iter={iter_idx} "
+                            f"output={body_scan_output_names[scan_idx]}"
+                        )
+                    )
+                scan_iteration_values[scan_idx].append(str(scan_value_name))
 
     for state_idx, output_name in enumerate(state_output_names):
         src_name = str(current_states[state_idx])
@@ -2677,6 +2790,200 @@ def _build_loop_static_unroll(node: Any, ctx: Any) -> None:
             alias_base_name=f"{node.name}_loop_final_state_{state_idx}",
             ctx=ctx,
         )
+
+    for scan_idx, output_name in enumerate(scan_output_names):
+        scan_values = scan_iteration_values[scan_idx]
+        if len(scan_values) != int(trip_count):
+            raise NotImplementedError(
+                f"Loop static unroll scan length is unresolved. node={node.name}"
+            )
+        expanded_values: List[str] = []
+        axis_name = ctx.add_const_tensor(
+            _make_unique_tensor_name(
+                base_name=f"{node.name}_loop_scan_{scan_idx}_axis",
+                ctx=ctx,
+            ),
+            np.asarray(0, dtype=np.int32),
+        )
+        for iter_idx, scan_value_name in enumerate(scan_values):
+            scan_shape = [int(v) for v in ctx.get_tensor_shape(scan_value_name)]
+            scan_dtype = str(ctx.get_tensor_dtype(scan_value_name)).upper()
+            if body_scan_output_is_scalar[scan_idx]:
+                expanded_values.append(scan_value_name)
+                continue
+            expanded_name = (
+                str(output_name)
+                if len(scan_values) == 1
+                else _make_unique_tensor_name(
+                    base_name=(
+                        f"{node.name}_loop_scan_{scan_idx}_expanded_{iter_idx}"
+                    ),
+                    ctx=ctx,
+                )
+            )
+            ctx.ensure_tensor(
+                expanded_name,
+                dtype=scan_dtype,
+                shape=[1] + scan_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="EXPAND_DIMS",
+                    inputs=[scan_value_name, axis_name],
+                    outputs=[expanded_name],
+                )
+            )
+            expanded_values.append(expanded_name)
+        if len(expanded_values) > 1:
+            scan_shape = [int(v) for v in ctx.get_tensor_shape(scan_values[0])]
+            if body_scan_output_is_scalar[scan_idx]:
+                scan_shape = []
+            scan_dtype = str(ctx.get_tensor_dtype(scan_values[0])).upper()
+            ctx.ensure_tensor(
+                str(output_name),
+                dtype=scan_dtype,
+                shape=[len(expanded_values)] + scan_shape,
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CONCATENATION",
+                    inputs=expanded_values,
+                    outputs=[str(output_name)],
+                    options={"axis": 0, "fusedActivationFunction": "NONE"},
+                )
+            )
+        elif expanded_values[0] != str(output_name):
+            _emit_tensor_alias_via_reshape(
+                src_name=expanded_values[0],
+                dst_name=str(output_name),
+                alias_base_name=f"{node.name}_loop_scan_{scan_idx}_single",
+                ctx=ctx,
+            )
+
+
+def _build_loop_arange_scan(node: Any, ctx: Any) -> None:
+    delta_capture_name = _loop_arange_scan_delta_name(node, ctx)
+    if delta_capture_name is None:
+        raise NotImplementedError(f"Loop arange scan pattern is unresolved. node={node.name}")
+
+    trip_count_name = str(node.inputs[0].name)
+    start_name = str(node.inputs[2].name)
+    final_name = str(node.outputs[0].name)
+    scan_name = str(node.outputs[1].name)
+    ctx.ensure_tensor(trip_count_name)
+    ctx.ensure_tensor(start_name)
+    state_dtype = str(ctx.get_tensor_dtype(start_name)).upper()
+    trip_dtype = str(ctx.get_tensor_dtype(trip_count_name)).upper()
+    if state_dtype not in {"INT32", "INT64"} or trip_dtype not in {"INT32", "INT64"}:
+        raise NotImplementedError(
+            f"Loop arange scan requires integer state/trip_count. node={node.name}"
+        )
+
+    delta_arr = ctx.get_constant_array(delta_capture_name)
+    delta_value = 1 if delta_arr is None else int(np.asarray(delta_arr).reshape(-1)[0])
+    np_dtype = np.int64 if state_dtype == "INT64" else np.int32
+    delta_name = ctx.add_const_tensor(
+        _make_unique_tensor_name(base_name=f"{node.name}_arange_delta", ctx=ctx),
+        np.asarray(delta_value, dtype=np_dtype),
+    )
+
+    typed_trip_count_name = trip_count_name
+    if trip_dtype != state_dtype:
+        typed_trip_count_name = ctx.add_intermediate_tensor(
+            _make_unique_tensor_name(
+                base_name=f"{node.name}_arange_trip_count_cast",
+                ctx=ctx,
+            ),
+            dtype=state_dtype,
+            shape=ctx.get_tensor_shape(trip_count_name),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[trip_count_name],
+                outputs=[typed_trip_count_name],
+                options={"inDataType": trip_dtype, "outDataType": state_dtype},
+            )
+        )
+
+    step_extent_name = typed_trip_count_name
+    if int(delta_value) != 1:
+        step_extent_name = ctx.add_intermediate_tensor(
+            _make_unique_tensor_name(
+                base_name=f"{node.name}_arange_step_extent",
+                ctx=ctx,
+            ),
+            dtype=state_dtype,
+            shape=ctx.get_tensor_shape(typed_trip_count_name),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[typed_trip_count_name, delta_name],
+                outputs=[step_extent_name],
+                options={"fusedActivationFunction": "NONE"},
+            )
+        )
+
+    limit_name = final_name
+    ctx.ensure_tensor(
+        limit_name,
+        dtype=state_dtype,
+        shape=ctx.get_tensor_shape(start_name),
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="ADD",
+            inputs=[start_name, step_extent_name],
+            outputs=[limit_name],
+            options={"fusedActivationFunction": "NONE"},
+        )
+    )
+    ctx.ensure_tensor(scan_name, dtype=state_dtype, shape=[1])
+    scan_tensor = ctx.model_ir.tensors[scan_name]
+    scan_tensor.shape = [1]
+    scan_tensor.shape_signature = [-1]
+
+    def _range_scalar(input_name: str, suffix: str) -> str:
+        input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+        if len(input_shape) == 0:
+            return input_name
+        if input_shape != [1]:
+            raise NotImplementedError(
+                f"Loop arange RANGE input is not scalar. node={node.name} shape={input_shape}"
+            )
+        scalar_name = ctx.add_intermediate_tensor(
+            _make_unique_tensor_name(
+                base_name=f"{node.name}_arange_{suffix}_scalar",
+                ctx=ctx,
+            ),
+            dtype=state_dtype,
+            shape=[],
+        )
+        scalar_tensor = ctx.model_ir.tensors[scalar_name]
+        scalar_tensor.shape = []
+        scalar_tensor.shape_signature = []
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SQUEEZE",
+                inputs=[input_name],
+                outputs=[scalar_name],
+                options={"squeezeDims": [0]},
+            )
+        )
+        return scalar_name
+
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RANGE",
+            inputs=[
+                _range_scalar(start_name, "start"),
+                _range_scalar(limit_name, "limit"),
+                _range_scalar(delta_name, "delta"),
+            ],
+            outputs=[scan_name],
+        )
+    )
 
 
 def _build_loop_while(node: Any, ctx: Any) -> None:
@@ -3003,6 +3310,9 @@ def _build_loop_while(node: Any, ctx: Any) -> None:
 
 
 def build_loop_op(node: Any, ctx: Any) -> None:
+    if is_supported_loop_arange_scan_pattern(node, ctx):
+        _build_loop_arange_scan(node, ctx)
+        return
     if is_supported_loop_while_pattern(node, ctx):
         _build_loop_while(node, ctx)
         return

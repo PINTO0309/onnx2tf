@@ -14172,6 +14172,39 @@ def test_flatbuffer_direct_rank6_binary_broadcast_coalesces_equivalent_axes() ->
     np.testing.assert_allclose(actual, sample_input * sample_scale, rtol=0.0, atol=1.0e-6)
 
 
+def test_flatbuffer_direct_dynamic_high_rank_binary_skips_static_coalescing() -> None:
+    x = helper.make_tensor_value_info(
+        "x",
+        TensorProto.FLOAT,
+        ["N", "A", "B", "C", "D"],
+    )
+    scale = helper.make_tensor_value_info(
+        "scale",
+        TensorProto.FLOAT,
+        [1, 1, 1, 3, 2],
+    )
+    y = helper.make_tensor_value_info(
+        "y",
+        TensorProto.FLOAT,
+        ["N", "A", "B", 3, 2],
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [helper.make_node("Mul", ["x", "scale"], ["y"], name="DynamicRank5Mul")],
+            "dynamic_rank5_mul",
+            [x, scale],
+            [y],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+    model_ir = lower_onnx_to_ir(
+        model,
+        output_file_name="dynamic_rank5_binary_no_static_coalescing",
+    )
+    assert [str(op.op_type) for op in model_ir.operators] == ["MUL"]
+    assert not any("coalesced" in name for name in model_ir.tensors)
+
+
 def test_flatbuffer_direct_softmax_default_axis_respects_opset11() -> None:
     model = _make_softmax_default_axis_opset11_model()
     model_ir = lower_onnx_to_ir(
@@ -39421,6 +39454,95 @@ def _make_loop_static_unroll_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
 
 
+def _make_loop_static_scan_model() -> onnx.ModelProto:
+    start_input = helper.make_tensor_value_info("scan_start", TensorProto.INT32, [])
+    final = helper.make_tensor_value_info("loop_final", TensorProto.INT32, [])
+    scan = helper.make_tensor_value_info("loop_scan", TensorProto.INT32, [3])
+    trip_count = numpy_helper.from_array(np.asarray(3, dtype=np.int64), name="scan_trip_count")
+    cond_init = numpy_helper.from_array(np.asarray(True, dtype=np.bool_), name="scan_cond_init")
+    delta = numpy_helper.from_array(np.asarray(1, dtype=np.int32), name="scan_delta")
+    body_graph = helper.make_graph(
+        [
+            helper.make_node("Identity", ["cond"], ["cond_out"], name="ScanCondIdentity"),
+            helper.make_node("Add", ["state_in", "scan_delta"], ["state_out"], name="ScanStep"),
+            helper.make_node("Identity", ["state_in"], ["scan_out"], name="ScanValue"),
+        ],
+        "loop_static_scan_body",
+        [
+            helper.make_tensor_value_info("i", TensorProto.INT64, []),
+            helper.make_tensor_value_info("cond", TensorProto.BOOL, []),
+            helper.make_tensor_value_info("state_in", TensorProto.INT32, []),
+        ],
+        [
+            helper.make_tensor_value_info("cond_out", TensorProto.BOOL, []),
+            helper.make_tensor_value_info("state_out", TensorProto.INT32, []),
+            helper.make_tensor_value_info("scan_out", TensorProto.INT32, []),
+        ],
+    )
+    loop_node = helper.make_node(
+        "Loop",
+        ["scan_trip_count", "scan_cond_init", "scan_start"],
+        ["loop_final", "loop_scan"],
+        name="LoopStaticScan",
+        body=body_graph,
+    )
+    graph = helper.make_graph(
+        [loop_node],
+        "loop_static_scan_graph",
+        [start_input],
+        [final, scan],
+        initializer=[trip_count, cond_init, delta],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
+def _make_loop_dynamic_arange_scan_model() -> onnx.ModelProto:
+    trip_input = helper.make_tensor_value_info("trip_count", TensorProto.INT64, [])
+    start_input = helper.make_tensor_value_info("start", TensorProto.INT32, [])
+    final = helper.make_tensor_value_info("final", TensorProto.INT32, [])
+    scan = helper.make_tensor_value_info("range_values", TensorProto.INT32, ["N"])
+    cond_init = numpy_helper.from_array(np.asarray(True, dtype=np.bool_), name="cond_init")
+    delta = numpy_helper.from_array(
+        np.asarray(1, dtype=np.int32),
+        name="tf/arange/delta:0",
+    )
+    body_graph = helper.make_graph(
+        [
+            helper.make_node("Identity", ["cond"], ["cond_out"], name="ArangeCond"),
+            helper.make_node("Add", ["prev", "tf/arange/delta:0"], ["current"], name="ArangeStep"),
+            helper.make_node("Identity", ["prev"], ["range"], name="ArangeScan"),
+        ],
+        "dynamic_arange_body",
+        [
+            helper.make_tensor_value_info("i", TensorProto.INT64, []),
+            helper.make_tensor_value_info("cond", TensorProto.BOOL, []),
+            helper.make_tensor_value_info("prev", TensorProto.INT32, []),
+        ],
+        [
+            helper.make_tensor_value_info("cond_out", TensorProto.BOOL, []),
+            helper.make_tensor_value_info("current", TensorProto.INT32, []),
+            helper.make_tensor_value_info("range", TensorProto.INT32, []),
+        ],
+    )
+    loop_node = helper.make_node(
+        "Loop",
+        ["trip_count", "cond_init", "start"],
+        ["final", "range_values"],
+        name="tf/arange_loop",
+        body=body_graph,
+    )
+    return helper.make_model(
+        helper.make_graph(
+            [loop_node],
+            "dynamic_arange_graph",
+            [trip_input, start_input],
+            [final, scan],
+            initializer=[cond_init, delta],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 16)],
+    )
+
+
 def _make_loop_while_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("loop_x", TensorProto.FLOAT, [3])
     counter = helper.make_tensor_value_info("loop_counter", TensorProto.INT64, [])
@@ -39481,6 +39603,106 @@ def test_flatbuffer_direct_loop_static_unroll_lowers_to_builtin_ops_without_cust
     assert len(model_ir.subgraphs) == 2
     out_tensor = model_ir.tensors["loop_y"]
     assert list(out_tensor.shape) == [3]
+
+
+def test_flatbuffer_direct_loop_static_scan_unrolls_and_stacks_scan_values() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_loop_static_scan_model(),
+        output_file_name="loop_static_scan_builtin",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "WHILE" not in op_types
+    assert op_types.count("CONCATENATION") == 1
+    assert list(model_ir.tensors["loop_scan"].shape) == [3]
+
+
+@pytest.mark.skipif(
+    not _requires_flatbuffer_tools(),
+    reason="flatbuffer_direct requires bundled schema artifacts",
+)
+def test_flatbuffer_direct_loop_static_scan_tflite_runtime_values() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_ir = lower_onnx_to_ir(
+            _make_loop_static_scan_model(),
+            output_file_name="loop_static_scan_runtime",
+        )
+        model_bytes = serialize_model(
+            schema_tflite=load_schema_module(tmpdir),
+            model_ir=model_ir,
+        )
+        interpreter = Interpreter(model_content=bytes(model_bytes))
+        interpreter.allocate_tensors()
+        input_detail = interpreter.get_input_details()[0]
+        interpreter.set_tensor(
+            input_detail["index"],
+            np.asarray([0], dtype=np.int32).reshape(input_detail["shape"]),
+        )
+        interpreter.invoke()
+        outputs = {
+            detail["name"]: interpreter.get_tensor(detail["index"])
+            for detail in interpreter.get_output_details()
+        }
+        np.testing.assert_array_equal(
+            np.asarray(outputs["loop_final"]).reshape(-1),
+            np.asarray([3], dtype=np.int32),
+        )
+        np.testing.assert_array_equal(
+            np.asarray(outputs["loop_scan"]).reshape(-1),
+            np.asarray([0, 1, 2], dtype=np.int32),
+        )
+
+
+def test_flatbuffer_direct_loop_dynamic_arange_scan_lowers_to_range() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_loop_dynamic_arange_scan_model(),
+        output_file_name="loop_dynamic_arange_scan",
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert "CUSTOM" not in op_types
+    assert "WHILE" not in op_types
+    assert op_types.count("RANGE") == 1
+    assert list(model_ir.tensors["range_values"].shape_signature or []) == [-1]
+
+
+@pytest.mark.skipif(
+    not _requires_flatbuffer_tools(),
+    reason="flatbuffer_direct requires bundled schema artifacts",
+)
+def test_flatbuffer_direct_loop_dynamic_arange_scan_tflite_runtime_values() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_ir = lower_onnx_to_ir(
+            _make_loop_dynamic_arange_scan_model(),
+            output_file_name="loop_dynamic_arange_runtime",
+        )
+        model_bytes = serialize_model(
+            schema_tflite=load_schema_module(tmpdir),
+            model_ir=model_ir,
+        )
+        interpreter = Interpreter(model_content=bytes(model_bytes))
+        interpreter.allocate_tensors()
+        inputs = {detail["name"]: detail for detail in interpreter.get_input_details()}
+        interpreter.set_tensor(
+            inputs["trip_count"]["index"],
+            np.asarray([4], dtype=np.int64).reshape(inputs["trip_count"]["shape"]),
+        )
+        interpreter.set_tensor(
+            inputs["start"]["index"],
+            np.asarray([2], dtype=np.int32).reshape(inputs["start"]["shape"]),
+        )
+        interpreter.invoke()
+        outputs = {
+            detail["name"]: interpreter.get_tensor(detail["index"])
+            for detail in interpreter.get_output_details()
+        }
+        np.testing.assert_array_equal(
+            np.asarray(outputs["final"]).reshape(-1),
+            np.asarray([6], dtype=np.int32),
+        )
+        np.testing.assert_array_equal(
+            np.asarray(outputs["range_values"]).reshape(-1),
+            np.asarray([2, 3, 4, 5], dtype=np.int32),
+        )
 
 
 def test_flatbuffer_direct_loop_while_lowers_to_builtin_ops_without_custom() -> None:

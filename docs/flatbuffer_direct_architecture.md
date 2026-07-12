@@ -92,8 +92,9 @@ The profile fixes root-only discovery, the 1–1,999 node range, all 420 managed
 historical model records, and inference concurrency of one. Models classified
 as `timeout` in the current managed baseline remain recorded for provenance but
 are automatically excluded from subsequent runs. The active run therefore
-contains 394 models: 343 expected passes and 51 expected non-passes, excluding
-26 recorded timeouts. Tier 5 models cannot be added because the profile loader
+contains 394 models: 345 expected passes and 49 expected non-passes, excluding
+26 recorded timeouts. The active non-passes are 31 accuracy failures and 18
+missing reports. Tier 5 models cannot be added because the profile loader
 rejects tiers above 4 and node ranges above 1,999.
 
 `silero_vad.onnx` is validated with `-kat input state sr` and has a recorded
@@ -232,6 +233,23 @@ intermediate value-info and clearing graph-output shapes does not make ONNX
 Runtime accept the structurally inconsistent node. The converter does not
 guess which branch should be resized because no valid ONNX reference exists
 to prove the required `1e-1` accuracy ceiling.
+
+`yolov3-12-int8.onnx` now produces and executes a direct TFLite artifact under
+the fixed `input_1:1,3,416,416` and `image_shape:1,2` contract. Six tf2onnx
+arange Loop bodies referenced one optimizer-pruned default `delta=1` capture;
+the ONNX Runtime compatibility graph restores only that canonical capture.
+The same canonical Loop pattern is lowered to a dynamic TFLite RANGE using
+`limit = start + trip_count * delta`, preserving its scan output without
+unrolling or a custom `ONNX_LOOP`. Dynamic rank-5 elementwise inputs also no
+longer use static high-rank coalescing based on all-one placeholder shapes.
+The previous missing report is therefore upgraded to an active accuracy
+non-pass with normalized reason `u8s8_detector_strict_metric_mismatch`. Its
+fixed-seed overall maximum absolute error is `0.09563881158828735`, below the
+independent `1e-1` ceiling, with mean error `7.735504565813028e-5`, RMSE
+`0.0009708107564596241`, and cosine similarity `0.9999678197697215`. It remains
+a non-pass because the existing stricter per-output thresholds reject a
+`0.0956388` box-output outlier and the low-energy score output has cosine
+similarity `0.8350063294036085`.
 
 `arcfaceresnet100-11-int8.onnx` also uses the normalized reason
 `onnxruntime_u8s8_saturating_pair_accumulation`. Its preprocessing and the

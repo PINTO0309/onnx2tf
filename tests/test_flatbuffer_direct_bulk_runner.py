@@ -957,9 +957,9 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 19,
+        "missing_tflite_report": 18,
         "pass": 345,
-        "tflite_fail": 30,
+        "tflite_fail": 31,
         "timeout": 26,
     }
     assert profile["model_options"]["silero_vad.onnx"] == {
@@ -1049,6 +1049,25 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert dynamics_rife_entry["error_signature_sha256"] == (
         "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109"
     )
+    yolov3_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "yolov3-12-int8.onnx"
+    )
+    assert yolov3_entry["baseline_classification"] == "tflite_fail"
+    assert yolov3_entry["baseline_reason"] == (
+        "u8s8_detector_strict_metric_mismatch"
+    )
+    assert yolov3_entry["error_signature_sha256"] == (
+        "042bc0ec6020004d0f33640af6ad3197daf7d2e012c2306e64ef42a999b29de9"
+    )
+    assert yolov3_entry["tflite_max_abs"] == 0.09563881158828735
+    assert profile["model_options"]["yolov3-12-int8.onnx"] == {
+        "overwrite_input_shape": [
+            "input_1:1,3,416,416",
+            "image_shape:1,2",
+        ],
+    }
     nanodet_entry = next(
         entry
         for entry in profile_payload["models"]

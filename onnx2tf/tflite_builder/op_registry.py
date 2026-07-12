@@ -235,6 +235,7 @@ from onnx2tf.tflite_builder.op_builders import (
     is_supported_if_nested_reducemin_add_branch_pattern,
     is_supported_if_nms_guard_pattern,
     is_supported_if_sequenceconstruct_add_branch_pattern,
+    is_supported_loop_arange_scan_pattern,
     is_supported_loop_static_unroll_pattern,
     is_supported_loop_while_pattern,
 )
@@ -6568,7 +6569,8 @@ def _validate_if(node: Any, ctx: Any) -> None:
 
 def _validate_loop(node: Any, ctx: Any) -> None:
     if not (
-        is_supported_loop_static_unroll_pattern(node, ctx)
+        is_supported_loop_arange_scan_pattern(node, ctx)
+        or is_supported_loop_static_unroll_pattern(node, ctx)
         or is_supported_loop_while_pattern(node, ctx)
     ):
         raise NodeValidationError(
@@ -7867,7 +7869,16 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "Loop": DispatchEntry(
         onnx_op="Loop",
-        tflite_ops=["RESHAPE"],
+        tflite_ops=[
+            "RESHAPE",
+            "EXPAND_DIMS",
+            "CONCATENATION",
+            "CAST",
+            "MUL",
+            "ADD",
+            "RANGE",
+            "SQUEEZE",
+        ],
         builder=build_loop_op,
         validation=ValidationSpec(min_inputs=3, max_inputs=None, min_outputs=1, max_outputs=None),
         extra_validator=_validate_loop,
