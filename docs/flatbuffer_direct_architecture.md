@@ -477,6 +477,13 @@ input/output retargeting, axis mutation, conditional pre-Transpose retention,
 post-Transpose removal, and pruning share one differential index and
 `LayoutState`; the legacy helper remains a compatibility wrapper.
 
+Strict canonical NHWC→NCHW Transpose→unary-chain→inverse Transpose passthrough
+is mechanically owned by the same family. Only linear layout-agnostic unary
+chains are eligible; public intermediate outputs and pre-Transpose fan-out are
+rejected, while final dtype/quantization/shape metadata is preserved. The
+157-line implementation moved with an identical AST and all six production
+positions still use the compatibility wrapper in their original order.
+
 General consecutive Reshape passthrough cleanup is also owned by
 `passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,
 fan-out-safe bypass of a second Reshape, and strict single-user chain collapse,

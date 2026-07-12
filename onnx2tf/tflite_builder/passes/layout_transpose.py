@@ -5,7 +5,10 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _build_tensor_consumer_map,
     _clone_quantization,
+    _invert_perm,
+    _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
     _read_transpose_perm,
     _replace_tensor_inputs,
@@ -20,7 +23,7 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
-from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 def _is_identity_perm(perm: List[int]) -> bool:
     return perm == [int(i) for i in range(len(perm))]
 
@@ -433,6 +436,165 @@ def run_layout_transpose_cleanup(
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
+
+
+def _optimize_transpose_unary_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Fold transpose wrappers around strict unary passthrough chains.
+
+    Target:
+      X --TRANSPOSE(P)--> A --(UNARY)*--> B --TRANSPOSE(inv(P))--> Y
+
+    Rewrite:
+      X --(UNARY)*--> Y
+
+    Safety:
+    - Unary chain must be strictly linear (single consumer per main-path output).
+    - Only layout-agnostic unary ops are allowed.
+    """
+    rewritten = 0
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+    unary_passthrough_ops = {
+        "RELU",
+        "RELU6",
+        "RELU_0_TO_1",
+        "HARD_SWISH",
+        "LEAKY_RELU",
+        "LOGISTIC",
+        "TANH",
+        "GELU",
+        "ABS",
+        "NEG",
+        "SQRT",
+        "EXP",
+        "FLOOR",
+        "CEIL",
+    }
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+
+        for pre_idx, pre_op in enumerate(model_ir.operators):
+            if str(pre_op.op_type) != "TRANSPOSE":
+                continue
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+                continue
+
+            pre_input_name = str(pre_op.inputs[0])
+            pre_output_name = str(pre_op.outputs[0])
+            if pre_output_name in model_ir.outputs:
+                continue
+
+            perm_pre = _read_transpose_perm(model_ir, pre_op)
+            if perm_pre is None:
+                continue
+            # Only fold the canonical NHWC->NCHW->NHWC bridge direction.
+            # Reverse-direction folds can corrupt downstream layout contracts.
+            if [int(v) for v in list(perm_pre)] != perm_nhwc_to_nchw:
+                continue
+            perm_post_expected = _invert_perm(perm_pre)
+            if perm_post_expected is None:
+                continue
+
+            chain_indices: List[int] = []
+            chain_ops: List[OperatorIR] = []
+            chain_output_names: List[str] = []
+            chain_main_input_index: Dict[int, int] = {}
+            current_tensor = pre_output_name
+
+            while True:
+                current_users = [int(v) for v in consumers.get(current_tensor, [])]
+                if len(current_users) != 1:
+                    break
+                op_idx = int(current_users[0])
+                op = model_ir.operators[op_idx]
+                op_type = str(op.op_type)
+                if op_type not in unary_passthrough_ops:
+                    break
+                if len(op.inputs) != 1 or len(op.outputs) != 1:
+                    break
+                if str(op.inputs[0]) != current_tensor:
+                    break
+                out_name = str(op.outputs[0])
+                if out_name in model_ir.outputs:
+                    break
+                chain_indices.append(int(op_idx))
+                chain_ops.append(op)
+                chain_output_names.append(out_name)
+                current_tensor = out_name
+
+            if len(chain_ops) == 0:
+                continue
+
+            tail_users = [int(v) for v in consumers.get(current_tensor, [])]
+            if len(tail_users) != 1:
+                continue
+            post_idx = int(tail_users[0])
+            if post_idx in set(chain_indices):
+                continue
+            post_op = model_ir.operators[int(post_idx)]
+            if str(post_op.op_type) != "TRANSPOSE":
+                continue
+            if len(post_op.inputs) < 2 or len(post_op.outputs) != 1:
+                continue
+            if str(post_op.inputs[0]) != current_tensor:
+                continue
+            perm_post = _read_transpose_perm(model_ir, post_op)
+            if perm_post is None or perm_post != perm_post_expected:
+                continue
+            post_output_name = str(post_op.outputs[0])
+
+            # Rewire chain head to the pre-transpose source.
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=chain_ops[0],
+                new_inputs=[pre_input_name],
+            )
+            # Preserve output name expected after post-transpose.
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=chain_ops[-1],
+                new_outputs=[post_output_name],
+            )
+
+            # Update intermediate metadata to post-transpose layout.
+            for out_name in chain_output_names[:-1]:
+                _permute_tensor_metadata_if_rank_matches(
+                    model_ir.tensors.get(out_name, None),
+                    perm_post_expected,
+                )
+
+            old_last_name = str(chain_output_names[-1])
+            old_last_tensor = model_ir.tensors.get(old_last_name, None)
+            post_output_tensor = model_ir.tensors.get(post_output_name, None)
+            if old_last_tensor is not None and post_output_tensor is not None:
+                post_output_tensor.dtype = str(old_last_tensor.dtype)
+                post_output_tensor.quantization = _clone_quantization(old_last_tensor.quantization)
+                post_output_tensor.shape = [int(v) for v in list(old_last_tensor.shape)]
+                post_output_tensor.shape_signature = (
+                    [int(v) for v in list(old_last_tensor.shape_signature)]
+                    if old_last_tensor.shape_signature is not None
+                    else [int(v) for v in list(old_last_tensor.shape)]
+                )
+                _permute_tensor_metadata_if_rank_matches(
+                    post_output_tensor,
+                    perm_post_expected,
+                )
+
+            remove_indices = sorted(list({int(pre_idx), int(post_idx)}), reverse=True)
+            for remove_idx in remove_indices:
+                del model_ir.operators[int(remove_idx)]
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"rewritten_transpose_unary_passthrough_chains": int(rewritten)}
 
 
 def _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(

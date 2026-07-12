@@ -453,6 +453,7 @@ def test_layout_transpose_cleanup_has_single_owner() -> None:
         "_is_inverse_perm",
         "_optimize_layout_transpose_chains",
         "_optimize_transpose_gather_transpose_axis_remap_nhwc_chains",
+        "_optimize_transpose_unary_passthrough_chains",
     } <= pass_functions
 
     lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
@@ -482,6 +483,14 @@ def test_layout_transpose_cleanup_has_single_owner() -> None:
         "_optimize_transpose_gather_transpose_axis_remap_nhwc_chains_pass"
         in gather_wrapper_names
     )
+    unary_wrapper_names = {
+        node.id
+        for node in ast.walk(
+            lowering_functions["_optimize_transpose_unary_passthrough_chains"]
+        )
+        if isinstance(node, ast.Name)
+    }
+    assert "_optimize_transpose_unary_passthrough_chains_pass" in unary_wrapper_names
     imports = [
         node
         for node in lowering_tree.body
@@ -494,6 +503,7 @@ def test_layout_transpose_cleanup_has_single_owner() -> None:
         "_is_inverse_perm",
         "_optimize_layout_transpose_chains",
         "_optimize_transpose_gather_transpose_axis_remap_nhwc_chains",
+        "_optimize_transpose_unary_passthrough_chains",
         "run_layout_transpose_cleanup",
         "run_transpose_gather_axis_cleanup",
     }

@@ -1910,6 +1910,26 @@ single-process and sequential, with no new dependency or TensorFlow import.
 Rerun the raw post-lowering inventory before selecting the next family. Do not
 create a pull request; commit and push only at a coherent checkpoint.
 
+The next mechanical split is complete. Because the strict canonical
+NHWC→NCHW Transpose→unary-chain→inverse Transpose passthrough had no direct
+characterization, compact success and pre-fan-out rejection fixtures were added
+before moving it. The 157-line implementation then moved unchanged into
+`passes/layout_transpose.py`; its old/new ASTs are identical, all six production
+call sites retain their order through a thin wrapper, and the ownership
+contract includes it.
+
+Sequential verification completed with:
+
+- `2 passed` for the new success/fan-out characterizations;
+- `1 passed` for the expanded ownership contract;
+- `1116 passed, 5 deselected, 2 warnings in 147.66s` for the full direct suite.
+
+No algorithm, call order, artifact, dependency, or TensorFlow boundary changed.
+The next checkpoint should use shared indexed consumers for linear matching,
+index-aware head/tail rewiring and structural removal, `LayoutState` metadata
+synchronization, and a stable guarded runner at all six positions. Do not create
+a pull request; commit and push only at a coherent checkpoint.
+
 The next mechanical split is complete. The 193-line fully static
 4D→2D Reshape/Concat/2D→4D Reshape rewrite moved unchanged into
 `passes/singleton_reshape_layout.py`. Its NHWC singleton-spatial, batch/channel,
