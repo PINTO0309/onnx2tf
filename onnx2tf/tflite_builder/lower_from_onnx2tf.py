@@ -65558,6 +65558,7 @@ def lower_onnx_to_ir(
         run_duplicate_fanout_cleanup(
             model_ir,
             include_transpose=enable_duplicate_transpose_fanout_optimizations,
+            layout_state=session.layout_state,
         )
         # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
         _optimize_transpose_quant_dequant_bridges(model_ir)
@@ -65642,6 +65643,7 @@ def lower_onnx_to_ir(
         run_duplicate_fanout_cleanup(
             model_ir,
             include_transpose=enable_duplicate_transpose_fanout_optimizations,
+            layout_state=session.layout_state,
         )
         _optimize_transpose_dequant_prelu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_prelu_transpose_bridges(model_ir)
@@ -65749,6 +65751,7 @@ def lower_onnx_to_ir(
         run_duplicate_fanout_cleanup(
             model_ir,
             include_transpose=enable_duplicate_transpose_fanout_optimizations,
+            layout_state=session.layout_state,
         )
         _optimize_transpose_dequant_prelu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_prelu_transpose_bridges(model_ir)

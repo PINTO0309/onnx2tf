@@ -194,6 +194,13 @@ ModelIR index, validates invariants against that index, and deep-snapshots each
 transaction. Invalid state restores the original ModelIR and refreshes the
 index only on rollback. Standalone legacy pass functions remain compatible.
 
+`LayoutState` has explicit synchronization, rename, removal, and ModelIR
+validation operations. Session index refresh also refreshes layouts. The
+ordered duplicate-cleanup group receives the session-owned state, synchronizes
+it at the phase boundary, removes pruned tensors from it, validates it after
+each pass, and resynchronizes it after transactional rollback. Canonical global
+tensor rename and pruning helpers accept the same optional state.
+
 The attention module also owns the QKV Slice canonicalization pair. One pass
 replaces compatible Slice branches with Gather/Reshape views; the next replaces
 three compatible branches with a single Split. Both require fully known,

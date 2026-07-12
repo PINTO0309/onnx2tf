@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.shape_resolution import (
     preserve_rewritten_output_dynamic_axes,
 )
@@ -284,7 +285,10 @@ def _is_fully_known_positive_shape(shape: Optional[List[int]]) -> bool:
     return all(int(dim) > 0 for dim in shape)
 
 
-def _prune_unused_tensors(model_ir: ModelIR) -> None:
+def _prune_unused_tensors(
+    model_ir: ModelIR,
+    layout_state: Optional[LayoutState] = None,
+) -> None:
     used_tensor_names = set(model_ir.inputs + model_ir.outputs)
     for op in model_ir.operators:
         used_tensor_names.update(op.inputs)
@@ -302,6 +306,8 @@ def _prune_unused_tensors(model_ir: ModelIR) -> None:
         )
     for name in unused_tensor_names:
         del model_ir.tensors[name]
+    if layout_state is not None:
+        layout_state.remove(unused_tensor_names)
 
 
 def _topologically_sort_operators(model_ir: ModelIR) -> Dict[str, int]:
@@ -363,6 +369,7 @@ def _rename_tensor_globally(
     model_ir: ModelIR,
     old_name: str,
     new_name: str,
+    layout_state: Optional[LayoutState] = None,
 ) -> None:
     if old_name == new_name:
         return
@@ -382,12 +389,16 @@ def _rename_tensor_globally(
     if old_tensor is None:
         if new_name in model_ir.tensors:
             del model_ir.tensors[new_name]
+        if layout_state is not None:
+            layout_state.remove([old_name, new_name])
         return
     old_tensor.name = new_name
     if new_name in model_ir.tensors and new_name != old_name:
         del model_ir.tensors[new_name]
     del model_ir.tensors[old_name]
     model_ir.tensors[new_name] = old_tensor
+    if layout_state is not None:
+        layout_state.rename(old_name, new_name)
     _append_tensor_lineage_event(
         model_ir=model_ir,
         event={

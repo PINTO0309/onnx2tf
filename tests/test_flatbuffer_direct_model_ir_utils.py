@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _broadcast_static_shapes,
     _build_tensor_consumer_map,
@@ -15,6 +16,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _read_singleton_constant_float,
     _read_const_ints_from_tensor,
     _replace_tensor_inputs,
+    _rename_tensor_globally,
     _replace_operator_input_at,
     _set_operator_inputs,
     _set_operator_outputs,
@@ -42,9 +44,11 @@ def test_prune_unused_tensors_records_deterministic_lineage() -> None:
         "unused": _tensor("unused"),
     }
 
-    _prune_unused_tensors(model_ir)
+    layout_state = LayoutState.from_model_ir(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
 
     assert set(model_ir.tensors) == {"x", "y"}
+    assert "unused" not in layout_state.logical
     assert model_ir.metadata["tensor_lineage_events"] == [
         {
             "kind": "prune_unused_tensors",
@@ -199,6 +203,40 @@ def test_graph_mutation_helpers_update_optional_incremental_index() -> None:
     refreshed = ModelIRGraphIndex(model_ir)
     assert graph_index.producers == refreshed.producers
     assert graph_index.consumers == refreshed.consumers
+
+
+def test_global_tensor_rename_updates_optional_layout_state() -> None:
+    model_ir = ModelIR("layout_aware_rename")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": TensorIR(
+            name="x",
+            dtype="FLOAT32",
+            shape=[1, 3, 2, 2],
+            shape_signature=[1, 3, 2, 2],
+            logical_layout="NCHW",
+            physical_layout="NCHW",
+        ),
+        "y": _tensor("y"),
+    }
+    model_ir.operators = [
+        OperatorIR(op_type="IDENTITY", inputs=["x"], outputs=["y"]),
+    ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+
+    _rename_tensor_globally(
+        model_ir,
+        "x",
+        "renamed",
+        layout_state=layout_state,
+    )
+
+    assert model_ir.inputs == ["renamed"]
+    assert model_ir.operators[0].inputs == ["renamed"]
+    assert layout_state.logical_of("renamed") == "NCHW"
+    assert "x" not in layout_state.logical
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
 
 def test_static_shape_and_constant_vector_helpers_are_deterministic() -> None:

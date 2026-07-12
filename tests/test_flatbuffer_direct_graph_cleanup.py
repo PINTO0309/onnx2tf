@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_maximum_minimum_relu0to1_chains,
@@ -116,7 +117,11 @@ def test_duplicate_cleanup_ordered_group_shares_one_index(monkeypatch) -> None:
 
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
 
-    stats = run_duplicate_fanout_cleanup(model_ir)
+    layout_state = LayoutState.from_model_ir(model_ir)
+    stats = run_duplicate_fanout_cleanup(
+        model_ir,
+        layout_state=layout_state,
+    )
 
     assert stats == {
         "removed_duplicate_transpose_fanout": 1,
@@ -124,6 +129,8 @@ def test_duplicate_cleanup_ordered_group_shares_one_index(monkeypatch) -> None:
     }
     assert refresh_count == 1
     assert model_ir.operators[1].inputs == ["y0"]
+    assert "y1" not in layout_state.logical
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
 
 def test_duplicate_cleanup_ordered_group_rolls_back_invalid_state() -> None:

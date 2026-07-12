@@ -273,6 +273,7 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         "_permute_tensor_metadata_if_rank_matches",
         "_read_const_ints_from_tensor",
         "_read_transpose_perm",
+        "_rename_tensor_globally",
         "_replace_operator_input_at",
         "_replace_tensor_inputs",
         "_set_operator_inputs",

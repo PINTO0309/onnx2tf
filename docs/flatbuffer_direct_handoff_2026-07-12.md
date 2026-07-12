@@ -471,9 +471,24 @@ Verification completed with:
 - `1021 passed, 5 deselected, 2 warnings in 129.92s` for the full sequential
   direct suite.
 
-Next, connect LayoutState synchronization to indexed graph mutation and migrate
-one layout-sensitive cleanup group. Keep the same stable pass IDs,
-transactional rollback, and invariant validation pattern.
+LayoutState is now connected to the ordered cleanup group. It supports full
+phase-boundary synchronization from ModelIR, rename/remove operations, and
+two-way consistency validation. `ConversionSession.refresh_indexes()` refreshes
+both the ONNX index and layout state. Canonical tensor pruning and global rename
+accept the optional state, and the duplicate cleanup group receives
+`session.layout_state` from the lowerer. Success removes stale tensor entries;
+transaction rollback restores and resynchronizes layout state before returning.
+
+Verification completed with:
+
+- `26 passed, 776 deselected` for focused session, LayoutState, rename/prune,
+  ordered-cleanup, and architecture behavior;
+- `1023 passed, 5 deselected, 2 warnings in 130.30s` for the full sequential
+  direct suite.
+
+Next, extend the ordered cleanup runner with one layout-sensitive pass that
+changes logical/physical annotations, using LayoutState as the validated phase
+contract rather than merely synchronizing at entry.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

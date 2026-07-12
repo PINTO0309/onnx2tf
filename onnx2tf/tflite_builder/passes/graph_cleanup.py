@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.passes import (
     OrderedPassManager,
     PassPhase,
@@ -30,6 +31,7 @@ def _optimize_duplicate_transpose_fanout(
     model_ir: ModelIR,
     *,
     graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Deduplicate fan-out TRANSPOSE nodes with identical input and permutation.
@@ -120,7 +122,7 @@ def _optimize_duplicate_transpose_fanout(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"removed_duplicate_transpose_fanout": int(removed_duplicates)}
 
 
@@ -128,6 +130,7 @@ def _optimize_duplicate_reshape_fanout(
     model_ir: ModelIR,
     *,
     graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Deduplicate fan-out RESHAPE nodes with identical input and target shape.
@@ -224,7 +227,7 @@ def _optimize_duplicate_reshape_fanout(
             break
 
     if removed_duplicates > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {
         "removed_duplicate_reshape_fanout": int(removed_duplicates),
     }
@@ -234,10 +237,14 @@ def run_duplicate_fanout_cleanup(
     model_ir: ModelIR,
     *,
     include_transpose: bool = True,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """Run duplicate layout-adapter cleanup as one ordered transaction group."""
 
     graph_index = ModelIRGraphIndex(model_ir)
+    effective_layout_state = layout_state or LayoutState.from_model_ir(model_ir)
+    if layout_state is not None:
+        effective_layout_state.sync_from_model_ir(model_ir)
 
     def _restore(index: ModelIRGraphIndex, snapshot: ModelIR) -> None:
         target = index.model_ir
@@ -250,11 +257,12 @@ def run_duplicate_fanout_cleanup(
         target.subgraphs = copy.deepcopy(snapshot.subgraphs)
         target.metadata = copy.deepcopy(snapshot.metadata)
         index.refresh()
+        effective_layout_state.sync_from_model_ir(target)
 
     manager = OrderedPassManager[ModelIRGraphIndex](
-        validator=lambda index: validate_model_ir_invariants(
-            index.model_ir,
-            graph_index=index,
+        validator=lambda index: (
+            validate_model_ir_invariants(index.model_ir, graph_index=index)
+            + effective_layout_state.validate_against_model_ir(index.model_ir)
         ),
         clone=lambda index: copy.deepcopy(index.model_ir),
         restore=_restore,
@@ -264,6 +272,7 @@ def run_duplicate_fanout_cleanup(
         stats = _optimize_duplicate_transpose_fanout(
             index.model_ir,
             graph_index=index,
+            layout_state=effective_layout_state,
         )
         return {
             **stats,
@@ -274,6 +283,7 @@ def run_duplicate_fanout_cleanup(
         stats = _optimize_duplicate_reshape_fanout(
             index.model_ir,
             graph_index=index,
+            layout_state=effective_layout_state,
         )
         return {
             **stats,

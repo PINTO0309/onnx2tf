@@ -12,6 +12,7 @@ from onnx2tf.tflite_builder.core import (
     ConversionResult,
     ConversionSession,
     GraphIndex,
+    LayoutState,
     ModelIRGraphIndex,
     OrderedPassManager,
     PassPhase,
@@ -80,6 +81,36 @@ def test_conversion_session_builds_one_graph_index() -> None:
     )
     assert session.graph_index.producer("z").name == "add"
     assert session.tensor_consumer_count == {"x": 1, "y": 1}
+
+    session.model_ir.tensors["new"] = TensorIR(
+        name="new",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        logical_layout="NHWC",
+        physical_layout="NHWC",
+    )
+    session.refresh_indexes()
+    assert session.layout_state.logical_of("new") == "NHWC"
+
+
+def test_layout_state_sync_rename_remove_and_validation() -> None:
+    model_ir = _add_model_ir()
+    model_ir.tensors["x"].logical_layout = "NCHW"
+    model_ir.tensors["x"].physical_layout = "NCHW"
+    state = LayoutState.from_model_ir(model_ir)
+    assert state.validate_against_model_ir(model_ir) == []
+
+    state.set("x", logical="NHWC")
+    assert state.validate_against_model_ir(model_ir) == [
+        "layout_state_logical_mismatch:x"
+    ]
+    state.sync_from_model_ir(model_ir)
+    state.rename("x", "renamed")
+    assert state.logical_of("renamed") == "NCHW"
+    assert state.logical_of("x") == "UNKNOWN"
+    state.remove(["renamed"])
+    assert "renamed" not in state.logical
 
 
 def test_onnx_graph_index_updates_only_mutated_node_references() -> None:
