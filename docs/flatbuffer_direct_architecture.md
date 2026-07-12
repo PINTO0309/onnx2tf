@@ -304,6 +304,16 @@ for QLinearAdd and
 for QLinearMul. Fingerprint normalization and serialization are shared by the
 op-family tests instead of being copied into each test module.
 
+QLinearSigmoid, QLinearLeakyRelu, and QLinearSoftmax are isolated in
+`op_builders/qlinear_activation.py`. The family owns activation validation,
+quantization metadata, float-domain activation lowering, and the existing
+ONNX-compatible Softmax requantization path. Their pre-extraction ModelIR
+fingerprints are
+`67e5b3d23cf2cfe03ae8ef1a006ac5fecf221f328553d3c1904ceebad9a7d902`,
+`f1d0b1b74e6f0f056ca595912efcceb2827da416b059dc12992fd06ed137ab09`,
+and `56aef3cabbed33cabcaba95d36058a37b6a12428102f7e83b0aef334eadbb4ec`,
+respectively. Public builder imports and registry dispatch remain unchanged.
+
 `dynamics_rife_sim.onnx` remains an active non-pass with the normalized reason
 `invalid_onnx_concat_spatial_mismatch_64_128`. The source passes the structural
 ONNX checker but ONNX Runtime rejects it during shape inference at

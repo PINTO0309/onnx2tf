@@ -175,9 +175,6 @@ from onnx2tf.tflite_builder.op_builders.quantized import (
     build_dequantize_linear_op,
     build_qlinear_concat_op,
     build_qlinear_conv_op,
-    build_qlinear_leaky_relu_op,
-    build_qlinear_sigmoid_op,
-    build_qlinear_softmax_op,
     build_quantize_linear_op,
 )
 from onnx2tf.tflite_builder.op_builders.dynamic_quantize import (
@@ -190,6 +187,11 @@ from onnx2tf.tflite_builder.op_builders.qlinear_fc import (
 from onnx2tf.tflite_builder.op_builders.qlinear_binary import (
     build_qlinear_add_op,
     build_qlinear_mul_op,
+)
+from onnx2tf.tflite_builder.op_builders.qlinear_activation import (
+    build_qlinear_leaky_relu_op,
+    build_qlinear_sigmoid_op,
+    build_qlinear_softmax_op,
 )
 from onnx2tf.tflite_builder.op_builders.qlinear_pool import (
     build_qlinear_average_pool_op,

@@ -152,6 +152,18 @@ QLinearConv chain, and QLinear FC chain runtime checks pass through the new
 import path. The full sequential direct regression completed with `973 passed,
 5 deselected, 2 warnings in 122.70s`.
 
+QLinearSigmoid, QLinearLeakyRelu, and QLinearSoftmax were subsequently moved
+mechanically to `op_builders/qlinear_activation.py`. Their pre-extraction
+ModelIR fingerprints are
+`67e5b3d23cf2cfe03ae8ef1a006ac5fecf221f328553d3c1904ceebad9a7d902`
+(1 operator, 2 tensors),
+`f1d0b1b74e6f0f056ca595912efcceb2827da416b059dc12992fd06ed137ab09`
+(1 operator, 3 tensors), and
+`56aef3cabbed33cabcaba95d36058a37b6a12428102f7e83b0aef334eadbb4ec`
+(12 operators, 17 tensors). Focused Sigmoid/Softmax runtime and LeakyRelu rank
+checks pass through the new import path. The full sequential direct regression
+completed with `977 passed, 5 deselected, 2 warnings in 123.56s`.
+
 `campp_vin.onnx` is promoted from an historical accuracy failure to a normal
 pass. Its concretized dynamic-time artifact fails during XNNPACK reshape
 preparation, so isolated evaluation now retries once, sequentially, with the
