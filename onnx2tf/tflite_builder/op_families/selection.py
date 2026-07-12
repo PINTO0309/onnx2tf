@@ -220,11 +220,11 @@ def _validate_topk(node: Any, ctx: Any) -> None:
         )
 
     input_dtype = str(ctx.get_tensor_dtype(node.inputs[0].name)).upper()
-    if input_dtype not in {"FLOAT16", "FLOAT32"}:
+    if input_dtype not in {"FLOAT16", "FLOAT32", "INT32", "INT64"}:
         raise NodeValidationError(
             reason_code="unsupported_input_dtype",
             message=(
-                "TopK currently supports FLOAT16/FLOAT32 input in flatbuffer_direct. "
+                "TopK supports FLOAT16/FLOAT32/INT32/INT64 input in flatbuffer_direct. "
                 f"input_dtype={input_dtype}"
             ),
             node_name=node.name,

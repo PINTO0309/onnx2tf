@@ -2175,9 +2175,8 @@
     {
       "tier": 3,
       "model": "fast_acvnet_generalization_opset16_192x320.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0010833740234375
     },
     {
       "tier": 3,
