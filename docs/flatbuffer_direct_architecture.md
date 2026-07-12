@@ -140,6 +140,13 @@ Flatten/global-normalization followed by Pad is likewise owned by
 Pad, and inverse-transpose topology is validated before rewriting; scalar and
 layout-sensitive constants are handled by its nested guarded helpers.
 
+Attention-specific layout propagation lives in
+`passes/attention_layout.py`. Its first family member reconciles parallel
+channel Mean and ReduceMax branches before Concat/MirrorPad/Conv. The pass is
+defined by producer/consumer topology, reduction semantics, permutations, and
+padding pairs—not by model names—and rewrites axes only after the entire
+region is proven.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

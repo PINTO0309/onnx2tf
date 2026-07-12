@@ -273,6 +273,26 @@ The core Pad family is now substantially centralized. Before adding another
 large pattern, audit remaining Pad-named passes for whether they truly share
 this phase and helper contract or belong to attention/slice-specific families.
 
+That audit classified the mixed Mean/ReduceMax/Concat/MirrorPad rewrite as an
+attention layout pass rather than a core Pad pass. It now starts
+`passes/attention_layout.py`, with the legacy lowerer symbol delegating to it.
+The matcher is generic: it uses branch topology, reduction axes, inverse
+permutations, MirrorPad pairs, and the Conv consumer, with no model-name guard.
+The existing full-topology characterization preserves axis and padding
+rotation, metadata, and terminal transpose removal.
+
+Verification completed with:
+
+- `17 passed, 758 deselected` for focused architecture and mixed-attention
+  MirrorPad characterization;
+- `1010 passed, 5 deselected, 2 warnings in 125.93s` for the full sequential
+  direct suite.
+
+The next attention-layout increment should come from the characterized QKV
+slice/split family. Keep each rewrite independent, preserve legacy wrappers,
+and avoid moving the uncharacterized SA/PA MirrorPad mega-pattern until a
+focused semantic fixture exists.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work
