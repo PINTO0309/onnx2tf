@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
-from onnx2tf.tflite_builder.lower_from_onnx2tf import (
-    _optimize_dequant_prelu_depthwise_quantize_chains,
-    _optimize_dequant_prelu_quantize_chains,
-    _optimize_transpose_dequant_prelu_quantize_bridges,
-    _optimize_transpose_dequant_prelu_transpose_bridges,
-)
+from onnx2tf.tflite_builder.passes.quantized_prelu import run_quantized_prelu_cleanup
 
 
 def _qparams(scale: float = 0.1) -> QuantParamIR:
@@ -93,12 +89,28 @@ def _transpose_prelu_model(*, quantized_tail: bool) -> ModelIR:
     return model_ir
 
 
-def test_transpose_dequant_prelu_quantize_bridge_characterization() -> None:
+def test_transpose_dequant_prelu_quantize_bridge_characterization(monkeypatch) -> None:
     model_ir = _transpose_prelu_model(quantized_tail=True)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _optimize_transpose_dequant_prelu_quantize_bridges(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
 
-    assert stats == {"removed_transpose_dequant_prelu_quantize_bridges": 1}
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict] = []
+    stats = run_quantized_prelu_cleanup(
+        model_ir,
+        include_transpose_bridge=False,
+        include_quantize_fusion=False,
+        include_depthwise_fusion=False,
+        diagnostics=diagnostics,
+    )
+
+    assert stats["removed_transpose_dequant_prelu_quantize_bridges"] == 1
+    assert sum(stats.values()) == 1
     assert [op.op_type for op in model_ir.operators] == [
         "DEQUANTIZE",
         "PRELU",
@@ -107,14 +119,25 @@ def test_transpose_dequant_prelu_quantize_bridge_characterization() -> None:
     assert model_ir.operators[0].inputs == ["xq"]
     assert model_ir.operators[-1].outputs == ["yq"]
     assert model_ir.tensors["alpha"].shape == [1, 1, 1, 3]
+    assert refresh_count == 1
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "layout.transpose_dequant_prelu_quantize"
+    assert diagnostics[0]["status"] == "changed"
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
 
 
 def test_transpose_dequant_prelu_transpose_bridge_characterization() -> None:
     model_ir = _transpose_prelu_model(quantized_tail=False)
 
-    stats = _optimize_transpose_dequant_prelu_transpose_bridges(model_ir)
+    stats = run_quantized_prelu_cleanup(
+        model_ir,
+        include_transpose_quantize_bridge=False,
+        include_quantize_fusion=False,
+        include_depthwise_fusion=False,
+    )
 
-    assert stats == {"removed_transpose_dequant_prelu_transpose_bridges": 1}
+    assert stats["removed_transpose_dequant_prelu_transpose_bridges"] == 1
+    assert sum(stats.values()) == 1
     assert [op.op_type for op in model_ir.operators] == [
         "DEQUANTIZE",
         "PRELU",
@@ -147,9 +170,15 @@ def test_dequant_prelu_quantize_characterization() -> None:
         OperatorIR("QUANTIZE", ["yf"], ["yq"]),
     ]
 
-    stats = _optimize_dequant_prelu_quantize_chains(model_ir)
+    stats = run_quantized_prelu_cleanup(
+        model_ir,
+        include_transpose_quantize_bridge=False,
+        include_transpose_bridge=False,
+        include_depthwise_fusion=False,
+    )
 
-    assert stats == {"folded_dequant_prelu_quantize_chains": 1}
+    assert stats["folded_dequant_prelu_quantize_chains"] == 1
+    assert sum(stats.values()) == 1
     assert [op.op_type for op in model_ir.operators] == ["PRELU"]
     assert model_ir.operators[0].inputs == ["xq", "alpha"]
     assert model_ir.operators[0].outputs == ["yq"]
@@ -197,9 +226,15 @@ def test_dequant_prelu_depthwise_quantize_characterization() -> None:
         OperatorIR("QUANTIZE", ["yf"], ["yq"]),
     ]
 
-    stats = _optimize_dequant_prelu_depthwise_quantize_chains(model_ir)
+    stats = run_quantized_prelu_cleanup(
+        model_ir,
+        include_transpose_quantize_bridge=False,
+        include_transpose_bridge=False,
+        include_quantize_fusion=False,
+    )
 
-    assert stats == {"folded_dequant_prelu_depthwise_quantize_chains": 1}
+    assert stats["folded_dequant_prelu_depthwise_quantize_chains"] == 1
+    assert sum(stats.values()) == 1
     assert [op.op_type for op in model_ir.operators] == [
         "PRELU",
         "DEPTHWISE_CONV_2D",
@@ -210,3 +245,47 @@ def test_dequant_prelu_depthwise_quantize_characterization() -> None:
     assert model_ir.tensors[prelu_op.inputs[1]].dtype == "INT8"
     assert model_ir.tensors[depthwise_op.inputs[1]].dtype == "INT8"
     assert model_ir.tensors[depthwise_op.inputs[2]].dtype == "INT32"
+
+
+def test_quantized_prelu_runner_rejects_incomplete_chain_before_snapshot(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("incomplete_quantized_prelu")
+    model_ir.inputs = ["xq"]
+    model_ir.outputs = ["z"]
+    model_ir.tensors = {
+        "xq": _tensor("xq", "INT8", [1, 2], quantized=True),
+        "xf": _tensor("xf", "FLOAT32", [1, 2]),
+        "alpha": _tensor(
+            "alpha",
+            "FLOAT32",
+            [2],
+            data=np.asarray([0.1, 0.2], dtype=np.float32),
+        ),
+        "y": _tensor("y", "FLOAT32", [1, 2]),
+        "z": _tensor("z", "FLOAT32", [1, 2]),
+    }
+    model_ir.operators = [
+        OperatorIR("DEQUANTIZE", ["xq"], ["xf"]),
+        OperatorIR("PRELU", ["xf", "alpha"], ["y"]),
+        OperatorIR("IDENTITY", ["y"], ["z"]),
+    ]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict] = []
+
+    stats = run_quantized_prelu_cleanup(model_ir, diagnostics=diagnostics)
+
+    assert sum(stats.values()) == 0
+    assert refresh_count == 1
+    assert len(diagnostics) == 4
+    assert all(event["status"] == "skipped" for event in diagnostics)
+    assert all(event["metrics"]["state_built"] is True for event in diagnostics)
+    assert all(event["metrics"]["snapshot_count"] == 0 for event in diagnostics)

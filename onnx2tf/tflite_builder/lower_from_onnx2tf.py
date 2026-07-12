@@ -111,6 +111,7 @@ from onnx2tf.tflite_builder.passes.quantized_prelu import (
     _optimize_dequant_prelu_quantize_chains as _optimize_dequant_prelu_quantize_chains_pass,
     _optimize_transpose_dequant_prelu_quantize_bridges as _optimize_transpose_dequant_prelu_quantize_bridges_pass,
     _optimize_transpose_dequant_prelu_transpose_bridges as _optimize_transpose_dequant_prelu_transpose_bridges_pass,
+    run_quantized_prelu_cleanup,
 )
 from onnx2tf.tflite_builder.passes.high_rank_binary import (
     coalesce_static_high_rank_binary_operators,
@@ -62920,10 +62921,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
         _optimize_trailing_output_transpose_passthrough_chains(model_ir)
         _optimize_transpose_dequant_mul_add_prelu_quantize_bridges(model_ir)
-        _optimize_transpose_dequant_prelu_quantize_bridges(model_ir)
-        _optimize_transpose_dequant_prelu_transpose_bridges(model_ir)
-        _optimize_dequant_prelu_quantize_chains(model_ir)
-        _optimize_dequant_prelu_depthwise_quantize_chains(model_ir)
+        run_quantized_prelu_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_dequant_transposeconv_quantize_chains(model_ir)
         _optimize_dequant_reshape_quantize_chains(model_ir)
         _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
@@ -63052,10 +63054,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_dequant_prelu_quantize_bridges(model_ir)
-        _optimize_transpose_dequant_prelu_transpose_bridges(model_ir)
-        _optimize_dequant_prelu_quantize_chains(model_ir)
-        _optimize_dequant_prelu_depthwise_quantize_chains(model_ir)
+        run_quantized_prelu_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_dequant_transposeconv_quantize_chains(model_ir)
         _optimize_dequant_reshape_quantize_chains(model_ir)
         _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
@@ -63187,10 +63190,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_dequant_prelu_quantize_bridges(model_ir)
-        _optimize_transpose_dequant_prelu_transpose_bridges(model_ir)
-        _optimize_dequant_prelu_quantize_chains(model_ir)
-        _optimize_dequant_prelu_depthwise_quantize_chains(model_ir)
+        run_quantized_prelu_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_dequant_transposeconv_quantize_chains(model_ir)
         _optimize_dequant_reshape_quantize_chains(model_ir)
         _optimize_dequant_hardsigmoid_quantize_chains(model_ir)

@@ -1483,6 +1483,37 @@ and LayoutState aware, then replace each of the three production quadruples
 with one ordered runner while retaining isolated include flags for compatibility
 tests.
 
+That ordered migration is complete. All four implementations now accept the
+shared ModelIRGraphIndex and LayoutState. Their consumer lookup, operator
+input/output changes, alpha clone rewiring, structural removal, and pruning are
+differential-index aware. Each of the three production quadruples is replaced
+in place by `run_quantized_prelu_cleanup`, preserving the original order with
+stable `LAYOUT_PLAN` IDs `layout.transpose_dequant_prelu_quantize`,
+`layout.transpose_dequant_prelu_transpose`,
+`layout.dequant_prelu_quantize`, and
+`layout.dequant_prelu_depthwise_quantize` at priorities 10–40. Model-only
+preflight requires DQ/PReLU capability; indexed guards prove the relevant
+linear chain, inverse permutations, protected intermediates, per-tensor
+quantization, dtype, and required constants before snapshotting. Include flags
+retain isolated legacy-contract tests.
+
+Sequential verification completed with:
+
+- `5 passed` for all four rewrite variants plus the incomplete-chain no-op;
+- `8 passed, 23 deselected` for runner behavior, diagnostics, architecture,
+  and irrelevant preflight coverage; the successful bridge used one full
+  GraphIndex build and one snapshot, while the preflight-relevant incomplete
+  chain used zero snapshots for all four specs;
+- `1089 passed, 5 deselected, 2 warnings in 139.28s` for the full direct suite;
+- Tier 1 `face_recognition_sface_2021dec_int8.onnx` `-cotof` evaluation with
+  every output compared, `evaluation_pass=true`, and maximum absolute error
+  `5.960464477539063e-08`.
+
+The temporary Tier 1 output directory was deleted. Validation remained
+single-process and sequential, and no dependency or TensorFlow import was
+added. Rerun the raw-call inventory before selecting the next complete
+quantized or layout family.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

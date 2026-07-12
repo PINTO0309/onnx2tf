@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Any, Dict, List
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _all_per_tensor_quantized,
-    _build_tensor_consumer_map,
     _clone_quantization,
     _get_per_tensor_scale_zero_point,
     _prune_unused_tensors,
@@ -17,6 +23,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_inputs,
     _set_operator_outputs,
 )
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     QuantParamIR,
@@ -24,7 +31,12 @@ from onnx2tf.tflite_builder.ir import (
     _is_inverse_perm,
 )
 
-def _optimize_transpose_dequant_prelu_quantize_bridges(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_dequant_prelu_quantize_bridges(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Fold transpose wrappers around DEQUANTIZE->PRELU->QUANTIZE chains.
 
@@ -41,10 +53,11 @@ def _optimize_transpose_dequant_prelu_quantize_bridges(model_ir: ModelIR) -> Dic
     - PRELU alpha tensor is constant if rank remap is required
     """
     removed_prelu_bridges = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
             if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
@@ -139,11 +152,13 @@ def _optimize_transpose_dequant_prelu_quantize_bridges(model_ir: ModelIR) -> Dic
                 model_ir=model_ir,
                 op=dq_op,
                 new_inputs=[q_src_name],
+                graph_index=graph_index,
             )
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=q_op,
                 new_outputs=[q_dst_name],
+                graph_index=graph_index,
             )
 
             # Update bridge tensor metadata to the non-transposed layout.
@@ -176,7 +191,7 @@ def _optimize_transpose_dequant_prelu_quantize_bridges(model_ir: ModelIR) -> Dic
                 q_dst_tensor.quantization = _clone_quantization(q_mid_out_tensor.quantization)
 
             for remove_idx in sorted([pre_idx, post_idx], reverse=True):
-                del model_ir.operators[remove_idx]
+                graph_index.remove_operator(remove_idx)
             removed_prelu_bridges += 1
             changed = True
             break
@@ -184,13 +199,20 @@ def _optimize_transpose_dequant_prelu_quantize_bridges(model_ir: ModelIR) -> Dic
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if removed_prelu_bridges > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {
         "removed_transpose_dequant_prelu_quantize_bridges": int(removed_prelu_bridges),
     }
 
 
-def _optimize_transpose_dequant_prelu_transpose_bridges(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_dequant_prelu_transpose_bridges(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Fold transpose wrappers around DEQUANTIZE->PRELU chains.
 
@@ -206,6 +228,7 @@ def _optimize_transpose_dequant_prelu_transpose_bridges(model_ir: ModelIR) -> Di
     - Quantized tensors on DEQUANTIZE input path are per-tensor
     """
     removed_prelu_transpose_bridges = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -217,7 +240,7 @@ def _optimize_transpose_dequant_prelu_transpose_bridges(model_ir: ModelIR) -> Di
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
             if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
@@ -306,17 +329,20 @@ def _optimize_transpose_dequant_prelu_transpose_bridges(model_ir: ModelIR) -> Di
                             op=prelu_op,
                             input_index=1,
                             new_input_name=new_alpha_name,
+                            graph_index=graph_index,
                         )
 
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=dq_op,
                 new_inputs=[q_src_name],
+                graph_index=graph_index,
             )
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=prelu_op,
                 new_outputs=[y_name],
+                graph_index=graph_index,
             )
 
             q_src_shape = list(q_src_tensor.shape) if q_src_tensor is not None else None
@@ -344,7 +370,7 @@ def _optimize_transpose_dequant_prelu_transpose_bridges(model_ir: ModelIR) -> Di
                     )
 
             for remove_idx in sorted([pre_idx, post_idx], reverse=True):
-                del model_ir.operators[remove_idx]
+                graph_index.remove_operator(remove_idx)
             removed_prelu_transpose_bridges += 1
             changed = True
             break
@@ -352,13 +378,20 @@ def _optimize_transpose_dequant_prelu_transpose_bridges(model_ir: ModelIR) -> Di
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if removed_prelu_transpose_bridges > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {
         "removed_transpose_dequant_prelu_transpose_bridges": int(removed_prelu_transpose_bridges),
     }
 
 
-def _optimize_dequant_prelu_quantize_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_dequant_prelu_quantize_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Fold DEQUANTIZE->PRELU->QUANTIZE into quantized PRELU.
 
@@ -369,6 +402,7 @@ def _optimize_dequant_prelu_quantize_chains(model_ir: ModelIR) -> Dict[str, int]
       Xq --PRELU(alpha_q)--> Yq
     """
     folded = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -380,7 +414,7 @@ def _optimize_dequant_prelu_quantize_chains(model_ir: ModelIR) -> Dict[str, int]
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
 
         for dq_idx, dq_op in enumerate(model_ir.operators):
             if str(dq_op.op_type) != "DEQUANTIZE" or len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
@@ -459,15 +493,17 @@ def _optimize_dequant_prelu_quantize_chains(model_ir: ModelIR) -> Dict[str, int]
                 model_ir=model_ir,
                 op=prelu_op,
                 new_inputs=[q_in_name, alpha_q_name],
+                graph_index=graph_index,
             )
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=prelu_op,
                 new_outputs=[q_out_name],
+                graph_index=graph_index,
             )
 
             for remove_idx in sorted([dq_idx, q_idx], reverse=True):
-                del model_ir.operators[remove_idx]
+                graph_index.remove_operator(remove_idx)
             folded += 1
             changed = True
             break
@@ -475,11 +511,18 @@ def _optimize_dequant_prelu_quantize_chains(model_ir: ModelIR) -> Dict[str, int]
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if folded > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"folded_dequant_prelu_quantize_chains": int(folded)}
 
 
-def _optimize_dequant_prelu_depthwise_quantize_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_dequant_prelu_depthwise_quantize_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Fold DEQUANTIZE->PRELU->DEPTHWISE_CONV_2D->QUANTIZE into quantized PRELU+DEPTHWISE_CONV_2D.
 
@@ -490,6 +533,7 @@ def _optimize_dequant_prelu_depthwise_quantize_chains(model_ir: ModelIR) -> Dict
       Xq --PRELU(alpha_q)--> Pq --DEPTHWISE_CONV_2D(w_q,b_q)--> Yq
     """
     folded = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -501,7 +545,7 @@ def _optimize_dequant_prelu_depthwise_quantize_chains(model_ir: ModelIR) -> Dict
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
 
         for dq_idx, dq_op in enumerate(model_ir.operators):
             if str(dq_op.op_type) != "DEQUANTIZE" or len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
@@ -646,20 +690,23 @@ def _optimize_dequant_prelu_depthwise_quantize_chains(model_ir: ModelIR) -> Dict
                 model_ir=model_ir,
                 op=prelu_op,
                 new_inputs=[q_in_name, alpha_q_name],
+                graph_index=graph_index,
             )
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=dw_op,
                 new_inputs=[p_f_name, w_q_name, b_q_name],
+                graph_index=graph_index,
             )
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=dw_op,
                 new_outputs=[y_q_name],
+                graph_index=graph_index,
             )
 
             for remove_idx in sorted([dq_idx, q_idx], reverse=True):
-                del model_ir.operators[remove_idx]
+                graph_index.remove_operator(remove_idx)
             folded += 1
             changed = True
             break
@@ -667,6 +714,342 @@ def _optimize_dequant_prelu_depthwise_quantize_chains(model_ir: ModelIR) -> Dict
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if folded > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"folded_dequant_prelu_depthwise_quantize_chains": int(folded)}
 
+
+def run_quantized_prelu_cleanup(
+    model_ir: ModelIR,
+    *,
+    include_transpose_quantize_bridge: bool = True,
+    include_transpose_bridge: bool = True,
+    include_quantize_fusion: bool = True,
+    include_depthwise_fusion: bool = True,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run the four adjacent quantized PReLU rewrites in legacy order."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"DEQUANTIZE", "PRELU"}
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            required.discard(str(operator.op_type))
+            if len(required) == 0:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _single_user(
+        pass_state: ModelIRPassState,
+        tensor_name: str,
+        op_type: str,
+    ) -> tuple[int, Any] | None:
+        users = pass_state.graph_index.consumer_indices(str(tensor_name))
+        if len(users) != 1:
+            return None
+        index = int(users[0])
+        operator = pass_state.model_ir.operators[index]
+        if str(operator.op_type) != str(op_type):
+            return None
+        return index, operator
+
+    def _has_transpose_quantize_bridge(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        for pre_op in candidate_model.operators:
+            if (
+                str(pre_op.op_type) != "TRANSPOSE"
+                or len(pre_op.inputs) < 2
+                or len(pre_op.outputs) != 1
+            ):
+                continue
+            perm_pre = _read_transpose_perm(candidate_model, pre_op)
+            if perm_pre is None:
+                continue
+            dq = _single_user(pass_state, str(pre_op.outputs[0]), "DEQUANTIZE")
+            if dq is None or len(dq[1].outputs) != 1:
+                continue
+            prelu = _single_user(pass_state, str(dq[1].outputs[0]), "PRELU")
+            if prelu is None or len(prelu[1].outputs) != 1:
+                continue
+            quantize = _single_user(
+                pass_state,
+                str(prelu[1].outputs[0]),
+                "QUANTIZE",
+            )
+            if quantize is None or len(quantize[1].outputs) != 1:
+                continue
+            post = _single_user(
+                pass_state,
+                str(quantize[1].outputs[0]),
+                "TRANSPOSE",
+            )
+            if post is None:
+                continue
+            perm_post = _read_transpose_perm(candidate_model, post[1])
+            if perm_post is None or not _is_inverse_perm(perm_pre, perm_post):
+                continue
+            protected_names = {
+                str(pre_op.outputs[0]),
+                str(dq[1].outputs[0]),
+                str(prelu[1].outputs[0]),
+                str(quantize[1].outputs[0]),
+                str(pre_op.inputs[0]),
+            }
+            if protected_names & set(str(value) for value in candidate_model.outputs):
+                continue
+            quantized_names = [
+                str(pre_op.inputs[0]),
+                str(pre_op.outputs[0]),
+                str(quantize[1].outputs[0]),
+                str(post[1].outputs[0]),
+            ]
+            if _all_per_tensor_quantized(
+                [candidate_model.tensors.get(name) for name in quantized_names]
+            ):
+                return True
+        return False
+
+    def _has_transpose_bridge(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        for pre_op in candidate_model.operators:
+            if (
+                str(pre_op.op_type) != "TRANSPOSE"
+                or len(pre_op.inputs) < 2
+                or len(pre_op.outputs) != 1
+            ):
+                continue
+            perm_pre = _read_transpose_perm(candidate_model, pre_op)
+            if perm_pre is None:
+                continue
+            dq = _single_user(pass_state, str(pre_op.outputs[0]), "DEQUANTIZE")
+            if dq is None or len(dq[1].outputs) != 1:
+                continue
+            prelu = _single_user(pass_state, str(dq[1].outputs[0]), "PRELU")
+            if prelu is None or len(prelu[1].outputs) != 1:
+                continue
+            post = _single_user(
+                pass_state,
+                str(prelu[1].outputs[0]),
+                "TRANSPOSE",
+            )
+            if post is None:
+                continue
+            perm_post = _read_transpose_perm(candidate_model, post[1])
+            if perm_post is None or not _is_inverse_perm(perm_pre, perm_post):
+                continue
+            protected_names = {
+                str(pre_op.outputs[0]),
+                str(dq[1].outputs[0]),
+                str(prelu[1].outputs[0]),
+                str(post[1].outputs[0]),
+            }
+            if protected_names & set(str(value) for value in candidate_model.outputs):
+                continue
+            if _all_per_tensor_quantized(
+                [
+                    candidate_model.tensors.get(str(pre_op.inputs[0])),
+                    candidate_model.tensors.get(str(pre_op.outputs[0])),
+                ]
+            ):
+                return True
+        return False
+
+    def _has_quantize_fusion(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        for dq_op in candidate_model.operators:
+            if (
+                str(dq_op.op_type) != "DEQUANTIZE"
+                or len(dq_op.inputs) != 1
+                or len(dq_op.outputs) != 1
+            ):
+                continue
+            prelu = _single_user(pass_state, str(dq_op.outputs[0]), "PRELU")
+            if prelu is None or len(prelu[1].inputs) != 2 or len(prelu[1].outputs) != 1:
+                continue
+            quantize = _single_user(
+                pass_state,
+                str(prelu[1].outputs[0]),
+                "QUANTIZE",
+            )
+            if quantize is None or len(quantize[1].outputs) != 1:
+                continue
+            q_in = candidate_model.tensors.get(str(dq_op.inputs[0]))
+            q_out = candidate_model.tensors.get(str(quantize[1].outputs[0]))
+            alpha = candidate_model.tensors.get(str(prelu[1].inputs[1]))
+            if (
+                not {
+                    str(dq_op.outputs[0]),
+                    str(prelu[1].outputs[0]),
+                }
+                & set(str(value) for value in candidate_model.outputs)
+                and q_in is not None
+                and q_out is not None
+                and str(q_in.dtype) in {"INT8", "UINT8"}
+                and str(q_out.dtype) == str(q_in.dtype)
+                and isinstance(alpha.data if alpha is not None else None, np.ndarray)
+                and _all_per_tensor_quantized([q_in, q_out])
+            ):
+                return True
+        return False
+
+    def _has_depthwise_fusion(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        for dq_op in candidate_model.operators:
+            if (
+                str(dq_op.op_type) != "DEQUANTIZE"
+                or len(dq_op.inputs) != 1
+                or len(dq_op.outputs) != 1
+            ):
+                continue
+            prelu = _single_user(pass_state, str(dq_op.outputs[0]), "PRELU")
+            if prelu is None or len(prelu[1].inputs) != 2 or len(prelu[1].outputs) != 1:
+                continue
+            depthwise = _single_user(
+                pass_state,
+                str(prelu[1].outputs[0]),
+                "DEPTHWISE_CONV_2D",
+            )
+            if depthwise is None or len(depthwise[1].inputs) != 3 or len(depthwise[1].outputs) != 1:
+                continue
+            quantize = _single_user(
+                pass_state,
+                str(depthwise[1].outputs[0]),
+                "QUANTIZE",
+            )
+            if quantize is None or len(quantize[1].outputs) != 1:
+                continue
+            q_in = candidate_model.tensors.get(str(dq_op.inputs[0]))
+            q_out = candidate_model.tensors.get(str(quantize[1].outputs[0]))
+            constants = [
+                candidate_model.tensors.get(str(prelu[1].inputs[1])),
+                candidate_model.tensors.get(str(depthwise[1].inputs[1])),
+                candidate_model.tensors.get(str(depthwise[1].inputs[2])),
+            ]
+            if (
+                not {
+                    str(dq_op.outputs[0]),
+                    str(prelu[1].outputs[0]),
+                    str(depthwise[1].outputs[0]),
+                }
+                & set(str(value) for value in candidate_model.outputs)
+                and q_in is not None
+                and q_out is not None
+                and str(q_in.dtype) in {"INT8", "UINT8"}
+                and str(q_out.dtype) == str(q_in.dtype)
+                and _all_per_tensor_quantized([q_in, q_out])
+                and all(
+                    tensor is not None and isinstance(tensor.data, np.ndarray)
+                    for tensor in constants
+                )
+            ):
+                return True
+        return False
+
+    def _run_transpose_quantize(
+        pass_state: ModelIRPassState,
+    ) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_dequant_prelu_quantize_bridges(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("removed_transpose_dequant_prelu_quantize_bridges", 0)
+            ),
+        }
+
+    def _run_transpose(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_dequant_prelu_transpose_bridges(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("removed_transpose_dequant_prelu_transpose_bridges", 0)
+            ),
+        }
+
+    def _run_quantize(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_dequant_prelu_quantize_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("folded_dequant_prelu_quantize_chains", 0)),
+        }
+
+    def _run_depthwise(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_dequant_prelu_depthwise_quantize_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("folded_dequant_prelu_depthwise_quantize_chains", 0)
+            ),
+        }
+
+    ordered = [
+        (
+            include_transpose_quantize_bridge,
+            "layout.transpose_dequant_prelu_quantize",
+            _run_transpose_quantize,
+            _has_transpose_quantize_bridge,
+        ),
+        (
+            include_transpose_bridge,
+            "layout.transpose_dequant_prelu_transpose",
+            _run_transpose,
+            _has_transpose_bridge,
+        ),
+        (
+            include_quantize_fusion,
+            "layout.dequant_prelu_quantize",
+            _run_quantize,
+            _has_quantize_fusion,
+        ),
+        (
+            include_depthwise_fusion,
+            "layout.dequant_prelu_depthwise_quantize",
+            _run_depthwise,
+            _has_depthwise_fusion,
+        ),
+    ]
+    specs = [
+        PassSpec(
+            pass_id=pass_id,
+            phase=PassPhase.LAYOUT_PLAN,
+            callback=callback,
+            precondition=precondition,
+            priority=(index + 1) * 10,
+            transactional=True,
+        )
+        for index, (_, pass_id, callback, precondition) in enumerate(ordered)
+        if ordered[index][0]
+    ]
+    default_details = {
+        "removed_transpose_dequant_prelu_quantize_bridges": 0,
+        "removed_transpose_dequant_prelu_transpose_bridges": 0,
+        "folded_dequant_prelu_quantize_chains": 0,
+        "folded_dequant_prelu_depthwise_quantize_chains": 0,
+    }
+    if len(specs) == 0:
+        return default_details
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=specs,
+        layout_state=layout_state,
+        default_details=default_details,
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}

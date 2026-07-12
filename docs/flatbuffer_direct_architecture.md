@@ -427,6 +427,17 @@ guards. Canonical quantization and graph mutation helpers come from
 The legacy lowerer symbols are thin compatibility wrappers. The later
 Dequantize→Reshape→Quantize rewrite remains separate because a TransposeConv
 fusion occurs between it and this four-pass block at every production site.
+The three production quadruples execute through `run_quantized_prelu_cleanup`
+with stable `LAYOUT_PLAN` IDs `layout.transpose_dequant_prelu_quantize`,
+`layout.transpose_dequant_prelu_transpose`,
+`layout.dequant_prelu_quantize`, and
+`layout.dequant_prelu_depthwise_quantize` at priorities 10–40. All
+producer/consumer lookup, input/output mutation, structural removal, constant
+cloning, and pruning share one differential `ModelIRGraphIndex` and
+`LayoutState`. Model-only DQ/PReLU preflight avoids state creation on unrelated
+graphs; indexed topology, inverse-permutation, public-output, dtype,
+per-tensor-quantization, and constant guards run before snapshots. Include
+flags retain isolated compatibility tests without changing production order.
 
 Squeeze/Reshape identity cleanup also uses the differential graph index. It
 normalizes explicit or inferred squeeze axes, proves the squeezed and restored
