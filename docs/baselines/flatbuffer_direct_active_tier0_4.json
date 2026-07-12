@@ -949,9 +949,9 @@
       "tier": 1,
       "model": "fcn-resnet50-12-int8.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "d80563fa73220bba115c51af9919e2c755776fb969f60e44dcaed98f2b2c12cc",
-      "tflite_max_abs": 1.5115007311105728
+      "baseline_reason": "onnxruntime_u8s8_saturating_pair_accumulation",
+      "error_signature_sha256": "da92ac2e2f0e69a6b68654c2152fadfadb079a20d73aaf8b33fc3a81af4afc15",
+      "tflite_max_abs": 0.5471203327178955
     },
     {
       "tier": 1,

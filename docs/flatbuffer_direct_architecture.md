@@ -205,6 +205,17 @@ absolute error is `1.3509051097190739e-5`, RMSE is
 `0.0011565761101850747`, and cosine similarity is
 `0.9999999968466379`.
 
+`fcn-resnet50-12-int8.onnx` is the third Tier 1 model with the normalized
+`onnxruntime_u8s8_saturating_pair_accumulation` reason. Its input quantization
+and shape operations match, and the first difference appears at the first
+UINT8-activation/INT8-weight QLinearConv. With a fixed 224x224 diagnostic
+shape, ONNX Runtime CPU and ONNX ReferenceEvaluator differ at 46,743 of
+802,816 elements by up to 36 quanta, while the direct TFLite tensor matches
+the reference at all 802,816 elements. Under the unchanged managed dynamic
+input conditions, the fixed-seed final maximum absolute error has improved
+from `1.5115007311105728` to `0.5471203327178955`, but it remains above the
+required ceiling and therefore stays an active non-pass.
+
 The root-only Tier 2 gate at commit `ad1d508` contains 113 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier2_root_ad1d508.json`: 80
 passed, 4 conversion errors, 3 timeouts, 6 accuracy failures, and 20 missing
