@@ -1615,10 +1615,29 @@ Sequential validation completed with:
 The generated 18 MB Tier 1 and 112 MB Tier 4 output directories and internal
 metrics files were deleted after recording the results. Validation remained
 single-process and sequential. No dependency or TensorFlow import was added.
-The next work unit should begin by rerunning the remaining raw post-lowering
-family inventory and selecting the next adjacent, independently testable
-family; do not create a pull request, and commit/push only at a coherent
-checkpoint.
+
+The next mechanical split is also complete. The two singleton-Reshape
+cleanups immediately preceding the MaxPool runner—strict
+Reshape→unary→inverse-Reshape passthrough and consecutive inverse singleton
+layout Reshape removal—moved unchanged into
+`passes/singleton_reshape_layout.py`. The old and new function ASTs were
+identical for both implementations. The lowerer retains thin compatibility
+wrappers, the two production call sites and their order are unchanged, and an
+architecture test fixes the family module as their sole implementation owner.
+
+Sequential verification completed with:
+
+- `2 passed` for the existing unary passthrough and inverse-pair success
+  characterizations;
+- `2 passed` for singleton MaxPool and singleton Reshape ownership contracts;
+- `1097 passed, 5 deselected, 2 warnings in 142.82s` for the full direct suite.
+
+No algorithm, dependency, TensorFlow boundary, or generated artifact changed.
+The next checkpoint should make this two-pass singleton-Reshape family use one
+shared differential index and `LayoutState`, add ordered transactional runner
+diagnostics and irrelevant-graph preflight coverage, and replace its two raw
+production call pairs. Do not create a pull request; commit and push only at a
+coherent checkpoint.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

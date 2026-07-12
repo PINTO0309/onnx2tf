@@ -279,6 +279,15 @@ implementation directly. This preserves the legacy order while exposing
 per-spec diagnostics and avoiding snapshots on irrelevant or guard-rejected
 graphs.
 
+The two immediately preceding singleton-Reshape cleanups live in
+`passes/singleton_reshape_layout.py`. That family owns the strict
+Reshape→unary→inverse-Reshape passthrough and consecutive inverse singleton
+layout Reshape pair implementations. Their match conditions, static rank-4
+shape requirements, singleton memory-order guards, fan-out/public-output
+handling, rewiring, and pruning remain unchanged. The legacy lowerer symbols
+are thin compatibility wrappers, so the family module is the single
+implementation owner while public test imports continue to work.
+
 The mixed attention MirrorPad pass is the first post-lowering rewrite migrated
 to the differential ModelIR index. It builds producer/consumer state once,
 updates input edges through indexed lineage helpers, and removes the redundant
