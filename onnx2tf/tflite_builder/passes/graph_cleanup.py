@@ -323,7 +323,12 @@ def run_duplicate_fanout_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_maximum_minimum_relu0to1_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_maximum_minimum_relu0to1_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Replace clamp chains MAXIMUM(0.0) -> MINIMUM(1.0) with RELU_0_TO_1.
 
@@ -339,7 +344,7 @@ def _optimize_maximum_minimum_relu0to1_chains(model_ir: ModelIR) -> Dict[str, in
     """
     rewritten = 0
     atol = 1e-6
-    graph_index = ModelIRGraphIndex(model_ir)
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
@@ -413,8 +418,59 @@ def _optimize_maximum_minimum_relu0to1_chains(model_ir: ModelIR) -> Dict[str, in
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"rewritten_maximum_minimum_relu0to1_chains": int(rewritten)}
+
+
+def run_clamp_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Run scalar zero-to-one clamp canonicalization transactionally."""
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        for op in pass_state.model_ir.operators:
+            if str(op.op_type) != "MINIMUM" or len(op.inputs) != 2:
+                continue
+            for input_name in op.inputs:
+                producer_idx = pass_state.graph_index.producers.get(
+                    str(input_name),
+                    None,
+                )
+                if producer_idx is None:
+                    continue
+                producer = pass_state.model_ir.operators[int(producer_idx)]
+                if str(producer.op_type) == "MAXIMUM":
+                    return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_maximum_minimum_relu0to1_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("rewritten_maximum_minimum_relu0to1_chains", 0)),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="canonicalize.scalar_clamp_relu0to1",
+                phase=PassPhase.CANONICALIZE,
+                callback=_run,
+                precondition=_has_candidate,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={"rewritten_maximum_minimum_relu0to1_chains": 0},
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_squeeze_reshape_identity_chains(model_ir: ModelIR) -> Dict[str, int]:

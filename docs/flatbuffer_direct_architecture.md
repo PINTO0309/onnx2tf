@@ -193,7 +193,12 @@ Scalar clamp canonicalization is the first linear fusion in
 `Maximum(x, 0) → Minimum(..., 1)` chain with `Relu0To1`, updates the surviving
 operator through the index-aware input helper, and removes the obsolete
 producer without rebuilding edge maps. Singleton finite-float reading has one
-canonical owner in `core/model_ir_utils.py`.
+canonical owner in `core/model_ir_utils.py`. Its production call runs through
+`run_clamp_cleanup` with stable ID
+`canonicalize.scalar_clamp_relu0to1`. The runner reuses the session LayoutState,
+skips transactional snapshots when no Maximum-to-Minimum edge exists, and
+removes pruned intermediate layouts together with their tensors. The legacy
+raw rewrite remains available as a compatibility wrapper target.
 
 Squeeze/Reshape identity cleanup also uses the differential graph index. It
 normalizes explicit or inferred squeeze axes, proves the squeezed and restored

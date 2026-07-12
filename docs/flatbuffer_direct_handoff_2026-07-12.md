@@ -557,6 +557,30 @@ GraphIndex/LayoutState and add a cheap structural precondition. Preserve its
 legacy wrapper and run the same focused and full sequential gates before
 committing.
 
+That inventory selected scalar clamp canonicalization because it has one
+production call, one generic topology, an existing differential-index
+implementation, and focused characterization. Production now calls
+`run_clamp_cleanup` at the same terminal pipeline position. Its stable ID is
+`canonicalize.scalar_clamp_relu0to1`; it shares ModelIRPassState's graph index
+and the session LayoutState, runs transactionally, and skips the deep snapshot
+when no Maximum-to-Minimum edge exists. The raw
+`_optimize_maximum_minimum_relu0to1_chains` signature remains compatible while
+accepting optional shared index/layout state internally.
+
+Verification completed with:
+
+- `4 passed, 21 deselected` for scalar-clamp positive/no-op behavior, one-index
+  construction, LayoutState pruning, precondition snapshot avoidance, and
+  architecture ownership;
+- `1029 passed, 5 deselected, 2 warnings in 130.48s` for the full sequential
+  direct suite.
+
+The next small migration candidate is Squeeze/Reshape identity cleanup, but it
+has eight production invocations. Before changing those calls, map their phase
+positions and decide whether one runner per existing position preserves the
+intended fixed-point behavior or whether adjacent calls can safely share a
+group. Do not collapse those invocations without digest/runtime evidence.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

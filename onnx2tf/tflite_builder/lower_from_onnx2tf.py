@@ -114,6 +114,7 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_maximum_minimum_relu0to1_chains as _optimize_maximum_minimum_relu0to1_chains_pass,
     _optimize_duplicate_reshape_fanout as _optimize_duplicate_reshape_fanout_pass,
     _optimize_duplicate_transpose_fanout as _optimize_duplicate_transpose_fanout_pass,
+    run_clamp_cleanup,
     run_duplicate_fanout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.attention_layout import (
@@ -66075,7 +66076,10 @@ def lower_onnx_to_ir(
         # Run OSNet-specific multi-branch gate rewrite at terminal stage so
         # earlier generic passes do not re-wrap rewritten NHWC tensors.
         _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(model_ir)
-    _optimize_maximum_minimum_relu0to1_chains(model_ir)
+    run_clamp_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     # MAXIMUM/MINIMUM -> RELU_0_TO_1 canonicalization can expose fresh
     # NHWC<->NCHW unary wrappers (e.g. HardSigmoid clamp). Re-run the
     # strict transpose-unary passthrough fold once in terminal stage.

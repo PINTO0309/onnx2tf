@@ -5,12 +5,14 @@ import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_maximum_minimum_relu0to1_chains,
     _optimize_squeeze_reshape_identity_chains,
     _optimize_duplicate_reshape_fanout,
     _optimize_duplicate_transpose_fanout,
+    run_clamp_cleanup,
     run_duplicate_fanout_cleanup,
 )
 
@@ -267,6 +269,71 @@ def test_clamp_cleanup_uses_one_incremental_index_refresh(monkeypatch) -> None:
     assert model_ir.operators[0].inputs == ["x"]
     assert model_ir.operators[0].outputs == ["out"]
     assert "maximum" not in model_ir.tensors
+
+
+def test_ordered_clamp_cleanup_updates_layout_state_and_uses_one_index(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("ordered_clamp_cleanup")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["out"]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 3]),
+        "zero": _tensor("zero", [], data=np.asarray(0.0, dtype=np.float32)),
+        "maximum": _tensor("maximum", [1, 3]),
+        "one": _tensor("one", [], data=np.asarray(1.0, dtype=np.float32)),
+        "out": _tensor("out", [1, 3]),
+    }
+    model_ir.operators = [
+        OperatorIR("MAXIMUM", ["x", "zero"], ["maximum"]),
+        OperatorIR("MINIMUM", ["maximum", "one"], ["out"]),
+    ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_clamp_cleanup(model_ir, layout_state=layout_state)
+
+    assert stats == {"rewritten_maximum_minimum_relu0to1_chains": 1}
+    assert refresh_count == 1
+    assert [op.op_type for op in model_ir.operators] == ["RELU_0_TO_1"]
+    assert "maximum" not in model_ir.tensors
+    assert "maximum" not in layout_state.logical
+    assert layout_state.validate_against_model_ir(model_ir) == []
+
+
+def test_ordered_clamp_cleanup_skips_snapshot_without_chain(monkeypatch) -> None:
+    model_ir = ModelIR("no_clamp_chain")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["out"]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 3]),
+        "zero": _tensor("zero", [], data=np.asarray(0.0, dtype=np.float32)),
+        "out": _tensor("out", [1, 3]),
+    }
+    model_ir.operators = [OperatorIR("MAXIMUM", ["x", "zero"], ["out"])]
+    snapshot_count = 0
+    original_snapshot = ModelIRPassState.snapshot
+
+    def counted_snapshot(state: ModelIRPassState) -> ModelIR:
+        nonlocal snapshot_count
+        snapshot_count += 1
+        return original_snapshot(state)
+
+    monkeypatch.setattr(ModelIRPassState, "snapshot", counted_snapshot)
+
+    stats = run_clamp_cleanup(model_ir)
+
+    assert stats == {"rewritten_maximum_minimum_relu0to1_chains": 0}
+    assert snapshot_count == 0
+    assert [op.op_type for op in model_ir.operators] == ["MAXIMUM"]
 
 
 def test_squeeze_reshape_cleanup_uses_one_incremental_index_refresh(
