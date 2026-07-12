@@ -217,6 +217,14 @@ without an edge-map refresh. Its strict two-or-three equal contiguous chunk,
 static-shape, rank, and output-shape guards are unchanged. LayoutState entries
 for pruned begin/size tensors are removed when a session state is supplied.
 
+The earlier QKV/KV gather-to-slice rewrite follows the same contract. It reads
+source and branch consumers from one ModelIRGraphIndex, converts each
+shape-restoring Reshape operator in place to Slice using indexed input
+replacement, resolves matched Gather operators by indexed identity, and
+removes them structurally. Output names, shapes, the axis-zero scalar Gather
+guard, exclusive Gather-output consumer guard, and two/three-branch handling
+remain unchanged; pruning also removes stale LayoutState entries.
+
 Generic structural deduplication lives in `passes/graph_cleanup.py`. Duplicate
 Transpose fan-out cleanup uses one `ModelIRGraphIndex`, rewires only indexed
 consumers through the lineage-aware bulk input replacement helper, and removes

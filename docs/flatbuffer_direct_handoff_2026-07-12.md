@@ -1088,6 +1088,24 @@ Next migrate gather-to-slice replacement, then gather/reshape hoist. Do not
 create the four-spec prefix runner until both implementations use the same
 indexed mutation contract as Slice-to-Split and Split/Reshape collapse.
 
+Gather-to-slice replacement is now differential-index aware. Its consumer
+walk uses the shared index; each matched post-Gather Reshape becomes a Slice
+through indexed input mutation; Gather identities are resolved by the index
+and removed structurally. Tensor/LayoutState pruning and all existing
+axis-zero, scalar-index, exclusive-consumer, static shape, and two/three-branch
+guards are preserved.
+
+The three-branch pipeline fixture now requires exactly one initial GraphIndex
+refresh for this rewrite, and the independent two-branch pipeline remains
+green. Sequential verification completed with `2 passed, 758 deselected` for
+the focused pipelines, `24 passed` for architecture/efficiency checks, and
+`1080 passed, 5 deselected, 2 warnings in 136.67s` for the full direct suite.
+
+The final prerequisite before the four-spec prefix runner is indexed
+gather/reshape/transpose hoisting. Preserve its branch order, public outputs,
+and insertion positions before replacing the two production four-step
+sequences.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

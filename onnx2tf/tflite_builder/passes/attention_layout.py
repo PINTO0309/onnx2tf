@@ -340,6 +340,9 @@ def run_mixed_attention_layout_cleanup(
 
 def _optimize_attention_qkv_slice_replace_gather_reshape_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Replace attention QKV/KV branch `GATHER -> RESHAPE` with direct `SLICE`.
@@ -352,6 +355,7 @@ def _optimize_attention_qkv_slice_replace_gather_reshape_chains(
       qkv_htc --SLICE(begin=[i,0,0,0], size=[1,H,T,C])--> z_i
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     candidate_branch_counts = [3, 2]
 
     def _shape_list(name: str) -> Optional[List[int]]:
@@ -392,7 +396,7 @@ def _optimize_attention_qkv_slice_replace_gather_reshape_chains(
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for source_name, user_indices in list(consumers.items()):
@@ -504,6 +508,7 @@ def _optimize_attention_qkv_slice_replace_gather_reshape_chains(
                     model_ir=model_ir,
                     op=reshape_op,
                     new_inputs=[str(source_name), str(begin_name), str(size_name)],
+                    graph_index=graph_index,
                 )
                 reshape_op.options = {}
                 out_tensor = model_ir.tensors.get(reshape_out_name, None)
@@ -511,15 +516,12 @@ def _optimize_attention_qkv_slice_replace_gather_reshape_chains(
                     out_tensor.shape = [1, int(h), int(t), int(c)]
                     out_tensor.shape_signature = [1, int(h), int(t), int(c)]
 
-                gather_remove_idx = next(
-                    (idx for idx, op in enumerate(model_ir.operators) if op is branch["gather_op"]),
-                    None,
-                )
+                gather_remove_idx = graph_index.operator_index(branch["gather_op"])
                 if gather_remove_idx is not None:
                     remove_indices.add(int(gather_remove_idx))
 
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -528,7 +530,9 @@ def _optimize_attention_qkv_slice_replace_gather_reshape_chains(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_attention_qkv_slice_replace_gather_reshape_chains": int(rewritten)}
 
 
