@@ -1071,6 +1071,23 @@ hoist differential-index aware in that dependency order. After each focused
 checkpoint passes, register those three plus the already-indexed collapse as a
 four-spec prefix runner at exactly the two contiguous production positions.
 
+The first of those three prerequisites is now complete. QKV/KV sibling
+`SLICE` groups use one ModelIRGraphIndex, insert their replacement `SPLIT`
+structurally, resolve the original Slice operators by indexed identity, and
+remove them without rebuilding producer/consumer maps. LayoutState-aware
+pruning was connected without changing the existing two/three-branch,
+contiguous-chunk, static-rank, and shape compatibility guards.
+
+The existing three-branch fixture now instruments GraphIndex and requires one
+initial refresh for the full rewrite. The two-branch pipeline fixture remains
+green. Sequential verification completed with `2 passed, 758 deselected` for
+those focused cases, `24 passed` for architecture/efficiency checks, and
+`1080 passed, 5 deselected, 2 warnings in 136.63s` for the full direct suite.
+
+Next migrate gather-to-slice replacement, then gather/reshape hoist. Do not
+create the four-spec prefix runner until both implementations use the same
+indexed mutation contract as Slice-to-Split and Split/Reshape collapse.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

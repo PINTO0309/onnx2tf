@@ -534,6 +534,9 @@ def _optimize_attention_qkv_slice_replace_gather_reshape_chains(
 
 def _optimize_attention_qkv_slice_to_split_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Replace attention QKV/KV sibling `SLICE` groups with a single `SPLIT`.
@@ -548,6 +551,7 @@ def _optimize_attention_qkv_slice_to_split_chains(
       SPLIT(numSplits=N, axis=split_axis): src -> [out_0, ..., out_{N-1}]
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     candidate_branch_counts = [3, 2]
 
     def _shape_list(name: str) -> Optional[List[int]]:
@@ -576,7 +580,7 @@ def _optimize_attention_qkv_slice_to_split_chains(
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
 
         for source_name, user_indices in list(consumers.items()):
             source_shape = _shape_list(str(source_name))
@@ -695,16 +699,13 @@ def _optimize_attention_qkv_slice_to_split_chains(
                 options={"numSplits": int(branch_count)},
             )
             insert_base_idx = min(int(branch_by_index[idx]["slice_idx"]) for idx in sorted(list(branch_by_index.keys())))
-            model_ir.operators.insert(int(insert_base_idx), split_op)
+            graph_index.insert_operator(int(insert_base_idx), split_op)
 
             remove_indices: set[int] = set()
             chunk = int(source_shape[int(split_axis)] // int(branch_count))
             for idx in sorted(list(branch_by_index.keys())):
                 slice_op = branch_by_index[idx]["slice_op"]
-                slice_remove_idx = next(
-                    (op_idx for op_idx, op in enumerate(model_ir.operators) if op is slice_op),
-                    None,
-                )
+                slice_remove_idx = graph_index.operator_index(slice_op)
                 if slice_remove_idx is not None:
                     remove_indices.add(int(slice_remove_idx))
 
@@ -717,7 +718,7 @@ def _optimize_attention_qkv_slice_to_split_chains(
                     out_tensor.shape_signature = [int(v) for v in list(out_shape)]
 
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -726,7 +727,9 @@ def _optimize_attention_qkv_slice_to_split_chains(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_attention_qkv_slice_to_split_chains": int(rewritten)}
 
 

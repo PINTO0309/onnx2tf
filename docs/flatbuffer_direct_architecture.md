@@ -209,6 +209,14 @@ optional LayoutState. This pass remains at its two original raw call positions
 until the other three QKV prefix rewrites are indexed and can join one ordered
 prefix group without changing recovery order.
 
+The preceding QKV/KV sibling-Slice canonicalization is differential-index
+aware as well. It enumerates consumers from the shared ModelIRGraphIndex,
+inserts the replacement Split through the structural index API, resolves each
+matched Slice by object identity through that index, and removes the branches
+without an edge-map refresh. Its strict two-or-three equal contiguous chunk,
+static-shape, rank, and output-shape guards are unchanged. LayoutState entries
+for pruned begin/size tensors are removed when a session state is supplied.
+
 Generic structural deduplication lives in `passes/graph_cleanup.py`. Duplicate
 Transpose fan-out cleanup uses one `ModelIRGraphIndex`, rewires only indexed
 consumers through the lineage-aware bulk input replacement helper, and removes

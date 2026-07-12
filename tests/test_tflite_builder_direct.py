@@ -36751,7 +36751,7 @@ def test_flatbuffer_direct_attention_qkv_slice_replace_gather_reshape() -> None:
         assert str(producer.op_type) == "SLICE"
 
 
-def test_flatbuffer_direct_attention_qkv_slice_to_split() -> None:
+def test_flatbuffer_direct_attention_qkv_slice_to_split(monkeypatch) -> None:
     model_ir = ModelIR("attention_qkv_slice_to_split_test")
     model_ir.inputs = ["src"]
     model_ir.outputs = ["z0", "z1", "z2"]
@@ -36816,8 +36816,19 @@ def test_flatbuffer_direct_attention_qkv_slice_to_split() -> None:
         OperatorIR(op_type="SLICE", inputs=["src", "z2_begin", "z2_size"], outputs=["z2"], options={}),
     ]
 
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
     stats = _optimize_attention_qkv_slice_to_split_chains(model_ir)
     assert stats["optimized_attention_qkv_slice_to_split_chains"] == 1
+    assert refresh_count == 1
 
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("SLICE") == 0
