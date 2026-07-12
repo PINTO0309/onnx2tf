@@ -1,6 +1,6 @@
 # flatbuffer_direct refactor handoff — 2026-07-12
 
-## Current checkpoint — `fb-refactor2` after `53bba37`
+## Current checkpoint — `fb-refactor2` after `286a0e7`
 
 The opset-aware Resize lowering and numerically stable Inverse lowering recover
 `onnx_dense_optimized.onnx` and its byte-identical `_org` counterpart without a
@@ -27,11 +27,36 @@ and no skip. Their identical fixed-seed result is `evaluation_pass=true`,
 it to `0.157419` before partial pivoting eliminated the amplified GridSample
 error.
 
-The managed Tier 0–4 profile now records 361 passes, 6
-`missing_tflite_report`, 27 `tflite_fail`, and 26 excluded historical timeouts.
-There are 33 active non-passes. The next accuracy failure without an explicit
-normalized cause is `modnet_old.onnx` in Tier 2; earlier failures in managed
-order already have documented quantization/runtime semantics.
+Legacy linear Upsample now follows the half-pixel coordinate semantics produced
+by ONNX's v9-to-v11 version converter, while legacy nearest Upsample retains its
+asymmetric behavior. This general rule recovers `modnet_old.onnx`, whose eight
+linear downsample branches previously diverged before the first concatenation.
+Its fixed-seed single output has no skip and reports `evaluation_pass=true`,
+`max_abs=2.3931264877319336e-05`, `mean_abs=2.478012597297248e-07`,
+`rmse=9.7739101243166e-07`, and cosine similarity `0.9999999999988499`.
+
+`LINEA.onnx` also passes on the current static-input runtime path without an
+additional lowering rule. Both outputs were compared with no skip:
+`evaluation_pass=true`, `max_abs=0.002297189086675644`,
+`mean_abs=3.4909796139056033e-06`, `rmse=7.162934073986925e-05`, and cosine
+similarity `0.9994290428305682`.
+
+The managed Tier 0–4 profile now records 363 passes, 6
+`missing_tflite_report`, 25 `tflite_fail`, and 26 excluded historical timeouts.
+There are 31 active non-passes. The next accuracy failures without an explicit
+normalized cause are the two `deim_hgnetv2_*` models in Tier 3; earlier failures
+in managed order now have documented quantization/runtime semantics.
+
+`best.onnx` and `best_org.onnx` remain failures rather than receiving a relaxed
+tolerance. Both simplify to the same 516-node Q/DQ graph and produce identical
+fixed-seed metrics with no output skip: `max_abs=58.7506103515625`,
+`mean_abs=0.12212618568213444`, `rmse=0.9568672461041465`, and cosine similarity
+`0.9998485974152098`. Their first material mismatch is a sparse QuantizeLinear
+rounding outlier (`max_abs=0.13601922988891602` over a
+`[1,16,128,160]` tensor), which is repeatedly amplified through the Q/DQ–Conv
+backbone and detector decode. The managed reason is now
+`qdq_rounding_outliers_amplified_by_detector_decode`; each model retains its
+previous normalized failure-signature hash.
 
 Validation completed in the core `uv` environment, with one pytest process and
 no parallel workers:
@@ -40,6 +65,8 @@ no parallel workers:
   profile, architecture/import boundary, and the two new regression files;
 - `28 passed, 772 deselected` for the focused Inverse, Resize, managed profile,
   and TensorFlow-free checks;
+- `23 passed, 750 deselected` for the subsequent legacy Upsample, Resize,
+  managed profile, and TensorFlow-free regression set;
 - `1 passed, 756 deselected` for Compress after removing a pre-existing unused
   local from the touched Resize module;
 - both dense corpus models passed sequential end-to-end `-cotof` runs.

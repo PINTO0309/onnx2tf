@@ -22,7 +22,7 @@ def resolve_resize_flags(
     op_type = str(getattr(node, "op", ""))
     opset = default_domain_opset(onnx_model)
     legacy_asymmetric_default = bool(
-        op_type == "Upsample"
+        (op_type == "Upsample" and mode == "nearest")
         or (op_type == "Resize" and opset is not None and int(opset) <= 10)
     )
     default_ctm = "asymmetric" if legacy_asymmetric_default else "half_pixel"

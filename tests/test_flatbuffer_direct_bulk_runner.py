@@ -999,8 +999,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 6,
-        "pass": 361,
-        "tflite_fail": 27,
+        "pass": 363,
+        "tflite_fail": 25,
         "timeout": 26,
     }
     assert profile["model_options"]["silero_vad.onnx"] == {
@@ -1039,6 +1039,49 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
             "baseline_classification": "pass",
             "tflite_max_abs": 0.00015753507614135742,
         }
+    modnet_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "modnet_old.onnx"
+    )
+    assert modnet_entry == {
+        "tier": 2,
+        "model": "modnet_old.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 2.3931264877319336e-05,
+    }
+    linea_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "LINEA.onnx"
+    )
+    assert linea_entry == {
+        "tier": 3,
+        "model": "LINEA.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 0.002297189086675644,
+    }
+    for model_name, expected_signature in (
+        (
+            "best.onnx",
+            "9990c93cc0bb978faa93f402b92e3799d0a2f720adbbba481346987fc955a277",
+        ),
+        (
+            "best_org.onnx",
+            "634981e4d0f8ac09f0f8251ce1454356e7dfc708abb8b42de784cbb0afe6c40b",
+        ),
+    ):
+        best_entry = next(
+            entry
+            for entry in profile_payload["models"]
+            if entry["model"] == model_name
+        )
+        assert best_entry["baseline_classification"] == "tflite_fail"
+        assert best_entry["baseline_reason"] == (
+            "qdq_rounding_outliers_amplified_by_detector_decode"
+        )
+        assert best_entry["tflite_max_abs"] == 58.7506103515625
+        assert best_entry["error_signature_sha256"] == expected_signature
     inverse_entry = next(
         entry
         for entry in profile_payload["models"]
