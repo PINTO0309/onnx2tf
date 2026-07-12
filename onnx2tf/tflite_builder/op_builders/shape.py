@@ -5404,6 +5404,32 @@ def build_pad_op(node: Any, ctx: Any) -> None:
             )
         )
 
+    if pads_begin is not None and pads_end is not None:
+        pad_input_tensor = ctx.model_ir.tensors.get(str(input_for_pad), None)
+        pad_output_tensor = ctx.model_ir.tensors.get(str(output_name), None)
+        if pad_input_tensor is not None and pad_output_tensor is not None:
+            pad_input_shape = [int(v) for v in list(pad_input_tensor.shape)]
+            if len(pad_input_shape) == input_rank:
+                inferred_shape = [
+                    int(dim) + int(pads_begin[axis]) + int(pads_end[axis])
+                    if int(dim) > 0
+                    else 1
+                    for axis, dim in enumerate(pad_input_shape)
+                ]
+                input_signature = (
+                    [int(v) for v in list(pad_input_tensor.shape_signature)]
+                    if pad_input_tensor.shape_signature is not None
+                    else [int(v) for v in pad_input_shape]
+                )
+                inferred_signature = [
+                    int(dim) + int(pads_begin[axis]) + int(pads_end[axis])
+                    if int(dim) > 0
+                    else -1
+                    for axis, dim in enumerate(input_signature)
+                ]
+                pad_output_tensor.shape = inferred_shape
+                pad_output_tensor.shape_signature = inferred_signature
+
     if mode == "edge":
         if pads_begin is None or pads_end is None:
             raise NotImplementedError(

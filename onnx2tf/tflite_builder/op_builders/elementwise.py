@@ -1882,6 +1882,11 @@ def build_unary_op(node: Any, ctx: Any, op_type: str) -> None:
     ctx.ensure_tensor(input_name)
     ctx.ensure_tensor(output_name)
     _propagate_shape(ctx, input_name, output_name)
+    _sync_shape_signature_from_src(
+        ctx=ctx,
+        src_tensor_name=input_name,
+        dst_tensor_name=output_name,
+    )
     runtime_input_name, runtime_output_name = _prepare_passthrough_unary_runtime(
         node=node,
         ctx=ctx,

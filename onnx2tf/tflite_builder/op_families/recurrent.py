@@ -76,7 +76,11 @@ def _validate_lstm(node: Any, ctx: Any) -> None:
     if W is None or R is None:
         raise NodeValidationError(
             reason_code="requires_constant_input",
-            message="LSTM W and R must be constant tensors for builtin lowering.",
+            message=(
+                "LSTM W and R must be constant tensors for builtin lowering. "
+                f"W={w_name} W_is_constant={W is not None} "
+                f"R={r_name} R_is_constant={R is not None}"
+            ),
             node_name=node.name,
             node_op=node.op,
         )
@@ -612,4 +616,3 @@ def _validate_gru(node: Any, ctx: Any) -> None:
                 node_name=node.name,
                 node_op=node.op,
             )
-

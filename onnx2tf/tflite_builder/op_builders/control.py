@@ -116,6 +116,7 @@ class _WrappedBranchNode:
     attrs: Dict[str, Any]
     inputs: List[_WrappedIO]
     outputs: List[_WrappedIO]
+    inputs_are_remapped: bool = True
 
 
 @dataclass
@@ -862,7 +863,11 @@ def _const_fold_slice(
                 end_i += dim
             start_i = min(max(start_i, -1), dim - 1)
             end_i = min(max(end_i, -1), dim - 1)
-        slices[axis_i] = slice(start_i, end_i, step_i)
+        # ONNX clamps a sufficiently negative end to the virtual position
+        # immediately before index 0. Python spells that boundary as None for
+        # a negative step; slice(..., -1, -1) would instead be empty.
+        python_end = None if step_i < 0 and end_i == -1 else end_i
+        slices[axis_i] = slice(start_i, python_end, step_i)
     return np.asarray(x[tuple(slices)])
 
 
@@ -968,6 +973,18 @@ def _lower_graph_nodes(
         if value_name != "":
             value_info_map[value_name] = value_info
 
+    def _record_branch_constant(output_name: str, value: np.ndarray) -> None:
+        result = np.asarray(value)
+        if output_name in ctx.model_ir.tensors:
+            output_tensor = ctx.model_ir.tensors[output_name]
+            output_tensor.data = result
+            output_tensor.dtype = _tflite_dtype_from_np_dtype(result.dtype)
+            output_tensor.shape = [int(v) for v in result.shape]
+            output_tensor.shape_signature = [int(v) for v in result.shape]
+            ctx.constants[output_name] = result
+        else:
+            ctx.add_const_tensor(output_name, result)
+
     for graph_node in graph.node:
         op_type = str(graph_node.op_type)
         for input_name in graph_node.input:
@@ -1009,6 +1026,135 @@ def _lower_graph_nodes(
             else:
                 ctx.add_const_tensor(out_name, const_value)
             continue
+
+        if op_type == "ConstantOfShape" and len(graph_node.input) == 1 and len(graph_node.output) == 1:
+            shape_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            shape_value = ctx.get_constant_array(shape_name)
+            if shape_value is not None:
+                target_shape = [int(v) for v in np.asarray(shape_value).reshape(-1)]
+                if all(int(v) >= 0 for v in target_shape):
+                    fill_value = np.asarray(0.0, dtype=np.float32)
+                    for attr in graph_node.attribute:
+                        if str(attr.name) == "value" and attr.HasField("t"):
+                            candidate = np.asarray(numpy_helper.to_array(attr.t)).reshape(-1)
+                            if candidate.size > 0:
+                                fill_value = np.asarray(candidate[0], dtype=candidate.dtype)
+                            break
+                    result = np.full(target_shape, fill_value.item(), dtype=fill_value.dtype)
+                    out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                    _record_branch_constant(out_name, result)
+                    continue
+
+        if op_type == "Shape" and len(graph_node.input) == 1 and len(graph_node.output) == 1:
+            input_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            input_tensor = ctx.model_ir.tensors.get(str(input_name), None)
+            if input_tensor is not None:
+                input_shape = [int(v) for v in list(input_tensor.shape)]
+                input_signature = (
+                    [int(v) for v in list(input_tensor.shape_signature)]
+                    if input_tensor.shape_signature is not None
+                    else [int(v) for v in input_shape]
+                )
+                dynamic_input_names = {
+                    str(v)
+                    for v in ctx.model_ir.metadata.get(
+                        "onnx_dynamic_input_tensor_names", []
+                    )
+                    if str(v) != ""
+                }
+                shape_is_static = all(int(v) > 0 for v in input_shape)
+                signature_is_static = (
+                    len(input_shape) == len(input_signature)
+                    and all(int(v) > 0 for v in input_signature)
+                )
+                if shape_is_static and (
+                    signature_is_static or len(dynamic_input_names) == 0
+                ):
+                    start = 0
+                    end = len(input_shape)
+                    for attr in graph_node.attribute:
+                        if str(attr.name) == "start":
+                            start = int(attr.i)
+                        elif str(attr.name) == "end":
+                            end = int(attr.i)
+                    if start < 0:
+                        start += len(input_shape)
+                    if end < 0:
+                        end += len(input_shape)
+                    start = max(0, min(int(start), len(input_shape)))
+                    end = max(0, min(int(end), len(input_shape)))
+                    result = np.asarray(input_shape[start:end], dtype=np.int64)
+                    out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                    _record_branch_constant(out_name, result)
+                    continue
+
+        if op_type == "Size" and len(graph_node.input) == 1 and len(graph_node.output) == 1:
+            input_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            input_value = ctx.get_constant_array(input_name)
+            if input_value is not None:
+                out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                _record_branch_constant(
+                    out_name,
+                    np.asarray(np.asarray(input_value).size, dtype=np.int64),
+                )
+                continue
+
+        if op_type == "Not" and len(graph_node.input) == 1 and len(graph_node.output) == 1:
+            input_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            input_value = ctx.get_constant_array(input_name)
+            if input_value is not None:
+                out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                _record_branch_constant(
+                    out_name,
+                    np.logical_not(np.asarray(input_value, dtype=np.bool_)),
+                )
+                continue
+
+        if op_type == "Reshape" and len(graph_node.input) >= 2 and len(graph_node.output) == 1:
+            data_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            shape_name = remap_in.get(str(graph_node.input[1]), str(graph_node.input[1]))
+            data_value = ctx.get_constant_array(data_name)
+            shape_value = ctx.get_constant_array(shape_name)
+            if data_value is not None and shape_value is not None:
+                target_shape = [int(v) for v in np.asarray(shape_value).reshape(-1)]
+                allowzero = any(
+                    str(attr.name) == "allowzero" and int(attr.i) != 0
+                    for attr in graph_node.attribute
+                )
+                if not allowzero:
+                    input_shape = [int(v) for v in np.asarray(data_value).shape]
+                    target_shape = [
+                        int(input_shape[idx]) if int(v) == 0 and idx < len(input_shape) else int(v)
+                        for idx, v in enumerate(target_shape)
+                    ]
+                try:
+                    result = np.asarray(data_value).reshape(target_shape)
+                except Exception:
+                    result = None
+                if result is not None:
+                    out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                    _record_branch_constant(out_name, result)
+                    continue
+
+        if op_type == "Transpose" and len(graph_node.input) == 1 and len(graph_node.output) == 1:
+            data_name = remap_in.get(str(graph_node.input[0]), str(graph_node.input[0]))
+            data_value = ctx.get_constant_array(data_name)
+            if data_value is not None:
+                perm = None
+                for attr in graph_node.attribute:
+                    if str(attr.name) == "perm":
+                        perm = [int(v) for v in attr.ints]
+                        break
+                if perm is None:
+                    perm = list(reversed(range(int(np.asarray(data_value).ndim))))
+                try:
+                    result = np.transpose(np.asarray(data_value), axes=perm)
+                except Exception:
+                    result = None
+                if result is not None:
+                    out_name = remap_out.get(str(graph_node.output[0]), str(graph_node.output[0]))
+                    _record_branch_constant(out_name, result)
+                    continue
 
         if op_type == "Concat" and len(graph_node.output) == 1:
             concat_inputs = [

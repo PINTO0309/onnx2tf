@@ -1629,6 +1629,12 @@ def _replace_expand_dims_and_squeeze_with_reshape(model_ir: ModelIR) -> Dict[str
             else [int(v) for v in list(output_shape)]
         )
         squeeze_dims_for_reshape: Optional[List[int]] = None
+        expand_axis_for_reshape: Optional[int] = None
+        if op_type == "EXPAND_DIMS" and len(op.inputs) >= 2:
+            axis_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+            axis_values = _read_const_ints_from_tensor(axis_tensor)
+            if axis_values is not None and len(axis_values) > 0:
+                expand_axis_for_reshape = int(axis_values[0])
         if op_type == "SQUEEZE":
             squeeze_dims_raw = op.options.get("squeezeDims", [])
             try:
@@ -1789,6 +1795,8 @@ def _replace_expand_dims_and_squeeze_with_reshape(model_ir: ModelIR) -> Dict[str
         op.op_type = "RESHAPE"
         op.inputs = [input_name, shape_name]
         op.options = {"newShape": [int(v) for v in list(reshape_target)]}
+        if expand_axis_for_reshape is not None:
+            op.options["onnxExpandDimsAxis"] = int(expand_axis_for_reshape)
         if squeeze_dims_for_reshape is not None:
             op.options["onnxSqueezeDims"] = [
                 int(v) for v in list(squeeze_dims_for_reshape)
@@ -3094,6 +3102,9 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                 "GELU",
                 "CAST",
                 "NEG",
+                "ABS",
+                "EXP",
+                "SQRT",
                 "FLOOR",
                 "ROUND",
             }:
@@ -3479,6 +3490,33 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                     if input_tensor.shape_signature is not None
                     else list(input_tensor.shape)
                 )
+                if "onnxExpandDimsAxis" in op.options:
+                    input_shape = [int(v) for v in list(input_tensor.shape)]
+                    out_rank = len(input_shape) + 1
+                    axis = int(op.options.get("onnxExpandDimsAxis", 0))
+                    if axis < 0:
+                        axis += out_rank
+                    if 0 <= axis < out_rank:
+                        out_shape = [int(v) for v in input_shape]
+                        out_signature = [int(v) for v in input_signature]
+                        out_shape.insert(axis, 1)
+                        out_signature.insert(axis, 1)
+                        op.options["newShape"] = [int(v) for v in out_shape]
+                        if len(inputs) >= 2:
+                            shape_tensor = model_ir.tensors.get(inputs[1], None)
+                            if shape_tensor is not None and shape_tensor.data is not None:
+                                changed |= _write_const_ints_to_tensor(
+                                    shape_tensor,
+                                    [int(v) for v in out_shape],
+                                )
+                                shape_tensor.shape = [int(len(out_shape))]
+                                shape_tensor.shape_signature = [int(len(out_shape))]
+                        changed |= _update_tensor_shape(
+                            outputs[0],
+                            out_shape,
+                            out_signature,
+                        )
+                    continue
                 if "onnxSqueezeDims" in op.options:
                     squeeze_axes = _parse_axes_option(
                         op.options.get("onnxSqueezeDims", [])

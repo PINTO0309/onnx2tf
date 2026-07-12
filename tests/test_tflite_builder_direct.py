@@ -38,6 +38,7 @@ from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_builders.norm import build_instance_normalization_op
 from onnx2tf.tflite_builder.op_builders.control import (
     _apply_value_info_hint_to_tensor,
+    _const_fold_slice,
 )
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _align_boundary_signature_to_current_shape,
@@ -13388,6 +13389,57 @@ def test_flatbuffer_direct_replace_expand_dims_with_reshape_skips_dynamic_axes()
     assert str(model_ir.operators[0].op_type) == "EXPAND_DIMS"
 
 
+def test_flatbuffer_direct_reconcile_rewritten_expand_dims_after_input_shape_change() -> None:
+    model_ir = ModelIR("expand_dims_reconcile_shape_change_test")
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 2, 3],
+        shape_signature=[1, 2, 3],
+    )
+    model_ir.tensors["axis"] = TensorIR(
+        name="axis",
+        dtype="INT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([2], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 2, 1, 3],
+        shape_signature=[1, 2, 1, 3],
+    )
+    model_ir.operators = [
+        OperatorIR(op_type="EXPAND_DIMS", inputs=["x", "axis"], outputs=["y"])
+    ]
+
+    _replace_expand_dims_and_squeeze_with_reshape(model_ir)
+    reshape_op = model_ir.operators[0]
+    assert reshape_op.options["onnxExpandDimsAxis"] == 2
+    model_ir.tensors["x"].shape = [1, 2, 5]
+    model_ir.tensors["x"].shape_signature = [1, 2, 5]
+    _reconcile_static_tensor_shapes(model_ir)
+
+    assert model_ir.tensors["y"].shape == [1, 2, 1, 5]
+    shape_tensor = model_ir.tensors[str(reshape_op.inputs[1])]
+    np.testing.assert_array_equal(shape_tensor.data, np.asarray([1, 2, 1, 5], dtype=np.int32))
+
+
+def test_flatbuffer_direct_if_const_slice_negative_sentinel_reverses_axis() -> None:
+    actual = _const_fold_slice(
+        data=np.asarray([[0, 64], [0, 0]], dtype=np.int64),
+        starts=np.asarray([-1], dtype=np.int64),
+        ends=np.asarray([-9223372036854775807], dtype=np.int64),
+        axes=np.asarray([0], dtype=np.int64),
+        steps=np.asarray([-1], dtype=np.int64),
+    )
+    np.testing.assert_array_equal(
+        actual,
+        np.asarray([[0, 0], [0, 64]], dtype=np.int64),
+    )
+
+
 def test_flatbuffer_direct_repair_unbound_shape_input_with_layout_transpose() -> None:
     model_ir = ModelIR("repair_unbound_shape_input_test")
     model_ir.inputs = ["x"]
@@ -14743,6 +14795,8 @@ def test_flatbuffer_direct_pad_reflect_lowering() -> None:
         pads_tensor.data,
         np.asarray([[0, 0], [1, 1]], dtype=np.int32),
     )
+    assert model_ir.tensors["y"].shape == [1, 6]
+    assert model_ir.tensors["y"].shape_signature == [1, 6]
 
 
 def test_flatbuffer_direct_pad_opset9_reflect_attr_lowering() -> None:

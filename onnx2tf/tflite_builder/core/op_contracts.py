@@ -173,6 +173,8 @@ def is_integer_dtype(dtype: str) -> bool:
 
 
 def get_original_node_inputs(node: Any, ctx: Any) -> List[str]:
+    if bool(getattr(node, "inputs_are_remapped", False)):
+        return [str(value.name) for value in node.inputs]
     onnx_model = getattr(ctx, "onnx_model", None)
     if onnx_model is None:
         return [str(value.name) for value in node.inputs]
