@@ -83,6 +83,12 @@ output or an inverse terminal transpose. Singleton constant detection is a
 canonical `core/model_ir_utils.py` predicate shared by the remaining legacy
 rewrite families.
 
+Standalone HardSigmoid decomposition passthrough also lives in
+`passes/input_passthrough_layout.py`. It accepts only the strict scalar
+`Mul → Add → Relu0To1` form or scalar `Mul → Add → Maximum → Minimum` form and
+requires an inverse terminal transpose. Intermediate metadata and output
+lineage are updated through the shared graph mutation utilities.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

@@ -13,6 +13,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
     _read_transpose_perm,
+    _replace_operator_input_at,
     _set_operator_inputs,
     _set_operator_outputs,
 )
@@ -510,3 +511,189 @@ def _optimize_asin_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, 
 
     _prune_unused_tensors(model_ir)
     return {"rewritten_asin_transpose_passthrough_chains": int(rewritten)}
+
+
+def _optimize_hardsigmoid_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Fold transpose wrappers around standalone HardSigmoid-expanded chains.
+
+    Target:
+      X --TRANSPOSE(P)--> x_t
+      x_t --MUL(alpha)--> m1 --ADD(beta)--> a1 --(MAXIMUM(0)->MINIMUM(1) | RELU_0_TO_1)--> h1
+      h1 --TRANSPOSE(inv(P))--> Y
+
+    Rewrite:
+      X --MUL(alpha)--> m1 --ADD(beta)--> a1 --(MAXIMUM(0)->MINIMUM(1) | RELU_0_TO_1)--> Y
+
+    Safety:
+    - Strict HardSigmoid decomposition topology.
+    - All side inputs must be singleton constants.
+    - Main branch must be strictly linear.
+    """
+    rewritten = 0
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+
+        for pre_idx, pre_op in enumerate(model_ir.operators):
+            if str(pre_op.op_type) != "TRANSPOSE":
+                continue
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+                continue
+
+            pre_input_name = str(pre_op.inputs[0])
+            pre_output_name = str(pre_op.outputs[0])
+
+            perm_pre = _read_transpose_perm(model_ir, pre_op)
+            if perm_pre is None:
+                continue
+            perm_post_expected = _invert_perm(perm_pre)
+            if perm_post_expected is None:
+                continue
+
+            pre_users = [int(v) for v in consumers.get(pre_output_name, [])]
+            if len(pre_users) != 1:
+                continue
+            hs_mul_idx = int(pre_users[0])
+            hs_mul_op = model_ir.operators[int(hs_mul_idx)]
+            if str(hs_mul_op.op_type) != "MUL" or len(hs_mul_op.inputs) != 2 or len(hs_mul_op.outputs) != 1:
+                continue
+
+            hs_mul_inputs = [str(v) for v in list(hs_mul_op.inputs)]
+            if pre_output_name == hs_mul_inputs[0]:
+                hs_mul_data_input_index = 0
+                hs_mul_side_name = hs_mul_inputs[1]
+            elif pre_output_name == hs_mul_inputs[1]:
+                hs_mul_data_input_index = 1
+                hs_mul_side_name = hs_mul_inputs[0]
+            else:
+                continue
+            if not _is_singleton_constant_tensor(model_ir, hs_mul_side_name):
+                continue
+            hs_mul_out_name = str(hs_mul_op.outputs[0])
+
+            hs_mul_users = [int(v) for v in consumers.get(hs_mul_out_name, [])]
+            if len(hs_mul_users) != 1:
+                continue
+            hs_add_idx = int(hs_mul_users[0])
+            hs_add_op = model_ir.operators[int(hs_add_idx)]
+            if str(hs_add_op.op_type) != "ADD" or len(hs_add_op.inputs) != 2 or len(hs_add_op.outputs) != 1:
+                continue
+            hs_add_inputs = [str(v) for v in list(hs_add_op.inputs)]
+            if hs_mul_out_name == hs_add_inputs[0]:
+                hs_add_side_name = hs_add_inputs[1]
+            elif hs_mul_out_name == hs_add_inputs[1]:
+                hs_add_side_name = hs_add_inputs[0]
+            else:
+                continue
+            if not _is_singleton_constant_tensor(model_ir, hs_add_side_name):
+                continue
+            hs_add_out_name = str(hs_add_op.outputs[0])
+
+            hs_add_users = [int(v) for v in consumers.get(hs_add_out_name, [])]
+            if len(hs_add_users) != 1:
+                continue
+            hs_clamp_idx = int(hs_add_users[0])
+            hs_clamp_op = model_ir.operators[int(hs_clamp_idx)]
+            hs_intermediate_names: List[str] = [str(hs_mul_out_name), str(hs_add_out_name)]
+            if (
+                str(hs_clamp_op.op_type) == "RELU_0_TO_1"
+                and len(hs_clamp_op.inputs) == 1
+                and len(hs_clamp_op.outputs) == 1
+                and str(hs_clamp_op.inputs[0]) == hs_add_out_name
+            ):
+                hs_terminal_op = hs_clamp_op
+                hs_out_name = str(hs_clamp_op.outputs[0])
+            else:
+                if str(hs_clamp_op.op_type) != "MAXIMUM" or len(hs_clamp_op.inputs) != 2 or len(hs_clamp_op.outputs) != 1:
+                    continue
+                hs_max_inputs = [str(v) for v in list(hs_clamp_op.inputs)]
+                if hs_add_out_name == hs_max_inputs[0]:
+                    hs_max_side_name = hs_max_inputs[1]
+                elif hs_add_out_name == hs_max_inputs[1]:
+                    hs_max_side_name = hs_max_inputs[0]
+                else:
+                    continue
+                if not _is_singleton_constant_tensor(model_ir, hs_max_side_name):
+                    continue
+                hs_max_out_name = str(hs_clamp_op.outputs[0])
+                hs_intermediate_names.append(str(hs_max_out_name))
+
+                hs_max_users = [int(v) for v in consumers.get(hs_max_out_name, [])]
+                if len(hs_max_users) != 1:
+                    continue
+                hs_min_idx = int(hs_max_users[0])
+                hs_min_op = model_ir.operators[int(hs_min_idx)]
+                if str(hs_min_op.op_type) != "MINIMUM" or len(hs_min_op.inputs) != 2 or len(hs_min_op.outputs) != 1:
+                    continue
+                hs_min_inputs = [str(v) for v in list(hs_min_op.inputs)]
+                if hs_max_out_name == hs_min_inputs[0]:
+                    hs_min_side_name = hs_min_inputs[1]
+                elif hs_max_out_name == hs_min_inputs[1]:
+                    hs_min_side_name = hs_min_inputs[0]
+                else:
+                    continue
+                if not _is_singleton_constant_tensor(model_ir, hs_min_side_name):
+                    continue
+                hs_terminal_op = hs_min_op
+                hs_out_name = str(hs_min_op.outputs[0])
+
+            hs_out_users = [int(v) for v in consumers.get(hs_out_name, [])]
+            if len(hs_out_users) != 1:
+                continue
+            post_idx = int(hs_out_users[0])
+            post_op = model_ir.operators[int(post_idx)]
+            if (
+                str(post_op.op_type) != "TRANSPOSE"
+                or len(post_op.inputs) < 2
+                or len(post_op.outputs) != 1
+                or str(post_op.inputs[0]) != hs_out_name
+            ):
+                continue
+            perm_post = _read_transpose_perm(model_ir, post_op)
+            if perm_post is None or perm_post != perm_post_expected:
+                continue
+            post_output_name = str(post_op.outputs[0])
+
+            _replace_operator_input_at(
+                model_ir=model_ir,
+                op=hs_mul_op,
+                input_index=int(hs_mul_data_input_index),
+                new_input_name=pre_input_name,
+            )
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=hs_terminal_op,
+                new_outputs=[post_output_name],
+            )
+
+            for intermediate_name in hs_intermediate_names:
+                _permute_tensor_metadata_if_rank_matches(
+                    model_ir.tensors.get(intermediate_name, None),
+                    perm_post_expected,
+                )
+
+            old_hs_tensor = model_ir.tensors.get(hs_out_name, None)
+            post_output_tensor = model_ir.tensors.get(post_output_name, None)
+            if post_output_tensor is not None and old_hs_tensor is not None:
+                post_output_tensor.dtype = str(old_hs_tensor.dtype)
+                post_output_tensor.quantization = _clone_quantization(old_hs_tensor.quantization)
+                _permute_tensor_metadata_if_rank_matches(
+                    post_output_tensor,
+                    perm_post_expected,
+                )
+
+            remove_indices = sorted(list({int(pre_idx), int(post_idx)}), reverse=True)
+            for remove_idx in remove_indices:
+                del model_ir.operators[int(remove_idx)]
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"rewritten_hardsigmoid_transpose_passthrough_chains": int(rewritten)}

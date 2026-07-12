@@ -5,6 +5,7 @@ import numpy as np
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     _optimize_asin_transpose_passthrough_chains,
+    _optimize_hardsigmoid_transpose_passthrough_chains,
     _optimize_leading_input_transpose_passthrough_chains,
 )
 
@@ -195,3 +196,95 @@ def test_asin_passthrough_rejects_nonsingleton_sub_constant() -> None:
     assert stats == {"rewritten_asin_transpose_passthrough_chains": 0}
     assert model_ir.operators[0].op_type == "TRANSPOSE"
     assert model_ir.operators[1].inputs == ["x_nchw", "x_nchw"]
+
+
+def _make_hardsigmoid_roundtrip(*, inverse_output_perm: bool = True) -> ModelIR:
+    model_ir = ModelIR("input_passthrough_hardsigmoid")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    output_perm = [0, 2, 3, 1] if inverse_output_perm else [0, 3, 1, 2]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 2, 3]),
+        "to_nchw": _tensor(
+            "to_nchw",
+            [4],
+            dtype="INT32",
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        ),
+        "x_nchw": _tensor("x_nchw", [1, 3, 2, 2]),
+        "alpha": _tensor(
+            "alpha",
+            [],
+            data=np.asarray(0.2, dtype=np.float32),
+        ),
+        "scaled": _tensor("scaled", [1, 3, 2, 2]),
+        "beta": _tensor(
+            "beta",
+            [],
+            data=np.asarray(0.5, dtype=np.float32),
+        ),
+        "biased": _tensor("biased", [1, 3, 2, 2]),
+        "clamped": _tensor("clamped", [1, 3, 2, 2]),
+        "to_output": _tensor(
+            "to_output",
+            [4],
+            dtype="INT32",
+            data=np.asarray(output_perm, dtype=np.int32),
+        ),
+        "y": _tensor("y", [1, 2, 2, 3]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["x", "to_nchw"],
+            outputs=["x_nchw"],
+        ),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["x_nchw", "alpha"],
+            outputs=["scaled"],
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["scaled", "beta"],
+            outputs=["biased"],
+        ),
+        OperatorIR(
+            op_type="RELU_0_TO_1",
+            inputs=["biased"],
+            outputs=["clamped"],
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["clamped", "to_output"],
+            outputs=["y"],
+        ),
+    ]
+    return model_ir
+
+
+def test_hardsigmoid_passthrough_moves_relu_decomposition_to_nhwc() -> None:
+    model_ir = _make_hardsigmoid_roundtrip()
+
+    stats = _optimize_hardsigmoid_transpose_passthrough_chains(model_ir)
+
+    assert stats == {"rewritten_hardsigmoid_transpose_passthrough_chains": 1}
+    assert [operator.op_type for operator in model_ir.operators] == [
+        "MUL",
+        "ADD",
+        "RELU_0_TO_1",
+    ]
+    assert model_ir.operators[0].inputs == ["x", "alpha"]
+    assert model_ir.operators[-1].outputs == ["y"]
+    assert model_ir.tensors["scaled"].shape == [1, 2, 2, 3]
+    assert model_ir.tensors["biased"].shape == [1, 2, 2, 3]
+
+
+def test_hardsigmoid_passthrough_rejects_noninverse_output_perm() -> None:
+    model_ir = _make_hardsigmoid_roundtrip(inverse_output_perm=False)
+
+    stats = _optimize_hardsigmoid_transpose_passthrough_chains(model_ir)
+
+    assert stats == {"rewritten_hardsigmoid_transpose_passthrough_chains": 0}
+    assert model_ir.operators[0].op_type == "TRANSPOSE"
+    assert model_ir.operators[-1].op_type == "TRANSPOSE"

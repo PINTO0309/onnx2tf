@@ -143,6 +143,20 @@ Verification completed with:
 - `1002 passed, 5 deselected, 2 warnings in 125.00s` for the full sequential
   direct suite.
 
+The standalone HardSigmoid passthrough has also moved to
+`passes/input_passthrough_layout.py`. It retains the strict singleton-side
+`Mul → Add → Relu0To1` or `Mul → Add → Maximum → Minimum` decomposition,
+single-consumer, inverse-permutation, and metadata guards. The legacy lowerer
+entry point remains a thin wrapper. Positive and noninverse-permutation no-op
+fixtures cover the Relu0To1 path.
+
+Verification completed with:
+
+- `26 passed` for the focused architecture, utility, and input-passthrough
+  suite;
+- `1004 passed, 5 deselected, 2 warnings in 125.56s` for the full sequential
+  direct suite.
+
 The next increment is the adjacent ERF polynomial decomposition passthrough.
 It can reuse the same canonical graph helpers and singleton predicate, but its
 larger topology needs both a positive fixture and guard-failure fixtures before
