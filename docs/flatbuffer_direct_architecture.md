@@ -163,6 +163,12 @@ branch producers, coefficient constants, reduction and merge topology, then
 rotates only proven layout-sensitive metadata and constants into NHWC while
 preserving shared values through cloned tensors.
 
+QKV Gather/Reshape/Transpose hoisting is centralized in the attention module.
+It accepts only compatible two- or three-branch projections, hoists their
+shared transpose after proving axis and shape equivalence, and preserves every
+branch output contract. The moved implementation removes one pre-existing
+unused local without changing graph semantics.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

@@ -328,10 +328,22 @@ Verification completed with:
 - `1010 passed, 5 deselected, 2 warnings in 125.36s` for the full sequential
   direct suite.
 
-Before the next attention increment, inventory the remaining attention-named
-passes and select only those with focused characterization. Keep the
-uncharacterized SA/PA MirrorPad mega-pattern in the lowerer until a semantic
-fixture exists.
+The QKV Gather/Reshape/Transpose hoist now also lives in
+`passes/attention_layout.py`. It preserves compatible two- and three-branch
+projection forms, Gather axes, shape guards, fan-out, output contracts, and
+ordered interaction with the Slice canonicalization passes. The move is exact
+apart from deleting one pre-existing unused local variable.
+
+Verification completed with:
+
+- `17 passed, 758 deselected` for focused architecture and QKV hoisting;
+- `1010 passed, 5 deselected, 2 warnings in 125.59s` for the full sequential
+  direct suite.
+
+The remaining characterized attention families are the much larger Conv-based
+and CSP propagation passes. Treat them as separate checkpoints. Keep
+uncharacterized attention mega-patterns in the lowerer until semantic fixtures
+exist.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

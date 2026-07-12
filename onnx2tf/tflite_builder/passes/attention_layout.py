@@ -1220,3 +1220,325 @@ def _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(
 
     _prune_unused_tensors(model_ir)
     return {"optimized_attention_qkv_weighted_sum_bridge_to_nhwc_chains": int(rewritten)}
+
+
+def _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    """
+    Hoist shared QKV/KV layout transforms before per-branch GATHERs.
+
+    Target branches (`N in {2,3}`, scalar gather indices `0..N-1`):
+      src[N,T,1,D] --GATHER(i)--> g_i[T,1,D]
+                    --RESHAPE([T,H,C])--> r_i[T,H,C]
+                    --TRANSPOSE([1,0,2])--> t_i[H,T,C]
+                    --RESHAPE([1,H,T,C])--> z_i
+
+    Rewrite:
+      src --RESHAPE([N,T,H,C])--> src_qkv
+          --TRANSPOSE([0,2,1,3])--> src_qkv_ht
+      src_qkv_ht --GATHER(i)--> g_i'[H,T,C]
+      g_i' --RESHAPE([1,H,T,C])--> z_i
+    """
+    rewritten = 0
+    candidate_branch_counts = [3, 2]
+
+    def _shape_list(name: str) -> Optional[List[int]]:
+        tensor = model_ir.tensors.get(str(name), None)
+        if tensor is None or tensor.shape is None:
+            return None
+        return [int(v) for v in list(tensor.shape)]
+
+    def _dims_compatible(a: int, b: int) -> bool:
+        if int(a) < 0 or int(b) < 0:
+            return True
+        return int(a) == int(b)
+
+    def _shape_compatible(a: List[int], b: List[int]) -> bool:
+        if len(a) != len(b):
+            return False
+        return all(_dims_compatible(int(x), int(y)) for x, y in zip(a, b))
+
+    def _gather_axis(op: OperatorIR) -> int:
+        opts = dict(op.options) if isinstance(op.options, dict) else {}
+        axis_value = opts.get("axis", 0)
+        if isinstance(axis_value, list):
+            if len(axis_value) != 1:
+                return 0
+            axis_value = axis_value[0]
+        try:
+            return int(axis_value)
+        except Exception:
+            return 0
+
+    def _unique_tensor_name(base: str) -> str:
+        name = str(base)
+        suffix = 1
+        while name in model_ir.tensors:
+            name = f"{base}_{suffix}"
+            suffix += 1
+        return name
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+        model_outputs = set(str(v) for v in model_ir.outputs)
+
+        for source_name, user_indices in list(consumers.items()):
+            source_shape = _shape_list(str(source_name))
+            if source_shape is None or len(source_shape) != 4:
+                continue
+            branch_count: Optional[int] = None
+            gather_branches: Dict[int, Dict[str, Any]] = {}
+            gather_indices: set[int] = set()
+
+            for candidate_branch_count in list(candidate_branch_counts):
+                if not _dims_compatible(int(source_shape[0]), int(candidate_branch_count)):
+                    continue
+                expected_indices = set(range(int(candidate_branch_count)))
+                candidate_branches: Dict[int, Dict[str, Any]] = {}
+
+                for user_idx in [int(v) for v in user_indices]:
+                    gather_op = model_ir.operators[int(user_idx)]
+                    if (
+                        str(gather_op.op_type) != "GATHER"
+                        or len(gather_op.inputs) < 2
+                        or len(gather_op.outputs) != 1
+                        or str(gather_op.inputs[0]) != str(source_name)
+                        or _gather_axis(gather_op) != 0
+                    ):
+                        continue
+                    index_vals = _read_const_ints_from_tensor(
+                        model_ir.tensors.get(str(gather_op.inputs[1]), None)
+                    )
+                    if index_vals is None or len(index_vals) != 1:
+                        continue
+                    gather_index = int(index_vals[0])
+                    if gather_index not in expected_indices or gather_index in candidate_branches:
+                        continue
+
+                    gather_out_name = str(gather_op.outputs[0])
+                    if gather_out_name in model_outputs:
+                        continue
+                    gather_out_users = [int(v) for v in consumers.get(gather_out_name, [])]
+                    if len(gather_out_users) != 1:
+                        continue
+                    reshape1_idx = int(gather_out_users[0])
+                    reshape1_op = model_ir.operators[int(reshape1_idx)]
+                    if (
+                        str(reshape1_op.op_type) != "RESHAPE"
+                        or len(reshape1_op.inputs) < 1
+                        or len(reshape1_op.outputs) != 1
+                        or str(reshape1_op.inputs[0]) != gather_out_name
+                    ):
+                        continue
+                    reshape1_out_name = str(reshape1_op.outputs[0])
+                    if reshape1_out_name in model_outputs:
+                        continue
+                    reshape1_out_users = [int(v) for v in consumers.get(reshape1_out_name, [])]
+                    if len(reshape1_out_users) != 1:
+                        continue
+                    transpose_idx = int(reshape1_out_users[0])
+                    transpose_op = model_ir.operators[int(transpose_idx)]
+                    if (
+                        str(transpose_op.op_type) != "TRANSPOSE"
+                        or len(transpose_op.inputs) < 2
+                        or len(transpose_op.outputs) != 1
+                        or str(transpose_op.inputs[0]) != reshape1_out_name
+                        or _read_transpose_perm(model_ir, transpose_op) != [1, 0, 2]
+                    ):
+                        continue
+                    transpose_out_name = str(transpose_op.outputs[0])
+                    if transpose_out_name in model_outputs:
+                        continue
+                    transpose_out_users = [int(v) for v in consumers.get(transpose_out_name, [])]
+                    if len(transpose_out_users) != 1:
+                        continue
+                    reshape2_idx = int(transpose_out_users[0])
+                    reshape2_op = model_ir.operators[int(reshape2_idx)]
+                    if (
+                        str(reshape2_op.op_type) != "RESHAPE"
+                        or len(reshape2_op.inputs) < 1
+                        or len(reshape2_op.outputs) != 1
+                        or str(reshape2_op.inputs[0]) != transpose_out_name
+                    ):
+                        continue
+
+                    gather_shape = _shape_list(gather_out_name)
+                    reshape1_shape = _shape_list(reshape1_out_name)
+                    transpose_shape = _shape_list(transpose_out_name)
+                    reshape2_shape = _shape_list(str(reshape2_op.outputs[0]))
+                    if (
+                        gather_shape is None
+                        or reshape1_shape is None
+                        or transpose_shape is None
+                        or reshape2_shape is None
+                        or len(gather_shape) != 3
+                        or len(reshape1_shape) != 3
+                        or len(transpose_shape) != 3
+                        or len(reshape2_shape) != 4
+                    ):
+                        continue
+
+                    candidate_branches[gather_index] = {
+                        "gather_idx": int(user_idx),
+                        "gather_op": gather_op,
+                        "gather_out_name": gather_out_name,
+                        "reshape1_idx": int(reshape1_idx),
+                        "reshape1_op": reshape1_op,
+                        "reshape1_out_name": reshape1_out_name,
+                        "transpose_idx": int(transpose_idx),
+                        "transpose_op": transpose_op,
+                        "transpose_out_name": transpose_out_name,
+                        "reshape2_idx": int(reshape2_idx),
+                        "reshape2_op": reshape2_op,
+                        "gather_shape": [int(v) for v in gather_shape],
+                        "reshape1_shape": [int(v) for v in reshape1_shape],
+                        "transpose_shape": [int(v) for v in transpose_shape],
+                        "reshape2_shape": [int(v) for v in reshape2_shape],
+                    }
+
+                if set(candidate_branches.keys()) == expected_indices:
+                    branch_count = int(candidate_branch_count)
+                    gather_branches = candidate_branches
+                    gather_indices = set(expected_indices)
+                    break
+
+            if branch_count is None:
+                continue
+
+            branch0 = gather_branches[0]
+            t = int(branch0["reshape1_shape"][0])
+            h = int(branch0["reshape1_shape"][1])
+            c = int(branch0["reshape1_shape"][2])
+            if not _shape_compatible(branch0["transpose_shape"], [h, t, c]):
+                continue
+            if not _shape_compatible(branch0["reshape2_shape"], [1, h, t, c]):
+                continue
+
+            is_consistent = True
+            for gather_index in sorted(list(gather_indices)):
+                branch = gather_branches[gather_index]
+                if not _shape_compatible(branch["gather_shape"], [t, 1, h * c]):
+                    is_consistent = False
+                    break
+                if not _shape_compatible(branch["reshape1_shape"], [t, h, c]):
+                    is_consistent = False
+                    break
+                if not _shape_compatible(branch["transpose_shape"], [h, t, c]):
+                    is_consistent = False
+                    break
+                if not _shape_compatible(branch["reshape2_shape"], [1, h, t, c]):
+                    is_consistent = False
+                    break
+            if not is_consistent:
+                continue
+
+            n = int(source_shape[0])
+            src_t = int(source_shape[1])
+            src_one = int(source_shape[2])
+            src_d = int(source_shape[3])
+            if not _dims_compatible(n, int(branch_count)):
+                continue
+            if not _dims_compatible(src_t, t) or not _dims_compatible(src_one, 1):
+                continue
+            if int(src_d) > 0 and int(h) > 0 and int(c) > 0 and int(src_d) != int(h) * int(c):
+                continue
+
+            shared_shape_name = _unique_tensor_name(f"{source_name}_qkv_reshape_shape")
+            shared_reshape_out_name = _unique_tensor_name(f"{source_name}_qkv_thc")
+            shared_perm_name = _unique_tensor_name(f"{source_name}_qkv_perm")
+            shared_transpose_out_name = _unique_tensor_name(f"{source_name}_qkv_htc")
+
+            model_ir.tensors[shared_shape_name] = TensorIR(
+                name=shared_shape_name,
+                dtype="INT32",
+                shape=[4],
+                shape_signature=[4],
+                data=np.asarray([int(branch_count), int(t), int(h), int(c)], dtype=np.int32),
+                is_variable=False,
+            )
+            source_tensor = model_ir.tensors.get(str(source_name), None)
+            model_ir.tensors[shared_reshape_out_name] = TensorIR(
+                name=shared_reshape_out_name,
+                dtype=str(source_tensor.dtype if source_tensor is not None else "FLOAT32"),
+                shape=[int(branch_count), int(t), int(h), int(c)],
+                shape_signature=[int(branch_count), int(t), int(h), int(c)],
+            )
+            model_ir.tensors[shared_perm_name] = TensorIR(
+                name=shared_perm_name,
+                dtype="INT32",
+                shape=[4],
+                shape_signature=[4],
+                data=np.asarray([0, 2, 1, 3], dtype=np.int32),
+                is_variable=False,
+            )
+            model_ir.tensors[shared_transpose_out_name] = TensorIR(
+                name=shared_transpose_out_name,
+                dtype=str(source_tensor.dtype if source_tensor is not None else "FLOAT32"),
+                shape=[int(branch_count), int(h), int(t), int(c)],
+                shape_signature=[int(branch_count), int(h), int(t), int(c)],
+            )
+
+            shared_reshape_op = OperatorIR(
+                op_type="RESHAPE",
+                inputs=[str(source_name), str(shared_shape_name)],
+                outputs=[str(shared_reshape_out_name)],
+                options={"newShape": [int(branch_count), int(t), int(h), int(c)]},
+            )
+            shared_transpose_op = OperatorIR(
+                op_type="TRANSPOSE",
+                inputs=[str(shared_reshape_out_name), str(shared_perm_name)],
+                outputs=[str(shared_transpose_out_name)],
+                options={},
+            )
+            insert_base_idx = min(int(gather_branches[idx]["gather_idx"]) for idx in sorted(list(gather_indices)))
+            model_ir.operators.insert(int(insert_base_idx), shared_reshape_op)
+            model_ir.operators.insert(int(insert_base_idx) + 1, shared_transpose_op)
+
+            remove_indices: set[int] = set()
+            for gather_index in sorted(list(gather_indices)):
+                branch = gather_branches[gather_index]
+                gather_op = branch["gather_op"]
+                gather_out_name = str(branch["gather_out_name"])
+                _replace_operator_input_at(
+                    model_ir=model_ir,
+                    op=gather_op,
+                    input_index=0,
+                    new_input_name=str(shared_transpose_out_name),
+                )
+                gather_tensor = model_ir.tensors.get(gather_out_name, None)
+                if gather_tensor is not None:
+                    gather_tensor.shape = [int(h), int(t), int(c)]
+                    gather_tensor.shape_signature = [int(h), int(t), int(c)]
+
+                _replace_tensor_inputs(
+                    model_ir,
+                    str(branch["transpose_out_name"]),
+                    gather_out_name,
+                )
+                reshape1_remove_idx = next(
+                    (idx for idx, op in enumerate(model_ir.operators) if op is branch["reshape1_op"]),
+                    None,
+                )
+                transpose_remove_idx = next(
+                    (idx for idx, op in enumerate(model_ir.operators) if op is branch["transpose_op"]),
+                    None,
+                )
+                if reshape1_remove_idx is not None:
+                    remove_indices.add(int(reshape1_remove_idx))
+                if transpose_remove_idx is not None:
+                    remove_indices.add(int(transpose_remove_idx))
+
+            for remove_idx in sorted(list(remove_indices), reverse=True):
+                del model_ir.operators[int(remove_idx)]
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"optimized_attention_qkv_gather_reshape_transpose_hoist_chains": int(rewritten)}
