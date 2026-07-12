@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import copy
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.passes import (
+    OrderedPassManager,
+    PassPhase,
+    PassSpec,
+)
+from onnx2tf.tflite_builder.core.validation import validate_model_ir_invariants
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _clone_quantization,
     _is_singleton_constant_tensor,
@@ -19,7 +26,11 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
 
 
-def _optimize_duplicate_transpose_fanout(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_duplicate_transpose_fanout(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Dict[str, int]:
     """
     Deduplicate fan-out TRANSPOSE nodes with identical input and permutation.
 
@@ -33,7 +44,7 @@ def _optimize_duplicate_transpose_fanout(model_ir: ModelIR) -> Dict[str, int]:
       (all uses of Y1, ... are rewired to Y0; duplicate TRANSPOSE nodes removed)
     """
     removed_duplicates = 0
-    graph_index = ModelIRGraphIndex(model_ir)
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
@@ -113,7 +124,11 @@ def _optimize_duplicate_transpose_fanout(model_ir: ModelIR) -> Dict[str, int]:
     return {"removed_duplicate_transpose_fanout": int(removed_duplicates)}
 
 
-def _optimize_duplicate_reshape_fanout(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_duplicate_reshape_fanout(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Dict[str, int]:
     """
     Deduplicate fan-out RESHAPE nodes with identical input and target shape.
 
@@ -127,7 +142,7 @@ def _optimize_duplicate_reshape_fanout(model_ir: ModelIR) -> Dict[str, int]:
       (all uses of Y1, ... are rewired to Y0; duplicate RESHAPE nodes removed)
     """
     removed_duplicates = 0
-    graph_index = ModelIRGraphIndex(model_ir)
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _read_reshape_target_shape(op: OperatorIR) -> Optional[List[int]]:
         if str(op.op_type) != "RESHAPE":
@@ -213,6 +228,81 @@ def _optimize_duplicate_reshape_fanout(model_ir: ModelIR) -> Dict[str, int]:
     return {
         "removed_duplicate_reshape_fanout": int(removed_duplicates),
     }
+
+
+def run_duplicate_fanout_cleanup(
+    model_ir: ModelIR,
+    *,
+    include_transpose: bool = True,
+) -> Dict[str, int]:
+    """Run duplicate layout-adapter cleanup as one ordered transaction group."""
+
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    def _restore(index: ModelIRGraphIndex, snapshot: ModelIR) -> None:
+        target = index.model_ir
+        target.name = str(snapshot.name)
+        target.description = str(snapshot.description)
+        target.tensors = copy.deepcopy(snapshot.tensors)
+        target.operators = copy.deepcopy(snapshot.operators)
+        target.inputs = list(snapshot.inputs)
+        target.outputs = list(snapshot.outputs)
+        target.subgraphs = copy.deepcopy(snapshot.subgraphs)
+        target.metadata = copy.deepcopy(snapshot.metadata)
+        index.refresh()
+
+    manager = OrderedPassManager[ModelIRGraphIndex](
+        validator=lambda index: validate_model_ir_invariants(
+            index.model_ir,
+            graph_index=index,
+        ),
+        clone=lambda index: copy.deepcopy(index.model_ir),
+        restore=_restore,
+    )
+
+    def _run_transpose(index: ModelIRGraphIndex) -> Dict[str, int | bool]:
+        stats = _optimize_duplicate_transpose_fanout(
+            index.model_ir,
+            graph_index=index,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("removed_duplicate_transpose_fanout", 0)),
+        }
+
+    def _run_reshape(index: ModelIRGraphIndex) -> Dict[str, int | bool]:
+        stats = _optimize_duplicate_reshape_fanout(
+            index.model_ir,
+            graph_index=index,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("removed_duplicate_reshape_fanout", 0)),
+        }
+
+    if include_transpose:
+        manager.register(
+            PassSpec(
+                pass_id="cleanup.duplicate_transpose_fanout",
+                phase=PassPhase.POST_LOWERING_CLEANUP,
+                callback=_run_transpose,
+                transactional=True,
+            )
+        )
+    manager.register(
+        PassSpec(
+            pass_id="cleanup.duplicate_reshape_fanout",
+            phase=PassPhase.POST_LOWERING_CLEANUP,
+            callback=_run_reshape,
+            transactional=True,
+        )
+    )
+    details: Dict[str, int] = {}
+    for result in manager.run(graph_index):
+        for key, value in result.details.items():
+            if key != "changed":
+                details[str(key)] = int(value)
+    return details
 
 
 def _optimize_maximum_minimum_relu0to1_chains(model_ir: ModelIR) -> Dict[str, int]:

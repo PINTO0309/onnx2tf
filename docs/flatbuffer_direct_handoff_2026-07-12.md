@@ -456,9 +456,24 @@ Verification completed with:
 - `1019 passed, 5 deselected, 2 warnings in 126.92s` for the full sequential
   direct suite.
 
-Continue converting small characterized cleanup passes while the mutation API
-surface remains stable. Defer multi-branch layout migration until indexed
-transaction rollback and LayoutState synchronization are connected.
+The three lowerer locations that consecutively invoked duplicate Transpose and
+Reshape cleanup now call `run_duplicate_fanout_cleanup`. This is the first
+post-lowering ordered pass group: it registers stable IDs in
+`POST_LOWERING_CLEANUP`, shares one differential index, validates invariants
+without rebuilding the index, and enables transactional deep-snapshot rollback.
+The Transpose pass remains conditionally disabled for QDQ graphs while Reshape
+cleanup always runs, preserving the previous call contract.
+
+Verification completed with:
+
+- `27 passed, 766 deselected` for focused ordered-pass, shared-index,
+  architecture, and rollback behavior;
+- `1021 passed, 5 deselected, 2 warnings in 129.92s` for the full sequential
+  direct suite.
+
+Next, connect LayoutState synchronization to indexed graph mutation and migrate
+one layout-sensitive cleanup group. Keep the same stable pass IDs,
+transactional rollback, and invariant validation pattern.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

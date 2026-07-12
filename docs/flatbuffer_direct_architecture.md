@@ -187,6 +187,13 @@ shapes, rewires only consumers of the round-trip output, then removes both
 operators without rebuilding maps. Squeeze-axis normalization has one shared
 implementation in `core/model_ir_utils.py`.
 
+Consecutive duplicate Transpose/Reshape cleanup calls are executed by
+`run_duplicate_fanout_cleanup`. The runner registers stable
+`cleanup.duplicate_*` pass IDs in `POST_LOWERING_CLEANUP` order, shares one
+ModelIR index, validates invariants against that index, and deep-snapshots each
+transaction. Invalid state restores the original ModelIR and refreshes the
+index only on rollback. Standalone legacy pass functions remain compatible.
+
 The attention module also owns the QKV Slice canonicalization pair. One pass
 replaces compatible Slice branches with Gather/Reshape views; the next replaces
 three compatible branches with a single Split. Both require fully known,

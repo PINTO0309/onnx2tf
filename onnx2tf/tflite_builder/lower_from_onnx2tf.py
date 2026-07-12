@@ -114,6 +114,7 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_maximum_minimum_relu0to1_chains as _optimize_maximum_minimum_relu0to1_chains_pass,
     _optimize_duplicate_reshape_fanout as _optimize_duplicate_reshape_fanout_pass,
     _optimize_duplicate_transpose_fanout as _optimize_duplicate_transpose_fanout_pass,
+    run_duplicate_fanout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.attention_layout import (
     _optimize_transpose_csp_attention_nhwc_chains as _optimize_transpose_csp_attention_nhwc_chains_pass,
@@ -65554,9 +65555,10 @@ def lower_onnx_to_ir(
         _optimize_transpose_binary_full_post_fanout_bridges(model_ir)
         if enable_transpose_binary_bridge_optimizations:
             _optimize_transpose_binary_bridges(model_ir)
-        if enable_duplicate_transpose_fanout_optimizations:
-            _optimize_duplicate_transpose_fanout(model_ir)
-        _optimize_duplicate_reshape_fanout(model_ir)
+        run_duplicate_fanout_cleanup(
+            model_ir,
+            include_transpose=enable_duplicate_transpose_fanout_optimizations,
+        )
         # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
         _optimize_transpose_quant_dequant_bridges(model_ir)
         _optimize_boundary_input_transpose_batchmatmul_chains(model_ir)
@@ -65637,9 +65639,10 @@ def lower_onnx_to_ir(
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
         _optimize_trailing_output_transpose_passthrough_chains(model_ir)
         _optimize_transpose_dequant_mul_add_prelu_quantize_bridges(model_ir)
-        if enable_duplicate_transpose_fanout_optimizations:
-            _optimize_duplicate_transpose_fanout(model_ir)
-        _optimize_duplicate_reshape_fanout(model_ir)
+        run_duplicate_fanout_cleanup(
+            model_ir,
+            include_transpose=enable_duplicate_transpose_fanout_optimizations,
+        )
         _optimize_transpose_dequant_prelu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_prelu_transpose_bridges(model_ir)
         _optimize_dequant_prelu_quantize_chains(model_ir)
@@ -65743,9 +65746,10 @@ def lower_onnx_to_ir(
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
         _optimize_trailing_output_transpose_passthrough_chains(model_ir)
         _optimize_transpose_dequant_mul_add_prelu_quantize_bridges(model_ir)
-        if enable_duplicate_transpose_fanout_optimizations:
-            _optimize_duplicate_transpose_fanout(model_ir)
-        _optimize_duplicate_reshape_fanout(model_ir)
+        run_duplicate_fanout_cleanup(
+            model_ir,
+            include_transpose=enable_duplicate_transpose_fanout_optimizations,
+        )
         _optimize_transpose_dequant_prelu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_prelu_transpose_bridges(model_ir)
         _optimize_dequant_prelu_quantize_chains(model_ir)

@@ -11,11 +11,18 @@ class ModelIRInvariantError(RuntimeError):
     pass
 
 
-def validate_model_ir_invariants(model_ir: ModelIR) -> List[str]:
+def validate_model_ir_invariants(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex | None = None,
+) -> List[str]:
     """Return structural errors that make exporter behaviour ambiguous."""
 
     problems: List[str] = []
-    index = ModelIRGraphIndex(model_ir)
+    index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
     for name, producers in sorted(index.duplicate_producers.items()):
         problems.append(f"duplicate_producer:{name}:{producers}")
 

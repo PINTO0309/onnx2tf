@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
@@ -9,6 +10,7 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_squeeze_reshape_identity_chains,
     _optimize_duplicate_reshape_fanout,
     _optimize_duplicate_transpose_fanout,
+    run_duplicate_fanout_cleanup,
 )
 
 
@@ -75,6 +77,69 @@ def test_duplicate_transpose_cleanup_uses_one_incremental_index_refresh(
     assert [op.op_type for op in model_ir.operators] == ["TRANSPOSE", "IDENTITY"]
     assert model_ir.operators[1].inputs == ["y0"]
     assert "y1" not in model_ir.tensors
+
+
+def test_duplicate_cleanup_ordered_group_shares_one_index(monkeypatch) -> None:
+    model_ir = ModelIR("ordered_duplicate_cleanup")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["out"]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 2, 3]),
+        "perm0": _tensor(
+            "perm0",
+            [4],
+            dtype="INT32",
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        ),
+        "perm1": _tensor(
+            "perm1",
+            [4],
+            dtype="INT32",
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        ),
+        "y0": _tensor("y0", [1, 3, 2, 2]),
+        "y1": _tensor("y1", [1, 3, 2, 2]),
+        "out": _tensor("out", [1, 3, 2, 2]),
+    }
+    model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x", "perm0"], outputs=["y0"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["x", "perm1"], outputs=["y1"]),
+        OperatorIR(op_type="IDENTITY", inputs=["y1"], outputs=["out"]),
+    ]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_duplicate_fanout_cleanup(model_ir)
+
+    assert stats == {
+        "removed_duplicate_transpose_fanout": 1,
+        "removed_duplicate_reshape_fanout": 0,
+    }
+    assert refresh_count == 1
+    assert model_ir.operators[1].inputs == ["y0"]
+
+
+def test_duplicate_cleanup_ordered_group_rolls_back_invalid_state() -> None:
+    model_ir = ModelIR("invalid_ordered_duplicate_cleanup")
+    model_ir.outputs = ["out"]
+    model_ir.tensors = {"out": _tensor("out", [1])}
+    model_ir.operators = [
+        OperatorIR(op_type="IDENTITY", inputs=["missing"], outputs=["out"]),
+    ]
+
+    with pytest.raises(RuntimeError, match="missing_input_tensor"):
+        run_duplicate_fanout_cleanup(model_ir)
+
+    assert len(model_ir.operators) == 1
+    assert model_ir.operators[0].inputs == ["missing"]
+    assert model_ir.operators[0].outputs == ["out"]
 
 
 def test_duplicate_reshape_cleanup_uses_one_incremental_index_refresh(
