@@ -202,6 +202,17 @@ on irrelevant graphs, and indexed topology guards prevent transactional
 snapshots unless the corresponding direct, unary, or normalization region can
 exist. Existing compatibility wrappers remain available.
 
+The strict `Transpose → Pad|MirrorPad → Mul(const) → Transpose → Add(const)`
+family executes through `run_pad_mul_layout_cleanup` at its three unchanged
+recovery positions. Its stable `LAYOUT_PLAN` ID is
+`layout.pad_mul_posttranspose_add_nhwc`. The precondition proves the complete
+producer/consumer topology, both inverse permutations, constant availability,
+Pad specification, and static broadcast compatibility before opening a
+transaction. Constant cloning and input/output rewiring update the shared
+`ModelIRGraphIndex`; both structural Transpose removals use that same index,
+and tensor pruning synchronizes the session `LayoutState`. This is a complete
+indexed migration of the helper rather than a partial deletion-only change.
+
 Decomposed InstanceNorm-Pad and flattened global-normalization-Pad propagation
 use `run_normalization_pad_layout_cleanup`. The two unchanged pair positions
 register `layout.instancenorm_pad_prepost_nhwc` then

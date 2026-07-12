@@ -45,6 +45,7 @@ from onnx2tf.tflite_builder.passes.attention_layout import (
 from onnx2tf.tflite_builder.passes.pad_layout import (
     run_normalization_pad_layout_cleanup,
     run_pad_layout_cleanup,
+    run_pad_mul_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     run_hard_activation_passthrough_cleanup,
@@ -17424,7 +17425,9 @@ def test_flatbuffer_direct_transpose_mul_posttranspose_add_nhwc_chain() -> None:
     assert "mul_out_nchw" in [str(v) for v in list(add_ops[0].inputs)]
 
 
-def test_flatbuffer_direct_transpose_pad_mul_posttranspose_add_nhwc_chain_optimized() -> None:
+def test_flatbuffer_direct_transpose_pad_mul_posttranspose_add_nhwc_chain_optimized(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("transpose_pad_mul_posttranspose_add_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
@@ -17521,8 +17524,23 @@ def test_flatbuffer_direct_transpose_pad_mul_posttranspose_add_nhwc_chain_optimi
         OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict[str, Any]] = []
+    stats = run_pad_mul_layout_cleanup(model_ir, diagnostics=diagnostics)
     assert stats["optimized_transpose_pad_mul_posttranspose_add_nhwc_chains"] == 1
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "layout.pad_mul_posttranspose_add_nhwc"
+    assert diagnostics[0]["status"] == "changed"
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
+    assert refresh_count == 1
 
     assert not any(
         str(op.op_type) == "TRANSPOSE"

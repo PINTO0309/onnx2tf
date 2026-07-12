@@ -36,6 +36,7 @@ from onnx2tf.tflite_builder.passes.quantization_cleanup import (
 from onnx2tf.tflite_builder.passes.pad_layout import (
     run_normalization_pad_layout_cleanup,
     run_pad_layout_cleanup,
+    run_pad_mul_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     run_hard_activation_passthrough_cleanup,
@@ -145,6 +146,7 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_qkv_attention_prefix_cleanup(model_ir, diagnostics=diagnostics)
     run_pad_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_normalization_pad_layout_cleanup(model_ir, diagnostics=diagnostics)
+    run_pad_mul_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_input_unary_passthrough_cleanup(model_ir, diagnostics=diagnostics)
     run_hard_activation_passthrough_cleanup(model_ir, diagnostics=diagnostics)
     run_boundary_input_layout_cleanup(model_ir, diagnostics=diagnostics)
@@ -153,7 +155,7 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_terminal_quantize_dequantize_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 32
+    assert len(diagnostics) == 33
     assert all(event["status"] == "skipped" for event in diagnostics)
     assert all(
         event["metrics"]

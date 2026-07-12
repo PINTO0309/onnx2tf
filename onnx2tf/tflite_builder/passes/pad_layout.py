@@ -679,7 +679,12 @@ def _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
     return {"optimized_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains": int(rewritten)}
 
 
-def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Eliminate strict NHWC<->NCHW round-trips around:
       T(NHWC->NCHW) -> PAD|MIRROR_PAD -> MUL(const) -> T(NCHW->NHWC) -> ADD(const)
@@ -688,16 +693,9 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
       PAD|MIRROR_PAD(NHWC pads) -> MUL(const_nhwc) -> ADD(const_nhwc)
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
-
-    def _unique_tensor_name(base: str) -> str:
-        name = str(base)
-        suffix = 1
-        while name in model_ir.tensors:
-            name = f"{base}_{suffix}"
-            suffix += 1
-        return name
 
     def _rewrite_rank4_mul_const_to_nhwc(
         *,
@@ -707,7 +705,6 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
         const_input_name: str,
         target_nhwc_shape: Optional[List[int]],
         chain_index_set: set[int],
-        consumers: Dict[str, List[int]],
     ) -> bool:
         const_tensor = model_ir.tensors.get(str(const_input_name), None)
         if const_tensor is None or const_tensor.data is None:
@@ -744,12 +741,12 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
         if rotated_data is None:
             return False
 
-        const_users = [int(v) for v in consumers.get(str(const_input_name), [])]
+        const_users = graph_index.consumer_indices(str(const_input_name))
         shared_outside_chain = any(int(v) not in chain_index_set for v in const_users)
 
         target_name = str(const_input_name)
         if shared_outside_chain:
-            target_name = _unique_tensor_name(f"{const_input_name}_nhwc")
+            target_name = _unique_tensor_name(model_ir, f"{const_input_name}_nhwc")
             model_ir.tensors[target_name] = TensorIR(
                 name=target_name,
                 dtype=str(const_tensor.dtype),
@@ -771,6 +768,7 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
                 model_ir=model_ir,
                 op=mul_op,
                 new_inputs=mul_inputs,
+                graph_index=graph_index,
             )
         return True
 
@@ -780,7 +778,6 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
         pad_idx: int,
         pads_input_name: str,
         chain_index_set: set[int],
-        consumers: Dict[str, List[int]],
     ) -> bool:
         pads_tensor = model_ir.tensors.get(str(pads_input_name), None)
         if pads_tensor is None or pads_tensor.data is None:
@@ -796,11 +793,11 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
             dtype=pads_pairs.dtype,
         )
 
-        pads_users = [int(v) for v in consumers.get(str(pads_input_name), [])]
+        pads_users = graph_index.consumer_indices(str(pads_input_name))
         shared_outside_chain = any(int(v) not in chain_index_set for v in pads_users)
         target_name = str(pads_input_name)
         if shared_outside_chain:
-            target_name = _unique_tensor_name(f"{pads_input_name}_nhwc")
+            target_name = _unique_tensor_name(model_ir, f"{pads_input_name}_nhwc")
             model_ir.tensors[target_name] = TensorIR(
                 name=target_name,
                 dtype=str(pads_tensor.dtype),
@@ -822,13 +819,14 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
                 model_ir=model_ir,
                 op=pad_op,
                 new_inputs=pad_inputs,
+                graph_index=graph_index,
             )
         return True
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for post_idx, post_op in enumerate(model_ir.operators):
@@ -963,7 +961,6 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
                 const_input_name=str(const_input_name),
                 target_nhwc_shape=target_nhwc_shape,
                 chain_index_set=chain_index_set,
-                consumers=consumers,
             ):
                 continue
 
@@ -972,7 +969,6 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
                 pad_idx=int(pad_idx),
                 pads_input_name=str(pad_op.inputs[1]),
                 chain_index_set=chain_index_set,
-                consumers=consumers,
             ):
                 continue
 
@@ -983,6 +979,7 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
                 model_ir=model_ir,
                 op=pad_op,
                 new_inputs=pad_inputs,
+                graph_index=graph_index,
             )
 
             _permute_tensor_metadata_if_rank_matches(
@@ -995,6 +992,7 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
                 model_ir=model_ir,
                 op=mul_op,
                 new_outputs=[str(post_output_name)],
+                graph_index=graph_index,
             )
             post_output_tensor = model_ir.tensors.get(str(post_output_name), None)
             if old_mul_tensor is not None and post_output_tensor is not None:
@@ -1016,7 +1014,7 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
             if len(pre_remaining_users) == 0:
                 remove_indices.add(int(pre_idx))
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -1026,8 +1024,223 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
             break
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_pad_mul_posttranspose_add_nhwc_chains": int(rewritten)}
+
+
+def run_pad_mul_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run the strict Pad/Mul/PostTranspose/Add rewrite as an ordered pass."""
+
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+    perm_nchw_to_nhwc = [0, 2, 3, 1]
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"TRANSPOSE", "MUL", "ADD"}
+        has_pad = False
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            op_type = str(operator.op_type)
+            required.discard(op_type)
+            has_pad = has_pad or op_type in {"PAD", "MIRROR_PAD"}
+            if len(required) == 0 and has_pad:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        graph_index = pass_state.graph_index
+        model_outputs = set(str(value) for value in candidate_model.outputs)
+
+        for post_idx, post_op in enumerate(candidate_model.operators):
+            if (
+                str(post_op.op_type) != "TRANSPOSE"
+                or len(post_op.inputs) < 2
+                or len(post_op.outputs) != 1
+                or _read_transpose_perm(candidate_model, post_op)
+                != perm_nchw_to_nhwc
+            ):
+                continue
+            mul_output_name = str(post_op.inputs[0])
+            post_output_name = str(post_op.outputs[0])
+            if mul_output_name in model_outputs or post_output_name in model_outputs:
+                continue
+
+            mul_idx = graph_index.producers.get(mul_output_name)
+            if mul_idx is None:
+                continue
+            mul_op = candidate_model.operators[int(mul_idx)]
+            if (
+                str(mul_op.op_type) != "MUL"
+                or len(mul_op.inputs) != 2
+                or len(mul_op.outputs) != 1
+                or str(mul_op.outputs[0]) != mul_output_name
+                or set(graph_index.consumer_indices(mul_output_name))
+                != {int(post_idx)}
+            ):
+                continue
+
+            pad_idx: Optional[int] = None
+            const_input_name: Optional[str] = None
+            for input_name in (str(value) for value in mul_op.inputs):
+                producer_idx = graph_index.producers.get(input_name)
+                if producer_idx is not None:
+                    producer_op = candidate_model.operators[int(producer_idx)]
+                    if (
+                        str(producer_op.op_type) in {"PAD", "MIRROR_PAD"}
+                        and len(producer_op.outputs) == 1
+                        and str(producer_op.outputs[0]) == input_name
+                    ):
+                        pad_idx = int(producer_idx)
+                        continue
+                tensor = candidate_model.tensors.get(input_name)
+                if tensor is not None and tensor.data is not None:
+                    const_input_name = input_name
+            if pad_idx is None or const_input_name is None:
+                continue
+
+            pad_op = candidate_model.operators[int(pad_idx)]
+            pad_output_name = str(pad_op.outputs[0])
+            if (
+                len(pad_op.inputs) < 2
+                or set(graph_index.consumer_indices(pad_output_name))
+                != {int(mul_idx)}
+            ):
+                continue
+            pre_nchw_name = str(pad_op.inputs[0])
+            pre_idx = graph_index.producers.get(pre_nchw_name)
+            if pre_idx is None:
+                continue
+            pre_op = candidate_model.operators[int(pre_idx)]
+            if (
+                str(pre_op.op_type) != "TRANSPOSE"
+                or len(pre_op.inputs) < 2
+                or len(pre_op.outputs) != 1
+                or str(pre_op.outputs[0]) != pre_nchw_name
+                or _read_transpose_perm(candidate_model, pre_op)
+                != perm_nhwc_to_nchw
+                or pre_nchw_name in model_outputs
+                or set(graph_index.consumer_indices(pre_nchw_name))
+                != {int(pad_idx)}
+            ):
+                continue
+
+            post_users = graph_index.consumer_indices(post_output_name)
+            if len(post_users) != 1:
+                continue
+            add_op = candidate_model.operators[int(post_users[0])]
+            if (
+                str(add_op.op_type) != "ADD"
+                or len(add_op.inputs) != 2
+                or len(add_op.outputs) != 1
+            ):
+                continue
+            add_inputs = [str(value) for value in add_op.inputs]
+            if add_inputs[0] == post_output_name:
+                add_side_name = add_inputs[1]
+            elif add_inputs[1] == post_output_name:
+                add_side_name = add_inputs[0]
+            else:
+                continue
+            add_side_tensor = candidate_model.tensors.get(add_side_name)
+            if add_side_tensor is None or add_side_tensor.data is None:
+                continue
+
+            target_tensor = candidate_model.tensors.get(post_output_name)
+            target_shape = (
+                [int(value) for value in target_tensor.shape]
+                if target_tensor is not None
+                else None
+            )
+            known_target = _is_fully_known_positive_shape(target_shape)
+            if known_target and _broadcast_static_shapes(
+                target_shape,
+                [int(value) for value in add_side_tensor.shape],
+            ) is None:
+                continue
+
+            mul_const = candidate_model.tensors.get(const_input_name)
+            if mul_const is None or mul_const.data is None:
+                continue
+            mul_data = np.asarray(mul_const.data)
+            if int(mul_data.size) != 1:
+                if int(mul_data.ndim) == 4:
+                    as_is_shape = [int(value) for value in mul_data.shape]
+                    if not (
+                        known_target
+                        and _broadcast_static_shapes(target_shape, as_is_shape)
+                        is not None
+                    ):
+                        rotated_shape = [
+                            int(value)
+                            for value in np.transpose(
+                                mul_data,
+                                perm_nchw_to_nhwc,
+                            ).shape
+                        ]
+                        if known_target and _broadcast_static_shapes(
+                            target_shape,
+                            rotated_shape,
+                        ) is None:
+                            continue
+                elif not known_target or _broadcast_static_shapes(
+                    target_shape,
+                    [int(value) for value in mul_data.shape],
+                ) is None:
+                    continue
+
+            pads_tensor = candidate_model.tensors.get(str(pad_op.inputs[1]))
+            if pads_tensor is None or pads_tensor.data is None:
+                continue
+            try:
+                pads = np.asarray(pads_tensor.data).reshape(4, 2)
+            except Exception:
+                continue
+            if int(pads.size) != 8:
+                continue
+            return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_transpose_pad_mul_posttranspose_add_nhwc_chains",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.pad_mul_posttranspose_add_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={
+            "optimized_transpose_pad_mul_posttranspose_add_nhwc_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(

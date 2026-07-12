@@ -101,6 +101,7 @@ from onnx2tf.tflite_builder.passes.pad_layout import (
     repair_channel_last_inputs_for_channel_first_pad,
     run_normalization_pad_layout_cleanup,
     run_pad_layout_cleanup,
+    run_pad_mul_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.quantized_layout import (
     repair_channel_last_convinteger_input_transposes,
@@ -65201,7 +65202,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_channel_slice_dual_add_bridges_strict(model_ir)
     _optimize_transpose_slice_muladd_conv_mergeadd_strict(model_ir)
     _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(model_ir)
-    _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir)
+    run_pad_mul_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
     _optimize_concat_mul_add_transpose_nhwc_bridge_chains(model_ir)
     _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
@@ -65448,7 +65453,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_channel_slice_dual_add_bridges_strict(model_ir)
     _optimize_transpose_slice_muladd_conv_mergeadd_strict(model_ir)
     _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(model_ir)
-    _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir)
+    run_pad_mul_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
     _optimize_concat_mul_add_transpose_nhwc_bridge_chains(model_ir)
     _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
@@ -65610,7 +65619,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_channel_slice_dual_add_bridges_strict(model_ir)
     _optimize_transpose_slice_muladd_conv_mergeadd_strict(model_ir)
     _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(model_ir)
-    _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir)
+    run_pad_mul_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
     # Strict slice/merge cleanup above can recreate simple affine bridge tails:

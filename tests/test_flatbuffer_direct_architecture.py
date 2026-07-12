@@ -442,6 +442,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_qkv_attention_bridge_cleanup",
         "run_qkv_attention_prefix_cleanup",
         "run_pad_layout_cleanup",
+        "run_pad_mul_layout_cleanup",
         "run_normalization_pad_layout_cleanup",
         "run_input_unary_passthrough_cleanup",
         "run_hard_activation_passthrough_cleanup",
@@ -459,7 +460,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 68
+    assert len(calls) == 71
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -517,6 +518,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_boundary_input_batchmatmul_cleanup"
     ]
     assert len(boundary_batchmatmul_calls) == 4
+
+    pad_mul_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_pad_mul_layout_cleanup"
+    ]
+    assert len(pad_mul_calls) == 3
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:
@@ -682,6 +691,7 @@ def test_pad_layout_rewrites_have_single_owner() -> None:
     }
     assert "run_pad_layout_cleanup" in lowerer_names
     assert "run_normalization_pad_layout_cleanup" in lowerer_names
+    assert "run_pad_mul_layout_cleanup" in lowerer_names
 
 
 def test_pytorch_pure_utilities_do_not_import_torch() -> None:

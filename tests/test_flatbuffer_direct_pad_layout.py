@@ -5,6 +5,7 @@ import numpy as np
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pad_layout import (
     repair_channel_last_inputs_for_channel_first_pad,
+    run_pad_mul_layout_cleanup,
 )
 
 
@@ -108,3 +109,61 @@ def test_pad_layout_repair_rejects_unproven_shape_mismatch() -> None:
 
     assert stats == {"repaired_channel_last_inputs_for_channel_first_pad": 0}
     assert [str(op.op_type) for op in model_ir.operators] == ["PAD"]
+
+
+def test_pad_mul_runner_rejects_chain_without_post_transpose_before_snapshot() -> None:
+    model_ir = ModelIR("pad_mul_without_post_transpose")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 2, 3]),
+        "perm": _tensor(
+            "perm",
+            [4],
+            dtype="INT32",
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        ),
+        "t": _tensor("t", [1, 3, 2, 2]),
+        "pads": _tensor(
+            "pads",
+            [4, 2],
+            dtype="INT32",
+            data=np.zeros((4, 2), dtype=np.int32),
+        ),
+        "p": _tensor("p", [1, 3, 2, 2]),
+        "scale": _tensor(
+            "scale",
+            [1],
+            data=np.asarray([1.0], dtype=np.float32),
+        ),
+        "m": _tensor("m", [1, 3, 2, 2]),
+        "bias": _tensor(
+            "bias",
+            [1],
+            data=np.asarray([0.0], dtype=np.float32),
+        ),
+        "y": _tensor("y", [1, 3, 2, 2]),
+    }
+    model_ir.operators = [
+        OperatorIR("TRANSPOSE", ["x", "perm"], ["t"]),
+        OperatorIR("PAD", ["t", "pads"], ["p"]),
+        OperatorIR("MUL", ["p", "scale"], ["m"]),
+        OperatorIR("ADD", ["m", "bias"], ["y"]),
+    ]
+    diagnostics: list[dict] = []
+
+    stats = run_pad_mul_layout_cleanup(model_ir, diagnostics=diagnostics)
+
+    assert stats == {
+        "optimized_transpose_pad_mul_posttranspose_add_nhwc_chains": 0,
+    }
+    assert [str(op.op_type) for op in model_ir.operators] == [
+        "TRANSPOSE",
+        "PAD",
+        "MUL",
+        "ADD",
+    ]
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["status"] == "skipped"
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 0

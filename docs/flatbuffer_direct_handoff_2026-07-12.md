@@ -1343,6 +1343,36 @@ added. The next raw-family inventory should now consider the three Pad-Mul
 invocations, but only migrate the full structural unit after confirming their
 surrounding ordering and the earlier regression guard.
 
+The three Pad-Mul invocations are now migrated as their own complete indexed
+unit. `run_pad_mul_layout_cleanup` retains all three retry positions and their
+surrounding order under stable `LAYOUT_PLAN` ID
+`layout.pad_mul_posttranspose_add_nhwc`. Its exact guard checks the complete
+Transpose→Pad/MirrorPad→Mul→Transpose→Add topology, exclusive internal edges,
+inverse permutations, protected outputs, constant availability, Pad shape,
+and broadcast compatibility before snapshotting. Constant cloning, operator
+input/output rewiring, both structural Transpose removals, and pruning now use
+one shared `ModelIRGraphIndex` and the session `LayoutState`. The prior
+deletion-only partial-edit failure mode is therefore not present.
+
+Sequential verification completed with:
+
+- `4 passed, 785 deselected` for the Pad-Mul success/no-op runner contracts,
+  ordered-runner architecture, and irrelevant-graph preflight; the successful
+  rewrite used one full GraphIndex build and one snapshot, while the incomplete
+  topology used zero snapshots;
+- `4 passed, 757 deselected` for the corrected Pad-Mul regression together
+  with InstanceNorm, flattened global-normalization, and residual-Add Pad
+  fixtures;
+- `1082 passed, 5 deselected, 2 warnings in 138.57s` for the full direct suite;
+- Tier 2 `osnet025_Nx3x256x128.onnx` `-cotof` evaluation with every output
+  compared, `evaluation_pass=true`, and maximum absolute error
+  `2.193450927734375e-05`.
+
+The temporary Tier 2 output directory was deleted. All validation remained
+single-process and sequential, with no dependency or TensorFlow import added.
+Rerun the AST call-frequency inventory before selecting the next complete raw
+family.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work
