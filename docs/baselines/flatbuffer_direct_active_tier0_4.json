@@ -1656,9 +1656,10 @@
     {
       "tier": 2,
       "model": "object_detection_nanodet_2022nov_int8.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "dae58a21d739468bff2901c90ab76f9a6e48358f9ace5d57cfb04eca3dac1c7c"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "tflite_fail",
+      "tflite_max_abs": 2.570713758468628,
+      "error_signature_sha256": "690409b9b5b1031eb9a3b4df42db1ee2dc58ea4d4f2cedeee21172b084cca12a"
     },
     {
       "tier": 2,

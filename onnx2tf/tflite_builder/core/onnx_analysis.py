@@ -118,7 +118,11 @@ def _infer_missing_tensor_ranks_with_axis_constraints(
             return True
         return False
 
-    def _unify_ranks(names: List[str]) -> bool:
+    def _unify_ranks(
+        names: List[str],
+        *,
+        prove_short_shapes: bool = False,
+    ) -> bool:
         normalized = [str(v) for v in names if str(v) != ""]
         if len(normalized) == 0:
             return False
@@ -133,7 +137,7 @@ def _infer_missing_tensor_ranks_with_axis_constraints(
             changed = _set_min_rank(name, max_rank) or changed
             current = shape_map.get(name, None)
             if (
-                propagate_missing_leading_dims
+                (propagate_missing_leading_dims or prove_short_shapes)
                 and isinstance(current, list)
                 and 0 < len(current) < int(max_rank)
                 and name not in leading_dims_proven_missing
@@ -170,6 +174,32 @@ def _infer_missing_tensor_ranks_with_axis_constraints(
             if op in {"QuantizeLinear", "DequantizeLinear", "Identity"}:
                 if len(inputs) >= 1:
                     changed = _unify_ranks([inputs[0], outputs[0]]) or changed
+                continue
+
+            if op in {"QLinearLeakyRelu", "QLinearSigmoid", "QLinearSoftmax"}:
+                if len(inputs) >= 1:
+                    changed = _unify_ranks(
+                        [inputs[0], outputs[0]],
+                        prove_short_shapes=True,
+                    ) or changed
+                continue
+
+            if op == "Split":
+                if len(inputs) >= 1:
+                    rank_linked = [inputs[0]] + outputs
+                    changed = _unify_ranks(
+                        rank_linked,
+                        prove_short_shapes=True,
+                    ) or changed
+                    axis = _node_attr_int(node, "axis", 0)
+                    if axis >= 0:
+                        min_rank = int(axis) + 1
+                        for tensor_name in rank_linked:
+                            changed = _set_min_rank(
+                                tensor_name,
+                                min_rank,
+                                prove_missing_leading_dims=True,
+                            ) or changed
                 continue
 
             if op in {"Softmax", "LogSoftmax"}:
@@ -264,7 +294,10 @@ def _infer_missing_tensor_ranks_with_axis_constraints(
                 else:
                     data_inputs = list(inputs)
                 rank_linked = [str(v) for v in data_inputs if str(v) != ""] + [outputs[0]]
-                changed = _unify_ranks(rank_linked) or changed
+                changed = _unify_ranks(
+                    rank_linked,
+                    prove_short_shapes=(op == "QLinearConcat"),
+                ) or changed
                 axis = _node_attr_int(node, "axis", 1)
                 if axis >= 0:
                     min_rank = int(axis) + 1

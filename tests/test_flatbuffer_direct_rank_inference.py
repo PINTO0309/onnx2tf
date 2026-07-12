@@ -114,3 +114,66 @@ def test_flatten_rank_uses_downstream_batch_norm_channel_contract() -> None:
 
     assert shape_map["x"] == [-1, -1, -1]
     assert shape_map["flat"] == [-1, -1]
+
+
+def test_split_and_qlinear_unary_restore_shortened_rank_metadata() -> None:
+    x = helper.make_tensor_value_info("x", TensorProto.UINT8, [1, 4, 8, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.UINT8, [8, 8])
+    scale = numpy_helper.from_array(
+        np.asarray(0.1, dtype=np.float32),
+        name="scale",
+    )
+    zero = numpy_helper.from_array(
+        np.asarray(0, dtype=np.uint8),
+        name="zero",
+    )
+    graph = helper.make_graph(
+        [
+            helper.make_node("Split", ["x"], ["lhs", "rhs"], axis=1),
+            helper.make_node(
+                "QLinearLeakyRelu",
+                ["rhs", "scale", "zero", "scale", "zero"],
+                ["rhs_act"],
+                domain="com.microsoft",
+            ),
+            helper.make_node(
+                "QLinearConcat",
+                [
+                    "scale",
+                    "zero",
+                    "lhs",
+                    "scale",
+                    "zero",
+                    "rhs_act",
+                    "scale",
+                    "zero",
+                ],
+                ["y"],
+                axis=1,
+                domain="com.microsoft",
+            ),
+        ],
+        "shortened_quantized_rank_contract",
+        [x],
+        [y],
+        initializer=[scale, zero],
+        value_info=[
+            helper.make_tensor_value_info("lhs", TensorProto.UINT8, [8, 8]),
+            helper.make_tensor_value_info("rhs", TensorProto.UINT8, [8, 8]),
+            helper.make_tensor_value_info("rhs_act", TensorProto.UINT8, [8, 8]),
+        ],
+    )
+    model = helper.make_model(
+        graph,
+        opset_imports=[
+            helper.make_operatorsetid("", 17),
+            helper.make_operatorsetid("com.microsoft", 1),
+        ],
+    )
+
+    shape_map, _ = _extract_tensor_info(model)
+
+    assert shape_map["lhs"] == [-1, -1, 8, 8]
+    assert shape_map["rhs"] == [-1, -1, 8, 8]
+    assert shape_map["rhs_act"] == [-1, -1, 8, 8]
+    assert shape_map["y"] == [-1, -1, 8, 8]
