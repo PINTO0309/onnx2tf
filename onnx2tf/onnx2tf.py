@@ -59,6 +59,7 @@ from onnx2tf.utils.torch_optional import (
     OptionalPyTorchDependencyError,
     require_torch,
 )
+from onnx2tf.utils.runtime_memory import reclaim_unused_process_memory
 from onnx2tf.tflite_builder.preprocess.rules.cleanup_unused_initializers import (
     prune_unused_initializers_inplace,
 )
@@ -6418,6 +6419,12 @@ def convert(
         info('')
         info(Color.REVERSE(f'flatbuffer_direct fast path started'), '=' * 47)
         try:
+            # The direct backend consumes the normalized ONNX ModelProto and
+            # never uses the legacy GraphSurgeon graph again. Release its
+            # duplicated initializer arrays before ModelIR/export clones are
+            # created, then trim those transient clones before runtime checks.
+            graph = None
+            reclaim_unused_process_memory()
             try:
                 direct_outputs = _run_flatbuffer_direct_export(
                     export_output_folder_path=flatbuffer_direct_output_folder_path,
@@ -6442,6 +6449,7 @@ def convert(
                 raise RuntimeError(
                     'flatbuffer_direct fast path failed.'
                 ) from ex
+            reclaim_unused_process_memory()
             _finalize_flatbuffer_direct_export(
                 direct_outputs=direct_outputs,
                 source_label='flatbuffer_direct',

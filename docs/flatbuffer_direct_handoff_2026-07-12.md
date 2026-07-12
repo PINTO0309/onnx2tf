@@ -1,6 +1,57 @@
 # flatbuffer_direct refactor handoff — 2026-07-12
 
-## Current checkpoint — `fb-refactor2` after `67a34b1`
+## Current checkpoint — `fb-refactor2` after `d278bcf`
+
+The current checkpoint recovers `vit_b_encoder.onnx` and removes a general
+large-model evaluation bottleneck without changing conversion semantics.
+
+- The direct branch releases its legacy GraphSurgeon graph before ModelIR
+  lowering. That graph duplicated hundreds of megabytes of initializers and is
+  never consumed by the direct pipeline.
+- After export, unreachable ModelIR and serialization clones are collected.
+  On glibc systems, unused allocator arenas are returned to the OS; the trim is
+  optional and failure-tolerant on other libc/platform combinations.
+- Isolated evaluation no longer pickles a complete ONNX protobuf through the
+  multiprocessing pipe. It writes one managed evaluation model, passes only
+  its path, and lets ONNX Runtime open it directly. The ONNX worker is still
+  fully reaped before the TFLite worker starts.
+- The evaluation graph and temporary worker model are released at their phase
+  boundaries. Managed temporary files are removed after comparison.
+- LiteRT's default delegate is enabled only when every requested input shape is
+  statically positive. Dynamic-shape models retain the existing
+  delegate-disabled safety path. This is a capability rule, not a model-name
+  or model-size workaround.
+
+Before the fix, each backend was healthy in isolation (ONNX Runtime inference
+`2.68s`, LiteRT with XNNPACK `10.94s`), but conversion-plus-evaluation exceeded
+300 seconds because the parent retained several graph/protobuf copies while a
+delegate-free worker ran the ViT. The final sequential end-to-end run completed
+in `40.55s`, with peak RSS `4,632,968 KiB`. Its only output was compared with no
+skip:
+
+- `evaluation_pass=true`;
+- `max_abs=2.6226043701171875e-06`;
+- `mean_abs=1.260113801429541e-07`;
+- `rmse=1.9330447647107274e-07`;
+- cosine similarity `0.9999999999992181`.
+
+The expanded affected suite completed with `884 passed, 5 deselected,
+2 warnings in 113.33s`. Focused evaluator, subprocess, import-boundary, managed
+profile, and memory tests also passed. Every worker and model ran sequentially;
+no process pool or parallel pytest worker was used.
+
+The managed Tier 0–4 profile now records 355 passes, 6
+`missing_tflite_report`, 33 `tflite_fail`, and 26 excluded historical timeouts.
+There are 39 active non-passes. Every remaining missing-report entry has a
+documented unsupported semantic or invalid-source reason. The next unresolved
+accuracy group in managed order starts with `anime-gan-v2.onnx`.
+
+During this checkpoint, obsolete Goal-generated temporary conversions,
+diagnostic models, and historical bulk-run directories were removed from
+`/tmp`. Available filesystem space increased from approximately `63 GiB` to
+`157 GiB`; repository models and tracked files were not removed.
+
+## Previous checkpoint — `fb-refactor2` at `d278bcf`
 
 The next checkpoint recovers `tiny_decoder_11.onnx` by making dynamic
 ScatterND negative-index normalization safe for index tensors above rank 4.
@@ -46,7 +97,7 @@ There are 40 active non-passes remaining. Six missing-report entries already
 have explicit unsupported or invalid-source reasons. The next unresolved
 generic missing-report model in managed order is `vit_b_encoder.onnx` (Tier 3).
 
-## Previous checkpoint — `fb-refactor2` at `5b0a098`
+## Earlier checkpoint — `fb-refactor2` at `5b0a098`
 
 Commit `5b0a098` recovers `encoder.onnx` by replacing dynamic rank-4
 `GridSample` custom fallback with a TensorFlow-free builtin lowering.

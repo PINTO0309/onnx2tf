@@ -46,6 +46,23 @@ must not import TensorFlow. Image trace data is resized with the existing
 PyTorch dependency so TorchScript, Dynamo ONNX, and ExportedProgram generation
 does not require the TensorFlow optional extra.
 
+## Runtime-check memory boundary
+
+The direct backend releases the legacy GraphSurgeon graph before ModelIR
+lowering because no direct stage consumes it. After artifact export,
+unreachable ModelIR/serialization clones are collected and allocator caches
+are returned to the operating system when the platform exposes a safe
+heap-trim operation. Heap trimming is optional and must never affect conversion
+correctness.
+
+Isolated ONNX/TFLite checking remains strictly sequential: the ONNX worker
+finishes and is reaped before the TFLite worker starts. Large prepared ONNX
+graphs are materialized once in a managed temporary file and opened directly
+by ONNX Runtime; do not send serialized model bytes through a multiprocessing
+pipe. Evaluation permits the standard LiteRT delegate only when every runtime
+input dimension is statically positive. Dynamic-input models retain the
+delegate-free interpreter path to preserve its crash-isolation behavior.
+
 ## Regression workflow
 
 Create the local corpus inventory without copying model files into Git:
@@ -92,8 +109,8 @@ The profile fixes root-only discovery, the 1–1,999 node range, all 420 managed
 historical model records, and inference concurrency of one. Models classified
 as `timeout` in the current managed baseline remain recorded for provenance but
 are automatically excluded from subsequent runs. The active run therefore
-contains 394 models: 351 expected passes and 43 expected non-passes, excluding
-26 recorded timeouts. The active non-passes are 33 accuracy failures and 10
+contains 394 models: 355 expected passes and 39 expected non-passes, excluding
+26 recorded timeouts. The active non-passes are 33 accuracy failures and 6
 missing reports. Tier 5 models cannot be added because the profile loader
 rejects tiers above 4 and node ranges above 1,999.
 

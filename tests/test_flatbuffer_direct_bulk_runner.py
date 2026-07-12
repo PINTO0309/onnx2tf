@@ -998,8 +998,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 7,
-        "pass": 354,
+        "missing_tflite_report": 6,
+        "pass": 355,
         "tflite_fail": 33,
         "timeout": 26,
     }
@@ -1077,6 +1077,17 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
             "kv_cache",
             "offset",
         ],
+    }
+    vit_b_encoder_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "vit_b_encoder.onnx"
+    )
+    assert vit_b_encoder_entry == {
+        "tier": 3,
+        "model": "vit_b_encoder.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 2.6226043701171875e-06,
     }
     ssd_mobilenet_entry = next(
         entry
