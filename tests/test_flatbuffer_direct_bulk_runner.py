@@ -998,8 +998,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 8,
-        "pass": 353,
+        "missing_tflite_report": 7,
+        "pass": 354,
         "tflite_fail": 33,
         "timeout": 26,
     }
@@ -1054,6 +1054,29 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "model": "encoder.onnx",
         "baseline_classification": "pass",
         "tflite_max_abs": 1.9293278455734253e-05,
+    }
+    tiny_decoder_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "tiny_decoder_11.onnx"
+    )
+    assert tiny_decoder_entry == {
+        "tier": 3,
+        "model": "tiny_decoder_11.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 5.048513412475586e-05,
+        "shape_hints": [
+            "tokens:1,1",
+            "audio_features:1,1500,384",
+            "kv_cache:8,1,1,384",
+            "offset:1",
+        ],
+        "keep_shape_absolutely_input_names": [
+            "tokens",
+            "audio_features",
+            "kv_cache",
+            "offset",
+        ],
     }
     ssd_mobilenet_entry = next(
         entry

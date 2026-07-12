@@ -11,6 +11,7 @@ from onnx2tf.tflite_builder.op_builders.roi_align_utils import (
     add_memory_efficient_roi_align_source,
 )
 from onnx2tf.tflite_builder.op_builders.scatter_utils import (
+    add_rank_safe_negative_index_normalization,
     add_zero_safe_runtime_scatter_shape,
 )
 from onnx2tf.tflite_builder.op_builders.shared import (
@@ -1478,59 +1479,14 @@ def build_scatter_nd_op(node: Any, ctx: Any) -> None:
 
             needs_runtime_normalize = indices_const is None
             if needs_runtime_normalize:
-                zero_i32_name = ctx.add_const_tensor(
-                    f"{output_name}_scatter_nd_zero_i32",
-                    np.asarray(0, dtype=np.int32),
-                )
-                negative_mask_name = ctx.add_intermediate_tensor(
-                    f"{output_name}_scatter_nd_negative_mask",
-                    dtype="BOOL",
-                    shape=indices_meta_shape,
-                )
-                indices_plus_shape_name = ctx.add_intermediate_tensor(
-                    f"{output_name}_scatter_nd_indices_plus_shape",
-                    dtype="INT32",
-                    shape=indices_meta_shape,
-                )
-                indices_wrapped_name = ctx.add_intermediate_tensor(
-                    f"{output_name}_scatter_nd_indices_wrapped",
-                    dtype="INT32",
-                    shape=indices_meta_shape,
-                )
-                normalized_indices_name = ctx.add_intermediate_tensor(
-                    f"{output_name}_scatter_nd_indices_normalized",
-                    dtype="INT32",
-                    shape=indices_meta_shape,
-                )
-                ctx.add_operator(
-                    OperatorIR(
-                        op_type="LESS",
-                        inputs=[indices_for_scatter, zero_i32_name],
-                        outputs=[negative_mask_name],
-                    )
-                )
-                _add_binary_op(
+                indices_for_scatter = add_rank_safe_negative_index_normalization(
                     ctx=ctx,
-                    op_type="ADD",
-                    lhs_name=indices_for_scatter,
-                    rhs_name=shape_prefix_name,
-                    output_name=indices_plus_shape_name,
+                    indices_name=indices_for_scatter,
+                    shape_prefix_name=shape_prefix_name,
+                    name_prefix=f"{output_name}_scatter_nd_indices",
+                    indices_shape=indices_shape,
+                    indices_signature=indices_meta_shape,
                 )
-                _add_binary_op(
-                    ctx=ctx,
-                    op_type="FLOOR_MOD",
-                    lhs_name=indices_plus_shape_name,
-                    rhs_name=shape_prefix_name,
-                    output_name=indices_wrapped_name,
-                )
-                ctx.add_operator(
-                    OperatorIR(
-                        op_type="SELECT",
-                        inputs=[negative_mask_name, indices_wrapped_name, indices_for_scatter],
-                        outputs=[normalized_indices_name],
-                    )
-                )
-                indices_for_scatter = normalized_indices_name
 
     updates_shape = [int(v) if int(v) >= 0 else 1 for v in updates_meta_shape]
     ones_scalar = ctx.add_const_tensor(

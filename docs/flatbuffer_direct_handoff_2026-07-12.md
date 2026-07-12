@@ -1,6 +1,52 @@
 # flatbuffer_direct refactor handoff — 2026-07-12
 
-## Current checkpoint — `fb-refactor2` at `5b0a098`
+## Current checkpoint — `fb-refactor2` after `67a34b1`
+
+The next checkpoint recovers `tiny_decoder_11.onnx` by making dynamic
+ScatterND negative-index normalization safe for index tensors above rank 4.
+The implementation remains TensorFlow-free and introduces no dependency.
+
+- LiteRT's elementwise comparison broadcast path aborts in native code when
+  the result rank exceeds four. The decoder exposed this with eight `LESS`
+  operations over dynamic `[1,1,1,1,4]` ScatterND indices.
+- The generic ScatterND helper now temporarily coalesces the leading index
+  dimensions to `[-1,K]`, normalizes each negative coordinate against the
+  indexed data-shape prefix, and reshapes the normalized coordinates back to
+  their original runtime shape before both ScatterND operations.
+- Only the comparison/normalization representation is flattened. The public
+  output, updates, index-vector dimension, dynamic leading dimensions, and
+  ScatterND semantics are unchanged.
+- The implementation is isolated in `op_builders/scatter_utils.py`; the large
+  central `index.py` loses duplicated normalization construction rather than
+  gaining another rule.
+- A dedicated synthetic regression varies the dynamic leading dimension,
+  exercises negative coordinates in a rank-5 index tensor, verifies the safe
+  rank-2 `LESS` contract in ModelIR, and requires exact ONNX Runtime/TFLite
+  output equality.
+
+Sequential `tiny_decoder_11.onnx` verification used all four managed shape
+hints and `keep_shape_absolutely_input_names` values. All three outputs were
+compared with no skip:
+
+- `evaluation_pass=true`;
+- `max_abs=5.048513412475586e-05`;
+- `mean_abs=1.637148860798228e-05`;
+- `rmse=2.167510270660002e-05`;
+- cosine similarity `0.9999999999902514`.
+
+The affected sequential suite completed with `864 passed, 5 deselected,
+2 warnings in 89.20s`. The optional TensorFlow/import-boundary suite separately
+completed with `13 passed in 5.79s`. The five deselections and two float16
+overflow warnings are the existing environment-specific cases documented
+below. No parallel pytest worker or concurrent inference process was used.
+
+The managed Tier 0–4 profile now records 354 passes, 7
+`missing_tflite_report`, 33 `tflite_fail`, and 26 excluded historical timeouts.
+There are 40 active non-passes remaining. Six missing-report entries already
+have explicit unsupported or invalid-source reasons. The next unresolved
+generic missing-report model in managed order is `vit_b_encoder.onnx` (Tier 3).
+
+## Previous checkpoint — `fb-refactor2` at `5b0a098`
 
 Commit `5b0a098` recovers `encoder.onnx` by replacing dynamic rank-4
 `GridSample` custom fallback with a TensorFlow-free builtin lowering.

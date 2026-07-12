@@ -2427,8 +2427,8 @@
     {
       "tier": 3,
       "model": "tiny_decoder_11.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
+      "baseline_classification": "pass",
+      "tflite_max_abs": 5.048513412475586e-05,
       "shape_hints": [
         "tokens:1,1",
         "audio_features:1,1500,384",
@@ -2440,8 +2440,7 @@
         "audio_features",
         "kv_cache",
         "offset"
-      ],
-      "error_signature_sha256": "60a7f14dde51ab6933c52ca3c47b8d654492f29a58634f6c6f0d046c826ac790"
+      ]
     },
     {
       "tier": 3,
