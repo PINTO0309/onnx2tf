@@ -2302,16 +2302,16 @@
     {
       "tier": 3,
       "model": "model_70_2023_0220_32_2_1_grid_sample_bilinear_sim.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "917cdc0e2439aac49500847aff57afb2e8513c38a5ac22854dd908d979ddb1d9"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "tflite_fail",
+      "error_signature_sha256": "8b74d3b46e6a1b361bb4cc872e621174731e12ff1fecf609475dedf7e6a7463f",
+      "tflite_max_abs": 0.5681529566645622
     },
     {
       "tier": 3,
       "model": "model_70_2023_0303_32_2_1_grid_sample_bilinear_no_pad_10_squeeze.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "a5b0606107e4f7e4b6d9d0e49217d200b9af00ba1e72c0ca86a6d09d1edd15b9"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.007200837135314941
     },
     {
       "tier": 3,
