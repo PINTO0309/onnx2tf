@@ -116,6 +116,12 @@ rewrite that can retain one local NCHW adapter for legacy consumers. Padding
 axis rotation, dynamic metadata, quantization, fan-out slots, and output names
 are preserved; lowerer symbols remain compatibility wrappers.
 
+The same Pad module owns the guarded
+`Transpose → Pad → Mul → Transpose → Add` NHWC propagation rewrite. It proves
+static broadcast compatibility, rotates Pad and rank-four Mul constants only
+when safe, preserves shared constants by cloning, updates metadata, and keeps
+the legacy lowerer entry point as a wrapper.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

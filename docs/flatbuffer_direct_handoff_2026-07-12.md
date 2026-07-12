@@ -215,10 +215,22 @@ Verification completed with:
 - `1009 passed, 5 deselected, 2 warnings in 125.61s` for the full sequential
   direct suite.
 
+The guarded `Transpose → Pad → Mul → Transpose → Add` rewrite has now joined
+`passes/pad_layout.py`. The exact implementation moved behind a legacy wrapper.
+Its existing characterization preserves broadcast proof, Pad-axis and Mul
+constant rotation, shared-constant cloning, inverse permutations, metadata,
+and output rewiring.
+
+Verification completed with:
+
+- `19 passed, 758 deselected` for focused architecture, Pad repair, and the
+  Pad/Mul/Add characterization;
+- `1009 passed, 5 deselected, 2 warnings in 125.75s` for the full sequential
+  direct suite.
+
 The next Pad increment can evaluate the adjacent normalization-subgraph Pad
 rewrite. Because that topology is substantially larger, first map its helper
-dependencies and existing characterization coverage; otherwise select the
-smaller Pad/Mul/post-transpose/Add rewrite as a separate guarded family.
+dependencies and existing characterization coverage before moving it.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
