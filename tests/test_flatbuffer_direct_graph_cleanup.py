@@ -14,6 +14,7 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_duplicate_transpose_fanout,
     run_clamp_cleanup,
     run_duplicate_fanout_cleanup,
+    run_maximum_zero_relu_cleanup,
     run_squeeze_reshape_identity_cleanup,
 )
 
@@ -335,6 +336,76 @@ def test_ordered_clamp_cleanup_skips_snapshot_without_chain(monkeypatch) -> None
     assert stats == {"rewritten_maximum_minimum_relu0to1_chains": 0}
     assert snapshot_count == 0
     assert [op.op_type for op in model_ir.operators] == ["MAXIMUM"]
+
+
+def test_ordered_maximum_zero_relu_cleanup_updates_layout_and_diagnostics(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("ordered_maximum_zero_relu")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["out"]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 3]),
+        "zero": _tensor("zero", [], data=np.asarray(0.0, dtype=np.float32)),
+        "out": _tensor("out", [1, 3]),
+    }
+    model_ir.operators = [OperatorIR("MAXIMUM", ["x", "zero"], ["out"])]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_maximum_zero_relu_cleanup(
+        model_ir,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"rewritten_maximum_with_zero_input2_to_relu": 1}
+    assert refresh_count == 1
+    assert model_ir.operators[0].op_type == "RELU"
+    assert model_ir.operators[0].inputs == ["x"]
+    assert "zero" not in model_ir.tensors
+    assert "zero" not in layout_state.logical
+    assert layout_state.validate_against_model_ir(model_ir) == []
+    assert diagnostics[0]["code"] == "canonicalize.maximum_zero_relu"
+    assert diagnostics[0]["status"] == "changed"
+
+
+def test_ordered_maximum_zero_relu_cleanup_skips_snapshot_without_maximum(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("no_maximum")
+    model_ir.inputs = ["x", "y"]
+    model_ir.outputs = ["out"]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 3]),
+        "y": _tensor("y", [1, 3]),
+        "out": _tensor("out", [1, 3]),
+    }
+    model_ir.operators = [OperatorIR("ADD", ["x", "y"], ["out"])]
+    snapshot_count = 0
+    original_snapshot = ModelIRPassState.snapshot
+
+    def counted_snapshot(state: ModelIRPassState) -> ModelIR:
+        nonlocal snapshot_count
+        snapshot_count += 1
+        return original_snapshot(state)
+
+    monkeypatch.setattr(ModelIRPassState, "snapshot", counted_snapshot)
+
+    stats = run_maximum_zero_relu_cleanup(model_ir)
+
+    assert stats == {"rewritten_maximum_with_zero_input2_to_relu": 0}
+    assert snapshot_count == 0
+    assert model_ir.operators[0].op_type == "ADD"
 
 
 def test_squeeze_reshape_cleanup_uses_one_incremental_index_refresh(

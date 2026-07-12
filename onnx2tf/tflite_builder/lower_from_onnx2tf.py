@@ -110,12 +110,14 @@ from onnx2tf.tflite_builder.passes.high_rank_matmul import (
     _compress_static_high_rank_batch_matmul as _compress_static_high_rank_batch_matmul_pass,
 )
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
+    _optimize_maximum_with_zero_input2_to_relu as _optimize_maximum_with_zero_input2_to_relu_pass,
     _optimize_squeeze_reshape_identity_chains as _optimize_squeeze_reshape_identity_chains_pass,
     _optimize_maximum_minimum_relu0to1_chains as _optimize_maximum_minimum_relu0to1_chains_pass,
     _optimize_duplicate_reshape_fanout as _optimize_duplicate_reshape_fanout_pass,
     _optimize_duplicate_transpose_fanout as _optimize_duplicate_transpose_fanout_pass,
     run_clamp_cleanup,
     run_duplicate_fanout_cleanup,
+    run_maximum_zero_relu_cleanup,
     run_squeeze_reshape_identity_cleanup,
 )
 from onnx2tf.tflite_builder.passes.attention_layout import (
@@ -9327,55 +9329,7 @@ def _optimize_maximum_minimum_relu0to1_chains(
 
 
 def _optimize_maximum_with_zero_input2_to_relu(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Rewrite MAXIMUM(x, 0) into RELU(x) when the second input is singleton zero.
-
-    Target:
-      X --MAXIMUM(X, 0.0)--> Y
-
-    Rewrite:
-      X --RELU--> Y
-
-    Notes:
-    - This pass intentionally checks input2 only to match ONNX Max patterns that
-      lower as MAXIMUM(data, const_zero).
-    - Restrict to FLOAT16/FLOAT32 tensors for safety.
-    """
-    rewritten = 0
-    atol = 1e-6
-
-    for op in model_ir.operators:
-        if str(op.op_type) != "MAXIMUM" or len(op.inputs) != 2 or len(op.outputs) != 1:
-            continue
-
-        data_name = str(op.inputs[0])
-        const_name = str(op.inputs[1])
-        if not _is_singleton_constant_tensor(model_ir, const_name):
-            continue
-        const_value = _read_singleton_constant_float(model_ir, const_name)
-        if const_value is None or not np.isclose(float(const_value), 0.0, atol=atol):
-            continue
-
-        data_tensor = model_ir.tensors.get(data_name, None)
-        if data_tensor is None:
-            continue
-        data_dtype = str(data_tensor.dtype).upper()
-        if data_dtype not in {"FLOAT16", "FLOAT32"}:
-            continue
-
-        op.op_type = "RELU"
-        op.version = 1
-        _set_operator_inputs(
-            model_ir=model_ir,
-            op=op,
-            new_inputs=[data_name],
-        )
-        op.options = {}
-        rewritten += 1
-
-    if rewritten > 0:
-        _prune_unused_tensors(model_ir)
-    return {"rewritten_maximum_with_zero_input2_to_relu": int(rewritten)}
+    return _optimize_maximum_with_zero_input2_to_relu_pass(model_ir)
 
 
 def _optimize_fuse_pseudo_leakyrelu_chains(model_ir: ModelIR) -> Dict[str, int]:
@@ -66122,7 +66076,11 @@ def lower_onnx_to_ir(
     # NHWC<->NCHW unary wrappers (e.g. HardSigmoid clamp). Re-run the
     # strict transpose-unary passthrough fold once in terminal stage.
     _optimize_transpose_unary_passthrough_chains(model_ir)
-    _optimize_maximum_with_zero_input2_to_relu(model_ir)
+    run_maximum_zero_relu_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_sinet_shuffle_residual_transpose_chains(model_ir)
     _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
     _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)

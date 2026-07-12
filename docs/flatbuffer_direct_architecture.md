@@ -200,6 +200,15 @@ skips transactional snapshots when no Maximum-to-Minimum edge exists, and
 removes pruned intermediate layouts together with their tensors. The legacy
 raw rewrite remains available as a compatibility wrapper target.
 
+The adjacent float-only `Maximum(data, scalar-zero) → Relu` canonicalization is
+owned by the same graph cleanup family. Its input2-only constant guard and
+FLOAT16/FLOAT32 restriction remain unchanged. Production invokes
+`run_maximum_zero_relu_cleanup` at the original terminal position with stable
+ID `canonicalize.maximum_zero_relu`; indexed input mutation, LayoutState-aware
+pruning, transaction rollback, precondition skip, and internal diagnostics use
+the same contracts as scalar zero-to-one clamp cleanup. The legacy lowerer
+symbol delegates to the family implementation.
+
 Squeeze/Reshape identity cleanup also uses the differential graph index. It
 normalizes explicit or inferred squeeze axes, proves the squeezed and restored
 shapes, rewires only consumers of the round-trip output, then removes both

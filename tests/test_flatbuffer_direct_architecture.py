@@ -353,6 +353,7 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
     function_names = {
         "_optimize_squeeze_reshape_identity_chains",
         "_optimize_maximum_minimum_relu0to1_chains",
+        "_optimize_maximum_with_zero_input2_to_relu",
         "_optimize_duplicate_reshape_fanout",
         "_optimize_duplicate_transpose_fanout",
     }
@@ -394,6 +395,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_clamp_cleanup",
         "run_duplicate_fanout_cleanup",
         "run_mixed_attention_layout_cleanup",
+        "run_maximum_zero_relu_cleanup",
         "run_squeeze_reshape_identity_cleanup",
     }
     tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
@@ -406,7 +408,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 19
+    assert len(calls) == 20
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"

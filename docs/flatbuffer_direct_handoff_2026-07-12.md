@@ -681,6 +681,29 @@ can share the scalar constant reader, differential index, precondition,
 transaction, LayoutState, and diagnostics patterns established by the
 zero-to-one clamp pass. Preserve its raw legacy helper and exact terminal order.
 
+The float-only `Maximum(data, scalar-zero) → Relu` rewrite now lives in
+`passes/graph_cleanup.py`, with the lowerer symbol retained as a compatibility
+wrapper. The original input2-only, singleton-zero, output-arity, and
+FLOAT16/FLOAT32 guards are unchanged. Its production call remains in the exact
+terminal position but now uses `run_maximum_zero_relu_cleanup`, stable ID
+`canonicalize.maximum_zero_relu`, the shared differential index and
+LayoutState, transactional validation, precondition skip, and session
+diagnostics. The production diagnostic-wiring architecture assertion now
+covers all 20 ordered runner invocations.
+
+Verification completed with:
+
+- `5 passed, 784 deselected` for positive/no-op runner behavior, existing raw
+  guard characterizations, implementation ownership, and production wiring;
+- `1039 passed, 5 deselected, 2 warnings in 130.97s` for the full sequential
+  direct suite.
+
+The next candidate should be chosen from another single-call generic terminal
+cleanup, but avoid model-named SiNet chains. Audit `fold consecutive Mul
+constants`, redundant integer Cast cleanup, and terminal Q/DQ cleanup for
+existing generic fixtures and differential-index readiness; select the
+smallest family with complete positive and guard coverage.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

@@ -477,6 +477,97 @@ def run_clamp_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
+def _optimize_maximum_with_zero_input2_to_relu(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Rewrite float Maximum(data, scalar-zero) operators to Relu."""
+
+    rewritten = 0
+    atol = 1e-6
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+
+    for op in model_ir.operators:
+        if str(op.op_type) != "MAXIMUM" or len(op.inputs) != 2 or len(op.outputs) != 1:
+            continue
+
+        data_name = str(op.inputs[0])
+        const_name = str(op.inputs[1])
+        if not _is_singleton_constant_tensor(model_ir, const_name):
+            continue
+        const_value = _read_singleton_constant_float(model_ir, const_name)
+        if const_value is None or not np.isclose(float(const_value), 0.0, atol=atol):
+            continue
+
+        data_tensor = model_ir.tensors.get(data_name, None)
+        if data_tensor is None:
+            continue
+        if str(data_tensor.dtype).upper() not in {"FLOAT16", "FLOAT32"}:
+            continue
+
+        op.op_type = "RELU"
+        op.version = 1
+        _set_operator_inputs(
+            model_ir=model_ir,
+            op=op,
+            new_inputs=[data_name],
+            graph_index=graph_index,
+        )
+        op.options = {}
+        rewritten += 1
+
+    if rewritten > 0:
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+    return {"rewritten_maximum_with_zero_input2_to_relu": int(rewritten)}
+
+
+def run_maximum_zero_relu_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run guarded Maximum(data, zero) canonicalization transactionally."""
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        return any(
+            str(op.op_type) == "MAXIMUM"
+            and len(op.inputs) == 2
+            and len(op.outputs) == 1
+            for op in pass_state.model_ir.operators
+        )
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_maximum_with_zero_input2_to_relu(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("rewritten_maximum_with_zero_input2_to_relu", 0)),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="canonicalize.maximum_zero_relu",
+                phase=PassPhase.CANONICALIZE,
+                callback=_run,
+                precondition=_has_candidate,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={"rewritten_maximum_with_zero_input2_to_relu": 0},
+        diagnostics=diagnostics,
+    )
+    return {str(key): int(value) for key, value in details.items()}
+
+
 def _optimize_squeeze_reshape_identity_chains(
     model_ir: ModelIR,
     *,
