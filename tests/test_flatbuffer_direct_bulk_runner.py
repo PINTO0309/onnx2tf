@@ -965,6 +965,33 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["model_options"]["silero_vad.onnx"] == {
         "keep_shape_absolutely_input_names": ["input", "state", "sr"],
     }
+    profile_payload = json.loads(profile_path.read_text(encoding="utf-8"))
+    inverse_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "inverse_11.onnx"
+    )
+    assert inverse_entry["baseline_classification"] == "missing_tflite_report"
+    assert inverse_entry["baseline_reason"] == (
+        "unsupported_exact_inverse_matrix_size_224"
+    )
+    assert inverse_entry["error_signature_sha256"] == (
+        "c1bdaa58f8b1dda9b86c24ce66f509320a6201e08f6ebfd35b4ecb058109d885"
+    )
+    string_normalizer_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "string_normalizer_11.onnx"
+    )
+    assert string_normalizer_entry["baseline_classification"] == (
+        "missing_tflite_report"
+    )
+    assert string_normalizer_entry["baseline_reason"] == (
+        "unsupported_stock_tflite_string_normalizer"
+    )
+    assert string_normalizer_entry["error_signature_sha256"] == (
+        "2623d1f687770e4aade4749af32963fca446f80b3dd131e7061bcb13ae225722"
+    )
     assert profile["model_options"]["tiny_decoder_11.onnx"] == {
         "shape_hints": [
             "tokens:1,1",

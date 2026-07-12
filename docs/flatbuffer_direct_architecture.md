@@ -103,6 +103,27 @@ lexically captured tensors that do not exist in the serialized ONNX, including
 all four LSTM weight/bias captures. It cannot provide an ONNX reference result
 for an accuracy-preserving promotion.
 
+`inverse_11.onnx` also remains an active non-pass, with the normalized reason
+`unsupported_exact_inverse_matrix_size_224`. Stock TFLite has matrix-diagonal
+and batch-matmul operators but no matrix solve/inverse operator. The model asks
+for three 224x224 inverses after bilinear upsampling. With the fixed evaluation
+seed, the matrices have condition numbers from approximately `8.0e9` to
+`9.2e10`, and ONNX Runtime produces magnitudes up to approximately `8.3e7`.
+Even a float64 NumPy inverse rounded to float32 differs from the ONNX Runtime
+reference by `1.7e7` to `1.2e8`, so substituting a different approximate
+algorithm cannot satisfy the required `1e-1` absolute-error limit. The existing
+custom-op fallback is retained; no inaccurate builtin approximation is emitted.
+
+`string_normalizer_11.onnx` remains an active non-pass with the normalized
+reason `unsupported_stock_tflite_string_normalizer`. It requires runtime string
+case conversion, locale-aware comparison, and stopword filtering. Stock TFLite
+supports string tensors and hash tables but has no string normalization,
+case-folding, tokenization, or filtering builtin, so the existing
+`ONNX_STRINGNORMALIZER` custom fallback is the only semantics-preserving
+artifact. The reference model additionally requests the `en_US` locale, which
+is not installed in the core validation environment. No locale package or
+string-processing dependency is added by this project.
+
 ### Recorded Tier 0 baseline
 
 The recursive Tier 0 corpus at commit `c4f3b7a` contains 190 models. Its

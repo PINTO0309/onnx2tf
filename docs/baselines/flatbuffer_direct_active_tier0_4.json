@@ -480,8 +480,8 @@
       "tier": 0,
       "model": "inverse_11.onnx",
       "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "2ddafacaad52dc057613699a3760e632fd4e9b92f73028238cd8943aa9e4966a"
+      "baseline_reason": "unsupported_exact_inverse_matrix_size_224",
+      "error_signature_sha256": "c1bdaa58f8b1dda9b86c24ce66f509320a6201e08f6ebfd35b4ecb058109d885"
     },
     {
       "tier": 0,
@@ -692,8 +692,8 @@
       "tier": 0,
       "model": "string_normalizer_11.onnx",
       "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109"
+      "baseline_reason": "unsupported_stock_tflite_string_normalizer",
+      "error_signature_sha256": "2623d1f687770e4aade4749af32963fca446f80b3dd131e7061bcb13ae225722"
     },
     {
       "tier": 0,
