@@ -957,9 +957,9 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 31,
+        "missing_tflite_report": 30,
         "pass": 335,
-        "tflite_fail": 28,
+        "tflite_fail": 29,
         "timeout": 26,
     }
     assert profile["model_options"]["tiny_decoder_11.onnx"] == {

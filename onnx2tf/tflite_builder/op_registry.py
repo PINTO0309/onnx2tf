@@ -6076,10 +6076,13 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
     mode = str(node.attrs.get("mode", "bilinear")).lower()
     padding_mode = str(node.attrs.get("padding_mode", "zeros")).lower()
     align_corners = int(node.attrs.get("align_corners", 0))
-    if mode != "bilinear":
+    if mode not in {"bilinear", "linear"}:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
-            message=f"GridSample supports mode=bilinear only in flatbuffer_direct. mode={mode}",
+            message=(
+                "GridSample supports mode=bilinear/linear only in "
+                f"flatbuffer_direct. mode={mode}"
+            ),
             node_name=node.name,
             node_op=node.op,
         )
