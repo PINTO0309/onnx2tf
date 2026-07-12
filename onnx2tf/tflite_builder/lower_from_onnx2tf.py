@@ -146,6 +146,7 @@ from onnx2tf.tflite_builder.passes.attention_layout import (
     run_conv_attention_layout_cleanup,
     run_mixed_attention_layout_cleanup,
     run_qkv_attention_bridge_cleanup,
+    run_qkv_attention_prefix_cleanup,
 )
 from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     _optimize_asin_transpose_passthrough_chains as _optimize_asin_transpose_passthrough_chains_pass,
@@ -65198,10 +65199,11 @@ def lower_onnx_to_ir(
         _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
         _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
         _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
-        _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(model_ir)
-        _optimize_attention_qkv_slice_replace_gather_reshape_chains(model_ir)
-        _optimize_attention_qkv_slice_to_split_chains(model_ir)
-        _optimize_attention_split_post_reshape_collapse_chains(model_ir)
+        run_qkv_attention_prefix_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_qkv_attention_bridge_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -65314,10 +65316,11 @@ def lower_onnx_to_ir(
     _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
     _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
     _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
-    _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(model_ir)
-    _optimize_attention_qkv_slice_replace_gather_reshape_chains(model_ir)
-    _optimize_attention_qkv_slice_to_split_chains(model_ir)
-    _optimize_attention_split_post_reshape_collapse_chains(model_ir)
+    run_qkv_attention_prefix_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_qkv_attention_bridge_cleanup(
         model_ir,
         layout_state=session.layout_state,

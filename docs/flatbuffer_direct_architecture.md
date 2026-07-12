@@ -225,6 +225,25 @@ removes them structurally. Output names, shapes, the axis-zero scalar Gather
 guard, exclusive Gather-output consumer guard, and two/three-branch handling
 remain unchanged; pruning also removes stale LayoutState entries.
 
+The initial shared QKV gather/reshape/transpose hoist is differential-index
+aware too. It inserts the shared Reshape and Transpose through the structural
+index API, retargets each Gather through indexed input mutation, rewires the
+old branch-transpose output consumers through the index, and removes the
+per-branch Reshape/Transpose pairs by indexed identity. Its public outputs and
+two/three-branch order remain stable and LayoutState follows tensor pruning.
+
+At the two production locations where these four rewrites were contiguous,
+`run_qkv_attention_prefix_cleanup` now registers them as one `LAYOUT_PLAN`
+group with priorities 10–40 and stable IDs
+`layout.qkv_gather_layout_hoist`, `layout.qkv_gather_to_slice`,
+`layout.qkv_slice_to_split`, and `layout.qkv_split_reshape_collapse`. The group
+shares one ModelIRGraphIndex and LayoutState across the dependency chain. A
+model-only op summary avoids state construction on irrelevant graphs; precise
+indexed topology guards inspect Gather index sets, Slice chunks, and
+Split/Reshape consumers before taking each transactional snapshot. The three
+later QKV bridge-tail calls remain a separate two-spec runner because one is a
+standalone terminal recovery position.
+
 Generic structural deduplication lives in `passes/graph_cleanup.py`. Duplicate
 Transpose fan-out cleanup uses one `ModelIRGraphIndex`, rewires only indexed
 consumers through the lineage-aware bulk input replacement helper, and removes

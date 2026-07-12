@@ -40,6 +40,7 @@ from onnx2tf.tflite_builder.passes.attention_layout import (
     run_conv_attention_layout_cleanup,
     run_mixed_attention_layout_cleanup,
     run_qkv_attention_bridge_cleanup,
+    run_qkv_attention_prefix_cleanup,
 )
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_builders.norm import build_instance_normalization_op
@@ -36488,7 +36489,7 @@ def test_flatbuffer_direct_transpose_unary_transpose_reshape_expanddims_transpos
     assert [str(v) for v in list(extra_add.inputs)][0] == bridge_out_name
 
 
-def test_flatbuffer_direct_attention_qkv_gather_reshape_transpose_hoist() -> None:
+def test_flatbuffer_direct_attention_qkv_gather_reshape_transpose_hoist(monkeypatch) -> None:
     model_ir = ModelIR("attention_qkv_gather_reshape_transpose_hoist_test")
     model_ir.inputs = ["src"]
     model_ir.outputs = ["z0", "z1", "z2"]
@@ -36604,8 +36605,19 @@ def test_flatbuffer_direct_attention_qkv_gather_reshape_transpose_hoist() -> Non
         OperatorIR(op_type="RESHAPE", inputs=["t2", "z2_shape"], outputs=["z2"], options={"newShape": [1, h, t, c]}),
     ]
 
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
     stats = _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(model_ir)
     assert stats["optimized_attention_qkv_gather_reshape_transpose_hoist_chains"] == 1
+    assert refresh_count == 1
 
     # 3 branch transposes are replaced by one shared transpose.
     transpose_ops = [op for op in model_ir.operators if str(op.op_type) == "TRANSPOSE"]
@@ -37379,12 +37391,24 @@ def test_flatbuffer_direct_attention_kv_slice_to_split_pipeline() -> None:
         OperatorIR(op_type="RESHAPE", inputs=["t1", "z1_shape"], outputs=["z1"], options={"newShape": [1, h, t, c]}),
     ]
 
-    stats0 = _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(model_ir)
-    assert stats0["optimized_attention_qkv_gather_reshape_transpose_hoist_chains"] == 1
-    stats1 = _optimize_attention_qkv_slice_replace_gather_reshape_chains(model_ir)
-    assert stats1["optimized_attention_qkv_slice_replace_gather_reshape_chains"] == 1
-    stats2 = _optimize_attention_qkv_slice_to_split_chains(model_ir)
-    assert stats2["optimized_attention_qkv_slice_to_split_chains"] == 1
+    diagnostics: list[dict[str, Any]] = []
+    stats = run_qkv_attention_prefix_cleanup(model_ir, diagnostics=diagnostics)
+    assert stats["optimized_attention_qkv_gather_reshape_transpose_hoist_chains"] == 1
+    assert stats["optimized_attention_qkv_slice_replace_gather_reshape_chains"] == 1
+    assert stats["optimized_attention_qkv_slice_to_split_chains"] == 1
+    assert stats["optimized_attention_split_post_reshape_collapse_chains"] == 0
+    assert [event["code"] for event in diagnostics] == [
+        "layout.qkv_gather_layout_hoist",
+        "layout.qkv_gather_to_slice",
+        "layout.qkv_slice_to_split",
+        "layout.qkv_split_reshape_collapse",
+    ]
+    assert [event["status"] for event in diagnostics] == [
+        "changed",
+        "changed",
+        "changed",
+        "skipped",
+    ]
 
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("GATHER") == 0

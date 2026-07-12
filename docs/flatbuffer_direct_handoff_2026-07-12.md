@@ -1106,6 +1106,49 @@ gather/reshape/transpose hoisting. Preserve its branch order, public outputs,
 and insertion positions before replacing the two production four-step
 sequences.
 
+That prerequisite and the prefix grouping are now complete. Shared QKV
+gather/reshape/transpose hoisting uses one ModelIRGraphIndex for both shared
+operator insertions, all Gather and downstream rewires, branch-operator
+identity lookup, and structural removal. Its existing strict two/three-branch,
+axis-zero, scalar index, exclusive chain, permutation, shape, and public-output
+guards remain intact.
+
+Both exactly contiguous four-step production sequences now call
+`run_qkv_attention_prefix_cleanup`. Stable `LAYOUT_PLAN` IDs execute in the
+original dependency order:
+
+1. `layout.qkv_gather_layout_hoist`;
+2. `layout.qkv_gather_to_slice`;
+3. `layout.qkv_slice_to_split`;
+4. `layout.qkv_split_reshape_collapse`.
+
+All four specs share one state/index/layout group and validate after each
+transaction. The separate three-call QKV bridge-tail runner is unchanged. The
+state-level guards were tightened after a real RTMDet probe revealed four
+avoidable no-op snapshots: Gather index sets must now form a valid two/three
+branch source, and Slice begin/size constants must describe complete equal
+contiguous chunks. The same probe now records zero prefix snapshots and
+fingerprints across both invocations.
+
+Sequential verification completed with:
+
+- `5 passed, 755 deselected` for individual prefix rewrites and the two-branch
+  ordered end-to-end pipeline;
+- `24 passed` for architecture and deterministic efficiency checks;
+- `1080 passed, 5 deselected, 2 warnings in 137.63s` for the full direct suite;
+- Tier 2 `rtmDet-tiny-res640-fp32.onnx` `-cotof` evaluation with every output
+  compared, `evaluation_pass=true`, maximum absolute error
+  `0.00018310546875`, and zero prefix snapshots.
+
+The temporary output, log, and private metrics file were deleted. Execution
+remained single-process and sequential; no dependency or TensorFlow import was
+introduced.
+
+Next use managed pass metrics to choose another repeated generic layout family.
+Do not merge the prefix and tail QKV runners: their third tail invocation is a
+late recovery pass with no matching prefix, so merging would change exposure
+and ordering semantics.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

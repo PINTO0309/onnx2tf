@@ -1779,6 +1779,9 @@ def run_qkv_attention_bridge_cleanup(
 
 def _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Hoist shared QKV/KV layout transforms before per-branch GATHERs.
@@ -1796,6 +1799,7 @@ def _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(
       g_i' --RESHAPE([1,H,T,C])--> z_i
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     candidate_branch_counts = [3, 2]
 
     def _shape_list(name: str) -> Optional[List[int]]:
@@ -1836,7 +1840,7 @@ def _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for source_name, user_indices in list(consumers.items()):
@@ -2048,8 +2052,8 @@ def _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(
                 options={},
             )
             insert_base_idx = min(int(gather_branches[idx]["gather_idx"]) for idx in sorted(list(gather_indices)))
-            model_ir.operators.insert(int(insert_base_idx), shared_reshape_op)
-            model_ir.operators.insert(int(insert_base_idx) + 1, shared_transpose_op)
+            graph_index.insert_operator(int(insert_base_idx), shared_reshape_op)
+            graph_index.insert_operator(int(insert_base_idx) + 1, shared_transpose_op)
 
             remove_indices: set[int] = set()
             for gather_index in sorted(list(gather_indices)):
@@ -2061,6 +2065,7 @@ def _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(
                     op=gather_op,
                     input_index=0,
                     new_input_name=str(shared_transpose_out_name),
+                    graph_index=graph_index,
                 )
                 gather_tensor = model_ir.tensors.get(gather_out_name, None)
                 if gather_tensor is not None:
@@ -2071,22 +2076,17 @@ def _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(
                     model_ir,
                     str(branch["transpose_out_name"]),
                     gather_out_name,
+                    graph_index=graph_index,
                 )
-                reshape1_remove_idx = next(
-                    (idx for idx, op in enumerate(model_ir.operators) if op is branch["reshape1_op"]),
-                    None,
-                )
-                transpose_remove_idx = next(
-                    (idx for idx, op in enumerate(model_ir.operators) if op is branch["transpose_op"]),
-                    None,
-                )
+                reshape1_remove_idx = graph_index.operator_index(branch["reshape1_op"])
+                transpose_remove_idx = graph_index.operator_index(branch["transpose_op"])
                 if reshape1_remove_idx is not None:
                     remove_indices.add(int(reshape1_remove_idx))
                 if transpose_remove_idx is not None:
                     remove_indices.add(int(transpose_remove_idx))
 
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -2095,8 +2095,273 @@ def _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_attention_qkv_gather_reshape_transpose_hoist_chains": int(rewritten)}
+
+
+def run_qkv_attention_prefix_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run the contiguous four-stage QKV branch canonicalization prefix."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        gather_count = 0
+        reshape_count = 0
+        slice_count = 0
+        has_split = False
+        for visited, op in enumerate(candidate_model.operators, start=1):
+            op_type = str(op.op_type)
+            gather_count += int(op_type == "GATHER")
+            reshape_count += int(op_type == "RESHAPE")
+            slice_count += int(op_type == "SLICE")
+            has_split = has_split or op_type == "SPLIT"
+            gather_possible = gather_count >= 2 and reshape_count >= 2
+            slice_possible = slice_count >= 2
+            collapse_possible = has_split and reshape_count >= 2
+            if gather_possible or slice_possible or collapse_possible:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_gather_reshape_candidate(
+        pass_state: ModelIRPassState,
+        *,
+        require_transpose: bool,
+    ) -> bool:
+        branch_indices: Dict[str, set[int]] = {}
+        for gather_op in pass_state.model_ir.operators:
+            if (
+                str(gather_op.op_type) != "GATHER"
+                or len(gather_op.inputs) < 2
+                or len(gather_op.outputs) != 1
+            ):
+                continue
+            axis_value = dict(gather_op.options).get("axis", 0)
+            if isinstance(axis_value, list):
+                if len(axis_value) != 1:
+                    continue
+                axis_value = axis_value[0]
+            try:
+                if int(axis_value) != 0:
+                    continue
+            except Exception:
+                continue
+            index_values = _read_const_ints_from_tensor(
+                pass_state.model_ir.tensors.get(str(gather_op.inputs[1]))
+            )
+            if index_values is None or len(index_values) != 1:
+                continue
+            gather_index = int(index_values[0])
+            if gather_index not in {0, 1, 2}:
+                continue
+            gather_users = pass_state.graph_index.consumer_indices(str(gather_op.outputs[0]))
+            if len(gather_users) != 1:
+                continue
+            reshape_op = pass_state.model_ir.operators[int(gather_users[0])]
+            if str(reshape_op.op_type) != "RESHAPE" or len(reshape_op.outputs) != 1:
+                continue
+            if require_transpose:
+                reshape_users = pass_state.graph_index.consumer_indices(str(reshape_op.outputs[0]))
+                if len(reshape_users) != 1:
+                    continue
+                transpose_op = pass_state.model_ir.operators[int(reshape_users[0])]
+                if not (
+                    str(transpose_op.op_type) == "TRANSPOSE"
+                    and _read_transpose_perm(pass_state.model_ir, transpose_op) == [1, 0, 2]
+                ):
+                    continue
+            source_name = str(gather_op.inputs[0])
+            branch_indices.setdefault(source_name, set()).add(gather_index)
+            source_tensor = pass_state.model_ir.tensors.get(source_name)
+            source_dim = (
+                int(source_tensor.shape[0])
+                if source_tensor is not None and len(source_tensor.shape) == 4
+                else None
+            )
+            two_branch = branch_indices[source_name] == {0, 1} and (
+                source_dim is not None and (source_dim < 0 or source_dim == 2)
+            )
+            three_branch = branch_indices[source_name] == {0, 1, 2} and (
+                source_dim is not None and (source_dim < 0 or source_dim == 3)
+            )
+            if two_branch or three_branch:
+                return True
+        return False
+
+    def _has_slice_group_candidate(pass_state: ModelIRPassState) -> bool:
+        for source_name, user_indices in pass_state.graph_index.consumers.items():
+            source_tensor = pass_state.model_ir.tensors.get(str(source_name))
+            if (
+                source_tensor is None
+                or not _is_fully_known_positive_shape(source_tensor.shape)
+            ):
+                continue
+            source_shape = [int(value) for value in source_tensor.shape]
+            rank = len(source_shape)
+            for branch_count in (3, 2):
+                expected_indices = set(range(branch_count))
+                for axis, axis_dim in enumerate(source_shape):
+                    if axis_dim % branch_count != 0:
+                        continue
+                    chunk = axis_dim // branch_count
+                    matched: set[int] = set()
+                    for operator_index in user_indices:
+                        slice_op = pass_state.model_ir.operators[int(operator_index)]
+                        if str(slice_op.op_type) != "SLICE" or len(slice_op.inputs) < 3:
+                            continue
+                        begin = _read_const_ints_from_tensor(
+                            pass_state.model_ir.tensors.get(str(slice_op.inputs[1]))
+                        )
+                        size = _read_const_ints_from_tensor(
+                            pass_state.model_ir.tensors.get(str(slice_op.inputs[2]))
+                        )
+                        if begin is None or size is None or len(begin) != rank or len(size) != rank:
+                            continue
+                        if any(
+                            int(begin[dim]) != 0 or int(size[dim]) != source_shape[dim]
+                            for dim in range(rank)
+                            if dim != axis
+                        ):
+                            continue
+                        if int(size[axis]) != chunk or int(begin[axis]) % chunk != 0:
+                            continue
+                        matched.add(int(begin[axis]) // chunk)
+                    if matched == expected_indices:
+                        return True
+        return False
+
+    def _has_split_reshape_candidate(pass_state: ModelIRPassState) -> bool:
+        for split_op in pass_state.model_ir.operators:
+            if str(split_op.op_type) != "SPLIT" or len(split_op.outputs) < 2:
+                continue
+            valid = True
+            for output_name in split_op.outputs:
+                users = pass_state.graph_index.consumer_indices(str(output_name))
+                if len(users) != 1:
+                    valid = False
+                    break
+                if str(pass_state.model_ir.operators[int(users[0])].op_type) != "RESHAPE":
+                    valid = False
+                    break
+            if valid:
+                return True
+        return False
+
+    def _run_hoist(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_attention_qkv_gather_reshape_transpose_hoist_chains",
+                    0,
+                )
+            ),
+        }
+
+    def _run_gather_to_slice(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_attention_qkv_slice_replace_gather_reshape_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_attention_qkv_slice_replace_gather_reshape_chains",
+                    0,
+                )
+            ),
+        }
+
+    def _run_slice_to_split(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_attention_qkv_slice_to_split_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("optimized_attention_qkv_slice_to_split_chains", 0)
+            ),
+        }
+
+    def _run_split_collapse(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_attention_split_post_reshape_collapse_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("optimized_attention_split_post_reshape_collapse_chains", 0)
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.qkv_gather_layout_hoist",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_hoist,
+                precondition=lambda state: _has_gather_reshape_candidate(
+                    state,
+                    require_transpose=True,
+                ),
+                priority=10,
+                transactional=True,
+            ),
+            PassSpec(
+                pass_id="layout.qkv_gather_to_slice",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_gather_to_slice,
+                precondition=lambda state: _has_gather_reshape_candidate(
+                    state,
+                    require_transpose=False,
+                ),
+                priority=20,
+                transactional=True,
+            ),
+            PassSpec(
+                pass_id="layout.qkv_slice_to_split",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_slice_to_split,
+                precondition=_has_slice_group_candidate,
+                priority=30,
+                transactional=True,
+            ),
+            PassSpec(
+                pass_id="layout.qkv_split_reshape_collapse",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_split_collapse,
+                precondition=_has_split_reshape_candidate,
+                priority=40,
+                transactional=True,
+            ),
+        ],
+        layout_state=layout_state,
+        default_details={
+            "optimized_attention_qkv_gather_reshape_transpose_hoist_chains": 0,
+            "optimized_attention_qkv_slice_replace_gather_reshape_chains": 0,
+            "optimized_attention_qkv_slice_to_split_chains": 0,
+            "optimized_attention_split_post_reshape_collapse_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_transpose_conv_attention_nhwc_propagation_chains(
