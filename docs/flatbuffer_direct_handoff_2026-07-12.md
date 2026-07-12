@@ -354,9 +354,24 @@ Verification completed with:
 - `1010 passed, 5 deselected, 2 warnings in 125.58s` for the full sequential
   direct suite.
 
-The remaining characterized large attention family is CSP propagation. Treat
-it as a separate checkpoint. Keep uncharacterized attention mega-patterns in
-the lowerer until semantic fixtures exist.
+The CSP attention NHWC propagation family now lives in
+`passes/attention_layout.py`. Its exact implementation and nested gate/reshape
+matchers moved behind the legacy wrapper. Two characterized residual forms
+preserve optional main Add behavior, HardSigmoid or sigmoid-self-Mul gates,
+singleton-spatial reshape adapters, branch fan-out, constants, metadata,
+quantization, and terminal output wiring.
+
+Verification completed with:
+
+- `18 passed, 757 deselected` for focused architecture and both CSP-attention
+  variants;
+- `1010 passed, 5 deselected, 2 warnings in 125.86s` for the full sequential
+  direct suite.
+
+All currently characterized attention-named families have an explicit module
+owner. Uncharacterized attention mega-patterns remain in the legacy lowerer
+until focused semantic fixtures are added. Re-audit the remaining generic
+layout passes for the next cohesive family.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

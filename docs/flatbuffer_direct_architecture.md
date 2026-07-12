@@ -175,6 +175,11 @@ attention, expanded HardSigmoid gates, HardSwish activation, and self-HardSwish
 Mean chains. Each nested matcher proves the full region and legacy consumers
 before any transpose removal or coefficient/axis rewrite.
 
+CSP attention propagation is the final currently characterized large member
+of `passes/attention_layout.py`. It validates both residual forms, expanded
+HardSigmoid or sigmoid-self-Mul gates, singleton-spatial reshape adapters,
+branch fan-out, and terminal layout before rewiring the region to NHWC.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither
