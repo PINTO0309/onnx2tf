@@ -957,9 +957,9 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 23,
+        "missing_tflite_report": 22,
         "pass": 340,
-        "tflite_fail": 31,
+        "tflite_fail": 32,
         "timeout": 26,
     }
     assert profile["model_options"]["tiny_decoder_11.onnx"] == {
@@ -987,6 +987,9 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
             "sid_src",
             "sid_tgt",
         ],
+    }
+    assert profile["model_options"]["LibreRFDETRn.onnx"] == {
+        "overwrite_input_shape": ["input:1,3,384,384"],
     }
     assert profile["model_options"]["conv_tasnet.onnx"] == {
         "keep_shape_absolutely_input_names": ["onnx::Unsqueeze_0"],
