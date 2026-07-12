@@ -18,7 +18,10 @@ from onnx2tf.tflite_builder.core.passes import (
     PassSpec,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _build_tensor_consumer_map,
+    _build_tensor_producer_map,
     _clone_quantization,
+    _is_fully_known_positive_shape,
     _is_singleton_constant_tensor,
     _normalize_squeeze_axes_for_rank,
     _prune_unused_tensors,
@@ -346,6 +349,308 @@ def run_duplicate_fanout_cleanup(
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
+
+
+def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Remove redundant RESHAPE chains.
+
+    Target:
+      x --RESHAPE(no-op)--> y
+      x --RESHAPE--> y --RESHAPE--> z
+
+    Rewrite:
+      x ----------------> y
+      x -----------RESHAPE--> z
+
+    Safety:
+    - No-op reshape removal requires matching input/output shape and shape_signature.
+    - For graph-output tensors, preserve visible output names.
+    - Middle tensor `y` can have fan-out. In that case the second RESHAPE is
+      rewired to the original source while keeping the first RESHAPE for other users.
+    - First RESHAPE removal still requires `y` to be consumed only by the second RESHAPE.
+    - `y` must not be a graph output.
+    - Source and destination element counts must match with fully known static shapes.
+    """
+    rewritten = 0
+    rewritten_fanout_bypass = 0
+    removed_noop = 0
+
+    def _reshape_depends_on_input_dims(reshape_op: OperatorIR) -> bool:
+        """
+        Return True when RESHAPE target depends on source tensor dimensions.
+        Such reshapes must not be bypassed across an intermediate reshape,
+        otherwise ONNX semantics of 0/-1 placeholders can change.
+        """
+        options = (
+            dict(reshape_op.options)
+            if isinstance(reshape_op.options, dict)
+            else {}
+        )
+        new_shape = options.get("newShape", None)
+        if new_shape is not None:
+            try:
+                concrete_values = [int(v) for v in np.asarray(new_shape).reshape(-1).tolist()]
+            except Exception:
+                concrete_values = []
+            if concrete_values and all(int(v) > 0 for v in concrete_values):
+                return False
+            if (
+                bool(options.get("layoutTransposeAsReshape", False))
+                and concrete_values
+                and int(concrete_values[0]) == -1
+                and all(int(v) > 0 for v in concrete_values[1:])
+            ):
+                # A singleton-only layout transpose may preserve a dynamic
+                # batch with one leading -1. Bypassing an earlier reshape is
+                # safe because both reshapes preserve the total element count
+                # and the inferred dimension remains the leading batch.
+                return False
+        raw_shape = options.get("onnxRawNewShape", None)
+        if raw_shape is not None:
+            try:
+                values = [int(v) for v in np.asarray(raw_shape).reshape(-1).tolist()]
+            except Exception:
+                return True
+            if any(int(v) <= 0 for v in values):
+                return True
+            return False
+        if new_shape is None:
+            return False
+        try:
+            values = [int(v) for v in np.asarray(new_shape).reshape(-1).tolist()]
+        except Exception:
+            return True
+        return any(int(v) <= 0 for v in values)
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+        producers = _build_tensor_producer_map(model_ir)
+        model_outputs = set(str(v) for v in model_ir.outputs)
+
+        # 1) Remove single no-op reshape: input/output metadata is identical.
+        for reshape_idx, reshape_op in enumerate(model_ir.operators):
+            if str(reshape_op.op_type) != "RESHAPE" or len(reshape_op.inputs) < 1 or len(reshape_op.outputs) != 1:
+                continue
+            if bool(reshape_op.options.get("preserveDynamicShape", False)):
+                continue
+            if bool(reshape_op.options.get("preserveSemanticRank", False)):
+                continue
+
+            src_name = str(reshape_op.inputs[0])
+            dst_name = str(reshape_op.outputs[0])
+            src_tensor = model_ir.tensors.get(src_name, None)
+            dst_tensor = model_ir.tensors.get(dst_name, None)
+            if src_tensor is None or dst_tensor is None:
+                continue
+            if bool(src_tensor.is_variable) or bool(dst_tensor.is_variable):
+                continue
+
+            src_shape = [int(v) for v in list(src_tensor.shape)]
+            dst_shape = [int(v) for v in list(dst_tensor.shape)]
+            src_signature = (
+                [int(v) for v in list(src_tensor.shape_signature)]
+                if src_tensor.shape_signature is not None
+                else [int(v) for v in list(src_shape)]
+            )
+            dst_signature = (
+                [int(v) for v in list(dst_tensor.shape_signature)]
+                if dst_tensor.shape_signature is not None
+                else [int(v) for v in list(dst_shape)]
+            )
+            if src_shape != dst_shape or src_signature != dst_signature:
+                continue
+
+            # Keep graph-output tensor names stable when possible.
+            if dst_name in model_outputs:
+                if len(consumers.get(dst_name, [])) != 0:
+                    continue
+                producer_idx = producers.get(src_name, None)
+                if producer_idx is None:
+                    continue
+                producer_op = model_ir.operators[int(producer_idx)]
+                producer_outputs = [str(v) for v in list(producer_op.outputs)]
+                if src_name not in set(producer_outputs):
+                    continue
+                _set_operator_outputs(
+                    model_ir=model_ir,
+                    op=producer_op,
+                    new_outputs=[
+                        str(dst_name) if str(v) == str(src_name) else str(v)
+                        for v in producer_outputs
+                    ],
+                )
+            else:
+                _replace_tensor_inputs(
+                    model_ir=model_ir,
+                    src_name=str(dst_name),
+                    dst_name=str(src_name),
+                )
+
+            del model_ir.operators[int(reshape_idx)]
+            removed_noop += 1
+            changed = True
+            break
+
+        if changed:
+            continue
+
+        # 2) Bypass intermediate reshape for RESHAPE->RESHAPE links, even with fan-out.
+        for first_idx, first_op in enumerate(model_ir.operators):
+            if str(first_op.op_type) != "RESHAPE" or len(first_op.inputs) < 1 or len(first_op.outputs) != 1:
+                continue
+            if bool(first_op.options.get("preserveSemanticRank", False)):
+                continue
+
+            first_input_name = str(first_op.inputs[0])
+            first_output_name = str(first_op.outputs[0])
+            if first_output_name in model_outputs:
+                continue
+
+            first_input_tensor = model_ir.tensors.get(first_input_name, None)
+            first_output_tensor = model_ir.tensors.get(first_output_name, None)
+            if (
+                first_input_tensor is None
+                or first_output_tensor is None
+                or bool(first_input_tensor.is_variable)
+                or bool(first_output_tensor.is_variable)
+                or not _is_fully_known_positive_shape(first_input_tensor.shape)
+            ):
+                continue
+            first_input_shape = [int(v) for v in list(first_input_tensor.shape)]
+            if len(first_input_shape) == 0:
+                continue
+            first_input_elements = int(np.prod(np.asarray(first_input_shape, dtype=np.int64)))
+
+            first_users = [int(v) for v in consumers.get(first_output_name, []) if int(v) != int(first_idx)]
+            if len(first_users) <= 1:
+                continue
+
+            for second_idx in first_users:
+                second_op = model_ir.operators[int(second_idx)]
+                if str(second_op.op_type) != "RESHAPE" or len(second_op.inputs) < 1 or len(second_op.outputs) != 1:
+                    continue
+                if bool(second_op.options.get("preserveSemanticRank", False)):
+                    continue
+                if str(second_op.inputs[0]) != first_output_name:
+                    continue
+                if _reshape_depends_on_input_dims(second_op):
+                    continue
+
+                second_output_name = str(second_op.outputs[0])
+                second_output_tensor = model_ir.tensors.get(second_output_name, None)
+                if second_output_tensor is None or not _is_fully_known_positive_shape(second_output_tensor.shape):
+                    continue
+                second_output_shape = [int(v) for v in list(second_output_tensor.shape)]
+                if len(second_output_shape) == 0:
+                    continue
+                second_output_elements = int(np.prod(np.asarray(second_output_shape, dtype=np.int64)))
+                if int(first_input_elements) != int(second_output_elements):
+                    continue
+
+                second_inputs = [str(v) for v in list(second_op.inputs)]
+                if str(second_inputs[0]) == str(first_input_name):
+                    continue
+                second_inputs[0] = str(first_input_name)
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=second_op,
+                    new_inputs=second_inputs,
+                )
+
+                rewritten += 1
+                rewritten_fanout_bypass += 1
+                changed = True
+                break
+
+            if changed:
+                break
+
+        if changed:
+            continue
+
+        # 3) Remove consecutive reshape chains when the middle tensor has a single user.
+        for first_idx, first_op in enumerate(model_ir.operators):
+            if str(first_op.op_type) != "RESHAPE" or len(first_op.inputs) < 1 or len(first_op.outputs) != 1:
+                continue
+            if bool(first_op.options.get("preserveSemanticRank", False)):
+                continue
+
+            first_input_name = str(first_op.inputs[0])
+            first_output_name = str(first_op.outputs[0])
+            if first_output_name in model_outputs:
+                continue
+            first_input_tensor = model_ir.tensors.get(first_input_name, None)
+            first_output_tensor = model_ir.tensors.get(first_output_name, None)
+            if (
+                first_input_tensor is None
+                or first_output_tensor is None
+                or bool(first_input_tensor.is_variable)
+                or bool(first_output_tensor.is_variable)
+            ):
+                continue
+
+            first_users = [int(v) for v in consumers.get(first_output_name, [])]
+            if len(first_users) != 1:
+                continue
+
+            second_idx = int(first_users[0])
+            if int(second_idx) == int(first_idx):
+                continue
+            second_op = model_ir.operators[int(second_idx)]
+            if str(second_op.op_type) != "RESHAPE" or len(second_op.inputs) < 1 or len(second_op.outputs) != 1:
+                continue
+            if bool(second_op.options.get("preserveSemanticRank", False)):
+                continue
+            if str(second_op.inputs[0]) != first_output_name:
+                continue
+            if _reshape_depends_on_input_dims(second_op):
+                continue
+
+            second_output_name = str(second_op.outputs[0])
+
+            second_output_tensor = model_ir.tensors.get(second_output_name, None)
+            if (
+                first_input_tensor is None
+                or second_output_tensor is None
+                or not _is_fully_known_positive_shape(first_input_tensor.shape)
+                or not _is_fully_known_positive_shape(second_output_tensor.shape)
+            ):
+                continue
+
+            first_input_shape = [int(v) for v in list(first_input_tensor.shape)]
+            second_output_shape = [int(v) for v in list(second_output_tensor.shape)]
+            if len(first_input_shape) == 0 or len(second_output_shape) == 0:
+                continue
+            if int(np.prod(np.asarray(first_input_shape, dtype=np.int64))) != int(
+                np.prod(np.asarray(second_output_shape, dtype=np.int64))
+            ):
+                continue
+
+            second_inputs = [str(v) for v in list(second_op.inputs)]
+            second_inputs[0] = str(first_input_name)
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=second_op,
+                new_inputs=second_inputs,
+            )
+
+            del model_ir.operators[int(first_idx)]
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    if rewritten > 0 or removed_noop > 0:
+        _prune_unused_tensors(model_ir)
+    return {
+        "removed_noop_reshape_chains": int(removed_noop),
+        "rewritten_consecutive_reshape_passthrough_chains": int(rewritten),
+        "rewritten_fanout_bypass_reshape_passthrough_chains": int(rewritten_fanout_bypass),
+    }
 
 
 def _optimize_maximum_minimum_relu0to1_chains(

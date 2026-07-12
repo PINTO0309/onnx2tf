@@ -393,6 +393,15 @@ names are protected, and only indexed consumers of a duplicate output are
 rewired before structural removal. Its instrumentation likewise permits only
 the initial index refresh.
 
+General consecutive Reshape passthrough cleanup is also owned by
+`passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,
+fan-out-safe bypass of a second Reshape, and strict single-user chain collapse,
+while preserving public names, mutable/dynamic boundaries, semantic-rank
+markers, and ONNX `0`/`-1` target semantics. The seven legacy lowerer call
+sites remain in their original positions through a thin compatibility wrapper;
+the implementation moved mechanically with an identical AST. Differential
+index and ordered-runner migration is intentionally a separate checkpoint.
+
 The four later reshape-only recovery positions also execute through
 `run_duplicate_fanout_cleanup(include_transpose=False)` instead of calling the
 compatibility helper directly. This preserves their original placement and

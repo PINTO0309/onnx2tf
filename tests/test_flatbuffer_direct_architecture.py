@@ -392,6 +392,7 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
         / "graph_cleanup.py"
     )
     function_names = {
+        "_optimize_consecutive_reshape_passthrough_chains",
         "_optimize_fold_consecutive_mul_constants_chains",
         "_optimize_squeeze_reshape_identity_chains",
         "_optimize_squeeze_unary_reshape_passthrough_chains",
@@ -418,12 +419,6 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
             if isinstance(node, ast.Name)
         }
         assert f"{function_name}_pass" in wrapper_names
-    lowerer_names = {
-        node.id
-        for node in ast.walk(ast.parse(lowering_path.read_text(encoding="utf-8")))
-        if isinstance(node, ast.Name)
-    }
-    assert "run_singleton_maxpool_layout_cleanup" in lowerer_names
     lowerer_names = {
         node.id
         for node in ast.walk(
@@ -867,6 +862,14 @@ def test_singleton_maxpool_rewrites_have_single_owner() -> None:
             if isinstance(node, ast.Name)
         }
         assert f"{function_name}_pass" in wrapper_names
+
+
+    lowerer_names = {
+        node.id
+        for node in ast.walk(ast.parse(lowering_path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Name)
+    }
+    assert "run_singleton_maxpool_layout_cleanup" in lowerer_names
 
 
 def test_singleton_reshape_rewrites_have_single_owner() -> None:

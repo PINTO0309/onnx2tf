@@ -1664,6 +1664,29 @@ TensorFlow import. The next work unit should rerun the raw post-lowering
 inventory and select the next adjacent independently testable family. Do not
 create a pull request; commit and push only at a coherent checkpoint.
 
+The next mechanical split is complete. The 300-line general consecutive
+Reshape passthrough cleanup moved unchanged into `passes/graph_cleanup.py`,
+beside duplicate Reshape fan-out and Squeeze/Reshape cleanup. It handles
+metadata-identical no-op removal, fan-out bypass, and strict single-user chain
+collapse. Its mutable/dynamic/semantic-rank and ONNX `0`/`-1` safety guards are
+unchanged, the old and new function ASTs are identical, all seven production
+call sites remain in place through a thin compatibility wrapper, and the
+architecture ownership contract now includes it. A previously misplaced
+singleton-MaxPool runner assertion was also moved from the graph-cleanup
+ownership test to its correct family test.
+
+Sequential verification completed with:
+
+- `7 passed` across no-op/chain/fan-out/mutable/dynamic-shape behavior and the
+  graph-cleanup/singleton-MaxPool ownership contracts;
+- `1099 passed, 5 deselected, 2 warnings in 143.72s` for the full direct suite.
+
+No algorithm, call order, artifact, dependency, or TensorFlow boundary changed.
+The next checkpoint should make this cleanup use the differential graph index,
+`LayoutState`, stable transactional diagnostics, and model-only/precise guards,
+then replace its seven raw production calls with runner calls. Do not create a
+pull request; commit and push only at a coherent checkpoint.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work
