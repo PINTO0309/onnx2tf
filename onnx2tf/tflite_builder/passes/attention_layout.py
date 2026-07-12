@@ -6,7 +6,10 @@ import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
-from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _build_tensor_consumer_map,
     _build_tensor_producer_map,
@@ -278,9 +281,6 @@ def run_mixed_attention_layout_cleanup(
 ) -> Dict[str, int]:
     """Run the mixed reduction/MirrorPad rewrite as an ordered layout pass."""
 
-    state = ModelIRPassState(model_ir, layout_state=layout_state)
-    manager = state.create_ordered_manager()
-
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
         op_types = {str(op.op_type) for op in pass_state.model_ir.operators}
         return {
@@ -308,23 +308,23 @@ def run_mixed_attention_layout_cleanup(
             ),
         }
 
-    manager.register(
-        PassSpec(
-            pass_id="layout.mixed_attention_mirrorpad",
-            phase=PassPhase.LAYOUT_PLAN,
-            callback=_run,
-            precondition=_has_candidate,
-            transactional=True,
-        )
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.mixed_attention_mirrorpad",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={
+            "optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains": 0,
+        },
     )
-    details = {
-        "optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains": 0,
-    }
-    for result in manager.run(state):
-        for key, value in result.details.items():
-            if key not in {"changed", "skipped_by_precondition"}:
-                details[str(key)] = int(value)
-    return details
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_attention_qkv_slice_replace_gather_reshape_chains(

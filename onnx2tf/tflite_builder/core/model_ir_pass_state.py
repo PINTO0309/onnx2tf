@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
-from onnx2tf.tflite_builder.core.passes import OrderedPassManager
+from onnx2tf.tflite_builder.core.passes import (
+    OrderedPassManager,
+    PassResult,
+    PassSpec,
+)
 from onnx2tf.tflite_builder.core.validation import validate_model_ir_invariants
 from onnx2tf.tflite_builder.ir import ModelIR
 
@@ -56,3 +60,25 @@ class ModelIRPassState:
             clone=lambda state: state.snapshot(),
             restore=lambda state, snapshot: state.restore(snapshot),
         )
+
+
+def run_model_ir_pass_group(
+    model_ir: ModelIR,
+    *,
+    specs: Iterable[PassSpec[ModelIRPassState]],
+    layout_state: Optional[LayoutState] = None,
+    default_details: Optional[Mapping[str, Any]] = None,
+) -> Tuple[Dict[str, Any], List[PassResult]]:
+    """Run ordered ModelIR specs with shared state and normalized diagnostics."""
+
+    state = ModelIRPassState(model_ir, layout_state=layout_state)
+    manager = state.create_ordered_manager()
+    for spec in specs:
+        manager.register(spec)
+    results = manager.run(state)
+    details: Dict[str, Any] = dict(default_details or {})
+    for result in results:
+        for key, value in result.details.items():
+            if key not in {"changed", "skipped_by_precondition"}:
+                details[str(key)] = value
+    return details, results

@@ -224,8 +224,14 @@ are reserved for graphs that may actually change.
 `ModelIRPassState` is the shared state object for ordered post-lowering groups.
 It owns one ModelIR graph index and one LayoutState, provides combined invariant
 validation, and centralizes deep snapshot/restore with index and layout
-resynchronization. Pass modules create their managers through this state rather
-than duplicating transaction plumbing.
+resynchronization. `run_model_ir_pass_group` is the common execution boundary:
+it creates that state, registers a supplied ordered spec set, executes the
+manager, preserves caller-provided zero-valued statistics, and strips manager
+control fields from returned semantic diagnostics. Duplicate fan-out, mixed
+attention layout, and boundary-input layout runners therefore own only their
+match guards, rewrite callbacks, stable pass specifications, and typed legacy
+result adapters rather than duplicating manager and result-aggregation
+plumbing.
 
 The attention module also owns the QKV Slice canonicalization pair. One pass
 replaces compatible Slice branches with Gather/Reshape views; the next replaces

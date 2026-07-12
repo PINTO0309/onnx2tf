@@ -4,7 +4,10 @@ from typing import Dict, Optional
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
-from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _prune_unused_tensors,
     _read_transpose_perm,
@@ -128,9 +131,6 @@ def run_boundary_input_layout_cleanup(
 ) -> Dict[str, int]:
     """Run guarded boundary-adapter removal as an ordered layout pass."""
 
-    state = ModelIRPassState(model_ir, layout_state=layout_state)
-    manager = state.create_ordered_manager()
-
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
         model_inputs = set(str(name) for name in pass_state.model_ir.inputs)
         return any(
@@ -153,18 +153,18 @@ def run_boundary_input_layout_cleanup(
             "changed": bool(stats.get("removed_boundary_input_layout_transpose", 0)),
         }
 
-    manager.register(
-        PassSpec(
-            pass_id="layout.boundary_input_adapter",
-            phase=PassPhase.LAYOUT_PLAN,
-            callback=_run,
-            precondition=_has_candidate,
-            transactional=True,
-        )
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.boundary_input_adapter",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={"removed_boundary_input_layout_transpose": 0},
     )
-    details = {"removed_boundary_input_layout_transpose": 0}
-    for result in manager.run(state):
-        for key, value in result.details.items():
-            if key not in {"changed", "skipped_by_precondition"}:
-                details[str(key)] = int(value)
-    return details
+    return {str(key): int(value) for key, value in details.items()}

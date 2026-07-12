@@ -534,9 +534,28 @@ Verification completed with:
 - `1026 passed, 5 deselected, 2 warnings in 128.23s` for the full sequential
   direct suite.
 
-Two independent ordered layout groups now use the same state/transaction
-pattern. The next refactor can extract shared result aggregation and runner
-construction helpers without guessing an abstraction from a single caller.
+`run_model_ir_pass_group` now centralizes state creation, ordered spec
+registration, execution, default-stat preservation, and removal of manager
+control fields from semantic diagnostics. Duplicate Transpose/Reshape cleanup,
+mixed attention layout, and boundary input layout all use this helper. Each
+family retains its own candidate guard, rewrite callback, phase, stable pass
+ID, transaction policy, and legacy integer result shape, so this removes only
+repeated orchestration and does not merge semantic rules.
+
+Verification completed with:
+
+- `22 passed, 776 deselected` for the focused common runner, duplicate cleanup,
+  mixed-attention, boundary-input, and architecture suite;
+- `1027 passed, 5 deselected, 2 warnings in 128.97s` for the full sequential
+  direct suite.
+
+The next checkpoint should inventory the remaining direct calls to legacy
+post-lowering/layout rewrite functions and select one small, already
+characterized family for migration onto `PassSpec` and
+`run_model_ir_pass_group`. Prefer a family that can reuse the session-owned
+GraphIndex/LayoutState and add a cheap structural precondition. Preserve its
+legacy wrapper and run the same focused and full sequential gates before
+committing.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

@@ -18,6 +18,7 @@ from onnx2tf.tflite_builder.core import (
     OrderedPassManager,
     PassPhase,
     PassSpec,
+    run_model_ir_pass_group,
     validate_model_ir_invariants,
 )
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
@@ -343,6 +344,37 @@ def test_model_ir_pass_state_restores_graph_index_and_layout_state() -> None:
     assert state.graph_index.producer("z") is model_ir.operators[0]
     assert state.layout_state is not None
     assert state.layout_state.validate_against_model_ir(model_ir) == []
+
+
+def test_model_ir_pass_group_runs_specs_and_normalizes_details() -> None:
+    model_ir = _add_model_ir()
+    specs = [
+        PassSpec(
+            pass_id="cleanup.executed",
+            phase=PassPhase.POST_LOWERING_CLEANUP,
+            callback=lambda state: {"changed": False, "rewritten": 2},
+        ),
+        PassSpec(
+            pass_id="cleanup.skipped",
+            phase=PassPhase.POST_LOWERING_CLEANUP,
+            callback=lambda state: {"changed": True, "unexpected": 1},
+            precondition=lambda state: False,
+            transactional=True,
+        ),
+    ]
+
+    details, results = run_model_ir_pass_group(
+        model_ir,
+        specs=specs,
+        default_details={"removed": 0},
+    )
+
+    assert details == {"removed": 0, "rewritten": 2}
+    assert [result.pass_id for result in results] == [
+        "cleanup.executed",
+        "cleanup.skipped",
+    ]
+    assert results[1].details == {"skipped_by_precondition": True}
 
 
 def test_dispatcher_records_onnx_provenance() -> None:
