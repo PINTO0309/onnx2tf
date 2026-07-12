@@ -366,6 +366,12 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
             node.id for node in ast.walk(wrapper) if isinstance(node, ast.Name)
         }
         assert f"{function_name}_pass" in wrapper_names
+    lowerer_names = {
+        node.id
+        for node in ast.walk(ast.parse(lowering_path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Name)
+    }
+    assert "run_input_unary_passthrough_cleanup" in lowerer_names
 
 
 def test_graph_cleanup_rewrites_have_single_owner() -> None:
@@ -434,6 +440,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_qkv_attention_prefix_cleanup",
         "run_pad_layout_cleanup",
         "run_normalization_pad_layout_cleanup",
+        "run_input_unary_passthrough_cleanup",
         "run_redundant_cast_cleanup",
         "run_squeeze_reshape_identity_cleanup",
         "run_terminal_quantize_dequantize_cleanup",
@@ -448,7 +455,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 51
+    assert len(calls) == 55
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"

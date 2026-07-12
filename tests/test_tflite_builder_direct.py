@@ -46,6 +46,9 @@ from onnx2tf.tflite_builder.passes.pad_layout import (
     run_normalization_pad_layout_cleanup,
     run_pad_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
+    run_input_unary_passthrough_cleanup,
+)
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_builders.norm import build_instance_normalization_op
 from onnx2tf.tflite_builder.op_builders.control import (
@@ -28507,7 +28510,58 @@ def test_flatbuffer_direct_fold_conv_add_affine_chain_folds_fused_add_activation
     assert list(conv_op.outputs) == ["add_out"]
 
 
-def test_flatbuffer_direct_asin_transpose_passthrough_chain() -> None:
+def test_flatbuffer_direct_leading_input_transpose_passthrough_group() -> None:
+    model_ir = ModelIR("leading_input_transpose_passthrough_group_test")
+    model_ir.inputs = ["x_nhwc"]
+    model_ir.outputs = ["y_nhwc"]
+    model_ir.tensors = {
+        "x_nhwc": TensorIR("x_nhwc", "FLOAT32", [1, 4, 5, 3], [1, 4, 5, 3]),
+        "pre_perm": TensorIR(
+            "pre_perm",
+            "INT32",
+            [4],
+            [4],
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        ),
+        "post_perm": TensorIR(
+            "post_perm",
+            "INT32",
+            [4],
+            [4],
+            data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        ),
+        "x_nchw": TensorIR("x_nchw", "FLOAT32", [1, 3, 4, 5], [1, 3, 4, 5]),
+        "bias": TensorIR(
+            "bias",
+            "FLOAT32",
+            [],
+            [],
+            data=np.asarray(0.25, dtype=np.float32),
+        ),
+        "added_nchw": TensorIR("added_nchw", "FLOAT32", [1, 3, 4, 5], [1, 3, 4, 5]),
+        "y_nhwc": TensorIR("y_nhwc", "FLOAT32", [1, 4, 5, 3], [1, 4, 5, 3]),
+    }
+    model_ir.operators = [
+        OperatorIR("TRANSPOSE", ["x_nhwc", "pre_perm"], ["x_nchw"]),
+        OperatorIR("ADD", ["x_nchw", "bias"], ["added_nchw"]),
+        OperatorIR("TRANSPOSE", ["added_nchw", "post_perm"], ["y_nhwc"]),
+    ]
+
+    diagnostics: list[dict[str, Any]] = []
+    stats = run_input_unary_passthrough_cleanup(model_ir, diagnostics=diagnostics)
+
+    assert stats["rewritten_leading_input_transpose_passthrough_chains"] == 1
+    assert [str(op.op_type) for op in model_ir.operators] == ["ADD"]
+    assert list(model_ir.operators[0].inputs) == ["x_nhwc", "bias"]
+    assert list(model_ir.operators[0].outputs) == ["y_nhwc"]
+    assert [event["status"] for event in diagnostics] == [
+        "changed",
+        "skipped",
+        "skipped",
+    ]
+
+
+def test_flatbuffer_direct_asin_transpose_passthrough_chain(monkeypatch) -> None:
     model_ir = ModelIR("asin_transpose_passthrough_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y"]
@@ -28565,8 +28619,29 @@ def test_flatbuffer_direct_asin_transpose_passthrough_chain() -> None:
         OperatorIR(op_type="ATAN2", inputs=["x_nchw", "denom"], outputs=["y"]),
     ]
 
-    stats = _optimize_asin_transpose_passthrough_chains(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict[str, Any]] = []
+    stats = run_input_unary_passthrough_cleanup(model_ir, diagnostics=diagnostics)
     assert stats["rewritten_asin_transpose_passthrough_chains"] == 1
+    assert refresh_count == 1
+    assert [event["code"] for event in diagnostics] == [
+        "layout.leading_input_passthrough",
+        "layout.asin_passthrough",
+        "layout.erf_passthrough",
+    ]
+    assert [event["status"] for event in diagnostics] == [
+        "skipped",
+        "changed",
+        "skipped",
+    ]
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types == ["MUL", "SUB", "SQRT", "ATAN2"]
     mul_op = model_ir.operators[0]

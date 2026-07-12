@@ -111,6 +111,18 @@ constants, exact consumer counts, and inverse terminal permutation are all
 validated before any mutation. This remains a semantic graph pattern and does
 not depend on a model name.
 
+At the four production locations where leading-input, Asin/Acos, and Erf
+passthrough were consecutive, `run_input_unary_passthrough_cleanup` registers
+them as one `LAYOUT_PLAN` group with priorities 10/20/30 and stable IDs
+`layout.leading_input_passthrough`, `layout.asin_passthrough`, and
+`layout.erf_passthrough`. All three rewrites use one ModelIRGraphIndex and
+LayoutState for input/output mutation, boundary-transpose removal, and pruning.
+A model-only relevant-op scan avoids state construction on unrelated graphs;
+indexed topology guards distinguish the single-consumer leading chain from the
+two-branch Asin and Erf decompositions before taking snapshots. HardSwish and
+HardSigmoid remain outside this group because intervening production rewrites
+separate the two sequences.
+
 Pseudo-expanded HardSwish passthrough is another member of
 `passes/input_passthrough_layout.py`. It accepts only the residual
 `Add → optional Relu6 → Div-or-Mul → Mul(original, branch)` topology with

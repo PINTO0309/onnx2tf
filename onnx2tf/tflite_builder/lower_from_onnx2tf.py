@@ -157,6 +157,7 @@ from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     _optimize_hardsigmoid_mul_transpose_passthrough_chains as _optimize_hardsigmoid_mul_transpose_passthrough_chains_pass,
     _optimize_hardswish_transpose_passthrough_chains as _optimize_hardswish_transpose_passthrough_chains_pass,
     _optimize_leading_input_transpose_passthrough_chains as _optimize_leading_input_transpose_passthrough_chains_pass,
+    run_input_unary_passthrough_cleanup,
 )
 from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     _optimize_boundary_input_layout_transposes as _optimize_boundary_input_layout_transposes_pass,
@@ -64543,9 +64544,11 @@ def lower_onnx_to_ir(
         _optimize_layout_transpose_chains(model_ir)
         _optimize_transpose_quant_dequant_bridges(model_ir)
         _optimize_boundary_input_transpose_batchmatmul_chains(model_ir)
-        _optimize_leading_input_transpose_passthrough_chains(model_ir)
-        _optimize_asin_transpose_passthrough_chains(model_ir)
-        _optimize_erf_transpose_passthrough_chains(model_ir)
+        run_input_unary_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
         _optimize_hardswish_transpose_passthrough_chains(model_ir)
@@ -64663,9 +64666,11 @@ def lower_onnx_to_ir(
         # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
         _optimize_transpose_quant_dequant_bridges(model_ir)
         _optimize_boundary_input_transpose_batchmatmul_chains(model_ir)
-        _optimize_leading_input_transpose_passthrough_chains(model_ir)
-        _optimize_asin_transpose_passthrough_chains(model_ir)
-        _optimize_erf_transpose_passthrough_chains(model_ir)
+        run_input_unary_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
         _optimize_hardswish_transpose_passthrough_chains(model_ir)
@@ -64784,9 +64789,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
         _optimize_transpose_quant_dequant_bridges(model_ir)
         _optimize_boundary_input_transpose_batchmatmul_chains(model_ir)
-        _optimize_leading_input_transpose_passthrough_chains(model_ir)
-        _optimize_asin_transpose_passthrough_chains(model_ir)
-        _optimize_erf_transpose_passthrough_chains(model_ir)
+        run_input_unary_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
         _optimize_hardswish_transpose_passthrough_chains(model_ir)
@@ -64948,9 +64955,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
         _optimize_transpose_quant_dequant_bridges(model_ir)
         _optimize_boundary_input_transpose_batchmatmul_chains(model_ir)
-        _optimize_leading_input_transpose_passthrough_chains(model_ir)
-        _optimize_asin_transpose_passthrough_chains(model_ir)
-        _optimize_erf_transpose_passthrough_chains(model_ir)
+        run_input_unary_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
         _optimize_hardswish_transpose_passthrough_chains(model_ir)

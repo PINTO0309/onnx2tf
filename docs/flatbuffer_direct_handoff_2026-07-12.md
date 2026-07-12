@@ -1228,6 +1228,38 @@ The next target should be selected from a fresh AST call-frequency inventory;
 the remaining Pad→Mul helper may be migrated only as its own complete indexed
 unit, not through isolated mechanical edits.
 
+The refreshed inventory selected input passthrough. Four production locations
+contained an exact consecutive `leading input → Asin/Acos → Erf` sequence;
+HardSwish/HardSigmoid follows only after intervening layout rewrites and was
+therefore excluded from this group.
+
+`run_input_unary_passthrough_cleanup` now replaces those four triples with
+stable `LAYOUT_PLAN` IDs `layout.leading_input_passthrough`,
+`layout.asin_passthrough`, and `layout.erf_passthrough` in priorities 10/20/30.
+Each implementation uses the shared ModelIRGraphIndex and LayoutState for
+input/output rewiring, boundary-transpose removal, and tensor/layout pruning.
+Model-only preflight scans only for relevant capability; indexed guards require
+a single leading-chain user, the Mul/Atan2 Asin branches, or the Abs/Sign Erf
+branches before snapshotting.
+
+Sequential verification completed with:
+
+- `3 passed, 758 deselected` for leading-input, Asin, and Erf group fixtures;
+- `24 passed` for architecture and deterministic pass-efficiency checks;
+- `1081 passed, 5 deselected, 2 warnings in 137.72s` for the full direct suite;
+- Tier 0 `Acos_11.onnx` `-cotof` evaluation with every output compared,
+  `evaluation_pass=true`, maximum absolute error
+  `7.972121238708496e-07`; the Asin spec changed once across four invocations
+  and was the only spec to take a snapshot.
+
+All temporary output, log, and metrics files were deleted. Execution remained
+single-process and sequential, with no new dependency or TensorFlow import.
+
+Next migrate the separate four-location
+`HardSwish → HardSigmoid → HardSigmoid-Mul` sequence. Preserve the later
+two-pass occurrence in its existing reversed `HardSigmoid-Mul → HardSigmoid`
+order rather than forcing it through the three-spec runner.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

@@ -4,6 +4,13 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _build_tensor_consumer_map,
     _clone_quantization,
@@ -20,6 +27,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_outputs,
     _write_const_ints_to_tensor,
 )
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
@@ -28,7 +36,12 @@ from onnx2tf.tflite_builder.ir import (
 )
 
 
-def _optimize_leading_input_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_leading_input_transpose_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Fold leading input-boundary transpose chains through layout-agnostic ops.
 
@@ -46,6 +59,7 @@ def _optimize_leading_input_transpose_passthrough_chains(model_ir: ModelIR) -> D
     - Quantization in the chain must remain per-tensor only.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     unary_passthrough_ops = {"CAST", "QUANTIZE", "DEQUANTIZE"}
     binary_passthrough_ops = {"ADD", "SUB", "MUL", "DIV", "MAXIMUM", "MINIMUM", "ATAN2"}
 
@@ -59,7 +73,7 @@ def _optimize_leading_input_transpose_passthrough_chains(model_ir: ModelIR) -> D
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_inputs = set(model_ir.inputs)
         model_outputs = set(model_ir.outputs)
 
@@ -218,12 +232,14 @@ def _optimize_leading_input_transpose_passthrough_chains(model_ir: ModelIR) -> D
                     model_ir=model_ir,
                     op=first_op,
                     new_inputs=[pre_input_name] + first_input_names[1:],
+                    graph_index=graph_index,
                 )
             elif len(first_input_names) > 1 and first_input_names[1] == pre_output_name:
                 _set_operator_inputs(
                     model_ir=model_ir,
                     op=first_op,
                     new_inputs=[first_input_names[0], pre_input_name],
+                    graph_index=graph_index,
                 )
             else:
                 continue
@@ -267,6 +283,7 @@ def _optimize_leading_input_transpose_passthrough_chains(model_ir: ModelIR) -> D
                             replacement_name if str(inp) == str(side_name) else str(inp)
                             for inp in list(target_op.inputs)
                         ],
+                        graph_index=graph_index,
                     )
 
             # Chain tail now produces post-transpose output name directly.
@@ -275,6 +292,7 @@ def _optimize_leading_input_transpose_passthrough_chains(model_ir: ModelIR) -> D
                     model_ir=model_ir,
                     op=chain_ops[-1],
                     new_outputs=[post_output_name],
+                    graph_index=graph_index,
                 )
 
             # Update metadata to NHWC-side layout.
@@ -305,7 +323,7 @@ def _optimize_leading_input_transpose_passthrough_chains(model_ir: ModelIR) -> D
                 remove_set.add(int(post_idx))
             remove_indices = sorted(list(remove_set), reverse=True)
             for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -314,11 +332,18 @@ def _optimize_leading_input_transpose_passthrough_chains(model_ir: ModelIR) -> D
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_leading_input_transpose_passthrough_chains": int(rewritten)}
 
 
-def _optimize_asin_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_asin_transpose_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Fold leading input TRANSPOSE through Asin/Acos decomposition chains.
 
@@ -343,10 +368,11 @@ def _optimize_asin_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, 
     - Terminal must be graph output or one inverse post-transpose.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_inputs = set(str(v) for v in model_ir.inputs)
         model_outputs = set(str(v) for v in model_ir.outputs)
 
@@ -460,6 +486,7 @@ def _optimize_asin_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, 
                 model_ir=model_ir,
                 op=mul_op,
                 new_inputs=[str(pre_input_name), str(pre_input_name)],
+                graph_index=graph_index,
             )
             _set_operator_inputs(
                 model_ir=model_ir,
@@ -468,6 +495,7 @@ def _optimize_asin_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, 
                     str(pre_input_name) if str(v) == str(pre_output_name) else str(v)
                     for v in list(atan2_op.inputs)
                 ],
+                graph_index=graph_index,
             )
 
             if terminal_mode == "inverse_post_transpose":
@@ -475,6 +503,7 @@ def _optimize_asin_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, 
                     model_ir=model_ir,
                     op=atan2_op,
                     new_outputs=[str(post_output_name)],
+                    graph_index=graph_index,
                 )
 
             # Update metadata to external layout.
@@ -503,7 +532,7 @@ def _optimize_asin_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, 
             if post_idx is not None:
                 remove_indices.add(int(post_idx))
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -512,7 +541,9 @@ def _optimize_asin_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, 
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_asin_transpose_passthrough_chains": int(rewritten)}
 
 
@@ -702,7 +733,12 @@ def _optimize_hardsigmoid_transpose_passthrough_chains(model_ir: ModelIR) -> Dic
     return {"rewritten_hardsigmoid_transpose_passthrough_chains": int(rewritten)}
 
 
-def _optimize_erf_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_erf_transpose_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Fold leading input TRANSPOSE through Erf polynomial decomposition chains.
 
@@ -724,6 +760,7 @@ def _optimize_erf_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, i
       Remove boundary transpose(s) and feed chain directly from X.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _single_user(
         *,
@@ -740,7 +777,7 @@ def _optimize_erf_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, i
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_inputs = set(str(v) for v in model_ir.inputs)
         model_outputs = set(str(v) for v in model_ir.outputs)
 
@@ -1024,17 +1061,20 @@ def _optimize_erf_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, i
                 model_ir=model_ir,
                 op=abs_op,
                 new_inputs=[str(pre_input_name)],
+                graph_index=graph_index,
             )
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=sign_op,
                 new_inputs=[str(pre_input_name)],
+                graph_index=graph_index,
             )
             if terminal_mode == "inverse_post_transpose":
                 _set_operator_outputs(
                     model_ir=model_ir,
                     op=final_mul_op,
                     new_outputs=[str(post_output_name)],
+                    graph_index=graph_index,
                 )
 
             # Update tensor metadata from transposed layout to source layout.
@@ -1065,7 +1105,7 @@ def _optimize_erf_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, i
             if post_idx is not None:
                 remove_indices.add(int(post_idx))
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -1074,8 +1114,154 @@ def _optimize_erf_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, i
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_erf_transpose_passthrough_chains": int(rewritten)}
+
+
+def run_input_unary_passthrough_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run the repeated leading-input, Asin, and Erf passthrough sequence."""
+
+    leading_types = {
+        "CAST",
+        "QUANTIZE",
+        "DEQUANTIZE",
+        "ADD",
+        "SUB",
+        "MUL",
+        "DIV",
+        "MAXIMUM",
+        "MINIMUM",
+        "ATAN2",
+    }
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        has_transpose = False
+        has_relevant = False
+        relevant = leading_types | {"ABS", "SIGN"}
+        for visited, op in enumerate(candidate_model.operators, start=1):
+            op_type = str(op.op_type)
+            has_transpose = has_transpose or op_type == "TRANSPOSE"
+            has_relevant = has_relevant or op_type in relevant
+            if has_transpose and has_relevant:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _leading_transpose_users(pass_state: ModelIRPassState) -> List[set[str]]:
+        model_inputs = {str(name) for name in pass_state.model_ir.inputs}
+        results: List[set[str]] = []
+        for pre_op in pass_state.model_ir.operators:
+            if (
+                str(pre_op.op_type) != "TRANSPOSE"
+                or len(pre_op.inputs) < 2
+                or len(pre_op.outputs) != 1
+                or str(pre_op.inputs[0]) not in model_inputs
+            ):
+                continue
+            users = pass_state.graph_index.consumer_indices(str(pre_op.outputs[0]))
+            results.append(
+                {
+                    str(pass_state.model_ir.operators[int(index)].op_type)
+                    for index in users
+                }
+            )
+        return results
+
+    def _has_leading_candidate(pass_state: ModelIRPassState) -> bool:
+        return any(
+            len(user_types) == 1 and bool(user_types & leading_types)
+            for user_types in _leading_transpose_users(pass_state)
+        )
+
+    def _has_asin_candidate(pass_state: ModelIRPassState) -> bool:
+        return any(
+            {"MUL", "ATAN2"}.issubset(user_types)
+            for user_types in _leading_transpose_users(pass_state)
+        )
+
+    def _has_erf_candidate(pass_state: ModelIRPassState) -> bool:
+        return any(
+            {"ABS", "SIGN"}.issubset(user_types)
+            for user_types in _leading_transpose_users(pass_state)
+        )
+
+    def _run_leading(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_leading_input_transpose_passthrough_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("rewritten_leading_input_transpose_passthrough_chains", 0)),
+        }
+
+    def _run_asin(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_asin_transpose_passthrough_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("rewritten_asin_transpose_passthrough_chains", 0)),
+        }
+
+    def _run_erf(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_erf_transpose_passthrough_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("rewritten_erf_transpose_passthrough_chains", 0)),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.leading_input_passthrough",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_leading,
+                precondition=_has_leading_candidate,
+                priority=10,
+                transactional=True,
+            ),
+            PassSpec(
+                pass_id="layout.asin_passthrough",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_asin,
+                precondition=_has_asin_candidate,
+                priority=20,
+                transactional=True,
+            ),
+            PassSpec(
+                pass_id="layout.erf_passthrough",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_erf,
+                precondition=_has_erf_candidate,
+                priority=30,
+                transactional=True,
+            ),
+        ],
+        layout_state=layout_state,
+        default_details={
+            "rewritten_leading_input_transpose_passthrough_chains": 0,
+            "rewritten_asin_transpose_passthrough_chains": 0,
+            "rewritten_erf_transpose_passthrough_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_hardswish_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
