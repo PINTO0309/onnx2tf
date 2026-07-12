@@ -1432,6 +1432,31 @@ three specs stopped with zero snapshots. The temporary Tier 2 output directory
 was deleted. Validation remained single-process and sequential, with no new
 dependency or TensorFlow import.
 
+The remaining boundary-input Mul→Sum→Reshape normalization helper is now an
+indexed ordered pass. Both raw production calls were replaced in place by
+`run_boundary_input_normalization_cleanup`, with stable `LAYOUT_PLAN` ID
+`layout.boundary_input_mul_sum_reshape`. The implementation uses the shared
+GraphIndex for consumer lookup, input rewiring, and structural Transpose
+removal, and uses LayoutState-aware pruning. Its exact indexed guard retains
+the synthetic-boundary name/permutation, exclusive edges, constant shape,
+kept reduction dimensions, channel-axis, protected-output, and terminal
+Reshape requirements before opening a transaction.
+
+Sequential verification completed with:
+
+- `5 passed, 24 deselected` for success, fan-out no-op, architecture,
+  diagnostics, and irrelevant preflight coverage; success used one index build
+  and one snapshot, while the preflight-relevant fan-out case used zero
+  snapshots;
+- `1083 passed, 5 deselected, 2 warnings in 138.82s` for the full direct suite.
+
+A sequential read-only scan of all readable root ONNX files found no model
+whose source graph directly contains the exact input
+Transpose→Mul→ReduceSum→Reshape topology. Therefore no unrelated root model was
+used as evidence for this pass; the exact ModelIR fixtures and full conversion
+suite are the applicable gate. No temporary inference output was created, and
+no dependency or TensorFlow import was added.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

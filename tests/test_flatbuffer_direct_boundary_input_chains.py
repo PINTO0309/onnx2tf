@@ -6,8 +6,8 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.boundary_input_chains import (
     _optimize_boundary_input_transpose_batchmatmul_chains,
-    _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains,
     run_boundary_input_batchmatmul_cleanup,
+    run_boundary_input_normalization_cleanup,
 )
 
 
@@ -28,7 +28,7 @@ def _tensor(
     )
 
 
-def test_boundary_mul_sum_reshape_chain_moves_to_nhwc() -> None:
+def test_boundary_mul_sum_reshape_chain_moves_to_nhwc(monkeypatch) -> None:
     model_ir = ModelIR("boundary_mul_sum_reshape")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
@@ -88,8 +88,19 @@ def test_boundary_mul_sum_reshape_chain_moves_to_nhwc() -> None:
         ),
     ]
 
-    stats = _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains(
-        model_ir
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict] = []
+    stats = run_boundary_input_normalization_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
     )
 
     assert stats == {
@@ -110,6 +121,11 @@ def test_boundary_mul_sum_reshape_chain_moves_to_nhwc() -> None:
     assert model_ir.tensors["sum_out"].shape == [1, 2, 2, 1]
     assert "x_onnx_ncx_internal" not in model_ir.tensors
     assert "perm" not in model_ir.tensors
+    assert refresh_count == 1
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "layout.boundary_input_mul_sum_reshape"
+    assert diagnostics[0]["status"] == "changed"
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
 
 
 def test_boundary_batchmatmul_chain_removes_exclusive_transpose(monkeypatch) -> None:
@@ -236,8 +252,10 @@ def test_boundary_mul_sum_reshape_chain_preserves_fanout() -> None:
         ),
     ]
 
-    stats = _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains(
-        model_ir
+    diagnostics: list[dict] = []
+    stats = run_boundary_input_normalization_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
     )
 
     assert stats == {
@@ -245,6 +263,10 @@ def test_boundary_mul_sum_reshape_chain_preserves_fanout() -> None:
     }
     assert model_ir.operators[0].op_type == "TRANSPOSE"
     assert model_ir.operators[1].inputs[0] == "x_onnx_ncx_internal"
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["status"] == "skipped"
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 0
 
 
 def test_boundary_batchmatmul_chain_preserves_shared_model_input() -> None:

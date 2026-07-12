@@ -169,6 +169,7 @@ from onnx2tf.tflite_builder.passes.boundary_input_chains import (
     _optimize_boundary_input_transpose_batchmatmul_chains as _optimize_boundary_input_transpose_batchmatmul_chains_pass,
     _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains as _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains_pass,
     run_boundary_input_batchmatmul_cleanup,
+    run_boundary_input_normalization_cleanup,
 )
 from onnx2tf.tflite_builder.passes.channel_slice_layout import (
     _optimize_boundary_input_transpose_channel_slice_blocks as _optimize_boundary_input_transpose_channel_slice_blocks_pass,
@@ -64091,7 +64092,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_pre_argmax_nhwc_terminal_chains(model_ir)
     _optimize_transpose_gather_transpose_nhwc_channel_chains(model_ir)
     _optimize_terminal_softmax_transpose_after_nhwc_propagation(model_ir)
-    _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains(model_ir)
+    run_boundary_input_normalization_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_boundary_input_transpose_channel_slice_blocks(model_ir)
     _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(model_ir)
     _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir)
@@ -64345,7 +64350,11 @@ def lower_onnx_to_ir(
     _optimize_fuse_conv_activation_chains(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     # Final boundary cleanup after all late transpose/layout rewrites.
-    _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains(model_ir)
+    run_boundary_input_normalization_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(model_ir)
     _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir)
     run_channel_slice_merge_layout_cleanup(

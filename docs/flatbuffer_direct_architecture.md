@@ -97,6 +97,16 @@ model-output, permutation, constant-shape, axis, and metadata guards. Their
 legacy lowerer names are delegating wrappers, while graph mutation and
 constant-vector access use the canonical `core/model_ir_utils.py` helpers.
 
+The boundary Mul/Sum/Reshape normalization rewrite executes through
+`run_boundary_input_normalization_cleanup` at its two unchanged terminal
+positions, registered as `layout.boundary_input_mul_sum_reshape` in
+`LAYOUT_PLAN`. Its model-only preflight requires the common boundary
+Transpose/Mul/Sum/Reshape capability. The indexed guard then proves the
+synthetic input adapter, scalar or channelwise constant, single-consumer
+normalization chain, kept reduction dimensions, channel axis, and terminal
+Reshape before snapshotting. Rewiring and structural removal update one
+`ModelIRGraphIndex`, and pruning synchronizes the session `LayoutState`.
+
 The BatchMatMul rewrite executes through
 `run_boundary_input_batchmatmul_cleanup`, registered as
 `layout.boundary_input_batchmatmul` in `LAYOUT_PLAN`. Its shared candidate
