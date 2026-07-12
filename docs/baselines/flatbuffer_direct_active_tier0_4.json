@@ -2101,7 +2101,7 @@
       "tier": 3,
       "model": "conv_tasnet.onnx",
       "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
+      "baseline_reason": "invalid_onnx_scatterelements_rank_mismatch_4_6",
       "keep_shape_absolutely_input_names": [
         "onnx::Unsqueeze_0"
       ],

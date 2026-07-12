@@ -368,6 +368,18 @@ result is `docs/baselines/flatbuffer_direct_tier3_root_c838b42.json`: 22
 passed, 15 conversion errors, 17 timeouts, 1 accuracy failure, and 16 missing
 reports. Median and maximum durations were 17.248 and 120.662 seconds.
 
+`conv_tasnet.onnx` remains an active missing-report model with the normalized
+reason `invalid_onnx_scatterelements_rank_mismatch_4_6`. Its terminal
+`/decoder/ScatterElements` receives FLOAT data and updates shaped
+`[256,2,2,10]`, but the constant indices are shaped
+`[2,1,256,2,2,10]`. ONNX requires data, indices, and updates to have the same
+rank, so ONNX Runtime rejects the original model at execution even though the
+structural checker accepts it. The direct artifact retains the incompatible
+scatter and LiteRT aborts during invocation. Squeezing or selecting either
+leading indices dimension would choose unrecorded source semantics, and no
+valid ONNX result exists to prove the `1e-1` accuracy ceiling, so the converter
+does not fabricate a rank repair.
+
 `dequantize_linear.onnx` remains an active non-pass with the normalized reason
 `onnxruntime_qdq_fusion_and_float_conv_decode_amplification`. Its input
 QuantizeLinear uses an equivalent signed internal representation and the

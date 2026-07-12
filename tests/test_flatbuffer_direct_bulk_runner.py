@@ -1130,6 +1130,20 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "aca9525029ba7a608c692da1d3944c7ba88e2c55d50b7b54a6bc35b237aa2a42"
     )
     assert dequantize_linear_entry["tflite_max_abs"] == 81.25048828125
+    conv_tasnet_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "conv_tasnet.onnx"
+    )
+    assert conv_tasnet_entry["baseline_classification"] == (
+        "missing_tflite_report"
+    )
+    assert conv_tasnet_entry["baseline_reason"] == (
+        "invalid_onnx_scatterelements_rank_mismatch_4_6"
+    )
+    assert conv_tasnet_entry["error_signature_sha256"] == (
+        "1a12a88b8f42185e545973a18cc67b274f6b1c7a01b21319ffeaeecf4fdb6052"
+    )
     version_rfb_entry = next(
         entry
         for entry in profile_payload["models"]
