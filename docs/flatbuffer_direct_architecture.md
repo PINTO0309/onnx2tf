@@ -293,6 +293,17 @@ and `1b066e8245cb45f79df76dbc052ecf7485f07d7910fb789cff38b47c298b7f19`,
 respectively. The module is part of the TensorFlow-import boundary. This split
 is an ownership improvement, not a source-line requirement.
 
+QLinearAdd and QLinearMul are isolated in
+`op_builders/qlinear_binary.py`. Their shared validation, quantization
+metadata, builtin/float-path selection, and ONNX-compatible requantization now
+have one op-family owner while continuing to use the common quantization
+primitives. Pre-extraction ModelIR fingerprints are fixed at
+`d2f0714a44b2dc376827b845269a217c1df894986f3957128994a2913d611c24`
+for QLinearAdd and
+`b4d9d1a39202474faf52ab43fbde4938fe892a0a38c5739a87b6da2d9b882b34`
+for QLinearMul. Fingerprint normalization and serialization are shared by the
+op-family tests instead of being copied into each test module.
+
 `dynamics_rife_sim.onnx` remains an active non-pass with the normalized reason
 `invalid_onnx_concat_spatial_mismatch_64_128`. The source passes the structural
 ONNX checker but ONNX Runtime rejects it during shape inference at

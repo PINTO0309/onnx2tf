@@ -139,6 +139,19 @@ The Goal's `2,000` threshold applies exclusively to ONNX graph operation/node
 count: Tier 4 ends at 1,999 nodes and Tier 5 begins at 2,000 nodes. It is not a
 limit on production or test source-file length.
 
+QLinearAdd and QLinearMul were then moved mechanically to
+`op_builders/qlinear_binary.py`. The dispatch and ModelIR contracts remain
+unchanged. Their pre-extraction fingerprints are
+`d2f0714a44b2dc376827b845269a217c1df894986f3957128994a2913d611c24`
+(9 operators, 15 tensors) and
+`b4d9d1a39202474faf52ab43fbde4938fe892a0a38c5739a87b6da2d9b882b34`
+(4 operators, 6 tensors), respectively. The fingerprint implementation is now
+shared by the FC, pooling, and binary family tests, removing duplicated
+normalization and ModelIR serialization code. Existing QLinearAdd rounding,
+QLinearConv chain, and QLinear FC chain runtime checks pass through the new
+import path. The full sequential direct regression completed with `973 passed,
+5 deselected, 2 warnings in 122.70s`.
+
 `campp_vin.onnx` is promoted from an historical accuracy failure to a normal
 pass. Its concretized dynamic-time artifact fails during XNNPACK reshape
 preparation, so isolated evaluation now retries once, sequentially, with the
