@@ -31,6 +31,7 @@ from onnx2tf.tflite_builder.core.op_contracts import (
 )
 from onnx2tf.tflite_builder.core.passes import (
     OrderedPassManager,
+    PassInvariantError,
     PassPhase,
     PassResult,
     PassSpec,
@@ -62,6 +63,7 @@ __all__ = [
     "NodeValidationError",
     "ValidationSpec",
     "OrderedPassManager",
+    "PassInvariantError",
     "PassPhase",
     "PassResult",
     "PassSpec",

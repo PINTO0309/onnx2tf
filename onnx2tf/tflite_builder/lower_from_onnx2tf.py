@@ -65505,6 +65505,7 @@ def lower_onnx_to_ir(
         run_squeeze_reshape_identity_cleanup(
             model_ir,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         _optimize_fold_mul_add_mul_affine_chains(model_ir)
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
@@ -65523,6 +65524,7 @@ def lower_onnx_to_ir(
         run_mixed_attention_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
@@ -65569,6 +65571,7 @@ def lower_onnx_to_ir(
             model_ir,
             include_transpose=enable_duplicate_transpose_fanout_optimizations,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
         _optimize_transpose_quant_dequant_bridges(model_ir)
@@ -65616,6 +65619,7 @@ def lower_onnx_to_ir(
         run_squeeze_reshape_identity_cleanup(
             model_ir,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         _optimize_fold_mul_add_mul_affine_chains(model_ir)
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
@@ -65632,6 +65636,7 @@ def lower_onnx_to_ir(
         run_mixed_attention_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
@@ -65660,6 +65665,7 @@ def lower_onnx_to_ir(
             model_ir,
             include_transpose=enable_duplicate_transpose_fanout_optimizations,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         _optimize_transpose_dequant_prelu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_prelu_transpose_bridges(model_ir)
@@ -65728,12 +65734,14 @@ def lower_onnx_to_ir(
         run_squeeze_reshape_identity_cleanup(
             model_ir,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir)
         _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
         run_squeeze_reshape_identity_cleanup(
             model_ir,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
@@ -65749,6 +65757,7 @@ def lower_onnx_to_ir(
         run_mixed_attention_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
@@ -65777,6 +65786,7 @@ def lower_onnx_to_ir(
             model_ir,
             include_transpose=enable_duplicate_transpose_fanout_optimizations,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         _optimize_transpose_dequant_prelu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_prelu_transpose_bridges(model_ir)
@@ -65814,6 +65824,7 @@ def lower_onnx_to_ir(
     run_squeeze_reshape_identity_cleanup(
         model_ir,
         layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
     )
     _prune_dead_operators(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
@@ -65872,6 +65883,7 @@ def lower_onnx_to_ir(
         run_mixed_attention_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
@@ -66001,6 +66013,7 @@ def lower_onnx_to_ir(
         run_squeeze_reshape_identity_cleanup(
             model_ir,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         _prune_dead_operators(model_ir)
         _reconcile_static_tensor_shapes(model_ir)
@@ -66054,6 +66067,7 @@ def lower_onnx_to_ir(
     run_boundary_input_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
     )
     # Boundary input layout recovery can recreate input-head PAD wrappers.
     _optimize_transpose_pad_prepost_nhwc_chains(model_ir)
@@ -66092,6 +66106,7 @@ def lower_onnx_to_ir(
         run_squeeze_reshape_identity_cleanup(
             model_ir,
             layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
         )
         _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(model_ir)
         _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir)
@@ -66101,6 +66116,7 @@ def lower_onnx_to_ir(
     run_clamp_cleanup(
         model_ir,
         layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
     )
     # MAXIMUM/MINIMUM -> RELU_0_TO_1 canonicalization can expose fresh
     # NHWC<->NCHW unary wrappers (e.g. HardSigmoid clamp). Re-run the
@@ -66139,6 +66155,7 @@ def lower_onnx_to_ir(
     run_squeeze_reshape_identity_cleanup(
         model_ir,
         layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
     )
     _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(model_ir)
     _prune_dead_operators(model_ir)
@@ -66193,6 +66210,7 @@ def lower_onnx_to_ir(
     run_mixed_attention_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
     )
     _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
     _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
@@ -66657,6 +66675,7 @@ def lower_onnx_to_ir(
     run_mixed_attention_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
     )
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
     _topologically_sort_operators(model_ir)

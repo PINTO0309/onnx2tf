@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -239,6 +239,7 @@ def run_duplicate_fanout_cleanup(
     *,
     include_transpose: bool = True,
     layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, int]:
     """Run duplicate layout-adapter cleanup as one ordered transaction group."""
 
@@ -319,6 +320,7 @@ def run_duplicate_fanout_cleanup(
         specs=specs,
         layout_state=layout_state,
         default_details=default_details,
+        diagnostics=diagnostics,
     )
     return {str(key): int(value) for key, value in details.items()}
 
@@ -426,6 +428,7 @@ def run_clamp_cleanup(
     model_ir: ModelIR,
     *,
     layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, int]:
     """Run scalar zero-to-one clamp canonicalization transactionally."""
 
@@ -469,6 +472,7 @@ def run_clamp_cleanup(
         ],
         layout_state=layout_state,
         default_details={"rewritten_maximum_minimum_relu0to1_chains": 0},
+        diagnostics=diagnostics,
     )
     return {str(key): int(value) for key, value in details.items()}
 
@@ -611,6 +615,7 @@ def run_squeeze_reshape_identity_cleanup(
     model_ir: ModelIR,
     *,
     layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, int]:
     """Run guarded Squeeze/Reshape round-trip removal transactionally."""
 
@@ -650,5 +655,6 @@ def run_squeeze_reshape_identity_cleanup(
         ],
         layout_state=layout_state,
         default_details={"optimized_squeeze_reshape_identity_chains": 0},
+        diagnostics=diagnostics,
     )
     return {str(key): int(value) for key, value in details.items()}

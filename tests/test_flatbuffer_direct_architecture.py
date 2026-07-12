@@ -385,6 +385,40 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
     assert "run_squeeze_reshape_identity_cleanup" in lowerer_names
 
 
+def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    runner_names = {
+        "run_boundary_input_layout_cleanup",
+        "run_clamp_cleanup",
+        "run_duplicate_fanout_cleanup",
+        "run_mixed_attention_layout_cleanup",
+        "run_squeeze_reshape_identity_cleanup",
+    }
+    tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in runner_names
+    ]
+
+    assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
+    assert len(calls) == 19
+    for call in calls:
+        diagnostics_keywords = [
+            keyword for keyword in call.keywords if keyword.arg == "diagnostics"
+        ]
+        assert len(diagnostics_keywords) == 1
+        value = diagnostics_keywords[0].value
+        assert isinstance(value, ast.Attribute)
+        assert value.attr == "diagnostics"
+        assert isinstance(value.value, ast.Name)
+        assert value.value.id == "session"
+
+
 def test_attention_layout_rewrites_have_single_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

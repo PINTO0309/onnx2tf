@@ -16,6 +16,7 @@ from onnx2tf.tflite_builder.core import (
     ModelIRGraphIndex,
     ModelIRPassState,
     OrderedPassManager,
+    PassInvariantError,
     PassPhase,
     PassSpec,
     run_model_ir_pass_group,
@@ -348,6 +349,7 @@ def test_model_ir_pass_state_restores_graph_index_and_layout_state() -> None:
 
 def test_model_ir_pass_group_runs_specs_and_normalizes_details() -> None:
     model_ir = _add_model_ir()
+    diagnostics: list[dict] = []
     specs = [
         PassSpec(
             pass_id="cleanup.executed",
@@ -367,6 +369,7 @@ def test_model_ir_pass_group_runs_specs_and_normalizes_details() -> None:
         model_ir,
         specs=specs,
         default_details={"removed": 0},
+        diagnostics=diagnostics,
     )
 
     assert details == {"removed": 0, "rewritten": 2}
@@ -375,6 +378,77 @@ def test_model_ir_pass_group_runs_specs_and_normalizes_details() -> None:
         "cleanup.skipped",
     ]
     assert results[1].details == {"skipped_by_precondition": True}
+    assert diagnostics == [
+        {
+            "stage": "model_ir_pass",
+            "code": "cleanup.executed",
+            "message": "model ir pass unchanged",
+            "phase": "post_lowering_cleanup",
+            "status": "unchanged",
+            "iterations": 1,
+            "changed": False,
+            "stopped_by_cycle": False,
+            "skipped_by_precondition": False,
+        },
+        {
+            "stage": "model_ir_pass",
+            "code": "cleanup.skipped",
+            "message": "model ir pass skipped",
+            "phase": "post_lowering_cleanup",
+            "status": "skipped",
+            "iterations": 0,
+            "changed": False,
+            "stopped_by_cycle": False,
+            "skipped_by_precondition": True,
+        },
+    ]
+
+
+def test_model_ir_pass_group_records_typed_invariant_failure() -> None:
+    model_ir = _add_model_ir()
+    diagnostics: list[dict] = []
+
+    def invalidate(state: ModelIRPassState) -> dict:
+        del state.model_ir.tensors["z"]
+        return {"changed": True}
+
+    with pytest.raises(PassInvariantError) as caught:
+        run_model_ir_pass_group(
+            model_ir,
+            specs=[
+                PassSpec(
+                    pass_id="cleanup.invalid",
+                    phase=PassPhase.POST_LOWERING_CLEANUP,
+                    callback=invalidate,
+                    transactional=True,
+                )
+            ],
+            diagnostics=diagnostics,
+        )
+
+    assert caught.value.pass_id == "cleanup.invalid"
+    assert caught.value.phase == "post_lowering_cleanup"
+    assert caught.value.iterations == 1
+    assert caught.value.problems == (
+        "missing_output_tensor:0:z",
+        "missing_graph_output_tensor:z",
+        "layout_state_stale_tensor:z",
+    )
+    assert "z" in model_ir.tensors
+    assert diagnostics == [
+        {
+            "stage": "model_ir_pass",
+            "code": "cleanup.invalid",
+            "message": "invariant validation failed; transaction rolled back",
+            "phase": "post_lowering_cleanup",
+            "status": "failed",
+            "iterations": 1,
+            "changed": False,
+            "stopped_by_cycle": False,
+            "skipped_by_precondition": False,
+            "problems": list(caught.value.problems),
+        }
+    ]
 
 
 def test_dispatcher_records_onnx_provenance() -> None:

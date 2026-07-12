@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
@@ -128,6 +128,7 @@ def run_boundary_input_layout_cleanup(
     model_ir: ModelIR,
     *,
     layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, int]:
     """Run guarded boundary-adapter removal as an ordered layout pass."""
 
@@ -166,5 +167,6 @@ def run_boundary_input_layout_cleanup(
         ],
         layout_state=layout_state,
         default_details={"removed_boundary_input_layout_transpose": 0},
+        diagnostics=diagnostics,
     )
     return {str(key): int(value) for key, value in details.items()}

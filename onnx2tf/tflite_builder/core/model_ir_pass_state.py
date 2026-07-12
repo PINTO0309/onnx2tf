@@ -8,6 +8,7 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.passes import (
     OrderedPassManager,
+    PassInvariantError,
     PassResult,
     PassSpec,
 )
@@ -68,6 +69,7 @@ def run_model_ir_pass_group(
     specs: Iterable[PassSpec[ModelIRPassState]],
     layout_state: Optional[LayoutState] = None,
     default_details: Optional[Mapping[str, Any]] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[Dict[str, Any], List[PassResult]]:
     """Run ordered ModelIR specs with shared state and normalized diagnostics."""
 
@@ -75,7 +77,50 @@ def run_model_ir_pass_group(
     manager = state.create_ordered_manager()
     for spec in specs:
         manager.register(spec)
-    results = manager.run(state)
+    try:
+        results = manager.run(state)
+    except PassInvariantError as error:
+        if diagnostics is not None:
+            diagnostics.append(
+                {
+                    "stage": "model_ir_pass",
+                    "code": error.pass_id,
+                    "message": "invariant validation failed; transaction rolled back",
+                    "phase": error.phase,
+                    "status": "failed",
+                    "iterations": error.iterations,
+                    "changed": False,
+                    "stopped_by_cycle": False,
+                    "skipped_by_precondition": False,
+                    "problems": list(error.problems),
+                }
+            )
+        raise
+    if diagnostics is not None:
+        for result in results:
+            skipped = bool(result.details.get("skipped_by_precondition", False))
+            status = (
+                "skipped"
+                if skipped
+                else "cycle_stopped"
+                if result.stopped_by_cycle
+                else "changed"
+                if result.changed
+                else "unchanged"
+            )
+            diagnostics.append(
+                {
+                    "stage": "model_ir_pass",
+                    "code": str(result.pass_id),
+                    "message": f"model ir pass {status}",
+                    "phase": str(result.phase),
+                    "status": status,
+                    "iterations": int(result.iterations),
+                    "changed": bool(result.changed),
+                    "stopped_by_cycle": bool(result.stopped_by_cycle),
+                    "skipped_by_precondition": skipped,
+                }
+            )
     details: Dict[str, Any] = dict(default_details or {})
     for result in results:
         for key, value in result.details.items():

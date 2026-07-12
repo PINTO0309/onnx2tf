@@ -243,6 +243,16 @@ match guards, rewrite callbacks, stable pass specifications, and typed legacy
 result adapters rather than duplicating manager and result-aggregation
 plumbing.
 
+The common runner can append normalized internal events to
+`ConversionSession.diagnostics`. Every event carries the stable pass ID,
+phase, status, iteration count, changed flag, cycle flag, and precondition-skip
+flag. Transactional invariant failures use `PassInvariantError`, a
+`RuntimeError`-compatible type that retains the pass ID, phase, iteration, and
+complete validator problem list after rollback. Failure events record the same
+problem list before re-raising. These diagnostics are conversion-session state
+only: they are not inserted into ModelIR metadata, legacy return dictionaries,
+coverage/correspondence reports, or public JSON schemas.
+
 The attention module also owns the QKV Slice canonicalization pair. One pass
 replaces compatible Slice branches with Gather/Reshape views; the next replaces
 three compatible branches with a single Split. Both require fully known,

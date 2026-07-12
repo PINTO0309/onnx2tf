@@ -607,6 +607,32 @@ attach stable pass IDs, iteration counts, skip state, and invariant failures to
 public return dictionary. Add a focused contract test before wiring production
 sessions.
 
+Ordered pass diagnostics are now connected. All 19 production invocations of
+the five current runners pass `session.diagnostics` into the common execution
+boundary. Success events retain stable ID, phase, status, iteration count,
+changed, cycle-stop, and precondition-skip fields. `PassInvariantError` remains
+compatible with the previous `RuntimeError` behavior while exposing pass ID,
+phase, iteration, and the complete invariant problem tuple; the common runner
+records the same failure details after rollback and re-raises. Diagnostics
+remain internal session state and do not alter ModelIR metadata, public return
+dictionaries, or report JSON schemas.
+
+Verification completed with:
+
+- `16 passed, 29 deselected` for success/skip diagnostics, typed rollback
+  failures, production diagnostic wiring, and existing ordered cleanup paths;
+- `1033 passed, 5 deselected, 2 warnings in 130.80s` for the full sequential
+  direct suite.
+
+The next core contract gap is deterministic ModelIR fingerprinting. The generic
+manager already detects cycles when supplied a fingerprint, but
+`ModelIRPassState.create_ordered_manager()` does not yet provide one. Implement
+a compact deterministic fingerprint that covers operator topology and mutable
+tensor semantics without serializing large constant buffers repeatedly; hash
+constant dtype/shape/content separately and cache immutable buffer digests.
+Then add idempotence and two-state cycle tests before enabling iterations above
+one for any production pass.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

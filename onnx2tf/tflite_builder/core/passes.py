@@ -46,6 +46,27 @@ class PassResult:
     details: Dict[str, Any] = field(default_factory=dict)
 
 
+class PassInvariantError(RuntimeError):
+    """Invariant failure raised after a transactional pass is rolled back."""
+
+    def __init__(
+        self,
+        *,
+        pass_id: str,
+        phase: PassPhase,
+        iterations: int,
+        problems: Iterable[str],
+    ) -> None:
+        self.pass_id = str(pass_id)
+        self.phase = phase.name.lower()
+        self.iterations = int(iterations)
+        self.problems = tuple(str(problem) for problem in problems)
+        super().__init__(
+            "pass invariant violation: "
+            f"pass_id={self.pass_id} problems={list(self.problems[:8])}"
+        )
+
+
 class OrderedPassManager(Generic[StateT]):
     """Deterministic pass runner with optional rollback and cycle detection."""
 
@@ -113,8 +134,11 @@ class OrderedPassManager(Generic[StateT]):
                 if problems:
                     if snapshot is not None and self._restore is not None:
                         self._restore(state, snapshot)
-                    raise RuntimeError(
-                        f"pass invariant violation: pass_id={spec.pass_id} problems={problems[:8]}"
+                    raise PassInvariantError(
+                        pass_id=spec.pass_id,
+                        phase=spec.phase,
+                        iterations=iterations,
+                        problems=problems,
                     )
                 after = self._digest(state)
                 iteration_changed = bool(current.get("changed", before != after))
