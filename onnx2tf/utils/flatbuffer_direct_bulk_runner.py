@@ -25,6 +25,7 @@ _STATE_FILENAME = "bulk_status.json"
 _SUMMARY_JSON_FILENAME = "bulk_summary.json"
 _SUMMARY_MD_FILENAME = "bulk_summary.md"
 _RUNS_DIRNAME = "runs"
+_INTERNAL_PASS_METRICS_PATH_ENV = "ONNX2TF_INTERNAL_PASS_METRICS_PATH"
 
 
 def _create_progress_bar(
@@ -563,7 +564,7 @@ def _build_summary(state: Dict[str, Any]) -> Dict[str, Any]:
     }
     if state.get("regression_profile") is not None:
         filters["regression_profile"] = dict(state["regression_profile"])
-    return {
+    summary = {
         "schema_version": _STATE_SCHEMA_VERSION,
         "root_dir": state.get("root_dir", ""),
         "models_sha256": state.get("models_sha256", ""),
@@ -593,6 +594,32 @@ def _build_summary(state: Dict[str, Any]) -> Dict[str, Any]:
         ],
         "generated_at": _utc_now_iso(),
     }
+    pass_metric_entries = [
+        entry.get("pass_metrics")
+        for entry in entries
+        if isinstance(entry.get("pass_metrics"), dict)
+    ]
+    if pass_metric_entries:
+        aggregate_totals = {
+            "preflight_operators_visited": 0,
+            "state_backed_event_count": 0,
+            "snapshot_count": 0,
+            "fingerprint_count": 0,
+        }
+        total_events = 0
+        for metrics in pass_metric_entries:
+            total_events += int(metrics.get("event_count", 0))
+            totals = metrics.get("totals", {})
+            if not isinstance(totals, dict):
+                continue
+            for key in aggregate_totals:
+                aggregate_totals[key] += int(totals.get(key, 0))
+        summary["pass_metrics"] = {
+            "models_with_metrics": len(pass_metric_entries),
+            "event_count": total_events,
+            "totals": aggregate_totals,
+        }
+    return summary
 
 
 def _write_markdown_summary(path: str, *, state: Dict[str, Any], summary: Dict[str, Any]) -> None:
@@ -822,6 +849,7 @@ def run_flatbuffer_direct_bulk_verification(
                 artifact_dir=artifact_dir,
                 model_path=model_name,
             )
+            pass_metrics_path = os.path.join(run_dir, "pass_metrics.json")
 
             entry: Dict[str, Any] = {
                 "index": int(offset),
@@ -833,6 +861,7 @@ def run_flatbuffer_direct_bulk_verification(
                 "stderr_log_path": str(stderr_log_path),
                 "tflite_accuracy_report_path": str(tflite_accuracy_report_path),
                 "pytorch_accuracy_report_path": str(pytorch_accuracy_report_path),
+                "pass_metrics_path": str(pass_metrics_path),
                 "started_at": _utc_now_iso(),
                 "onnx2tf_exit_code": None,
                 "classification": "",
@@ -945,6 +974,15 @@ def run_flatbuffer_direct_bulk_verification(
             )
             spinner.start()
             try:
+                os.remove(pass_metrics_path)
+            except FileNotFoundError:
+                pass
+            previous_metrics_path = os.environ.get(
+                _INTERNAL_PASS_METRICS_PATH_ENV,
+                None,
+            )
+            os.environ[_INTERNAL_PASS_METRICS_PATH_ENV] = pass_metrics_path
+            try:
                 completed = subprocess.run(
                     cmd,
                     cwd=run_dir,
@@ -987,12 +1025,22 @@ def run_flatbuffer_direct_bulk_verification(
                 )
                 continue
             finally:
+                if previous_metrics_path is None:
+                    os.environ.pop(_INTERNAL_PASS_METRICS_PATH_ENV, None)
+                else:
+                    os.environ[_INTERNAL_PASS_METRICS_PATH_ENV] = (
+                        previous_metrics_path
+                    )
                 spinner.stop()
 
             with open(stdout_log_path, "w", encoding="utf-8") as f:
                 f.write(stdout_text)
             with open(stderr_log_path, "w", encoding="utf-8") as f:
                 f.write(stderr_text)
+
+            pass_metrics = _read_json(pass_metrics_path)
+            if isinstance(pass_metrics, dict):
+                entry["pass_metrics"] = pass_metrics
 
             if int(entry["onnx2tf_exit_code"]) != 0:
                 entry["classification"] = "conversion_error"

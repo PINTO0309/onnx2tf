@@ -292,6 +292,16 @@ the exact snapshot and fingerprint counts reported by OrderedPassManager.
 visited counts deterministic and allow early-match scans. These counters feed
 Tier profiling while remaining absent from ModelIR metadata and public reports.
 
+Managed corpus runs can collect an aggregate through a private sink without
+changing CLI/API artifacts. `lower_onnx_to_ir` accepts an optional private
+diagnostic list; the flatbuffer builder summarizes only model-ir-pass events
+when `ONNX2TF_INTERNAL_PASS_METRICS_PATH` is set. The sequential bulk runner sets
+that environment variable only around one subprocess, restores the prior value
+in `finally`, reads the per-run JSON, and stores it under the managed entry's
+optional `pass_metrics`. Bulk summary totals combine visited operators,
+state-backed events, snapshots, and fingerprints. Normal conversions do not
+allocate the sink or write a metrics file.
+
 Production constant-input materialization uses
 `run_constant_input_fold_cleanup` from `passes/constant_fold.py`. Its three
 specs preserve the original dependency order with priorities 10/20/30:

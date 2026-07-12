@@ -9,6 +9,9 @@ from onnx2tf.tflite_builder.core.progress import (
     ProgressSpinner as _ProgressSpinner,
     create_progress_bar as _create_progress_bar,
 )
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    summarize_model_ir_pass_diagnostics,
+)
 from onnx2tf.tflite_builder.core.validation import run_model_ir_validation_pipeline
 from onnx2tf.tflite_builder.ir import (
     clone_model_ir_with_float16,
@@ -40,6 +43,7 @@ from onnx2tf.tflite_builder.quantization import (
     load_calibration_samples,
     strict_int16_activation_skip_reasons,
 )
+
 from onnx2tf.tflite_builder.preprocess import (
     configure_pseudo_ops_wave1_targets,
     get_supported_pseudo_ops_wave1_aliases,
@@ -62,6 +66,27 @@ from onnx2tf.tflite_builder.split_planner import (
 from onnx2tf.utils.onnx_litert_runtime import weights_export
 from onnx2tf.utils.tf_optional import require_tensorflow
 from onnx2tf.utils.torch_optional import require_torch
+
+_INTERNAL_PASS_METRICS_PATH_ENV = "ONNX2TF_INTERNAL_PASS_METRICS_PATH"
+
+
+def _write_internal_pass_metrics(
+    path: str,
+    diagnostics: List[Dict[str, Any]],
+) -> None:
+    output_path = os.path.abspath(path)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    tmp_path = f"{output_path}.tmp.{os.getpid()}"
+    with open(tmp_path, "w", encoding="utf-8") as file:
+        json.dump(
+            summarize_model_ir_pass_diagnostics(diagnostics),
+            file,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        file.write("\n")
+    os.replace(tmp_path, output_path)
 
 
 def _progress_write(*, message: str, enabled: bool) -> None:
@@ -514,6 +539,12 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     finally:
         configure_pseudo_ops_wave1_targets(None)
 
+    internal_pass_metrics_path = str(
+        os.environ.get(_INTERNAL_PASS_METRICS_PATH_ENV, "")
+    ).strip()
+    internal_pass_diagnostics: Optional[List[Dict[str, Any]]] = (
+        [] if internal_pass_metrics_path else None
+    )
     try:
         model_ir = lower_onnx_to_ir(
             onnx_graph=preprocessed_onnx_graph,
@@ -546,7 +577,16 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     + list(output_names_to_interrupt_model_conversion or [])
                 )
             ),
+            _internal_pass_diagnostics=internal_pass_diagnostics,
         )
+        if internal_pass_diagnostics is not None:
+            try:
+                _write_internal_pass_metrics(
+                    internal_pass_metrics_path,
+                    internal_pass_diagnostics,
+                )
+            except Exception:
+                pass
         if (
             input_names_to_interrupt_model_conversion
             or output_names_to_interrupt_model_conversion

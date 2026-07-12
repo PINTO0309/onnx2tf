@@ -20,10 +20,12 @@ from onnx2tf.tflite_builder.core import (
     PassPhase,
     PassSpec,
     run_model_ir_pass_group,
+    summarize_model_ir_pass_diagnostics,
     validate_model_ir_invariants,
 )
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
+from onnx2tf.tflite_builder.lower_from_onnx2tf import lower_onnx_to_ir
 
 
 def _add_onnx_model() -> onnx.ModelProto:
@@ -95,6 +97,22 @@ def test_conversion_session_builds_one_graph_index() -> None:
     )
     session.refresh_indexes()
     assert session.layout_state.logical_of("new") == "NHWC"
+
+
+def test_lowerer_private_sink_collects_internal_pass_diagnostics() -> None:
+    diagnostics: list[dict] = []
+
+    model_ir = lower_onnx_to_ir(
+        _add_onnx_model(),
+        "diagnostic_sink",
+        _internal_pass_diagnostics=diagnostics,
+    )
+
+    assert model_ir.name == "diagnostic_sink"
+    assert diagnostics
+    assert all(event["stage"] == "model_ir_pass" for event in diagnostics)
+    summary = summarize_model_ir_pass_diagnostics(diagnostics)
+    assert summary["event_count"] == len(diagnostics)
 
 
 def test_layout_state_sync_rename_remove_and_validation() -> None:
@@ -602,6 +620,30 @@ def test_model_ir_pass_diagnostics_number_repeated_invocations() -> None:
     assert diagnostics[1]["invocation"] == 1
     assert diagnostics[2]["sequence"] == 2
     assert diagnostics[2]["invocation"] == 2
+
+    summary = summarize_model_ir_pass_diagnostics(diagnostics)
+    assert summary == {
+        "schema_version": 1,
+        "event_count": 2,
+        "status_counts": {"unchanged": 2},
+        "totals": {
+            "preflight_operators_visited": 0,
+            "state_backed_event_count": 2,
+            "snapshot_count": 0,
+            "fingerprint_count": 0,
+        },
+        "by_pass": {
+            "cleanup.repeated": {
+                "event_count": 2,
+                "changed_count": 0,
+                "skipped_count": 0,
+                "preflight_operators_visited": 0,
+                "state_backed_event_count": 2,
+                "snapshot_count": 0,
+                "fingerprint_count": 0,
+            }
+        },
+    }
 
 
 def test_dispatcher_records_onnx_provenance() -> None:

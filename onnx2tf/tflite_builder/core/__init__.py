@@ -17,6 +17,7 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
     run_model_ir_pass_group,
+    summarize_model_ir_pass_diagnostics,
 )
 from onnx2tf.tflite_builder.core.lowering_registry import (
     LoweringRegistry,
@@ -55,6 +56,7 @@ __all__ = [
     "ModelIRPreflightResult",
     "ModelIRPassState",
     "run_model_ir_pass_group",
+    "summarize_model_ir_pass_diagnostics",
     "ModelIRInvariantError",
     "LoweringRegistry",
     "LoweringResolution",

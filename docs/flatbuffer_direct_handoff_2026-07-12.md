@@ -875,6 +875,32 @@ conversion reports. Inspect the bulk runner's existing timing/RSS entry schema
 and add an optional internal `pass_metrics` summary only where the conversion
 session diagnostics are available without changing CLI/API artifacts.
 
+Managed corpus metrics now cross the subprocess boundary through an internal,
+opt-in path only. `lower_onnx_to_ir` has a private diagnostic sink finalized on
+both normal and fallback returns. The flatbuffer builder activates it only when
+`ONNX2TF_INTERNAL_PASS_METRICS_PATH` is present, writes an atomic aggregated
+JSON, and otherwise allocates nothing and emits no file.
+
+The sequential bulk runner sets that environment variable to each run's
+`pass_metrics.json` immediately around `subprocess.run`, restores any previous
+value in `finally`, and removes stale files before execution. Valid metrics are
+stored in the managed entry and aggregated into `summary.pass_metrics` across
+models. This does not add a public CLI flag, ModelIR metadata, accuracy-report
+field, or conversion-result key.
+
+Verification completed with:
+
+- `50 passed` for core diagnostics, private lowerer sink, environment
+  restoration, bulk entry/summary aggregation, and all existing bulk behavior;
+- `1076 passed, 5 deselected, 2 warnings in 136.25s` for the full sequential
+  direct suite.
+
+The next practical step is to run a small real Tier 0 sample with the managed
+bulk runner and inspect `pass_metrics` distributions, one model at a time. Use
+the existing fixed order/profile and do not launch parallel workers. Based on
+actual high-count pass IDs, select the next migration or grouping target rather
+than guessing from source order.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

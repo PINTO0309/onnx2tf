@@ -64613,6 +64613,7 @@ def lower_onnx_to_ir(
     fused_argmax_scale_ratio: float = 0.5,
     replace_to_pseudo_operators: Optional[List[str]] = None,
     protected_boundary_tensor_names: Optional[List[str]] = None,
+    _internal_pass_diagnostics: Optional[List[Dict[str, Any]]] = None,
 ) -> ModelIR:
     repair_missing_torchvision_nms_guard_captures(onnx_graph)
     repair_missing_torchvision_paste_masks_loop_captures(onnx_graph)
@@ -64663,6 +64664,11 @@ def lower_onnx_to_ir(
         dtype_map=dtype_map,
         constants=constants,
     )
+
+    def _finalize_model_ir(result: ModelIR) -> ModelIR:
+        if _internal_pass_diagnostics is not None:
+            _internal_pass_diagnostics.extend(copy.deepcopy(session.diagnostics))
+        return result
     ctx = LoweringContext(
         model_ir=model_ir,
         shape_map=shape_map,
@@ -66211,7 +66217,7 @@ def lower_onnx_to_ir(
             )
             _reconcile_static_tensor_shapes(fallback_ir)
         _topologically_sort_operators(fallback_ir)
-        return fallback_ir
+        return _finalize_model_ir(fallback_ir)
 
     _rewrite_constant_divisors_to_multiplicative_reciprocals(model_ir)
     run_consecutive_mul_constants_cleanup(
@@ -66401,4 +66407,4 @@ def lower_onnx_to_ir(
     coalesce_static_high_rank_binary_operators(model_ir)
     _realign_dynamic_boundary_shape_signature_map(model_ir)
     _topologically_sort_operators(model_ir)
-    return model_ir
+    return _finalize_model_ir(model_ir)
