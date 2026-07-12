@@ -7309,6 +7309,22 @@ def _make_squeeze_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_squeeze_to_scalar_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT64, [1])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [])
+    node = helper.make_node(
+        "Squeeze",
+        ["x"],
+        ["y"],
+        name="SqueezeToScalarNode",
+    )
+    graph = helper.make_graph([node], "squeeze_to_scalar_graph", [x], [y])
+    return helper.make_model(
+        graph,
+        opset_imports=[helper.make_operatorsetid("", 11)],
+    )
+
+
 def _make_unsqueeze_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 3])
@@ -7489,6 +7505,41 @@ def _make_gather_runtime_scalar_indices_rank_reduced_dynamic_batch_model() -> on
         [y],
     )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_gather_runtime_scalar_indices_two_dynamic_dims_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info(
+        "x",
+        TensorProto.FLOAT,
+        [8, "B", "T", 384],
+    )
+    indices = helper.make_tensor_value_info(
+        "indices_runtime_scalar",
+        TensorProto.INT64,
+        [],
+    )
+    y = helper.make_tensor_value_info(
+        "y",
+        TensorProto.FLOAT,
+        ["B", "T", 384],
+    )
+    node = helper.make_node(
+        "Gather",
+        ["x", "indices_runtime_scalar"],
+        ["y"],
+        name="GatherRuntimeScalarIndicesTwoDynamicDimsNode",
+        axis=0,
+    )
+    graph = helper.make_graph(
+        [node],
+        "gather_runtime_scalar_indices_two_dynamic_dims_graph",
+        [x, indices],
+        [y],
+    )
+    return helper.make_model(
+        graph,
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
 
 
 def _make_gather_runtime_negative_indices_model() -> onnx.ModelProto:
@@ -31530,6 +31581,70 @@ def test_flatbuffer_direct_gather_runtime_scalar_indices_dynamic_batch_uses_dyna
     reshape_shape_const = np.asarray(model_ir.tensors[reshape_shape_name].data, dtype=np.int32).reshape(-1).tolist()
     assert reshape_shape_const == [-1, 3]
     assert list(reshape_to_output_op.options.get("newShape", [])) == []
+
+
+def test_flatbuffer_direct_gather_scalar_two_dynamic_dims_builds_runtime_reshape_shape() -> None:
+    model = _make_gather_runtime_scalar_indices_two_dynamic_dims_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="gather_scalar_two_dynamic_dims_runtime_shape_test",
+    )
+    reshape_op = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "RESHAPE"
+        and len(op.outputs) == 1
+        and str(op.outputs[0]) == "y"
+    )
+    runtime_shape_name = str(reshape_op.inputs[1])
+    runtime_shape_tensor = model_ir.tensors[runtime_shape_name]
+    assert runtime_shape_tensor.data is None
+    runtime_shape_gather = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "GATHER"
+        and len(op.outputs) == 1
+        and str(op.outputs[0]) == runtime_shape_name
+    )
+    params_shape_name = str(runtime_shape_gather.inputs[0])
+    params_shape_op = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "SHAPE"
+        and len(op.outputs) == 1
+        and str(op.outputs[0]) == params_shape_name
+    )
+    assert params_shape_op.inputs == ["x"]
+    retained_axes = np.asarray(
+        model_ir.tensors[str(runtime_shape_gather.inputs[1])].data,
+        dtype=np.int32,
+    ).reshape(-1)
+    assert retained_axes.tolist() == [1, 2, 3]
+    assert list(reshape_op.options.get("newShape", [])) == []
+
+
+def test_flatbuffer_direct_squeeze_scalar_uses_rank1_runtime_representation() -> None:
+    model = _make_squeeze_to_scalar_model()
+    register_default_preprocess_rules()
+    preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=preprocessed_model,
+        output_file_name="squeeze_scalar_rank1_runtime_test",
+    )
+
+    assert all(str(op.op_type) != "SQUEEZE" for op in model_ir.operators)
+    reshape_op = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "RESHAPE"
+        and len(op.outputs) == 1
+        and str(op.outputs[0]) == "y"
+    )
+    assert list(reshape_op.options.get("newShape", [])) == [1]
+    assert model_ir.tensors["y"].shape == [1]
+    assert _shape_signature(model_ir.tensors["y"]) == [1]
 
 
 def test_flatbuffer_direct_gather_runtime_negative_indices_are_normalized_before_gather() -> None:

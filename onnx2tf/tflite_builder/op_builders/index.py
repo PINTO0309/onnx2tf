@@ -826,19 +826,56 @@ def build_gather_op(node: Any, ctx: Any) -> None:
                 int(v) if int(v) >= 0 else 1 for v in reshape_target_signature
             ]
         reshape_const_shape = [int(v) for v in reshape_target_signature]
-        reshape_options_shape = (
-            []
-            if any(int(v) < 0 for v in reshape_const_shape)
-            else [int(v) for v in reshape_const_shape]
-        )
-        gather_out_shape_const = ctx.add_const_tensor(
-            f"{output_name}_gather_scalar_reshape_shape",
-            np.asarray(reshape_const_shape, dtype=np.int32),
-        )
+        reshape_options_shape: list[int] = []
+        if sum(int(v) < 0 for v in reshape_const_shape) > 1:
+            params_runtime_shape_name = ctx.add_intermediate_tensor(
+                f"{output_name}_gather_scalar_params_shape",
+                dtype="INT32",
+                shape=[input_rank],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="SHAPE",
+                    inputs=[params_name],
+                    outputs=[params_runtime_shape_name],
+                )
+            )
+            retained_axes = [
+                int(dim_idx)
+                for dim_idx in range(input_rank)
+                if int(dim_idx) != int(axis)
+            ]
+            retained_axes_name = ctx.add_const_tensor(
+                f"{output_name}_gather_scalar_retained_axes",
+                np.asarray(retained_axes, dtype=np.int32),
+            )
+            gather_out_shape_input = ctx.add_intermediate_tensor(
+                f"{output_name}_gather_scalar_runtime_reshape_shape",
+                dtype="INT32",
+                shape=[len(retained_axes)],
+            )
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="GATHER",
+                    inputs=[params_runtime_shape_name, retained_axes_name],
+                    outputs=[gather_out_shape_input],
+                    options={"axis": 0, "batchDims": 0},
+                )
+            )
+        else:
+            reshape_options_shape = (
+                []
+                if any(int(v) < 0 for v in reshape_const_shape)
+                else [int(v) for v in reshape_const_shape]
+            )
+            gather_out_shape_input = ctx.add_const_tensor(
+                f"{output_name}_gather_scalar_reshape_shape",
+                np.asarray(reshape_const_shape, dtype=np.int32),
+            )
         ctx.add_operator(
             OperatorIR(
                 op_type="RESHAPE",
-                inputs=[gather_output_name, gather_out_shape_const],
+                inputs=[gather_output_name, gather_out_shape_input],
                 outputs=[output_name],
                 options={
                     "newShape": reshape_options_shape,

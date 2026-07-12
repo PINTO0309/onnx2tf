@@ -962,3 +962,17 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "tflite_fail": 26,
         "timeout": 26,
     }
+    assert profile["model_options"]["tiny_decoder_11.onnx"] == {
+        "shape_hints": [
+            "tokens:1,1",
+            "audio_features:1,1500,384",
+            "kv_cache:8,1,1,384",
+            "offset:1",
+        ],
+        "keep_shape_absolutely_input_names": [
+            "tokens",
+            "audio_features",
+            "kv_cache",
+            "offset",
+        ],
+    }

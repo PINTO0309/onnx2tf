@@ -5520,6 +5520,29 @@ def build_squeeze_op(node: Any, ctx: Any) -> None:
     input_shape = ctx.get_tensor_shape(input_name)
     input_tensor = ctx.model_ir.tensors[input_name]
     output_tensor = ctx.model_ir.tensors[output_name]
+    raw_output_shape = ctx.shape_map.get(output_name, None)
+    if isinstance(raw_output_shape, (list, tuple)) and len(raw_output_shape) == 0:
+        # ModelIR represents ONNX scalars as one-element tensors. Emitting a
+        # TFLite SQUEEZE here would nevertheless create a rank-0 runtime
+        # tensor, allowing later scalar/vector canonicalization to remove a
+        # required Unsqueeze and leaving downstream GATHER(axis=0) invalid.
+        # Keep the runtime representation consistent with the ModelIR scalar
+        # convention by using a one-element RESHAPE.
+        output_tensor.shape = [1]
+        output_tensor.shape_signature = [1]
+        scalar_shape_name = ctx.add_const_tensor(
+            f"{output_name}_scalar_as_vector_shape",
+            np.asarray([1], dtype=np.int32),
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[input_name, scalar_shape_name],
+                outputs=[output_name],
+                options={"newShape": [1]},
+            )
+        )
+        return
     input_signature = (
         [int(v) for v in list(input_tensor.shape_signature)]
         if input_tensor.shape_signature is not None
