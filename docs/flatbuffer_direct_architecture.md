@@ -76,6 +76,13 @@ model-output guards remain part of the pass contract. Permutation inversion is
 a canonical graph utility in `core/model_ir_utils.py`; the legacy lowerer pass
 name remains a delegating wrapper.
 
+The same module owns the guarded ASIN/ACOS decomposition passthrough rewrite:
+`Mul(x,x) → Sub → Sqrt → Atan2`. It requires the original two-branch topology,
+a singleton subtraction constant, strict inner consumers, and either a model
+output or an inverse terminal transpose. Singleton constant detection is a
+canonical `core/model_ir_utils.py` predicate shared by the remaining legacy
+rewrite families.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

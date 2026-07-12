@@ -128,6 +128,26 @@ adjacent ASIN/ERF/HardSwish/HardSigmoid semantic passthrough families. Move one
 guarded family at a time, keep its legacy entry point, and gate each increment
 with focused ModelIR fixtures before the sequential full suite.
 
+The ASIN/ACOS decomposition passthrough is now the second implementation in
+`passes/input_passthrough_layout.py`. It preserves the strict
+`Mul(x,x) → Sub → Sqrt → Atan2` topology, singleton subtraction constant,
+consumer, boundary, inverse-permutation, and output guards. Its legacy lowerer
+entry point delegates to the pass module. `_is_singleton_constant_tensor` now
+has one canonical implementation in `core/model_ir_utils.py` while remaining
+available through the legacy lowerer import surface.
+
+Verification completed with:
+
+- `24 passed` for architecture, common ModelIR utilities, generic input
+  passthrough, and ASIN positive/no-op behavior;
+- `1002 passed, 5 deselected, 2 warnings in 125.00s` for the full sequential
+  direct suite.
+
+The next increment is the adjacent ERF polynomial decomposition passthrough.
+It can reuse the same canonical graph helpers and singleton predicate, but its
+larger topology needs both a positive fixture and guard-failure fixtures before
+the full-suite gate.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

@@ -7,6 +7,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _build_tensor_consumer_map,
     _is_fully_known_positive_shape,
     _invert_perm,
+    _is_singleton_constant_tensor,
     _prune_unused_tensors,
     _read_transpose_perm,
     _read_const_ints_from_tensor,
@@ -59,6 +60,34 @@ def test_invert_perm_rejects_invalid_permutations() -> None:
     assert _invert_perm([0, 3, 1, 2]) == [0, 2, 3, 1]
     assert _invert_perm([0, 0, 1]) is None
     assert _invert_perm([0, 1, 3]) is None
+
+
+def test_singleton_constant_requires_one_materialized_value() -> None:
+    model_ir = ModelIR("singleton_constant_test")
+    model_ir.tensors = {
+        "scalar": TensorIR(
+            name="scalar",
+            dtype="FLOAT32",
+            shape=[],
+            shape_signature=[],
+            data=np.asarray(1.0, dtype=np.float32),
+            is_variable=False,
+        ),
+        "vector": TensorIR(
+            name="vector",
+            dtype="FLOAT32",
+            shape=[2],
+            shape_signature=[2],
+            data=np.asarray([1.0, 2.0], dtype=np.float32),
+            is_variable=False,
+        ),
+        "runtime": _tensor("runtime"),
+    }
+
+    assert _is_singleton_constant_tensor(model_ir, "scalar") is True
+    assert _is_singleton_constant_tensor(model_ir, "vector") is False
+    assert _is_singleton_constant_tensor(model_ir, "runtime") is False
+    assert _is_singleton_constant_tensor(model_ir, "missing") is False
 
 
 def test_graph_helpers_read_transpose_and_record_input_replacement() -> None:

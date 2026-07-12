@@ -9,6 +9,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _clone_quantization,
     _invert_perm,
     _is_per_tensor_quantization,
+    _is_singleton_constant_tensor,
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
     _read_transpose_perm,
@@ -311,3 +312,201 @@ def _optimize_leading_input_transpose_passthrough_chains(model_ir: ModelIR) -> D
 
     _prune_unused_tensors(model_ir)
     return {"rewritten_leading_input_transpose_passthrough_chains": int(rewritten)}
+
+
+def _optimize_asin_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Fold leading input TRANSPOSE through Asin/Acos decomposition chains.
+
+    Target:
+      X --TRANSPOSE(P)--> x_t
+      x_t --MUL(x_t, x_t)--> x2
+      c1 --SUB(x2)--> one_minus
+      one_minus --SQRT--> denom
+      ATAN2(x_t, denom) or ATAN2(denom, x_t) --> y_t
+      (optional) y_t --TRANSPOSE(inv(P))--> Y
+
+    Rewrite:
+      X --MUL(X, X)--> x2
+      c1 --SUB(x2)--> one_minus
+      one_minus --SQRT--> denom
+      ATAN2(X, denom) or ATAN2(denom, X) --> Y
+
+    Safety:
+    - Leading transpose input must be a model input tensor.
+    - Strict local topology and single-consumer inner chain.
+    - SUB constant side must be scalar-like.
+    - Terminal must be graph output or one inverse post-transpose.
+    """
+    rewritten = 0
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+        model_inputs = set(str(v) for v in model_ir.inputs)
+        model_outputs = set(str(v) for v in model_ir.outputs)
+
+        for pre_idx, pre_op in enumerate(model_ir.operators):
+            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+                continue
+
+            pre_input_name = str(pre_op.inputs[0])
+            if pre_input_name not in model_inputs:
+                continue
+
+            perm_pre = _read_transpose_perm(model_ir, pre_op)
+            if perm_pre is None:
+                continue
+            perm_post_expected = _invert_perm(perm_pre)
+            if perm_post_expected is None:
+                continue
+
+            pre_output_name = str(pre_op.outputs[0])
+            if pre_output_name in model_outputs:
+                continue
+
+            pre_users = sorted({int(v) for v in consumers.get(pre_output_name, [])})
+            if len(pre_users) != 2:
+                continue
+
+            mul_idx: Optional[int] = None
+            atan2_idx: Optional[int] = None
+            for user_idx in pre_users:
+                user_op = model_ir.operators[int(user_idx)]
+                user_type = str(user_op.op_type)
+                if user_type == "MUL":
+                    mul_idx = int(user_idx)
+                elif user_type == "ATAN2":
+                    atan2_idx = int(user_idx)
+            if mul_idx is None or atan2_idx is None:
+                continue
+
+            mul_op = model_ir.operators[int(mul_idx)]
+            if len(mul_op.inputs) != 2 or len(mul_op.outputs) != 1:
+                continue
+            mul_inputs = [str(v) for v in list(mul_op.inputs)]
+            if not (mul_inputs[0] == pre_output_name and mul_inputs[1] == pre_output_name):
+                continue
+            mul_out_name = str(mul_op.outputs[0])
+            mul_users = [int(v) for v in consumers.get(mul_out_name, [])]
+            if len(mul_users) != 1:
+                continue
+
+            sub_idx = int(mul_users[0])
+            sub_op = model_ir.operators[int(sub_idx)]
+            if str(sub_op.op_type) != "SUB" or len(sub_op.inputs) != 2 or len(sub_op.outputs) != 1:
+                continue
+            sub_inputs = [str(v) for v in list(sub_op.inputs)]
+            if sub_inputs[1] != mul_out_name:
+                continue
+            sub_const_name = str(sub_inputs[0])
+            if not _is_singleton_constant_tensor(model_ir, sub_const_name):
+                continue
+            sub_out_name = str(sub_op.outputs[0])
+            sub_users = [int(v) for v in consumers.get(sub_out_name, [])]
+            if len(sub_users) != 1:
+                continue
+
+            sqrt_idx = int(sub_users[0])
+            sqrt_op = model_ir.operators[int(sqrt_idx)]
+            if str(sqrt_op.op_type) != "SQRT" or len(sqrt_op.inputs) != 1 or len(sqrt_op.outputs) != 1:
+                continue
+            if str(sqrt_op.inputs[0]) != sub_out_name:
+                continue
+            sqrt_out_name = str(sqrt_op.outputs[0])
+            sqrt_users = [int(v) for v in consumers.get(sqrt_out_name, [])]
+            if sqrt_users != [int(atan2_idx)]:
+                continue
+
+            atan2_op = model_ir.operators[int(atan2_idx)]
+            if len(atan2_op.inputs) != 2 or len(atan2_op.outputs) != 1:
+                continue
+            atan2_inputs = [str(v) for v in list(atan2_op.inputs)]
+            if set(atan2_inputs) != {str(pre_output_name), str(sqrt_out_name)}:
+                continue
+            atan2_out_name = str(atan2_op.outputs[0])
+            if atan2_out_name in model_inputs:
+                continue
+
+            terminal_mode = ""
+            post_idx: Optional[int] = None
+            post_output_name = str(atan2_out_name)
+            atan2_out_users = [int(v) for v in consumers.get(atan2_out_name, [])]
+            if atan2_out_name in model_outputs and len(atan2_out_users) == 0:
+                terminal_mode = "model_output"
+            elif len(atan2_out_users) == 1:
+                candidate_post_idx = int(atan2_out_users[0])
+                candidate_post_op = model_ir.operators[int(candidate_post_idx)]
+                if (
+                    str(candidate_post_op.op_type) == "TRANSPOSE"
+                    and len(candidate_post_op.inputs) >= 2
+                    and len(candidate_post_op.outputs) == 1
+                    and str(candidate_post_op.inputs[0]) == str(atan2_out_name)
+                ):
+                    perm_post = _read_transpose_perm(model_ir, candidate_post_op)
+                    if perm_post is not None and list(perm_post) == list(perm_post_expected):
+                        terminal_mode = "inverse_post_transpose"
+                        post_idx = int(candidate_post_idx)
+                        post_output_name = str(candidate_post_op.outputs[0])
+            if terminal_mode == "":
+                continue
+
+            # Rewire chain heads from transposed input to external input.
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=mul_op,
+                new_inputs=[str(pre_input_name), str(pre_input_name)],
+            )
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=atan2_op,
+                new_inputs=[
+                    str(pre_input_name) if str(v) == str(pre_output_name) else str(v)
+                    for v in list(atan2_op.inputs)
+                ],
+            )
+
+            if terminal_mode == "inverse_post_transpose":
+                _set_operator_outputs(
+                    model_ir=model_ir,
+                    op=atan2_op,
+                    new_outputs=[str(post_output_name)],
+                )
+
+            # Update metadata to external layout.
+            for name in [str(mul_out_name), str(sub_out_name), str(sqrt_out_name)]:
+                _permute_tensor_metadata_if_rank_matches(
+                    model_ir.tensors.get(name, None),
+                    perm_post_expected,
+                )
+            if terminal_mode == "inverse_post_transpose":
+                atan2_out_tensor = model_ir.tensors.get(str(atan2_out_name), None)
+                post_output_tensor = model_ir.tensors.get(str(post_output_name), None)
+                if post_output_tensor is not None and atan2_out_tensor is not None:
+                    post_output_tensor.dtype = str(atan2_out_tensor.dtype)
+                    post_output_tensor.quantization = _clone_quantization(atan2_out_tensor.quantization)
+                    _permute_tensor_metadata_if_rank_matches(
+                        post_output_tensor,
+                        perm_post_expected,
+                    )
+            else:
+                _permute_tensor_metadata_if_rank_matches(
+                    model_ir.tensors.get(str(post_output_name), None),
+                    perm_post_expected,
+                )
+
+            remove_indices = {int(pre_idx)}
+            if post_idx is not None:
+                remove_indices.add(int(post_idx))
+            for remove_idx in sorted(list(remove_indices), reverse=True):
+                del model_ir.operators[int(remove_idx)]
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"rewritten_asin_transpose_passthrough_chains": int(rewritten)}

@@ -489,6 +489,20 @@ def _is_per_tensor_quantization(quantization: Any) -> bool:
     return count <= 1
 
 
+def _is_singleton_constant_tensor(
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> bool:
+    tensor = model_ir.tensors.get(str(tensor_name), None)
+    if tensor is None or tensor.data is None:
+        return False
+    try:
+        array = np.asarray(tensor.data)
+    except Exception:
+        return False
+    return int(array.size) == 1
+
+
 def _invert_perm(perm: List[int]) -> Optional[List[int]]:
     rank = len(perm)
     if sorted(perm) != [int(i) for i in range(rank)]:

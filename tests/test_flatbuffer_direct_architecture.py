@@ -267,6 +267,7 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         "_broadcast_static_shapes",
         "_build_tensor_consumer_map",
         "_invert_perm",
+        "_is_singleton_constant_tensor",
         "_permute_tensor_metadata_if_rank_matches",
         "_read_const_ints_from_tensor",
         "_read_transpose_perm",
@@ -310,6 +311,7 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         assert f"{function_name}_pass" in wrapper_names
 
     input_passthrough_functions = {
+        "_optimize_asin_transpose_passthrough_chains",
         "_optimize_leading_input_transpose_passthrough_chains",
     }
     pass_functions = _functions(input_passthrough_path)
