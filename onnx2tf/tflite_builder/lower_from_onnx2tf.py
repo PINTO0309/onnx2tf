@@ -125,6 +125,7 @@ from onnx2tf.tflite_builder.passes.attention_layout import (
     _optimize_attention_qkv_slice_replace_gather_reshape_chains as _optimize_attention_qkv_slice_replace_gather_reshape_chains_pass,
     _optimize_attention_qkv_slice_to_split_chains as _optimize_attention_qkv_slice_to_split_chains_pass,
     _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains as _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains_pass,
+    run_mixed_attention_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     _optimize_asin_transpose_passthrough_chains as _optimize_asin_transpose_passthrough_chains_pass,
@@ -65513,7 +65514,10 @@ def lower_onnx_to_ir(
         _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir)
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
         _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
-        _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir)
+        run_mixed_attention_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
@@ -65616,7 +65620,10 @@ def lower_onnx_to_ir(
         _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir)
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
         _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
-        _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir)
+        run_mixed_attention_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
@@ -65724,7 +65731,10 @@ def lower_onnx_to_ir(
         _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir)
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
         _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
-        _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir)
+        run_mixed_attention_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
@@ -65841,7 +65851,10 @@ def lower_onnx_to_ir(
         _optimize_transpose_conv_attention_nhwc_propagation_chains(model_ir)
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
         _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
-        _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir)
+        run_mixed_attention_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
@@ -66144,7 +66157,10 @@ def lower_onnx_to_ir(
     _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(model_ir)
     _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
     _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
-    _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir)
+    run_mixed_attention_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
     _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
     _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
@@ -66605,7 +66621,10 @@ def lower_onnx_to_ir(
     _optimize_transpose_flatten_globalnorm_pad_prepost_nhwc_chains(model_ir)
     # Some late boundary/layout repairs can still recreate the DEA/SiNet
     # mixed NHWC/NCHW SA branch around REDUCE_MAX->CONCAT->MIRROR_PAD.
-    _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir)
+    run_mixed_attention_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
     _topologically_sort_operators(model_ir)
     infer_model_ir_logical_layouts(model_ir)

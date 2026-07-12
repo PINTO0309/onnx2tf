@@ -34,6 +34,10 @@ from onnx2tf.tflite_builder.ir import (
     prune_identity_cast_operators,
 )
 from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.passes.attention_layout import (
+    run_mixed_attention_layout_cleanup,
+)
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_builders.norm import build_instance_normalization_op
 from onnx2tf.tflite_builder.op_builders.control import (
@@ -119,7 +123,6 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_swish_residual_concat_closure_nhwc_chains,
     _optimize_transpose_swish_qdq_nhwc_islands,
     _optimize_transpose_mean_prepost_nhwc_passthrough_chains,
-    _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains,
     _optimize_transpose_layernorm_stats_nhwc_propagation_chains,
     _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains,
     _optimize_transpose_se_fc_mul_prepost_nhwc_chains,
@@ -28828,7 +28831,11 @@ def test_flatbuffer_direct_mixed_mean_reducemax_concat_mirrorpad_nhwc_chain() ->
         OperatorIR(op_type="CONV_2D", inputs=["conv_in", "w", "b"], outputs=["y_nhwc"], options={"padding": "VALID", "strideH": 1, "strideW": 1, "dilationHFactor": 1, "dilationWFactor": 1, "fusedActivationFunction": "NONE"}),
     ]
 
-    stats = _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir)
+    layout_state = LayoutState.from_model_ir(model_ir)
+    stats = run_mixed_attention_layout_cleanup(
+        model_ir,
+        layout_state=layout_state,
+    )
     assert stats["optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains"] == 1
     assert [str(op.op_type) for op in model_ir.operators] == [
         "TRANSPOSE",
@@ -28851,6 +28858,9 @@ def test_flatbuffer_direct_mixed_mean_reducemax_concat_mirrorpad_nhwc_chain() ->
     )
     conv_op = model_ir.operators[5]
     assert list(conv_op.inputs) == ["pad_out", "w", "b"]
+    assert layout_state.logical_of("max_out") == "NHWC"
+    assert layout_state.logical_of("x_nchw") == "NCHW"
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
 
 def test_flatbuffer_direct_transpose_pre_unary_mean_terminal_nhwc_chain() -> None:

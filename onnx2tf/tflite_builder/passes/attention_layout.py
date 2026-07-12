@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _build_tensor_consumer_map,
     _build_tensor_producer_map,
@@ -22,10 +24,16 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_outputs,
     _write_const_ints_to_tensor,
 )
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
 
-def _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Repair partial NHWC propagation around mixed spatial-attention reductions.
 
@@ -42,7 +50,7 @@ def _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir: ModelI
       - remove the redundant MIRROR_PAD output transpose
     """
     optimized = 0
-    graph_index = ModelIRGraphIndex(model_ir)
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
 
@@ -243,8 +251,13 @@ def _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir: ModelI
                 _permute_tensor_metadata_if_rank_matches(tensor, perm_nchw_to_nhwc)
                 if tensor is not None and len(list(tensor.shape)) == 4:
                     tensor.logical_layout = "NHWC"
+                    if layout_state is not None:
+                        layout_state.set(tensor_name, logical="NHWC")
             max_input_tensor.logical_layout = "NCHW"
             mean_input_tensor.logical_layout = "NHWC"
+            if layout_state is not None:
+                layout_state.set(max_input_name, logical="NCHW")
+                layout_state.set(mean_input_name, logical="NHWC")
 
             graph_index.remove_operator(post_idx)
             optimized += 1
@@ -254,8 +267,64 @@ def _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(model_ir: ModelI
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains": int(optimized)}
+
+
+def run_mixed_attention_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Run the mixed reduction/MirrorPad rewrite as an ordered layout pass."""
+
+    state = ModelIRPassState(model_ir, layout_state=layout_state)
+    manager = state.create_ordered_manager()
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        op_types = {str(op.op_type) for op in pass_state.model_ir.operators}
+        return {
+            "MEAN",
+            "REDUCE_MAX",
+            "CONCATENATION",
+            "MIRROR_PAD",
+            "TRANSPOSE",
+            "CONV_2D",
+        }.issubset(op_types)
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains",
+                    0,
+                )
+            ),
+        }
+
+    manager.register(
+        PassSpec(
+            pass_id="layout.mixed_attention_mirrorpad",
+            phase=PassPhase.LAYOUT_PLAN,
+            callback=_run,
+            precondition=_has_candidate,
+            transactional=True,
+        )
+    )
+    details = {
+        "optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains": 0,
+    }
+    for result in manager.run(state):
+        for key, value in result.details.items():
+            if key not in {"changed", "skipped_by_precondition"}:
+                details[str(key)] = int(value)
+    return details
 
 
 def _optimize_attention_qkv_slice_replace_gather_reshape_chains(

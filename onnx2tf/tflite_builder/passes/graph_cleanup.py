@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-import copy
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
 from onnx2tf.tflite_builder.core.passes import (
-    OrderedPassManager,
     PassPhase,
     PassSpec,
 )
-from onnx2tf.tflite_builder.core.validation import validate_model_ir_invariants
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _clone_quantization,
     _is_singleton_constant_tensor,
@@ -241,61 +239,38 @@ def run_duplicate_fanout_cleanup(
 ) -> Dict[str, int]:
     """Run duplicate layout-adapter cleanup as one ordered transaction group."""
 
-    graph_index = ModelIRGraphIndex(model_ir)
-    effective_layout_state = layout_state or LayoutState.from_model_ir(model_ir)
-    if layout_state is not None:
-        effective_layout_state.sync_from_model_ir(model_ir)
+    state = ModelIRPassState(model_ir, layout_state=layout_state)
+    manager = state.create_ordered_manager()
+    assert state.layout_state is not None
 
-    def _restore(index: ModelIRGraphIndex, snapshot: ModelIR) -> None:
-        target = index.model_ir
-        target.name = str(snapshot.name)
-        target.description = str(snapshot.description)
-        target.tensors = copy.deepcopy(snapshot.tensors)
-        target.operators = copy.deepcopy(snapshot.operators)
-        target.inputs = list(snapshot.inputs)
-        target.outputs = list(snapshot.outputs)
-        target.subgraphs = copy.deepcopy(snapshot.subgraphs)
-        target.metadata = copy.deepcopy(snapshot.metadata)
-        index.refresh()
-        effective_layout_state.sync_from_model_ir(target)
-
-    manager = OrderedPassManager[ModelIRGraphIndex](
-        validator=lambda index: (
-            validate_model_ir_invariants(index.model_ir, graph_index=index)
-            + effective_layout_state.validate_against_model_ir(index.model_ir)
-        ),
-        clone=lambda index: copy.deepcopy(index.model_ir),
-        restore=_restore,
-    )
-
-    def _run_transpose(index: ModelIRGraphIndex) -> Dict[str, int | bool]:
+    def _run_transpose(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
         stats = _optimize_duplicate_transpose_fanout(
-            index.model_ir,
-            graph_index=index,
-            layout_state=effective_layout_state,
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
         )
         return {
             **stats,
             "changed": bool(stats.get("removed_duplicate_transpose_fanout", 0)),
         }
 
-    def _run_reshape(index: ModelIRGraphIndex) -> Dict[str, int | bool]:
+    def _run_reshape(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
         stats = _optimize_duplicate_reshape_fanout(
-            index.model_ir,
-            graph_index=index,
-            layout_state=effective_layout_state,
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
         )
         return {
             **stats,
             "changed": bool(stats.get("removed_duplicate_reshape_fanout", 0)),
         }
 
-    def _has_duplicate_transpose_candidate(index: ModelIRGraphIndex) -> bool:
+    def _has_duplicate_transpose_candidate(pass_state: ModelIRPassState) -> bool:
         seen: set[Tuple[str, Tuple[int, ...]]] = set()
-        for op in index.model_ir.operators:
+        for op in pass_state.model_ir.operators:
             if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 2:
                 continue
-            perm = _read_transpose_perm(index.model_ir, op)
+            perm = _read_transpose_perm(pass_state.model_ir, op)
             if perm is None:
                 continue
             key = (str(op.inputs[0]), tuple(int(value) for value in perm))
@@ -304,9 +279,9 @@ def run_duplicate_fanout_cleanup(
             seen.add(key)
         return False
 
-    def _has_duplicate_reshape_candidate(index: ModelIRGraphIndex) -> bool:
+    def _has_duplicate_reshape_candidate(pass_state: ModelIRPassState) -> bool:
         input_counts: Dict[str, int] = {}
-        for op in index.model_ir.operators:
+        for op in pass_state.model_ir.operators:
             if str(op.op_type) != "RESHAPE" or len(op.inputs) < 2:
                 continue
             input_name = str(op.inputs[0])
@@ -339,7 +314,7 @@ def run_duplicate_fanout_cleanup(
     }
     if include_transpose:
         details["removed_duplicate_transpose_fanout"] = 0
-    for result in manager.run(graph_index):
+    for result in manager.run(state):
         for key, value in result.details.items():
             if key not in {"changed", "skipped_by_precondition"}:
                 details[str(key)] = int(value)

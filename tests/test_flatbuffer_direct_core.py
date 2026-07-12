@@ -14,6 +14,7 @@ from onnx2tf.tflite_builder.core import (
     GraphIndex,
     LayoutState,
     ModelIRGraphIndex,
+    ModelIRPassState,
     OrderedPassManager,
     PassPhase,
     PassSpec,
@@ -315,6 +316,33 @@ def test_transactional_pass_rolls_back_on_invariant_failure() -> None:
     with pytest.raises(RuntimeError, match="pass invariant violation"):
         manager.run(state)
     assert state == {"values": [1]}
+
+
+def test_model_ir_pass_state_restores_graph_index_and_layout_state() -> None:
+    model_ir = _add_model_ir()
+    state = ModelIRPassState(model_ir)
+    manager = state.create_ordered_manager()
+
+    def invalidate(pass_state: ModelIRPassState) -> dict:
+        del pass_state.model_ir.tensors["z"]
+        return {"changed": True}
+
+    manager.register(
+        PassSpec(
+            pass_id="invalid_model_ir_mutation",
+            phase=PassPhase.POST_LOWERING_CLEANUP,
+            callback=invalidate,
+            transactional=True,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="missing_output_tensor"):
+        manager.run(state)
+
+    assert "z" in model_ir.tensors
+    assert state.graph_index.producer("z") is model_ir.operators[0]
+    assert state.layout_state is not None
+    assert state.layout_state.validate_against_model_ir(model_ir) == []
 
 
 def test_dispatcher_records_onnx_provenance() -> None:

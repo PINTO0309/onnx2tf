@@ -161,6 +161,13 @@ updates input edges through indexed lineage helpers, and removes the redundant
 transpose through `ModelIRGraphIndex.remove_operator`, avoiding a full edge
 rescan after each successful match.
 
+All lowerer invocations of that pass now use
+`run_mixed_attention_layout_cleanup`, registered as
+`layout.mixed_attention_mirrorpad` in `LAYOUT_PLAN`. A cheap topology
+precondition guards snapshots; successful rewrites update the session-owned
+LayoutState as logical annotations change, and the shared pass state validates
+graph and layout invariants transactionally.
+
 Generic structural deduplication lives in `passes/graph_cleanup.py`. Duplicate
 Transpose fan-out cleanup uses one `ModelIRGraphIndex`, rewires only indexed
 consumers through the lineage-aware bulk input replacement helper, and removes
@@ -206,6 +213,12 @@ When false, the manager records `skipped_by_precondition` with zero iterations
 and performs no fingerprint, snapshot, callback, or validation work. The
 duplicate cleanup group uses cheap candidate scans so transactional deep copies
 are reserved for graphs that may actually change.
+
+`ModelIRPassState` is the shared state object for ordered post-lowering groups.
+It owns one ModelIR graph index and one LayoutState, provides combined invariant
+validation, and centralizes deep snapshot/restore with index and layout
+resynchronization. Pass modules create their managers through this state rather
+than duplicating transaction plumbing.
 
 The attention module also owns the QKV Slice canonicalization pair. One pass
 replaces compatible Slice branches with Gather/Reshape views; the next replaces

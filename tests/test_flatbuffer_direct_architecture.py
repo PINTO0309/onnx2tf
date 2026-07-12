@@ -366,8 +366,6 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
             if isinstance(node, ast.Name)
         }
         assert f"{function_name}_pass" in wrapper_names
-
-
 def test_attention_layout_rewrites_have_single_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -407,6 +405,14 @@ def test_attention_layout_rewrites_have_single_owner() -> None:
             if isinstance(node, ast.Name)
         }
         assert f"{function_name}_pass" in wrapper_names
+    lowerer_names = {
+        node.id
+        for node in ast.walk(
+            ast.parse(lowering_path.read_text(encoding="utf-8"))
+        )
+        if isinstance(node, ast.Name)
+    }
+    assert "run_mixed_attention_layout_cleanup" in lowerer_names
 
 
 def test_pad_layout_rewrites_have_single_owner() -> None:

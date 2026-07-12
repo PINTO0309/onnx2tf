@@ -499,9 +499,29 @@ Verification completed with:
 - `1024 passed, 5 deselected, 2 warnings in 130.57s` for the full sequential
   direct suite.
 
-Next, extend the ordered cleanup runner with one layout-sensitive pass that
-changes logical/physical annotations, using LayoutState as the validated phase
-contract rather than merely synchronizing at entry.
+`ModelIRPassState` now centralizes one graph index, one LayoutState, combined
+validation, deep snapshots, and rollback resynchronization for ordered ModelIR
+pass groups. The duplicate cleanup runner uses this shared state instead of its
+previous local transaction plumbing.
+
+The mixed Mean/ReduceMax/Concat/MirrorPad rewrite is the first layout-sensitive
+ordered group. All six lowerer call sites now use
+`run_mixed_attention_layout_cleanup`, whose stable pass ID is
+`layout.mixed_attention_mirrorpad` in `LAYOUT_PLAN`. A cheap topology
+precondition avoids irrelevant snapshots. On success, changed logical layouts
+are written to the session-owned LayoutState, pruned tensors are removed from
+it, and graph/layout invariants are validated transactionally.
+
+Verification completed with:
+
+- `21 passed, 775 deselected` for focused shared-state, ordered attention,
+  LayoutState, cleanup, and architecture behavior;
+- `1025 passed, 5 deselected, 2 warnings in 128.05s` for the full sequential
+  direct suite.
+
+Next, migrate another small layout-sensitive pass into a shared ordered group,
+then factor common precondition and pass-result aggregation helpers only after
+two independent groups demonstrate the same need.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
