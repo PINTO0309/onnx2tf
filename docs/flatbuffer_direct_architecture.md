@@ -43,6 +43,14 @@ shape predicate and tensor-pruning utility from `core/model_ir_utils.py`.
 Precision, constant-fold, layout, and high-rank passes share that pruning
 implementation so lineage events and unused-tensor removal have one owner.
 
+Synthetic input-boundary transpose elision lives in
+`passes/boundary_input_layout.py`. It only removes the adapter when public and
+internal tensor metadata agree and no axis-sensitive gather/slice consumer
+requires the boundary. Consumer indexing, transpose-permutation reads, and
+lineage-aware input replacement are canonical utilities in
+`core/model_ir_utils.py`; reporting, precision, and layout passes do not keep
+private copies.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

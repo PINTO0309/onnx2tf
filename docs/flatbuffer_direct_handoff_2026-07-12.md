@@ -45,10 +45,24 @@ Verification after this extraction completed with:
 - `989 passed, 5 deselected, 2 warnings in 122.64s` for the full sequential
   direct suite.
 
-The next low-coupling layout extraction should move the boundary input layout
-transpose pass after first relocating its generic transpose-read and tensor
-input-replacement helpers into a shared graph-mutation utility. Preserve the
-legacy helper re-exports during that move.
+The boundary input layout transpose pass now lives in
+`passes/boundary_input_layout.py`, with the legacy lowerer symbol delegating to
+it. `_build_tensor_consumer_map`, `_read_transpose_perm`, and
+`_replace_tensor_inputs` are canonicalized in `core/model_ir_utils.py`; the
+reporting and precision copies of the consumer map were removed. Focused tests
+preserve the metadata-equality guard, the GatherND safety guard, deterministic
+consumer indices, transpose permutation decoding, and lineage-aware input
+replacement.
+
+Verification completed with:
+
+- `5 passed, 794 deselected` for focused boundary/report compatibility;
+- `991 passed, 5 deselected, 2 warnings in 124.96s` for the full sequential
+  direct suite.
+
+The next boundary-layout step should evaluate the adjacent channel-slice and
+StridedSlice/QDQ/Concat boundary passes as one semantic family, extracting
+only after their additional mutation helpers have canonical owners.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

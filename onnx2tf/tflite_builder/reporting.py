@@ -7,7 +7,10 @@ import onnx
 from onnx import numpy_helper
 
 from onnx2tf.tflite_builder.core.lowering_context import LoweringContext
-from onnx2tf.tflite_builder.core.model_ir_utils import _build_tensor_producer_map
+from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _build_tensor_consumer_map,
+    _build_tensor_producer_map,
+)
 from onnx2tf.tflite_builder.core.node import NodeView as _NodeWrap
 from onnx2tf.tflite_builder.core.onnx_analysis import (
     _extract_tensor_info,
@@ -22,16 +25,6 @@ from onnx2tf.tflite_builder.op_registry import (
     resolve_node_dispatch,
 )
 from onnx2tf.tflite_builder.tensor_buffer_builder import tflite_dtype_from_numpy
-
-
-def _build_tensor_consumer_map(model_ir: ModelIR) -> Dict[str, List[int]]:
-    consumers: Dict[str, List[int]] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        for input_name in op.inputs:
-            if input_name not in consumers:
-                consumers[input_name] = []
-            consumers[input_name].append(op_idx)
-    return consumers
 
 
 def _collect_schema_ops_for_range(

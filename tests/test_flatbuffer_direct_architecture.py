@@ -201,6 +201,57 @@ def test_high_rank_matmul_pass_and_prune_utility_have_single_owners() -> None:
         assert "_is_fully_known_positive_shape" not in functions
 
 
+def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "boundary_input_layout.py"
+    )
+    common_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "core"
+        / "model_ir_utils.py"
+    )
+    reporting_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py"
+    precision_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "precision.py"
+    )
+
+    def _functions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+    lowering_functions = _functions(lowering_path)
+    pass_functions = _functions(pass_path)
+    common_functions = _functions(common_path)
+    assert "_optimize_boundary_input_layout_transposes" in pass_functions
+    wrapper = lowering_functions["_optimize_boundary_input_layout_transposes"]
+    wrapper_names = {
+        node.id for node in ast.walk(wrapper) if isinstance(node, ast.Name)
+    }
+    assert "_optimize_boundary_input_layout_transposes_pass" in wrapper_names
+
+    graph_helpers = {
+        "_build_tensor_consumer_map",
+        "_read_transpose_perm",
+        "_replace_tensor_inputs",
+    }
+    assert graph_helpers <= set(common_functions)
+    for path in (lowering_path, reporting_path, precision_path):
+        assert graph_helpers.isdisjoint(set(_functions(path)))
+
+
 def test_pytorch_pure_utilities_do_not_import_torch() -> None:
     offenders = []
     for path in PYTORCH_PURE_UTILITY_FILES:

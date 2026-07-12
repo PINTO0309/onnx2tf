@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from onnx2tf.tflite_builder.ir import ModelIR, QuantParamIR, TensorIR
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
 
 
 def _append_tensor_lineage_event(
@@ -30,6 +30,51 @@ def _build_tensor_producer_map(model_ir: ModelIR) -> Dict[str, int]:
         for output_name in op.outputs:
             producers[output_name] = op_idx
     return producers
+
+
+def _build_tensor_consumer_map(model_ir: ModelIR) -> Dict[str, List[int]]:
+    consumers: Dict[str, List[int]] = {}
+    for op_idx, op in enumerate(model_ir.operators):
+        for input_name in op.inputs:
+            consumers.setdefault(str(input_name), []).append(int(op_idx))
+    return consumers
+
+
+def _read_transpose_perm(
+    model_ir: ModelIR,
+    op: OperatorIR,
+) -> Optional[List[int]]:
+    if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 2:
+        return None
+    perm_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+    if perm_tensor is None or perm_tensor.data is None:
+        return None
+    perm = np.asarray(perm_tensor.data).reshape(-1)
+    if perm.size == 0:
+        return None
+    return [int(value) for value in perm.tolist()]
+
+
+def _replace_tensor_inputs(
+    model_ir: ModelIR,
+    src_name: str,
+    dst_name: str,
+) -> None:
+    if str(src_name) != str(dst_name):
+        _append_tensor_lineage_event(
+            model_ir=model_ir,
+            event={
+                "kind": "replace_input",
+                "src_name": str(src_name),
+                "dst_name": str(dst_name),
+            },
+        )
+    for op in model_ir.operators:
+        if op.inputs:
+            op.inputs = [
+                dst_name if input_name == src_name else input_name
+                for input_name in op.inputs
+            ]
 
 
 def _is_fully_known_positive_shape(shape: Optional[List[int]]) -> bool:

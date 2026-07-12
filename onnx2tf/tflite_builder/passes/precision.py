@@ -5,7 +5,10 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from onnx2tf.tflite_builder.core.model_ir_utils import _prune_unused_tensors
+from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _build_tensor_consumer_map,
+    _prune_unused_tensors,
+)
 
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -14,14 +17,6 @@ from onnx2tf.tflite_builder.ir import (
     normalize_logical_layout,
     normalize_onnx_shape,
 )
-
-
-def _build_tensor_consumer_map(model_ir: ModelIR) -> Dict[str, List[int]]:
-    consumers: Dict[str, List[int]] = {}
-    for op_index, op in enumerate(model_ir.operators):
-        for input_name in op.inputs:
-            consumers.setdefault(input_name, []).append(op_index)
-    return consumers
 
 
 def _rewrite_constant_divisors_to_multiplicative_reciprocals(
