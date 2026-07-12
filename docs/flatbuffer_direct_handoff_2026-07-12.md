@@ -1,6 +1,41 @@
 # flatbuffer_direct refactor handoff — 2026-07-12
 
-## Pause checkpoint — `fb-refactor2` after `19cb989`
+## Current resumed checkpoint — `fb-refactor3`
+
+Coverage and tensor-correspondence reporting have been extracted from
+`lower_from_onnx2tf.py` into `tflite_builder/reporting.py`.
+
+- Schema policy construction, node dispatch diagnostics, report assembly,
+  lineage tracing, downstream correspondence inference, and both JSON writers
+  now have one reporting owner.
+- `_build_tensor_consumer_map` also moved to the reporting module and is
+  imported back by the legacy lowerer for its existing layout passes.
+- `lower_from_onnx2tf.py` retains the four public report functions as thin
+  signature-preserving wrappers. Existing imports from both
+  `lower_from_onnx2tf` and `tflite_builder` remain compatible.
+- Imported ONNX-analysis and constant-fold helper symbols previously visible
+  through `lower_from_onnx2tf.py` remain explicit compatibility re-exports.
+- An architecture test verifies reporting implementation ownership, wrapper
+  delegation, and the TensorFlow-free import boundary without imposing any
+  source-line threshold.
+
+Sequential verification in the core `uv` environment completed with:
+
+- `33 passed, 749 deselected` for focused coverage/report integration;
+- `35 passed` for reporting coverage plus architecture checks;
+- `986 passed, 5 deselected, 2 warnings in 122.89s` for the full direct suite.
+
+The five deselections and two FLOAT16 warnings are the same optional-environment
+and expected-warning set documented below. No report schema, output path,
+public signature, or direct conversion behavior changed.
+
+The next refactoring step is to group the 204 `_optimize_*` functions in
+`lower_from_onnx2tf.py` by semantic pass phase and select a low-coupling layout
+family for the first mechanical extraction. Preserve function re-exports while
+tests still import legacy helpers directly. Do not create a pull request;
+commit and push completed checkpoints only.
+
+## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work
 

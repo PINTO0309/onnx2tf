@@ -10,6 +10,7 @@ DEPENDENCY_SCOPED_ROOTS = [
     for name in ["core", "passes", "op_families"]
 ]
 DEPENDENCY_SCOPED_FILES = [
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py",
     REPO_ROOT
     / "onnx2tf"
     / "tflite_builder"
@@ -100,6 +101,49 @@ def test_flatbuffer_direct_core_has_no_tensorflow_imports() -> None:
         if _imports_tensorflow(path)
     ]
     assert offenders == []
+
+
+def test_reporting_implementation_stays_out_of_lowering_module() -> None:
+    reporting_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py"
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    reporting_tree = ast.parse(reporting_path.read_text(encoding="utf-8"))
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    reporting_functions = {
+        node.name
+        for node in reporting_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    lowering_functions = {
+        node.name: node
+        for node in lowering_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    implementation_functions = {
+        "_collect_schema_ops_for_range",
+        "_build_schema_policy_matrix",
+        "_trace_tensor_rewrite_history",
+        "_build_onnx_tensor_consumer_graph",
+        "_infer_correspondence_via_downstream",
+    }
+    assert implementation_functions <= reporting_functions
+    assert implementation_functions.isdisjoint(lowering_functions)
+
+    public_delegates = {
+        "build_op_coverage_report": "_build_op_coverage_report",
+        "write_op_coverage_report": "_write_op_coverage_report",
+        "build_tensor_correspondence_report": "_build_tensor_correspondence_report",
+        "write_tensor_correspondence_report": "_write_tensor_correspondence_report",
+    }
+    assert set(public_delegates) <= reporting_functions
+    for public_name, delegate_name in public_delegates.items():
+        wrapper = lowering_functions[public_name]
+        referenced_names = {
+            node.id for node in ast.walk(wrapper) if isinstance(node, ast.Name)
+        }
+        assert delegate_name in referenced_names
 
 
 def test_pytorch_pure_utilities_do_not_import_torch() -> None:

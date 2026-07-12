@@ -28,6 +28,14 @@ op-family module. Do not add model-name checks. A model-specific failure should
 be reduced to a semantic graph pattern with explicit guards and a focused ONNX
 fixture generated with `onnx.helper`.
 
+Coverage and tensor-correspondence report construction lives in
+`tflite_builder/reporting.py`. `lower_from_onnx2tf.py` retains thin wrappers
+with the legacy signatures so existing Python imports and callers remain
+compatible. Schema policy classification, dispatch diagnostics, lineage
+tracing, downstream correspondence inference, and JSON writers have one owner
+in the reporting module. The module is part of the TensorFlow-free dependency
+boundary.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither
