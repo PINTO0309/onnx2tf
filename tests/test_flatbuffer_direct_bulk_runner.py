@@ -1061,6 +1061,19 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "da92ac2e2f0e69a6b68654c2152fadfadb079a20d73aaf8b33fc3a81af4afc15"
     )
     assert fcn_resnet_entry["tflite_max_abs"] == 0.5471203327178955
+    yolox_nano_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "yolox_nano.onnx"
+    )
+    assert yolox_nano_entry["baseline_classification"] == "tflite_fail"
+    assert yolox_nano_entry["baseline_reason"] == (
+        "float_conv_accumulation_amplified_by_exp_stride"
+    )
+    assert yolox_nano_entry["error_signature_sha256"] == (
+        "9516f4001a1361f52f4218a2585bedb5371d3be64116a8182cccfd91a3c0d5c0"
+    )
+    assert yolox_nano_entry["tflite_max_abs"] == 0.1362457275390625
     assert profile["model_options"]["tiny_decoder_11.onnx"] == {
         "shape_hints": [
             "tokens:1,1",

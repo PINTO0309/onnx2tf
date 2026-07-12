@@ -221,6 +221,17 @@ result is `docs/baselines/flatbuffer_direct_tier2_root_ad1d508.json`: 80
 passed, 4 conversion errors, 3 timeouts, 6 accuracy failures, and 20 missing
 reports. Median and maximum durations were 7.124 and 120.360 seconds.
 
+`yolox_nano.onnx` remains an active Tier 2 non-pass with the normalized reason
+`float_conv_accumulation_amplified_by_exp_stride`. The normal sequential
+comparison satisfies the aggregate metric gate with mean absolute error
+`1.3679266313265127e-5`, RMSE `0.0003010161768765817`, and cosine similarity
+`0.9999999999699016`. However, ordinary FLOAT32 convolution accumulation-order
+differences reach approximately `0.0021` in the regression head, then the
+decoded size path amplifies them through Exp (approximately `0.0085`) and its
+stride multiplication to a final maximum absolute error of
+`0.1362457275390625`. This exceeds the project's independent `1e-1` ceiling,
+so the model is not promoted despite the aggregate evaluator result.
+
 The root-only Tier 3 gate at commit `c838b42` contains 71 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier3_root_c838b42.json`: 22
 passed, 15 conversion errors, 17 timeouts, 1 accuracy failure, and 16 missing

@@ -1989,8 +1989,8 @@
       "tier": 2,
       "model": "yolox_nano.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "cc0ae8adce2d7859d1a223e1a080decef814e134e5e6d07525cf76a858c10dcb",
+      "baseline_reason": "float_conv_accumulation_amplified_by_exp_stride",
+      "error_signature_sha256": "9516f4001a1361f52f4218a2585bedb5371d3be64116a8182cccfd91a3c0d5c0",
       "tflite_max_abs": 0.1362457275390625
     },
     {
