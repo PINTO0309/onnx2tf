@@ -152,6 +152,7 @@ from onnx2tf.tflite_builder.passes.singleton_reshape_layout import (
     _optimize_singleton_spatial_nhwc_transpose_reshape_flatten as _optimize_singleton_spatial_nhwc_transpose_reshape_flatten_pass,
     run_flatten_concat_reshape_cleanup,
     run_singleton_reshape_layout_cleanup,
+    run_singleton_spatial_reshape_cleanup,
 )
 from onnx2tf.tflite_builder.passes.cast_cleanup import (
     _optimize_redundant_int32_to_int64_passthrough_cast_chains as _optimize_redundant_int32_to_int64_passthrough_cast_chains_pass,
@@ -61305,8 +61306,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(model_ir)
-        _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir)
+        run_singleton_spatial_reshape_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         # Run OSNet-specific multi-branch gate rewrite at terminal stage so
         # earlier generic passes do not re-wrap rewritten NHWC tensors.
         _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(model_ir)
@@ -61377,7 +61381,12 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(model_ir)
+    run_singleton_spatial_reshape_cleanup(
+        model_ir,
+        include_concat_post_transpose=False,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _prune_dead_operators(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     _resolve_dynamic_reshape_shapes(model_ir)

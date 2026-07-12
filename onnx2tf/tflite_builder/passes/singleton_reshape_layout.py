@@ -12,8 +12,6 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _is_fully_known_positive_shape,
     _invert_perm,
@@ -512,7 +510,12 @@ def run_singleton_reshape_layout_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Remove NHWC->NCHW transpose before 2D flatten reshape when spatial dims are 1x1.
 
@@ -529,11 +532,12 @@ def _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(model_ir: ModelIR
       RESHAPE(x_nhwc) -> y
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for transpose_idx, transpose_op in enumerate(model_ir.operators):
@@ -629,22 +633,28 @@ def _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(model_ir: ModelIR
             if int(reshape_output_shape[1]) != int(input_shape[3]):
                 continue
 
+            remove_intermediate = bool(
+                intermediate_reshape_idx is not None
+                and intermediate_reshape_output_name not in model_outputs
+                and set(
+                    int(v)
+                    for v in consumers.get(intermediate_reshape_output_name, [])
+                )
+                == {int(target_reshape_idx)}
+            )
             reshape_inputs = [str(v) for v in list(target_reshape_op.inputs)]
             reshape_inputs[0] = str(transpose_input_name)
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=target_reshape_op,
                 new_inputs=reshape_inputs,
+                graph_index=graph_index,
             )
             remove_indices = [int(transpose_idx)]
-            if (
-                intermediate_reshape_idx is not None
-                and intermediate_reshape_output_name not in model_outputs
-                and set(int(v) for v in consumers.get(intermediate_reshape_output_name, [])) == {int(target_reshape_idx)}
-            ):
+            if remove_intermediate and intermediate_reshape_idx is not None:
                 remove_indices.append(int(intermediate_reshape_idx))
             for remove_idx in sorted(set(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
             rewritten += 1
             changed = True
             break
@@ -653,11 +663,18 @@ def _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(model_ir: ModelIR
             break
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"optimized_singleton_spatial_nhwc_transpose_reshape_flatten": int(rewritten)}
 
 
-def _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Rewrite singleton-channel NCHW concat blocks back to NHWC and remove trailing transpose.
 
@@ -672,6 +689,7 @@ def _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir: Mode
       - trailing TRANSPOSE is removed and CONCAT directly produces y_nhwc
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     perm_nhwc_to_nchw = [0, 3, 1, 2]
 
@@ -685,8 +703,8 @@ def _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir: Mode
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for post_idx, post_op in enumerate(model_ir.operators):
@@ -830,7 +848,7 @@ def _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir: Mode
                         is_variable=False,
                         quantization=_clone_quantization(source_quant),
                     )
-                    model_ir.operators.insert(
+                    graph_index.insert_operator(
                         int(insert_pos),
                         OperatorIR(
                             op_type="RESHAPE",
@@ -856,13 +874,20 @@ def _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir: Mode
                 model_ir=model_ir,
                 op=concat_op,
                 new_inputs=[str(v) for v in mapped_concat_inputs],
+                graph_index=graph_index,
             )
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=concat_op,
                 new_outputs=[str(post_output_name)],
+                graph_index=graph_index,
             )
-            _replace_tensor_inputs(model_ir, concat_old_output_name, post_output_name)
+            _replace_tensor_inputs(
+                model_ir,
+                concat_old_output_name,
+                post_output_name,
+                graph_index=graph_index,
+            )
 
             post_out_tensor = model_ir.tensors.get(str(post_output_name), None)
             if post_out_tensor is not None and post_out_tensor.shape is not None and len(list(post_out_tensor.shape)) == 4:
@@ -895,7 +920,7 @@ def _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir: Mode
                 if reshape_index is not None:
                     remove_indices.append(int(reshape_index))
             for remove_idx in sorted(set(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -904,7 +929,9 @@ def _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir: Mode
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_singleton_reshape_concat_post_transpose_nhwc_chains": int(rewritten)}
 
 
@@ -1186,6 +1213,130 @@ def run_flatten_concat_reshape_cleanup(
                 transactional=True,
             )
         ],
+        layout_state=layout_state,
+        default_details=default_details,
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
+
+
+def run_singleton_spatial_reshape_cleanup(
+    model_ir: ModelIR,
+    *,
+    include_spatial_flatten: bool = True,
+    include_concat_post_transpose: bool = True,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run singleton-spatial Reshape rewrites in legacy order."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            if str(operator.op_type) == "TRANSPOSE":
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _single_user(
+        pass_state: ModelIRPassState,
+        tensor_name: str,
+    ) -> OperatorIR | None:
+        users = pass_state.graph_index.consumer_indices(str(tensor_name))
+        if len(users) != 1:
+            return None
+        return pass_state.model_ir.operators[int(users[0])]
+
+    def _has_spatial_flatten_candidate(pass_state: ModelIRPassState) -> bool:
+        for transpose_op in pass_state.model_ir.operators:
+            if (
+                str(transpose_op.op_type) != "TRANSPOSE"
+                or len(transpose_op.outputs) != 1
+                or _read_transpose_perm(pass_state.model_ir, transpose_op)
+                != [0, 3, 1, 2]
+            ):
+                continue
+            first = _single_user(pass_state, str(transpose_op.outputs[0]))
+            if first is not None and str(first.op_type) == "RESHAPE":
+                return True
+        return False
+
+    def _has_concat_candidate(pass_state: ModelIRPassState) -> bool:
+        for post_op in pass_state.model_ir.operators:
+            if (
+                str(post_op.op_type) != "TRANSPOSE"
+                or len(post_op.inputs) < 1
+                or _read_transpose_perm(pass_state.model_ir, post_op)
+                != [0, 2, 3, 1]
+            ):
+                continue
+            concat_op = pass_state.graph_index.producer(str(post_op.inputs[0]))
+            if concat_op is not None and str(concat_op.op_type) == "CONCATENATION":
+                return True
+        return False
+
+    def _run_spatial_flatten(
+        pass_state: ModelIRPassState,
+    ) -> Dict[str, int | bool]:
+        stats = _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("optimized_singleton_spatial_nhwc_transpose_reshape_flatten", 0)
+            ),
+        }
+
+    def _run_concat(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "rewritten_singleton_reshape_concat_post_transpose_nhwc_chains",
+                    0,
+                )
+            ),
+        }
+
+    specs: List[PassSpec[ModelIRPassState]] = []
+    if include_spatial_flatten:
+        specs.append(
+            PassSpec(
+                pass_id="layout.singleton_spatial_flatten",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_spatial_flatten,
+                precondition=_has_spatial_flatten_candidate,
+                priority=10,
+                transactional=True,
+            )
+        )
+    if include_concat_post_transpose:
+        specs.append(
+            PassSpec(
+                pass_id="layout.singleton_reshape_concat_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_concat,
+                precondition=_has_concat_candidate,
+                priority=20,
+                transactional=True,
+            )
+        )
+    default_details = {
+        "optimized_singleton_spatial_nhwc_transpose_reshape_flatten": 0,
+        "rewritten_singleton_reshape_concat_post_transpose_nhwc_chains": 0,
+    }
+    if len(specs) == 0:
+        return default_details
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=specs,
         layout_state=layout_state,
         default_details=default_details,
         diagnostics=diagnostics,

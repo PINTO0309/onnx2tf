@@ -310,7 +310,17 @@ before a 2D flattening Reshape when both spatial dimensions are one. The second
 keeps repeated singleton 2D→4D Reshape inputs, Concat, and a terminal
 NHWC→NCHW Transpose directly in NHWC while reusing side adapters. Their 392
 implementation lines moved with identical ASTs; all three production calls and
-their original adjacency remain unchanged through thin lowerer wrappers.
+their original adjacency remain unchanged.
+
+Production uses `run_singleton_spatial_reshape_cleanup` at two positions. The
+first registers `layout.singleton_spatial_flatten` then
+`layout.singleton_reshape_concat_nhwc`; the second disables the Concat spec and
+runs only the spatial-flatten spec. Model-only Transpose preflight, exact
+permutation/topology guards, transactional snapshots, and a shared differential
+index preserve that legacy ordering. Edge rewrites, adapter insertion, output
+retargeting, structural removal, and pruning all update `LayoutState`. Any
+single-consumer removal decision needed after rewiring is captured before the
+index mutation changes its live consumer set.
 
 Production uses one ordered pass group for that family, with stable IDs
 `layout.singleton_reshape_unary_passthrough` and

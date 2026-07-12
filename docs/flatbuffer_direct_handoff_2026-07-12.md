@@ -1729,10 +1729,38 @@ Sequential verification completed with:
 - `1103 passed, 5 deselected, 2 warnings in 143.65s` for the full direct suite.
 
 No algorithm, call order, artifact, dependency, or TensorFlow boundary changed.
-The next checkpoint should introduce one ordered runner that can execute the
-spatial-flatten spec alone at both positions and the Concat/post-Transpose spec
-only at the first position, sharing a differential index and `LayoutState`.
-Do not create a pull request; commit and push only at a coherent checkpoint.
+
+The indexed singleton-spatial checkpoint is now complete. The first production
+position runs stable IDs `layout.singleton_spatial_flatten` then
+`layout.singleton_reshape_concat_nhwc`; the second disables the Concat spec and
+runs only spatial flatten. A model-only Transpose preflight and exact indexed
+permutation/topology guards precede transactional callbacks. Both implementations
+share differential producer/consumer state for input/output rewiring, adapter
+insertion, structural removal, and `LayoutState`-aware pruning.
+
+The first full-suite run exposed one live-index ordering regression in the
+optional intermediate-Reshape case: rewiring updated the consumer set before
+the legacy single-user removal condition was evaluated. The implementation now
+captures that removal decision before mutating the indexed edge, restoring the
+original behavior; the focused eight-test rerun and final full suite passed.
+
+Sequential verification completed with:
+
+- `8 passed` for both spatial variants, Concat propagation/repeated adapter,
+  indexed runner behavior, ordered diagnostics, and irrelevant preflight;
+- an AST mutation audit showing zero raw production calls, exactly two runner
+  calls, and no direct operator deletion/insertion or local graph-map rebuild;
+- Tier 2 `sinet_320_op.onnx` and `osnet025_Nx3x256x128.onnx` direct conversion;
+  both specs were correctly guard-skipped on those final IRs, and OSNet
+  `-cotof` compared every output with `evaluation_pass=true` and maximum
+  absolute error `2.19345e-05`;
+- `1105 passed, 5 deselected, 2 warnings in 144.41s` for the final full direct
+  suite.
+
+All temporary SINet/OSNet outputs and metrics were deleted. Validation remained
+single-process and sequential, with no new dependency or TensorFlow import.
+Rerun the raw post-lowering inventory before selecting the next family. Do not
+create a pull request; commit and push only at a coherent checkpoint.
 
 The next mechanical split is complete. The 193-line fully static
 4D→2D Reshape/Concat/2D→4D Reshape rewrite moved unchanged into
