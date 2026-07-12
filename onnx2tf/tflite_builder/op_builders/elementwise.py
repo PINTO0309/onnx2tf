@@ -416,6 +416,110 @@ def _finalize_float_compute_output(
     )
 
 
+def _emit_static_high_rank_binary(
+    *,
+    node: Any,
+    ctx: Any,
+    op_type: str,
+    input_names: list[str],
+    output_name: str,
+    options: dict[str, Any],
+) -> bool:
+    """Coalesce broadcast-equivalent axes to avoid LiteRT rank>4 aborts."""
+    if len(input_names) != 2:
+        return False
+    output_shape = [int(v) for v in ctx.get_tensor_shape(output_name)]
+    rank = len(output_shape)
+    if rank <= 4 or any(int(v) <= 0 for v in output_shape):
+        return False
+
+    padded_input_shapes: list[list[int]] = []
+    for input_name in input_names:
+        input_shape = [int(v) for v in ctx.get_tensor_shape(input_name)]
+        if len(input_shape) > rank or any(int(v) <= 0 for v in input_shape):
+            return False
+        padded = [1] * (rank - len(input_shape)) + input_shape
+        if any(int(src) not in {1, int(dst)} for src, dst in zip(padded, output_shape)):
+            return False
+        padded_input_shapes.append(padded)
+
+    relation_patterns = [
+        tuple(
+            "equal" if int(src_shape[axis]) == int(output_shape[axis]) else "broadcast"
+            for src_shape in padded_input_shapes
+        )
+        for axis in range(rank)
+    ]
+    groups: list[list[int]] = []
+    for axis, pattern in enumerate(relation_patterns):
+        if len(groups) == 0 or relation_patterns[groups[-1][-1]] != pattern:
+            groups.append([axis])
+        else:
+            groups[-1].append(axis)
+    if len(groups) >= rank or len(groups) > 4:
+        return False
+
+    def _coalesced_shape(shape: list[int]) -> list[int]:
+        return [
+            int(np.prod(np.asarray([shape[axis] for axis in group], dtype=np.int64)))
+            for group in groups
+        ]
+
+    coalesced_output_shape = _coalesced_shape(output_shape)
+    coalesced_input_names: list[str] = []
+    for idx, (input_name, padded_shape) in enumerate(zip(input_names, padded_input_shapes)):
+        coalesced_shape = _coalesced_shape(padded_shape)
+        reshaped_name = ctx.add_intermediate_tensor(
+            f"{node.name}_{str(op_type).lower()}_coalesced_input{idx}",
+            dtype=ctx.get_tensor_dtype(input_name),
+            shape=coalesced_shape,
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="RESHAPE",
+                inputs=[
+                    input_name,
+                    ctx.add_const_tensor(
+                        f"{node.name}_{str(op_type).lower()}_coalesced_input{idx}_shape",
+                        np.asarray(coalesced_shape, dtype=np.int32),
+                    ),
+                ],
+                outputs=[reshaped_name],
+                options={"newShape": coalesced_shape},
+            )
+        )
+        coalesced_input_names.append(reshaped_name)
+
+    coalesced_output_name = ctx.add_intermediate_tensor(
+        f"{node.name}_{str(op_type).lower()}_coalesced_output",
+        dtype=ctx.get_tensor_dtype(output_name),
+        shape=coalesced_output_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type=op_type,
+            inputs=coalesced_input_names,
+            outputs=[coalesced_output_name],
+            options=options,
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[
+                coalesced_output_name,
+                ctx.add_const_tensor(
+                    f"{node.name}_{str(op_type).lower()}_output_shape",
+                    np.asarray(output_shape, dtype=np.int32),
+                ),
+            ],
+            outputs=[output_name],
+            options={"newShape": output_shape},
+        )
+    )
+    return True
+
+
 def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
     input_names = [i.name for i in node.inputs]
     output_name = node.outputs[0].name
@@ -625,6 +729,15 @@ def build_binary_op(node: Any, ctx: Any, op_type: str) -> None:
         ctx.dtype_map[str(output_name)] = output_target_dtype
 
     options = {"fusedActivationFunction": "NONE"}
+    if _emit_static_high_rank_binary(
+        node=node,
+        ctx=ctx,
+        op_type=op_type,
+        input_names=casted_input_names,
+        output_name=output_name,
+        options=options,
+    ):
+        return
     ctx.add_operator(
         OperatorIR(
             op_type=op_type,
@@ -4217,6 +4330,81 @@ def build_clip_op(node: Any, ctx: Any) -> None:
     )
 
 
+def _emit_last_axis_softmax(
+    *,
+    node: Any,
+    ctx: Any,
+    input_name: str,
+    output_name: str,
+    input_shape: list[int],
+    beta: float,
+) -> None:
+    """Emit Softmax while avoiding LiteRT's large high-rank kernel abort."""
+    rank = len(input_shape)
+    static_shape = [int(v) for v in input_shape]
+    if rank <= 4 or any(int(v) <= 0 for v in static_shape):
+        ctx.add_operator(
+            OperatorIR(
+                op_type="SOFTMAX",
+                inputs=[input_name],
+                outputs=[output_name],
+                options={"axis": rank - 1, "beta": beta},
+            )
+        )
+        return
+
+    flattened_shape = [
+        int(np.prod(np.asarray(static_shape[:-1], dtype=np.int64))),
+        int(static_shape[-1]),
+    ]
+    flattened_input_name = ctx.add_intermediate_tensor(
+        f"{node.name}_softmax_flattened_input",
+        dtype=ctx.get_tensor_dtype(input_name),
+        shape=flattened_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[
+                input_name,
+                ctx.add_const_tensor(
+                    f"{node.name}_softmax_flattened_input_shape",
+                    np.asarray(flattened_shape, dtype=np.int32),
+                ),
+            ],
+            outputs=[flattened_input_name],
+            options={"newShape": flattened_shape},
+        )
+    )
+    flattened_output_name = ctx.add_intermediate_tensor(
+        f"{node.name}_softmax_flattened_output",
+        dtype=ctx.get_tensor_dtype(output_name),
+        shape=flattened_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SOFTMAX",
+            inputs=[flattened_input_name],
+            outputs=[flattened_output_name],
+            options={"axis": 1, "beta": beta},
+        )
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=[
+                flattened_output_name,
+                ctx.add_const_tensor(
+                    f"{node.name}_softmax_output_shape",
+                    np.asarray(static_shape, dtype=np.int32),
+                ),
+            ],
+            outputs=[output_name],
+            options={"newShape": static_shape},
+        )
+    )
+
+
 def build_softmax_op(node: Any, ctx: Any) -> None:
     input_name = node.inputs[0].name
     output_name = node.outputs[0].name
@@ -4237,13 +4425,13 @@ def build_softmax_op(node: Any, ctx: Any) -> None:
     beta = float(node.attrs.get("beta", 1.0))
 
     if axis == rank - 1:
-        ctx.add_operator(
-            OperatorIR(
-                op_type="SOFTMAX",
-                inputs=[input_name],
-                outputs=[output_name],
-                options={"axis": axis, "beta": beta},
-            )
+        _emit_last_axis_softmax(
+            node=node,
+            ctx=ctx,
+            input_name=input_name,
+            output_name=output_name,
+            input_shape=list(input_shape),
+            beta=beta,
         )
         return
 
@@ -4266,13 +4454,13 @@ def build_softmax_op(node: Any, ctx: Any) -> None:
         shape=list(axis_last_shape),
     )
 
-    ctx.add_operator(
-        OperatorIR(
-            op_type="SOFTMAX",
-            inputs=[input_axis_last_name],
-            outputs=[output_axis_last_name],
-            options={"axis": rank - 1, "beta": beta},
-        )
+    _emit_last_axis_softmax(
+        node=node,
+        ctx=ctx,
+        input_name=input_axis_last_name,
+        output_name=output_axis_last_name,
+        input_shape=list(axis_last_shape),
+        beta=beta,
     )
     make_transpose(
         ctx,

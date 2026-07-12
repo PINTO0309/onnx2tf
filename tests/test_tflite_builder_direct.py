@@ -7194,6 +7194,26 @@ def _make_softmax_axis_non_last_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
 
+def _make_softmax_rank6_model() -> onnx.ModelProto:
+    shape = [1, 1, 2, 2, 3, 4]
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, shape)
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, shape)
+    node = helper.make_node("Softmax", ["x"], ["y"], name="SoftmaxRank6Node", axis=-1)
+    graph = helper.make_graph([node], "softmax_rank6_graph", [x], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
+def _make_mul_rank6_broadcast_model() -> onnx.ModelProto:
+    x_shape = [1, 1, 2, 2, 3, 4]
+    scale_shape = [1, 1, 2, 2, 3, 1]
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, x_shape)
+    scale = helper.make_tensor_value_info("scale", TensorProto.FLOAT, scale_shape)
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, x_shape)
+    node = helper.make_node("Mul", ["x", "scale"], ["y"], name="MulRank6Node")
+    graph = helper.make_graph([node], "mul_rank6_broadcast_graph", [x, scale], [y])
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
+
+
 def _make_logsoftmax_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 4])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 3, 4])
@@ -13849,6 +13869,68 @@ def test_flatbuffer_direct_softmax_default_axis_respects_opset13() -> None:
     assert op_types.count("SOFTMAX") == 1
     assert op_types.count("TRANSPOSE") == 0
     assert op_types.count("CUSTOM") == 0
+
+
+def test_flatbuffer_direct_rank6_softmax_uses_safe_flattened_kernel() -> None:
+    model = _make_softmax_rank6_model()
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="softmax_rank6_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == ["RESHAPE", "SOFTMAX", "RESHAPE"]
+    softmax_op = next(op for op in model_ir.operators if str(op.op_type) == "SOFTMAX")
+    assert model_ir.tensors[str(softmax_op.inputs[0])].shape == [12, 4]
+
+    sample_input = np.arange(48, dtype=np.float32).reshape(1, 1, 2, 2, 3, 4)
+    shifted = sample_input - np.max(sample_input, axis=-1, keepdims=True)
+    expected = np.exp(shifted) / np.sum(np.exp(shifted), axis=-1, keepdims=True)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "softmax_rank6", model)
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+        )
+        actual = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs={"x": sample_input},
+            tensor_names=["y"],
+        )["y"]
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1.0e-6)
+
+
+def test_flatbuffer_direct_rank6_binary_broadcast_coalesces_equivalent_axes() -> None:
+    model = _make_mul_rank6_broadcast_model()
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="mul_rank6_broadcast_lowering_test",
+        allow_custom_ops=False,
+    )
+    op_types = [str(op.op_type) for op in model_ir.operators]
+    assert op_types == ["RESHAPE", "RESHAPE", "MUL", "RESHAPE"]
+    mul_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL")
+    assert model_ir.tensors[str(mul_op.inputs[0])].shape == [12, 4]
+    assert model_ir.tensors[str(mul_op.inputs[1])].shape == [12, 1]
+
+    sample_input = np.arange(48, dtype=np.float32).reshape(1, 1, 2, 2, 3, 4)
+    sample_scale = np.linspace(0.5, 1.5, 12, dtype=np.float32).reshape(1, 1, 2, 2, 3, 1)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(tmpdir, "mul_rank6_broadcast", model)
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+        )
+        actual = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs={"x": sample_input, "scale": sample_scale},
+            tensor_names=["y"],
+        )["y"]
+    np.testing.assert_allclose(actual, sample_input * sample_scale, rtol=0.0, atol=1.0e-6)
 
 
 def test_flatbuffer_direct_softmax_default_axis_respects_opset11() -> None:
