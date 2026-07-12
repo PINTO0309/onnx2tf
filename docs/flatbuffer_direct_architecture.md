@@ -174,6 +174,20 @@ such approximation is emitted. The fixed-seed final output remains below the
 required `1e-1` maximum absolute-error ceiling, but it stays a non-pass because
 the stricter cosine-similarity gate is not satisfied.
 
+`version-RFB-320-int8.onnx` exhibits the same host-runtime U8S8 limitation and
+uses the same normalized reason. The input QuantizeLinear result matches
+exactly. For the immediately following QLinearConv, the direct TFLite result
+and ONNX ReferenceEvaluator differ at only one of 307,200 elements by one
+quantum, while ONNX Runtime CPU and the reference differ at 97,431 elements by
+as much as 32 quanta. The current fixed-seed final maximum absolute error is
+`0.14972958900034428`, improved from `0.15208351612091064` but still above the
+required `1e-1` ceiling. A full ReferenceEvaluator run is not a practical
+fallback: ONNX lacks built-in implementations for this model's QLinearConcat
+and opset-12 DequantizeLinear, and even with local diagnostic implementations
+the sequential run remained inside the pure-NumPy QLinearConv loop after more
+than 90 seconds. No host-SIMD emulation or slow evaluator substitution is added
+to the production pipeline.
+
 The root-only Tier 2 gate at commit `ad1d508` contains 113 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier2_root_ad1d508.json`: 80
 passed, 4 conversion errors, 3 timeouts, 6 accuracy failures, and 20 missing

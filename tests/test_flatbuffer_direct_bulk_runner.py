@@ -1022,6 +1022,19 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert efficientnet_lite4_entry["error_signature_sha256"] == (
         "da92ac2e2f0e69a6b68654c2152fadfadb079a20d73aaf8b33fc3a81af4afc15"
     )
+    version_rfb_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "version-RFB-320-int8.onnx"
+    )
+    assert version_rfb_entry["baseline_classification"] == "tflite_fail"
+    assert version_rfb_entry["baseline_reason"] == (
+        "onnxruntime_u8s8_saturating_pair_accumulation"
+    )
+    assert version_rfb_entry["error_signature_sha256"] == (
+        "da92ac2e2f0e69a6b68654c2152fadfadb079a20d73aaf8b33fc3a81af4afc15"
+    )
+    assert version_rfb_entry["tflite_max_abs"] == 0.14972958900034428
     assert profile["model_options"]["tiny_decoder_11.onnx"] == {
         "shape_hints": [
             "tokens:1,1",

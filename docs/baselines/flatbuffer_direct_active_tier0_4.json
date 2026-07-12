@@ -1304,9 +1304,9 @@
       "tier": 1,
       "model": "version-RFB-320-int8.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "c4f4571f021aaaa76b13509894837a7e6505c254f4e0f6f7f43b9434b317d4b6",
-      "tflite_max_abs": 0.15208351612091064
+      "baseline_reason": "onnxruntime_u8s8_saturating_pair_accumulation",
+      "error_signature_sha256": "da92ac2e2f0e69a6b68654c2152fadfadb079a20d73aaf8b33fc3a81af4afc15",
+      "tflite_max_abs": 0.14972958900034428
     },
     {
       "tier": 1,
