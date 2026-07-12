@@ -339,7 +339,11 @@ def test_attention_layout_rewrites_have_single_owner() -> None:
         / "passes"
         / "attention_layout.py"
     )
-    function_name = "_optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains"
+    function_names = {
+        "_optimize_attention_qkv_slice_replace_gather_reshape_chains",
+        "_optimize_attention_qkv_slice_to_split_chains",
+        "_optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains",
+    }
 
     def _functions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -350,13 +354,14 @@ def test_attention_layout_rewrites_have_single_owner() -> None:
         }
 
     lowering_functions = _functions(lowering_path)
-    assert function_name in _functions(pass_path)
-    wrapper_names = {
-        node.id
-        for node in ast.walk(lowering_functions[function_name])
-        if isinstance(node, ast.Name)
-    }
-    assert f"{function_name}_pass" in wrapper_names
+    assert function_names <= set(_functions(pass_path))
+    for function_name in function_names:
+        wrapper_names = {
+            node.id
+            for node in ast.walk(lowering_functions[function_name])
+            if isinstance(node, ast.Name)
+        }
+        assert f"{function_name}_pass" in wrapper_names
 
 
 def test_pad_layout_rewrites_have_single_owner() -> None:

@@ -147,6 +147,12 @@ defined by producer/consumer topology, reduction semantics, permutations, and
 padding pairs—not by model names—and rewrites axes only after the entire
 region is proven.
 
+The attention module also owns the QKV Slice canonicalization pair. One pass
+replaces compatible Slice branches with Gather/Reshape views; the next replaces
+three compatible branches with a single Split. Both require fully known,
+compatible dimensions and exact consumers before changing ModelIR, and both
+preserve the legacy lowerer entry points.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

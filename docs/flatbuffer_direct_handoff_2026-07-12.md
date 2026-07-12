@@ -288,10 +288,23 @@ Verification completed with:
 - `1010 passed, 5 deselected, 2 warnings in 125.93s` for the full sequential
   direct suite.
 
-The next attention-layout increment should come from the characterized QKV
-slice/split family. Keep each rewrite independent, preserve legacy wrappers,
-and avoid moving the uncharacterized SA/PA MirrorPad mega-pattern until a
-focused semantic fixture exists.
+The characterized QKV Slice canonicalization pair now also lives in
+`passes/attention_layout.py`. The first pass replaces compatible Slice branches
+with Gather/Reshape views, and the second replaces a compatible three-way QKV
+Slice fan-out with Split. Both exact implementations moved with their nested
+shape helpers; legacy lowerer names delegate. Existing tests cover each pass
+individually and their ordered interaction on a shared graph.
+
+Verification completed with:
+
+- `18 passed, 757 deselected` for focused architecture and QKV Slice
+  canonicalization;
+- `1010 passed, 5 deselected, 2 warnings in 125.91s` for the full sequential
+  direct suite.
+
+The next characterized attention increment is the shared pre-transpose QKV
+Slice rewrite. Keep the uncharacterized SA/PA MirrorPad mega-pattern in the
+lowerer until a focused semantic fixture exists.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
