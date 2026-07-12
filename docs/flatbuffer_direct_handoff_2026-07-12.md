@@ -228,9 +228,23 @@ Verification completed with:
 - `1009 passed, 5 deselected, 2 warnings in 125.75s` for the full sequential
   direct suite.
 
-The next Pad increment can evaluate the adjacent normalization-subgraph Pad
-rewrite. Because that topology is substantially larger, first map its helper
-dependencies and existing characterization coverage before moving it.
+The normalization-subgraph Pad rewrite has now moved into
+`passes/pad_layout.py`. Its helper routines were already nested and therefore
+moved with the pass as one semantic unit. Four existing characterization
+fixtures preserve reduction topology, channelwise constants, shared-constant
+cloning, axes and padding remapping, fan-out adapters, quantization, metadata,
+and output wiring. The lowerer retains only a compatibility wrapper.
+
+Verification completed with:
+
+- `22 passed, 755 deselected` for focused architecture, Pad repair, and
+  normalization-subgraph Pad characterization;
+- `1009 passed, 5 deselected, 2 warnings in 125.27s` for the full sequential
+  direct suite.
+
+Further Pad-family work should evaluate the InstanceNorm and global-norm Pad
+families independently; both are substantially larger and should move only
+with their current characterization fixtures and full direct-suite gates.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

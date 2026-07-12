@@ -122,6 +122,13 @@ static broadcast compatibility, rotates Pad and rank-four Mul constants only
 when safe, preserves shared constants by cloning, updates metadata, and keeps
 the legacy lowerer entry point as a wrapper.
 
+Normalization-subgraph Pad propagation is also contained in
+`passes/pad_layout.py`. Its matcher validates the complete reduction and
+channelwise normalization region, clones constants that are shared outside the
+transactional region, remaps axes and Pad specifications, and preserves legacy
+fan-out adapters. The module has no source-line limit; the 2,000 threshold is
+reserved exclusively for ONNX corpus node-tier classification.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither
