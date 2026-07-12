@@ -92,9 +92,16 @@ The profile fixes root-only discovery, the 1–1,999 node range, all 420 managed
 historical model records, and inference concurrency of one. Models classified
 as `timeout` in the current managed baseline remain recorded for provenance but
 are automatically excluded from subsequent runs. The active run therefore
-contains 394 models: 342 expected passes and 52 expected non-passes, excluding
+contains 394 models: 343 expected passes and 51 expected non-passes, excluding
 26 recorded timeouts. Tier 5 models cannot be added because the profile loader
 rejects tiers above 4 and node ranges above 1,999.
+
+`silero_vad.onnx` is validated with `-kat input state sr` and has a recorded
+float32 maximum absolute error of `1.3750978e-6`. The similarly named dynamic
+`silero_vad (1).onnx` remains a non-pass input-model defect: it references 14
+lexically captured tensors that do not exist in the serialized ONNX, including
+all four LSTM weight/bias captures. It cannot provide an ONNX reference result
+for an accuracy-preserving promotion.
 
 ### Recorded Tier 0 baseline
 

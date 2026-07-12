@@ -3105,7 +3105,16 @@ def build_where_op(node: Any, ctx: Any) -> None:
         )
         return
 
-    select_op_type = "SELECT" if len(cond_shape) <= 1 else "SELECT_V2"
+    select_rank1_prefix_compatible = bool(
+        len(cond_shape) == 1
+        and len(x_shape) >= 1
+        and int(cond_shape[0]) == int(x_shape[0])
+    )
+    select_op_type = (
+        "SELECT"
+        if cond_shape == x_shape or select_rank1_prefix_compatible
+        else "SELECT_V2"
+    )
     ctx.add_operator(
         OperatorIR(
             op_type=select_op_type,

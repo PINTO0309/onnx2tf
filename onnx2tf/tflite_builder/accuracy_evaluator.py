@@ -991,6 +991,22 @@ def _build_static_control_input_overrides(
 
     candidates: Dict[str, np.ndarray] = {}
     conflicts: set[str] = set()
+    sample_rate_names = {
+        "sr",
+        "sample_rate",
+        "sampling_rate",
+        "sample_rate_hz",
+        "sampling_rate_hz",
+    }
+    for input_name, (input_dtype, input_shape) in input_spec_map.items():
+        if _canonical_input_name(input_name) not in sample_rate_names:
+            continue
+        if not np.issubdtype(input_dtype, np.integer):
+            continue
+        if int(np.prod(input_shape, dtype=np.int64)) > 1:
+            continue
+        candidates[input_name] = np.full(input_shape, 16000, dtype=input_dtype)
+
     for node in onnx_graph.graph.node:
         if str(node.op_type) != "TopK" or len(node.input) < 2 or len(node.output) < 1:
             continue
@@ -1039,6 +1055,42 @@ def _prepare_onnx_graph_for_onnxruntime(
 ) -> onnx.ModelProto:
     prepared, _ = prepare_onnx_graph_for_onnxruntime(onnx_graph)
     return prepared
+
+
+def _create_onnx_inference_session(onnx_graph: onnx.ModelProto) -> Any:
+    import onnxruntime as ort
+
+    try:
+        return ort.InferenceSession(
+            onnx_graph.SerializeToString(),
+            providers=["CPUExecutionProvider"],
+        )
+    except Exception as initial_error:
+        error_text = str(initial_error)
+        if "Unsupported model IR version" in error_text:
+            fallback_graph = onnx.ModelProto()
+            fallback_graph.CopyFrom(onnx_graph)
+            fallback_graph.ir_version = min(int(fallback_graph.ir_version), 10)
+            try:
+                return ort.InferenceSession(
+                    fallback_graph.SerializeToString(),
+                    providers=["CPUExecutionProvider"],
+                )
+            except Exception as downgraded_error:
+                initial_error = downgraded_error
+                error_text = str(downgraded_error)
+
+        is_nested_lstm_rank_failure = (
+            "LSTM" in error_text
+            and "First input tensor must have rank 3" in error_text
+            and "Graph attribute inferencing failed" in error_text
+        )
+        if not is_nested_lstm_rank_failure:
+            raise initial_error
+
+        from onnx2tf.utils.onnx_reference_compat import create_reference_evaluator
+
+        return create_reference_evaluator(onnx_graph)
 
 
 def _extract_sample_from_custom(
@@ -1761,22 +1813,7 @@ def evaluate_onnx_tflite_outputs(
         if output_name in nondeterministic_output_reasons
     ]
 
-    try:
-        onnx_session = ort.InferenceSession(
-            onnx_runtime_graph.SerializeToString(),
-            providers=["CPUExecutionProvider"],
-        )
-    except Exception as ex:
-        err = str(ex)
-        if "Unsupported model IR version" not in err:
-            raise
-        fallback_graph = onnx.ModelProto()
-        fallback_graph.CopyFrom(onnx_runtime_graph)
-        fallback_graph.ir_version = min(int(fallback_graph.ir_version), 10)
-        onnx_session = ort.InferenceSession(
-            fallback_graph.SerializeToString(),
-            providers=["CPUExecutionProvider"],
-        )
+    onnx_session = _create_onnx_inference_session(onnx_runtime_graph)
     interpreter = _create_tflite_interpreter(model_path=tflite_path)
     interpreter.allocate_tensors()
     tflite_input_details = interpreter.get_input_details()
@@ -2070,27 +2107,10 @@ def _onnx_inference_worker(
     result_queue: Any,
 ) -> None:
     try:
-        import onnxruntime as ort
-
         onnx_graph = onnx.load_from_string(payload["onnx_graph_serialized"])
         onnx_output_names = [str(v) for v in payload["onnx_output_names"]]
         onnx_inputs = _load_onnx_inputs_from_payload(payload)
-        try:
-            onnx_session = ort.InferenceSession(
-                onnx_graph.SerializeToString(),
-                providers=["CPUExecutionProvider"],
-            )
-        except Exception as ex:
-            err = str(ex)
-            if "Unsupported model IR version" not in err:
-                raise
-            fallback_graph = onnx.ModelProto()
-            fallback_graph.CopyFrom(onnx_graph)
-            fallback_graph.ir_version = min(int(fallback_graph.ir_version), 10)
-            onnx_session = ort.InferenceSession(
-                fallback_graph.SerializeToString(),
-                providers=["CPUExecutionProvider"],
-            )
+        onnx_session = _create_onnx_inference_session(onnx_graph)
         onnx_outputs = onnx_session.run(onnx_output_names, onnx_inputs)
         use_memmap_outputs = bool(payload.get("use_memmap_outputs", False))
         if use_memmap_outputs:

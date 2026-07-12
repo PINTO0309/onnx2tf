@@ -232,6 +232,30 @@ def test_build_static_control_input_overrides_infers_topk_k_from_output_shape() 
     np.testing.assert_array_equal(inputs["k"], np.asarray([1250], dtype=np.int64))
 
 
+def test_build_static_control_input_overrides_uses_audio_sample_rate() -> None:
+    sample_rate = helper.make_tensor_value_info("sr", TensorProto.INT64, [])
+    output = helper.make_tensor_value_info("output", TensorProto.INT64, [])
+    model = helper.make_model(
+        helper.make_graph(
+            [helper.make_node("Identity", ["sr"], ["output"])],
+            "sample_rate_control_input",
+            [sample_rate],
+            [output],
+        )
+    )
+    input_specs = _collect_onnx_input_specs(model)
+
+    overrides = _build_static_control_input_overrides(
+        onnx_graph=model,
+        input_specs=input_specs,
+    )
+
+    np.testing.assert_array_equal(
+        overrides["sr"],
+        np.asarray(16000, dtype=np.int64),
+    )
+
+
 def test_prepare_onnx_graph_for_onnxruntime_upgrades_legacy_default_opset() -> None:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2])

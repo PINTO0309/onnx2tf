@@ -1645,6 +1645,63 @@ def _replace_expand_dims_and_squeeze_with_reshape(model_ir: ModelIR) -> Dict[str
             except Exception:
                 squeeze_dims_for_reshape = []
 
+        statically_non_singleton_squeeze = False
+        if op_type == "SQUEEZE" and squeeze_dims_for_reshape:
+            input_shape = [int(v) for v in list(input_tensor.shape)]
+            normalized_squeeze_dims: List[int] = []
+            for squeeze_axis in squeeze_dims_for_reshape:
+                normalized_axis = int(squeeze_axis)
+                if normalized_axis < 0:
+                    normalized_axis += len(input_shape)
+                if 0 <= normalized_axis < len(input_shape):
+                    normalized_squeeze_dims.append(int(normalized_axis))
+            statically_non_singleton_squeeze = any(
+                int(input_shape[axis]) > 1
+                for axis in normalized_squeeze_dims
+            )
+
+        if statically_non_singleton_squeeze and len(output_shape) > 0:
+            # A flattened If executes both branches. A Squeeze that is valid in
+            # its selected branch can therefore receive a non-singleton axis
+            # while its enclosing branch is inactive. Keep the valid-path shape,
+            # but let one retained dimension absorb the inactive-path extent so
+            # LiteRT can safely execute the speculative branch.
+            dynamic_axis = next(
+                (
+                    int(axis)
+                    for axis, dim in enumerate(output_shape)
+                    if int(dim) == 1
+                ),
+                0,
+            )
+            reshape_target = [int(v) for v in list(output_shape)]
+            reshape_target[int(dynamic_axis)] = -1
+            shape_name = _unique_tensor_name(f"{output_name}_reshape_shape")
+            model_ir.tensors[shape_name] = TensorIR(
+                name=shape_name,
+                dtype="INT32",
+                shape=[int(len(reshape_target))],
+                shape_signature=[int(len(reshape_target))],
+                data=np.asarray(reshape_target, dtype=np.int32),
+                is_variable=False,
+                quantization=None,
+            )
+            output_tensor.shape_signature = [int(v) for v in reshape_target]
+            op.op_type = "RESHAPE"
+            op.inputs = [input_name, shape_name]
+            op.options = {
+                "newShape": [int(v) for v in reshape_target],
+                "onnxSqueezeDims": [
+                    int(v) for v in list(squeeze_dims_for_reshape)
+                ],
+                "preserveSemanticRank": True,
+                "preserveDynamicShape": True,
+                "speculativeBranchSafe": True,
+            }
+            rewritten += 1
+            shape_tensors_created += 1
+            continue
+
         if op_type == "SQUEEZE" and len(output_shape) > 0 and all(int(v) == 1 for v in output_shape):
             # Conservative guard:
             # all-ones squeeze outputs are frequently metadata-ambiguous in
@@ -3528,6 +3585,53 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
                             squeeze_axes=squeeze_axes,
                         )
                     )
+                    if len(squeeze_axes) > 0:
+                        input_shape = [int(v) for v in list(input_tensor.shape)]
+                        normalized_squeeze_axes: List[int] = []
+                        for squeeze_axis in squeeze_axes:
+                            normalized_axis = int(squeeze_axis)
+                            if normalized_axis < 0:
+                                normalized_axis += len(input_shape)
+                            if 0 <= normalized_axis < len(input_shape):
+                                normalized_squeeze_axes.append(int(normalized_axis))
+                        has_non_singleton_axis = any(
+                            int(input_shape[axis]) > 1
+                            for axis in normalized_squeeze_axes
+                        )
+                        existing_output_shape = (
+                            [int(v) for v in list(output_tensor.shape)]
+                            if output_tensor is not None
+                            else []
+                        )
+                        if has_non_singleton_axis and len(existing_output_shape) > 0:
+                            dynamic_axis = next(
+                                (
+                                    int(axis)
+                                    for axis, dim in enumerate(existing_output_shape)
+                                    if int(dim) == 1
+                                ),
+                                0,
+                            )
+                            safe_shape = [int(v) for v in existing_output_shape]
+                            safe_shape[int(dynamic_axis)] = -1
+                            op.options["newShape"] = [int(v) for v in safe_shape]
+                            op.options["preserveDynamicShape"] = True
+                            op.options["speculativeBranchSafe"] = True
+                            if len(inputs) >= 2:
+                                shape_tensor = model_ir.tensors.get(inputs[1], None)
+                                if shape_tensor is not None and shape_tensor.data is not None:
+                                    changed |= _write_const_ints_to_tensor(
+                                        shape_tensor,
+                                        [int(v) for v in safe_shape],
+                                    )
+                            if output_tensor is not None:
+                                output_tensor.shape_signature = [
+                                    int(v) for v in safe_shape
+                                ]
+                            changed = True
+                            continue
+                    if out_shape is None:
+                        continue
                     if (
                         out_shape is not None
                         and _is_fully_known_positive_shape(out_shape)

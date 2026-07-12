@@ -13451,6 +13451,94 @@ def test_flatbuffer_direct_replace_squeeze_with_reshape_rewrites_dynamic_axes() 
     assert list(model_ir.operators[-1].outputs)[0] == "y"
 
 
+def test_flatbuffer_direct_replace_squeeze_keeps_inactive_if_branch_executable() -> None:
+    model_ir = ModelIR("squeeze_inactive_if_branch_test")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 128, 2],
+        shape_signature=[1, 128, 2],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 128],
+        shape_signature=[1, 128],
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="SQUEEZE",
+            inputs=["x"],
+            outputs=["y"],
+            options={"squeezeDims": [2]},
+        )
+    )
+
+    stats = _replace_expand_dims_and_squeeze_with_reshape(model_ir)
+
+    assert int(stats.get("replaced_expand_dims_and_squeeze_with_reshape", 0)) == 1
+    reshape_op = model_ir.operators[0]
+    assert str(reshape_op.op_type) == "RESHAPE"
+    assert list(reshape_op.options["newShape"]) == [-1, 128]
+    assert bool(reshape_op.options["speculativeBranchSafe"])
+    shape_tensor = model_ir.tensors[str(reshape_op.inputs[1])]
+    np.testing.assert_array_equal(
+        shape_tensor.data,
+        np.asarray([-1, 128], dtype=np.int32),
+    )
+
+
+def test_flatbuffer_direct_reconcile_squeeze_after_inactive_branch_shape_change() -> None:
+    model_ir = ModelIR("squeeze_inactive_branch_reconcile_test")
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 128, 1],
+        shape_signature=[1, 128, 1],
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([1, 128], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 128],
+        shape_signature=[1, 128],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "shape"],
+            outputs=["y"],
+            options={
+                "newShape": [1, 128],
+                "onnxSqueezeDims": [2],
+                "preserveSemanticRank": True,
+            },
+        )
+    ]
+    model_ir.tensors["x"].shape = [1, 128, 2]
+    model_ir.tensors["x"].shape_signature = [1, 128, 2]
+
+    _reconcile_static_tensor_shapes(model_ir)
+
+    reshape_op = model_ir.operators[0]
+    assert list(reshape_op.options["newShape"]) == [-1, 128]
+    assert bool(reshape_op.options["preserveDynamicShape"])
+    assert bool(reshape_op.options["speculativeBranchSafe"])
+    np.testing.assert_array_equal(
+        model_ir.tensors["shape"].data,
+        np.asarray([-1, 128], dtype=np.int32),
+    )
+    assert _shape_signature(model_ir.tensors["y"]) == [-1, 128]
+
+
 def test_flatbuffer_direct_replace_expand_dims_with_reshape_skips_dynamic_axes() -> None:
     model_ir = ModelIR("expand_dims_rewrite_dynamic_axes_guard_test")
     model_ir.inputs = ["x"]
@@ -32299,6 +32387,34 @@ def test_flatbuffer_direct_where_mixed_int64_int32_prefers_int32_select_inputs()
     assert output_dtype == "INT32"
 
 
+def test_flatbuffer_direct_where_rank1_singleton_condition_uses_broadcast_select_v2() -> None:
+    condition = helper.make_tensor_value_info("condition", TensorProto.BOOL, [1])
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 1, 3])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 1, 3])
+    z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [2, 1, 3])
+    model = helper.make_model(
+        helper.make_graph(
+            [helper.make_node("Where", ["condition", "x", "y"], ["z"])],
+            "where_rank1_singleton_broadcast_graph",
+            [condition, x, y],
+            [z],
+        ),
+        opset_imports=[helper.make_operatorsetid("", 13)],
+    )
+
+    model_ir = lower_onnx_to_ir(
+        onnx_graph=model,
+        output_file_name="where_rank1_singleton_broadcast_test",
+    )
+
+    select_ops = [
+        op for op in model_ir.operators
+        if str(op.op_type) in {"SELECT", "SELECT_V2"}
+    ]
+    assert len(select_ops) == 1
+    assert str(select_ops[0].op_type) == "SELECT_V2"
+
+
 def test_flatbuffer_direct_gather_rank1_params_scalar_const_indices_not_scalarized() -> None:
     model = _make_gather_rank1_params_scalar_index_concat_model()
     register_default_preprocess_rules()
@@ -33506,7 +33622,7 @@ def test_flatbuffer_direct_lstm_reverse_builtin_lowering() -> None:
     assert _shape_signature(y_tensor) == [3, 1, 1, 2]
 
 
-def test_flatbuffer_direct_lstm_forward_state_io_builtin_lowering() -> None:
+def test_flatbuffer_direct_lstm_forward_state_io_runtime_state_lowering() -> None:
     model = _make_forward_lstm_with_state_io_model()
     register_default_preprocess_rules()
     preprocessed_model, _ = run_preprocess_pipeline(onnx_graph=model)
@@ -33517,7 +33633,11 @@ def test_flatbuffer_direct_lstm_forward_state_io_builtin_lowering() -> None:
     )
 
     op_types = [str(op.op_type) for op in model_ir.operators]
-    assert op_types.count("UNIDIRECTIONAL_SEQUENCE_LSTM") == 1
+    assert op_types.count("UNIDIRECTIONAL_SEQUENCE_LSTM") == 0
+    assert op_types.count("BATCH_MATMUL") == 4
+    assert op_types.count("SLICE") == 4
+    assert op_types.count("LOGISTIC") == 12
+    assert op_types.count("TANH") == 8
     assert op_types.count("CUSTOM") == 0
     assert op_types.count("RESHAPE") >= 3
 
@@ -33530,6 +33650,53 @@ def test_flatbuffer_direct_lstm_forward_state_io_builtin_lowering() -> None:
     assert list(y_tensor.shape) == [4, 1, 1, 2]
     assert list(h_out_tensor.shape) == [1, 1, 2]
     assert list(c_out_tensor.shape) == [1, 1, 2]
+
+
+def test_flatbuffer_direct_lstm_forward_state_io_runtime_numeric_parity() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_forward_lstm_with_state_io_model()
+        model_path = _save_model(tmpdir, "lstm_forward_state_io_runtime", model)
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+            keep_shape_absolutely_input_names=["x", "h_in", "c_in"],
+        )
+        sample_inputs = {
+            "x": np.asarray(
+                [
+                    [[0.20, -0.10]],
+                    [[0.05, 0.30]],
+                    [[-0.40, 0.15]],
+                    [[0.25, 0.10]],
+                ],
+                dtype=np.float32,
+            ),
+            "h_in": np.asarray([[[0.10, -0.20]]], dtype=np.float32),
+            "c_in": np.asarray([[[0.30, 0.05]]], dtype=np.float32),
+        }
+        ort_session = ort.InferenceSession(
+            model_path,
+            providers=["CPUExecutionProvider"],
+        )
+        ort_values = ort_session.run(None, sample_inputs)
+        ort_by_name = {
+            output.name: np.asarray(value)
+            for output, value in zip(ort_session.get_outputs(), ort_values)
+        }
+        tflite_outputs = _run_tflite_and_collect_tensors(
+            tflite_path=tflite_path,
+            onnx_model=model,
+            sample_inputs=sample_inputs,
+            tensor_names=["y", "h_out", "c_out"],
+        )
+        for output_name in ["y", "h_out", "c_out"]:
+            np.testing.assert_allclose(
+                tflite_outputs[output_name],
+                ort_by_name[output_name],
+                rtol=1e-5,
+                atol=1e-6,
+            )
 
 
 def test_flatbuffer_direct_rnn_reverse_builtin_lowering() -> None:
@@ -40301,6 +40468,7 @@ def _make_if_branch_lstm_optional_input_model() -> onnx.ModelProto:
         "if_lstm_then_graph",
         [],
         [helper.make_tensor_value_info("if_lstm_then_h", TensorProto.FLOAT, [1, 1, 2])],
+        initializer=[W, R, B],
     )
 
     else_nodes = [
@@ -40331,7 +40499,7 @@ def _make_if_branch_lstm_optional_input_model() -> onnx.ModelProto:
         "if_lstm_graph",
         [cond, x, h, c],
         [y],
-        initializer=[W, R, B],
+        initializer=[],
     )
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 13)])
 
@@ -40376,7 +40544,7 @@ def test_flatbuffer_direct_if_p3_lowers_to_builtin_ops_without_custom() -> None:
     assert "REDUCE_MIN" in op_types
     assert "GREATER" in op_types
     assert "ADD" in op_types
-    assert any(op in op_types for op in {"SELECT", "MUL"})
+    assert any(op in op_types for op in {"SELECT", "SELECT_V2", "MUL"})
     out_tensor = model_ir.tensors["If_p3_output"]
     assert out_tensor.shape_signature is not None
     assert int(_shape_signature(out_tensor)[0]) == 100
@@ -40460,7 +40628,8 @@ def test_flatbuffer_direct_if_branch_lstm_optional_input_lowers_to_builtin_ops_w
     )
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert "CUSTOM" not in op_types
-    assert "UNIDIRECTIONAL_SEQUENCE_LSTM" in op_types
+    assert "UNIDIRECTIONAL_SEQUENCE_LSTM" not in op_types
+    assert "BATCH_MATMUL" in op_types
     assert any(op in op_types for op in {"SELECT", "SELECT_V2", "MUL"})
     out_tensor = model_ir.tensors["if_lstm_out"]
     assert out_tensor.shape_signature is not None
@@ -40468,6 +40637,49 @@ def test_flatbuffer_direct_if_branch_lstm_optional_input_lowers_to_builtin_ops_w
     assert int(_shape_signature(out_tensor)[0]) == 1
     assert int(_shape_signature(out_tensor)[1]) == 1
     assert int(_shape_signature(out_tensor)[2]) == 2
+
+
+def test_flatbuffer_direct_if_branch_lstm_runtime_state_numeric_parity() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model = _make_if_branch_lstm_optional_input_model()
+        model.ir_version = 10
+        model_path = _save_model(tmpdir, "if_branch_lstm_runtime_state", model)
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            backend="flatbuffer_direct",
+            keep_shape_absolutely_input_names=[
+                "if_lstm_cond",
+                "if_lstm_x",
+                "if_lstm_h",
+                "if_lstm_c",
+            ],
+        )
+        ort_session = ort.InferenceSession(
+            model_path,
+            providers=["CPUExecutionProvider"],
+        )
+        common_inputs = {
+            "if_lstm_x": np.asarray(
+                [[[0.2, -0.1]], [[0.05, 0.3]], [[-0.4, 0.15]]],
+                dtype=np.float32,
+            ),
+            "if_lstm_h": np.asarray([[[0.1, -0.2]]], dtype=np.float32),
+            "if_lstm_c": np.asarray([[[0.3, 0.05]]], dtype=np.float32),
+        }
+        for condition in [True, False]:
+            sample_inputs = {
+                **common_inputs,
+                "if_lstm_cond": np.asarray(condition, dtype=np.bool_),
+            }
+            expected = np.asarray(ort_session.run(None, sample_inputs)[0])
+            actual = _run_tflite_and_collect_tensors(
+                tflite_path=tflite_path,
+                onnx_model=model,
+                sample_inputs=sample_inputs,
+                tensor_names=["if_lstm_out"],
+            )["if_lstm_out"]
+            np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-6)
 
 
 def test_flatbuffer_direct_size_lowers_to_builtin_ops_without_custom() -> None:

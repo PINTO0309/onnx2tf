@@ -984,6 +984,12 @@ def _lower_graph_nodes(
             ctx.constants[output_name] = result
         else:
             ctx.add_const_tensor(output_name, result)
+        folded_names = ctx.model_ir.metadata.setdefault(
+            "branch_folded_constant_tensor_names",
+            [],
+        )
+        if str(output_name) not in folded_names:
+            folded_names.append(str(output_name))
 
     for graph_node in graph.node:
         op_type = str(graph_node.op_type)
@@ -1260,6 +1266,12 @@ def _lower_graph_nodes(
                         ctx.constants[out_name] = result
                     else:
                         ctx.add_const_tensor(out_name, result)
+                    folded_names = ctx.model_ir.metadata.setdefault(
+                        "branch_folded_constant_tensor_names",
+                        [],
+                    )
+                    if str(out_name) not in folded_names:
+                        folded_names.append(str(out_name))
                     continue
 
         if op_type == "Squeeze" and len(graph_node.output) == 1 and len(graph_node.input) >= 1:
@@ -1298,6 +1310,12 @@ def _lower_graph_nodes(
                         ctx.constants[out_name] = np.asarray(result)
                     else:
                         ctx.add_const_tensor(out_name, np.asarray(result))
+                    folded_names = ctx.model_ir.metadata.setdefault(
+                        "branch_folded_constant_tensor_names",
+                        [],
+                    )
+                    if str(out_name) not in folded_names:
+                        folded_names.append(str(out_name))
                     continue
 
         if op_type == "Gather" and len(graph_node.input) >= 2 and len(graph_node.output) == 1:

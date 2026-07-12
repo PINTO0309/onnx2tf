@@ -662,15 +662,19 @@
       "tier": 0,
       "model": "silero_vad (1).onnx",
       "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
+      "baseline_reason": "invalid_onnx_missing_lexical_captures",
       "error_signature_sha256": "f520b28d4b025834dacc97c0c39c78740f977618c54631634dddeec0752da35d"
     },
     {
       "tier": 0,
       "model": "silero_vad.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "f916312e1957704e4d0278b3ef3a4a490f41bc9d7ca1b59e41061ce052b94354"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 1.375097781419754e-06,
+      "keep_shape_absolutely_input_names": [
+        "input",
+        "state",
+        "sr"
+      ]
     },
     {
       "tier": 0,
