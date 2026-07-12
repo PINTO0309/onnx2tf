@@ -299,7 +299,9 @@ when `ONNX2TF_INTERNAL_PASS_METRICS_PATH` is set. The sequential bulk runner set
 that environment variable only around one subprocess, restores the prior value
 in `finally`, reads the per-run JSON, and stores it under the managed entry's
 optional `pass_metrics`. Bulk summary totals combine visited operators,
-state-backed events, snapshots, and fingerprints. Normal conversions do not
+actual state builds, snapshots, and fingerprints. Metrics schema version 2
+assigns a `group_sequence` to every runner call so shared preflight/state work
+is counted once for multi-spec groups rather than once per event. Normal conversions do not
 allocate the sink or write a metrics file.
 
 Production constant-input materialization uses

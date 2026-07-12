@@ -602,7 +602,7 @@ def _build_summary(state: Dict[str, Any]) -> Dict[str, Any]:
     if pass_metric_entries:
         aggregate_totals = {
             "preflight_operators_visited": 0,
-            "state_backed_event_count": 0,
+            "state_build_count": 0,
             "snapshot_count": 0,
             "fingerprint_count": 0,
         }

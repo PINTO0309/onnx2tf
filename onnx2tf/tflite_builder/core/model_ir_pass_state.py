@@ -266,11 +266,12 @@ def summarize_model_ir_pass_diagnostics(
     status_counts: Dict[str, int] = {}
     totals = {
         "preflight_operators_visited": 0,
-        "state_backed_event_count": 0,
+        "state_build_count": 0,
         "snapshot_count": 0,
         "fingerprint_count": 0,
     }
     by_pass: Dict[str, Dict[str, Any]] = {}
+    by_group: Dict[int, Dict[str, Any]] = {}
     for event in events:
         status = str(event.get("status", "unknown"))
         status_counts[status] = int(status_counts.get(status, 0)) + 1
@@ -281,20 +282,29 @@ def summarize_model_ir_pass_diagnostics(
         state_built = bool(metrics.get("state_built", False))
         snapshots = int(metrics.get("snapshot_count", 0))
         fingerprints = int(metrics.get("fingerprint_count", 0))
-        totals["preflight_operators_visited"] += visited
-        totals["state_backed_event_count"] += int(state_built)
         totals["snapshot_count"] += snapshots
         totals["fingerprint_count"] += fingerprints
 
+        group_sequence = int(event.get("group_sequence", 0))
+        group_summary = by_group.get(group_sequence)
+        if group_summary is None:
+            group_summary = {
+                "pass_ids": [],
+                "preflight_operators_visited": visited,
+                "state_built": state_built,
+            }
+            by_group[group_sequence] = group_summary
+            totals["preflight_operators_visited"] += visited
+            totals["state_build_count"] += int(state_built)
+
         code = str(event.get("code", ""))
+        group_summary["pass_ids"].append(code)
         pass_summary = by_pass.setdefault(
             code,
             {
                 "event_count": 0,
                 "changed_count": 0,
                 "skipped_count": 0,
-                "preflight_operators_visited": 0,
-                "state_backed_event_count": 0,
                 "snapshot_count": 0,
                 "fingerprint_count": 0,
             },
@@ -304,16 +314,18 @@ def summarize_model_ir_pass_diagnostics(
         pass_summary["skipped_count"] += int(
             bool(event.get("skipped_by_precondition", False))
         )
-        pass_summary["preflight_operators_visited"] += visited
-        pass_summary["state_backed_event_count"] += int(state_built)
         pass_summary["snapshot_count"] += snapshots
         pass_summary["fingerprint_count"] += fingerprints
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "event_count": len(events),
         "status_counts": dict(sorted(status_counts.items())),
         "totals": totals,
+        "groups": {
+            str(group_sequence): by_group[group_sequence]
+            for group_sequence in sorted(by_group)
+        },
         "by_pass": {code: by_pass[code] for code in sorted(by_pass)},
     }
 
@@ -333,6 +345,16 @@ def run_model_ir_pass_group(
 
     preflight_operators_visited = 0
     state_built = False
+    group_sequence = 1
+    if diagnostics is not None:
+        group_sequence += max(
+            (
+                int(event.get("group_sequence", 0))
+                for event in diagnostics
+                if str(event.get("stage", "")) == "model_ir_pass"
+            ),
+            default=0,
+        )
 
     def _record_event(
         event: Dict[str, Any],
@@ -356,6 +378,7 @@ def run_model_ir_pass_group(
                 **event,
                 "sequence": sequence,
                 "invocation": invocation,
+                "group_sequence": group_sequence,
                 "metrics": {
                     "preflight_operators_visited": preflight_operators_visited,
                     "state_built": state_built,

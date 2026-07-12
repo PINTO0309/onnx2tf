@@ -460,6 +460,7 @@ def test_model_ir_pass_group_stops_and_records_two_state_cycle() -> None:
         "skipped_by_precondition": False,
         "sequence": 1,
         "invocation": 1,
+        "group_sequence": 1,
         "metrics": {
             "preflight_operators_visited": 0,
             "state_built": True,
@@ -513,6 +514,7 @@ def test_model_ir_pass_group_runs_specs_and_normalizes_details() -> None:
             "skipped_by_precondition": False,
             "sequence": 1,
             "invocation": 1,
+            "group_sequence": 1,
             "metrics": {
                 "preflight_operators_visited": 0,
                 "state_built": True,
@@ -532,6 +534,7 @@ def test_model_ir_pass_group_runs_specs_and_normalizes_details() -> None:
             "skipped_by_precondition": True,
             "sequence": 2,
             "invocation": 1,
+            "group_sequence": 1,
             "metrics": {
                 "preflight_operators_visited": 0,
                 "state_built": True,
@@ -540,6 +543,20 @@ def test_model_ir_pass_group_runs_specs_and_normalizes_details() -> None:
             },
         },
     ]
+    summary = summarize_model_ir_pass_diagnostics(diagnostics)
+    assert summary["totals"] == {
+        "preflight_operators_visited": 0,
+        "state_build_count": 1,
+        "snapshot_count": 0,
+        "fingerprint_count": 0,
+    }
+    assert summary["groups"] == {
+        "1": {
+            "pass_ids": ["cleanup.executed", "cleanup.skipped"],
+            "preflight_operators_visited": 0,
+            "state_built": True,
+        }
+    }
 
 
 def test_model_ir_pass_group_records_typed_invariant_failure() -> None:
@@ -587,6 +604,7 @@ def test_model_ir_pass_group_records_typed_invariant_failure() -> None:
             "problems": list(caught.value.problems),
             "sequence": 1,
             "invocation": 1,
+            "group_sequence": 1,
             "metrics": {
                 "preflight_operators_visited": 0,
                 "state_built": True,
@@ -620,15 +638,17 @@ def test_model_ir_pass_diagnostics_number_repeated_invocations() -> None:
     assert diagnostics[1]["invocation"] == 1
     assert diagnostics[2]["sequence"] == 2
     assert diagnostics[2]["invocation"] == 2
+    assert diagnostics[1]["group_sequence"] == 1
+    assert diagnostics[2]["group_sequence"] == 2
 
     summary = summarize_model_ir_pass_diagnostics(diagnostics)
     assert summary == {
-        "schema_version": 1,
+        "schema_version": 2,
         "event_count": 2,
         "status_counts": {"unchanged": 2},
         "totals": {
             "preflight_operators_visited": 0,
-            "state_backed_event_count": 2,
+            "state_build_count": 2,
             "snapshot_count": 0,
             "fingerprint_count": 0,
         },
@@ -637,11 +657,21 @@ def test_model_ir_pass_diagnostics_number_repeated_invocations() -> None:
                 "event_count": 2,
                 "changed_count": 0,
                 "skipped_count": 0,
-                "preflight_operators_visited": 0,
-                "state_backed_event_count": 2,
                 "snapshot_count": 0,
                 "fingerprint_count": 0,
             }
+        },
+        "groups": {
+            "1": {
+                "pass_ids": ["cleanup.repeated"],
+                "preflight_operators_visited": 0,
+                "state_built": True,
+            },
+            "2": {
+                "pass_ids": ["cleanup.repeated"],
+                "preflight_operators_visited": 0,
+                "state_built": True,
+            },
         },
     }
 

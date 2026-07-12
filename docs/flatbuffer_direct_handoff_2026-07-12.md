@@ -901,6 +901,33 @@ the existing fixed order/profile and do not launch parallel workers. Based on
 actual high-count pass IDs, select the next migration or grouping target rather
 than guessing from source order.
 
+A real sequential Tier 0 sample was run with only `Acos_11.onnx` in an isolated
+root (`--root_only --tflite_only`, timeout 120 seconds). It passed in 2.26
+seconds. The first metrics aggregation exposed that multi-spec group preflight
+work was duplicated once per event. Metrics schema version 2 fixes this by
+assigning `group_sequence`, deduplicating preflight/state construction per
+runner group, and retaining snapshot/fingerprint accounting per pass event.
+
+The corrected rerun passed and recorded:
+
+- 37 pass events across 28 runner groups;
+- 37 skips, zero changed events;
+- 112 actual preflight operator visits;
+- zero ModelIRPassState builds, snapshots, or fingerprints.
+
+The latest schema-v2 core/bulk suite completed with `50 passed`; the latest full
+sequential direct suite completed with
+`1076 passed, 5 deselected, 2 warnings in 135.57s`. Both sample roots and output
+trees were deleted after inspection, so no generated models or artifacts remain.
+
+The highest repeated IDs in this sample were Squeeze/Reshape identity (eight
+invocations) and mixed-attention layout (six), all skipped. The next cohesive
+migration should therefore pair the legacy Squeeze/Unary/Reshape passthrough
+that immediately precedes Squeeze/Reshape identity cleanup at its repeated
+sites. Move it into the graph-cleanup family, make it differential-index and
+LayoutState aware, then run both specs in their existing order through one
+group. Do not merge calls separated by other rewrites.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

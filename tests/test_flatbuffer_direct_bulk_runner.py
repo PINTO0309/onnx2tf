@@ -96,12 +96,12 @@ def test_flatbuffer_direct_bulk_runner_collects_internal_pass_metrics(
         metrics_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "event_count": 3,
                     "status_counts": {"changed": 1, "skipped": 2},
                     "totals": {
                         "preflight_operators_visited": 9,
-                        "state_backed_event_count": 1,
+                        "state_build_count": 1,
                         "snapshot_count": 1,
                         "fingerprint_count": 0,
                     },
@@ -126,7 +126,7 @@ def test_flatbuffer_direct_bulk_runner_collects_internal_pass_metrics(
         "event_count": 3,
         "totals": {
             "preflight_operators_visited": 9,
-            "state_backed_event_count": 1,
+            "state_build_count": 1,
             "snapshot_count": 1,
             "fingerprint_count": 0,
         },
