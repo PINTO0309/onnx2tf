@@ -7719,6 +7719,7 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
             f"GridSample supports rank-4/5 tensors in flatbuffer_direct. op={node.name} image_shape={image_shape}"
         )
     align_corners = bool(int(node.attrs.get("align_corners", 0)))
+    interpolation_mode = str(node.attrs.get("mode", "bilinear")).lower()
     padding_mode = str(node.attrs.get("padding_mode", "zeros")).lower()
     use_border_padding = padding_mode == "border"
     flattened_axis_size_2d = int(w * h) if use_border_padding else int((w + 2) * (h + 2))
@@ -7982,6 +7983,39 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
                 },
             )
         )
+
+    # ONNX Runtime treats NaN GridSample coordinates as -1. Normalize before
+    # coordinate extraction so NaN-to-integer casts cannot create out-of-range
+    # gather indices in either linear or nearest lowering.
+    grid_nan_mask_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_grid_nan_mask",
+        dtype="BOOL",
+        shape=grid_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="NOT_EQUAL",
+            inputs=[grid_compute_name, grid_compute_name],
+            outputs=[grid_nan_mask_name],
+        )
+    )
+    grid_nan_replacement_name = ctx.add_const_tensor(
+        f"{output_name}_gridsample_grid_nan_replacement",
+        np.asarray(-1.0, dtype=compute_np_dtype),
+    )
+    grid_sanitized_name = ctx.add_intermediate_tensor(
+        f"{output_name}_gridsample_grid_sanitized",
+        dtype=compute_dtype,
+        shape=grid_shape,
+    )
+    ctx.add_operator(
+        OperatorIR(
+            op_type="SELECT_V2",
+            inputs=[grid_nan_mask_name, grid_nan_replacement_name, grid_compute_name],
+            outputs=[grid_sanitized_name],
+        )
+    )
+    grid_compute_name = grid_sanitized_name
 
     if image_rank == 5:
         def _squeeze_last_dim_3d(name: str, tag: str, dtype: str) -> str:
@@ -8999,6 +9033,130 @@ def build_grid_sample_op(node: Any, ctx: Any) -> None:
         _add_binary_op("MINIMUM", y_clip_low_name, h_const, y_clip_name)
         _add_binary_op("ADD", x_clip_name, one_const, x_shift_name)
         _add_binary_op("ADD", y_clip_name, one_const, y_shift_name)
+
+    if interpolation_mode == "nearest":
+        nearest_x_source = x_shift_name if use_border_padding else x_clip_name
+        nearest_y_source = y_shift_name if use_border_padding else y_clip_name
+        x_nearest_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_x_nearest",
+            dtype=compute_dtype,
+            shape=[int(n), int(out_h), int(out_w), 1],
+        )
+        y_nearest_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_y_nearest",
+            dtype=compute_dtype,
+            shape=[int(n), int(out_h), int(out_w), 1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ROUND",
+                inputs=[nearest_x_source],
+                outputs=[x_nearest_name],
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="ROUND",
+                inputs=[nearest_y_source],
+                outputs=[y_nearest_name],
+            )
+        )
+        x_nearest_i_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_x_nearest_i",
+            dtype="INT32",
+            shape=[int(n), int(out_h), int(out_w), 1],
+        )
+        y_nearest_i_name = ctx.add_intermediate_tensor(
+            f"{output_name}_gridsample_y_nearest_i",
+            dtype="INT32",
+            shape=[int(n), int(out_h), int(out_w), 1],
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[x_nearest_name],
+                outputs=[x_nearest_i_name],
+                options={"inDataType": compute_dtype, "outDataType": "INT32"},
+            )
+        )
+        ctx.add_operator(
+            OperatorIR(
+                op_type="CAST",
+                inputs=[y_nearest_name],
+                outputs=[y_nearest_i_name],
+                options={"inDataType": compute_dtype, "outDataType": "INT32"},
+            )
+        )
+        if not use_border_padding:
+            one_i32_name = ctx.add_const_tensor(
+                f"{output_name}_gridsample_nearest_one_i32",
+                np.asarray(1, dtype=np.int32),
+            )
+            x_nearest_shifted_i_name = ctx.add_intermediate_tensor(
+                f"{output_name}_gridsample_x_nearest_shifted_i",
+                dtype="INT32",
+                shape=[int(n), int(out_h), int(out_w), 1],
+            )
+            y_nearest_shifted_i_name = ctx.add_intermediate_tensor(
+                f"{output_name}_gridsample_y_nearest_shifted_i",
+                dtype="INT32",
+                shape=[int(n), int(out_h), int(out_w), 1],
+            )
+            _add_binary_op(
+                "ADD",
+                x_nearest_i_name,
+                one_i32_name,
+                x_nearest_shifted_i_name,
+            )
+            _add_binary_op(
+                "ADD",
+                y_nearest_i_name,
+                one_i32_name,
+                y_nearest_shifted_i_name,
+            )
+            x_nearest_i_name = x_nearest_shifted_i_name
+            y_nearest_i_name = y_nearest_shifted_i_name
+        x_nearest_3d = _squeeze_last_dim(x_nearest_i_name, "x_nearest", "INT32")
+        y_nearest_3d = _squeeze_last_dim(y_nearest_i_name, "y_nearest", "INT32")
+        linear_width_const = ctx.add_const_tensor(
+            f"{output_name}_gridsample_linear_width",
+            np.asarray(int(w if use_border_padding else w + 2), dtype=np.int32),
+        )
+        nearest_index_name = _build_linear_index(
+            y_nearest_3d,
+            x_nearest_3d,
+            "nearest_idx",
+            linear_width_const,
+        )
+        nearest_value_name = _build_gather(
+            nearest_index_name,
+            "nearest_value",
+            image_flat_name,
+        )
+        if output_dtype != compute_dtype:
+            ctx.add_operator(
+                OperatorIR(
+                    op_type="CAST",
+                    inputs=[nearest_value_name],
+                    outputs=[output_name],
+                    options={
+                        "inDataType": compute_dtype,
+                        "outDataType": output_dtype,
+                    },
+                )
+            )
+        elif nearest_value_name != output_name:
+            _add_reshape_operator(
+                ctx=ctx,
+                input_name=nearest_value_name,
+                output_name=output_name,
+                new_shape=[int(out_n), int(out_c), int(out_h), int(out_w)],
+                preserve_dynamic_shape=True,
+            )
+        in_quant = ctx.model_ir.tensors[image_name].quantization
+        if in_quant is not None and ctx.model_ir.tensors[output_name].quantization is None:
+            ctx.model_ir.tensors[output_name].quantization = _clone_quantization(in_quant)
+        return
 
     x0_name = ctx.add_intermediate_tensor(
         f"{output_name}_gridsample_x0",

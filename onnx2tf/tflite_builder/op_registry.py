@@ -6076,11 +6076,11 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
     mode = str(node.attrs.get("mode", "bilinear")).lower()
     padding_mode = str(node.attrs.get("padding_mode", "zeros")).lower()
     align_corners = int(node.attrs.get("align_corners", 0))
-    if mode not in {"bilinear", "linear"}:
+    if mode not in {"bilinear", "linear", "nearest"}:
         raise NodeValidationError(
             reason_code="unsupported_attribute_value",
             message=(
-                "GridSample supports mode=bilinear/linear only in "
+                "GridSample supports mode=bilinear/linear/nearest only in "
                 f"flatbuffer_direct. mode={mode}"
             ),
             node_name=node.name,
@@ -6145,6 +6145,13 @@ def _validate_grid_sample(node: Any, ctx: Any) -> None:
                 "GridSample supports rank-4/5 tensors only in flatbuffer_direct. "
                 f"image_shape={image_shape} grid_shape={grid_shape} output_shape={output_shape}"
             ),
+            node_name=node.name,
+            node_op=node.op,
+        )
+    if mode == "nearest" and rank != 4:
+        raise NodeValidationError(
+            reason_code="unsupported_input_rank",
+            message="GridSample mode=nearest currently supports rank-4 input only.",
             node_name=node.name,
             node_op=node.op,
         )
@@ -8136,9 +8143,12 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
             "SUB",
             "MUL",
             "FLOOR",
+            "ROUND",
             "MAXIMUM",
             "MINIMUM",
             "CAST",
+            "NOT_EQUAL",
+            "SELECT_V2",
             "GATHER",
         ],
         builder=build_grid_sample_op,

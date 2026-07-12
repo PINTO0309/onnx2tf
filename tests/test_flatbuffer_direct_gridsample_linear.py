@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import onnx
 import onnxruntime as ort
+import pytest
 from ai_edge_litert.interpreter import Interpreter
 from onnx import TensorProto, helper
 
@@ -16,7 +17,7 @@ from onnx2tf.tflite_builder.preprocess import (
 )
 
 
-def _make_standard_linear_gridsample_model() -> onnx.ModelProto:
+def _make_standard_gridsample_model(*, mode: str) -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 2, 2])
     grid = helper.make_tensor_value_info("grid", TensorProto.FLOAT, [1, 2, 2, 2])
     y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1, 2, 2])
@@ -25,7 +26,7 @@ def _make_standard_linear_gridsample_model() -> onnx.ModelProto:
         ["x", "grid"],
         ["y"],
         name="standard_linear_gridsample",
-        mode="linear",
+        mode=mode,
         padding_mode="zeros",
         align_corners=0,
     )
@@ -37,8 +38,9 @@ def _make_standard_linear_gridsample_model() -> onnx.ModelProto:
     return model
 
 
-def test_standard_linear_gridsample_uses_builtin_lowering() -> None:
-    model = _make_standard_linear_gridsample_model()
+@pytest.mark.parametrize("mode", ["linear", "nearest"])
+def test_standard_gridsample_uses_builtin_lowering(mode: str) -> None:
+    model = _make_standard_gridsample_model(mode=mode)
     register_default_preprocess_rules()
     preprocessed, _ = run_preprocess_pipeline(onnx_graph=model)
 
@@ -52,8 +54,9 @@ def test_standard_linear_gridsample_uses_builtin_lowering() -> None:
     assert any(str(op.op_type) == "GATHER" for op in model_ir.operators)
 
 
-def test_standard_linear_gridsample_tflite_matches_onnx(tmp_path: Path) -> None:
-    model = _make_standard_linear_gridsample_model()
+@pytest.mark.parametrize("mode", ["linear", "nearest"])
+def test_standard_gridsample_tflite_matches_onnx(tmp_path: Path, mode: str) -> None:
+    model = _make_standard_gridsample_model(mode=mode)
     result = export_tflite_model_flatbuffer_direct(
         onnx_graph=model,
         output_folder_path=str(tmp_path),
@@ -66,6 +69,7 @@ def test_standard_linear_gridsample_tflite_matches_onnx(tmp_path: Path) -> None:
         [[[[ -0.75, -0.75], [0.25, -0.5]], [[-0.5, 0.5], [0.75, 0.75]]]],
         dtype=np.float32,
     )
+    grid[0, 0, 0] = np.nan
     expected = ort.InferenceSession(
         model.SerializeToString(),
         providers=["CPUExecutionProvider"],
