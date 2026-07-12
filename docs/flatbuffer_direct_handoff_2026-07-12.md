@@ -1682,10 +1682,36 @@ Sequential verification completed with:
 - `1099 passed, 5 deselected, 2 warnings in 143.72s` for the full direct suite.
 
 No algorithm, call order, artifact, dependency, or TensorFlow boundary changed.
-The next checkpoint should make this cleanup use the differential graph index,
-`LayoutState`, stable transactional diagnostics, and model-only/precise guards,
-then replace its seven raw production calls with runner calls. Do not create a
-pull request; commit and push only at a coherent checkpoint.
+
+The indexed consecutive-Reshape checkpoint is now complete. Its three mutation
+paths—output-name-preserving no-op removal, fan-out bypass, and single-user
+chain collapse—use the shared graph index for lookup and every edge/operator
+mutation, then synchronize pruning with `LayoutState`. All seven raw production
+calls, including the conditional fallback-IR call, were replaced with
+`run_consecutive_reshape_cleanup`; stable diagnostics use
+`cleanup.consecutive_reshape_passthrough` in `POST_LOWERING_CLEANUP`.
+Model-only preflight rejects graphs without Reshape, and the indexed guard
+recognizes metadata no-ops or Reshape consumers before snapshotting.
+
+Sequential verification completed with:
+
+- `10 passed` across runner success/output preservation, legacy chain/fan-out/
+  mutable/dynamic semantics, ordered diagnostics, ownership, and irrelevant-
+  preflight efficiency;
+- an AST mutation audit showing zero raw production calls, exactly seven runner
+  calls, and no direct operator deletion or local producer/consumer-map rebuild
+  in the implementation;
+- Tier 1 `superpoint.onnx`, where six runtime positions produced two changed and
+  four guard-skipped events with exactly two snapshots, followed by `-cotof`
+  with every output compared, `evaluation_pass=true`, and maximum absolute
+  error `1.6666017472743988e-06`;
+- `1101 passed, 5 deselected, 2 warnings in 143.83s` for the full direct suite.
+
+The generated 18 MB output directory and internal metrics file were deleted.
+Validation remained single-process and sequential, with no new dependency or
+TensorFlow import. Rerun the raw post-lowering inventory before selecting the
+next family. Do not create a pull request; commit and push only at a coherent
+checkpoint.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

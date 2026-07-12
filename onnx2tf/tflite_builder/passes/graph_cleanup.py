@@ -18,8 +18,6 @@ from onnx2tf.tflite_builder.core.passes import (
     PassSpec,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _is_fully_known_positive_shape,
     _is_singleton_constant_tensor,
@@ -351,7 +349,12 @@ def run_duplicate_fanout_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_consecutive_reshape_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Remove redundant RESHAPE chains.
 
@@ -375,6 +378,7 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
     rewritten = 0
     rewritten_fanout_bypass = 0
     removed_noop = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _reshape_depends_on_input_dims(reshape_op: OperatorIR) -> bool:
         """
@@ -425,8 +429,8 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         # 1) Remove single no-op reshape: input/output metadata is identical.
@@ -480,15 +484,17 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
                         str(dst_name) if str(v) == str(src_name) else str(v)
                         for v in producer_outputs
                     ],
+                    graph_index=graph_index,
                 )
             else:
                 _replace_tensor_inputs(
                     model_ir=model_ir,
                     src_name=str(dst_name),
                     dst_name=str(src_name),
+                    graph_index=graph_index,
                 )
 
-            del model_ir.operators[int(reshape_idx)]
+            graph_index.remove_operator(int(reshape_idx))
             removed_noop += 1
             changed = True
             break
@@ -557,6 +563,7 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
                     model_ir=model_ir,
                     op=second_op,
                     new_inputs=second_inputs,
+                    graph_index=graph_index,
                 )
 
                 rewritten += 1
@@ -634,9 +641,10 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
                 model_ir=model_ir,
                 op=second_op,
                 new_inputs=second_inputs,
+                graph_index=graph_index,
             )
 
-            del model_ir.operators[int(first_idx)]
+            graph_index.remove_operator(int(first_idx))
             rewritten += 1
             changed = True
             break
@@ -645,12 +653,111 @@ def _optimize_consecutive_reshape_passthrough_chains(model_ir: ModelIR) -> Dict[
             break
 
     if rewritten > 0 or removed_noop > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {
         "removed_noop_reshape_chains": int(removed_noop),
         "rewritten_consecutive_reshape_passthrough_chains": int(rewritten),
         "rewritten_fanout_bypass_reshape_passthrough_chains": int(rewritten_fanout_bypass),
     }
+
+
+def run_consecutive_reshape_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run general no-op, fan-out, and consecutive Reshape cleanup."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        return preflight_any_operator(
+            candidate_model,
+            lambda operator: str(operator.op_type) == "RESHAPE",
+        )
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        model_outputs = set(str(value) for value in candidate_model.outputs)
+        for reshape_op in candidate_model.operators:
+            if (
+                str(reshape_op.op_type) != "RESHAPE"
+                or len(reshape_op.inputs) < 1
+                or len(reshape_op.outputs) != 1
+            ):
+                continue
+            src_name = str(reshape_op.inputs[0])
+            dst_name = str(reshape_op.outputs[0])
+            src_tensor = candidate_model.tensors.get(src_name)
+            dst_tensor = candidate_model.tensors.get(dst_name)
+            if (
+                src_tensor is not None
+                and dst_tensor is not None
+                and not bool(src_tensor.is_variable)
+                and not bool(dst_tensor.is_variable)
+                and list(src_tensor.shape) == list(dst_tensor.shape)
+                and list(src_tensor.shape_signature or src_tensor.shape)
+                == list(dst_tensor.shape_signature or dst_tensor.shape)
+                and not bool(reshape_op.options.get("preserveDynamicShape", False))
+                and not bool(reshape_op.options.get("preserveSemanticRank", False))
+            ):
+                if dst_name not in model_outputs:
+                    return True
+                if (
+                    len(pass_state.graph_index.consumer_indices(dst_name)) == 0
+                    and pass_state.graph_index.producers.get(src_name) is not None
+                ):
+                    return True
+            if dst_name in model_outputs or bool(
+                reshape_op.options.get("preserveSemanticRank", False)
+            ):
+                continue
+            for user_index in pass_state.graph_index.consumer_indices(dst_name):
+                user_op = candidate_model.operators[int(user_index)]
+                if (
+                    str(user_op.op_type) == "RESHAPE"
+                    and len(user_op.inputs) >= 1
+                    and str(user_op.inputs[0]) == dst_name
+                    and not bool(user_op.options.get("preserveSemanticRank", False))
+                ):
+                    return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_consecutive_reshape_passthrough_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(sum(int(value) for value in stats.values())),
+        }
+
+    default_details = {
+        "removed_noop_reshape_chains": 0,
+        "rewritten_consecutive_reshape_passthrough_chains": 0,
+        "rewritten_fanout_bypass_reshape_passthrough_chains": 0,
+    }
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="cleanup.consecutive_reshape_passthrough",
+                phase=PassPhase.POST_LOWERING_CLEANUP,
+                priority=10,
+                callback=_run,
+                precondition=_has_candidate,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details=default_details,
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_maximum_minimum_relu0to1_chains(

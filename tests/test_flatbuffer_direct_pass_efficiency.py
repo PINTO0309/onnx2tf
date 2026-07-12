@@ -31,6 +31,7 @@ from onnx2tf.tflite_builder.passes.constant_fold import (
 )
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     run_clamp_cleanup,
+    run_consecutive_reshape_cleanup,
     run_consecutive_mul_constants_cleanup,
     run_duplicate_fanout_cleanup,
     run_maximum_zero_relu_cleanup,
@@ -177,9 +178,10 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_quantized_reshape_cleanup(model_ir, diagnostics=diagnostics)
     run_singleton_maxpool_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_singleton_reshape_layout_cleanup(model_ir, diagnostics=diagnostics)
+    run_consecutive_reshape_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 46
+    assert len(diagnostics) == 47
     assert all(event["status"] == "skipped" for event in diagnostics)
     assert all(
         event["metrics"]

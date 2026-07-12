@@ -133,6 +133,7 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_duplicate_reshape_fanout as _optimize_duplicate_reshape_fanout_pass,
     _optimize_duplicate_transpose_fanout as _optimize_duplicate_transpose_fanout_pass,
     run_clamp_cleanup,
+    run_consecutive_reshape_cleanup,
     run_consecutive_mul_constants_cleanup,
     run_duplicate_fanout_cleanup,
     run_maximum_zero_relu_cleanup,
@@ -61865,7 +61866,11 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir)
-        _optimize_consecutive_reshape_passthrough_chains(model_ir)
+        run_consecutive_reshape_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_squeeze_reshape_identity_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -61929,7 +61934,11 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir)
-    _optimize_consecutive_reshape_passthrough_chains(model_ir)
+    run_consecutive_reshape_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_squeeze_reshape_identity_cleanup(
         model_ir,
         layout_state=session.layout_state,
@@ -62088,7 +62097,11 @@ def lower_onnx_to_ir(
     )
     # Boundary cleanup can recreate a terminal no-op RESHAPE.
     # Run one last pass to remove shape-preserving single reshapes.
-    _optimize_consecutive_reshape_passthrough_chains(model_ir)
+    run_consecutive_reshape_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     if optimize_layout_transpose_chains:
         _optimize_convpool_output_transpose_nhwc_passthrough_chains(model_ir)
     elif apply_safe_transpose_reduction_lite_on_no_layout_opt:
@@ -62155,7 +62168,11 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_consecutive_reshape_passthrough_chains(model_ir)
+    run_consecutive_reshape_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     if optimize_layout_transpose_chains:
         _optimize_layout_transpose_chains(model_ir)
     _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(model_ir)
@@ -62177,7 +62194,11 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_consecutive_reshape_passthrough_chains(model_ir)
+    run_consecutive_reshape_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _reconcile_static_tensor_shapes(model_ir)
     _sanitize_static_shape_signature_consistency(model_ir)
     _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
@@ -62384,7 +62405,10 @@ def lower_onnx_to_ir(
                 include_transpose=False,
                 diagnostics=session.diagnostics,
             )
-            _optimize_consecutive_reshape_passthrough_chains(fallback_ir)
+            run_consecutive_reshape_cleanup(
+                fallback_ir,
+                diagnostics=session.diagnostics,
+            )
             _reconcile_static_tensor_shapes(fallback_ir)
             _topologically_sort_operators(fallback_ir)
         _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(fallback_ir)
@@ -62592,7 +62616,11 @@ def lower_onnx_to_ir(
     # Absolute-final reshape cleanup:
     # very late repair/reconciliation passes above can still recreate trivial
     # singleton-growth RESHAPE chains (e.g. 2D->3D->4D Conv1D input shims).
-    _optimize_consecutive_reshape_passthrough_chains(model_ir)
+    run_consecutive_reshape_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _reconcile_static_tensor_shapes(model_ir)
     # Keep this after the final shape reconciliation: earlier than this,
     # SiNet-specific residual branches are not yet in their terminal form and

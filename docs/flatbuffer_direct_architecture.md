@@ -398,9 +398,17 @@ General consecutive Reshape passthrough cleanup is also owned by
 fan-out-safe bypass of a second Reshape, and strict single-user chain collapse,
 while preserving public names, mutable/dynamic boundaries, semantic-rank
 markers, and ONNX `0`/`-1` target semantics. The seven legacy lowerer call
-sites remain in their original positions through a thin compatibility wrapper;
-the implementation moved mechanically with an identical AST. Differential
-index and ordered-runner migration is intentionally a separate checkpoint.
+sites remain available through a thin compatibility wrapper; the implementation
+moved mechanically with an identical AST.
+
+Production now invokes `run_consecutive_reshape_cleanup` at all seven positions
+with stable ID `cleanup.consecutive_reshape_passthrough` in
+`POST_LOWERING_CLEANUP`. Model-only preflight rejects graphs without Reshape;
+the indexed guard detects metadata no-ops or Reshape consumers before taking a
+transactional snapshot. Producer/consumer lookup, output retargeting, fan-out
+input bypass, structural removal, and layout-aware pruning all use one
+differential `ModelIRGraphIndex` and `LayoutState` per invocation. The fallback
+IR position builds local state but reports into the same session diagnostics.
 
 The four later reshape-only recovery positions also execute through
 `run_duplicate_fanout_cleanup(include_transpose=False)` instead of calling the
