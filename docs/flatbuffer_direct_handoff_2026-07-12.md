@@ -1,5 +1,106 @@
 # flatbuffer_direct refactor handoff — 2026-07-12
 
+## Pause checkpoint — `fb-refactor2` after `19cb989`
+
+### Completed work
+
+- Completed the quantized op-family split. DynamicQuantizeLinear,
+  QLinearMatMul/QGemm, QLinearAveragePool/GlobalAveragePool,
+  QLinearAdd/QLinearMul, QLinearSigmoid/LeakyRelu/Softmax, QLinearConcat,
+  QuantizeLinear/DequantizeLinear, QLinearConv, and ConvInteger now have
+  dedicated family modules.
+- Replaced the old combined `op_builders/quantized.py` with
+  `op_builders/quantized_common.py`. The common module contains shared
+  quantization, shape/signature, padding, and requantization primitives and no
+  `build_*` entry point.
+- Fixed pre-extraction normalized ModelIR fingerprints for each extracted
+  family and consolidated duplicate fingerprint serialization in
+  `tests/flatbuffer_direct_fingerprint.py`.
+- Preserved the public builder imports, registry dispatch, TensorFlow-free
+  boundary, and existing runtime behavior. The latest implementation commit is
+  `19cb989` (`complete quantized op family split`) and is pushed to
+  `origin/fb-refactor2`.
+- Measured `lower_from_onnx2tf.py` with the Python AST. It contains 280
+  top-level definitions, including 204 `_optimize_*` functions. The largest
+  functions include `_optimize_transpose_pre_concat_nhwc_chains` (2,117
+  lines), `lower_onnx_to_ir` (1,711 lines), and
+  `_optimize_transpose_pre_add_nhwc_chains` (1,580 lines).
+- Selected coverage/correspondence reporting as the next independent
+  extraction boundary. The contiguous implementation is currently
+  `_collect_schema_ops_for_range` through
+  `write_tensor_correspondence_report`; `_build_tensor_consumer_map` at the top
+  of the legacy module must move with it and be re-imported for layout passes.
+
+### Incomplete work
+
+- The reporting extraction has not been applied. An attempted generated patch
+  failed context verification before changing any file; no partial
+  `reporting.py` exists and all reporting functions remain in
+  `lower_from_onnx2tf.py`.
+- `lower_from_onnx2tf.py` remains approximately 78,000 lines and still owns the
+  large layout-rule collection and the main lowering orchestration.
+- The broader Goal remains incomplete: ordered pass ownership, transactional
+  rewrite coverage, further layout-rule generalization, exporter cleanup, and
+  final Tier 0–4/Tier 5 phase gates still require work.
+- The managed Tier 0–4 baseline remains 368 passes, 6
+  `missing_tflite_report`, 20 `tflite_fail`, and 26 excluded historical
+  timeouts. The 26 active non-passes have explicit normalized causes; the two
+  DEIM entries are accepted successes by user direction.
+
+### Branch and working tree
+
+- Branch: `fb-refactor2`, synchronized with `origin/fb-refactor2` at
+  `19cb989` before this handoff-only checkpoint.
+- There are no unfinished code changes or generated temporary files from the
+  reporting attempt. This handoff document is the only intended checkpoint
+  change before commit.
+
+### Tests run
+
+- Latest full sequential direct regression after the complete quantized split:
+  `985 passed, 5 deselected, 2 warnings in 121.63s`.
+- Quantized family fingerprint/architecture set: `26 passed`.
+- Focused QLinearConv/ConvInteger extraction set: `12 passed, 760 deselected`.
+- Reporting characterization command, run without the standard optional-test
+  exclusions: `777 passed, 5 failed, 2 warnings in 117.09s`. All five failures
+  are the already-known optional environment cases listed below; no reporting
+  test failed.
+
+### Failing tests and known issues
+
+- Four TensorFlow converter tests fail because the core `uv` environment does
+  not install the optional `tensorflow`/`tf_keras` extra:
+  `test_tflite_backend_matrix_add`,
+  `test_tflite_backend_matrix_hardswish_rewrite_on_off`,
+  `test_tf_converter_resize_cubic_avoids_flex_resize_bicubic`, and
+  `test_tf_converter_resize_cubic_honors_cubic_coeff_a`.
+- `test_flatbuffer_direct_group_norm_alias_builtin_conversion` fails because a
+  system Python 3.10 Torch binary is incompatible with the active Python 3.12
+  `uv` environment. These five tests are the standard broad-suite exclusions.
+- Two expected FLOAT16 cast overflow warnings remain in the ArgMax/ReduceMax
+  and negative-infinity Where tests.
+- The first reporting extraction patch failed only because its deletion hunk
+  did not preserve the blank-line context before `_read_transpose_perm`; it
+  made no filesystem change and is not a product defect.
+
+### First action on resume
+
+1. Reconfirm a clean `fb-refactor2` worktree and the current reporting function
+   boundaries with `rg`/AST.
+2. Create `onnx2tf/tflite_builder/reporting.py` with
+   `_build_tensor_consumer_map`, coverage schema/policy/report writers, rewrite
+   tracing, downstream correspondence inference, and correspondence writers.
+3. Import/re-export `_build_tensor_consumer_map`, `build_op_coverage_report`,
+   `write_op_coverage_report`, `build_tensor_correspondence_report`, and
+   `write_tensor_correspondence_report` from `lower_from_onnx2tf.py` so existing
+   Python imports remain compatible.
+4. Run `tests/test_tflite_builder_op_coverage.py` plus the correspondence cases
+   selected from `tests/test_tflite_builder_direct.py`, using the standard five
+   optional-test exclusions, then run the full direct suite sequentially.
+5. Only after identical reports and a green full suite, update this document,
+   commit the reporting extraction, and batch the next push. Do not create a
+   pull request.
+
 ## Current checkpoint — `fb-refactor2`
 
 The opset-aware Resize lowering and numerically stable Inverse lowering recover
