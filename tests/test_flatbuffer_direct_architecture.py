@@ -345,6 +345,7 @@ def test_pad_layout_rewrites_have_single_owner() -> None:
         }
 
     pass_names = {
+        "_optimize_transpose_instancenorm_pad_prepost_nhwc_chains",
         "_optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains",
         "_optimize_transpose_pad_mul_posttranspose_add_nhwc_chains",
         "_optimize_transpose_pad_prepost_nhwc_chains",

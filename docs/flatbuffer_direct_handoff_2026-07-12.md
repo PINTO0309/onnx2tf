@@ -242,9 +242,22 @@ Verification completed with:
 - `1009 passed, 5 deselected, 2 warnings in 125.27s` for the full sequential
   direct suite.
 
-Further Pad-family work should evaluate the InstanceNorm and global-norm Pad
-families independently; both are substantially larger and should move only
-with their current characterization fixtures and full direct-suite gates.
+The InstanceNorm decomposition followed by Pad now also belongs to
+`passes/pad_layout.py`. The exact pass and its nested topology helpers moved as
+one unit. Three existing characterizations preserve reduction axes, epsilon
+and channel coefficients, Pad rotation, legacy consumer adapters, quantization,
+metadata, and terminal output wiring. The legacy lowerer symbol delegates.
+
+Verification completed with:
+
+- `18 passed, 759 deselected` for focused architecture, Pad repair, and
+  InstanceNorm/Pad characterization;
+- `1009 passed, 5 deselected, 2 warnings in 125.74s` for the full sequential
+  direct suite.
+
+The next Pad-family increment is the flatten/global-normalization Pad rewrite,
+which has an existing full positive characterization and should remain a
+separate checkpoint.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

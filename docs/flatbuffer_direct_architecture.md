@@ -129,6 +129,12 @@ transactional region, remaps axes and Pad specifications, and preserves legacy
 fan-out adapters. The module has no source-line limit; the 2,000 threshold is
 reserved exclusively for ONNX corpus node-tier classification.
 
+InstanceNorm decomposition followed by Pad is owned by the same Pad family.
+The matcher retains its strict reduction, epsilon, coefficient, optional
+legacy-consumer adapter, Pad-axis, and terminal-transpose guards. Shared tensor
+mutation utilities maintain quantization, metadata, and lineage while the
+lowerer exposes only a compatibility wrapper.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither
