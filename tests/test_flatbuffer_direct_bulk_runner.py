@@ -998,8 +998,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 12,
-        "pass": 349,
+        "missing_tflite_report": 11,
+        "pass": 350,
         "tflite_fail": 33,
         "timeout": 26,
     }
@@ -1227,6 +1227,23 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "accuracy_only": True,
     }
     assert profile["model_options"]["new_encoder.onnx"] == {
+        "eval_num_samples": 1,
+        "accuracy_only": True,
+    }
+    fasterrcnn_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "fasterrcnn_resnet50_fpn.onnx"
+    )
+    assert fasterrcnn_entry == {
+        "tier": 3,
+        "model": "fasterrcnn_resnet50_fpn.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 0.0,
+        "eval_num_samples": 1,
+        "accuracy_only": True,
+    }
+    assert profile["model_options"]["fasterrcnn_resnet50_fpn.onnx"] == {
         "eval_num_samples": 1,
         "accuracy_only": True,
     }

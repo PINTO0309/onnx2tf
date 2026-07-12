@@ -92,8 +92,8 @@ The profile fixes root-only discovery, the 1–1,999 node range, all 420 managed
 historical model records, and inference concurrency of one. Models classified
 as `timeout` in the current managed baseline remain recorded for provenance but
 are automatically excluded from subsequent runs. The active run therefore
-contains 394 models: 349 expected passes and 45 expected non-passes, excluding
-26 recorded timeouts. The active non-passes are 33 accuracy failures and 12
+contains 394 models: 350 expected passes and 44 expected non-passes, excluding
+26 recorded timeouts. The active non-passes are 33 accuracy failures and 11
 missing reports. Tier 5 models cannot be added because the profile loader
 rejects tiers above 4 and node ranges above 1,999.
 
@@ -411,6 +411,20 @@ allows ONNX Runtime evaluation to proceed, after which explicit evaluation
 reports the expected unresolved custom op. Default `-cotof` continues to skip
 that unsupported runtime comparison and retains error signature
 `603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109`.
+
+`fasterrcnn_resnet50_fpn.onnx` is promoted from a missing report to a pass.
+`LoweringContext.ensure_tensor()` previously expanded a producer-confirmed
+rank-2 tensor `[1,12543]` back to a stale shape hint `[-1,1,12543]`. Slice was
+then lowered with rank-3 vectors, and a downstream TopK inserted a rank-3
+transpose whose runtime input was rank 2. The context now indexes ModelIR
+producers as operators are added and retains an all-static producer rank when
+the higher-rank hint can only add singleton or dynamic axes. Known
+non-singleton mismatches and tensors without a producer retain the previous
+behavior. The resulting Slice is rank 2 (`[1,12543]` to `[1,9408]`) and no
+TopK axis transpose is needed. A fixed-seed one-sample sequential run compares
+all three outputs without skips, with maximum absolute error `0` and cosine
+similarity `1`. Its managed profile uses `eval_num_samples: 1` and
+`accuracy_only: true`; ten sequential samples exceed 180 seconds.
 
 `conv_tasnet.onnx` remains an active missing-report model with the normalized
 reason `invalid_onnx_scatterelements_rank_mismatch_4_6`. Its terminal

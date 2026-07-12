@@ -5,6 +5,9 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.core.session import ConversionSession
+from onnx2tf.tflite_builder.core.shape_resolution import (
+    shape_hint_only_adds_singleton_or_dynamic_axes,
+)
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR, normalize_onnx_shape
 from onnx2tf.tflite_builder.tensor_buffer_builder import tflite_dtype_from_numpy
 
@@ -106,6 +109,7 @@ class LoweringContext:
             if str(value).strip()
         }
         self._serial = 0
+        self.ir_tensor_producers: Dict[str, OperatorIR] = {}
         self.onnx_tensor_consumers: Dict[str, List[Any]] = (
             session.graph_index.consumers if session is not None else {}
         )
@@ -168,16 +172,27 @@ class LoweringContext:
             hinted_rank = len(rank_hint) if isinstance(rank_hint, list) else 0
             current_shape = [int(v) for v in list(tensor.shape)]
             if int(hinted_rank) > len(current_shape):
-                missing_rank = int(hinted_rank) - len(current_shape)
+                producer = self.ir_tensor_producers.get(str(name), None)
                 current_signature = (
                     [int(v) for v in list(tensor.shape_signature)]
                     if tensor.shape_signature is not None
                     else list(current_shape)
                 )
-                tensor.shape = [1 for _ in range(missing_rank)] + current_shape
-                tensor.shape_signature = [
-                    -1 for _ in range(missing_rank)
-                ] + current_signature
+                preserve_producer_rank = bool(
+                    producer is not None
+                    and len(current_signature) == len(current_shape)
+                    and all(int(value) > 0 for value in current_signature)
+                    and shape_hint_only_adds_singleton_or_dynamic_axes(
+                        resolved_shape=current_shape,
+                        shape_hint=rank_hint,
+                    )
+                )
+                if not preserve_producer_rank:
+                    missing_rank = int(hinted_rank) - len(current_shape)
+                    tensor.shape = [1 for _ in range(missing_rank)] + current_shape
+                    tensor.shape_signature = [
+                        -1 for _ in range(missing_rank)
+                    ] + current_signature
             self._record_layout(name)
             return name
         resolved_shape, signature = normalize_onnx_shape(
@@ -225,3 +240,6 @@ class LoweringContext:
 
     def add_operator(self, op: OperatorIR) -> None:
         self.model_ir.operators.append(op)
+        for output_name in op.outputs:
+            if str(output_name):
+                self.ir_tensor_producers[str(output_name)] = op

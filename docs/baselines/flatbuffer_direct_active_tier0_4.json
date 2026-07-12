@@ -2194,9 +2194,10 @@
     {
       "tier": 3,
       "model": "fasterrcnn_resnet50_fpn.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "26d5bfe6744f6d4ed2acca5efb049c4d421b82a50e5ab0be9df5b94ec0f90631"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 0.0,
+      "eval_num_samples": 1,
+      "accuracy_only": true
     },
     {
       "tier": 3,
