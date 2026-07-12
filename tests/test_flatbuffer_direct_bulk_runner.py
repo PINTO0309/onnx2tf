@@ -992,6 +992,24 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert string_normalizer_entry["error_signature_sha256"] == (
         "2623d1f687770e4aade4749af32963fca446f80b3dd131e7061bcb13ae225722"
     )
+    ssd_mobilenet_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "ssd_mobilenet_v1_12-int8.onnx"
+    )
+    assert ssd_mobilenet_entry["baseline_classification"] == (
+        "missing_tflite_report"
+    )
+    assert ssd_mobilenet_entry["baseline_reason"] == (
+        "invalid_onnx_missing_loop_captures_186"
+    )
+    assert ssd_mobilenet_entry["error_signature_sha256"] == (
+        "a2db2a961bcee7b5af536f985dff9ceee1ed8ef8fc8115f8a57dbf64b5f1fe26"
+    )
+    assert profile["model_options"]["ssd_mobilenet_v1_12-int8.onnx"] == {
+        "overwrite_input_shape": ["inputs:1,300,300,3"],
+        "keep_shape_absolutely_input_names": ["inputs"],
+    }
     assert profile["model_options"]["tiny_decoder_11.onnx"] == {
         "shape_hints": [
             "tokens:1,1",

@@ -144,6 +144,19 @@ result is `docs/baselines/flatbuffer_direct_tier1_root_a1fd301.json`: 57
 passed, 5 conversion errors, 13 accuracy failures, 11 missing reports, and
 no timeouts. Median and maximum durations were 4.046 and 79.296 seconds.
 
+`ssd_mobilenet_v1_12-int8.onnx` remains an active Tier 1 non-pass with the
+normalized reason `invalid_onnx_missing_loop_captures_186`. Conversion succeeds
+when its dynamic NHWC input is fixed to `inputs:1,300,300,3` and preserved with
+`-kat inputs`, but the source model itself fails both the ONNX checker and ONNX
+Runtime validation. Its two `Loop` bodies reference 186 unique tensors that
+are neither defined locally nor available from the parent graph. These include
+the preprocessor loop increment and numerous postprocessor slice bounds,
+thresholds, and other constants. Supplying only the evident `int32(1)` loop
+increment exposes the next missing capture immediately. Reconstructing all
+missing values heuristically would not provide a trustworthy ONNX reference,
+so the generated TFLite artifact is not promoted without the required
+accuracy comparison.
+
 The root-only Tier 2 gate at commit `ad1d508` contains 113 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier2_root_ad1d508.json`: 80
 passed, 4 conversion errors, 3 timeouts, 6 accuracy failures, and 20 missing
