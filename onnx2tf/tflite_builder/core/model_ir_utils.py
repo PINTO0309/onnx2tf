@@ -370,15 +370,46 @@ def _rename_tensor_globally(
     old_name: str,
     new_name: str,
     layout_state: Optional[LayoutState] = None,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> None:
     if old_name == new_name:
         return
 
-    for op in model_ir.operators:
-        if len(op.inputs) > 0:
-            op.inputs = [new_name if input_name == old_name else input_name for input_name in op.inputs]
-        if len(op.outputs) > 0:
-            op.outputs = [new_name if output_name == old_name else output_name for output_name in op.outputs]
+    if graph_index is None:
+        for op in model_ir.operators:
+            if len(op.inputs) > 0:
+                op.inputs = [
+                    new_name if input_name == old_name else input_name
+                    for input_name in op.inputs
+                ]
+            if len(op.outputs) > 0:
+                op.outputs = [
+                    new_name if output_name == old_name else output_name
+                    for output_name in op.outputs
+                ]
+    else:
+        affected_indices = set(graph_index.consumer_indices(old_name))
+        producer_idx = graph_index.producers.get(str(old_name), None)
+        if producer_idx is not None:
+            affected_indices.add(int(producer_idx))
+        affected_indices.update(
+            int(index)
+            for index in graph_index.duplicate_producers.get(str(old_name), [])
+        )
+        for operator_idx in sorted(affected_indices):
+            op = model_ir.operators[int(operator_idx)]
+            new_inputs = [
+                new_name if input_name == old_name else input_name
+                for input_name in op.inputs
+            ]
+            if new_inputs != list(op.inputs):
+                graph_index.replace_operator_inputs(operator_idx, new_inputs)
+            new_outputs = [
+                new_name if output_name == old_name else output_name
+                for output_name in op.outputs
+            ]
+            if new_outputs != list(op.outputs):
+                graph_index.replace_operator_outputs(operator_idx, new_outputs)
 
     if len(model_ir.inputs) > 0:
         model_ir.inputs = [new_name if input_name == old_name else input_name for input_name in model_ir.inputs]

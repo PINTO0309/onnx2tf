@@ -400,6 +400,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_maximum_zero_relu_cleanup",
         "run_redundant_cast_cleanup",
         "run_squeeze_reshape_identity_cleanup",
+        "run_terminal_quantize_dequantize_cleanup",
     }
     tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
     calls = [
@@ -411,7 +412,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 25
+    assert len(calls) == 27
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -438,6 +439,41 @@ def test_cast_cleanup_rewrites_have_single_owner() -> None:
     function_names = {
         "_optimize_redundant_int32_to_int64_passthrough_cast_chains",
         "_optimize_redundant_int64_to_int32_cast_chains",
+    }
+
+    def _functions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+    lowering_functions = _functions(lowering_path)
+    assert function_names <= set(_functions(pass_path))
+    for function_name in function_names:
+        wrapper_names = {
+            node.id
+            for node in ast.walk(lowering_functions[function_name])
+            if isinstance(node, ast.Name)
+        }
+        assert f"{function_name}_pass" in wrapper_names
+
+
+def test_quantization_cleanup_rewrites_have_single_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "quantization_cleanup.py"
+    )
+    function_names = {
+        "_optimize_terminal_quantize_dequantize",
+        "_quantized_tensors_share_exact_grid",
     }
 
     def _functions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:

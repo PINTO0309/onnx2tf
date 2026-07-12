@@ -224,12 +224,14 @@ def test_global_tensor_rename_updates_optional_layout_state() -> None:
         OperatorIR(op_type="IDENTITY", inputs=["x"], outputs=["y"]),
     ]
     layout_state = LayoutState.from_model_ir(model_ir)
+    graph_index = ModelIRGraphIndex(model_ir)
 
     _rename_tensor_globally(
         model_ir,
         "x",
         "renamed",
         layout_state=layout_state,
+        graph_index=graph_index,
     )
 
     assert model_ir.inputs == ["renamed"]
@@ -237,6 +239,9 @@ def test_global_tensor_rename_updates_optional_layout_state() -> None:
     assert layout_state.logical_of("renamed") == "NCHW"
     assert "x" not in layout_state.logical
     assert layout_state.validate_against_model_ir(model_ir) == []
+    refreshed = ModelIRGraphIndex(model_ir)
+    assert graph_index.producers == refreshed.producers
+    assert graph_index.consumers == refreshed.consumers
 
 
 def test_static_shape_and_constant_vector_helpers_are_deterministic() -> None:

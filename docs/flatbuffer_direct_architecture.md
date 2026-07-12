@@ -232,6 +232,18 @@ aliases/outputs, fan-out, non-Cast consumers, signed/unsigned dtype pairing,
 shape signatures, and quantization remain guarded. The two legacy lowerer
 symbols are wrappers, and both terminal sweep pairs are one-to-one group calls.
 
+Accuracy-sensitive terminal Quantize/Dequantize cleanup lives in
+`passes/quantization_cleanup.py`. It removes a terminal Q→DQ pair only when the
+incoming float tensor is itself produced by Dequantize, both quantized tensors
+have identical dtype, quantized dimension, scale array, and zero-point array,
+and every boundary/fan-out condition is exclusive. The output-preserving tensor
+rename uses indexed producer/consumer mutation and LayoutState rename; both
+terminal operators are then removed structurally. The two production positions
+call `run_terminal_quantize_dequantize_cleanup` with stable ID
+`cleanup.terminal_quantize_dequantize`. The exact-grid helper and raw rewrite
+have one owner while lowerer symbols remain compatibility wrappers. Runtime
+rounding equivalence is a mandatory integration gate.
+
 Squeeze/Reshape identity cleanup also uses the differential graph index. It
 normalizes explicit or inferred squeeze axes, proves the squeezed and restored
 shapes, rewires only consumers of the round-trip output, then removes both

@@ -127,6 +127,11 @@ from onnx2tf.tflite_builder.passes.cast_cleanup import (
     _optimize_redundant_int64_to_int32_cast_chains as _optimize_redundant_int64_to_int32_cast_chains_pass,
     run_redundant_cast_cleanup,
 )
+from onnx2tf.tflite_builder.passes.quantization_cleanup import (
+    _optimize_terminal_quantize_dequantize as _optimize_terminal_quantize_dequantize_pass,
+    _quantized_tensors_share_exact_grid as _quantized_tensors_share_exact_grid_pass,
+    run_terminal_quantize_dequantize_cleanup,
+)
 from onnx2tf.tflite_builder.passes.attention_layout import (
     _optimize_transpose_csp_attention_nhwc_chains as _optimize_transpose_csp_attention_nhwc_chains_pass,
     _optimize_transpose_conv_attention_nhwc_propagation_chains as _optimize_transpose_conv_attention_nhwc_propagation_chains_pass,
@@ -56893,126 +56898,15 @@ def _quantized_tensors_share_exact_grid(
     lhs_name: str,
     rhs_name: str,
 ) -> bool:
-    lhs = model_ir.tensors.get(str(lhs_name), None)
-    rhs = model_ir.tensors.get(str(rhs_name), None)
-    if lhs is None or rhs is None:
-        return False
-    if str(lhs.dtype).upper() != str(rhs.dtype).upper():
-        return False
-    lhs_q = lhs.quantization
-    rhs_q = rhs.quantization
-    if lhs_q is None or rhs_q is None:
-        return False
-    if int(lhs_q.quantized_dimension) != int(rhs_q.quantized_dimension):
-        return False
-    return bool(
-        np.array_equal(
-            np.asarray(lhs_q.scale, dtype=np.float64),
-            np.asarray(rhs_q.scale, dtype=np.float64),
-        )
-        and np.array_equal(
-            np.asarray(lhs_q.zero_point, dtype=np.int64),
-            np.asarray(rhs_q.zero_point, dtype=np.int64),
-        )
+    return _quantized_tensors_share_exact_grid_pass(
+        model_ir,
+        lhs_name,
+        rhs_name,
     )
-
-
-def _optimize_terminal_quantize_dequantize(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Remove terminal QUANTIZE->DEQUANTIZE pairs for float outputs when safe.
-
-    Target pattern:
-      x_float -> QUANTIZE -> q -> DEQUANTIZE -> y_float (graph output)
-
-    Safety conditions:
-    - q is consumed only by that DEQUANTIZE
-    - y_float is a graph output and has no internal consumers
-    - x_float is produced directly by DEQUANTIZE from the exact same
-      quantization grid and consumed only by QUANTIZE
-      (allows preserving output name by renaming x_float -> y_float)
-    """
-    removed_pairs = 0
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-
-        for q_idx, q_op in enumerate(model_ir.operators):
-            if str(q_op.op_type) != "QUANTIZE":
-                continue
-            if len(q_op.inputs) != 1 or len(q_op.outputs) != 1:
-                continue
-
-            float_input_name = q_op.inputs[0]
-            quantized_name = q_op.outputs[0]
-            if float_input_name in model_ir.inputs:
-                continue
-
-            quantized_users = consumers.get(quantized_name, [])
-            if len(quantized_users) != 1:
-                continue
-
-            dq_idx = int(quantized_users[0])
-            if dq_idx == q_idx:
-                continue
-            dq_op = model_ir.operators[dq_idx]
-            if str(dq_op.op_type) != "DEQUANTIZE":
-                continue
-            if len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
-                continue
-            if dq_op.inputs[0] != quantized_name:
-                continue
-
-            float_output_name = dq_op.outputs[0]
-            if float_output_name not in model_ir.outputs:
-                continue
-            if len(consumers.get(float_output_name, [])) > 0:
-                continue
-
-            float_input_users = consumers.get(float_input_name, [])
-            if len(float_input_users) != 1 or int(float_input_users[0]) != q_idx:
-                continue
-            if float_input_name not in producers:
-                continue
-            if float_input_name in model_ir.outputs:
-                continue
-            float_producer = model_ir.operators[int(producers[float_input_name])]
-            if (
-                str(float_producer.op_type) != "DEQUANTIZE"
-                or len(float_producer.inputs) != 1
-                or len(float_producer.outputs) != 1
-                or str(float_producer.outputs[0]) != str(float_input_name)
-            ):
-                continue
-            if not _quantized_tensors_share_exact_grid(
-                model_ir,
-                str(float_producer.inputs[0]),
-                str(quantized_name),
-            ):
-                continue
-
-            _rename_tensor_globally(
-                model_ir=model_ir,
-                old_name=float_input_name,
-                new_name=float_output_name,
-            )
-
-            for remove_idx in sorted([q_idx, dq_idx], reverse=True):
-                del model_ir.operators[remove_idx]
-            removed_pairs += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {
-        "removed_terminal_quantize_dequantize_pairs": int(removed_pairs),
-    }
-
-
+def _optimize_terminal_quantize_dequantize(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
+    return _optimize_terminal_quantize_dequantize_pass(model_ir)
 def _optimize_fuse_conv_activation_chains(model_ir: ModelIR) -> Dict[str, int]:
     """
     Fuse producer -> Activation chains into producer fusedActivationFunction in flatbuffer_direct IR.
@@ -65457,7 +65351,11 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     _sanitize_terminal_transpose_before_dequantize(model_ir)
-    _optimize_terminal_quantize_dequantize(model_ir)
+    run_terminal_quantize_dequantize_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_fold_conv_mul_add_affine_chains(
         model_ir,
         enable_conv_add_only_fold=True,
@@ -65666,7 +65564,11 @@ def lower_onnx_to_ir(
     # Recovery sweeps above can re-introduce terminal TRANSPOSE->DEQUANTIZE.
     # Run terminal sanitizers once more at the very end.
     _sanitize_terminal_transpose_before_dequantize(model_ir)
-    _optimize_terminal_quantize_dequantize(model_ir)
+    run_terminal_quantize_dequantize_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_fold_conv_mul_add_affine_chains(
         model_ir,
         enable_conv_add_only_fold=True,

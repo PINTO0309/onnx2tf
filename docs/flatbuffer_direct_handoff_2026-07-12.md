@@ -762,6 +762,37 @@ point, public quantized input, shared quantized output, nonterminal float output
 and non-Dequantize producer. Retain the existing runtime rounding test as the
 mandatory integration gate.
 
+Terminal Q/DQ cleanup now lives in `passes/quantization_cleanup.py`. The
+exact-grid predicate is colocated and compares quantized dtype, quantized
+dimension, the full scale array, and the full zero-point array exactly. Compact
+fixtures cover the positive terminal collapse and no-op cases for every grid
+field, shared quantized/float tensors, nonterminal or consumed output, public
+float input, and a non-Dequantize producer.
+
+The output-name-preserving rename now accepts `ModelIRGraphIndex` and mutates
+only indexed producers/consumers before updating graph boundaries, tensors,
+LayoutState, and lineage. Terminal Q/DQ operators are removed structurally from
+the same index. Both former production positions call
+`run_terminal_quantize_dequantize_cleanup` with stable ID
+`cleanup.terminal_quantize_dequantize`; raw helper symbols remain wrappers.
+
+Verification completed with:
+
+- `16 passed, 25 deselected` for exact-grid semantics, all terminal/boundary
+  guards, indexed rename, ownership, and all 27 ordered production call sites;
+- `1 passed, 758 deselected` for the existing terminal Q/DQ runtime rounding
+  integration gate;
+- `1068 passed, 5 deselected, 2 warnings in 134.71s` for the full sequential
+  direct suite.
+
+The next checkpoint should measure the orchestration overhead introduced by
+the migrated pass groups on synthetic graph sizes before migrating another
+family. Add a deterministic microbenchmark test/helper (not a timing-flaky CI
+assertion) that records index refresh count, snapshot count, fingerprint count,
+and visited operator count for no-candidate and one-candidate graphs. Use it to
+identify remaining avoidable full scans and deep copies; retain the existing
+host-level Tier timing gates for actual performance acceptance.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work
