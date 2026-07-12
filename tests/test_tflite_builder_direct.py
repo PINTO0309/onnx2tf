@@ -38,6 +38,7 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.passes.attention_layout import (
     run_conv_attention_layout_cleanup,
     run_mixed_attention_layout_cleanup,
+    run_qkv_attention_bridge_cleanup,
 )
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_builders.norm import build_instance_normalization_op
@@ -118,8 +119,6 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_attention_qkv_gather_reshape_transpose_hoist_chains,
     _optimize_attention_qkv_slice_replace_gather_reshape_chains,
     _optimize_attention_qkv_slice_to_split_chains,
-    _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains,
-    _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains,
     _optimize_transpose_dequant_logistic_mul_quantize_bridges,
     _optimize_transpose_swish_residual_concat_closure_nhwc_chains,
     _optimize_transpose_swish_qdq_nhwc_islands,
@@ -37013,8 +37012,17 @@ def test_flatbuffer_direct_attention_qkv_shared_pretranspose_slice_nchw() -> Non
         OperatorIR(op_type="MUL", inputs=["s2_relu_nchw", "expand"], outputs=["out"], options={"fusedActivationFunction": "NONE"}),
     ]
 
-    stats = _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(model_ir)
+    diagnostics: list[dict[str, Any]] = []
+    stats = run_qkv_attention_bridge_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
     assert stats["optimized_attention_qkv_shared_pretranspose_slice_nchw_chains"] == 1
+    assert [event["code"] for event in diagnostics] == [
+        "layout.qkv_shared_pretranspose",
+        "layout.qkv_weighted_sum_bridge",
+    ]
+    assert [event["status"] for event in diagnostics] == ["changed", "skipped"]
 
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("TRANSPOSE") == 1
@@ -37165,8 +37173,13 @@ def test_flatbuffer_direct_attention_qkv_weighted_sum_bridge_to_nhwc() -> None:
         OperatorIR(op_type="IDENTITY", inputs=["out"], outputs=["final_out"], options={}),
     ]
 
-    stats = _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(model_ir)
+    diagnostics: list[dict[str, Any]] = []
+    stats = run_qkv_attention_bridge_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
     assert stats["optimized_attention_qkv_weighted_sum_bridge_to_nhwc_chains"] == 1
+    assert [event["status"] for event in diagnostics] == ["skipped", "changed"]
 
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("TRANSPOSE") == 1

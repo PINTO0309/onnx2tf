@@ -430,6 +430,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_duplicate_fanout_cleanup",
         "run_mixed_attention_layout_cleanup",
         "run_maximum_zero_relu_cleanup",
+        "run_qkv_attention_bridge_cleanup",
         "run_redundant_cast_cleanup",
         "run_squeeze_reshape_identity_cleanup",
         "run_terminal_quantize_dequantize_cleanup",
@@ -444,7 +445,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 34
+    assert len(calls) == 37
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -575,6 +576,7 @@ def test_attention_layout_rewrites_have_single_owner() -> None:
     }
     assert "run_conv_attention_layout_cleanup" in lowerer_names
     assert "run_mixed_attention_layout_cleanup" in lowerer_names
+    assert "run_qkv_attention_bridge_cleanup" in lowerer_names
 
 
 def test_pad_layout_rewrites_have_single_owner() -> None:

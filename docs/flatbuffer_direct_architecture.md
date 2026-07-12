@@ -186,6 +186,18 @@ it once after each complete structural rewrite iteration, replacing the former
 independent producer and consumer map builds. The legacy lowerer function
 remains a compatibility wrapper around the same implementation.
 
+The contiguous generic QKV bridge tail is registered as one ordered group at
+all three production positions. `layout.qkv_shared_pretranspose` (priority 10)
+hoists three sibling Slice branches behind one NHWC-to-NCHW transpose;
+`layout.qkv_weighted_sum_bridge` (priority 20) then moves the weighted Sum tail
+back to NHWC. Both passes use the same ModelIRGraphIndex and LayoutState,
+perform indexed input mutation and structural remove/insert operations, and
+prune layouts with tensors. Their state-level guards inspect the exact local
+producer/consumer topology before taking a transactional snapshot. A broader
+single model-only scan still avoids constructing state when neither Slice nor
+weighted-Sum capability is present. The four earlier QKV canonicalization
+steps remain outside this group until their own indexed migration is complete.
+
 Generic structural deduplication lives in `passes/graph_cleanup.py`. Duplicate
 Transpose fan-out cleanup uses one `ModelIRGraphIndex`, rewires only indexed
 consumers through the lineage-aware bulk input replacement helper, and removes

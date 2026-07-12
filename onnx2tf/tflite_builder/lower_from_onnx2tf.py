@@ -144,6 +144,7 @@ from onnx2tf.tflite_builder.passes.attention_layout import (
     _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains as _optimize_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains_pass,
     run_conv_attention_layout_cleanup,
     run_mixed_attention_layout_cleanup,
+    run_qkv_attention_bridge_cleanup,
 )
 from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     _optimize_asin_transpose_passthrough_chains as _optimize_asin_transpose_passthrough_chains_pass,
@@ -65485,8 +65486,11 @@ def lower_onnx_to_ir(
         _optimize_attention_qkv_slice_replace_gather_reshape_chains(model_ir)
         _optimize_attention_qkv_slice_to_split_chains(model_ir)
         _optimize_attention_split_post_reshape_collapse_chains(model_ir)
-        _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(model_ir)
-        _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(model_ir)
+        run_qkv_attention_bridge_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
         _optimize_layout_transpose_chains(model_ir)
         _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
@@ -65598,8 +65602,11 @@ def lower_onnx_to_ir(
     _optimize_attention_qkv_slice_replace_gather_reshape_chains(model_ir)
     _optimize_attention_qkv_slice_to_split_chains(model_ir)
     _optimize_attention_split_post_reshape_collapse_chains(model_ir)
-    _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(model_ir)
-    _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(model_ir)
+    run_qkv_attention_bridge_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(model_ir)
     _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(model_ir)
     _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
@@ -65836,8 +65843,11 @@ def lower_onnx_to_ir(
         _optimize_layout_transpose_chains(model_ir)
     # Keep QKV bridge reductions at the terminal stage: some late strict
     # transpose/add/slice rewrites above can recreate this exact motif.
-    _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(model_ir)
-    _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(model_ir)
+    run_qkv_attention_bridge_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
     _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(model_ir)
     # Late affine/fusion cleanups can recreate

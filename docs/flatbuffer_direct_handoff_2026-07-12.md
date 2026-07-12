@@ -998,6 +998,45 @@ contiguous same-order sequences, retain isolated calls, and first make each
 selected rewrite differential-index aware. Do not include the neighboring
 SiNet-, CSP-, or model-specific layout rules merely to reduce call count.
 
+The QKV inventory found two identical six-step sequences and one additional
+contiguous occurrence of their final two steps. The common tail is now one
+`run_qkv_attention_bridge_cleanup` call at all three original positions.
+`layout.qkv_shared_pretranspose` runs first at priority 10 and
+`layout.qkv_weighted_sum_bridge` follows at priority 20. The earlier gather,
+slice, split, and reshape canonicalizations remain at their original two sites;
+there is no ordering change around them.
+
+Both migrated rewrites now accept the session ModelIRGraphIndex and LayoutState.
+Input rewires, operator removal, and transpose insertion update the differential
+index directly, and unused tensors and layouts are pruned together. Their
+precise preconditions recognize the strict local Slice/Transpose and
+Mul/Transpose/Mul topology before taking a snapshot. Initial RTMDet and ViT
+probes exposed an overly broad op-count guard that took three no-op snapshots;
+after tightening the guard, every no-op invocation records zero snapshots and
+zero fingerprints.
+
+Sequential verification completed with:
+
+- `2 passed, 757 deselected` for the two migrated QKV bridge fixtures;
+- `5 passed, 778 deselected` for all generic QKV fixtures;
+- `24 passed` for architecture and deterministic pass-efficiency checks;
+- `1079 passed, 5 deselected, 2 warnings in 136.75s` for the full direct suite;
+- real Tier 2 `rtmDet-tiny-res640-fp32.onnx` `-cotof` evaluation with every
+  output compared, `evaluation_pass=true`, and maximum absolute error
+  `0.00018310546875`.
+
+The representative model invoked the ordered group three times; both pass IDs
+were safely skipped with zero snapshots/fingerprints. All probe outputs, logs,
+and internal metrics files were deleted. No inference ran concurrently, no
+dependency was added, and no TensorFlow import was introduced.
+
+The next unit should migrate the four-step QKV prefix shared by the two full
+sequences: gather/reshape hoist, gather-to-slice replacement, slice-to-split,
+and split/post-reshape collapse. First move the remaining collapse
+implementation out of the lowerer, then make all four rewrites differential-
+index aware and group only those two exactly contiguous positions. Keep the
+three tail-group calls separate so late recovery can still rerun them.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

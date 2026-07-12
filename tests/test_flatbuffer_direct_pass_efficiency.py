@@ -13,6 +13,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.attention_layout import (
     run_conv_attention_layout_cleanup,
     run_mixed_attention_layout_cleanup,
+    run_qkv_attention_bridge_cleanup,
 )
 from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     run_boundary_input_layout_cleanup,
@@ -131,13 +132,14 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_squeeze_reshape_identity_cleanup(model_ir, diagnostics=diagnostics)
     run_conv_attention_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_mixed_attention_layout_cleanup(model_ir, diagnostics=diagnostics)
+    run_qkv_attention_bridge_cleanup(model_ir, diagnostics=diagnostics)
     run_boundary_input_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_constant_input_fold_cleanup(model_ir, diagnostics=diagnostics)
     run_redundant_cast_cleanup(model_ir, diagnostics=diagnostics)
     run_terminal_quantize_dequantize_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 15
+    assert len(diagnostics) == 17
     assert all(event["status"] == "skipped" for event in diagnostics)
     assert all(
         event["metrics"]

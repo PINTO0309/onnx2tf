@@ -731,6 +731,9 @@ def _optimize_attention_qkv_slice_to_split_chains(
 
 def _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Hoist sibling NHWC->NCHW transposes on Q/K/V branches to a single
@@ -747,6 +750,7 @@ def _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(
       Drop per-branch transposes on k and v-relu branches.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
 
     def _unique_tensor_name(base: str) -> str:
@@ -763,8 +767,8 @@ def _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for k_transpose_idx, k_transpose_op in enumerate(model_ir.operators):
@@ -960,6 +964,7 @@ def _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(
                     model_ir=model_ir,
                     op=branch_slice_op,
                     new_inputs=[str(shared_nchw_name), begin_name, size_name],
+                    graph_index=graph_index,
                 )
                 out_name = str(branch_slice_op.outputs[0])
                 _permute_tensor_metadata_if_rank_matches(
@@ -974,17 +979,27 @@ def _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(
                 perm_nhwc_to_nchw,
             )
 
-            _replace_tensor_inputs(model_ir, k_transpose_out_name, k_slice_out_name)
-            _replace_tensor_inputs(model_ir, v_transpose_out_name, v_relu_out_name)
+            _replace_tensor_inputs(
+                model_ir,
+                k_transpose_out_name,
+                k_slice_out_name,
+                graph_index=graph_index,
+            )
+            _replace_tensor_inputs(
+                model_ir,
+                v_transpose_out_name,
+                v_relu_out_name,
+                graph_index=graph_index,
+            )
 
             remove_indices = sorted([int(k_transpose_idx), int(v_transpose_idx)], reverse=True)
             for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             insert_index = min(int(v) for v in list(slice_user_indices))
             removed_before_insert = sum(1 for v in remove_indices if int(v) < int(insert_index))
             adjusted_insert_index = int(insert_index) - int(removed_before_insert)
-            model_ir.operators.insert(int(adjusted_insert_index), shared_transpose_op)
+            graph_index.insert_operator(int(adjusted_insert_index), shared_transpose_op)
 
             rewritten += 1
             changed = True
@@ -993,12 +1008,17 @@ def _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_attention_qkv_shared_pretranspose_slice_nchw_chains": int(rewritten)}
 
 
 def _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Convert NCHW-side weighted-sum attention bridge to NHWC and remove
@@ -1022,6 +1042,7 @@ def _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(
       Remove k/e bridge transposes.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
 
@@ -1035,8 +1056,8 @@ def _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for post_t_idx, post_t_op in enumerate(model_ir.operators):
@@ -1264,6 +1285,7 @@ def _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(
                 model_ir=model_ir,
                 op=kmul_op,
                 new_inputs=kmul_new_inputs,
+                graph_index=graph_index,
             )
 
             if not (
@@ -1285,16 +1307,17 @@ def _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(
                 op=relu_mul_op,
                 input_index=int(relu_mul_expand_input_index),
                 new_input_name=str(expand_nchw_name),
+                graph_index=graph_index,
             )
 
             remove_indices = sorted([int(k_pre_t_idx), int(post_t_idx)], reverse=True)
             for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             insert_index = int(kmul_idx)
             removed_before_insert = sum(1 for v in remove_indices if int(v) < int(insert_index))
             adjusted_insert_index = int(insert_index) - int(removed_before_insert)
-            model_ir.operators.insert(int(adjusted_insert_index), soft_to_nhwc_op)
+            graph_index.insert_operator(int(adjusted_insert_index), soft_to_nhwc_op)
 
             rewritten += 1
             changed = True
@@ -1303,8 +1326,147 @@ def _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_attention_qkv_weighted_sum_bridge_to_nhwc_chains": int(rewritten)}
+
+
+def run_qkv_attention_bridge_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run the contiguous QKV shared-layout and weighted-sum bridge pair."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        transpose_count = 0
+        slice_count = 0
+        mul_count = 0
+        has_sum = False
+        for visited, op in enumerate(candidate_model.operators, start=1):
+            op_type = str(op.op_type)
+            if op_type == "TRANSPOSE":
+                transpose_count += 1
+            elif op_type == "SLICE":
+                slice_count += 1
+            elif op_type == "MUL":
+                mul_count += 1
+            elif op_type == "SUM":
+                has_sum = True
+            shared_possible = transpose_count >= 2 and slice_count >= 3
+            weighted_possible = transpose_count >= 2 and mul_count >= 2 and has_sum
+            if shared_possible or weighted_possible:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_shared_candidate(pass_state: ModelIRPassState) -> bool:
+        for op in pass_state.model_ir.operators:
+            if (
+                str(op.op_type) != "TRANSPOSE"
+                or len(op.inputs) < 2
+                or _read_transpose_perm(pass_state.model_ir, op) != [0, 3, 1, 2]
+            ):
+                continue
+            slice_idx = pass_state.graph_index.producers.get(str(op.inputs[0]))
+            if slice_idx is None:
+                continue
+            slice_op = pass_state.model_ir.operators[int(slice_idx)]
+            if str(slice_op.op_type) != "SLICE" or len(slice_op.inputs) < 3:
+                continue
+            source_users = pass_state.graph_index.consumer_indices(str(slice_op.inputs[0]))
+            if len(source_users) != 3:
+                continue
+            if all(
+                str(pass_state.model_ir.operators[int(index)].op_type) == "SLICE"
+                for index in source_users
+            ):
+                return True
+        return False
+
+    def _has_weighted_candidate(pass_state: ModelIRPassState) -> bool:
+        for op in pass_state.model_ir.operators:
+            if (
+                str(op.op_type) != "TRANSPOSE"
+                or len(op.inputs) < 2
+                or len(op.outputs) != 1
+                or _read_transpose_perm(pass_state.model_ir, op) != [0, 2, 3, 1]
+            ):
+                continue
+            producer_idx = pass_state.graph_index.producers.get(str(op.inputs[0]))
+            if producer_idx is None:
+                continue
+            if str(pass_state.model_ir.operators[int(producer_idx)].op_type) != "MUL":
+                continue
+            output_users = pass_state.graph_index.consumer_indices(str(op.outputs[0]))
+            if len(output_users) != 1:
+                continue
+            if str(pass_state.model_ir.operators[int(output_users[0])].op_type) == "MUL":
+                return True
+        return False
+
+    def _run_shared(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_attention_qkv_shared_pretranspose_slice_nchw_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_attention_qkv_shared_pretranspose_slice_nchw_chains",
+                    0,
+                )
+            ),
+        }
+
+    def _run_weighted(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_attention_qkv_weighted_sum_bridge_to_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_attention_qkv_weighted_sum_bridge_to_nhwc_chains",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.qkv_shared_pretranspose",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_shared,
+                precondition=_has_shared_candidate,
+                priority=10,
+                transactional=True,
+            ),
+            PassSpec(
+                pass_id="layout.qkv_weighted_sum_bridge",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_weighted,
+                precondition=_has_weighted_candidate,
+                priority=20,
+                transactional=True,
+            ),
+        ],
+        layout_state=layout_state,
+        default_details={
+            "optimized_attention_qkv_shared_pretranspose_slice_nchw_chains": 0,
+            "optimized_attention_qkv_weighted_sum_bridge_to_nhwc_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_attention_qkv_gather_reshape_transpose_hoist_chains(
