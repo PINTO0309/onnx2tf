@@ -1266,7 +1266,7 @@
       "tier": 1,
       "model": "text_recognition_CRNN_CN_2021nov_int8.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "qlinear_matmul_single_quantum_outlier",
+      "baseline_reason": "lstm_float_drift_crosses_quantization_boundary_before_qlinear_matmul",
       "error_signature_sha256": "42f6b758e04d423511002b64e18281c40f1c2fe6eb72f20065608fb10bca90a1",
       "tflite_max_abs": 0.14842605590820312
     },

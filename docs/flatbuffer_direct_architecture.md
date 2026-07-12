@@ -215,13 +215,18 @@ failure after the LSTM. The centralized shape reconciliation pass now resolves
 that contract to `[25,1,512]` from the source tensor and the LSTM input-weight
 shape, then propagates the sequence length through the bidirectional output.
 The normal sequential `-cotof` path consequently completes and emits its
-reports. The model remains an active accuracy non-pass with the normalized
-reason `qlinear_matmul_single_quantum_outlier`: both LSTMs are within
-`6.7e-6`, while the final QLinearMatMul has one-quantum maximum error that
-propagates to a final maximum absolute error of `0.14842605590820312`. Mean
-absolute error is `1.3509051097190739e-5`, RMSE is
-`0.0011565761101850747`, and cosine similarity is
-`0.9999999968466379`.
+reports. The model remains an active accuracy non-pass with normalized reason
+`lstm_float_drift_crosses_quantization_boundary_before_qlinear_matmul`. The
+second fused LSTM differs by at most `4.181463737040758e-06`; one value at
+`[23,266]` then crosses the following QuantizeLinear boundary by one quantum.
+That changes six QLinearMatMul outputs by one quantum. ONNX Runtime and direct
+TFLite QLinearMatMul each match an explicit INT32 NumPy calculation exactly
+when given their respective quantized input, proving that the matmul lowering
+itself is not the source. The difference propagates to final maximum absolute
+error `0.14842605590820312`; mean absolute error is
+`1.3509051097190739e-5`, RMSE is `0.0011565761101850747`, and cosine similarity
+is `0.9999999968466379`. A rounding bias would change valid quantization
+semantics, so none is added.
 
 `fcn-resnet50-12-int8.onnx` is the third Tier 1 model with the normalized
 `onnxruntime_u8s8_saturating_pair_accumulation` reason. Its input quantization
@@ -420,20 +425,16 @@ selects the existing `--eval_with_onnx` path so the much heavier intermediate
 operator report is not generated for this model. Inference remains strictly
 single-process.
 
-`encoder.onnx` remains a missing-report model for a narrower, explicit reason.
-Unlike `new_encoder.onnx`, its 24 GridSample image tensors retain dynamic
-spatial dimensions (`unk__*`) derived from the `spatial_shapes` input. The
-built-in GridSample decomposition requires static batch, channel, and input
-spatial dimensions, so conversion correctly preserves functionality through
-the `ONNX_GRIDSAMPLE` custom-op fallback. The evaluation control builder now
-also handles this graph form: when no feature Split sizes exist, it derives a
-spatial pyramid from the known sequence length only if the non-degenerate
-factorization is unique. For sequence length `11097` and four levels this is
-`[[72,116],[36,58],[18,29],[9,15]]`; ambiguous totals remain untouched. This
-allows ONNX Runtime evaluation to proceed, after which explicit evaluation
-reports the expected unresolved custom op. Default `-cotof` continues to skip
-that unsupported runtime comparison and retains error signature
-`603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109`.
+`encoder.onnx` is also promoted from a missing report to a pass. Unlike
+`new_encoder.onnx`, its 24 GridSample image tensors retain runtime spatial
+dimensions derived from `spatial_shapes`. The TensorFlow-free dynamic rank-4
+GridSample lowering reads N/C/H/W with `SHAPE`, flattens the NHWC image once,
+and builds runtime batch/spatial gather indices for bilinear or nearest
+interpolation. Zeros and border padding and both align-corners modes are
+supported without fabricating static dimensions or retaining an
+`ONNX_GRIDSAMPLE` custom op. Sequential verification compares its only output
+with no skip at `max_abs=1.9293278455734253e-05`, RMSE
+`2.1648828175950605e-07`, and cosine similarity `0.9999999999964916`.
 
 `fasterrcnn_resnet50_fpn.onnx` is promoted from a missing report to a pass.
 `LoweringContext.ensure_tensor()` previously expanded a producer-confirmed

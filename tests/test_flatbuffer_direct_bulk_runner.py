@@ -1520,7 +1520,7 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     )
     assert crnn_entry["baseline_classification"] == "tflite_fail"
     assert crnn_entry["baseline_reason"] == (
-        "qlinear_matmul_single_quantum_outlier"
+        "lstm_float_drift_crosses_quantization_boundary_before_qlinear_matmul"
     )
     assert crnn_entry["error_signature_sha256"] == (
         "42f6b758e04d423511002b64e18281c40f1c2fe6eb72f20065608fb10bca90a1"

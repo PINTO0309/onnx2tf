@@ -132,6 +132,17 @@ final postprocessor TopK amplify this discontinuity to final label maxima of
 lowering rule, global tolerance relaxation, or forced index ordering was added.
 No cause-unclassified active Tier 0–4 model remains at this checkpoint.
 
+`text_recognition_CRNN_CN_2021nov_int8.onnx` retains its failure but now has
+the more precise reason
+`lstm_float_drift_crosses_quantization_boundary_before_qlinear_matmul`. The
+second fused LSTM is within `max_abs=4.181463737040758e-06`; exactly one value
+at `[23,266]` crosses the next QuantizeLinear boundary by one quantum. Six
+QLinearMatMul outputs consequently differ by one quantum. For both the ONNX
+and direct tensors, an explicit INT32 NumPy matmul plus declared requantization
+matches every QLinearMatMul element when fed that runtime's own quantized
+input. The final `max_abs=0.14842605590820312` therefore does not justify a
+matmul rewrite or a semantics-changing rounding bias.
+
 Those GridSample siblings remain normal threshold failures. Their upstream
 feature tensors agree to roughly `1e-4`, and the generated grid agrees except
 for sparse coordinates (`max_abs=0.010283231735229492`). With
