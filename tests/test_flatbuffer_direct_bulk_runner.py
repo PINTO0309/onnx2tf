@@ -976,3 +976,6 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
             "offset",
         ],
     }
+    assert profile["model_options"]["conv_tasnet.onnx"] == {
+        "keep_shape_absolutely_input_names": ["onnx::Unsqueeze_0"],
+    }

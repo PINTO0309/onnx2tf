@@ -2082,6 +2082,9 @@
       "model": "conv_tasnet.onnx",
       "baseline_classification": "missing_tflite_report",
       "baseline_reason": "missing_tflite_report",
+      "keep_shape_absolutely_input_names": [
+        "onnx::Unsqueeze_0"
+      ],
       "error_signature_sha256": "1a12a88b8f42185e545973a18cc67b274f6b1c7a01b21319ffeaeecf4fdb6052"
     },
     {
