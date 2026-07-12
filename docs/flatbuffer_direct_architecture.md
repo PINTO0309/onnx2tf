@@ -288,6 +288,16 @@ handling, rewiring, and pruning remain unchanged. The legacy lowerer symbols
 are thin compatibility wrappers, so the family module is the single
 implementation owner while public test imports continue to work.
 
+Production uses one ordered pass group for that family, with stable IDs
+`layout.singleton_reshape_unary_passthrough` and
+`layout.consecutive_inverse_singleton_reshapes`. A model-only preflight scans
+until it finds two Reshape operators; otherwise neither graph index nor
+transaction state is built. Local single-user topology guards precede each
+transactional callback. Both callbacks share one differential
+`ModelIRGraphIndex` and `LayoutState`, including indexed edge rewrites, tensor
+renames, operator removals, and layout-aware pruning. The lowerer has two
+runner calls and no raw production calls for either implementation.
+
 The mixed attention MirrorPad pass is the first post-lowering rewrite migrated
 to the differential ModelIR index. It builds producer/consumer state once,
 updates input edges through indexed lineage helpers, and removes the redundant

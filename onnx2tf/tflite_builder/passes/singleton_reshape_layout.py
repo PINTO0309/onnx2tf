@@ -1,9 +1,15 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
     _clone_quantization,
     _invert_perm,
     _permute_shape,
@@ -13,8 +19,16 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_inputs,
     _set_operator_outputs,
 )
-from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
-def _optimize_singleton_layout_reshape_unary_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+
+
+def _optimize_singleton_layout_reshape_unary_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Remove singleton-layout RESHAPE wrappers around layout-agnostic unary ops.
 
@@ -31,6 +45,7 @@ def _optimize_singleton_layout_reshape_unary_passthrough_chains(model_ir: ModelI
     - Chain must be strict linear: pre-reshape output and unary output have one consumer.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     unary_passthrough_ops = {
@@ -87,7 +102,7 @@ def _optimize_singleton_layout_reshape_unary_passthrough_chains(model_ir: ModelI
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -164,11 +179,13 @@ def _optimize_singleton_layout_reshape_unary_passthrough_chains(model_ir: ModelI
                 model_ir=model_ir,
                 op=unary_op,
                 new_inputs=[pre_input_name],
+                graph_index=graph_index,
             )
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=unary_op,
                 new_outputs=[post_output_name],
+                graph_index=graph_index,
             )
 
             if unary_output_tensor is not None and post_output_tensor is not None:
@@ -183,7 +200,7 @@ def _optimize_singleton_layout_reshape_unary_passthrough_chains(model_ir: ModelI
             if post_remove_idx is not None:
                 remove_indices.append(int(post_remove_idx))
             for remove_idx in sorted(set(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -193,10 +210,17 @@ def _optimize_singleton_layout_reshape_unary_passthrough_chains(model_ir: ModelI
             break
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_singleton_layout_reshape_unary_passthrough_chains": int(rewritten)}
 
-def _optimize_consecutive_inverse_singleton_layout_reshapes(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_consecutive_inverse_singleton_layout_reshapes(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Remove consecutive inverse NHWC<->NCHW layout RESHAPE pairs.
 
@@ -213,6 +237,7 @@ def _optimize_consecutive_inverse_singleton_layout_reshapes(model_ir: ModelIR) -
     - Intermediate tensor must be single-consumer.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
 
@@ -252,7 +277,7 @@ def _optimize_consecutive_inverse_singleton_layout_reshapes(model_ir: ModelIR) -
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for first_idx, first_op in enumerate(model_ir.operators):
@@ -312,16 +337,19 @@ def _optimize_consecutive_inverse_singleton_layout_reshapes(model_ir: ModelIR) -
                     model_ir=model_ir,
                     old_name=str(src_name),
                     new_name=str(dst_name),
+                    layout_state=layout_state,
+                    graph_index=graph_index,
                 )
             else:
                 _replace_tensor_inputs(
                     model_ir=model_ir,
                     src_name=str(dst_name),
                     dst_name=str(src_name),
+                    graph_index=graph_index,
                 )
 
             for remove_idx in sorted([int(first_idx), int(second_idx)], reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -331,6 +359,148 @@ def _optimize_consecutive_inverse_singleton_layout_reshapes(model_ir: ModelIR) -
             break
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_consecutive_inverse_singleton_layout_reshapes": int(rewritten)}
 
+
+def run_singleton_reshape_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    include_unary_passthrough: bool = True,
+    include_inverse_pair: bool = True,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run adjacent singleton-Reshape cleanups in legacy order."""
+
+    unary_passthrough_ops = {
+        "RELU",
+        "RELU6",
+        "RELU_0_TO_1",
+        "HARD_SWISH",
+        "LEAKY_RELU",
+        "LOGISTIC",
+        "TANH",
+        "GELU",
+        "ABS",
+        "NEG",
+        "SQRT",
+        "EXP",
+        "FLOOR",
+        "CEIL",
+        "ROUND",
+    }
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        reshape_count = 0
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            if str(operator.op_type) == "RESHAPE":
+                reshape_count += 1
+                if reshape_count >= 2:
+                    return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _single_user(
+        pass_state: ModelIRPassState,
+        tensor_name: str,
+    ) -> tuple[int, OperatorIR] | None:
+        users = pass_state.graph_index.consumer_indices(str(tensor_name))
+        if len(users) != 1:
+            return None
+        index = int(users[0])
+        return index, pass_state.model_ir.operators[index]
+
+    def _has_unary_candidate(pass_state: ModelIRPassState) -> bool:
+        for pre_op in pass_state.model_ir.operators:
+            if str(pre_op.op_type) != "RESHAPE" or len(pre_op.outputs) != 1:
+                continue
+            unary = _single_user(pass_state, str(pre_op.outputs[0]))
+            if (
+                unary is None
+                or str(unary[1].op_type) not in unary_passthrough_ops
+                or len(unary[1].outputs) != 1
+            ):
+                continue
+            post = _single_user(pass_state, str(unary[1].outputs[0]))
+            if post is not None and str(post[1].op_type) == "RESHAPE":
+                return True
+        return False
+
+    def _has_inverse_pair_candidate(pass_state: ModelIRPassState) -> bool:
+        for first_op in pass_state.model_ir.operators:
+            if str(first_op.op_type) != "RESHAPE" or len(first_op.outputs) != 1:
+                continue
+            second = _single_user(pass_state, str(first_op.outputs[0]))
+            if second is not None and str(second[1].op_type) == "RESHAPE":
+                return True
+        return False
+
+    def _run_unary(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_singleton_layout_reshape_unary_passthrough_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "rewritten_singleton_layout_reshape_unary_passthrough_chains",
+                    0,
+                )
+            ),
+        }
+
+    def _run_inverse_pair(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_consecutive_inverse_singleton_layout_reshapes(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("rewritten_consecutive_inverse_singleton_layout_reshapes", 0)
+            ),
+        }
+
+    specs: List[PassSpec[ModelIRPassState]] = []
+    if include_unary_passthrough:
+        specs.append(
+            PassSpec(
+                pass_id="layout.singleton_reshape_unary_passthrough",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_unary,
+                precondition=_has_unary_candidate,
+                priority=10,
+                transactional=True,
+            )
+        )
+    if include_inverse_pair:
+        specs.append(
+            PassSpec(
+                pass_id="layout.consecutive_inverse_singleton_reshapes",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_inverse_pair,
+                precondition=_has_inverse_pair_candidate,
+                priority=20,
+                transactional=True,
+            )
+        )
+    default_details = {
+        "rewritten_singleton_layout_reshape_unary_passthrough_chains": 0,
+        "rewritten_consecutive_inverse_singleton_layout_reshapes": 0,
+    }
+    if len(specs) == 0:
+        return default_details
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=specs,
+        layout_state=layout_state,
+        default_details=default_details,
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}

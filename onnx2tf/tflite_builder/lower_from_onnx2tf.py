@@ -145,6 +145,7 @@ from onnx2tf.tflite_builder.passes.singleton_maxpool_layout import (
 from onnx2tf.tflite_builder.passes.singleton_reshape_layout import (
     _optimize_consecutive_inverse_singleton_layout_reshapes as _optimize_consecutive_inverse_singleton_layout_reshapes_pass,
     _optimize_singleton_layout_reshape_unary_passthrough_chains as _optimize_singleton_layout_reshape_unary_passthrough_chains_pass,
+    run_singleton_reshape_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.cast_cleanup import (
     _optimize_redundant_int32_to_int64_passthrough_cast_chains as _optimize_redundant_int32_to_int64_passthrough_cast_chains_pass,
@@ -62150,8 +62151,11 @@ def lower_onnx_to_ir(
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
         _optimize_layout_transpose_chains(model_ir)
         _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
-        _optimize_singleton_layout_reshape_unary_passthrough_chains(model_ir)
-        _optimize_consecutive_inverse_singleton_layout_reshapes(model_ir)
+        run_singleton_reshape_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_singleton_maxpool_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -62211,8 +62215,11 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_singleton_layout_reshape_unary_passthrough_chains(model_ir)
-    _optimize_consecutive_inverse_singleton_layout_reshapes(model_ir)
+    run_singleton_reshape_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_singleton_maxpool_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,

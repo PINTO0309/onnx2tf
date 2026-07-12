@@ -1633,11 +1633,36 @@ Sequential verification completed with:
 - `1097 passed, 5 deselected, 2 warnings in 142.82s` for the full direct suite.
 
 No algorithm, dependency, TensorFlow boundary, or generated artifact changed.
-The next checkpoint should make this two-pass singleton-Reshape family use one
-shared differential index and `LayoutState`, add ordered transactional runner
-diagnostics and irrelevant-graph preflight coverage, and replace its two raw
-production call pairs. Do not create a pull request; commit and push only at a
-coherent checkpoint.
+
+The indexed singleton-Reshape checkpoint is now complete. Both implementations
+use a shared differential graph index for consumer lookup and all graph
+mutations, and propagate tensor pruning/renames through `LayoutState`. Their
+two raw production call pairs were replaced with one ordered transactional
+runner per position. Stable IDs are
+`layout.singleton_reshape_unary_passthrough` and
+`layout.consecutive_inverse_singleton_reshapes`; order remains unary
+passthrough before inverse-pair removal. Model-only preflight requires two
+Reshape operators before building state, and each spec has a local
+single-consumer topology guard.
+
+Sequential verification completed with:
+
+- `5 passed` for ordered positive rewrites, graph-output preservation, runner
+  ownership/diagnostics, and irrelevant-preflight efficiency;
+- an AST mutation audit showing zero raw production calls, exactly two runner
+  calls, and no direct operator deletion/insertion or local consumer-map
+  reconstruction in either implementation;
+- Tier 1 `superpoint.onnx` with both specs correctly guard-rejected at both
+  positions, followed by `-cotof` with every output compared,
+  `evaluation_pass=true`, and maximum absolute error
+  `1.6666017472743988e-06`;
+- `1099 passed, 5 deselected, 2 warnings in 144.02s` for the full direct suite.
+
+The generated 18 MB output directory and internal metrics file were deleted.
+Validation remained single-process and sequential, with no new dependency or
+TensorFlow import. The next work unit should rerun the raw post-lowering
+inventory and select the next adjacent independently testable family. Do not
+create a pull request; commit and push only at a coherent checkpoint.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
