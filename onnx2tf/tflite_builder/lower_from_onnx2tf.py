@@ -18,6 +18,7 @@ from onnx2tf.tflite_builder.core.node import NodeView as _NodeWrap
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _append_tensor_lineage_event,
     _broadcast_static_shapes,
+    _broadcast_shape_signatures,
     _build_tensor_consumer_map,
     _build_tensor_producer_map,
     _topologically_sort_operators,
@@ -2789,41 +2790,6 @@ def _infer_slice_output_signature(
             out_signature.append(int(max(min(int(raw_size), int(remain)), 0)))
 
     return out_signature
-
-
-def _broadcast_shape_signatures(
-    signature_a: Optional[List[int]],
-    signature_b: Optional[List[int]],
-) -> Optional[List[int]]:
-    if signature_a is None or signature_b is None:
-        return None
-    a = [int(v) for v in list(signature_a)]
-    b = [int(v) for v in list(signature_b)]
-    rank = max(len(a), len(b))
-    a = [1] * (rank - len(a)) + a
-    b = [1] * (rank - len(b)) + b
-    out: List[int] = []
-    for dim_a, dim_b in zip(a, b):
-        if int(dim_a) == int(dim_b):
-            out.append(int(dim_a))
-            continue
-        if int(dim_a) == 1:
-            out.append(-1 if int(dim_b) < 0 else int(dim_b))
-            continue
-        if int(dim_b) == 1:
-            out.append(-1 if int(dim_a) < 0 else int(dim_a))
-            continue
-        if int(dim_a) < 0 and int(dim_b) < 0:
-            out.append(-1)
-            continue
-        if int(dim_a) < 0 and int(dim_b) > 1:
-            out.append(int(dim_b))
-            continue
-        if int(dim_b) < 0 and int(dim_a) > 1:
-            out.append(int(dim_a))
-            continue
-        return None
-    return out
 
 
 def _infer_batch_matmul_output_shape_and_signature(

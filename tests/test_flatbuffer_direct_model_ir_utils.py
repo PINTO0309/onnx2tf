@@ -5,6 +5,7 @@ import numpy as np
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _broadcast_shape_signatures,
     _broadcast_static_shapes,
     _build_tensor_consumer_map,
     _is_fully_known_positive_shape,
@@ -256,6 +257,10 @@ def test_static_shape_and_constant_vector_helpers_are_deterministic() -> None:
 
     assert _broadcast_static_shapes([2, 1, 4], [1, 3, 4]) == [2, 3, 4]
     assert _broadcast_static_shapes([2, 3], [4, 3]) is None
+    assert _broadcast_shape_signatures([-1, 1, 4], [1, 3, 4]) == [-1, 3, 4]
+    assert _broadcast_shape_signatures([-1, 2], [3, 2]) == [3, 2]
+    assert _broadcast_shape_signatures([2, 3], [4, 3]) is None
+    assert _broadcast_shape_signatures(None, [1]) is None
     assert _read_const_ints_from_tensor(tensor) == [1, 3]
     assert _write_const_ints_to_tensor(tensor, [0, 2, 3]) is True
     assert _read_const_ints_from_tensor(tensor) == [0, 2, 3]

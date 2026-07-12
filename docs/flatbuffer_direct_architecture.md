@@ -50,6 +50,10 @@ name as a delegating wrapper for compatibility. The pass uses the canonical
 shape predicate and tensor-pruning utility from `core/model_ir_utils.py`.
 Precision, constant-fold, layout, and high-rank passes share that pruning
 implementation so lineage events and unused-tensor removal have one owner.
+Dynamic broadcast shape-signature reconciliation is likewise canonical in
+`core/model_ir_utils.py`; the lowerer imports and compatibility re-exports the
+helper instead of owning a private implementation, allowing op-family passes
+to use it without a circular dependency.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and

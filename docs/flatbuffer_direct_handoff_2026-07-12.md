@@ -2863,3 +2863,18 @@ The optional-environment deselections and float16 overflow warnings are
 unchanged. No dependency or TensorFlow path was added, all inference remained
 single-process and sequential, and temporary SuperPoint output/metrics under
 `/tmp/onnx2tf_transpose_unary_fanout_superpoint*` were deleted after review.
+
+### Unary/binary fan-out prerequisite
+
+The next selected rule is the 305-line, six-position
+`_optimize_transpose_unary_binary_full_post_fanout_bridges`. Two
+characterization tests were committed first as `639ba86`: they preserve
+non-commutative RHS-`SUB` input order while coalescing multiple inverse-post
+branches, and preserve a legacy NCHW consumer through an adapter.
+
+Extraction exposed one legitimate lowerer-local dependency,
+`_broadcast_shape_signatures`. Its exact implementation was mechanically moved
+to `core/model_ir_utils.py` (AST-identical), and the lowerer now imports and
+compatibility re-exports it. Focused helper, ownership, and unary/binary tests
+passed 11 tests. This prerequisite avoids either duplicating shape semantics in
+the layout pass or introducing a circular import when the 305-line rule moves.

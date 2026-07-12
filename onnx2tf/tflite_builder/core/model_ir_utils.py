@@ -257,6 +257,41 @@ def _broadcast_static_shapes(
     return output
 
 
+def _broadcast_shape_signatures(
+    signature_a: Optional[List[int]],
+    signature_b: Optional[List[int]],
+) -> Optional[List[int]]:
+    if signature_a is None or signature_b is None:
+        return None
+    a = [int(v) for v in list(signature_a)]
+    b = [int(v) for v in list(signature_b)]
+    rank = max(len(a), len(b))
+    a = [1] * (rank - len(a)) + a
+    b = [1] * (rank - len(b)) + b
+    out: List[int] = []
+    for dim_a, dim_b in zip(a, b):
+        if int(dim_a) == int(dim_b):
+            out.append(int(dim_a))
+            continue
+        if int(dim_a) == 1:
+            out.append(-1 if int(dim_b) < 0 else int(dim_b))
+            continue
+        if int(dim_b) == 1:
+            out.append(-1 if int(dim_a) < 0 else int(dim_a))
+            continue
+        if int(dim_a) < 0 and int(dim_b) < 0:
+            out.append(-1)
+            continue
+        if int(dim_a) < 0 and int(dim_b) > 1:
+            out.append(int(dim_b))
+            continue
+        if int(dim_b) < 0 and int(dim_a) > 1:
+            out.append(int(dim_a))
+            continue
+        return None
+    return out
+
+
 def _permute_tensor_metadata_if_rank_matches(
     tensor: Optional[TensorIR],
     perm: List[int],

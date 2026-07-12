@@ -195,10 +195,12 @@ def test_high_rank_matmul_pass_and_prune_utility_have_single_owners() -> None:
 
     assert "_prune_unused_tensors" in common_functions
     assert "_is_fully_known_positive_shape" in common_functions
+    assert "_broadcast_shape_signatures" in common_functions
     for path in (lowering_path, precision_path, constant_fold_path):
         functions = _functions(path)
         assert "_prune_unused_tensors" not in functions
         assert "_is_fully_known_positive_shape" not in functions
+        assert "_broadcast_shape_signatures" not in functions
 
 
 def test_constant_input_fold_rewrites_have_single_owner() -> None:
