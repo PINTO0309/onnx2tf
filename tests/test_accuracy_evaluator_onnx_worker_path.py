@@ -5,11 +5,14 @@ from pathlib import Path
 
 import numpy as np
 import onnx
+import pytest
 from onnx import TensorProto, helper
 
+from onnx2tf.tflite_builder import accuracy_evaluator
 from onnx2tf.tflite_builder.accuracy_evaluator import (
     _all_input_shapes_are_static,
     _onnx_inference_worker,
+    _run_tflite_worker_with_delegate_fallback,
 )
 
 
@@ -62,3 +65,57 @@ def test_default_delegates_require_fully_static_input_shapes() -> None:
     assert not _all_input_shapes_are_static(
         [("image", np.dtype(np.float32), [1, 3, -1, -1])]
     )
+
+
+def test_tflite_worker_retries_without_default_delegates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delegate_attempts: list[bool] = []
+
+    def fake_run_worker_in_subprocess(*, worker, payload, timeout_sec):
+        del worker, timeout_sec
+        use_default_delegates = bool(payload["use_default_delegates"])
+        delegate_attempts.append(use_default_delegates)
+        if use_default_delegates:
+            raise RuntimeError("delegate prepare failed")
+        return {"ok": True, "tflite_outputs": {"y": np.asarray([1.0])}}
+
+    monkeypatch.setattr(
+        accuracy_evaluator,
+        "_run_worker_in_subprocess",
+        fake_run_worker_in_subprocess,
+    )
+
+    result = _run_tflite_worker_with_delegate_fallback(
+        payload={"use_default_delegates": True},
+        timeout_sec=60,
+    )
+
+    assert result["ok"] is True
+    assert delegate_attempts == [True, False]
+
+
+def test_tflite_worker_does_not_retry_builtin_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    def fake_run_worker_in_subprocess(*, worker, payload, timeout_sec):
+        nonlocal attempts
+        del worker, payload, timeout_sec
+        attempts += 1
+        raise RuntimeError("builtin invoke failed")
+
+    monkeypatch.setattr(
+        accuracy_evaluator,
+        "_run_worker_in_subprocess",
+        fake_run_worker_in_subprocess,
+    )
+
+    with pytest.raises(RuntimeError, match="builtin invoke failed"):
+        _run_tflite_worker_with_delegate_fallback(
+            payload={"use_default_delegates": False},
+            timeout_sec=60,
+        )
+
+    assert attempts == 1

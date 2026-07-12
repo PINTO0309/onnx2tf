@@ -2570,10 +2570,8 @@
     {
       "tier": 4,
       "model": "campp_vin.onnx",
-      "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "2d3c830401e7367e1cbfcbf5f506f0e0bafbfbfe4470cd3ea7a3d8187fe51e44",
-      "tflite_max_abs": 11.07311725616455
+      "baseline_classification": "pass",
+      "tflite_max_abs": 3.3020973205566406e-05
     },
     {
       "tier": 4,

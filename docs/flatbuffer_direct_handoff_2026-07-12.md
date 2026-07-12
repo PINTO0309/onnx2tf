@@ -1,6 +1,6 @@
 # flatbuffer_direct refactor handoff — 2026-07-12
 
-## Current checkpoint — `fb-refactor2` after `df2ca4f`
+## Current checkpoint — `fb-refactor2`
 
 The opset-aware Resize lowering and numerically stable Inverse lowering recover
 `onnx_dense_optimized.onnx` and its byte-identical `_org` counterpart without a
@@ -41,11 +41,10 @@ additional lowering rule. Both outputs were compared with no skip:
 `mean_abs=3.4909796139056033e-06`, `rmse=7.162934073986925e-05`, and cosine
 similarity `0.9994290428305682`.
 
-The managed Tier 0–4 profile now records 367 passes, 6
-`missing_tflite_report`, 21 `tflite_fail`, and 26 excluded historical timeouts.
-There are 27 active non-passes. The next failure without an explicit normalized
-cause is the Tier 4 model `campp_vin.onnx`; earlier failures in managed order
-now have documented quantization/runtime semantics.
+The managed Tier 0–4 profile now records 368 passes, 6
+`missing_tflite_report`, 20 `tflite_fail`, and 26 excluded historical timeouts.
+There are 26 active non-passes, and every one now has an explicit normalized
+cause or the expected invalid/custom-op runtime classification.
 
 `rf-detr-nano.onnx` is promoted from its historical conversion failure to a
 normal accuracy pass without a model-specific workaround. Its sequential
@@ -78,6 +77,16 @@ similarity `0.9637255350014788`. Emulating a host-specific saturating CPU
 kernel would violate portable ONNX integer-matmul semantics, so the exact
 lowering is retained and the previous failure-signature hash remains fixed.
 
+`campp_vin.onnx` is promoted from an historical accuracy failure to a normal
+pass. Its concretized dynamic-time artifact fails during XNNPACK reshape
+preparation, so isolated evaluation now retries once, sequentially, with the
+builtin interpreter after a default-delegate worker failure. The builtin run
+compares the single `output` tensor with no skip and reports
+`evaluation_pass=true`, `max_abs=3.3020973205566406e-05`,
+`mean_abs=8.416682248935103e-06`, `rmse=1.0447499868661927e-05`, and cosine
+similarity `0.9999999999694269`. Successful default-delegate evaluation is
+unchanged, and builtin failures are not retried.
+
 `best.onnx` and `best_org.onnx` remain failures rather than receiving a relaxed
 tolerance. Both simplify to the same 516-node Q/DQ graph and produce identical
 fixed-seed metrics with no output skip: `max_abs=58.7506103515625`,
@@ -99,7 +108,7 @@ final postprocessor TopK amplify this discontinuity to final label maxima of
 `27.0` and `20.0`. Both baseline entries record
 `user_approved_topk_index_instability_from_near_tied_scores`; no model-name
 lowering rule, global tolerance relaxation, or forced index ordering was added.
-The next cause-unclassified model is `campp_vin.onnx`.
+No cause-unclassified active Tier 0–4 model remains at this checkpoint.
 
 Those GridSample siblings remain normal threshold failures. Their upstream
 feature tensors agree to roughly `1e-4`, and the generated grid agrees except
@@ -116,6 +125,12 @@ their previous failure-signature hashes.
 Validation completed in the core `uv` environment, with one pytest process and
 no parallel workers:
 
+- `961 passed, 5 deselected, 2 warnings` across the direct builder, op
+  coverage, all `flatbuffer_direct` regression modules, and all accuracy
+  evaluator modules after the delegate fallback change;
+- `73 passed` for the focused accuracy evaluator and managed baseline set;
+- `rf-detr-nano.onnx`, `LibreRFDETRn.onnx`, `bertsquad-12-int8.onnx`, and
+  `campp_vin.onnx` were each run sequentially end to end with `-cotof`;
 - `793 passed, 7 deselected, 2 warnings` across the direct builder, managed
   profile, architecture/import boundary, and the two new regression files;
 - `28 passed, 772 deselected` for the focused Inverse, Resize, managed profile,
@@ -126,10 +141,11 @@ no parallel workers:
   local from the touched Resize module;
 - both dense corpus models passed sequential end-to-end `-cotof` runs.
 
-The seven broad-suite deselections are the optional TensorFlow backend matrix,
-the optional Torch GroupNorm integration test (the core environment exposes an
-incompatible system Python 3.10 Torch binary), and their explicitly named
-companions. No optional dependency was installed for this checkpoint.
+The five current broad-suite deselections are four optional TensorFlow backend
+tests and the optional Torch GroupNorm integration test. The core environment
+does not install TensorFlow and exposes an incompatible system Python 3.10
+Torch binary to Python 3.12. No optional dependency was installed for this
+checkpoint.
 
 ## Previous checkpoint — static delegate family after `53bba37`
 

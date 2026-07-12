@@ -1787,8 +1787,6 @@ def evaluate_onnx_tflite_outputs(
     onnxruntime_output_memmap: bool = True,
     onnxruntime_output_memmap_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
-    import onnxruntime as ort
-
     if int(num_samples) <= 0:
         raise ValueError(f"num_samples must be > 0. got: {num_samples}")
     rtol = float(rtol)
@@ -2387,6 +2385,29 @@ def _run_worker_in_subprocess(
     return result
 
 
+def _run_tflite_worker_with_delegate_fallback(
+    *,
+    payload: Dict[str, Any],
+    timeout_sec: int,
+) -> Dict[str, Any]:
+    try:
+        return _run_worker_in_subprocess(
+            worker=_tflite_inference_worker,
+            payload=payload,
+            timeout_sec=timeout_sec,
+        )
+    except RuntimeError:
+        if not bool(payload.get("use_default_delegates", False)):
+            raise
+        fallback_payload = dict(payload)
+        fallback_payload["use_default_delegates"] = False
+        return _run_worker_in_subprocess(
+            worker=_tflite_inference_worker,
+            payload=fallback_payload,
+            timeout_sec=timeout_sec,
+        )
+
+
 def evaluate_onnx_tflite_outputs_isolated(
     *,
     onnx_graph: onnx.ModelProto,
@@ -2571,8 +2592,7 @@ def evaluate_onnx_tflite_outputs_isolated(
                     },
                     timeout_sec=per_worker_timeout,
                 )
-                tflite_result = _run_worker_in_subprocess(
-                    worker=_tflite_inference_worker,
+                tflite_result = _run_tflite_worker_with_delegate_fallback(
                     payload={
                         "tflite_path": str(tflite_path),
                         "onnx_input_names": onnx_input_names,

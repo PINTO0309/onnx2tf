@@ -109,8 +109,8 @@ The profile fixes root-only discovery, the 1–1,999 node range, all 420 managed
 historical model records, and inference concurrency of one. Models classified
 as `timeout` in the current managed baseline remain recorded for provenance but
 are automatically excluded from subsequent runs. The active run therefore
-contains 394 models: 367 expected passes and 27 expected non-passes, excluding
-26 recorded timeouts. The active non-passes are 21 accuracy failures and 6
+contains 394 models: 368 expected passes and 26 expected non-passes, excluding
+26 recorded timeouts. The active non-passes are 20 accuracy failures and 6
 missing reports. Tier 5 models cannot be added because the profile loader
 rejects tiers above 4 and node ranges above 1,999.
 
@@ -519,6 +519,14 @@ result is `docs/baselines/flatbuffer_direct_tier4_root_0a8ee88.json`: 12
 passed, 7 conversion errors, 4 timeouts, 2 accuracy failures, and 5 missing
 reports. Median and maximum durations were 28.100 and 121.826 seconds. All 12
 passing models remained below the required `1e-1` maximum absolute error.
+
+`campp_vin.onnx` is promoted to a pass after isolated accuracy evaluation adds
+a sequential builtin-interpreter retry when a default delegate invocation
+fails. XNNPACK cannot reshape this model's concretized dynamic-time graph, but
+the same artifact runs with the builtin interpreter and matches its single
+output at maximum absolute error `3.3020973205566406e-05`. A successful default
+delegate remains the first choice, and an already-builtin failure is never
+retried.
 
 `bertsquad-12-int8.onnx` remains a managed accuracy failure because ONNX
 Runtime's CPU U8×S8 MatMulInteger kernel does not match the exact ONNX integer

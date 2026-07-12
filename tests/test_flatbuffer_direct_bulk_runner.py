@@ -999,8 +999,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 6,
-        "pass": 367,
-        "tflite_fail": 21,
+        "pass": 368,
+        "tflite_fail": 20,
         "timeout": 26,
     }
     assert profile["model_options"]["silero_vad.onnx"] == {
@@ -1638,6 +1638,17 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "6ff24c95a66de18bc32f4c9ad1ab3d41d714213b5849f3fb3a156aa652896105"
     )
     assert bertsquad_entry["tflite_max_abs"] == 1.8257164359092712
+    campp_vin_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "campp_vin.onnx"
+    )
+    assert campp_vin_entry == {
+        "tier": 4,
+        "model": "campp_vin.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 3.3020973205566406e-05,
+    }
     assert profile["model_options"]["conv_tasnet.onnx"] == {
         "keep_shape_absolutely_input_names": ["onnx::Unsqueeze_0"],
     }
