@@ -251,6 +251,18 @@ padding followed by VALID pooling. All six
 outputs pass sequential comparison; maximum absolute error improved from
 `2.570713758468628` to `4.76837158203125e-7`.
 
+`object_detection_yolox_2022nov_int8.onnx` is also promoted to a pass. A late
+quantized layout rewrite left one two-input QLinearConcat branch in NCHW
+`[1,32,160,160]` and the other in NHWC `[1,160,160,32]`, while the Concat still
+used NCHW axis 1. The existing mixed-layout repair required three inputs so it
+could elect a spatial majority and therefore skipped this unambiguous
+two-input case. For a channel-axis Concat with a fully known NCHW output
+contract, the repair now uses that output's spatial dimensions as the
+canonical contract and inserts a local NHWC-to-NCHW adapter only for the
+permuted branch. LiteRT allocation and inference then complete; maximum
+absolute error improved from `3.234160177409649` to
+`2.384185791015625e-7`, with all metric gates passing.
+
 `yolox_nano.onnx` remains an active Tier 2 non-pass with the normalized reason
 `float_conv_accumulation_amplified_by_exp_stride`. The normal sequential
 comparison satisfies the aggregate metric gate with mean absolute error

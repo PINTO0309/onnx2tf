@@ -1672,10 +1672,8 @@
     {
       "tier": 2,
       "model": "object_detection_yolox_2022nov_int8.onnx",
-      "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
-      "error_signature_sha256": "d791755c15b8ac4661c0870ce00199be0997075491e02beee76c2a02a0f0bc98",
-      "tflite_max_abs": 3.234160177409649
+      "baseline_classification": "pass",
+      "tflite_max_abs": 2.384185791015625e-07
     },
     {
       "tier": 2,

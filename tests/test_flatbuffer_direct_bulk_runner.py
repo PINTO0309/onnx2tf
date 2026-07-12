@@ -958,8 +958,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 19,
-        "pass": 344,
-        "tflite_fail": 31,
+        "pass": 345,
+        "tflite_fail": 30,
         "timeout": 26,
     }
     assert profile["model_options"]["silero_vad.onnx"] == {
@@ -1045,6 +1045,17 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "model": "object_detection_nanodet_2022nov_int8.onnx",
         "baseline_classification": "pass",
         "tflite_max_abs": 4.76837158203125e-07,
+    }
+    yolox_int8_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "object_detection_yolox_2022nov_int8.onnx"
+    )
+    assert yolox_int8_entry == {
+        "tier": 2,
+        "model": "object_detection_yolox_2022nov_int8.onnx",
+        "baseline_classification": "pass",
+        "tflite_max_abs": 2.384185791015625e-07,
     }
     version_rfb_entry = next(
         entry

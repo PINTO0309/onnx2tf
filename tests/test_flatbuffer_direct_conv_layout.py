@@ -208,6 +208,34 @@ def test_repair_adds_local_nchw_adapter_for_mixed_concat_input() -> None:
     assert model_ir.tensors["stacked"].shape == [1, 144, 64, 64]
 
 
+def test_repair_uses_output_contract_for_two_input_mixed_concat() -> None:
+    model_ir = ModelIR("two_input_mixed_concat_layout")
+    model_ir.inputs = ["branch_nchw", "branch_nhwc"]
+    model_ir.outputs = ["stacked"]
+    _tensor(model_ir, "branch_nchw", [1, 32, 160, 160])
+    _tensor(model_ir, "branch_nhwc", [1, 160, 160, 32])
+    _tensor(model_ir, "stacked", [1, 64, 160, 160])
+    model_ir.operators = [
+        OperatorIR(
+            "CONCATENATION",
+            ["branch_nchw", "branch_nhwc"],
+            ["stacked"],
+            {"axis": 1, "fusedActivationFunction": "NONE"},
+        ),
+    ]
+
+    stats = _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir)
+
+    assert stats == {"repaired_mixed_nhwc_inputs_for_nchw_concat": 1}
+    concat = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    assert concat.inputs[0] == "branch_nchw"
+    assert concat.inputs[1] != "branch_nhwc"
+    assert model_ir.tensors[concat.inputs[1]].shape == [1, 32, 160, 160]
+    assert model_ir.tensors["stacked"].shape == [1, 64, 160, 160]
+
+
 def test_repair_removes_stale_transpose_before_channelwise_add() -> None:
     model_ir = ModelIR("stale_batchnorm_add_adapter")
     model_ir.inputs = ["mul_out_nhwc"]

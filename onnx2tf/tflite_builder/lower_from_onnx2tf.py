@@ -68208,7 +68208,7 @@ def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, in
         for concat_idx, concat_op in enumerate(model_ir.operators):
             if (
                 str(concat_op.op_type) != "CONCATENATION"
-                or len(concat_op.inputs) < 3
+                or len(concat_op.inputs) < 2
                 or len(concat_op.outputs) != 1
             ):
                 continue
@@ -68243,7 +68243,27 @@ def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, in
                 key=lambda item: int(item[1]),
             )
             if int(canonical_count) < 2:
-                continue
+                output_tensor = model_ir.tensors.get(
+                    str(concat_op.outputs[0]),
+                    None,
+                )
+                output_shape = (
+                    [int(v) for v in list(output_tensor.shape)]
+                    if output_tensor is not None
+                    else []
+                )
+                if (
+                    len(output_shape) != 4
+                    or any(int(v) <= 0 for v in output_shape)
+                ):
+                    continue
+                output_spatial = (
+                    int(output_shape[2]),
+                    int(output_shape[3]),
+                )
+                if output_spatial not in spatial_counts:
+                    continue
+                canonical_spatial = output_spatial
             height, width = [int(v) for v in canonical_spatial]
 
             nhwc_input_indices: List[int] = []
