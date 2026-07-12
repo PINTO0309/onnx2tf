@@ -1762,6 +1762,28 @@ single-process and sequential, with no new dependency or TensorFlow import.
 Rerun the raw post-lowering inventory before selecting the next family. Do not
 create a pull request; commit and push only at a coherent checkpoint.
 
+The next mechanical split is complete. The 291-line singleton-safe layout
+Transpose→Reshape canonicalization moved unchanged into
+`passes/singleton_reshape_layout.py`. Canonical/generalized singleton
+memory-order equivalence, dynamic batch preservation, shape/constant side-input
+remapping, and the quantized Logistic→Concat(axis=1) protection remain intact.
+The old and new function ASTs are identical, all five production call sites
+remain in place through a thin compatibility wrapper, and the family ownership
+contract includes the implementation.
+
+Sequential verification completed with:
+
+- `9 passed` for positive singleton-channel/spatial/moved-axis/dynamic-batch
+  variants and non-singleton/dynamic-signature rejection;
+- `1 passed` for the updated ownership contract;
+- `1105 passed, 5 deselected, 2 warnings in 144.25s` for the full direct suite.
+
+No algorithm, call order, artifact, dependency, or TensorFlow boundary changed.
+The next checkpoint should migrate this rewrite to differential index and
+`LayoutState`, add a stable transactional runner and exact Transpose guard, and
+replace all five raw production calls. Do not create a pull request; commit and
+push only at a coherent checkpoint.
+
 The next mechanical split is complete. The 193-line fully static
 4D→2D Reshape/Concat/2D→4D Reshape rewrite moved unchanged into
 `passes/singleton_reshape_layout.py`. Its NHWC singleton-spatial, batch/channel,

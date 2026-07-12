@@ -322,6 +322,14 @@ retargeting, structural removal, and pruning all update `LayoutState`. Any
 single-consumer removal decision needed after rewiring is captured before the
 index mutation changes its live consumer set.
 
+The family also mechanically owns singleton-safe layout Transpose→Reshape
+canonicalization. It recognizes canonical and generalized singleton
+memory-order equivalence, preserves dynamic batch signatures, remaps shape
+metadata and constant side inputs, and protects the quantized
+Logistic→Concat(axis=1) case. The 291-line implementation moved with an
+identical AST; its five production positions still call a thin lowerer wrapper
+in their original order.
+
 Production uses one ordered pass group for that family, with stable IDs
 `layout.singleton_reshape_unary_passthrough` and
 `layout.consecutive_inverse_singleton_reshapes`. A model-only preflight scans

@@ -12,6 +12,8 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _build_tensor_consumer_map,
+    _build_tensor_producer_map,
     _clone_quantization,
     _is_fully_known_positive_shape,
     _invert_perm,
@@ -508,6 +510,299 @@ def run_singleton_reshape_layout_cleanup(
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
+
+
+def _optimize_singleton_channel_layout_transpose_to_reshape(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Replace TRANSPOSE with RESHAPE when permutation is memory-order
+    equivalent due to singleton dimensions.
+
+    Safe cases:
+    - NHWC -> NCHW with input shape [N,H,W,1]
+    - NCHW -> NHWC with input shape [N,1,H,W]
+    - NHWC -> NCHW with input shape [N,1,1,C]
+    - NCHW -> NHWC with input shape [N,C,1,1]
+    In these rank-4 layout cases, moved axes are singleton and the transpose
+    is an exact reshape.
+    """
+    rewritten = 0
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+    perm_nchw_to_nhwc = [0, 2, 3, 1]
+    consumers = _build_tensor_consumer_map(model_ir)
+    producers = _build_tensor_producer_map(model_ir)
+
+    def _unique_tensor_name(base: str) -> str:
+        name = str(base)
+        suffix = 1
+        while name in model_ir.tensors:
+            name = f"{base}_{suffix}"
+            suffix += 1
+        return name
+
+    def _is_memory_order_equivalent_by_singletons(
+        *,
+        input_signature: List[int],
+        perm: List[int],
+    ) -> bool:
+        rank = len(input_signature)
+        if rank < 2 or len(perm) != rank:
+            return False
+        if any(int(v) <= 0 for v in input_signature):
+            return False
+        non_singleton_input_axes = [
+            int(axis_idx)
+            for axis_idx, dim in enumerate(input_signature)
+            if int(dim) != 1
+        ]
+        non_singleton_permuted_axes = [
+            int(axis_idx)
+            for axis_idx in list(perm)
+            if int(input_signature[int(axis_idx)]) != 1
+        ]
+        return non_singleton_input_axes == non_singleton_permuted_axes
+
+    def _feeds_quantized_logistic_concat_axis1_chain(transpose_out_name: str) -> bool:
+        """
+        Keep transpose form for detection-head style paths:
+          TRANSPOSE -> DQ -> LOGISTIC -> Q -> DQ -> CONCAT(axis=1)
+        where concat has any non-singleton channel sibling input.
+        """
+        lv1_users = [int(v) for v in consumers.get(str(transpose_out_name), [])]
+        if len(lv1_users) != 1:
+            return False
+        dq1_op = model_ir.operators[int(lv1_users[0])]
+        if (
+            str(dq1_op.op_type) != "DEQUANTIZE"
+            or len(dq1_op.inputs) != 1
+            or len(dq1_op.outputs) != 1
+            or str(dq1_op.inputs[0]) != str(transpose_out_name)
+        ):
+            return False
+        dq1_out = str(dq1_op.outputs[0])
+
+        lv2_users = [int(v) for v in consumers.get(dq1_out, [])]
+        if len(lv2_users) != 1:
+            return False
+        logistic_op = model_ir.operators[int(lv2_users[0])]
+        if (
+            str(logistic_op.op_type) != "LOGISTIC"
+            or len(logistic_op.inputs) != 1
+            or len(logistic_op.outputs) != 1
+            or str(logistic_op.inputs[0]) != dq1_out
+        ):
+            return False
+        logistic_out = str(logistic_op.outputs[0])
+
+        lv3_users = [int(v) for v in consumers.get(logistic_out, [])]
+        if len(lv3_users) != 1:
+            return False
+        q_op = model_ir.operators[int(lv3_users[0])]
+        if (
+            str(q_op.op_type) != "QUANTIZE"
+            or len(q_op.inputs) != 1
+            or len(q_op.outputs) != 1
+            or str(q_op.inputs[0]) != logistic_out
+        ):
+            return False
+        q_out = str(q_op.outputs[0])
+
+        lv4_users = [int(v) for v in consumers.get(q_out, [])]
+        if len(lv4_users) != 1:
+            return False
+        dq2_op = model_ir.operators[int(lv4_users[0])]
+        if (
+            str(dq2_op.op_type) != "DEQUANTIZE"
+            or len(dq2_op.inputs) != 1
+            or len(dq2_op.outputs) != 1
+            or str(dq2_op.inputs[0]) != q_out
+        ):
+            return False
+        dq2_out = str(dq2_op.outputs[0])
+
+        lv5_users = [int(v) for v in consumers.get(dq2_out, [])]
+        if len(lv5_users) != 1:
+            return False
+        concat_op = model_ir.operators[int(lv5_users[0])]
+        if (
+            str(concat_op.op_type) != "CONCATENATION"
+            or len(concat_op.inputs) < 2
+            or str(dq2_out) not in set(str(v) for v in list(concat_op.inputs))
+        ):
+            return False
+        concat_axis = int(concat_op.options.get("axis", 1))
+        if concat_axis < 0:
+            concat_axis += 4
+        if concat_axis != 1:
+            return False
+
+        # If siblings include non-singleton channel inputs, this branch is part
+        # of an NCHW concat contract and downstream shape passes can optimize it.
+        for input_name in [str(v) for v in list(concat_op.inputs)]:
+            if str(input_name) == str(dq2_out):
+                continue
+            input_tensor = model_ir.tensors.get(str(input_name), None)
+            if input_tensor is None or len(list(input_tensor.shape)) != 4:
+                continue
+            if int(input_tensor.shape[1]) > 1:
+                return True
+        return False
+
+    for op in model_ir.operators:
+        if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 2 or len(op.outputs) != 1:
+            continue
+
+        perm = _read_transpose_perm(model_ir, op)
+        if perm is None:
+            continue
+
+        input_name = str(op.inputs[0])
+        output_name = str(op.outputs[0])
+        input_tensor = model_ir.tensors.get(input_name, None)
+        output_tensor = model_ir.tensors.get(output_name, None)
+        if (
+            input_tensor is None
+            or output_tensor is None
+            or not _is_fully_known_positive_shape(input_tensor.shape)
+            or not _is_fully_known_positive_shape(output_tensor.shape)
+        ):
+            continue
+
+        input_shape = [int(v) for v in list(input_tensor.shape)]
+        output_shape = [int(v) for v in list(output_tensor.shape)]
+        rank = len(input_shape)
+        # This pass is intended only for NHWC<->NCHW style rank-4 layout bridges.
+        # Rank-3 permutations (e.g. [0,2,1]) can be axis-semantic transforms and
+        # rewriting them to RESHAPE may break downstream ops (e.g. LogSoftmax/Add).
+        if rank != 4:
+            continue
+        input_signature = (
+            [int(v) for v in list(input_tensor.shape_signature)]
+            if input_tensor.shape_signature is not None
+            else [int(v) for v in list(input_shape)]
+        )
+        output_signature = (
+            [int(v) for v in list(output_tensor.shape_signature)]
+            if output_tensor.shape_signature is not None
+            else [int(v) for v in list(output_shape)]
+        )
+        if len(output_shape) != rank or len(list(perm)) != rank:
+            continue
+        input_producer_idx = producers.get(input_name, None)
+        input_producer = (
+            model_ir.operators[int(input_producer_idx)]
+            if input_producer_idx is not None
+            and 0 <= int(input_producer_idx) < len(model_ir.operators)
+            else None
+        )
+        obsolete_post_mean_layout_adapter = bool(
+            perm == perm_nchw_to_nhwc
+            and input_producer is not None
+            and str(input_producer.op_type) == "MEAN"
+            and isinstance(input_producer.options, dict)
+            and bool(
+                input_producer.options.get(
+                    "__convpool_output_nhwc_axes_remapped__",
+                    False,
+                )
+            )
+        )
+        if obsolete_post_mean_layout_adapter:
+            output_shape = [int(v) for v in input_shape]
+            output_signature = [int(v) for v in input_signature]
+            output_tensor.shape = list(output_shape)
+            output_tensor.shape_signature = list(output_signature)
+        # Dynamic dimensions can be represented as placeholder static 1s in `shape`.
+        # Replacing transpose with reshape is only safe when the moved layout axes
+        # are still provably singleton in signatures. Rank-4 layout bridges keep
+        # batch at axis 0, so a dynamic batch dimension there remains safe.
+        if (
+            len(input_signature) != rank
+            or len(output_signature) != rank
+            or any(int(v) < 0 for idx, v in enumerate(input_signature) if int(idx) != 0)
+            or any(int(v) < 0 for idx, v in enumerate(output_signature) if int(idx) != 0)
+        ):
+            continue
+
+        canonical_singleton_safe = False
+        if perm == perm_nhwc_to_nchw:
+            channel_singleton = int(input_shape[3]) == 1 and int(output_shape[1]) == 1
+            spatial_singleton = (
+                int(input_shape[1]) == 1
+                and int(input_shape[2]) == 1
+                and int(output_shape[2]) == 1
+                and int(output_shape[3]) == 1
+            )
+            canonical_singleton_safe = bool(channel_singleton or spatial_singleton)
+        elif perm == perm_nchw_to_nhwc:
+            channel_singleton = int(input_shape[1]) == 1 and int(output_shape[3]) == 1
+            spatial_singleton = (
+                int(input_shape[2]) == 1
+                and int(input_shape[3]) == 1
+                and int(output_shape[1]) == 1
+                and int(output_shape[2]) == 1
+            )
+            canonical_singleton_safe = bool(channel_singleton or spatial_singleton)
+
+        expected_output_shape = (
+            list(input_shape)
+            if obsolete_post_mean_layout_adapter
+            else _permute_shape(input_shape, perm)
+        )
+        if expected_output_shape is None or [int(v) for v in list(expected_output_shape)] != output_shape:
+            continue
+        expected_output_signature = (
+            list(input_signature)
+            if obsolete_post_mean_layout_adapter
+            else _permute_shape(input_signature, perm)
+        )
+        if (
+            expected_output_signature is None
+            or [int(v) for v in list(expected_output_signature)] != output_signature
+        ):
+            continue
+
+        if not canonical_singleton_safe and not _is_memory_order_equivalent_by_singletons(
+            input_signature=[int(v) for v in list(input_signature)],
+            perm=[int(v) for v in list(perm)],
+        ):
+            continue
+
+        # Preserve transpose (do not downcast to reshape) for quantized
+        # detection-head singleton gates that feed NCHW concat chains.
+        if (
+            rank == 4
+            and [int(v) for v in list(perm)] == perm_nhwc_to_nchw
+            and int(input_shape[3]) == 1
+            and _feeds_quantized_logistic_concat_axis1_chain(str(output_name))
+        ):
+            continue
+
+        reshape_target = [int(v) for v in output_shape]
+        if int(output_signature[0]) < 0:
+            reshape_target[0] = -1
+        reshape_shape_name = _unique_tensor_name(f"{output_name}_reshape_shape")
+        model_ir.tensors[reshape_shape_name] = TensorIR(
+            name=reshape_shape_name,
+            dtype="INT32",
+            shape=[len(reshape_target)],
+            shape_signature=[len(reshape_target)],
+            data=np.asarray(reshape_target, dtype=np.int32),
+            is_variable=False,
+            quantization=None,
+        )
+
+        op.op_type = "RESHAPE"
+        op.inputs = [input_name, reshape_shape_name]
+        op.options = {
+            "newShape": [int(v) for v in reshape_target],
+            "layoutTransposeAsReshape": True,
+            "layoutTransposePerm": [int(v) for v in perm],
+        }
+        rewritten += 1
+
+    if rewritten > 0:
+        _prune_unused_tensors(model_ir)
+    return {"rewritten_singleton_channel_layout_transpose_to_reshape": int(rewritten)}
 
 
 def _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(

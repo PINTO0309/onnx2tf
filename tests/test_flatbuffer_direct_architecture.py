@@ -912,6 +912,7 @@ def test_singleton_reshape_rewrites_have_single_owner() -> None:
         / "singleton_reshape_layout.py"
     )
     function_names = {
+        "_optimize_singleton_channel_layout_transpose_to_reshape",
         "_optimize_consecutive_inverse_singleton_layout_reshapes",
         "_optimize_flatten_concat_expanddims_to_nhwc_concat",
         "_optimize_singleton_layout_reshape_unary_passthrough_chains",
