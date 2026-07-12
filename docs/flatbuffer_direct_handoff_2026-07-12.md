@@ -60,9 +60,31 @@ Verification completed with:
 - `991 passed, 5 deselected, 2 warnings in 124.96s` for the full sequential
   direct suite.
 
-The next boundary-layout step should evaluate the adjacent channel-slice and
-StridedSlice/QDQ/Concat boundary passes as one semantic family, extracting
-only after their additional mutation helpers have canonical owners.
+The channel-slice and StridedSlice/QDQ/Concat boundary family now lives in
+`passes/channel_slice_layout.py`. Five legacy lowerer entry points delegate to
+that module: boundary channel-slice elision, internal channel-slice NHWC
+propagation, Mul/Add bridge propagation, strict dual-Add bridge propagation,
+and boundary StridedSlice/QDQ/Concat cleanup.
+
+Their generic dependencies are canonicalized in `core/model_ir_utils.py`:
+operator input/output mutation, indexed input replacement, constant-vector
+read/write, static broadcasting, tensor metadata permutation, consumer maps,
+transpose permutations, quantization cloning, pruning, and lineage events.
+The family preserves all existing semantic guards and does not introduce a
+model-name rule.
+
+Verification completed with:
+
+- `6 passed, 771 deselected` for focused channel-slice/StridedSlice and utility
+  cases;
+- `18 passed` for architecture and common ModelIR utility ownership;
+- `992 passed, 5 deselected, 2 warnings in 125.00s` for the full sequential
+  direct suite.
+
+The next extraction candidate is the earlier boundary input Mul/Sum/Reshape
+and BatchMatMul pair. Their mutation and constant-vector dependencies now have
+canonical core owners, so they can move as a small boundary-input chain family
+while retaining legacy wrappers.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

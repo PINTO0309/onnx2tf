@@ -223,6 +223,13 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
     precision_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "precision.py"
     )
+    channel_slice_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "channel_slice_layout.py"
+    )
 
     def _functions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -243,13 +250,36 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
     assert "_optimize_boundary_input_layout_transposes_pass" in wrapper_names
 
     graph_helpers = {
+        "_broadcast_static_shapes",
         "_build_tensor_consumer_map",
+        "_permute_tensor_metadata_if_rank_matches",
+        "_read_const_ints_from_tensor",
         "_read_transpose_perm",
+        "_replace_operator_input_at",
         "_replace_tensor_inputs",
+        "_set_operator_inputs",
+        "_set_operator_outputs",
+        "_write_const_ints_to_tensor",
     }
     assert graph_helpers <= set(common_functions)
     for path in (lowering_path, reporting_path, precision_path):
         assert graph_helpers.isdisjoint(set(_functions(path)))
+
+    channel_slice_functions = {
+        "_optimize_boundary_input_transpose_channel_slice_blocks",
+        "_optimize_internal_transpose_channel_slice_nhwc_propagation_chains",
+        "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains",
+        "_optimize_transpose_channel_slice_dual_add_bridges_strict",
+        "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
+    }
+    pass_functions = _functions(channel_slice_path)
+    assert channel_slice_functions <= set(pass_functions)
+    for function_name in channel_slice_functions:
+        wrapper = lowering_functions[function_name]
+        wrapper_names = {
+            node.id for node in ast.walk(wrapper) if isinstance(node, ast.Name)
+        }
+        assert f"{function_name}_pass" in wrapper_names
 
 
 def test_pytorch_pure_utilities_do_not_import_torch() -> None:

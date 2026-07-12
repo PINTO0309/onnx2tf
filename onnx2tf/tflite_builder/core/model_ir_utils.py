@@ -5,6 +5,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.shape_resolution import (
+    preserve_rewritten_output_dynamic_axes,
+)
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
 
 
@@ -75,6 +78,161 @@ def _replace_tensor_inputs(
                 dst_name if input_name == src_name else input_name
                 for input_name in op.inputs
             ]
+
+
+def _set_operator_inputs(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    new_inputs: List[str],
+) -> None:
+    old_inputs = [str(value) for value in op.inputs]
+    normalized_new_inputs = [str(value) for value in new_inputs]
+    for old_name, new_name in zip(old_inputs, normalized_new_inputs):
+        if old_name == new_name:
+            continue
+        _append_tensor_lineage_event(
+            model_ir=model_ir,
+            event={
+                "kind": "replace_input",
+                "src_name": old_name,
+                "dst_name": new_name,
+                "source": "set_operator_inputs",
+            },
+        )
+    op.inputs = normalized_new_inputs
+
+
+def _set_operator_outputs(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    new_outputs: List[str],
+) -> None:
+    old_outputs = [str(value) for value in op.outputs]
+    normalized_new_outputs = [str(value) for value in new_outputs]
+    for old_name, new_name in zip(old_outputs, normalized_new_outputs):
+        if old_name == new_name:
+            continue
+        preserve_rewritten_output_dynamic_axes(
+            source_tensor=model_ir.tensors.get(old_name, None),
+            target_tensor=model_ir.tensors.get(new_name, None),
+        )
+        _append_tensor_lineage_event(
+            model_ir=model_ir,
+            event={
+                "kind": "rename_tensor",
+                "old_name": old_name,
+                "new_name": new_name,
+                "source": "set_operator_outputs",
+            },
+        )
+    op.outputs = normalized_new_outputs
+
+
+def _replace_operator_input_at(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    input_index: int,
+    new_input_name: str,
+) -> None:
+    if int(input_index) < 0 or int(input_index) >= len(op.inputs):
+        return
+    old_name = str(op.inputs[int(input_index)])
+    new_name = str(new_input_name)
+    if old_name != new_name:
+        _append_tensor_lineage_event(
+            model_ir=model_ir,
+            event={
+                "kind": "replace_input",
+                "src_name": old_name,
+                "dst_name": new_name,
+                "source": "replace_operator_input_at",
+            },
+        )
+    op.inputs[int(input_index)] = new_name
+
+
+def _read_const_ints_from_tensor(
+    tensor: Optional[TensorIR],
+) -> Optional[List[int]]:
+    if tensor is None or tensor.data is None:
+        return None
+    try:
+        return [int(value) for value in np.asarray(tensor.data).reshape(-1).tolist()]
+    except Exception:
+        return None
+
+
+def _write_const_ints_to_tensor(
+    tensor: Optional[TensorIR],
+    values: List[int],
+) -> bool:
+    if tensor is None:
+        return False
+    current = _read_const_ints_from_tensor(tensor)
+    normalized = [int(value) for value in values]
+    if current == normalized:
+        return False
+    np_dtype = np.int32
+    if tensor.data is not None:
+        try:
+            np_dtype = np.asarray(tensor.data).dtype
+        except Exception:
+            np_dtype = np.int32
+    tensor.data = np.asarray(normalized, dtype=np_dtype)
+    tensor.shape = [int(len(normalized))]
+    tensor.shape_signature = [int(len(normalized))]
+    return True
+
+
+def _broadcast_static_shapes(
+    shape_a: Optional[List[int]],
+    shape_b: Optional[List[int]],
+) -> Optional[List[int]]:
+    if not _is_fully_known_positive_shape(
+        shape_a
+    ) or not _is_fully_known_positive_shape(shape_b):
+        return None
+    a = [int(value) for value in shape_a or []]
+    b = [int(value) for value in shape_b or []]
+    rank = max(len(a), len(b))
+    a = [1] * (rank - len(a)) + a
+    b = [1] * (rank - len(b)) + b
+    output: List[int] = []
+    for dim_a, dim_b in zip(a, b):
+        if dim_a == dim_b:
+            output.append(dim_a)
+        elif dim_a == 1:
+            output.append(dim_b)
+        elif dim_b == 1:
+            output.append(dim_a)
+        else:
+            return None
+    return output
+
+
+def _permute_tensor_metadata_if_rank_matches(
+    tensor: Optional[TensorIR],
+    perm: List[int],
+) -> None:
+    if tensor is None:
+        return
+    shape_src = list(tensor.shape) if tensor.shape is not None else None
+    if shape_src is not None and len(shape_src) == len(perm):
+        new_shape = _permute_shape(shape_src, perm)
+        if new_shape is not None:
+            tensor.shape = [int(value) for value in new_shape]
+    signature_src = (
+        list(tensor.shape_signature)
+        if tensor.shape_signature is not None
+        else (list(tensor.shape) if tensor.shape is not None else None)
+    )
+    if signature_src is not None and len(signature_src) == len(perm):
+        new_signature = _permute_shape(signature_src, perm)
+        if new_signature is not None:
+            tensor.shape_signature = [int(value) for value in new_signature]
 
 
 def _is_fully_known_positive_shape(shape: Optional[List[int]]) -> bool:

@@ -51,6 +51,14 @@ lineage-aware input replacement are canonical utilities in
 `core/model_ir_utils.py`; reporting, precision, and layout passes do not keep
 private copies.
 
+Channel-slice layout propagation and boundary StridedSlice/QDQ/Concat cleanup
+live together in `passes/channel_slice_layout.py`. The family owns the guarded
+boundary channel-slice rewrite, internal NHWC propagation, Mul/Add bridge
+rewrites, strict dual-Add bridges, and the StridedSlice/QDQ/Concat round-trip
+rewrite. Constant-vector reads/writes, operator input/output mutation,
+broadcast checks, metadata permutation, and lineage recording remain shared
+core utilities. Legacy function names delegate to the family module.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither
