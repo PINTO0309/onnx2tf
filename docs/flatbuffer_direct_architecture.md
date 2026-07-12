@@ -306,6 +306,14 @@ names are protected, and only indexed consumers of a duplicate output are
 rewired before structural removal. Its instrumentation likewise permits only
 the initial index refresh.
 
+The four later reshape-only recovery positions also execute through
+`run_duplicate_fanout_cleanup(include_transpose=False)` instead of calling the
+compatibility helper directly. This preserves their original placement and
+does not introduce Transpose deduplication at those phase boundaries. The
+three primary-IR calls reuse the session `LayoutState` and diagnostics; the
+fallback-IR call builds local pass state while reporting through the same
+session diagnostics. An AST contract fixes the four reshape-only invocations.
+
 Scalar clamp canonicalization is the first linear fusion in
 `passes/graph_cleanup.py`. It replaces the strictly guarded
 `Maximum(x, 0) → Minimum(..., 1)` chain with `Relu0To1`, updates the surviving

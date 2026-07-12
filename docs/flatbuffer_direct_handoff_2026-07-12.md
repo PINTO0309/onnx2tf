@@ -1296,6 +1296,26 @@ Next rerun the AST frequency inventory. The remaining repeated raw families
 must each migrate as a complete indexed unit; do not partially replace
 structural deletion as discovered by the earlier Pad-Mul regression.
 
+The fresh inventory identified duplicate Reshape fan-out as the largest
+remaining already-indexed raw family, with four production invocations. All
+four now route through the existing ordered duplicate-fanout runner with
+`include_transpose=false`, retaining their exact phase locations and excluding
+Transpose cleanup. The three primary-IR positions share the session
+`LayoutState` and diagnostics; fallback relowering uses local pass state and
+the session diagnostics. No lowering algorithm, dependency, or public contract
+changed.
+
+Sequential verification completed with:
+
+- `3 passed, 40 deselected` for focused duplicate-Reshape, ordered-runner, and
+  production-preflight coverage;
+- `1081 passed, 5 deselected, 2 warnings in 138.24s` for the full direct suite.
+
+The next inventory candidates are the four boundary-input BatchMatMul
+invocations and the three Pad-Mul invocations. Migrate whichever forms the next
+complete adjacent family, preserving every current call location and order;
+do not make a partial structural-rewrite migration.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

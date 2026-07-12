@@ -457,7 +457,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 60
+    assert len(calls) == 64
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -493,6 +493,20 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and keyword.value.value is False
         for keyword in reverse_calls[0].keywords
     )
+
+    reshape_only_duplicate_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_duplicate_fanout_cleanup"
+        and any(
+            keyword.arg == "include_transpose"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is False
+            for keyword in call.keywords
+        )
+    ]
+    assert len(reshape_only_duplicate_calls) == 4
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:

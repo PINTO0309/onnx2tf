@@ -65304,7 +65304,12 @@ def lower_onnx_to_ir(
     # This is required for fallback relowering (optimize_layout_transpose_chains=False)
     # where channelwise [1,C,1,1] -> [1,1,1,C] adapters can remain as TRANSPOSE.
     _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
-    _optimize_duplicate_reshape_fanout(model_ir)
+    run_duplicate_fanout_cleanup(
+        model_ir,
+        include_transpose=False,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_singleton_layout_reshape_unary_passthrough_chains(model_ir)
     _optimize_consecutive_inverse_singleton_layout_reshapes(model_ir)
     _optimize_singleton_layout_reshape_maxpool_binary_cast_chains(model_ir)
@@ -65517,7 +65522,12 @@ def lower_onnx_to_ir(
     # [1,C,1,1]->[1,1,1,C] adapters as TRANSPOSE in no-layout mode.
     # Re-canonicalize them to RESHAPE at the very end.
     _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
-    _optimize_duplicate_reshape_fanout(model_ir)
+    run_duplicate_fanout_cleanup(
+        model_ir,
+        include_transpose=False,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_consecutive_reshape_passthrough_chains(model_ir)
     if optimize_layout_transpose_chains:
         _optimize_layout_transpose_chains(model_ir)
@@ -65534,7 +65544,12 @@ def lower_onnx_to_ir(
     _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
     _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
     _optimize_singleton_channel_layout_transpose_to_reshape(model_ir)
-    _optimize_duplicate_reshape_fanout(model_ir)
+    run_duplicate_fanout_cleanup(
+        model_ir,
+        include_transpose=False,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_consecutive_reshape_passthrough_chains(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     _sanitize_static_shape_signature_consistency(model_ir)
@@ -65731,7 +65746,11 @@ def lower_onnx_to_ir(
             _repair_rank4_binary_layout_mismatch_with_transpose_adapter(fallback_ir)
             _repair_rank4_binary_singleton_broadcast_layout_mismatch(fallback_ir)
             _optimize_singleton_channel_layout_transpose_to_reshape(fallback_ir)
-            _optimize_duplicate_reshape_fanout(fallback_ir)
+            run_duplicate_fanout_cleanup(
+                fallback_ir,
+                include_transpose=False,
+                diagnostics=session.diagnostics,
+            )
             _optimize_consecutive_reshape_passthrough_chains(fallback_ir)
             _reconcile_static_tensor_shapes(fallback_ir)
             _topologically_sort_operators(fallback_ir)
