@@ -1514,6 +1514,26 @@ single-process and sequential, and no dependency or TensorFlow import was
 added. Rerun the raw-call inventory before selecting the next complete
 quantized or layout family.
 
+The next isolated family is Dequantize→Reshape→Quantize, repeated three times
+immediately after quantized TransposeConv fusion. A positive fixture and a
+mismatched-quantization no-op fixture first fixed its linearity, dtype,
+per-tensor quantization equivalence, rewiring, and output metadata contract.
+The 106-line implementation then moved unchanged to
+`passes/quantized_reshape.py`; the lowerer retains a thin compatibility
+wrapper, and all three production call locations and their ordering relative
+to TransposeConv remain unchanged.
+
+Sequential verification completed with:
+
+- `2 passed` for success and mismatched-quantization characterization;
+- `3 passed, 22 deselected` including the ownership architecture contract;
+- `1092 passed, 5 deselected, 2 warnings in 140.75s` for the full direct suite.
+
+The next checkpoint should make this implementation differential-index and
+LayoutState aware, replace its three raw calls with one-spec ordered runner
+calls, and add relevant-no-op snapshot coverage before running the numeric
+corpus gate.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

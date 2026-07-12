@@ -764,6 +764,37 @@ def test_quantized_prelu_rewrites_have_single_owner() -> None:
     assert "run_quantized_prelu_cleanup" in lowerer_names
 
 
+def test_quantized_reshape_rewrite_has_single_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "quantized_reshape.py"
+    )
+
+    def _functions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+    function_name = "_optimize_dequant_reshape_quantize_chains"
+    lowering_functions = _functions(lowering_path)
+    assert function_name in _functions(pass_path)
+    wrapper_names = {
+        node.id
+        for node in ast.walk(lowering_functions[function_name])
+        if isinstance(node, ast.Name)
+    }
+    assert f"{function_name}_pass" in wrapper_names
+
+
 def test_pytorch_pure_utilities_do_not_import_torch() -> None:
     offenders = []
     for path in PYTORCH_PURE_UTILITY_FILES:

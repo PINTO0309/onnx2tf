@@ -439,6 +439,14 @@ graphs; indexed topology, inverse-permutation, public-output, dtype,
 per-tensor-quantization, and constant guards run before snapshots. Include
 flags retain isolated compatibility tests without changing production order.
 
+Quantized Reshape fusion ownership lives in `passes/quantized_reshape.py`.
+It folds only the linear Dequantize→Reshape→Quantize chain whose quantized
+input/output dtypes and per-tensor quantization parameters are identical, while
+protecting observable float intermediates and preserving output shape metadata.
+The three production calls remain after their corresponding quantized
+TransposeConv fusion, so this family does not reorder that dependency. The
+legacy lowerer symbol is a thin compatibility wrapper.
+
 Squeeze/Reshape identity cleanup also uses the differential graph index. It
 normalizes explicit or inferred squeeze axes, proves the squeezed and restored
 shapes, rewires only consumers of the round-trip output, then removes both
