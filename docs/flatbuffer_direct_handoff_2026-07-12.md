@@ -106,9 +106,9 @@ The public builder import and registry dispatch remain unchanged. A normalized
 ModelIR fingerprint covering all operators, tensor metadata, constants,
 options, and quantization fields is identical at `d97cba6` and after the move:
 `a83d642e4aa7903f9b34495fec2c1edb5ff8779ba6735bedde382578152657f5`
-(22 operators, 27 tensors). The architecture regression keeps this family
-module below 2,000 lines and verifies that the implementation is absent from
-the legacy file.
+(22 operators, 27 tensors). The architecture regression verifies that the
+implementation remains in its family module and is absent from the legacy
+file. It does not impose a source-line limit.
 
 QLinearMatMul and QGemm were then moved mechanically into the dedicated
 238-line `op_builders/qlinear_fc.py` family module, reducing the remaining
@@ -118,11 +118,26 @@ fingerprints are now executable regression tests:
 for QLinearMatMul and
 `bf71085f2cc3a5981b209b6d5b02cc65ea55a41251465229a5ef1636a319f70f`
 for QGemm, each with 9 operators and 16 tensors. The architecture test keeps
-both builders out of the legacy module, enforces the 2,000-line family limit,
-and includes the new module in the TensorFlow-import boundary. Sequential
+both builders out of the legacy module and includes the new module in the
+TensorFlow-import boundary. Sequential
 one-sample CRNN verification through the new registry path is unchanged at
 `max_abs=0.14842605590820312`, RMSE `0.0011565753987944503`, and cosine
 similarity `0.999999996846642`.
+
+QLinearAveragePool and QLinearGlobalAveragePool were subsequently moved
+mechanically to `op_builders/qlinear_pool.py`. Public imports and registry
+dispatch remain unchanged, and the legacy combined quantized module no longer
+defines either builder. Focused ModelIR fingerprints are fixed at
+`0bb8b9064ae208810addbcebb27846b05873d817e947a5af212f3fd8ee4a6b7c` and
+`1b066e8245cb45f79df76dbc052ecf7485f07d7910fb789cff38b47c298b7f19`.
+The full sequential direct regression completed with `970 passed, 5
+deselected, 2 warnings in 121.97s`. The architecture checks enforce op-family
+ownership and the TensorFlow-free import boundary only; they intentionally do
+not enforce a source-line count.
+
+The Goal's `2,000` threshold applies exclusively to ONNX graph operation/node
+count: Tier 4 ends at 1,999 nodes and Tier 5 begins at 2,000 nodes. It is not a
+limit on production or test source-file length.
 
 `campp_vin.onnx` is promoted from an historical accuracy failure to a normal
 pass. Its concretized dynamic-time artifact fails during XNNPACK reshape
@@ -349,8 +364,7 @@ Commit `5b0a098` recovers `encoder.onnx` by replacing dynamic rank-4
 - NaN coordinates retain the existing ONNX Runtime-compatible `-1`
   normalization.
 - The implementation is isolated in
-  `op_builders/grid_sample_utils.py` (1,237 lines), below the 2,000-line source
-  limit; no new package was introduced.
+  `op_builders/grid_sample_utils.py`; no new package was introduced.
 
 Sequential `encoder.onnx` verification compared its only output with no skip:
 
@@ -401,8 +415,8 @@ TensorFlow in the direct path.
 - Merged explicit control-flow-body metadata into Loop lowering and recovered
   missing Gather ranks from ONNX semantics. In particular, rank-1 data gathered
   by a scalar index remains a logical scalar before Unsqueeze.
-- Split the new control, Pad, and RoiAlign helpers into focused modules well
-  below the 2,000-line source limit.
+- Split the new control, Pad, and RoiAlign helpers into focused modules by
+  responsibility. There is no source-line acceptance limit.
 - Promoted the managed Tier 0–4 profile from 351 to 352 expected passes. The
   active profile now contains 352 passes, 9 `missing_tflite_report` records,
   33 `tflite_fail` records, and 26 excluded historical timeouts.

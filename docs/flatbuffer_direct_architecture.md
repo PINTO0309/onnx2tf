@@ -270,9 +270,9 @@ quantized builder. The move reduces `op_builders/quantized.py` from 3,235 to
 fingerprint over every operator, tensor, constant buffer, option, shape,
 signature, dtype, and quantization field is identical before and after the
 move: `a83d642e4aa7903f9b34495fec2c1edb5ff8779ba6735bedde382578152657f5`
-for 22 operators and 27 tensors. An architecture test enforces the 2,000-line
-limit for the new family module and prevents the builder from returning to the
-legacy file.
+for 22 operators and 27 tensors. An architecture test preserves the op-family
+ownership and prevents the builder from returning to the legacy file; source
+line count is not an acceptance criterion.
 
 QLinearMatMul and QGemm now share the dedicated 238-line
 `op_builders/qlinear_fc.py` family module. This second mechanical extraction
@@ -284,6 +284,14 @@ for QLinearMatMul and
 `bf71085f2cc3a5981b209b6d5b02cc65ea55a41251465229a5ef1636a319f70f`
 for QGemm; each contains 9 operators and 16 tensors. The CRNN corpus model
 also retains its exact fixed-seed metrics through the new dispatch path.
+
+QLinearAveragePool and QLinearGlobalAveragePool are isolated in
+`op_builders/qlinear_pool.py` without changing their registry names or public
+builder imports. Their normalized ModelIR fingerprints are locked by focused
+tests at `0bb8b9064ae208810addbcebb27846b05873d817e947a5af212f3fd8ee4a6b7c`
+and `1b066e8245cb45f79df76dbc052ecf7485f07d7910fb789cff38b47c298b7f19`,
+respectively. The module is part of the TensorFlow-import boundary. This split
+is an ownership improvement, not a source-line requirement.
 
 `dynamics_rife_sim.onnx` remains an active non-pass with the normalized reason
 `invalid_onnx_concat_spatial_mismatch_64_128`. The source passes the structural
