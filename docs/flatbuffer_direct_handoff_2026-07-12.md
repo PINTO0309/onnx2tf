@@ -413,9 +413,23 @@ Verification completed with:
 - `1016 passed, 5 deselected, 2 warnings in 126.24s` for the full sequential
   direct suite.
 
-The next graph-cleanup increment is duplicate Reshape fan-out, which has an
-existing characterization and can reuse the same indexed consumer replacement
-and structural removal path.
+Duplicate Reshape fan-out cleanup now also lives in
+`passes/graph_cleanup.py`. It compares targets from `newShape` options or
+constant shape tensors, preserves public outputs, merges compatible tensor
+metadata, rewires only indexed consumers, and removes duplicates through the
+structural index. Its instrumented fixture also requires one initial
+`refresh()` and no post-rewrite full rebuild.
+
+Verification completed with:
+
+- `20 passed, 758 deselected` for focused architecture and duplicate Reshape
+  cleanup;
+- `1017 passed, 5 deselected, 2 warnings in 126.05s` for the full sequential
+  direct suite.
+
+The next incremental-index migration should target a small linear bridge pass
+that currently rebuilds consumer maps inside a fixed-point loop. Preserve its
+existing characterization and instrument the number of full refreshes.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

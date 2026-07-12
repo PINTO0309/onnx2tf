@@ -168,6 +168,12 @@ duplicates through the structural index API. A focused test instruments
 `refresh()` and requires exactly one initial full index build regardless of the
 successful rewrite.
 
+Duplicate Reshape fan-out cleanup shares the same indexed contract. Target
+shapes are compared semantically from options or constant inputs, public output
+names are protected, and only indexed consumers of a duplicate output are
+rewired before structural removal. Its instrumentation likewise permits only
+the initial index refresh.
+
 The attention module also owns the QKV Slice canonicalization pair. One pass
 replaces compatible Slice branches with Gather/Reshape views; the next replaces
 three compatible branches with a single Split. Both require fully known,
