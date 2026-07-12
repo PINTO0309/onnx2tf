@@ -7,7 +7,10 @@ import numpy as np
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
     ModelIRPassState,
+    preflight_any_operator,
+    preflight_required_op_types,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.passes import (
@@ -249,17 +252,17 @@ def run_duplicate_fanout_cleanup(
 ) -> Dict[str, int]:
     """Run duplicate layout-adapter cleanup as one ordered transaction group."""
 
-    def _preflight(candidate_model: ModelIR) -> bool:
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
         reshape_count = 0
         transpose_count = 0
-        for op in candidate_model.operators:
+        for visited, op in enumerate(candidate_model.operators, start=1):
             if str(op.op_type) == "RESHAPE":
                 reshape_count += 1
             elif include_transpose and str(op.op_type) == "TRANSPOSE":
                 transpose_count += 1
             if reshape_count >= 2 or transpose_count >= 2:
-                return True
-        return False
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
 
     def _run_transpose(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
         stats = _optimize_duplicate_transpose_fanout(
@@ -451,9 +454,8 @@ def run_clamp_cleanup(
 ) -> Dict[str, int]:
     """Run scalar zero-to-one clamp canonicalization transactionally."""
 
-    def _preflight(candidate_model: ModelIR) -> bool:
-        op_types = {str(op.op_type) for op in candidate_model.operators}
-        return {"MAXIMUM", "MINIMUM"}.issubset(op_types)
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        return preflight_required_op_types(candidate_model, {"MAXIMUM", "MINIMUM"})
 
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
         for op in pass_state.model_ir.operators:
@@ -555,8 +557,11 @@ def run_maximum_zero_relu_cleanup(
 ) -> Dict[str, int]:
     """Run guarded Maximum(data, zero) canonicalization transactionally."""
 
-    def _preflight(candidate_model: ModelIR) -> bool:
-        return any(str(op.op_type) == "MAXIMUM" for op in candidate_model.operators)
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        return preflight_any_operator(
+            candidate_model,
+            lambda op: str(op.op_type) == "MAXIMUM",
+        )
 
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
         return any(
@@ -774,15 +779,15 @@ def run_consecutive_mul_constants_cleanup(
 ) -> Dict[str, int]:
     """Run guarded consecutive floating Mul folding transactionally."""
 
-    def _preflight(candidate_model: ModelIR) -> bool:
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
         mul_count = 0
-        for op in candidate_model.operators:
+        for visited, op in enumerate(candidate_model.operators, start=1):
             if str(op.op_type) != "MUL":
                 continue
             mul_count += 1
             if mul_count >= 2:
-                return True
-        return False
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
 
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
         for op in pass_state.model_ir.operators:
@@ -970,9 +975,8 @@ def run_squeeze_reshape_identity_cleanup(
 ) -> Dict[str, int]:
     """Run guarded Squeeze/Reshape round-trip removal transactionally."""
 
-    def _preflight(candidate_model: ModelIR) -> bool:
-        op_types = {str(op.op_type) for op in candidate_model.operators}
-        return {"SQUEEZE", "RESHAPE"}.issubset(op_types)
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        return preflight_required_op_types(candidate_model, {"SQUEEZE", "RESHAPE"})
 
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
         for op in pass_state.model_ir.operators:

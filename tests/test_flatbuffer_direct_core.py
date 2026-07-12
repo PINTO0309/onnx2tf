@@ -442,6 +442,12 @@ def test_model_ir_pass_group_stops_and_records_two_state_cycle() -> None:
         "skipped_by_precondition": False,
         "sequence": 1,
         "invocation": 1,
+        "metrics": {
+            "preflight_operators_visited": 0,
+            "state_built": True,
+            "snapshot_count": 0,
+            "fingerprint_count": 5,
+        },
     }
 
 
@@ -489,6 +495,12 @@ def test_model_ir_pass_group_runs_specs_and_normalizes_details() -> None:
             "skipped_by_precondition": False,
             "sequence": 1,
             "invocation": 1,
+            "metrics": {
+                "preflight_operators_visited": 0,
+                "state_built": True,
+                "snapshot_count": 0,
+                "fingerprint_count": 0,
+            },
         },
         {
             "stage": "model_ir_pass",
@@ -502,6 +514,12 @@ def test_model_ir_pass_group_runs_specs_and_normalizes_details() -> None:
             "skipped_by_precondition": True,
             "sequence": 2,
             "invocation": 1,
+            "metrics": {
+                "preflight_operators_visited": 0,
+                "state_built": True,
+                "snapshot_count": 0,
+                "fingerprint_count": 0,
+            },
         },
     ]
 
@@ -551,6 +569,12 @@ def test_model_ir_pass_group_records_typed_invariant_failure() -> None:
             "problems": list(caught.value.problems),
             "sequence": 1,
             "invocation": 1,
+            "metrics": {
+                "preflight_operators_visited": 0,
+                "state_built": True,
+                "snapshot_count": 1,
+                "fingerprint_count": 0,
+            },
         }
     ]
 

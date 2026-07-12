@@ -14,6 +14,7 @@ from onnx2tf.tflite_builder.core.contracts import (
 from onnx2tf.tflite_builder.core.graph import GraphIndex, ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
     ModelIRPassState,
     run_model_ir_pass_group,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "GraphIndex",
     "LayoutState",
     "ModelIRGraphIndex",
+    "ModelIRPreflightResult",
     "ModelIRPassState",
     "run_model_ir_pass_group",
     "ModelIRInvariantError",

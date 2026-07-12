@@ -284,6 +284,14 @@ keeps irrelevant recovery sweeps to one cheap operator-type/topology scan and
 eliminates repeated index builds and tensor-layout synchronization on large
 no-candidate graphs.
 
+Preflight and manager work is observable through internal diagnostic metrics,
+without timers or public schema changes. Each pass event records operators
+visited by model-only preflight, whether ModelIRPassState was constructed, and
+the exact snapshot and fingerprint counts reported by OrderedPassManager.
+`ModelIRPreflightResult` and shared any-operator/required-op-type scanners make
+visited counts deterministic and allow early-match scans. These counters feed
+Tier profiling while remaining absent from ModelIR metadata and public reports.
+
 Production constant-input materialization uses
 `run_constant_input_fold_cleanup` from `passes/constant_fold.py`. Its three
 specs preserve the original dependency order with priorities 10/20/30:

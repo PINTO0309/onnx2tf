@@ -5,7 +5,9 @@ from typing import Any, Dict, List, Optional
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
     ModelIRPassState,
+    preflight_any_operator,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
@@ -215,21 +217,23 @@ def run_redundant_cast_cleanup(
 ) -> Dict[str, int]:
     """Run widening-alias then narrowing-chain Cast cleanup in fixed order."""
 
-    def _preflight(candidate_model: ModelIR) -> bool:
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
         relevant_pairs = {
             ("INT32", "INT64"),
             ("UINT32", "UINT64"),
             ("INT64", "INT32"),
             ("UINT64", "UINT32"),
         }
-        return any(
-            str(op.op_type) == "CAST"
-            and (
-                str(op.options.get("inDataType", "")).upper(),
-                str(op.options.get("outDataType", "")).upper(),
-            )
-            in relevant_pairs
-            for op in candidate_model.operators
+        return preflight_any_operator(
+            candidate_model,
+            lambda op: (
+                str(op.op_type) == "CAST"
+                and (
+                    str(op.options.get("inDataType", "")).upper(),
+                    str(op.options.get("outDataType", "")).upper(),
+                )
+                in relevant_pairs
+            ),
         )
 
     def _has_widening_alias_candidate(pass_state: ModelIRPassState) -> bool:

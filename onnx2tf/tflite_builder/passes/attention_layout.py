@@ -7,7 +7,9 @@ import numpy as np
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
     ModelIRPassState,
+    preflight_required_op_types,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
@@ -282,16 +284,18 @@ def run_mixed_attention_layout_cleanup(
 ) -> Dict[str, int]:
     """Run the mixed reduction/MirrorPad rewrite as an ordered layout pass."""
 
-    def _preflight(candidate_model: ModelIR) -> bool:
-        op_types = {str(op.op_type) for op in candidate_model.operators}
-        return {
-            "MEAN",
-            "REDUCE_MAX",
-            "CONCATENATION",
-            "MIRROR_PAD",
-            "TRANSPOSE",
-            "CONV_2D",
-        }.issubset(op_types)
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        return preflight_required_op_types(
+            candidate_model,
+            {
+                "MEAN",
+                "REDUCE_MAX",
+                "CONCATENATION",
+                "MIRROR_PAD",
+                "TRANSPOSE",
+                "CONV_2D",
+            },
+        )
 
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
         return _preflight(pass_state.model_ir)

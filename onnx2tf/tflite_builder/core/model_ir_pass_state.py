@@ -18,7 +18,7 @@ from onnx2tf.tflite_builder.core.passes import (
     PassSpec,
 )
 from onnx2tf.tflite_builder.core.validation import validate_model_ir_invariants
-from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
 
 
 @dataclass
@@ -223,6 +223,38 @@ class ModelIRPassState:
         )
 
 
+@dataclass(frozen=True)
+class ModelIRPreflightResult:
+    """Cheap model-only candidate scan result used before pass state creation."""
+
+    matched: bool
+    operators_visited: int
+
+
+def preflight_any_operator(
+    model_ir: ModelIR,
+    predicate: Callable[[OperatorIR], bool],
+) -> ModelIRPreflightResult:
+    for visited, operator in enumerate(model_ir.operators, start=1):
+        if predicate(operator):
+            return ModelIRPreflightResult(True, visited)
+    return ModelIRPreflightResult(False, len(model_ir.operators))
+
+
+def preflight_required_op_types(
+    model_ir: ModelIR,
+    required_op_types: Iterable[str],
+) -> ModelIRPreflightResult:
+    missing = {str(op_type) for op_type in required_op_types}
+    if len(missing) == 0:
+        return ModelIRPreflightResult(True, 0)
+    for visited, operator in enumerate(model_ir.operators, start=1):
+        missing.discard(str(operator.op_type))
+        if len(missing) == 0:
+            return ModelIRPreflightResult(True, visited)
+    return ModelIRPreflightResult(False, len(model_ir.operators))
+
+
 def run_model_ir_pass_group(
     model_ir: ModelIR,
     *,
@@ -230,11 +262,21 @@ def run_model_ir_pass_group(
     layout_state: Optional[LayoutState] = None,
     default_details: Optional[Mapping[str, Any]] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
-    preflight: Optional[Callable[[ModelIR], bool]] = None,
+    preflight: Optional[
+        Callable[[ModelIR], bool | ModelIRPreflightResult]
+    ] = None,
 ) -> Tuple[Dict[str, Any], List[PassResult]]:
     """Run ordered ModelIR specs with shared state and normalized diagnostics."""
 
-    def _record_event(event: Dict[str, Any]) -> None:
+    preflight_operators_visited = 0
+    state_built = False
+
+    def _record_event(
+        event: Dict[str, Any],
+        *,
+        snapshot_count: int = 0,
+        fingerprint_count: int = 0,
+    ) -> None:
         if diagnostics is None:
             return
         code = str(event.get("code", ""))
@@ -251,13 +293,27 @@ def run_model_ir_pass_group(
                 **event,
                 "sequence": sequence,
                 "invocation": invocation,
+                "metrics": {
+                    "preflight_operators_visited": preflight_operators_visited,
+                    "state_built": state_built,
+                    "snapshot_count": int(snapshot_count),
+                    "fingerprint_count": int(fingerprint_count),
+                },
             }
         )
 
     manager = ModelIRPassState.create_ordered_manager()
     for spec in list(specs):
         manager.register(spec)
-    if preflight is not None and not preflight(model_ir):
+    preflight_matched = True
+    if preflight is not None:
+        raw_preflight = preflight(model_ir)
+        if isinstance(raw_preflight, ModelIRPreflightResult):
+            preflight_matched = bool(raw_preflight.matched)
+            preflight_operators_visited = int(raw_preflight.operators_visited)
+        else:
+            preflight_matched = bool(raw_preflight)
+    if not preflight_matched:
         results = [
             PassResult(
                 pass_id=spec.pass_id,
@@ -270,6 +326,7 @@ def run_model_ir_pass_group(
             for spec in manager.ordered_specs()
         ]
     else:
+        state_built = True
         state = ModelIRPassState(model_ir, layout_state=layout_state)
         try:
             results = manager.run(state)
@@ -286,7 +343,9 @@ def run_model_ir_pass_group(
                     "stopped_by_cycle": False,
                     "skipped_by_precondition": False,
                     "problems": list(error.problems),
-                }
+                },
+                snapshot_count=error.snapshot_count,
+                fingerprint_count=error.fingerprint_count,
             )
             raise
     for result in results:
@@ -311,7 +370,9 @@ def run_model_ir_pass_group(
                 "changed": bool(result.changed),
                 "stopped_by_cycle": bool(result.stopped_by_cycle),
                 "skipped_by_precondition": skipped,
-            }
+            },
+            snapshot_count=result.snapshot_count,
+            fingerprint_count=result.fingerprint_count,
         )
     details: Dict[str, Any] = dict(default_details or {})
     for result in results:

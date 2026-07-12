@@ -7,7 +7,9 @@ import numpy as np
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
     ModelIRPassState,
+    preflight_any_operator,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
@@ -151,12 +153,14 @@ def run_terminal_quantize_dequantize_cleanup(
 ) -> Dict[str, int]:
     """Run exact-grid terminal Q/DQ cleanup transactionally."""
 
-    def _preflight(candidate_model: ModelIR) -> bool:
-        return any(
-            str(op.op_type) == "QUANTIZE"
-            and len(op.inputs) == 1
-            and len(op.outputs) == 1
-            for op in candidate_model.operators
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        return preflight_any_operator(
+            candidate_model,
+            lambda op: (
+                str(op.op_type) == "QUANTIZE"
+                and len(op.inputs) == 1
+                and len(op.outputs) == 1
+            ),
         )
 
     def _has_candidate(pass_state: ModelIRPassState) -> bool:

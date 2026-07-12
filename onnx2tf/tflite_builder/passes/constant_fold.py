@@ -7,7 +7,9 @@ import numpy as np
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
     ModelIRPassState,
+    preflight_any_operator,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
@@ -538,11 +540,11 @@ def run_constant_input_fold_cleanup(
 ) -> Dict[str, int]:
     """Materialize constant Pad, Pool, then Cast chains in fixed order."""
 
-    def _preflight(candidate_model: ModelIR) -> bool:
-        return any(
-            str(op.op_type)
-            in {"PAD", "PADV2", "AVERAGE_POOL_2D", "MAX_POOL_2D", "CAST"}
-            for op in candidate_model.operators
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        return preflight_any_operator(
+            candidate_model,
+            lambda op: str(op.op_type)
+            in {"PAD", "PADV2", "AVERAGE_POOL_2D", "MAX_POOL_2D", "CAST"},
         )
 
     def _has_pad(pass_state: ModelIRPassState) -> bool:

@@ -44,6 +44,8 @@ class PassResult:
     changed: bool
     stopped_by_cycle: bool
     details: Dict[str, Any] = field(default_factory=dict)
+    snapshot_count: int = 0
+    fingerprint_count: int = 0
 
 
 class PassInvariantError(RuntimeError):
@@ -56,11 +58,15 @@ class PassInvariantError(RuntimeError):
         phase: PassPhase,
         iterations: int,
         problems: Iterable[str],
+        snapshot_count: int = 0,
+        fingerprint_count: int = 0,
     ) -> None:
         self.pass_id = str(pass_id)
         self.phase = phase.name.lower()
         self.iterations = int(iterations)
         self.problems = tuple(str(problem) for problem in problems)
+        self.snapshot_count = int(snapshot_count)
+        self.fingerprint_count = int(fingerprint_count)
         super().__init__(
             "pass invariant violation: "
             f"pass_id={self.pass_id} problems={list(self.problems[:8])}"
@@ -116,17 +122,23 @@ class OrderedPassManager(Generic[StateT]):
             stopped_by_cycle = False
             details: Dict[str, Any] = {}
             iterations = 0
+            snapshot_count = 0
+            fingerprint_count = 0
             for _ in range(int(spec.max_iterations)):
                 if spec.precondition is not None and not spec.precondition(state):
                     details["skipped_by_precondition"] = True
                     break
                 before = self._digest(state) if detect_cycles else None
+                if detect_cycles:
+                    fingerprint_count += 1
                 if before is not None:
                     if before in seen:
                         stopped_by_cycle = True
                         break
                     seen.add(before)
                 snapshot = self._clone(state) if spec.transactional and self._clone else None
+                if snapshot is not None:
+                    snapshot_count += 1
                 raw = spec.callback(state)
                 current = dict(raw or {})
                 details.update(current)
@@ -140,8 +152,12 @@ class OrderedPassManager(Generic[StateT]):
                         phase=spec.phase,
                         iterations=iterations,
                         problems=problems,
+                        snapshot_count=snapshot_count,
+                        fingerprint_count=fingerprint_count,
                     )
                 after = self._digest(state) if detect_cycles else None
+                if detect_cycles:
+                    fingerprint_count += 1
                 iteration_changed = bool(
                     current.get(
                         "changed",
@@ -159,6 +175,8 @@ class OrderedPassManager(Generic[StateT]):
                     changed=changed,
                     stopped_by_cycle=stopped_by_cycle,
                     details=details,
+                    snapshot_count=snapshot_count,
+                    fingerprint_count=fingerprint_count,
                 )
             )
         return results

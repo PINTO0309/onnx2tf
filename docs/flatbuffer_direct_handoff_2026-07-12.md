@@ -849,6 +849,32 @@ state was built, and whether a snapshot/fingerprint occurred—using counters
 rather than timers. This will let Tier runs attribute orchestration work before
 attempting a session-wide mutable topology cache.
 
+Internal pass diagnostics now expose deterministic orchestration counters under
+`metrics`: `preflight_operators_visited`, `state_built`, `snapshot_count`, and
+`fingerprint_count`. OrderedPassManager counts actual snapshot and digest calls,
+including the extra before-state digest that detects a cycle. Model-only
+preflights return `ModelIRPreflightResult`; shared scanners stop at the first
+matching operator or when all required op types have been seen.
+
+The 256-operator no-candidate fixture now proves all 14 emitted spec events
+report `operators_visited=256`, `state_built=false`, and zero snapshots and
+fingerprints. A first-operator Maximum candidate reports one visited operator,
+state construction, one snapshot, and zero fingerprints. The two-state cycle
+reports five fingerprints, while invariant rollback reports one snapshot.
+
+Verification completed with:
+
+- `52 passed, 12 deselected` for metric accounting, preflight behavior, core
+  manager contracts, and migrated cleanup families;
+- `1074 passed, 5 deselected, 2 warnings in 136.55s` for the full sequential
+  direct suite.
+
+The next task should surface an aggregate of these internal counters in the
+managed corpus result files used for local Tier analysis—not in public
+conversion reports. Inspect the bulk runner's existing timing/RSS entry schema
+and add an optional internal `pass_metrics` summary only where the conversion
+session diagnostics are available without changing CLI/API artifacts.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

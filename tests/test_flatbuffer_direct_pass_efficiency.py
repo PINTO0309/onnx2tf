@@ -4,6 +4,7 @@ import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
     ModelIRPassState,
     run_model_ir_pass_group,
 )
@@ -58,11 +59,11 @@ def test_model_only_preflight_visits_graph_once_and_skips_state(monkeypatch) -> 
     callback_count = 0
     original_refresh = ModelIRGraphIndex.refresh
 
-    def preflight(candidate_model: ModelIR) -> bool:
+    def preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
         nonlocal visited
         for _ in candidate_model.operators:
             visited += 1
-        return False
+        return ModelIRPreflightResult(False, visited)
 
     def counted_refresh(index: ModelIRGraphIndex) -> None:
         nonlocal refresh_count
@@ -136,6 +137,16 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
     assert len(diagnostics) == 14
     assert all(event["status"] == "skipped" for event in diagnostics)
+    assert all(
+        event["metrics"]
+        == {
+            "preflight_operators_visited": 256,
+            "state_built": False,
+            "snapshot_count": 0,
+            "fingerprint_count": 0,
+        }
+        for event in diagnostics
+    )
 
 
 def test_one_candidate_builds_one_index_and_one_snapshot_without_fingerprint(
@@ -177,7 +188,14 @@ def test_one_candidate_builds_one_index_and_one_snapshot_without_fingerprint(
     monkeypatch.setattr(ModelIRPassState, "snapshot", counted_snapshot)
     monkeypatch.setattr(ModelIRPassState, "fingerprint", counted_fingerprint)
 
-    stats = run_maximum_zero_relu_cleanup(model_ir)
+    diagnostics: list[dict] = []
+    stats = run_maximum_zero_relu_cleanup(model_ir, diagnostics=diagnostics)
 
     assert stats == {"rewritten_maximum_with_zero_input2_to_relu": 1}
     assert calls == {"refresh": 1, "snapshot": 1, "fingerprint": 0}
+    assert diagnostics[0]["metrics"] == {
+        "preflight_operators_visited": 1,
+        "state_built": True,
+        "snapshot_count": 1,
+        "fingerprint_count": 0,
+    }

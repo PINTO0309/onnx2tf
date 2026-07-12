@@ -5,7 +5,9 @@ from typing import Any, Dict, List, Optional
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
     ModelIRPassState,
+    preflight_any_operator,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
@@ -132,15 +134,17 @@ def run_boundary_input_layout_cleanup(
 ) -> Dict[str, int]:
     """Run guarded boundary-adapter removal as an ordered layout pass."""
 
-    def _preflight(candidate_model: ModelIR) -> bool:
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
         model_inputs = set(str(name) for name in candidate_model.inputs)
-        return any(
-            str(op.op_type) == "TRANSPOSE"
-            and len(op.inputs) >= 2
-            and len(op.outputs) == 1
-            and str(op.inputs[0]) in model_inputs
-            and str(op.outputs[0]).endswith("_onnx_ncx_internal")
-            for op in candidate_model.operators
+        return preflight_any_operator(
+            candidate_model,
+            lambda op: (
+                str(op.op_type) == "TRANSPOSE"
+                and len(op.inputs) >= 2
+                and len(op.outputs) == 1
+                and str(op.inputs[0]) in model_inputs
+                and str(op.outputs[0]).endswith("_onnx_ncx_internal")
+            ),
         )
 
     def _has_candidate(pass_state: ModelIRPassState) -> bool:
