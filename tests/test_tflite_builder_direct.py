@@ -47,6 +47,7 @@ from onnx2tf.tflite_builder.passes.pad_layout import (
     run_pad_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
+    run_hard_activation_passthrough_cleanup,
     run_input_unary_passthrough_cleanup,
 )
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
@@ -27310,7 +27311,9 @@ def test_flatbuffer_direct_transpose_csp_attention_nhwc_chain_without_main_add_o
     assert list(model_ir.tensors["concat_nchw"].shape) == [1, 20, 20, 384]
 
 
-def test_flatbuffer_direct_hardsigmoid_mul_transpose_passthrough_with_legacy_fanout_keeps_adapter() -> None:
+def test_flatbuffer_direct_hardsigmoid_mul_transpose_passthrough_with_legacy_fanout_keeps_adapter(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("hardsigmoid_mul_transpose_passthrough_legacy_fanout_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nhwc", "m_nhwc"]
@@ -27434,8 +27437,29 @@ def test_flatbuffer_direct_hardsigmoid_mul_transpose_passthrough_with_legacy_fan
         OperatorIR(op_type="TRANSPOSE", inputs=["m_nchw", "post_perm"], outputs=["m_nhwc"]),
     ]
 
-    stats = _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict[str, Any]] = []
+    stats = run_hard_activation_passthrough_cleanup(model_ir, diagnostics=diagnostics)
     assert stats["rewritten_hardsigmoid_mul_transpose_passthrough_chains"] == 1
+    assert refresh_count == 1
+    assert [event["code"] for event in diagnostics] == [
+        "layout.hardswish_passthrough",
+        "layout.hardsigmoid_passthrough",
+        "layout.hardsigmoid_mul_passthrough",
+    ]
+    assert [event["status"] for event in diagnostics] == [
+        "skipped",
+        "skipped",
+        "changed",
+    ]
 
     op_types = [str(op.op_type) for op in model_ir.operators]
     # Keep one adapter for the legacy MEAN branch, but drop the original pre/post pair.

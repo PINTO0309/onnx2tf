@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -547,7 +547,12 @@ def _optimize_asin_transpose_passthrough_chains(
     return {"rewritten_asin_transpose_passthrough_chains": int(rewritten)}
 
 
-def _optimize_hardsigmoid_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_hardsigmoid_transpose_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Fold transpose wrappers around standalone HardSigmoid-expanded chains.
 
@@ -565,10 +570,11 @@ def _optimize_hardsigmoid_transpose_passthrough_chains(model_ir: ModelIR) -> Dic
     - Main branch must be strictly linear.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
             if str(pre_op.op_type) != "TRANSPOSE":
@@ -695,11 +701,13 @@ def _optimize_hardsigmoid_transpose_passthrough_chains(model_ir: ModelIR) -> Dic
                 op=hs_mul_op,
                 input_index=int(hs_mul_data_input_index),
                 new_input_name=pre_input_name,
+                graph_index=graph_index,
             )
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=hs_terminal_op,
                 new_outputs=[post_output_name],
+                graph_index=graph_index,
             )
 
             for intermediate_name in hs_intermediate_names:
@@ -720,7 +728,7 @@ def _optimize_hardsigmoid_transpose_passthrough_chains(model_ir: ModelIR) -> Dic
 
             remove_indices = sorted(list({int(pre_idx), int(post_idx)}), reverse=True)
             for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -729,7 +737,9 @@ def _optimize_hardsigmoid_transpose_passthrough_chains(model_ir: ModelIR) -> Dic
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_hardsigmoid_transpose_passthrough_chains": int(rewritten)}
 
 
@@ -1264,7 +1274,12 @@ def run_input_unary_passthrough_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_hardswish_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_hardswish_transpose_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Fold transpose wrappers around pseudo-op-expanded HardSwish-like chains.
 
@@ -1288,10 +1303,11 @@ def _optimize_hardswish_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[
     - Single-consumer chain on the main path.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
             if str(pre_op.op_type) != "TRANSPOSE":
@@ -1435,17 +1451,20 @@ def _optimize_hardswish_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[
                 op=add_op,
                 input_index=int(add_data_input_index),
                 new_input_name=pre_input_name,
+                graph_index=graph_index,
             )
             _replace_operator_input_at(
                 model_ir=model_ir,
                 op=mul_op,
                 input_index=int(mul_data_input_index),
                 new_input_name=pre_input_name,
+                graph_index=graph_index,
             )
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=mul_op,
                 new_outputs=[post_output_name],
+                graph_index=graph_index,
             )
 
             # Update intermediate metadata from transposed layout to source layout.
@@ -1473,7 +1492,7 @@ def _optimize_hardswish_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[
 
             remove_indices = sorted(list({int(pre_idx), int(post_idx)}), reverse=True)
             for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -1482,11 +1501,18 @@ def _optimize_hardswish_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_hardswish_transpose_passthrough_chains": int(rewritten)}
 
 
-def _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_hardsigmoid_mul_transpose_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Fold transpose wrappers around HardSigmoid-expanded residual MUL chains.
 
@@ -1510,10 +1536,11 @@ def _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir: ModelIR) ->
     - Optional MEAN branch must be rank-4 constant-axes and only feed inverse post-transpose adapters.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -1816,20 +1843,28 @@ def _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir: ModelIR) ->
                 op=hs_data_op,
                 input_index=int(matched["hs_data_input_index"]),
                 new_input_name=pre_input_name,
+                graph_index=graph_index,
             )
             _replace_operator_input_at(
                 model_ir=model_ir,
                 op=residual_mul_op,
                 input_index=int(matched["residual_mul_data_input_index"]),
                 new_input_name=pre_input_name,
+                graph_index=graph_index,
             )
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=residual_mul_op,
                 new_outputs=[representative_output_name],
+                graph_index=graph_index,
             )
             for alias_output_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, alias_output_name, representative_output_name)
+                _replace_tensor_inputs(
+                    model_ir,
+                    alias_output_name,
+                    representative_output_name,
+                    graph_index=graph_index,
+                )
 
             for intermediate_name in [str(v) for v in list(matched.get("hs_intermediate_names", []))]:
                 _permute_tensor_metadata_if_rank_matches(
@@ -1889,6 +1924,7 @@ def _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir: ModelIR) ->
                     model_ir=model_ir,
                     op=mean_op,
                     new_inputs=mean_inputs,
+                    graph_index=graph_index,
                 )
                 _permute_tensor_metadata_if_rank_matches(
                     model_ir.tensors.get(mean_out_name, None),
@@ -1900,9 +1936,15 @@ def _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir: ModelIR) ->
                     model_ir=model_ir,
                     op=mean_op,
                     new_outputs=[representative_mean_output_name],
+                    graph_index=graph_index,
                 )
                 for alias_mean_output_name in mean_post_output_names[1:]:
-                    _replace_tensor_inputs(model_ir, alias_mean_output_name, representative_mean_output_name)
+                    _replace_tensor_inputs(
+                        model_ir,
+                        alias_mean_output_name,
+                        representative_mean_output_name,
+                        graph_index=graph_index,
+                    )
 
                 old_mean_tensor = model_ir.tensors.get(mean_out_name, None)
                 representative_mean_tensor = model_ir.tensors.get(representative_mean_output_name, None)
@@ -1931,11 +1973,13 @@ def _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir: ModelIR) ->
                     model_ir=model_ir,
                     op=keep_post_op,
                     new_inputs=[representative_output_name, keep_perm_name],
+                    graph_index=graph_index,
                 )
                 _set_operator_outputs(
                     model_ir=model_ir,
                     op=keep_post_op,
                     new_outputs=[residual_mul_out_name],
+                    graph_index=graph_index,
                 )
                 post_remove_indices = [int(v) for v in post_indices[1:]]
             else:
@@ -1946,7 +1990,7 @@ def _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir: ModelIR) ->
                 reverse=True,
             )
             for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -1955,5 +1999,302 @@ def _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir: ModelIR) ->
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_hardsigmoid_mul_transpose_passthrough_chains": int(rewritten)}
+
+
+def run_hard_activation_passthrough_cleanup(
+    model_ir: ModelIR,
+    *,
+    include_hardswish: bool = True,
+    include_hardsigmoid: bool = True,
+    include_hardsigmoid_mul: bool = True,
+    reverse_hardsigmoid_order: bool = False,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run hard-activation passthrough specs in the selected production order."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        has_transpose = False
+        has_add = False
+        has_mul = False
+        for visited, op in enumerate(candidate_model.operators, start=1):
+            op_type = str(op.op_type)
+            has_transpose = has_transpose or op_type == "TRANSPOSE"
+            has_add = has_add or op_type == "ADD"
+            has_mul = has_mul or op_type == "MUL"
+            if has_transpose and has_mul and has_add:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _single_user(pass_state: ModelIRPassState, tensor_name: str) -> Optional[OperatorIR]:
+        users = pass_state.graph_index.consumer_indices(str(tensor_name))
+        if len(users) != 1:
+            return None
+        return pass_state.model_ir.operators[int(users[0])]
+
+    def _binary_side_is_scalar(
+        pass_state: ModelIRPassState,
+        op: OperatorIR,
+        data_name: str,
+    ) -> bool:
+        if len(op.inputs) != 2 or str(data_name) not in [str(v) for v in op.inputs]:
+            return False
+        inputs = [str(v) for v in op.inputs]
+        side_name = inputs[1] if inputs[0] == str(data_name) else inputs[0]
+        return _is_singleton_constant_tensor(pass_state.model_ir, side_name)
+
+    def _has_inverse_post(
+        pass_state: ModelIRPassState,
+        tensor_name: str,
+        perm_pre: List[int],
+    ) -> bool:
+        inverse = _invert_perm(perm_pre)
+        if inverse is None:
+            return False
+        for index in pass_state.graph_index.consumer_indices(str(tensor_name)):
+            op = pass_state.model_ir.operators[int(index)]
+            if (
+                str(op.op_type) == "TRANSPOSE"
+                and _read_transpose_perm(pass_state.model_ir, op) == inverse
+            ):
+                return True
+        return False
+
+    def _match_hardsigmoid_terminal(
+        pass_state: ModelIRPassState,
+        *,
+        source_name: str,
+        mul_op: OperatorIR,
+    ) -> Optional[str]:
+        if str(mul_op.op_type) != "MUL" or len(mul_op.outputs) != 1:
+            return None
+        if not _binary_side_is_scalar(pass_state, mul_op, source_name):
+            return None
+        add_op = _single_user(pass_state, str(mul_op.outputs[0]))
+        if (
+            add_op is None
+            or str(add_op.op_type) != "ADD"
+            or len(add_op.outputs) != 1
+            or not _binary_side_is_scalar(pass_state, add_op, str(mul_op.outputs[0]))
+        ):
+            return None
+        clamp_op = _single_user(pass_state, str(add_op.outputs[0]))
+        if clamp_op is None or len(clamp_op.outputs) != 1:
+            return None
+        if str(clamp_op.op_type) == "RELU_0_TO_1":
+            return str(clamp_op.outputs[0])
+        if (
+            str(clamp_op.op_type) != "MAXIMUM"
+            or not _binary_side_is_scalar(pass_state, clamp_op, str(add_op.outputs[0]))
+        ):
+            return None
+        minimum_op = _single_user(pass_state, str(clamp_op.outputs[0]))
+        if (
+            minimum_op is None
+            or str(minimum_op.op_type) != "MINIMUM"
+            or len(minimum_op.outputs) != 1
+            or not _binary_side_is_scalar(
+                pass_state,
+                minimum_op,
+                str(clamp_op.outputs[0]),
+            )
+        ):
+            return None
+        return str(minimum_op.outputs[0])
+
+    def _has_hardswish_candidate(pass_state: ModelIRPassState) -> bool:
+        for pre_op in pass_state.model_ir.operators:
+            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.outputs) != 1:
+                continue
+            source_name = str(pre_op.outputs[0])
+            user_indices = pass_state.graph_index.consumer_indices(source_name)
+            if len(user_indices) != 2:
+                continue
+            user_ops = [pass_state.model_ir.operators[int(index)] for index in user_indices]
+            add_ops = [op for op in user_ops if str(op.op_type) == "ADD"]
+            residual_ops = [op for op in user_ops if str(op.op_type) == "MUL"]
+            if len(add_ops) != 1 or len(residual_ops) != 1:
+                continue
+            add_op = add_ops[0]
+            residual_op = residual_ops[0]
+            if not _binary_side_is_scalar(pass_state, add_op, source_name):
+                continue
+            branch_input_name = str(add_op.outputs[0])
+            branch_op = _single_user(pass_state, branch_input_name)
+            if branch_op is None:
+                continue
+            if str(branch_op.op_type) == "RELU6":
+                if len(branch_op.outputs) != 1:
+                    continue
+                branch_input_name = str(branch_op.outputs[0])
+                branch_op = _single_user(pass_state, branch_input_name)
+                if branch_op is None:
+                    continue
+            if (
+                str(branch_op.op_type) not in {"MUL", "DIV"}
+                or len(branch_op.outputs) != 1
+                or not _binary_side_is_scalar(pass_state, branch_op, branch_input_name)
+            ):
+                continue
+            branch_out = str(branch_op.outputs[0])
+            if set(str(v) for v in residual_op.inputs) != {source_name, branch_out}:
+                continue
+            perm_pre = _read_transpose_perm(pass_state.model_ir, pre_op)
+            if perm_pre is not None and _has_inverse_post(
+                pass_state,
+                str(residual_op.outputs[0]),
+                perm_pre,
+            ):
+                return True
+        return False
+
+    def _has_hardsigmoid_candidate(pass_state: ModelIRPassState) -> bool:
+        for pre_op in pass_state.model_ir.operators:
+            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.outputs) != 1:
+                continue
+            source_name = str(pre_op.outputs[0])
+            users = pass_state.graph_index.consumer_indices(source_name)
+            if len(users) != 1:
+                continue
+            terminal_name = _match_hardsigmoid_terminal(
+                pass_state,
+                source_name=source_name,
+                mul_op=pass_state.model_ir.operators[int(users[0])],
+            )
+            perm_pre = _read_transpose_perm(pass_state.model_ir, pre_op)
+            if terminal_name is not None and perm_pre is not None and _has_inverse_post(
+                pass_state,
+                terminal_name,
+                perm_pre,
+            ):
+                return True
+        return False
+
+    def _has_hardsigmoid_mul_candidate(pass_state: ModelIRPassState) -> bool:
+        for pre_op in pass_state.model_ir.operators:
+            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.outputs) != 1:
+                continue
+            source_name = str(pre_op.outputs[0])
+            users = pass_state.graph_index.consumer_indices(source_name)
+            if len(users) != 2:
+                continue
+            for hs_index in users:
+                hs_op = pass_state.model_ir.operators[int(hs_index)]
+                terminal_name = _match_hardsigmoid_terminal(
+                    pass_state,
+                    source_name=source_name,
+                    mul_op=hs_op,
+                )
+                if terminal_name is None:
+                    continue
+                residual_index = users[1] if int(users[0]) == int(hs_index) else users[0]
+                residual_op = pass_state.model_ir.operators[int(residual_index)]
+                if (
+                    str(residual_op.op_type) != "MUL"
+                    or len(residual_op.inputs) != 2
+                    or len(residual_op.outputs) != 1
+                    or set(str(v) for v in residual_op.inputs) != {source_name, terminal_name}
+                ):
+                    continue
+                perm_pre = _read_transpose_perm(pass_state.model_ir, pre_op)
+                if perm_pre is not None and _has_inverse_post(
+                    pass_state,
+                    str(residual_op.outputs[0]),
+                    perm_pre,
+                ):
+                    return True
+        return False
+
+    def _run_hardswish(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_hardswish_transpose_passthrough_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("rewritten_hardswish_transpose_passthrough_chains", 0)),
+        }
+
+    def _run_hardsigmoid(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_hardsigmoid_transpose_passthrough_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("rewritten_hardsigmoid_transpose_passthrough_chains", 0)),
+        }
+
+    def _run_hardsigmoid_mul(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_hardsigmoid_mul_transpose_passthrough_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("rewritten_hardsigmoid_mul_transpose_passthrough_chains", 0)
+            ),
+        }
+
+    ordered: List[Tuple[str, Any, Any]] = []
+    if include_hardswish:
+        ordered.append(("layout.hardswish_passthrough", _run_hardswish, _has_hardswish_candidate))
+    hardsigmoid_specs = [
+        (
+            "layout.hardsigmoid_passthrough",
+            _run_hardsigmoid,
+            _has_hardsigmoid_candidate,
+        ),
+        (
+            "layout.hardsigmoid_mul_passthrough",
+            _run_hardsigmoid_mul,
+            _has_hardsigmoid_mul_candidate,
+        ),
+    ]
+    if reverse_hardsigmoid_order:
+        hardsigmoid_specs.reverse()
+    for pass_id, callback, precondition in hardsigmoid_specs:
+        if pass_id == "layout.hardsigmoid_passthrough" and not include_hardsigmoid:
+            continue
+        if pass_id == "layout.hardsigmoid_mul_passthrough" and not include_hardsigmoid_mul:
+            continue
+        ordered.append((pass_id, callback, precondition))
+    if len(ordered) == 0:
+        return {
+            "rewritten_hardswish_transpose_passthrough_chains": 0,
+            "rewritten_hardsigmoid_transpose_passthrough_chains": 0,
+            "rewritten_hardsigmoid_mul_transpose_passthrough_chains": 0,
+        }
+
+    specs = [
+        PassSpec(
+            pass_id=pass_id,
+            phase=PassPhase.LAYOUT_PLAN,
+            callback=callback,
+            precondition=precondition,
+            priority=(index + 1) * 10,
+            transactional=True,
+        )
+        for index, (pass_id, callback, precondition) in enumerate(ordered)
+    ]
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=specs,
+        layout_state=layout_state,
+        default_details={
+            "rewritten_hardswish_transpose_passthrough_chains": 0,
+            "rewritten_hardsigmoid_transpose_passthrough_chains": 0,
+            "rewritten_hardsigmoid_mul_transpose_passthrough_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}

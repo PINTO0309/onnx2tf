@@ -372,6 +372,7 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         if isinstance(node, ast.Name)
     }
     assert "run_input_unary_passthrough_cleanup" in lowerer_names
+    assert "run_hard_activation_passthrough_cleanup" in lowerer_names
 
 
 def test_graph_cleanup_rewrites_have_single_owner() -> None:
@@ -441,6 +442,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_pad_layout_cleanup",
         "run_normalization_pad_layout_cleanup",
         "run_input_unary_passthrough_cleanup",
+        "run_hard_activation_passthrough_cleanup",
         "run_redundant_cast_cleanup",
         "run_squeeze_reshape_identity_cleanup",
         "run_terminal_quantize_dequantize_cleanup",
@@ -455,7 +457,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 55
+    assert len(calls) == 60
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -466,6 +468,31 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         assert value.attr == "diagnostics"
         assert isinstance(value.value, ast.Name)
         assert value.value.id == "session"
+
+    hard_activation_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_hard_activation_passthrough_cleanup"
+    ]
+    assert len(hard_activation_calls) == 5
+    reverse_calls = [
+        call
+        for call in hard_activation_calls
+        if any(
+            keyword.arg == "reverse_hardsigmoid_order"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in call.keywords
+        )
+    ]
+    assert len(reverse_calls) == 1
+    assert any(
+        keyword.arg == "include_hardswish"
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value is False
+        for keyword in reverse_calls[0].keywords
+    )
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:

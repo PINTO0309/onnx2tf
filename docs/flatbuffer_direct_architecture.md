@@ -136,6 +136,18 @@ axis remapping, and cases where a legacy NCHW adapter must be retained for
 other consumers. Constant-vector and graph mutations use only shared core
 helpers.
 
+Hard activation passthrough executes through
+`run_hard_activation_passthrough_cleanup`. Four unchanged production sites
+register HardSwish, standalone HardSigmoid, then HardSigmoid-residual-Mul as
+`layout.hardswish_passthrough`, `layout.hardsigmoid_passthrough`, and
+`layout.hardsigmoid_mul_passthrough`. The late recovery site enables only the
+last two specs and reverses their priorities to preserve its original
+HardSigmoid-Mul→HardSigmoid order. All variants share one ModelIRGraphIndex and
+LayoutState. Indexed guards trace singleton constants, Add/clamp topology,
+residual multiplication, optional Mean fan-out, and inverse terminal
+transposes before snapshotting; operator rewires and boundary-transpose removal
+update the differential index directly.
+
 Pad layout ownership is centralized in `passes/pad_layout.py`. In addition to
 repairing a proven channel-last input/channel-first Pad mismatch, the module
 owns direct inverse-transpose Pad folding and the guarded unary-to-Pad tail

@@ -1260,6 +1260,42 @@ Next migrate the separate four-location
 two-pass occurrence in its existing reversed `HardSigmoid-Mul → HardSigmoid`
 order rather than forcing it through the three-spec runner.
 
+That migration is complete. Four production triples now invoke
+`run_hard_activation_passthrough_cleanup` with stable `LAYOUT_PLAN` IDs
+`layout.hardswish_passthrough`, `layout.hardsigmoid_passthrough`, and
+`layout.hardsigmoid_mul_passthrough` in their original order. The late pair
+uses the same runner with HardSwish disabled and
+`reverse_hardsigmoid_order=true`, retaining the original
+HardSigmoid-Mul→HardSigmoid ordering; an AST contract fixes that one reversed
+call and the four normal calls.
+
+All three implementations now use shared ModelIRGraphIndex/LayoutState for
+input/output mutation, alias rewiring, optional Mean branches, adapter
+preservation, boundary-transpose removal, and pruning. Initial op-type guards
+were refined after MobileNetV3 metrics showed no-op snapshots. The final guards
+prove scalar Mul/Add/clamp chains, HardSwish residual structure,
+HardSigmoid-residual multiplication, and inverse terminal transposes before
+snapshotting.
+
+Sequential verification completed with:
+
+- `4 passed, 757 deselected` for HardSwish, standalone HardSigmoid,
+  HardSigmoid-Mul, and legacy-fanout adapter paths;
+- `24 passed` for architecture, reversed-order wiring, and deterministic
+  efficiency checks;
+- `1081 passed, 5 deselected, 2 warnings in 137.95s` for the full direct suite;
+- Tier 1 `mobilenetv3_large_pytorch.onnx` `-cotof` evaluation with every output
+  compared, `evaluation_pass=true`, maximum absolute error
+  `1.430511474609375e-05`; only the one changed HardSigmoid-Mul event took a
+  snapshot across all 14 normal/late hard-activation events.
+
+All temporary output, log, and metrics files were deleted. Validation remained
+single-process and sequential; no dependency or TensorFlow import was added.
+
+Next rerun the AST frequency inventory. The remaining repeated raw families
+must each migrate as a complete indexed unit; do not partially replace
+structural deletion as discovered by the earlier Pad-Mul regression.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

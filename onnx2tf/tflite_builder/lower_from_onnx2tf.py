@@ -157,6 +157,7 @@ from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     _optimize_hardsigmoid_mul_transpose_passthrough_chains as _optimize_hardsigmoid_mul_transpose_passthrough_chains_pass,
     _optimize_hardswish_transpose_passthrough_chains as _optimize_hardswish_transpose_passthrough_chains_pass,
     _optimize_leading_input_transpose_passthrough_chains as _optimize_leading_input_transpose_passthrough_chains_pass,
+    run_hard_activation_passthrough_cleanup,
     run_input_unary_passthrough_cleanup,
 )
 from onnx2tf.tflite_builder.passes.boundary_input_layout import (
@@ -64551,9 +64552,11 @@ def lower_onnx_to_ir(
         )
         _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-        _optimize_hardswish_transpose_passthrough_chains(model_ir)
-        _optimize_hardsigmoid_transpose_passthrough_chains(model_ir)
-        _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir)
+        run_hard_activation_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_swish_transpose_passthrough_chains(model_ir)
         _optimize_gelu_tanh_transpose_passthrough_chains(model_ir)
         _optimize_center_size_offset_terminal_transpose_chains(model_ir)
@@ -64673,9 +64676,11 @@ def lower_onnx_to_ir(
         )
         _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-        _optimize_hardswish_transpose_passthrough_chains(model_ir)
-        _optimize_hardsigmoid_transpose_passthrough_chains(model_ir)
-        _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir)
+        run_hard_activation_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_swish_transpose_passthrough_chains(model_ir)
         _optimize_gelu_tanh_transpose_passthrough_chains(model_ir)
         _optimize_center_size_offset_terminal_transpose_chains(model_ir)
@@ -64796,9 +64801,11 @@ def lower_onnx_to_ir(
         )
         _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-        _optimize_hardswish_transpose_passthrough_chains(model_ir)
-        _optimize_hardsigmoid_transpose_passthrough_chains(model_ir)
-        _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir)
+        run_hard_activation_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_swish_transpose_passthrough_chains(model_ir)
         _optimize_gelu_tanh_transpose_passthrough_chains(model_ir)
         _optimize_center_size_offset_terminal_transpose_chains(model_ir)
@@ -64962,9 +64969,11 @@ def lower_onnx_to_ir(
         )
         _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-        _optimize_hardswish_transpose_passthrough_chains(model_ir)
-        _optimize_hardsigmoid_transpose_passthrough_chains(model_ir)
-        _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir)
+        run_hard_activation_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_swish_transpose_passthrough_chains(model_ir)
         _optimize_gelu_tanh_transpose_passthrough_chains(model_ir)
         _optimize_center_size_offset_terminal_transpose_chains(model_ir)
@@ -65605,8 +65614,15 @@ def lower_onnx_to_ir(
     # Late affine/fusion cleanups can recreate
     # TRANSPOSE->(ADD/MUL hard-sigmoid-like)->MUL->TRANSPOSE wrappers.
     # Run strict hard-sigmoid transpose passthrough once more at terminal stage.
-    _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir)
-    _optimize_hardsigmoid_transpose_passthrough_chains(model_ir)
+    run_hard_activation_passthrough_cleanup(
+        model_ir,
+        include_hardswish=False,
+        include_hardsigmoid=True,
+        include_hardsigmoid_mul=True,
+        reverse_hardsigmoid_order=True,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     if optimize_layout_transpose_chains:
         _optimize_layout_transpose_chains(model_ir)
     # Absolute-end cleanup: late bridge rewrites can recreate strict
