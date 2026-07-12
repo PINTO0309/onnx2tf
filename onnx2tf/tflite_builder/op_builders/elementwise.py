@@ -1770,7 +1770,12 @@ def _prepare_passthrough_unary_runtime(
     input_dtype = str(ctx.get_tensor_dtype(input_name)).upper()
     output_dtype = str(ctx.get_tensor_dtype(output_name)).upper()
     op_tag = str(getattr(node, "op_type", getattr(node, "op", "unary"))).lower()
-    if input_dtype == output_dtype:
+    requires_wide_integer_sign_adapter = (
+        op_tag == "sign"
+        and input_dtype in {"INT64", "UINT64"}
+        and output_dtype == input_dtype
+    )
+    if input_dtype == output_dtype and not requires_wide_integer_sign_adapter:
         return str(input_name), str(output_name)
 
     def _add_cast(
@@ -1793,7 +1798,11 @@ def _prepare_passthrough_unary_runtime(
         )
 
     if _is_integer_dtype(input_dtype) and _is_integer_dtype(output_dtype):
-        work_dtype = _normalize_unary_integer_work_dtype(input_dtype)
+        work_dtype = (
+            "FLOAT32"
+            if requires_wide_integer_sign_adapter
+            else _normalize_unary_integer_work_dtype(input_dtype)
+        )
         runtime_input_name = str(input_name)
         runtime_output_name = str(output_name)
         src_tensor = ctx.model_ir.tensors.get(str(input_name), None)

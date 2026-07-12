@@ -93,7 +93,7 @@ historical model records, and inference concurrency of one. Models classified
 as `timeout` in the current managed baseline remain recorded for provenance but
 are automatically excluded from subsequent runs. The active run therefore
 contains 394 models: 345 expected passes and 49 expected non-passes, excluding
-26 recorded timeouts. The active non-passes are 31 accuracy failures and 18
+26 recorded timeouts. The active non-passes are 32 accuracy failures and 17
 missing reports. Tier 5 models cannot be added because the profile loader
 rejects tiers above 4 and node ranges above 1,999.
 
@@ -397,6 +397,20 @@ and from the optimization-disabled graph by `22.74102783203125`; the two ONNX
 Runtime paths differ by `59.61541748046875`. Emulating one host optimizer's
 quantized fusion would therefore neither reproduce the unfused ONNX path nor
 meet the `1e-1` ceiling, so the portable explicit-Q/DQ lowering is retained.
+
+`rtdetrv4_s.onnx` now executes after wide-integer Sign lowering routes
+INT64/UINT64 values through FLOAT32 SIGN and casts the `{-1,0,1}` result back to
+the ONNX integer dtype. Casting through FLOAT32 is exact for sign semantics even
+at integer extrema, unlike narrowing to INT32. The model moves from a missing
+report to an active non-pass with normalized reason
+`builtin_conv_accumulation_amplified_by_topk`. Under the evaluator's required
+builtin-only LiteRT path, 278 of 300 labels differ after TopK and the score
+maximum error is `0.37020038068294525`; the aggregate maximum is `79.0` from
+integer labels. With the same artifact and inputs under LiteRT's default
+XNNPACK delegate, all labels and zero-scaled boxes match exactly and score
+maximum error is only `4.954636096954346e-6`. The evaluator remains
+builtin-only for portability and dynamic-shape crash isolation; the converter
+does not make XNNPACK a hidden accuracy dependency or alter TopK tie semantics.
 
 The root-only Tier 4 gate at commit `0a8ee88` contains 30 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier4_root_0a8ee88.json`: 12

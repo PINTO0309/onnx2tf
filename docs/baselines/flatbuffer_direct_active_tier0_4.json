@@ -2393,9 +2393,10 @@
     {
       "tier": 3,
       "model": "rtdetrv4_s.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "89f1c401ebba34f7ff14255ba823d701d215a9f265b4010910d7c4686e79fa32"
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "builtin_conv_accumulation_amplified_by_topk",
+      "error_signature_sha256": "743900046d8e38c14684c26f9df0c0fcd60a95f014698a135d2162ef77b8ae05",
+      "tflite_max_abs": 79.0
     },
     {
       "tier": 3,

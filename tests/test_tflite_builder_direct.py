@@ -1432,6 +1432,18 @@ def _make_sign_after_int64_add_model() -> onnx.ModelProto:
     return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
 
 
+def _make_direct_int64_sign_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.INT64, [1, 5])
+    y = helper.make_tensor_value_info("y", TensorProto.INT64, [1, 5])
+    graph = helper.make_graph(
+        [helper.make_node("Sign", ["x"], ["y"], name="DirectInt64Sign")],
+        "direct_int64_sign_graph",
+        [x],
+        [y],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 16)])
+
+
 def _make_unique_axis0_rank2_output0_only_model() -> onnx.ModelProto:
     x = helper.make_tensor_value_info("x", TensorProto.INT32, [6, 2])
     y = helper.make_tensor_value_info("y", TensorProto.INT64, ["M", 2])
@@ -39151,6 +39163,23 @@ def test_flatbuffer_direct_sign_after_int64_add_preserves_unary_runtime_dtype_ma
     assert len(final_cast_ops) == 1
 
 
+def test_flatbuffer_direct_direct_int64_sign_uses_float_sign_adapter() -> None:
+    model_ir = lower_onnx_to_ir(
+        _make_direct_int64_sign_model(),
+        output_file_name="direct_int64_sign_ir_test",
+    )
+    assert [str(op.op_type) for op in model_ir.operators] == [
+        "CAST",
+        "SIGN",
+        "CAST",
+    ]
+    sign_op = model_ir.operators[1]
+    assert model_ir.tensors[str(sign_op.inputs[0])].dtype == "FLOAT32"
+    assert model_ir.tensors[str(sign_op.outputs[0])].dtype == "FLOAT32"
+    assert model_ir.tensors["x"].dtype == "INT64"
+    assert model_ir.tensors["y"].dtype == "INT64"
+
+
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
 def test_flatbuffer_direct_abs_after_int64_add_builtin_smoke() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -39203,6 +39232,35 @@ def test_flatbuffer_direct_sign_after_int64_add_builtin_smoke() -> None:
 
         expected = np.sign(x + np.asarray([[1, -2, 3, -4]], dtype=np.int64)).astype(np.int64)
         np.testing.assert_array_equal(out, expected)
+
+
+@pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")
+def test_flatbuffer_direct_direct_int64_sign_builtin_extreme_values() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        model_path = _save_model(
+            tmpdir,
+            "direct_int64_sign",
+            _make_direct_int64_sign_model(),
+        )
+        tflite_path = _convert(
+            model_path,
+            os.path.join(tmpdir, "out"),
+            "flatbuffer_direct",
+        )
+        interpreter = Interpreter(model_path=tflite_path)
+        interpreter.allocate_tensors()
+        values = np.asarray(
+            [[np.iinfo(np.int64).min, -1, 0, 1, np.iinfo(np.int64).max]],
+            dtype=np.int64,
+        )
+        input_detail = interpreter.get_input_details()[0]
+        interpreter.set_tensor(input_detail["index"], values)
+        interpreter.invoke()
+        actual = interpreter.get_tensor(interpreter.get_output_details()[0]["index"])
+        np.testing.assert_array_equal(
+            actual,
+            np.asarray([[-1, -1, 0, 1, 1]], dtype=np.int64),
+        )
 
 
 @pytest.mark.skipif(not _requires_flatbuffer_tools(), reason="flatbuffer_direct requires bundled schema artifacts")

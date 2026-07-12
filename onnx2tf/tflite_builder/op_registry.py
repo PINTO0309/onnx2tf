@@ -7519,7 +7519,7 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "Sign": DispatchEntry(
         onnx_op="Sign",
-        tflite_ops=["SIGN"],
+        tflite_ops=["SIGN", "CAST"],
         builder=_make_unary_builder("SIGN"),
         validation=ValidationSpec(min_inputs=1, max_inputs=1, min_outputs=1, max_outputs=1),
     ),

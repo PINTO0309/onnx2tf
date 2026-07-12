@@ -957,9 +957,9 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 18,
+        "missing_tflite_report": 17,
         "pass": 345,
-        "tflite_fail": 31,
+        "tflite_fail": 32,
         "timeout": 26,
     }
     assert profile["model_options"]["silero_vad.onnx"] == {
@@ -1144,6 +1144,19 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert conv_tasnet_entry["error_signature_sha256"] == (
         "1a12a88b8f42185e545973a18cc67b274f6b1c7a01b21319ffeaeecf4fdb6052"
     )
+    rtdetrv4_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "rtdetrv4_s.onnx"
+    )
+    assert rtdetrv4_entry["baseline_classification"] == "tflite_fail"
+    assert rtdetrv4_entry["baseline_reason"] == (
+        "builtin_conv_accumulation_amplified_by_topk"
+    )
+    assert rtdetrv4_entry["error_signature_sha256"] == (
+        "743900046d8e38c14684c26f9df0c0fcd60a95f014698a135d2162ef77b8ae05"
+    )
+    assert rtdetrv4_entry["tflite_max_abs"] == 79.0
     version_rfb_entry = next(
         entry
         for entry in profile_payload["models"]
