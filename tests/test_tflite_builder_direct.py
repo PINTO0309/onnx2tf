@@ -42,6 +42,7 @@ from onnx2tf.tflite_builder.passes.attention_layout import (
     run_qkv_attention_bridge_cleanup,
     run_qkv_attention_prefix_cleanup,
 )
+from onnx2tf.tflite_builder.passes.pad_layout import run_pad_layout_cleanup
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.op_builders.norm import build_instance_normalization_op
 from onnx2tf.tflite_builder.op_builders.control import (
@@ -18496,7 +18497,7 @@ def test_flatbuffer_direct_transpose_nested_weighted_add_swish_prepost_nhwc_chai
     assert [str(v) for v in list(reshape_op.inputs)] == ["y_nhwc", "reshape_shape"]
 
 
-def test_flatbuffer_direct_transpose_pad_prepost_nhwc_chain_optimized() -> None:
+def test_flatbuffer_direct_transpose_pad_prepost_nhwc_chain_optimized(monkeypatch) -> None:
     model_ir = ModelIR("transpose_pad_prepost_nhwc_chain_opt_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
@@ -18563,8 +18564,29 @@ def test_flatbuffer_direct_transpose_pad_prepost_nhwc_chain_optimized() -> None:
         OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_pad_prepost_nhwc_chains(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict[str, Any]] = []
+    stats = run_pad_layout_cleanup(model_ir, diagnostics=diagnostics)
     assert stats["optimized_transpose_pad_prepost_nhwc_chains"] == 1
+    assert refresh_count == 1
+    assert [event["code"] for event in diagnostics] == [
+        "layout.pad_prepost_nhwc",
+        "layout.unary_pad_prepost_nhwc",
+        "layout.norm_subgraph_pad_prepost_nhwc",
+    ]
+    assert [event["status"] for event in diagnostics] == [
+        "changed",
+        "skipped",
+        "skipped",
+    ]
 
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("TRANSPOSE") == 0

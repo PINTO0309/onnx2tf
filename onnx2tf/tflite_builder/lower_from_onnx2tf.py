@@ -99,6 +99,7 @@ from onnx2tf.tflite_builder.passes.pad_layout import (
     _optimize_transpose_pad_prepost_nhwc_chains as _optimize_transpose_pad_prepost_nhwc_chains_pass,
     _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains as _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains_pass,
     repair_channel_last_inputs_for_channel_first_pad,
+    run_pad_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.quantized_layout import (
     repair_channel_last_convinteger_input_transposes,
@@ -64613,9 +64614,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_pad_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(model_ir)
-        _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir)
+        run_pad_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir)
         _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir)
         _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
@@ -64729,9 +64732,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_pad_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(model_ir)
-        _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir)
+        run_pad_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir)
         _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir)
         _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
@@ -64854,9 +64859,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_pad_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(model_ir)
-        _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir)
+        run_pad_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir)
         _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir)
         _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
@@ -64992,9 +64999,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_pad_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(model_ir)
-        _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir)
+        run_pad_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir)
         _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir)
         _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
@@ -65059,9 +65068,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
         _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_pad_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(model_ir)
-        _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir)
+        run_pad_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir)
         _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir)
         _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
@@ -65181,9 +65192,11 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     # Boundary input layout recovery can recreate input-head PAD wrappers.
-    _optimize_transpose_pad_prepost_nhwc_chains(model_ir)
-    _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(model_ir)
-    _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir)
+    run_pad_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     # Final transpose-only sweep after boundary rewrites. This removes
     # inverse/identity pairs introduced late by localized layout adapters.
     _optimize_layout_transpose_chains(model_ir)
@@ -65465,9 +65478,11 @@ def lower_onnx_to_ir(
     # Remap squeeze/mean axes in NHWC and drop the transpose.
     _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains(model_ir)
     # Very late transpose/layout rewrites can recreate PAD-adjacent NCHW wrappers.
-    _optimize_transpose_pad_prepost_nhwc_chains(model_ir)
-    _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(model_ir)
-    _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir)
+    run_pad_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(model_ir)
     _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(model_ir)
     _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(model_ir)
@@ -65665,7 +65680,13 @@ def lower_onnx_to_ir(
             number_of_dimensions_after_flexstridedslice_compression=number_of_dimensions_after_flexstridedslice_compression,
             protected_boundary_tensor_names=protected_boundary_tensor_names,
         )
-        fallback_norm_stats = _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(fallback_ir)
+        fallback_norm_stats = run_pad_layout_cleanup(
+            fallback_ir,
+            include_pad=False,
+            include_unary=False,
+            include_norm=True,
+            diagnostics=session.diagnostics,
+        )
         if int(fallback_norm_stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)) > 0:
             _repair_rank4_binary_layout_mismatch_with_transpose_adapter(fallback_ir)
             _repair_rank4_binary_singleton_broadcast_layout_mismatch(fallback_ir)

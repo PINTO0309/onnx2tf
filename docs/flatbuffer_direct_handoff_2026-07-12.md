@@ -1149,6 +1149,46 @@ Do not merge the prefix and tail QKV runners: their third tail invocation is a
 late recovery pass with no matching prefix, so merging would change exposure
 and ordering semantics.
 
+AST call-frequency analysis selected the Pad layout family next: normalization
+Pad propagation appeared eight times, while direct Pad and unary-Pad
+propagation appeared seven times each. Seven sites contained the exact same
+three-step sequence; the eighth norm call belongs to fallback recovery.
+
+All seven triples now call `run_pad_layout_cleanup` in the original order with
+stable `LAYOUT_PLAN` IDs `layout.pad_prepost_nhwc`,
+`layout.unary_pad_prepost_nhwc`, and
+`layout.norm_subgraph_pad_prepost_nhwc`. The fallback uses the same runner with
+only the norm spec enabled and retains the returned statistics that gate its
+subsequent repairs.
+
+The three implementations now share ModelIRGraphIndex/LayoutState. Operator
+input/output changes use indexed mutation, transpose removal and legacy
+adapter insertion use structural index operations, and pruned tensors remove
+their layout entries. The complex normalization rewrite also uses the updated
+index when deciding whether bypass adapters are dead, eliminating its extra
+consumer-map rebuild. Model-only and exact indexed topology guards avoid state
+and snapshots for irrelevant direct, unary, and normalization patterns.
+
+Sequential verification completed with:
+
+- `12 passed, 772 deselected` for direct Pad, MirrorPad, unary side-consumer,
+  normalization bypass/shared/external, InstanceNorm, and global-norm Pad
+  fixtures;
+- `24 passed` for architecture and deterministic pass-efficiency checks;
+- `1080 passed, 5 deselected, 2 warnings in 137.11s` for the full direct suite;
+- Tier 2 `sinet_320_op.onnx` `-cotof` evaluation with every output compared,
+  `evaluation_pass=true`, maximum absolute error
+  `2.572051016613841e-09`, and zero Pad-family snapshots.
+
+All temporary output, log, and internal metrics files were deleted. Validation
+remained single-process and sequential; no dependency or TensorFlow import was
+introduced.
+
+The next Pad-family unit should evaluate the two repeated
+InstanceNorm→global-norm sequence and the two standalone global-norm recovery
+calls. Group only the two exact pairs; retain the standalone calls and first
+make both implementations differential-index aware.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

@@ -4,6 +4,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _append_tensor_lineage_event,
     _broadcast_static_shapes,
@@ -21,6 +28,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_outputs,
     _write_const_ints_to_tensor,
 )
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
 
 
@@ -168,7 +176,12 @@ def repair_channel_last_inputs_for_channel_first_pad(model_ir: ModelIR) -> Dict[
     return {"repaired_channel_last_inputs_for_channel_first_pad": int(repaired)}
 
 
-def _optimize_transpose_pad_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_pad_prepost_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Eliminate NHWC<->NCHW transpose wrappers around PAD/MIRROR_PAD when they can run in NHWC.
 
@@ -186,13 +199,14 @@ def _optimize_transpose_pad_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
     - Static 4x2 pads tensor available.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for post_idx, post_op in enumerate(model_ir.operators):
@@ -257,6 +271,7 @@ def _optimize_transpose_pad_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
                 model_ir=model_ir,
                 op=pad_op,
                 new_inputs=new_pad_inputs,
+                graph_index=graph_index,
             )
 
             # Convert pad spec NCHW [N,C,H,W] -> NHWC [N,H,W,C].
@@ -273,6 +288,7 @@ def _optimize_transpose_pad_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
                 model_ir=model_ir,
                 op=pad_op,
                 new_outputs=[post_output_name],
+                graph_index=graph_index,
             )
 
             old_pad_tensor = model_ir.tensors.get(str(pad_output_name), None)
@@ -296,7 +312,7 @@ def _optimize_transpose_pad_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
             if len(pre_remaining_users) == 0:
                 remove_indices.add(int(pre_idx))
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -305,12 +321,17 @@ def _optimize_transpose_pad_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, 
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_pad_prepost_nhwc_chains": int(rewritten)}
 
 
 def _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Eliminate NHWC<->NCHW transpose wrappers around UNARY->PAD/MIRROR_PAD tails.
@@ -330,6 +351,7 @@ def _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
       NHWC->NCHW transpose adapter.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     adapter_perm_name = "__unary_pad_tail_nhwc_to_nchw_perm_rank4__"
@@ -360,8 +382,8 @@ def _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for post_idx, post_op in enumerate(model_ir.operators):
@@ -472,6 +494,7 @@ def _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
                     model_ir=model_ir,
                     op=unary_op,
                     new_outputs=[str(adapter_input_name)],
+                    graph_index=graph_index,
                 )
             else:
                 _permute_tensor_metadata_if_rank_matches(
@@ -483,6 +506,7 @@ def _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
                 model_ir=model_ir,
                 op=unary_op,
                 new_inputs=[str(pre_input_name)],
+                graph_index=graph_index,
             )
 
             if len(legacy_consumer_slots) > 0:
@@ -550,6 +574,7 @@ def _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
                         op=consumer_op,
                         input_index=0,
                         new_input_name=str(adapter_input_name),
+                        graph_index=graph_index,
                     )
                     _permute_tensor_metadata_if_rank_matches(
                         model_ir.tensors.get(mean_out_name, None),
@@ -569,6 +594,7 @@ def _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
                 model_ir=model_ir,
                 op=pad_op,
                 new_inputs=pad_inputs,
+                graph_index=graph_index,
             )
 
             pads_nhwc = np.asarray(
@@ -583,6 +609,7 @@ def _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
                 model_ir=model_ir,
                 op=pad_op,
                 new_outputs=[post_output_name],
+                graph_index=graph_index,
             )
 
             old_pad_tensor = model_ir.tensors.get(str(pad_output_name), None)
@@ -602,7 +629,7 @@ def _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
                 )
 
             for remove_idx in sorted([int(pre_idx), int(post_idx)], reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             if len(legacy_consumer_slots) > 0:
                 if adapter_perm_name not in model_ir.tensors:
@@ -630,7 +657,7 @@ def _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
                         continue
                     slot_targets.append((int(consumer_index), int(input_index)))
                 if len(slot_targets) > 0:
-                    model_ir.operators.insert(
+                    graph_index.insert_operator(
                         int(min(int(v[0]) for v in slot_targets)),
                         OperatorIR(
                             op_type="TRANSPOSE",
@@ -646,7 +673,9 @@ def _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains": int(rewritten)}
 
 
@@ -1001,7 +1030,12 @@ def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(model_ir: ModelIR)
     return {"optimized_transpose_pad_mul_posttranspose_add_nhwc_chains": int(rewritten)}
 
 
-def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Eliminate NHWC<->NCHW wrappers around closed rank-4 norm subgraphs ending in PAD.
 
@@ -1021,6 +1055,7 @@ def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir: ModelIR)
     - Keeps rewrite strict with a limited op whitelist.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     allowed_op_types = {
@@ -1097,13 +1132,14 @@ def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir: ModelIR)
             op=op,
             input_index=int(input_index),
             new_input_name=clone_name,
+            graph_index=graph_index,
         )
         return str(clone_name)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
         channel_last_hints = set(
             str(v) for v in model_ir.metadata.get("assume_channel_last_layout_tensor_names", [])
@@ -1445,6 +1481,7 @@ def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir: ModelIR)
                     model_ir=model_ir,
                     op=producer_op,
                     new_outputs=producer_outputs,
+                    graph_index=graph_index,
                 )
                 for region_user_idx in sorted(list(region_index_set)):
                     region_user_op = model_ir.operators[int(region_user_idx)]
@@ -1456,6 +1493,7 @@ def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir: ModelIR)
                             op=region_user_op,
                             input_index=int(input_index),
                             new_input_name=str(internal_output_name),
+                            graph_index=graph_index,
                         )
                 outside_user_op_ids = [
                     int(id(model_ir.operators[int(user_idx)]))
@@ -1526,6 +1564,7 @@ def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir: ModelIR)
                     model_ir=model_ir,
                     op=op,
                     new_inputs=new_inputs,
+                    graph_index=graph_index,
                 )
             if not rewire_ok:
                 continue
@@ -1678,6 +1717,7 @@ def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir: ModelIR)
                 model_ir=model_ir,
                 op=pad_op,
                 new_outputs=[post_out_name],
+                graph_index=graph_index,
             )
             old_pad_tensor = model_ir.tensors.get(str(pad_out_name), None)
             post_out_tensor = model_ir.tensors.get(str(post_out_name), None)
@@ -1698,13 +1738,11 @@ def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir: ModelIR)
             remove_indices = {int(pre_idx), int(post_idx)}
             for bypass_idx in list(bypass_transpose_indices):
                 bypass_out_name = str(model_ir.operators[int(bypass_idx)].outputs[0])
-                remaining_users = [
-                    int(v) for v in _build_tensor_consumer_map(model_ir).get(bypass_out_name, [])
-                ]
+                remaining_users = graph_index.consumer_indices(bypass_out_name)
                 if len(remaining_users) == 0:
                     remove_indices.add(int(bypass_idx))
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             if len(shared_output_adapter_specs) > 0:
                 if legacy_rank4_adapter_perm_name not in model_ir.tensors:
@@ -1730,7 +1768,7 @@ def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir: ModelIR)
                         insertion_index = int(len(model_ir.operators))
                     else:
                         continue
-                    model_ir.operators.insert(
+                    graph_index.insert_operator(
                         int(insertion_index),
                         OperatorIR(
                             op_type="TRANSPOSE",
@@ -1763,7 +1801,7 @@ def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir: ModelIR)
                     if len(insertion_candidates) == 0:
                         continue
                     insertion_index = int(min(insertion_candidates))
-                    model_ir.operators.insert(
+                    graph_index.insert_operator(
                         int(insertion_index),
                         OperatorIR(
                             op_type="TRANSPOSE",
@@ -1779,8 +1817,219 @@ def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(model_ir: ModelIR)
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains": int(rewritten)}
+
+
+def run_pad_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    include_pad: bool = True,
+    include_unary: bool = True,
+    include_norm: bool = True,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run the contiguous Pad layout propagation family in fixed order."""
+
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+    perm_nchw_to_nhwc = [0, 2, 3, 1]
+    unary_types = {
+        "RELU",
+        "RELU6",
+        "RELU_0_TO_1",
+        "HARD_SWISH",
+        "LEAKY_RELU",
+        "LOGISTIC",
+        "TANH",
+        "GELU",
+        "ABS",
+        "NEG",
+        "SQRT",
+        "EXP",
+        "FLOOR",
+        "CEIL",
+    }
+    norm_types = {"MEAN", "SUB", "MUL", "ADD", "SQRT", "DIV", "RELU", "RELU6"}
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        transpose_count = 0
+        has_pad = False
+        for visited, op in enumerate(candidate_model.operators, start=1):
+            op_type = str(op.op_type)
+            transpose_count += int(op_type == "TRANSPOSE")
+            has_pad = has_pad or op_type in {"PAD", "MIRROR_PAD"}
+            if has_pad and transpose_count >= 2:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _post_pad_candidates(pass_state: ModelIRPassState) -> List[Tuple[int, OperatorIR]]:
+        candidates: List[Tuple[int, OperatorIR]] = []
+        for post_op in pass_state.model_ir.operators:
+            if (
+                str(post_op.op_type) != "TRANSPOSE"
+                or len(post_op.inputs) < 2
+                or _read_transpose_perm(pass_state.model_ir, post_op) != perm_nchw_to_nhwc
+            ):
+                continue
+            pad_idx = pass_state.graph_index.producers.get(str(post_op.inputs[0]))
+            if pad_idx is None:
+                continue
+            pad_op = pass_state.model_ir.operators[int(pad_idx)]
+            if str(pad_op.op_type) in {"PAD", "MIRROR_PAD"} and len(pad_op.inputs) >= 2:
+                candidates.append((int(pad_idx), pad_op))
+        return candidates
+
+    def _has_pad_candidate(pass_state: ModelIRPassState) -> bool:
+        for _, pad_op in _post_pad_candidates(pass_state):
+            pre_idx = pass_state.graph_index.producers.get(str(pad_op.inputs[0]))
+            if pre_idx is None:
+                continue
+            pre_op = pass_state.model_ir.operators[int(pre_idx)]
+            if (
+                str(pre_op.op_type) == "TRANSPOSE"
+                and _read_transpose_perm(pass_state.model_ir, pre_op) == perm_nhwc_to_nchw
+            ):
+                return True
+        return False
+
+    def _has_unary_candidate(pass_state: ModelIRPassState) -> bool:
+        for _, pad_op in _post_pad_candidates(pass_state):
+            unary_idx = pass_state.graph_index.producers.get(str(pad_op.inputs[0]))
+            if unary_idx is None:
+                continue
+            unary_op = pass_state.model_ir.operators[int(unary_idx)]
+            if str(unary_op.op_type) not in unary_types or len(unary_op.inputs) != 1:
+                continue
+            pre_idx = pass_state.graph_index.producers.get(str(unary_op.inputs[0]))
+            if pre_idx is None:
+                continue
+            pre_op = pass_state.model_ir.operators[int(pre_idx)]
+            if (
+                str(pre_op.op_type) == "TRANSPOSE"
+                and _read_transpose_perm(pass_state.model_ir, pre_op) == perm_nhwc_to_nchw
+            ):
+                return True
+        return False
+
+    def _has_norm_candidate(pass_state: ModelIRPassState) -> bool:
+        for _, pad_op in _post_pad_candidates(pass_state):
+            pending = [str(pad_op.inputs[0])]
+            visited: set[str] = set()
+            while pending:
+                tensor_name = pending.pop()
+                if tensor_name in visited:
+                    continue
+                visited.add(tensor_name)
+                producer_idx = pass_state.graph_index.producers.get(tensor_name)
+                if producer_idx is None:
+                    continue
+                producer_op = pass_state.model_ir.operators[int(producer_idx)]
+                if str(producer_op.op_type) == "TRANSPOSE":
+                    if _read_transpose_perm(pass_state.model_ir, producer_op) == perm_nhwc_to_nchw:
+                        return True
+                    continue
+                if str(producer_op.op_type) not in norm_types:
+                    continue
+                pending.extend(str(name) for name in producer_op.inputs)
+        return False
+
+    def _run_pad(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_pad_prepost_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("optimized_transpose_pad_prepost_nhwc_chains", 0)),
+        }
+
+    def _run_unary(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains",
+                    0,
+                )
+            ),
+        }
+
+    def _run_norm(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)
+            ),
+        }
+
+    specs: List[PassSpec[ModelIRPassState]] = []
+    if include_pad:
+        specs.append(
+            PassSpec(
+                pass_id="layout.pad_prepost_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_pad,
+                precondition=_has_pad_candidate,
+                priority=10,
+                transactional=True,
+            )
+        )
+    if include_unary:
+        specs.append(
+            PassSpec(
+                pass_id="layout.unary_pad_prepost_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_unary,
+                precondition=_has_unary_candidate,
+                priority=20,
+                transactional=True,
+            )
+        )
+    if include_norm:
+        specs.append(
+            PassSpec(
+                pass_id="layout.norm_subgraph_pad_prepost_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_norm,
+                precondition=_has_norm_candidate,
+                priority=30,
+                transactional=True,
+            )
+        )
+    if len(specs) == 0:
+        return {
+            "optimized_transpose_pad_prepost_nhwc_chains": 0,
+            "optimized_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains": 0,
+            "optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains": 0,
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=specs,
+        layout_state=layout_state,
+        default_details={
+            "optimized_transpose_pad_prepost_nhwc_chains": 0,
+            "optimized_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains": 0,
+            "optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_transpose_instancenorm_pad_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:

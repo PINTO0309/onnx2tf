@@ -155,6 +155,19 @@ Flatten/global-normalization followed by Pad is likewise owned by
 Pad, and inverse-transpose topology is validated before rewriting; scalar and
 layout-sensitive constants are handled by its nested guarded helpers.
 
+The three most frequently repeated Pad layout passes now execute through
+`run_pad_layout_cleanup`. At seven unchanged production positions it registers
+`layout.pad_prepost_nhwc`, `layout.unary_pad_prepost_nhwc`, and
+`layout.norm_subgraph_pad_prepost_nhwc` with priorities 10/20/30 in
+`LAYOUT_PLAN`; the fallback recovery invokes the same runner with only the norm
+spec enabled. Each rewrite accepts the state-owned ModelIRGraphIndex and
+LayoutState. Input/output mutation, transpose removal, and required adapter
+insertion update the differential index directly, while tensor pruning removes
+layout entries. A shared model-only Pad/Transpose scan avoids state allocation
+on irrelevant graphs, and indexed topology guards prevent transactional
+snapshots unless the corresponding direct, unary, or normalization region can
+exist. Existing compatibility wrappers remain available.
+
 Attention-specific layout propagation lives in
 `passes/attention_layout.py`. Its first family member reconciles parallel
 channel Mean and ReduceMax branches before Concat/MirrorPad/Conv. The pass is
