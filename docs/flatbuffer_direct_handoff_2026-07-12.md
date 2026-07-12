@@ -633,6 +633,35 @@ constant dtype/shape/content separately and cache immutable buffer digests.
 Then add idempotence and two-state cycle tests before enabling iterations above
 one for any production pass.
 
+`ModelIRPassState` now supplies that deterministic fingerprint. It covers
+topology, subgraphs, boundaries, tensor semantic metadata and provenance,
+operator options/axis semantics/provenance, LayoutState, and constant content,
+while excluding lineage metadata that should not affect graph fixed points.
+Constant ndarrays become read-only lazily on the first fingerprint and content
+digests are cached by object identity; replacing a buffer invalidates the
+identity naturally. A two-state Add/Mul toggle proves deterministic cycle stop
+after two iterations and emits `cycle_stopped` diagnostics.
+
+To preserve large-model efficiency, the manager now computes fingerprints only
+for specs whose `max_iterations` exceeds one. Current one-shot production
+passes therefore do not serialize ModelIR or freeze constants at all. Their
+explicit `changed` result remains the source of truth.
+
+Verification completed with:
+
+- `19 passed` for the complete core contracts, including fingerprint
+  determinism, constant mutation sensitivity/cache behavior, cycle stop, and
+  zero fingerprint work for one-shot passes;
+- `1036 passed, 5 deselected, 2 warnings in 131.04s` for the full sequential
+  direct suite.
+
+The next pass-manager gap is phase-boundary observability. The current
+production runner calls are separate groups, so `PassPhase` orders specs within
+each group but does not yet produce a conversion-wide phase trace. Add a small
+session-owned invocation counter/phase event contract, without reordering
+calls, so diagnostics distinguish repeated invocations of the same stable pass
+ID. This should remain internal and must not alter report schemas.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

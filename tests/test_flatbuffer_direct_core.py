@@ -300,6 +300,31 @@ def test_pass_precondition_skips_snapshot_callback_and_validation() -> None:
     assert results[0].details == {"skipped_by_precondition": True}
 
 
+def test_single_iteration_pass_skips_fingerprint_work() -> None:
+    state = {"value": 0}
+    fingerprint_calls = 0
+
+    def fingerprint(value: dict) -> bytes:
+        nonlocal fingerprint_calls
+        fingerprint_calls += 1
+        return str(value["value"]).encode()
+
+    manager = OrderedPassManager[dict](fingerprint=fingerprint)
+    manager.register(
+        PassSpec(
+            pass_id="single_iteration",
+            phase=PassPhase.CANONICALIZE,
+            callback=lambda value: value.update(value=1) or {"changed": True},
+        )
+    )
+
+    results = manager.run(state)
+
+    assert state == {"value": 1}
+    assert results[0].changed is True
+    assert fingerprint_calls == 0
+
+
 def test_transactional_pass_rolls_back_on_invariant_failure() -> None:
     state = {"values": [1]}
     manager = OrderedPassManager[dict](
@@ -345,6 +370,77 @@ def test_model_ir_pass_state_restores_graph_index_and_layout_state() -> None:
     assert state.graph_index.producer("z") is model_ir.operators[0]
     assert state.layout_state is not None
     assert state.layout_state.validate_against_model_ir(model_ir) == []
+
+
+def test_model_ir_pass_state_fingerprint_is_deterministic_and_caches_constants() -> None:
+    model_ir = _add_model_ir()
+    constant = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
+    model_ir.tensors["constant"] = TensorIR(
+        name="constant",
+        dtype="FLOAT32",
+        shape=[3],
+        shape_signature=[3],
+        data=constant,
+    )
+    state = ModelIRPassState(model_ir)
+
+    initial = state.fingerprint()
+    repeated = state.fingerprint()
+
+    assert initial == repeated
+    assert len(state._constant_digest_cache) == 1
+    assert constant.flags.writeable is False
+    with pytest.raises(ValueError):
+        constant[0] = 9.0
+
+    model_ir.operators[0].options["fusedActivationFunction"] = "RELU"
+    assert state.fingerprint() != initial
+    model_ir.operators[0].options.clear()
+    model_ir.tensors["constant"].data = np.asarray(
+        [1.0, 2.0, 4.0],
+        dtype=np.float32,
+    )
+    assert state.fingerprint() != initial
+    assert len(state._constant_digest_cache) == 2
+
+
+def test_model_ir_pass_group_stops_and_records_two_state_cycle() -> None:
+    model_ir = _add_model_ir()
+    diagnostics: list[dict] = []
+
+    def toggle_operator(state: ModelIRPassState) -> dict:
+        operator = state.model_ir.operators[0]
+        operator.op_type = "MUL" if operator.op_type == "ADD" else "ADD"
+        return {"changed": True}
+
+    _, results = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="canonicalize.toggle",
+                phase=PassPhase.CANONICALIZE,
+                callback=toggle_operator,
+                max_iterations=8,
+            )
+        ],
+        diagnostics=diagnostics,
+    )
+
+    assert model_ir.operators[0].op_type == "ADD"
+    assert results[0].iterations == 2
+    assert results[0].changed is True
+    assert results[0].stopped_by_cycle is True
+    assert diagnostics[0] == {
+        "stage": "model_ir_pass",
+        "code": "canonicalize.toggle",
+        "message": "model ir pass cycle_stopped",
+        "phase": "canonicalize",
+        "status": "cycle_stopped",
+        "iterations": 2,
+        "changed": True,
+        "stopped_by_cycle": True,
+        "skipped_by_precondition": False,
+    }
 
 
 def test_model_ir_pass_group_runs_specs_and_normalizes_details() -> None:

@@ -231,6 +231,16 @@ and performs no fingerprint, snapshot, callback, or validation work. The
 duplicate cleanup group uses cheap candidate scans so transactional deep copies
 are reserved for graphs that may actually change.
 
+`ModelIRPassState.fingerprint()` provides deterministic cycle state for
+repeating passes. It covers graph/subgraph topology, public boundaries, tensor
+shape/dtype/layout/quantization/provenance, operator options/axis semantics,
+and constant content while deliberately excluding non-semantic lineage
+metadata. Constant ndarray buffers become read-only when fingerprinting first
+occurs, and their content SHA-256 is cached by object identity; replacement
+buffers receive a new digest. The manager computes fingerprints only when
+`max_iterations > 1`, so current one-shot production passes perform no
+fingerprint serialization or constant freezing.
+
 `ModelIRPassState` is the shared state object for ordered post-lowering groups.
 It owns one ModelIR graph index and one LayoutState, provides combined invariant
 validation, and centralizes deep snapshot/restore with index and layout

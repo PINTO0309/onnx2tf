@@ -110,6 +110,7 @@ class OrderedPassManager(Generic[StateT]):
     def run(self, state: StateT) -> List[PassResult]:
         results: List[PassResult] = []
         for spec in self.ordered_specs():
+            detect_cycles = self._fingerprint is not None and spec.max_iterations > 1
             seen: set[str] = set()
             changed = False
             stopped_by_cycle = False
@@ -119,7 +120,7 @@ class OrderedPassManager(Generic[StateT]):
                 if spec.precondition is not None and not spec.precondition(state):
                     details["skipped_by_precondition"] = True
                     break
-                before = self._digest(state)
+                before = self._digest(state) if detect_cycles else None
                 if before is not None:
                     if before in seen:
                         stopped_by_cycle = True
@@ -140,8 +141,13 @@ class OrderedPassManager(Generic[StateT]):
                         iterations=iterations,
                         problems=problems,
                     )
-                after = self._digest(state)
-                iteration_changed = bool(current.get("changed", before != after))
+                after = self._digest(state) if detect_cycles else None
+                iteration_changed = bool(
+                    current.get(
+                        "changed",
+                        before != after if detect_cycles else False,
+                    )
+                )
                 changed = changed or iteration_changed
                 if not iteration_changed:
                     break
