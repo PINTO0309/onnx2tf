@@ -398,6 +398,25 @@ contract and measure map-build reductions before extending the API. Structural
 mutations that still bypass the index must continue using `refresh()` until
 they are converted explicitly.
 
+Duplicate Transpose fan-out cleanup is now the second differential-index
+consumer and the first member of `passes/graph_cleanup.py`. The canonical bulk
+input replacement helper can update only indexed consumer operators, while
+`ModelIRGraphIndex.remove_operator` maintains shifted producer/consumer and
+operator-identity references. The legacy lowerer entry point delegates to the
+new module. An instrumented fixture requires exactly one `refresh()`—the index
+construction—through a successful deduplication.
+
+Verification completed with:
+
+- `25 passed, 770 deselected` for focused GraphIndex, mutation-helper,
+  architecture, and duplicate-cleanup behavior;
+- `1016 passed, 5 deselected, 2 warnings in 126.24s` for the full sequential
+  direct suite.
+
+The next graph-cleanup increment is duplicate Reshape fan-out, which has an
+existing characterization and can reuse the same indexed consumer replacement
+and structural removal path.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

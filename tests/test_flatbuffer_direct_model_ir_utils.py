@@ -182,6 +182,14 @@ def test_graph_mutation_helpers_update_optional_incremental_index() -> None:
     )
     assert graph_index.consumer_indices("x") == [0]
     assert graph_index.consumer_indices("y") == [0]
+    _replace_tensor_inputs(
+        model_ir,
+        "y",
+        "x",
+        graph_index=graph_index,
+    )
+    assert graph_index.consumer_indices("x") == [0, 0]
+    assert graph_index.consumer_indices("y") == []
     refreshed = ModelIRGraphIndex(model_ir)
     assert graph_index.producers == refreshed.producers
     assert graph_index.consumers == refreshed.consumers

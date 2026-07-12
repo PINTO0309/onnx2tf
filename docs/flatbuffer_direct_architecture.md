@@ -161,6 +161,13 @@ updates input edges through indexed lineage helpers, and removes the redundant
 transpose through `ModelIRGraphIndex.remove_operator`, avoiding a full edge
 rescan after each successful match.
 
+Generic structural deduplication lives in `passes/graph_cleanup.py`. Duplicate
+Transpose fan-out cleanup uses one `ModelIRGraphIndex`, rewires only indexed
+consumers through the lineage-aware bulk input replacement helper, and removes
+duplicates through the structural index API. A focused test instruments
+`refresh()` and requires exactly one initial full index build regardless of the
+successful rewrite.
+
 The attention module also owns the QKV Slice canonicalization pair. One pass
 replaces compatible Slice branches with Gather/Reshape views; the next replaces
 three compatible branches with a single Split. Both require fully known,

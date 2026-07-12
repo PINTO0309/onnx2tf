@@ -328,6 +328,37 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
         assert f"{function_name}_pass" in wrapper_names
 
 
+def test_graph_cleanup_rewrites_have_single_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "graph_cleanup.py"
+    )
+    function_name = "_optimize_duplicate_transpose_fanout"
+
+    def _functions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+    lowering_functions = _functions(lowering_path)
+    assert function_name in _functions(pass_path)
+    wrapper_names = {
+        node.id
+        for node in ast.walk(lowering_functions[function_name])
+        if isinstance(node, ast.Name)
+    }
+    assert f"{function_name}_pass" in wrapper_names
+
+
 def test_attention_layout_rewrites_have_single_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

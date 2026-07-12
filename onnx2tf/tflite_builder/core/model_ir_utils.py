@@ -63,6 +63,7 @@ def _replace_tensor_inputs(
     model_ir: ModelIR,
     src_name: str,
     dst_name: str,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> None:
     if str(src_name) != str(dst_name):
         _append_tensor_lineage_event(
@@ -73,6 +74,18 @@ def _replace_tensor_inputs(
                 "dst_name": str(dst_name),
             },
         )
+    if graph_index is not None and graph_index.model_ir is model_ir:
+        affected_indices = sorted(set(graph_index.consumer_indices(src_name)))
+        for operator_index in affected_indices:
+            op = model_ir.operators[int(operator_index)]
+            graph_index.replace_operator_inputs(
+                operator_index,
+                [
+                    dst_name if input_name == src_name else input_name
+                    for input_name in op.inputs
+                ],
+            )
+        return
     for op in model_ir.operators:
         if op.inputs:
             op.inputs = [
