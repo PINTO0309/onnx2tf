@@ -148,6 +148,7 @@ from onnx2tf.tflite_builder.passes.singleton_reshape_layout import (
     _optimize_consecutive_inverse_singleton_layout_reshapes as _optimize_consecutive_inverse_singleton_layout_reshapes_pass,
     _optimize_flatten_concat_expanddims_to_nhwc_concat as _optimize_flatten_concat_expanddims_to_nhwc_concat_pass,
     _optimize_singleton_layout_reshape_unary_passthrough_chains as _optimize_singleton_layout_reshape_unary_passthrough_chains_pass,
+    run_flatten_concat_reshape_cleanup,
     run_singleton_reshape_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.cast_cleanup import (
@@ -61675,7 +61676,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir)
+        run_flatten_concat_reshape_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_consecutive_reshape_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -61743,7 +61748,11 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir)
+    run_flatten_concat_reshape_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_consecutive_reshape_cleanup(
         model_ir,
         layout_state=session.layout_state,

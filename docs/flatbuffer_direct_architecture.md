@@ -293,7 +293,16 @@ rewrite that keeps the concatenation directly in NHWC. Its rank, singleton
 spatial, batch/channel, axis, single-consumer, and public-output guards remain
 unchanged, as do its inserted side-input Reshape and metadata propagation. The
 193-line implementation moved mechanically with an identical AST; both legacy
-production positions still call the thin lowerer wrapper in the same order.
+production positions retain the same relative order.
+
+Those positions now call `run_flatten_concat_reshape_cleanup`, registered as
+`layout.flatten_concat_expanddims_nhwc` in `LAYOUT_PLAN`. Model-only preflight
+requires Reshape and Concat; an indexed strict-linear
+Reshape→Concat→Reshape guard prevents snapshots on fan-out or unrelated graphs.
+The callback shares one differential index for producer/consumer lookup,
+inserted side-Reshape placement, Concat input/output mutation, downstream edge
+replacement, structural removal, and layout-aware pruning. The legacy helper
+remains a compatibility wrapper only.
 
 Production uses one ordered pass group for that family, with stable IDs
 `layout.singleton_reshape_unary_passthrough` and

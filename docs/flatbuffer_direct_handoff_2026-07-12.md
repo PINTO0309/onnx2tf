@@ -1728,11 +1728,33 @@ Sequential verification completed with:
 - `1101 passed, 5 deselected, 2 warnings in 144.16s` for the full direct suite.
 
 No algorithm, call order, artifact, dependency, or TensorFlow boundary changed.
-The next checkpoint should make this rewrite differential-index and
-`LayoutState` aware, add a stable transactional runner with model-only and
-indexed topology guards, replace both raw production calls, and verify a root
-model sequentially. Do not create a pull request; commit and push only at a
-coherent checkpoint.
+
+The indexed flatten/Concat checkpoint is now complete. Producer/consumer lookup,
+the inserted side-input Reshape, Concat input/output mutation, downstream edge
+replacement, structural removal, and pruning all use a shared differential
+index and `LayoutState`. Both raw production calls were replaced without
+changing their relative order by `run_flatten_concat_reshape_cleanup`, with
+stable ID `layout.flatten_concat_expanddims_nhwc` in `LAYOUT_PLAN`. Model-only
+preflight requires Reshape and Concat, while the indexed strict-linear
+Reshape→Concat→Reshape guard rejects fan-out before snapshotting.
+
+Sequential verification completed with:
+
+- `5 passed` for indexed success/fan-out, ordered diagnostics, ownership, and
+  irrelevant-preflight efficiency;
+- an AST mutation audit showing zero raw production calls, exactly two runner
+  calls, and no direct operator deletion/insertion or local graph-map rebuild;
+- Tier 1 `superpoint.onnx`, where both runtime positions were correctly
+  guard-skipped with zero snapshots, followed by `-cotof` with every output
+  compared, `evaluation_pass=true`, and maximum absolute error
+  `1.6666017472743988e-06`;
+- `1103 passed, 5 deselected, 2 warnings in 144.22s` for the full direct suite.
+
+The generated 18 MB output directory and internal metrics file were deleted.
+Validation remained single-process and sequential, with no new dependency or
+TensorFlow import. Rerun the raw post-lowering inventory before selecting the
+next family. Do not create a pull request; commit and push only at a coherent
+checkpoint.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

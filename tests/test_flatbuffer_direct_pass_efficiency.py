@@ -50,6 +50,7 @@ from onnx2tf.tflite_builder.passes.singleton_maxpool_layout import (
     run_singleton_maxpool_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.singleton_reshape_layout import (
+    run_flatten_concat_reshape_cleanup,
     run_singleton_reshape_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.pad_layout import (
@@ -179,9 +180,10 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_singleton_maxpool_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_singleton_reshape_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_consecutive_reshape_cleanup(model_ir, diagnostics=diagnostics)
+    run_flatten_concat_reshape_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 47
+    assert len(diagnostics) == 48
     assert all(event["status"] == "skipped" for event in diagnostics)
     assert all(
         event["metrics"]

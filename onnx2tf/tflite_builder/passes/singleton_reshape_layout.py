@@ -12,8 +12,6 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _is_fully_known_positive_shape,
     _invert_perm,
@@ -511,7 +509,12 @@ def run_singleton_reshape_layout_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_flatten_concat_expanddims_to_nhwc_concat(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Rewrite 4D->2D flatten concat and 2D->4D reshape back to direct NHWC concat.
 
@@ -526,6 +529,7 @@ def _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir: ModelIR) -> Dic
       CONCAT(axis=3, [a4d,b4d]) -> c4d
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -537,8 +541,7 @@ def _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir: ModelIR) -> Dic
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -649,7 +652,7 @@ def _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir: ModelIR) -> Dic
                 quantization=_clone_quantization(b2d_tensor.quantization),
             )
             concat_pos = int(model_ir.operators.index(concat_op))
-            model_ir.operators.insert(
+            graph_index.insert_operator(
                 int(concat_pos),
                 OperatorIR(
                     op_type="RESHAPE",
@@ -676,13 +679,20 @@ def _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir: ModelIR) -> Dic
                 model_ir=model_ir,
                 op=concat_op,
                 new_inputs=concat_in_4d,
+                graph_index=graph_index,
             )
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=concat_op,
                 new_outputs=[str(c4d_name)],
+                graph_index=graph_index,
             )
-            _replace_tensor_inputs(model_ir, c2d_name, c4d_name)
+            _replace_tensor_inputs(
+                model_ir,
+                c2d_name,
+                c4d_name,
+                graph_index=graph_index,
+            )
 
             remove_indices: List[int] = []
             pre_remove_idx = next((idx for idx, op in enumerate(model_ir.operators) if op is pre_op), None)
@@ -692,7 +702,7 @@ def _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir: ModelIR) -> Dic
             if post_remove_idx is not None:
                 remove_indices.append(int(post_remove_idx))
             for remove_idx in sorted(set(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -702,5 +712,84 @@ def _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir: ModelIR) -> Dic
             break
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_flatten_concat_expanddims_to_nhwc_concat": int(rewritten)}
+
+
+def run_flatten_concat_reshape_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run the fully static 2D-to-NHWC Concat rewrite."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"RESHAPE", "CONCATENATION"}
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            required.discard(str(operator.op_type))
+            if len(required) == 0:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _single_user(
+        pass_state: ModelIRPassState,
+        tensor_name: str,
+    ) -> OperatorIR | None:
+        users = pass_state.graph_index.consumer_indices(str(tensor_name))
+        if len(users) != 1:
+            return None
+        return pass_state.model_ir.operators[int(users[0])]
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        for pre_op in pass_state.model_ir.operators:
+            if str(pre_op.op_type) != "RESHAPE" or len(pre_op.outputs) != 1:
+                continue
+            concat_op = _single_user(pass_state, str(pre_op.outputs[0]))
+            if (
+                concat_op is None
+                or str(concat_op.op_type) != "CONCATENATION"
+                or len(concat_op.outputs) != 1
+            ):
+                continue
+            post_op = _single_user(pass_state, str(concat_op.outputs[0]))
+            if post_op is not None and str(post_op.op_type) == "RESHAPE":
+                return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_flatten_concat_expanddims_to_nhwc_concat(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("rewritten_flatten_concat_expanddims_to_nhwc_concat", 0)
+            ),
+        }
+
+    default_details = {
+        "rewritten_flatten_concat_expanddims_to_nhwc_concat": 0,
+    }
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.flatten_concat_expanddims_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details=default_details,
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
