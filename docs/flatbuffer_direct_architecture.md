@@ -284,6 +284,17 @@ keeps irrelevant recovery sweeps to one cheap operator-type/topology scan and
 eliminates repeated index builds and tensor-layout synchronization on large
 no-candidate graphs.
 
+Production constant-input materialization uses
+`run_constant_input_fold_cleanup` from `passes/constant_fold.py`. Its three
+specs preserve the original dependency order with priorities 10/20/30:
+`canonicalize.constant_input_pad`, `canonicalize.constant_input_pool`, then
+`canonicalize.constant_input_cast`. A materialized Pad output can therefore feed
+Pool folding, whose output can feed Cast folding, all through one differential
+index and LayoutState. Each operator is removed structurally and unused source
+constants are pruned transactionally. The two former lowerer triplets are
+one-to-one group calls; ScatterND and binary constant folding remain independent
+compatibility helpers because they are not part of those production sequences.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

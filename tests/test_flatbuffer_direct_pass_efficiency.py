@@ -16,6 +16,9 @@ from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     run_boundary_input_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.cast_cleanup import run_redundant_cast_cleanup
+from onnx2tf.tflite_builder.passes.constant_fold import (
+    run_constant_input_fold_cleanup,
+)
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     run_clamp_cleanup,
     run_consecutive_mul_constants_cleanup,
@@ -126,11 +129,12 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_squeeze_reshape_identity_cleanup(model_ir, diagnostics=diagnostics)
     run_mixed_attention_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_boundary_input_layout_cleanup(model_ir, diagnostics=diagnostics)
+    run_constant_input_fold_cleanup(model_ir, diagnostics=diagnostics)
     run_redundant_cast_cleanup(model_ir, diagnostics=diagnostics)
     run_terminal_quantize_dequantize_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 11
+    assert len(diagnostics) == 14
     assert all(event["status"] == "skipped" for event in diagnostics)
 
 

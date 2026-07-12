@@ -820,6 +820,35 @@ differentially; do not cache stale topology. Alternatively, migrate an adjacent
 pair into one semantically cohesive group when there is no intervening rewrite,
 as done for Cast cleanup. Measure refresh/snapshot counts before and after.
 
+The two repeated production sequences of constant Pad→Pool→Cast folding are now
+each one `run_constant_input_fold_cleanup` call. Three specs retain the exact
+dependency order with priorities 10, 20, and 30 and stable IDs
+`canonicalize.constant_input_pad`, `canonicalize.constant_input_pool`, and
+`canonicalize.constant_input_cast`. They share one ModelIRGraphIndex and
+LayoutState, remove operators structurally, validate after each materialization,
+and retain the quantized-accumulator runtime Cast guard. ScatterND and binary
+constant folding remain independent compatibility helpers.
+
+A compact full-chain fixture proves that Pad materialization enables Pool and
+then Cast materialization in the same group, with one index build and correct
+FLOAT16 output values. Both former lowerer triplets were replaced one-for-one;
+the diagnostic-wiring assertion now covers 29 production runner calls.
+
+Verification completed with:
+
+- `9 passed, 776 deselected` for the full constant chain, runtime-Cast guard,
+  existing Pad/Pool/Cast characterizations, preflight efficiency, ownership,
+  and production wiring;
+- `1074 passed, 5 deselected, 2 warnings in 137.66s` for the full sequential
+  direct suite.
+
+The next implementation unit should make preflight cost observable per
+production conversion without exposing it publicly. Add lightweight integer
+metrics to internal pass diagnostics—operators visited by preflight, whether
+state was built, and whether a snapshot/fingerprint occurred—using counters
+rather than timers. This will let Tier runs attribute orchestration work before
+attempting a session-wide mutable topology cache.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

@@ -168,10 +168,11 @@ from onnx2tf.tflite_builder.passes.channel_slice_layout import (
 )
 from onnx2tf.tflite_builder.passes.constant_fold import (
     _optimize_constant_binary_elementwise_chains,  # noqa: F401 - compatibility re-export
-    _optimize_constant_input_cast_chains,
-    _optimize_constant_input_pad_chains,
-    _optimize_constant_input_pool_chains,
+    _optimize_constant_input_cast_chains,  # noqa: F401 - compatibility re-export
+    _optimize_constant_input_pad_chains,  # noqa: F401 - compatibility re-export
+    _optimize_constant_input_pool_chains,  # noqa: F401 - compatibility re-export
     _optimize_constant_input_scatter_nd_chains,  # noqa: F401 - compatibility re-export
+    run_constant_input_fold_cleanup,
 )
 from onnx2tf.tflite_builder.reporting import (
     build_op_coverage_report as _build_op_coverage_report,
@@ -66009,9 +66010,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains(model_ir)
     _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
     _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir)
-    _optimize_constant_input_pad_chains(model_ir)
-    _optimize_constant_input_pool_chains(model_ir)
-    _optimize_constant_input_cast_chains(model_ir)
+    run_constant_input_fold_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_redundant_cast_cleanup(
         model_ir,
         layout_state=session.layout_state,
@@ -66028,9 +66031,11 @@ def lower_onnx_to_ir(
     # Fold them again before final shape/topology reconciliation.
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
     _optimize_transpose_gather_transpose_axis_remap_nhwc_chains(model_ir)
-    _optimize_constant_input_pad_chains(model_ir)
-    _optimize_constant_input_pool_chains(model_ir)
-    _optimize_constant_input_cast_chains(model_ir)
+    run_constant_input_fold_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_redundant_cast_cleanup(
         model_ir,
         layout_state=session.layout_state,

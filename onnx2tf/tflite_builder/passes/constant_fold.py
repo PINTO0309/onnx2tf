@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _is_fully_known_positive_shape,
     _prune_unused_tensors,
 )
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR
 
 _TFLITE_DTYPE_TO_NUMPY_DTYPE = {
@@ -271,7 +278,12 @@ def _evaluate_constant_binary_elementwise(
     return np.asarray(out)
 
 
-def _optimize_constant_input_cast_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_constant_input_cast_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Fold CAST when its input tensor already has embedded constant data.
 
@@ -281,6 +293,7 @@ def _optimize_constant_input_cast_chains(model_ir: ModelIR) -> Dict[str, int]:
       CONST(out_casted_data) and remove CAST op.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
@@ -331,7 +344,7 @@ def _optimize_constant_input_cast_chains(model_ir: ModelIR) -> Dict[str, int]:
                 },
             )
 
-            del model_ir.operators[int(cast_idx)]
+            graph_index.remove_operator(int(cast_idx))
             rewritten += 1
             changed = True
             break
@@ -340,11 +353,16 @@ def _optimize_constant_input_cast_chains(model_ir: ModelIR) -> Dict[str, int]:
             break
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"optimized_constant_input_cast_chains": int(rewritten)}
 
 
-def _optimize_constant_input_pool_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_constant_input_pool_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Fold constant-input pool operators by materializing their outputs as constant tensors.
 
@@ -354,6 +372,7 @@ def _optimize_constant_input_pool_chains(model_ir: ModelIR) -> Dict[str, int]:
       CONST(out_pooled_data) and remove the pool op.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
@@ -409,7 +428,7 @@ def _optimize_constant_input_pool_chains(model_ir: ModelIR) -> Dict[str, int]:
                 },
             )
 
-            del model_ir.operators[int(pool_idx)]
+            graph_index.remove_operator(int(pool_idx))
             rewritten += 1
             changed = True
             break
@@ -418,11 +437,16 @@ def _optimize_constant_input_pool_chains(model_ir: ModelIR) -> Dict[str, int]:
             break
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"optimized_constant_input_pool_chains": int(rewritten)}
 
 
-def _optimize_constant_input_pad_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_constant_input_pad_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Fold constant-input PAD/PADV2 operators by materializing their outputs as constant tensors.
 
@@ -432,6 +456,7 @@ def _optimize_constant_input_pad_chains(model_ir: ModelIR) -> Dict[str, int]:
       CONST(out_padded_data) and remove the pad op.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
@@ -492,7 +517,7 @@ def _optimize_constant_input_pad_chains(model_ir: ModelIR) -> Dict[str, int]:
                 },
             )
 
-            del model_ir.operators[int(pad_idx)]
+            graph_index.remove_operator(int(pad_idx))
             rewritten += 1
             changed = True
             break
@@ -501,8 +526,113 @@ def _optimize_constant_input_pad_chains(model_ir: ModelIR) -> Dict[str, int]:
             break
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"optimized_constant_input_pad_chains": int(rewritten)}
+
+
+def run_constant_input_fold_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Materialize constant Pad, Pool, then Cast chains in fixed order."""
+
+    def _preflight(candidate_model: ModelIR) -> bool:
+        return any(
+            str(op.op_type)
+            in {"PAD", "PADV2", "AVERAGE_POOL_2D", "MAX_POOL_2D", "CAST"}
+            for op in candidate_model.operators
+        )
+
+    def _has_pad(pass_state: ModelIRPassState) -> bool:
+        return any(
+            str(op.op_type) in {"PAD", "PADV2"}
+            for op in pass_state.model_ir.operators
+        )
+
+    def _has_pool(pass_state: ModelIRPassState) -> bool:
+        return any(
+            str(op.op_type) in {"AVERAGE_POOL_2D", "MAX_POOL_2D"}
+            for op in pass_state.model_ir.operators
+        )
+
+    def _has_cast(pass_state: ModelIRPassState) -> bool:
+        return any(
+            str(op.op_type) == "CAST" for op in pass_state.model_ir.operators
+        )
+
+    def _run_pad(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_constant_input_pad_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("optimized_constant_input_pad_chains", 0)),
+        }
+
+    def _run_pool(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_constant_input_pool_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("optimized_constant_input_pool_chains", 0)),
+        }
+
+    def _run_cast(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_constant_input_cast_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("optimized_constant_input_cast_chains", 0)),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="canonicalize.constant_input_pad",
+                phase=PassPhase.CANONICALIZE,
+                priority=10,
+                callback=_run_pad,
+                precondition=_has_pad,
+                transactional=True,
+            ),
+            PassSpec(
+                pass_id="canonicalize.constant_input_pool",
+                phase=PassPhase.CANONICALIZE,
+                priority=20,
+                callback=_run_pool,
+                precondition=_has_pool,
+                transactional=True,
+            ),
+            PassSpec(
+                pass_id="canonicalize.constant_input_cast",
+                phase=PassPhase.CANONICALIZE,
+                priority=30,
+                callback=_run_cast,
+                precondition=_has_cast,
+                transactional=True,
+            ),
+        ],
+        layout_state=layout_state,
+        default_details={
+            "optimized_constant_input_pad_chains": 0,
+            "optimized_constant_input_pool_chains": 0,
+            "optimized_constant_input_cast_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_constant_input_scatter_nd_chains(model_ir: ModelIR) -> Dict[str, int]:

@@ -201,6 +201,35 @@ def test_high_rank_matmul_pass_and_prune_utility_have_single_owners() -> None:
         assert "_is_fully_known_positive_shape" not in functions
 
 
+def test_constant_input_fold_rewrites_have_single_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "constant_fold.py"
+    )
+    function_names = {
+        "_optimize_constant_input_cast_chains",
+        "_optimize_constant_input_pad_chains",
+        "_optimize_constant_input_pool_chains",
+    }
+
+    def _functions(path: Path) -> set[str]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+    assert function_names <= _functions(pass_path)
+    assert function_names.isdisjoint(_functions(lowering_path))
+
+
 def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -394,6 +423,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     runner_names = {
         "run_boundary_input_layout_cleanup",
         "run_clamp_cleanup",
+        "run_constant_input_fold_cleanup",
         "run_consecutive_mul_constants_cleanup",
         "run_duplicate_fanout_cleanup",
         "run_mixed_attention_layout_cleanup",
@@ -412,7 +442,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 27
+    assert len(calls) == 29
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
