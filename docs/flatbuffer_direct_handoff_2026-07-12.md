@@ -442,9 +442,23 @@ Verification completed with:
 - `1018 passed, 5 deselected, 2 warnings in 125.98s` for the full sequential
   direct suite.
 
-Continue with another characterized single-producer linear cleanup before
-migrating multi-branch layout passes. Each migration should prove one initial
-index build and no fixed-point refresh.
+The Squeeze/Reshape round-trip identity cleanup now also belongs to
+`passes/graph_cleanup.py`. It validates explicit or inferred squeeze axes,
+singleton dimensions, dynamic-compatible squeezed shape, and restored output
+shape. Indexed consumer replacement and descending structural removals require
+only one initial refresh. `_normalize_squeeze_axes_for_rank` now has one
+canonical implementation in `core/model_ir_utils.py` for all remaining users.
+
+Verification completed with:
+
+- `22 passed, 765 deselected` for focused squeeze-axis utility, architecture,
+  and indexed round-trip cleanup;
+- `1019 passed, 5 deselected, 2 warnings in 126.92s` for the full sequential
+  direct suite.
+
+Continue converting small characterized cleanup passes while the mutation API
+surface remains stable. Defer multi-branch layout migration until indexed
+transaction rollback and LayoutState synchronization are connected.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

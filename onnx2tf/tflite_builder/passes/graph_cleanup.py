@@ -8,6 +8,7 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _clone_quantization,
     _is_singleton_constant_tensor,
+    _normalize_squeeze_axes_for_rank,
     _prune_unused_tensors,
     _read_const_ints_from_tensor,
     _read_singleton_constant_float,
@@ -306,3 +307,132 @@ def _optimize_maximum_minimum_relu0to1_chains(model_ir: ModelIR) -> Dict[str, in
 
     _prune_unused_tensors(model_ir)
     return {"rewritten_maximum_minimum_relu0to1_chains": int(rewritten)}
+
+
+def _optimize_squeeze_reshape_identity_chains(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Remove redundant SQUEEZE -> RESHAPE chains that round-trip to input shape.
+
+    Target:
+      x --SQUEEZE--> s --RESHAPE--> y, where shape(y) == shape(x)
+
+    Rewrite:
+      replace all uses of y with x and remove SQUEEZE/RESHAPE.
+    """
+    rewritten = 0
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    def _shape_list(name: str) -> Optional[List[int]]:
+        tensor = model_ir.tensors.get(str(name), None)
+        if tensor is None or tensor.shape is None:
+            return None
+        return [int(v) for v in list(tensor.shape)]
+
+    def _dims_compatible(a: int, b: int) -> bool:
+        if int(a) < 0 or int(b) < 0:
+            return True
+        return int(a) == int(b)
+
+    def _shape_compatible(a: List[int], b: List[int]) -> bool:
+        if len(a) != len(b):
+            return False
+        return all(_dims_compatible(int(x), int(y)) for x, y in zip(a, b))
+
+    while True:
+        changed = False
+        consumers = graph_index.consumers
+        model_outputs = set(str(v) for v in model_ir.outputs)
+
+        for squeeze_idx, squeeze_op in enumerate(model_ir.operators):
+            if str(squeeze_op.op_type) != "SQUEEZE" or len(squeeze_op.inputs) != 1 or len(squeeze_op.outputs) != 1:
+                continue
+
+            squeeze_in_name = str(squeeze_op.inputs[0])
+            squeeze_out_name = str(squeeze_op.outputs[0])
+            if squeeze_out_name in model_outputs:
+                continue
+
+            squeeze_users = [int(v) for v in consumers.get(squeeze_out_name, [])]
+            if len(squeeze_users) != 1:
+                continue
+
+            reshape_idx = int(squeeze_users[0])
+            reshape_op = model_ir.operators[int(reshape_idx)]
+            if (
+                str(reshape_op.op_type) != "RESHAPE"
+                or len(reshape_op.inputs) < 1
+                or len(reshape_op.outputs) != 1
+                or str(reshape_op.inputs[0]) != squeeze_out_name
+            ):
+                continue
+
+            reshape_out_name = str(reshape_op.outputs[0])
+            if reshape_out_name in model_outputs:
+                continue
+            if reshape_out_name == squeeze_in_name:
+                continue
+
+            in_shape = _shape_list(squeeze_in_name)
+            squeezed_shape = _shape_list(squeeze_out_name)
+            reshape_out_shape = _shape_list(reshape_out_name)
+            if in_shape is None or squeezed_shape is None or reshape_out_shape is None:
+                continue
+            if not _shape_compatible(in_shape, reshape_out_shape):
+                continue
+
+            squeeze_options = dict(squeeze_op.options) if isinstance(squeeze_op.options, dict) else {}
+            squeeze_axes: List[int]
+            if "squeezeDims" in squeeze_options:
+                raw_axes = np.asarray(squeeze_options.get("squeezeDims", []), dtype=np.int64).reshape(-1)
+                normalized_axes = _normalize_squeeze_axes_for_rank(
+                    [int(v) for v in raw_axes.tolist()],
+                    len(in_shape),
+                )
+                if normalized_axes is None:
+                    continue
+                squeeze_axes = [int(v) for v in normalized_axes]
+            else:
+                # Keep this conservative for unknown shapes when axes are omitted.
+                if any(int(v) < 0 for v in in_shape):
+                    continue
+                squeeze_axes = [int(idx) for idx, dim in enumerate(in_shape) if int(dim) == 1]
+
+            if len(set(int(v) for v in squeeze_axes)) != len(squeeze_axes):
+                continue
+            valid_axes = True
+            for axis in squeeze_axes:
+                if axis < 0 or axis >= len(in_shape):
+                    valid_axes = False
+                    break
+                dim = int(in_shape[int(axis)])
+                if dim >= 0 and dim != 1:
+                    valid_axes = False
+                    break
+            if not valid_axes:
+                continue
+
+            squeeze_axes_set = set(int(v) for v in squeeze_axes)
+            expected_squeezed_shape = [
+                int(dim) for idx, dim in enumerate(in_shape) if int(idx) not in squeeze_axes_set
+            ]
+            if not _shape_compatible(squeezed_shape, expected_squeezed_shape):
+                continue
+
+            _replace_tensor_inputs(
+                model_ir,
+                reshape_out_name,
+                squeeze_in_name,
+                graph_index=graph_index,
+            )
+            for remove_idx in sorted([int(reshape_idx), int(squeeze_idx)], reverse=True):
+                graph_index.remove_operator(remove_idx)
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"optimized_squeeze_reshape_identity_chains": int(rewritten)}

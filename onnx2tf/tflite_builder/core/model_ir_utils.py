@@ -575,6 +575,22 @@ def _invert_perm(perm: List[int]) -> Optional[List[int]]:
     return inverse
 
 
+def _normalize_squeeze_axes_for_rank(
+    axes: List[int],
+    rank: int,
+) -> Optional[List[int]]:
+    normalized: List[int] = []
+    for axis in axes:
+        value = int(axis)
+        if value < 0:
+            value += int(rank)
+        if value < 0 or value >= int(rank):
+            return None
+        if value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
 def _permute_shape(shape: Optional[List[int]], perm: List[int]) -> Optional[List[int]]:
     if shape is None:
         return None

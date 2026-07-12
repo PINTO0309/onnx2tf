@@ -9,6 +9,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _is_fully_known_positive_shape,
     _invert_perm,
     _is_singleton_constant_tensor,
+    _normalize_squeeze_axes_for_rank,
     _prune_unused_tensors,
     _read_transpose_perm,
     _read_singleton_constant_float,
@@ -65,6 +66,8 @@ def test_invert_perm_rejects_invalid_permutations() -> None:
     assert _invert_perm([0, 3, 1, 2]) == [0, 2, 3, 1]
     assert _invert_perm([0, 0, 1]) is None
     assert _invert_perm([0, 1, 3]) is None
+    assert _normalize_squeeze_axes_for_rank([0, -1, 0], 4) == [0, 3]
+    assert _normalize_squeeze_axes_for_rank([4], 4) is None
 
 
 def test_singleton_constant_requires_one_materialized_value() -> None:

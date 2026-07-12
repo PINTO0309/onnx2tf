@@ -6,6 +6,7 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_maximum_minimum_relu0to1_chains,
+    _optimize_squeeze_reshape_identity_chains,
     _optimize_duplicate_reshape_fanout,
     _optimize_duplicate_transpose_fanout,
 )
@@ -174,3 +175,56 @@ def test_clamp_cleanup_uses_one_incremental_index_refresh(monkeypatch) -> None:
     assert model_ir.operators[0].inputs == ["x"]
     assert model_ir.operators[0].outputs == ["out"]
     assert "maximum" not in model_ir.tensors
+
+
+def test_squeeze_reshape_cleanup_uses_one_incremental_index_refresh(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("squeeze_reshape_incremental_index")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["out"]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 3]),
+        "squeezed": _tensor("squeezed", [3]),
+        "shape": _tensor(
+            "shape",
+            [2],
+            dtype="INT32",
+            data=np.asarray([1, 3], dtype=np.int32),
+        ),
+        "reshaped": _tensor("reshaped", [1, 3]),
+        "out": _tensor("out", [1, 3]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            op_type="SQUEEZE",
+            inputs=["x"],
+            outputs=["squeezed"],
+            options={"squeezeDims": [0]},
+        ),
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["squeezed", "shape"],
+            outputs=["reshaped"],
+        ),
+        OperatorIR(op_type="IDENTITY", inputs=["reshaped"], outputs=["out"]),
+    ]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = _optimize_squeeze_reshape_identity_chains(model_ir)
+
+    assert stats == {"optimized_squeeze_reshape_identity_chains": 1}
+    assert refresh_count == 1
+    assert len(model_ir.operators) == 1
+    assert model_ir.operators[0].op_type == "IDENTITY"
+    assert model_ir.operators[0].inputs == ["x"]
+    assert "squeezed" not in model_ir.tensors
+    assert "reshaped" not in model_ir.tensors

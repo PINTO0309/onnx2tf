@@ -181,6 +181,12 @@ operator through the index-aware input helper, and removes the obsolete
 producer without rebuilding edge maps. Singleton finite-float reading has one
 canonical owner in `core/model_ir_utils.py`.
 
+Squeeze/Reshape identity cleanup also uses the differential graph index. It
+normalizes explicit or inferred squeeze axes, proves the squeezed and restored
+shapes, rewires only consumers of the round-trip output, then removes both
+operators without rebuilding maps. Squeeze-axis normalization has one shared
+implementation in `core/model_ir_utils.py`.
+
 The attention module also owns the QKV Slice canonicalization pair. One pass
 replaces compatible Slice branches with Gather/Reshape views; the next replaces
 three compatible branches with a single Split. Both require fully known,
