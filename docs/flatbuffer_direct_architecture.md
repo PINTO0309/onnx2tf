@@ -241,10 +241,13 @@ quantized LeakyRelu and DequantizeLinear retained that placeholder while the
 MaxPool lowering selected its padding strategy. For the actual `[1,24,208,208]`
 input, ONNX `kernel=3`, `stride=2`, `pads=[1,1,1,1]` starts its windows one
 element before the input, whereas TFLite SAME needs only one total padding
-element and places it at the end. This shifted every pooling window. QLinearConv
-now derives static output geometry eagerly, and quantized pass-through ops
-replace same-rank all-one placeholders from their source. MaxPool therefore
-emits explicit negative-infinity padding followed by VALID pooling. All six
+element and places it at the end. This shifted every pooling window. For a
+quantized pass-through chain feeding a stride-greater-than-one MaxPool,
+QLinearConv now derives static output geometry eagerly and pass-through ops
+replace same-rank all-one placeholders from their source. The scope is kept at
+that semantic planning boundary so unrelated quantized layout chains are not
+prematurely materialized. MaxPool therefore emits explicit negative-infinity
+padding followed by VALID pooling. All six
 outputs pass sequential comparison; maximum absolute error improved from
 `2.570713758468628` to `4.76837158203125e-7`.
 

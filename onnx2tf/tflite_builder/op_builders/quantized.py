@@ -363,12 +363,57 @@ def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> No
         and list(dst.shape) != list(src.shape)
         and len(list(dst.shape)) > 0
         and all(int(v) == 1 for v in list(dst.shape))
+        and _feeds_max_pool_through_quantized_passthrough(ctx, dst_tensor_name)
     )
     if (dst.shape == [1] and src.shape != [1]) or same_rank_all_ones_placeholder:
         dst.shape = list(src.shape)
         dst.shape_signature = list(src_signature)
     elif len(list(dst.shape)) == len(list(src.shape)) and list(dst.shape) == list(src.shape):
         dst.shape_signature = list(src_signature)
+
+
+def _feeds_max_pool_through_quantized_passthrough(
+    ctx: Any,
+    tensor_name: str,
+) -> bool:
+    passthrough_ops = {
+        "DequantizeLinear",
+        "Identity",
+        "QLinearLeakyRelu",
+    }
+    frontier = [str(tensor_name)]
+    visited: set[str] = set()
+    for _ in range(4):
+        next_frontier: List[str] = []
+        for current_name in frontier:
+            if current_name in visited:
+                continue
+            visited.add(current_name)
+            for consumer in ctx.onnx_tensor_consumers.get(current_name, []):
+                op_type = str(getattr(consumer, "op_type", ""))
+                if op_type == "MaxPool":
+                    strides = [
+                        int(value)
+                        for attr in consumer.attribute
+                        if str(attr.name) == "strides"
+                        for value in attr.ints
+                    ]
+                    if len(strides) == 0:
+                        strides = [1, 1]
+                    if any(int(value) > 1 for value in strides):
+                        return True
+                    continue
+                if op_type not in passthrough_ops:
+                    continue
+                next_frontier.extend(
+                    str(output_name)
+                    for output_name in consumer.output
+                    if str(output_name) != ""
+                )
+        frontier = next_frontier
+        if len(frontier) == 0:
+            break
+    return False
 
 
 def _infer_rank4_conv_output_signature(
@@ -1259,6 +1304,7 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
         if len(input_shape) == 4
         and np.asarray(weights).ndim == 4
         and all(int(v) > 0 for v in input_shape)
+        and _feeds_max_pool_through_quantized_passthrough(ctx, output_name)
         else None
     )
     output_shape_disagrees = bool(
