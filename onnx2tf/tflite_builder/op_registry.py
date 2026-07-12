@@ -827,17 +827,6 @@ def _validate_conv(node: Any, ctx: Any) -> None:
             node_name=node.name,
             node_op=node.op,
         )
-    if int(weights.ndim) == 5 and group != 1:
-        raise NodeValidationError(
-            reason_code="unsupported_grouped_convolution",
-            message=(
-                "Conv3D currently supports group=1 only. "
-                f"group={group} input_shape={input_shape} output_shape={output_shape} "
-                f"weight_shape={list(weights.shape)}"
-            ),
-            node_name=node.name,
-            node_op=node.op,
-        )
     in_channels = int(input_shape[1]) if len(input_shape) > 1 else -1
     out_channels = int(weights.shape[0])
     weight_in_channels_per_group = int(weights.shape[1])
@@ -850,6 +839,39 @@ def _validate_conv(node: Any, ctx: Any) -> None:
         and weight_in_channels_per_group == 1
         and (out_channels % group) == 0
     )
+    if int(weights.ndim) == 5 and group != 1:
+        if in_channels <= 0 or in_channels % group != 0:
+            raise NodeValidationError(
+                reason_code="unsupported_grouped_convolution",
+                message=(
+                    "Grouped Conv3D requires input channels divisible by group. "
+                    f"group={group} in_channels={in_channels}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if weight_in_channels_per_group != (in_channels // group):
+            raise NodeValidationError(
+                reason_code="unsupported_grouped_convolution",
+                message=(
+                    "Grouped Conv3D weight shape is inconsistent with input channels/group. "
+                    f"group={group} in_channels={in_channels} "
+                    f"weight_in_channels_per_group={weight_in_channels_per_group}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        if out_channels % group != 0:
+            raise NodeValidationError(
+                reason_code="unsupported_grouped_convolution",
+                message=(
+                    "Grouped Conv3D requires output channels divisible by group. "
+                    f"group={group} out_channels={out_channels}"
+                ),
+                node_name=node.name,
+                node_op=node.op,
+            )
+        return
     if group != 1 and not is_depthwise:
         input_rank_supported = (
             len(input_shape) == 4
@@ -8206,7 +8228,13 @@ _DISPATCH_REGISTRY: Dict[str, DispatchEntry] = {
     ),
     "Conv": DispatchEntry(
         onnx_op="Conv",
-        tflite_ops=["CONV_2D", "DEPTHWISE_CONV_2D", "CONV_3D"],
+        tflite_ops=[
+            "CONV_2D",
+            "DEPTHWISE_CONV_2D",
+            "CONV_3D",
+            "SLICE",
+            "CONCATENATION",
+        ],
         builder=build_conv2d_or_depthwise_op,
         validation=ValidationSpec(
             min_inputs=2,
