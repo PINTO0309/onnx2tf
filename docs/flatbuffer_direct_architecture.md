@@ -304,6 +304,14 @@ inserted side-Reshape placement, Concat input/output mutation, downstream edge
 replacement, structural removal, and layout-aware pruning. The legacy helper
 remains a compatibility wrapper only.
 
+Two related singleton-spatial rewrites are mechanically owned by the same
+family. The first removes an NHWC→NCHW Transpose (optionally through Identity)
+before a 2D flattening Reshape when both spatial dimensions are one. The second
+keeps repeated singleton 2D→4D Reshape inputs, Concat, and a terminal
+NHWC→NCHW Transpose directly in NHWC while reusing side adapters. Their 392
+implementation lines moved with identical ASTs; all three production calls and
+their original adjacency remain unchanged through thin lowerer wrappers.
+
 Production uses one ordered pass group for that family, with stable IDs
 `layout.singleton_reshape_unary_passthrough` and
 `layout.consecutive_inverse_singleton_reshapes`. A model-only preflight scans

@@ -906,6 +906,8 @@ def test_singleton_reshape_rewrites_have_single_owner() -> None:
         "_optimize_consecutive_inverse_singleton_layout_reshapes",
         "_optimize_flatten_concat_expanddims_to_nhwc_concat",
         "_optimize_singleton_layout_reshape_unary_passthrough_chains",
+        "_optimize_singleton_reshape_concat_post_transpose_nhwc_chains",
+        "_optimize_singleton_spatial_nhwc_transpose_reshape_flatten",
     }
 
     def _functions(path: Path) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:

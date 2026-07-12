@@ -1713,6 +1713,27 @@ TensorFlow import. Rerun the raw post-lowering inventory before selecting the
 next family. Do not create a pull request; commit and push only at a coherent
 checkpoint.
 
+The next mechanical split is complete. The singleton-spatial
+NHWC→NCHW-Transpose/(optional Identity)/flatten-Reshape rewrite and the
+singleton 2D→4D Reshape/Concat/post-Transpose NHWC propagation rewrite moved
+unchanged into `passes/singleton_reshape_layout.py`. Their rank/static-shape,
+permutation, singleton-spatial, fan-out, public-output, repeated-input adapter,
+dtype, and quantization guards are unchanged. Both old/new AST comparisons are
+identical, all three production call sites remain in their original positions,
+and the family ownership contract includes both implementations.
+
+Sequential verification completed with:
+
+- `5 passed` for two spatial-flatten variants, Concat propagation, repeated
+  adapter reuse, and ownership;
+- `1103 passed, 5 deselected, 2 warnings in 143.65s` for the full direct suite.
+
+No algorithm, call order, artifact, dependency, or TensorFlow boundary changed.
+The next checkpoint should introduce one ordered runner that can execute the
+spatial-flatten spec alone at both positions and the Concat/post-Transpose spec
+only at the first position, sharing a differential index and `LayoutState`.
+Do not create a pull request; commit and push only at a coherent checkpoint.
+
 The next mechanical split is complete. The 193-line fully static
 4D→2D Reshape/Concat/2D→4D Reshape rewrite moved unchanged into
 `passes/singleton_reshape_layout.py`. Its NHWC singleton-spatial, batch/channel,
