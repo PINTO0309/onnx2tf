@@ -339,6 +339,7 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
             node.id for node in ast.walk(wrapper) if isinstance(node, ast.Name)
         }
         assert f"{function_name}_pass" in wrapper_names
+    assert "run_channel_slice_merge_layout_cleanup" in lowerer_names
 
     boundary_chain_functions = {
         "_optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains",
@@ -434,6 +435,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     runner_names = {
         "run_boundary_input_layout_cleanup",
         "run_boundary_input_batchmatmul_cleanup",
+        "run_channel_slice_merge_layout_cleanup",
         "run_clamp_cleanup",
         "run_constant_input_fold_cleanup",
         "run_consecutive_mul_constants_cleanup",
@@ -462,7 +464,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 71
+    assert len(calls) == 74
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -528,6 +530,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_pad_mul_layout_cleanup"
     ]
     assert len(pad_mul_calls) == 3
+
+    channel_slice_merge_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_channel_slice_merge_layout_cleanup"
+    ]
+    assert len(channel_slice_merge_calls) == 3
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:

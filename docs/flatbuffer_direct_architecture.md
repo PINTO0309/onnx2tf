@@ -74,8 +74,18 @@ rewrite. The strict slice-MulAdd/Conv/merge-Add and
 slice-MulAdd/merge-Add/post-Transpose implementations are also owned by this
 module; their legacy lowerer symbols are thin compatibility wrappers. This
 places the three adjacent late channel-slice rewrites under one ownership
-boundary before their ordered indexed migration. Constant-vector reads/writes,
-operator input/output mutation,
+boundary. They execute through `run_channel_slice_merge_layout_cleanup` at
+their three unchanged recovery positions. The runner registers stable
+`LAYOUT_PLAN` IDs `layout.channel_slice_dual_add_strict`,
+`layout.slice_muladd_conv_mergeadd_strict`, and
+`layout.slice_muladd_mergeadd_posttranspose_strict` with priorities 10/20/30.
+All producer/consumer reads, input/output rewrites, structural removal and
+insertion, constant cloning, and pruning share one differential
+`ModelIRGraphIndex` and `LayoutState`. Model-only capability scanning avoids
+state construction on irrelevant graphs; indexed prefix and downstream-chain
+guards reject incomplete two-Slice regions before snapshotting. Include flags
+allow isolated compatibility tests without changing the production order.
+Constant-vector reads/writes, operator input/output mutation,
 broadcast checks, metadata permutation, and lineage recording remain shared
 core utilities. Legacy function names delegate to the family module.
 

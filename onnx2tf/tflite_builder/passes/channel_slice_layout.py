@@ -4,6 +4,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _broadcast_static_shapes,
     _build_tensor_consumer_map,
@@ -21,6 +28,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_outputs,
     _write_const_ints_to_tensor,
 )
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
 
@@ -1107,6 +1115,9 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
 
 def _optimize_transpose_slice_muladd_conv_mergeadd_strict(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Strictly fold the following into a single post-merge adapter:
@@ -1122,6 +1133,7 @@ def _optimize_transpose_slice_muladd_conv_mergeadd_strict(
       one new NHWC->NCHW transpose is inserted after merge ADD.
     """
     optimized = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
 
@@ -1249,6 +1261,7 @@ def _optimize_transpose_slice_muladd_conv_mergeadd_strict(
                 model_ir=model_ir,
                 op=mul_op,
                 new_inputs=mul_inputs,
+                graph_index=graph_index,
             )
         else:
             const_tensor.data = np.asarray(rotated)
@@ -1258,8 +1271,8 @@ def _optimize_transpose_slice_muladd_conv_mergeadd_strict(
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -1514,6 +1527,7 @@ def _optimize_transpose_slice_muladd_conv_mergeadd_strict(
                     op=slice_op,
                     input_index=0,
                     new_input_name=pre_in_name,
+                    graph_index=graph_index,
                 )
                 _permute_tensor_metadata_if_rank_matches(
                     model_ir.tensors.get(str(slice_op.outputs[0]), None),
@@ -1527,6 +1541,7 @@ def _optimize_transpose_slice_muladd_conv_mergeadd_strict(
                 model_ir,
                 str(branch_a_plan["t1_out_name"]),
                 str(branch_a_plan["mul_out_name"]),
+                graph_index=graph_index,
             )
             _permute_tensor_metadata_if_rank_matches(
                 model_ir.tensors.get(str(branch_a_plan["mul_out_name"]), None),
@@ -1536,6 +1551,7 @@ def _optimize_transpose_slice_muladd_conv_mergeadd_strict(
                 model_ir,
                 str(branch_a_plan["t2_out_name"]),
                 str(branch_a_plan["conv_out_name"]),
+                graph_index=graph_index,
             )
 
             # Merge ADD output is now NHWC, then insert one post adapter back to NCHW.
@@ -1558,6 +1574,7 @@ def _optimize_transpose_slice_muladd_conv_mergeadd_strict(
                 model_ir=model_ir,
                 op=merge_add_op,
                 new_outputs=[nhwc_merge_out_name],
+                graph_index=graph_index,
             )
 
             perm_tensor_name = _find_or_create_nhwc_to_nchw_perm_tensor()
@@ -1574,8 +1591,8 @@ def _optimize_transpose_slice_muladd_conv_mergeadd_strict(
                 int(branch_a_plan["t2_idx"]),
             }
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
-            model_ir.operators.append(post_adapter)
+                graph_index.remove_operator(int(remove_idx))
+            graph_index.append_operator(post_adapter)
 
             optimized += 1
             changed = True
@@ -1585,12 +1602,17 @@ def _optimize_transpose_slice_muladd_conv_mergeadd_strict(
             break
 
     if optimized > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_slice_muladd_conv_mergeadd_strict": int(optimized)}
 
 
 def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Strictly fold:
@@ -1603,6 +1625,7 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
     into NHWC and keep a single localized legacy adapter when required.
     """
     optimized = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
 
@@ -1730,6 +1753,7 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
                 model_ir=model_ir,
                 op=mul_op,
                 new_inputs=mul_inputs,
+                graph_index=graph_index,
             )
         else:
             const_tensor.data = np.asarray(rotated)
@@ -1800,8 +1824,8 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -2076,6 +2100,7 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
                     op=slice_op,
                     input_index=0,
                     new_input_name=pre_in_name,
+                    graph_index=graph_index,
                 )
                 _permute_tensor_metadata_if_rank_matches(
                     model_ir.tensors.get(str(slice_op.outputs[0]), None),
@@ -2088,6 +2113,7 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
                 model_ir,
                 str(branch_a["t1_out_name"]),
                 str(branch_a["mul_out_name"]),
+                graph_index=graph_index,
             )
             _permute_tensor_metadata_if_rank_matches(
                 model_ir.tensors.get(str(branch_a["mul_out_name"]), None),
@@ -2116,6 +2142,7 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
                 model_ir,
                 str(branch_a["to_nchw_out_name"]),
                 str(branch_a["path_nhwc_tensor_name"]),
+                graph_index=graph_index,
             )
 
             if len(post_transpose_out_names) > 0:
@@ -2136,9 +2163,15 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
                 model_ir=model_ir,
                 op=merge_add_op,
                 new_outputs=[canonical_nhwc_out_name],
+                graph_index=graph_index,
             )
             for alias_name in post_transpose_out_names[1:]:
-                _replace_tensor_inputs(model_ir, alias_name, canonical_nhwc_out_name)
+                _replace_tensor_inputs(
+                    model_ir,
+                    alias_name,
+                    canonical_nhwc_out_name,
+                    graph_index=graph_index,
+                )
             for post_mul_plan in post_mul_transpose_plans:
                 post_mul_idx = int(post_mul_plan["mul_idx"])
                 post_mul_op = model_ir.operators[int(post_mul_idx)]
@@ -2147,6 +2180,7 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
                     op=post_mul_op,
                     input_index=int(post_mul_plan["mul_data_input_index"]),
                     new_input_name=str(canonical_nhwc_out_name),
+                    graph_index=graph_index,
                 )
                 old_mul_out_name = str(post_mul_plan["mul_out_name"])
                 post_out_name = str(post_mul_plan["post_out_name"])
@@ -2156,6 +2190,7 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
                     model_ir=model_ir,
                     op=post_mul_op,
                     new_outputs=[post_out_name],
+                    graph_index=graph_index,
                 )
                 if old_mul_tensor is not None and post_out_tensor is not None:
                     post_out_tensor.dtype = str(old_mul_tensor.dtype)
@@ -2201,7 +2236,7 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
                     outputs=[merge_out_name],
                     options={},
                 )
-                model_ir.operators.append(adapter_op)
+                graph_index.append_operator(adapter_op)
 
             remove_indices = {
                 int(pre_idx),
@@ -2211,7 +2246,7 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
             remove_indices.update(int(v) for v in post_transpose_indices)
             remove_indices.update(int(v["post_idx"]) for v in post_mul_transpose_plans)
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             optimized += 1
             changed = True
@@ -2221,12 +2256,17 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
             break
 
     if optimized > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_slice_muladd_mergeadd_posttranspose_strict": int(optimized)}
 
 
 def _optimize_transpose_channel_slice_dual_add_bridges_strict(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Strictly fold:
@@ -2238,6 +2278,7 @@ def _optimize_transpose_channel_slice_dual_add_bridges_strict(
     This is intentionally strict to avoid unsafe late-stage rewrites.
     """
     optimized = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
 
@@ -2341,6 +2382,7 @@ def _optimize_transpose_channel_slice_dual_add_bridges_strict(
                 model_ir=model_ir,
                 op=mul_op,
                 new_inputs=mul_inputs,
+                graph_index=graph_index,
             )
         else:
             const_tensor.data = np.asarray(rotated)
@@ -2351,7 +2393,7 @@ def _optimize_transpose_channel_slice_dual_add_bridges_strict(
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -2543,6 +2585,7 @@ def _optimize_transpose_channel_slice_dual_add_bridges_strict(
                     op=slice_op,
                     input_index=0,
                     new_input_name=pre_in_name,
+                    graph_index=graph_index,
                 )
                 _permute_tensor_metadata_if_rank_matches(
                     model_ir.tensors.get(str(slice_op.outputs[0]), None),
@@ -2573,6 +2616,7 @@ def _optimize_transpose_channel_slice_dual_add_bridges_strict(
                         model_ir,
                         str(plan["post_out_name"]),
                         str(plan["mul_out_name"]),
+                        graph_index=graph_index,
                     )
                     remove_indices.add(int(plan["post_idx"]))
                 else:
@@ -2580,6 +2624,7 @@ def _optimize_transpose_channel_slice_dual_add_bridges_strict(
                         model_ir,
                         str(plan["post_out_name"]),
                         str(plan["slice_out_name"]),
+                        graph_index=graph_index,
                     )
                     remove_indices.add(int(plan["post_idx"]))
 
@@ -2587,7 +2632,7 @@ def _optimize_transpose_channel_slice_dual_add_bridges_strict(
                 continue
 
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             optimized += 1
             changed = True
@@ -2597,8 +2642,350 @@ def _optimize_transpose_channel_slice_dual_add_bridges_strict(
             break
 
     if optimized > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_channel_slice_dual_add_bridges_strict": int(optimized)}
+
+
+def run_channel_slice_merge_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    include_dual_add: bool = True,
+    include_conv_merge: bool = True,
+    include_posttranspose_merge: bool = True,
+    layout_state: Optional[LayoutState] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run the adjacent strict channel-slice merge rewrites in legacy order."""
+
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+    perm_nchw_to_nhwc = [0, 2, 3, 1]
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"TRANSPOSE", "MUL", "ADD"}
+        slice_count = 0
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            op_type = str(operator.op_type)
+            required.discard(op_type)
+            if op_type == "SLICE":
+                slice_count += 1
+            if len(required) == 0 and slice_count >= 2:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _is_axis1_slice(candidate_model: ModelIR, op: OperatorIR) -> bool:
+        if str(op.op_type) != "SLICE" or len(op.inputs) < 3 or len(op.outputs) != 1:
+            return False
+        begin = _read_const_ints_from_tensor(
+            candidate_model.tensors.get(str(op.inputs[1]))
+        )
+        size = _read_const_ints_from_tensor(
+            candidate_model.tensors.get(str(op.inputs[2]))
+        )
+        return bool(
+            begin is not None
+            and size is not None
+            and len(begin) == 4
+            and len(size) == 4
+            and int(size[1]) > 0
+            and int(begin[2]) == 0
+            and int(begin[3]) == 0
+        )
+
+    def _prefixes(
+        pass_state: ModelIRPassState,
+    ) -> List[Tuple[int, List[int]]]:
+        prefixes: List[Tuple[int, List[int]]] = []
+        for pre_idx, pre_op in enumerate(pass_state.model_ir.operators):
+            if (
+                str(pre_op.op_type) != "TRANSPOSE"
+                or len(pre_op.inputs) < 2
+                or len(pre_op.outputs) != 1
+                or _read_transpose_perm(pass_state.model_ir, pre_op)
+                != perm_nhwc_to_nchw
+            ):
+                continue
+            slice_indices = pass_state.graph_index.consumer_indices(
+                str(pre_op.outputs[0])
+            )
+            if len(slice_indices) != 2:
+                continue
+            if all(
+                _is_axis1_slice(
+                    pass_state.model_ir,
+                    pass_state.model_ir.operators[int(slice_idx)],
+                )
+                for slice_idx in slice_indices
+            ):
+                prefixes.append(
+                    (int(pre_idx), [int(value) for value in slice_indices])
+                )
+        return prefixes
+
+    def _single_user(
+        pass_state: ModelIRPassState,
+        tensor_name: str,
+    ) -> Optional[Tuple[int, OperatorIR]]:
+        users = pass_state.graph_index.consumer_indices(str(tensor_name))
+        if len(users) != 1:
+            return None
+        index = int(users[0])
+        return index, pass_state.model_ir.operators[index]
+
+    def _inverse_transpose_output(
+        pass_state: ModelIRPassState,
+        tensor_name: str,
+    ) -> Optional[Tuple[int, str]]:
+        match = _single_user(pass_state, tensor_name)
+        if match is None:
+            return None
+        index, op = match
+        if (
+            str(op.op_type) != "TRANSPOSE"
+            or len(op.inputs) < 2
+            or len(op.outputs) != 1
+            or _read_transpose_perm(pass_state.model_ir, op)
+            != perm_nchw_to_nhwc
+        ):
+            return None
+        return int(index), str(op.outputs[0])
+
+    def _add_after(
+        pass_state: ModelIRPassState,
+        tensor_name: str,
+    ) -> Optional[Tuple[int, OperatorIR]]:
+        match = _single_user(pass_state, tensor_name)
+        if match is None:
+            return None
+        index, op = match
+        if (
+            str(op.op_type) != "ADD"
+            or len(op.inputs) != 2
+            or len(op.outputs) != 1
+            or str(tensor_name) not in [str(value) for value in op.inputs]
+        ):
+            return None
+        return int(index), op
+
+    def _has_dual_add_candidate(pass_state: ModelIRPassState) -> bool:
+        for _, slice_indices in _prefixes(pass_state):
+            kinds: set[str] = set()
+            valid = True
+            for slice_idx in slice_indices:
+                slice_op = pass_state.model_ir.operators[int(slice_idx)]
+                slice_output = str(slice_op.outputs[0])
+                first = _single_user(pass_state, slice_output)
+                if first is None:
+                    valid = False
+                    break
+                _, first_op = first
+                if str(first_op.op_type) == "TRANSPOSE":
+                    post = _inverse_transpose_output(pass_state, slice_output)
+                    if post is None or _add_after(pass_state, post[1]) is None:
+                        valid = False
+                        break
+                    kinds.add("direct")
+                    continue
+                if (
+                    str(first_op.op_type) != "MUL"
+                    or len(first_op.inputs) != 2
+                    or len(first_op.outputs) != 1
+                ):
+                    valid = False
+                    break
+                post = _inverse_transpose_output(
+                    pass_state,
+                    str(first_op.outputs[0]),
+                )
+                if post is None or _add_after(pass_state, post[1]) is None:
+                    valid = False
+                    break
+                kinds.add("mul")
+            if valid and kinds == {"direct", "mul"}:
+                return True
+        return False
+
+    def _has_conv_merge_candidate(pass_state: ModelIRPassState) -> bool:
+        for _, slice_indices in _prefixes(pass_state):
+            for branch_idx, slice_idx in enumerate(slice_indices):
+                other_slice = pass_state.model_ir.operators[
+                    int(slice_indices[1 - branch_idx])
+                ]
+                tensor_name = str(
+                    pass_state.model_ir.operators[int(slice_idx)].outputs[0]
+                )
+                expected = ["MUL", "TRANSPOSE", "ADD", "CONV_2D", "TRANSPOSE"]
+                valid = True
+                for step_index, op_type in enumerate(expected):
+                    match = _single_user(pass_state, tensor_name)
+                    if match is None:
+                        valid = False
+                        break
+                    _, op = match
+                    if str(op.op_type) != op_type or len(op.outputs) != 1:
+                        valid = False
+                        break
+                    if op_type == "TRANSPOSE":
+                        expected_perm = (
+                            perm_nchw_to_nhwc
+                            if int(step_index) == 1
+                            else perm_nhwc_to_nchw
+                        )
+                        if _read_transpose_perm(pass_state.model_ir, op) != expected_perm:
+                            valid = False
+                            break
+                    tensor_name = str(op.outputs[0])
+                if not valid:
+                    continue
+                merge = _add_after(pass_state, tensor_name)
+                if merge is not None and str(other_slice.outputs[0]) in [
+                    str(value) for value in merge[1].inputs
+                ]:
+                    return True
+        return False
+
+    def _has_posttranspose_merge_candidate(pass_state: ModelIRPassState) -> bool:
+        for _, slice_indices in _prefixes(pass_state):
+            slice_outputs = {
+                str(pass_state.model_ir.operators[int(index)].outputs[0])
+                for index in slice_indices
+            }
+            for slice_output in slice_outputs:
+                first = _single_user(pass_state, slice_output)
+                if first is None or str(first[1].op_type) != "MUL":
+                    continue
+                if len(first[1].outputs) != 1:
+                    continue
+                post = _inverse_transpose_output(
+                    pass_state,
+                    str(first[1].outputs[0]),
+                )
+                if post is None:
+                    continue
+                pending = [str(post[1])]
+                visited: set[str] = set()
+                for _ in range(12):
+                    if len(pending) == 0:
+                        break
+                    tensor_name = pending.pop()
+                    if tensor_name in visited:
+                        continue
+                    visited.add(tensor_name)
+                    match = _single_user(pass_state, tensor_name)
+                    if match is None:
+                        continue
+                    _, op = match
+                    if str(op.op_type) == "ADD" and any(
+                        str(value) in slice_outputs - {slice_output}
+                        for value in op.inputs
+                    ):
+                        return True
+                    if len(op.outputs) == 1:
+                        pending.append(str(op.outputs[0]))
+        return False
+
+    def _run_dual_add(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_channel_slice_dual_add_bridges_strict(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_transpose_channel_slice_dual_add_bridges_strict",
+                    0,
+                )
+            ),
+        }
+
+    def _run_conv_merge(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_slice_muladd_conv_mergeadd_strict(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_transpose_slice_muladd_conv_mergeadd_strict",
+                    0,
+                )
+            ),
+        }
+
+    def _run_posttranspose_merge(
+        pass_state: ModelIRPassState,
+    ) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_transpose_slice_muladd_mergeadd_posttranspose_strict",
+                    0,
+                )
+            ),
+        }
+
+    specs: List[PassSpec[ModelIRPassState]] = []
+    if include_dual_add:
+        specs.append(
+            PassSpec(
+                pass_id="layout.channel_slice_dual_add_strict",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_dual_add,
+                precondition=_has_dual_add_candidate,
+                priority=10,
+                transactional=True,
+            )
+        )
+    if include_conv_merge:
+        specs.append(
+            PassSpec(
+                pass_id="layout.slice_muladd_conv_mergeadd_strict",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_conv_merge,
+                precondition=_has_conv_merge_candidate,
+                priority=20,
+                transactional=True,
+            )
+        )
+    if include_posttranspose_merge:
+        specs.append(
+            PassSpec(
+                pass_id="layout.slice_muladd_mergeadd_posttranspose_strict",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_posttranspose_merge,
+                precondition=_has_posttranspose_merge_candidate,
+                priority=30,
+                transactional=True,
+            )
+        )
+    default_details = {
+        "optimized_transpose_channel_slice_dual_add_bridges_strict": 0,
+        "optimized_transpose_slice_muladd_conv_mergeadd_strict": 0,
+        "optimized_transpose_slice_muladd_mergeadd_posttranspose_strict": 0,
+    }
+    if len(specs) == 0:
+        return default_details
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=specs,
+        layout_state=layout_state,
+        default_details=default_details,
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(

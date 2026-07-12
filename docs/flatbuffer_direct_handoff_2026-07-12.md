@@ -1394,6 +1394,44 @@ shared ordered runner. First make each implementation differential-index and
 LayoutState aware, then add exact per-pattern preconditions; do not replace
 only their structural deletions.
 
+That indexed migration is complete. The three production triples are replaced
+by `run_channel_slice_merge_layout_cleanup` without changing their locations
+or the dual-Add→Conv-merge→post-Transpose-merge order. Stable `LAYOUT_PLAN` IDs
+are `layout.channel_slice_dual_add_strict`,
+`layout.slice_muladd_conv_mergeadd_strict`, and
+`layout.slice_muladd_mergeadd_posttranspose_strict`. Each implementation now
+uses the shared `ModelIRGraphIndex` for producer/consumer lookup, all operator
+input/output changes, structural removal/insertion, and constant-clone
+rewiring; pruning synchronizes the shared `LayoutState`. Model-only preflight
+requires the common Transpose/two-Slice/Mul/Add capability, while indexed
+guards trace the dual branch, Conv merge, and post-merge variants before a
+transaction. Include flags preserve isolated legacy-contract testing while
+production enables all three specs.
+
+The first broad run exposed an accidental `graph_index` keyword mechanically
+added to the preceding, unmigrated channel-slice MulAdd helper. The two
+out-of-scope keywords were removed, an AST unbound-name audit passed, and the
+previously failing focused fixture plus the corrected full suite passed. No
+partial indexed dependency remains in that helper.
+
+Sequential verification completed with:
+
+- `12 passed, 774 deselected` for all runner variants, stable ordering,
+  architecture, relevant/irrelevant preflight, and pass efficiency;
+- `8 passed, 753 deselected` for the complete adjacent channel-slice fixture
+  set plus the preceding MulAdd bridge regression;
+- `1083 passed, 5 deselected, 2 warnings in 139.01s` for the corrected full
+  direct suite;
+- Tier 2 `sinet_320_op.onnx` `-cotof` evaluation with every output compared,
+  `evaluation_pass=true`, and maximum absolute error
+  `2.572051016613841e-09`.
+
+The successful dual-Add fixture required one full GraphIndex build; the
+incomplete but preflight-relevant two-Slice prefix also built one index but all
+three specs stopped with zero snapshots. The temporary Tier 2 output directory
+was deleted. Validation remained single-process and sequential, with no new
+dependency or TensorFlow import.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work

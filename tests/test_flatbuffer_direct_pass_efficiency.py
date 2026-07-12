@@ -19,6 +19,9 @@ from onnx2tf.tflite_builder.passes.attention_layout import (
 from onnx2tf.tflite_builder.passes.boundary_input_layout import (
     run_boundary_input_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.channel_slice_layout import (
+    run_channel_slice_merge_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.cast_cleanup import run_redundant_cast_cleanup
 from onnx2tf.tflite_builder.passes.constant_fold import (
     run_constant_input_fold_cleanup,
@@ -150,12 +153,13 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_input_unary_passthrough_cleanup(model_ir, diagnostics=diagnostics)
     run_hard_activation_passthrough_cleanup(model_ir, diagnostics=diagnostics)
     run_boundary_input_layout_cleanup(model_ir, diagnostics=diagnostics)
+    run_channel_slice_merge_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_constant_input_fold_cleanup(model_ir, diagnostics=diagnostics)
     run_redundant_cast_cleanup(model_ir, diagnostics=diagnostics)
     run_terminal_quantize_dequantize_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 33
+    assert len(diagnostics) == 36
     assert all(event["status"] == "skipped" for event in diagnostics)
     assert all(
         event["metrics"]
@@ -167,6 +171,80 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
         }
         for event in diagnostics
     )
+
+
+def test_channel_slice_merge_guard_rejects_incomplete_prefix_before_snapshot(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("incomplete_channel_slice_merge")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1, 2, 2, 4], [1, 2, 2, 4]),
+        "perm": TensorIR(
+            "perm",
+            "INT32",
+            [4],
+            [4],
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        ),
+        "t": TensorIR("t", "FLOAT32", [1, 4, 2, 2], [1, 4, 2, 2]),
+        "a_begin": TensorIR(
+            "a_begin", "INT32", [4], [4], data=np.asarray([0, 0, 0, 0])
+        ),
+        "a_size": TensorIR(
+            "a_size", "INT32", [4], [4], data=np.asarray([1, 2, 2, 2])
+        ),
+        "b_begin": TensorIR(
+            "b_begin", "INT32", [4], [4], data=np.asarray([0, 2, 0, 0])
+        ),
+        "b_size": TensorIR(
+            "b_size", "INT32", [4], [4], data=np.asarray([1, 2, 2, 2])
+        ),
+        "a": TensorIR("a", "FLOAT32", [1, 2, 2, 2], [1, 2, 2, 2]),
+        "b": TensorIR("b", "FLOAT32", [1, 2, 2, 2], [1, 2, 2, 2]),
+        "scale": TensorIR(
+            "scale", "FLOAT32", [1], [1], data=np.asarray([1.0], dtype=np.float32)
+        ),
+        "m": TensorIR("m", "FLOAT32", [1, 2, 2, 2], [1, 2, 2, 2]),
+        "bias": TensorIR(
+            "bias", "FLOAT32", [1], [1], data=np.asarray([0.0], dtype=np.float32)
+        ),
+        "y": TensorIR("y", "FLOAT32", [1, 2, 2, 2], [1, 2, 2, 2]),
+    }
+    model_ir.operators = [
+        OperatorIR("TRANSPOSE", ["x", "perm"], ["t"]),
+        OperatorIR("SLICE", ["t", "a_begin", "a_size"], ["a"]),
+        OperatorIR("SLICE", ["t", "b_begin", "b_size"], ["b"]),
+        OperatorIR("MUL", ["a", "scale"], ["m"]),
+        OperatorIR("ADD", ["m", "bias"], ["y"]),
+    ]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict] = []
+
+    stats = run_channel_slice_merge_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {
+        "optimized_transpose_channel_slice_dual_add_bridges_strict": 0,
+        "optimized_transpose_slice_muladd_conv_mergeadd_strict": 0,
+        "optimized_transpose_slice_muladd_mergeadd_posttranspose_strict": 0,
+    }
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert all(event["status"] == "skipped" for event in diagnostics)
+    assert all(event["metrics"]["state_built"] is True for event in diagnostics)
+    assert all(event["metrics"]["snapshot_count"] == 0 for event in diagnostics)
 
 
 def test_one_candidate_builds_one_index_and_one_snapshot_without_fingerprint(

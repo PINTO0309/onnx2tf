@@ -178,6 +178,7 @@ from onnx2tf.tflite_builder.passes.channel_slice_layout import (
     _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains as _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains_pass,
     _optimize_transpose_slice_muladd_conv_mergeadd_strict as _optimize_transpose_slice_muladd_conv_mergeadd_strict_pass,
     _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict as _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict_pass,
+    run_channel_slice_merge_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.constant_fold import (
     _optimize_constant_binary_elementwise_chains,  # noqa: F401 - compatibility re-export
@@ -64094,9 +64095,11 @@ def lower_onnx_to_ir(
     _optimize_boundary_input_transpose_channel_slice_blocks(model_ir)
     _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(model_ir)
     _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir)
-    _optimize_transpose_channel_slice_dual_add_bridges_strict(model_ir)
-    _optimize_transpose_slice_muladd_conv_mergeadd_strict(model_ir)
-    _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(model_ir)
+    run_channel_slice_merge_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_pad_mul_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
@@ -64345,9 +64348,11 @@ def lower_onnx_to_ir(
     _optimize_boundary_input_transpose_mul_sum_reshape_nhwc_chains(model_ir)
     _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(model_ir)
     _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir)
-    _optimize_transpose_channel_slice_dual_add_bridges_strict(model_ir)
-    _optimize_transpose_slice_muladd_conv_mergeadd_strict(model_ir)
-    _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(model_ir)
+    run_channel_slice_merge_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_pad_mul_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
@@ -64511,9 +64516,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir)
     _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
     _optimize_transpose_pre_add_nhwc_chains(model_ir)
-    _optimize_transpose_channel_slice_dual_add_bridges_strict(model_ir)
-    _optimize_transpose_slice_muladd_conv_mergeadd_strict(model_ir)
-    _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(model_ir)
+    run_channel_slice_merge_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_pad_mul_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,

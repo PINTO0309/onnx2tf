@@ -42,6 +42,9 @@ from onnx2tf.tflite_builder.passes.attention_layout import (
     run_qkv_attention_bridge_cleanup,
     run_qkv_attention_prefix_cleanup,
 )
+from onnx2tf.tflite_builder.passes.channel_slice_layout import (
+    run_channel_slice_merge_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.pad_layout import (
     run_normalization_pad_layout_cleanup,
     run_pad_layout_cleanup,
@@ -10239,7 +10242,9 @@ def test_flatbuffer_direct_transpose_channel_slice_muladd_nhwc_bridge_chain() ->
     assert mul_const_shape in ([1, 1, 1, 2], [1, 2, 1, 1])
 
 
-def test_flatbuffer_direct_transpose_channel_slice_dual_add_bridges_strict() -> None:
+def test_flatbuffer_direct_transpose_channel_slice_dual_add_bridges_strict(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("transpose_channel_slice_dual_add_bridges_strict_test")
     model_ir.inputs = ["x_nhwc", "rhs_nhwc"]
     model_ir.outputs = ["z"]
@@ -10387,8 +10392,28 @@ def test_flatbuffer_direct_transpose_channel_slice_dual_add_bridges_strict() -> 
         OperatorIR(op_type="ADD", inputs=["y0", "y1"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_channel_slice_dual_add_bridges_strict(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict[str, Any]] = []
+    stats = run_channel_slice_merge_layout_cleanup(
+        model_ir,
+        include_conv_merge=False,
+        include_posttranspose_merge=False,
+        diagnostics=diagnostics,
+    )
     assert stats["optimized_transpose_channel_slice_dual_add_bridges_strict"] == 1
+    assert refresh_count == 1
+    assert [event["code"] for event in diagnostics] == [
+        "layout.channel_slice_dual_add_strict",
+    ]
+    assert [event["status"] for event in diagnostics].count("changed") == 1
 
     assert not any(
         str(op.op_type) == "TRANSPOSE"
@@ -10572,7 +10597,11 @@ def test_flatbuffer_direct_transpose_slice_muladd_conv_mergeadd_strict() -> None
         OperatorIR(op_type="RELU", inputs=["y_nchw"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_slice_muladd_conv_mergeadd_strict(model_ir)
+    stats = run_channel_slice_merge_layout_cleanup(
+        model_ir,
+        include_dual_add=False,
+        include_posttranspose_merge=False,
+    )
     assert stats["optimized_transpose_slice_muladd_conv_mergeadd_strict"] == 1
 
     assert not any(
@@ -10675,7 +10704,11 @@ def test_flatbuffer_direct_transpose_slice_muladd_conv_mergeadd_strict_conv_expa
         OperatorIR(op_type="RELU", inputs=["y_nchw"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_slice_muladd_conv_mergeadd_strict(model_ir)
+    stats = run_channel_slice_merge_layout_cleanup(
+        model_ir,
+        include_dual_add=False,
+        include_posttranspose_merge=False,
+    )
     assert stats["optimized_transpose_slice_muladd_conv_mergeadd_strict"] == 1
     assert not any(str(op.op_type) == "TRANSPOSE" and [str(v) for v in list(op.inputs)] == ["x_nhwc", "to_nchw_perm"] for op in model_ir.operators)
     assert not any(str(op.op_type) == "TRANSPOSE" and [str(v) for v in list(op.inputs)] == ["mul_out", "to_nhwc_perm"] for op in model_ir.operators)
@@ -10844,7 +10877,11 @@ def test_flatbuffer_direct_transpose_slice_muladd_mergeadd_posttranspose_strict(
         OperatorIR(op_type="CONCATENATION", inputs=["legacy_lhs", "merge_nchw"], outputs=["legacy_out"], options={"axis": 1}),
     ]
 
-    stats = _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(model_ir)
+    stats = run_channel_slice_merge_layout_cleanup(
+        model_ir,
+        include_dual_add=False,
+        include_conv_merge=False,
+    )
     assert stats["optimized_transpose_slice_muladd_mergeadd_posttranspose_strict"] == 1
 
     assert not any(
@@ -10919,7 +10956,11 @@ def test_flatbuffer_direct_transpose_slice_muladd_mergeadd_posttranspose_signatu
         OperatorIR(op_type="CONCATENATION", inputs=["legacy_lhs", "merge_nchw"], outputs=["legacy_out"], options={"axis": 1}),
     ]
 
-    stats = _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(model_ir)
+    stats = run_channel_slice_merge_layout_cleanup(
+        model_ir,
+        include_dual_add=False,
+        include_conv_merge=False,
+    )
     assert stats["optimized_transpose_slice_muladd_mergeadd_posttranspose_strict"] == 1
     assert list(model_ir.tensors["merge_nhwc"].shape) == [1, 2, 3, 2]
     assert _shape_signature(model_ir.tensors["merge_nhwc"]) == [1, 2, 3, 2]
@@ -10962,7 +11003,11 @@ def test_flatbuffer_direct_transpose_slice_muladd_mergeadd_legacy_only_tail_stri
         OperatorIR(op_type="CONCATENATION", inputs=["legacy_lhs", "merge_nchw"], outputs=["legacy_out"], options={"axis": 1}),
     ]
 
-    stats = _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(model_ir)
+    stats = run_channel_slice_merge_layout_cleanup(
+        model_ir,
+        include_dual_add=False,
+        include_conv_merge=False,
+    )
     assert stats["optimized_transpose_slice_muladd_mergeadd_posttranspose_strict"] == 1
 
     assert not any(str(op.op_type) == "TRANSPOSE" and [str(v) for v in list(op.inputs)] == ["x_nhwc", "to_nchw_perm"] for op in model_ir.operators)
@@ -11022,7 +11067,11 @@ def test_flatbuffer_direct_transpose_slice_muladd_mergeadd_postmultranspose_tail
         OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(model_ir)
+    stats = run_channel_slice_merge_layout_cleanup(
+        model_ir,
+        include_dual_add=False,
+        include_conv_merge=False,
+    )
     assert stats["optimized_transpose_slice_muladd_mergeadd_posttranspose_strict"] == 1
     assert not any(str(op.op_type) == "TRANSPOSE" and [str(v) for v in list(op.inputs)] == ["x_nhwc", "to_nchw_perm"] for op in model_ir.operators)
     assert not any(str(op.op_type) == "TRANSPOSE" and [str(v) for v in list(op.inputs)] == ["mul0_out", "to_nhwc_perm"] for op in model_ir.operators)
