@@ -5,6 +5,7 @@ import numpy as np
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     _optimize_asin_transpose_passthrough_chains,
+    _optimize_erf_transpose_passthrough_chains,
     _optimize_hardsigmoid_transpose_passthrough_chains,
     _optimize_leading_input_transpose_passthrough_chains,
 )
@@ -288,3 +289,174 @@ def test_hardsigmoid_passthrough_rejects_noninverse_output_perm() -> None:
     assert stats == {"rewritten_hardsigmoid_transpose_passthrough_chains": 0}
     assert model_ir.operators[0].op_type == "TRANSPOSE"
     assert model_ir.operators[-1].op_type == "TRANSPOSE"
+
+
+def _make_erf_roundtrip(*, scalar_abs_multiplier: bool = True) -> ModelIR:
+    model_ir = ModelIR("input_passthrough_erf")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 2, 3]),
+        "to_nchw": _tensor(
+            "to_nchw",
+            [4],
+            dtype="INT32",
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        ),
+        "x_nchw": _tensor("x_nchw", [1, 3, 2, 2]),
+        "abs": _tensor("abs", [1, 3, 2, 2]),
+        "sign": _tensor("sign", [1, 3, 2, 2]),
+        "to_nhwc": _tensor(
+            "to_nhwc",
+            [4],
+            dtype="INT32",
+            data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        ),
+        "y": _tensor("y", [1, 2, 2, 3]),
+    }
+
+    def add_scalar(name: str, value: float) -> None:
+        model_ir.tensors[name] = _tensor(
+            name,
+            [],
+            data=np.asarray(value, dtype=np.float32),
+        )
+
+    def add_value(name: str) -> None:
+        model_ir.tensors[name] = _tensor(name, [1, 3, 2, 2])
+
+    for name, value in {
+        "p": 0.3275911,
+        "one_a": 1.0,
+        "one_div": 1.0,
+        "negative_one": -1.0,
+        "a5": 0.254829592,
+        "a4": -0.284496736,
+        "a3": 1.421413741,
+        "a2": -1.453152027,
+        "a1": 1.061405429,
+        "one_sub": 1.0,
+    }.items():
+        add_scalar(name, value)
+    if not scalar_abs_multiplier:
+        model_ir.tensors["p"] = _tensor(
+            "p",
+            [2],
+            data=np.asarray([0.3275911, 0.3275911], dtype=np.float32),
+        )
+
+    for name in [
+        "px",
+        "one_plus",
+        "t",
+        "square",
+        "negative_square",
+        "exp",
+        "h0",
+        "add0",
+        "h1",
+        "add1",
+        "h2",
+        "add2",
+        "h3",
+        "add3",
+        "poly",
+        "poly_exp",
+        "one_minus",
+        "erf_nchw",
+    ]:
+        add_value(name)
+
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["x", "to_nchw"],
+            outputs=["x_nchw"],
+        ),
+        OperatorIR(op_type="ABS", inputs=["x_nchw"], outputs=["abs"]),
+        OperatorIR(op_type="SIGN", inputs=["x_nchw"], outputs=["sign"]),
+        OperatorIR(op_type="MUL", inputs=["abs", "p"], outputs=["px"]),
+        OperatorIR(op_type="ADD", inputs=["px", "one_a"], outputs=["one_plus"]),
+        OperatorIR(op_type="DIV", inputs=["one_div", "one_plus"], outputs=["t"]),
+        OperatorIR(op_type="MUL", inputs=["abs", "abs"], outputs=["square"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["square", "negative_one"],
+            outputs=["negative_square"],
+        ),
+        OperatorIR(op_type="EXP", inputs=["negative_square"], outputs=["exp"]),
+        OperatorIR(op_type="MUL", inputs=["a5", "t"], outputs=["h0"]),
+    ]
+    current = "h0"
+    coefficient_names = ["a4", "a3", "a2", "a1"]
+    output_names = ["h1", "h2", "h3", "poly"]
+    for index, (coefficient, output_name) in enumerate(
+        zip(coefficient_names, output_names)
+    ):
+        add_name = f"add{index}"
+        model_ir.operators.append(
+            OperatorIR(
+                op_type="ADD",
+                inputs=[current, coefficient],
+                outputs=[add_name],
+            )
+        )
+        model_ir.operators.append(
+            OperatorIR(
+                op_type="MUL",
+                inputs=[add_name, "t"],
+                outputs=[output_name],
+            )
+        )
+        current = output_name
+    model_ir.operators.extend(
+        [
+            OperatorIR(
+                op_type="MUL",
+                inputs=["poly", "exp"],
+                outputs=["poly_exp"],
+            ),
+            OperatorIR(
+                op_type="SUB",
+                inputs=["one_sub", "poly_exp"],
+                outputs=["one_minus"],
+            ),
+            OperatorIR(
+                op_type="MUL",
+                inputs=["sign", "one_minus"],
+                outputs=["erf_nchw"],
+            ),
+            OperatorIR(
+                op_type="TRANSPOSE",
+                inputs=["erf_nchw", "to_nhwc"],
+                outputs=["y"],
+            ),
+        ]
+    )
+    return model_ir
+
+
+def test_erf_passthrough_moves_polynomial_decomposition_to_nhwc() -> None:
+    model_ir = _make_erf_roundtrip()
+
+    stats = _optimize_erf_transpose_passthrough_chains(model_ir)
+
+    assert stats == {"rewritten_erf_transpose_passthrough_chains": 1}
+    assert model_ir.operators[0].op_type == "ABS"
+    assert model_ir.operators[0].inputs == ["x"]
+    assert model_ir.operators[1].op_type == "SIGN"
+    assert model_ir.operators[1].inputs == ["x"]
+    assert model_ir.operators[-1].op_type == "MUL"
+    assert model_ir.operators[-1].outputs == ["y"]
+    for name in ["abs", "sign", "poly", "poly_exp", "one_minus"]:
+        assert model_ir.tensors[name].shape == [1, 2, 2, 3]
+
+
+def test_erf_passthrough_rejects_nonsingleton_abs_multiplier() -> None:
+    model_ir = _make_erf_roundtrip(scalar_abs_multiplier=False)
+
+    stats = _optimize_erf_transpose_passthrough_chains(model_ir)
+
+    assert stats == {"rewritten_erf_transpose_passthrough_chains": 0}
+    assert model_ir.operators[0].op_type == "TRANSPOSE"
+    assert model_ir.operators[1].inputs == ["x_nchw"]

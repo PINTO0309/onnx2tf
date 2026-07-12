@@ -697,3 +697,379 @@ def _optimize_hardsigmoid_transpose_passthrough_chains(model_ir: ModelIR) -> Dic
 
     _prune_unused_tensors(model_ir)
     return {"rewritten_hardsigmoid_transpose_passthrough_chains": int(rewritten)}
+
+
+def _optimize_erf_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Fold leading input TRANSPOSE through Erf polynomial decomposition chains.
+
+    Target (strict local topology):
+      X --TRANSPOSE(P)--> x_t
+      x_t --ABS--> a
+      x_t --SIGN--> s
+      a --MUL(p)--> px --ADD(1)--> one_plus --DIV(1)--> t
+      a --MUL(a)--> a2 --MUL(-1)--> na2 --EXP--> e
+      Horner chain with t:
+        m1=MUL(a5,t); a1=ADD(m1,a4); m2=MUL(a1,t); a2=ADD(m2,a3);
+        m3=MUL(a2,t); a3=ADD(m3,a2); m4=MUL(a3,t); a4=ADD(m4,a1);
+        poly=MUL(a4,t)
+      poly --MUL(e)--> pe --SUB(1)--> om
+      MUL(s, om) --> y_t
+      (optional) y_t --TRANSPOSE(inv(P))--> Y
+
+    Rewrite:
+      Remove boundary transpose(s) and feed chain directly from X.
+    """
+    rewritten = 0
+
+    def _single_user(
+        *,
+        tensor_name: str,
+        consumers: Dict[str, List[int]],
+    ) -> Optional[int]:
+        users = sorted({int(v) for v in consumers.get(str(tensor_name), [])})
+        if len(users) != 1:
+            return None
+        return int(users[0])
+
+    def _is_scalar_const_tensor(name: str) -> bool:
+        return _is_singleton_constant_tensor(model_ir, str(name))
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+        model_inputs = set(str(v) for v in model_ir.inputs)
+        model_outputs = set(str(v) for v in model_ir.outputs)
+
+        for pre_idx, pre_op in enumerate(model_ir.operators):
+            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+                continue
+            pre_input_name = str(pre_op.inputs[0])
+            if pre_input_name not in model_inputs:
+                continue
+            perm_pre = _read_transpose_perm(model_ir, pre_op)
+            if perm_pre is None:
+                continue
+            perm_post_expected = _invert_perm(perm_pre)
+            if perm_post_expected is None:
+                continue
+
+            pre_output_name = str(pre_op.outputs[0])
+            if pre_output_name in model_outputs:
+                continue
+
+            pre_users = sorted({int(v) for v in consumers.get(pre_output_name, [])})
+            if len(pre_users) != 2:
+                continue
+            abs_idx: Optional[int] = None
+            sign_idx: Optional[int] = None
+            for user_idx in pre_users:
+                user_op = model_ir.operators[int(user_idx)]
+                user_type = str(user_op.op_type)
+                if user_type == "ABS":
+                    abs_idx = int(user_idx)
+                elif user_type == "SIGN":
+                    sign_idx = int(user_idx)
+            if abs_idx is None or sign_idx is None:
+                continue
+            abs_op = model_ir.operators[int(abs_idx)]
+            sign_op = model_ir.operators[int(sign_idx)]
+            if len(abs_op.inputs) != 1 or len(abs_op.outputs) != 1:
+                continue
+            if len(sign_op.inputs) != 1 or len(sign_op.outputs) != 1:
+                continue
+            if str(abs_op.inputs[0]) != pre_output_name or str(sign_op.inputs[0]) != pre_output_name:
+                continue
+            abs_out = str(abs_op.outputs[0])
+            sign_out = str(sign_op.outputs[0])
+
+            abs_users = sorted({int(v) for v in consumers.get(abs_out, [])})
+            if len(abs_users) != 2:
+                continue
+            mul_px_idx: Optional[int] = None
+            mul_sq_idx: Optional[int] = None
+            for user_idx in abs_users:
+                user_op = model_ir.operators[int(user_idx)]
+                if str(user_op.op_type) != "MUL" or len(user_op.inputs) != 2 or len(user_op.outputs) != 1:
+                    continue
+                in0 = str(user_op.inputs[0])
+                in1 = str(user_op.inputs[1])
+                if in0 == abs_out and in1 == abs_out:
+                    mul_sq_idx = int(user_idx)
+                    continue
+                if abs_out in {in0, in1}:
+                    side_name = in1 if in0 == abs_out else in0
+                    if _is_scalar_const_tensor(side_name):
+                        mul_px_idx = int(user_idx)
+            if mul_px_idx is None or mul_sq_idx is None:
+                continue
+
+            mul_px_op = model_ir.operators[int(mul_px_idx)]
+            mul_sq_op = model_ir.operators[int(mul_sq_idx)]
+            mul_px_out = str(mul_px_op.outputs[0])
+            mul_sq_out = str(mul_sq_op.outputs[0])
+
+            add_px_idx = _single_user(tensor_name=mul_px_out, consumers=consumers)
+            if add_px_idx is None:
+                continue
+            add_px_op = model_ir.operators[int(add_px_idx)]
+            if str(add_px_op.op_type) != "ADD" or len(add_px_op.inputs) != 2 or len(add_px_op.outputs) != 1:
+                continue
+            if mul_px_out not in {str(v) for v in list(add_px_op.inputs)}:
+                continue
+            add_px_side = str(add_px_op.inputs[1]) if str(add_px_op.inputs[0]) == mul_px_out else str(add_px_op.inputs[0])
+            if not _is_scalar_const_tensor(add_px_side):
+                continue
+            add_px_out = str(add_px_op.outputs[0])
+
+            div_t_idx = _single_user(tensor_name=add_px_out, consumers=consumers)
+            if div_t_idx is None:
+                continue
+            div_t_op = model_ir.operators[int(div_t_idx)]
+            if str(div_t_op.op_type) != "DIV" or len(div_t_op.inputs) != 2 or len(div_t_op.outputs) != 1:
+                continue
+            div_t_inputs = [str(v) for v in list(div_t_op.inputs)]
+            if add_px_out == div_t_inputs[0]:
+                div_t_side = div_t_inputs[1]
+            elif add_px_out == div_t_inputs[1]:
+                div_t_side = div_t_inputs[0]
+            else:
+                continue
+            if not _is_scalar_const_tensor(div_t_side):
+                continue
+            t_out = str(div_t_op.outputs[0])
+
+            mul_neg_idx = _single_user(tensor_name=mul_sq_out, consumers=consumers)
+            if mul_neg_idx is None:
+                continue
+            mul_neg_op = model_ir.operators[int(mul_neg_idx)]
+            if str(mul_neg_op.op_type) != "MUL" or len(mul_neg_op.inputs) != 2 or len(mul_neg_op.outputs) != 1:
+                continue
+            if mul_sq_out not in {str(v) for v in list(mul_neg_op.inputs)}:
+                continue
+            mul_neg_side = (
+                str(mul_neg_op.inputs[1])
+                if str(mul_neg_op.inputs[0]) == mul_sq_out
+                else str(mul_neg_op.inputs[0])
+            )
+            if not _is_scalar_const_tensor(mul_neg_side):
+                continue
+            mul_neg_out = str(mul_neg_op.outputs[0])
+
+            exp_idx = _single_user(tensor_name=mul_neg_out, consumers=consumers)
+            if exp_idx is None:
+                continue
+            exp_op = model_ir.operators[int(exp_idx)]
+            if str(exp_op.op_type) != "EXP" or len(exp_op.inputs) != 1 or len(exp_op.outputs) != 1:
+                continue
+            if str(exp_op.inputs[0]) != mul_neg_out:
+                continue
+            exp_out = str(exp_op.outputs[0])
+
+            t_users = sorted({int(v) for v in consumers.get(t_out, [])})
+            if len(t_users) != 5:
+                continue
+
+            s1_mul_idx: Optional[int] = None
+            for user_idx in t_users:
+                user_op = model_ir.operators[int(user_idx)]
+                if str(user_op.op_type) != "MUL" or len(user_op.inputs) != 2 or len(user_op.outputs) != 1:
+                    continue
+                in0 = str(user_op.inputs[0])
+                in1 = str(user_op.inputs[1])
+                side_name: Optional[str] = None
+                if in0 == t_out:
+                    side_name = in1
+                elif in1 == t_out:
+                    side_name = in0
+                if side_name is None:
+                    continue
+                if _is_scalar_const_tensor(side_name):
+                    s1_mul_idx = int(user_idx)
+                    break
+            if s1_mul_idx is None:
+                continue
+
+            chain_indices: List[int] = []
+            chain_ops: List[OperatorIR] = []
+            s1_mul_op = model_ir.operators[int(s1_mul_idx)]
+            s1_mul_out = str(s1_mul_op.outputs[0])
+            chain_indices.append(int(s1_mul_idx))
+            chain_ops.append(s1_mul_op)
+            current = str(s1_mul_out)
+
+            chain_ok = True
+            for _ in range(4):
+                add_idx = _single_user(tensor_name=current, consumers=consumers)
+                if add_idx is None:
+                    chain_ok = False
+                    break
+                add_op = model_ir.operators[int(add_idx)]
+                if str(add_op.op_type) != "ADD" or len(add_op.inputs) != 2 or len(add_op.outputs) != 1:
+                    chain_ok = False
+                    break
+                add_inputs = [str(v) for v in list(add_op.inputs)]
+                if current == add_inputs[0]:
+                    add_side = add_inputs[1]
+                elif current == add_inputs[1]:
+                    add_side = add_inputs[0]
+                else:
+                    chain_ok = False
+                    break
+                if not _is_scalar_const_tensor(add_side):
+                    chain_ok = False
+                    break
+                chain_indices.append(int(add_idx))
+                chain_ops.append(add_op)
+                add_out = str(add_op.outputs[0])
+
+                mul_idx = _single_user(tensor_name=add_out, consumers=consumers)
+                if mul_idx is None:
+                    chain_ok = False
+                    break
+                mul_op = model_ir.operators[int(mul_idx)]
+                if str(mul_op.op_type) != "MUL" or len(mul_op.inputs) != 2 or len(mul_op.outputs) != 1:
+                    chain_ok = False
+                    break
+                mul_inputs = [str(v) for v in list(mul_op.inputs)]
+                if add_out == mul_inputs[0]:
+                    mul_side = mul_inputs[1]
+                elif add_out == mul_inputs[1]:
+                    mul_side = mul_inputs[0]
+                else:
+                    chain_ok = False
+                    break
+                if str(mul_side) != str(t_out):
+                    chain_ok = False
+                    break
+                chain_indices.append(int(mul_idx))
+                chain_ops.append(mul_op)
+                current = str(mul_op.outputs[0])
+            if not chain_ok:
+                continue
+            poly_out = str(current)
+
+            mul_poly_exp_idx = _single_user(tensor_name=poly_out, consumers=consumers)
+            if mul_poly_exp_idx is None:
+                continue
+            mul_poly_exp_op = model_ir.operators[int(mul_poly_exp_idx)]
+            if str(mul_poly_exp_op.op_type) != "MUL" or len(mul_poly_exp_op.inputs) != 2 or len(mul_poly_exp_op.outputs) != 1:
+                continue
+            mpex_inputs = [str(v) for v in list(mul_poly_exp_op.inputs)]
+            if set(mpex_inputs) != {str(poly_out), str(exp_out)}:
+                continue
+            mul_poly_exp_out = str(mul_poly_exp_op.outputs[0])
+
+            if sorted({int(v) for v in consumers.get(exp_out, [])}) != [int(mul_poly_exp_idx)]:
+                continue
+
+            sub_idx = _single_user(tensor_name=mul_poly_exp_out, consumers=consumers)
+            if sub_idx is None:
+                continue
+            sub_op = model_ir.operators[int(sub_idx)]
+            if str(sub_op.op_type) != "SUB" or len(sub_op.inputs) != 2 or len(sub_op.outputs) != 1:
+                continue
+            sub_inputs = [str(v) for v in list(sub_op.inputs)]
+            if mul_poly_exp_out == sub_inputs[0]:
+                sub_side = sub_inputs[1]
+            elif mul_poly_exp_out == sub_inputs[1]:
+                sub_side = sub_inputs[0]
+            else:
+                continue
+            if not _is_scalar_const_tensor(sub_side):
+                continue
+            sub_out = str(sub_op.outputs[0])
+
+            final_mul_idx = _single_user(tensor_name=sub_out, consumers=consumers)
+            if final_mul_idx is None:
+                continue
+            final_mul_op = model_ir.operators[int(final_mul_idx)]
+            if str(final_mul_op.op_type) != "MUL" or len(final_mul_op.inputs) != 2 or len(final_mul_op.outputs) != 1:
+                continue
+            final_inputs = [str(v) for v in list(final_mul_op.inputs)]
+            if set(final_inputs) != {str(sign_out), str(sub_out)}:
+                continue
+            if sorted({int(v) for v in consumers.get(sign_out, [])}) != [int(final_mul_idx)]:
+                continue
+            final_out = str(final_mul_op.outputs[0])
+
+            terminal_mode = ""
+            post_idx: Optional[int] = None
+            post_output_name = str(final_out)
+            final_users = sorted({int(v) for v in consumers.get(final_out, [])})
+            if final_out in model_outputs and len(final_users) == 0:
+                terminal_mode = "model_output"
+            elif len(final_users) == 1:
+                cand_idx = int(final_users[0])
+                cand_op = model_ir.operators[int(cand_idx)]
+                if (
+                    str(cand_op.op_type) == "TRANSPOSE"
+                    and len(cand_op.inputs) >= 2
+                    and len(cand_op.outputs) == 1
+                    and str(cand_op.inputs[0]) == str(final_out)
+                ):
+                    perm_post = _read_transpose_perm(model_ir, cand_op)
+                    if perm_post is not None and list(perm_post) == list(perm_post_expected):
+                        terminal_mode = "inverse_post_transpose"
+                        post_idx = int(cand_idx)
+                        post_output_name = str(cand_op.outputs[0])
+            if terminal_mode == "":
+                continue
+
+            # Rewire chain head from transposed tensor to model input tensor.
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=abs_op,
+                new_inputs=[str(pre_input_name)],
+            )
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=sign_op,
+                new_inputs=[str(pre_input_name)],
+            )
+            if terminal_mode == "inverse_post_transpose":
+                _set_operator_outputs(
+                    model_ir=model_ir,
+                    op=final_mul_op,
+                    new_outputs=[str(post_output_name)],
+                )
+
+            # Update tensor metadata from transposed layout to source layout.
+            chain_all_ops: List[OperatorIR] = [
+                abs_op,
+                sign_op,
+                mul_px_op,
+                add_px_op,
+                div_t_op,
+                mul_sq_op,
+                mul_neg_op,
+                exp_op,
+            ] + chain_ops + [mul_poly_exp_op, sub_op, final_mul_op]
+            seen_names: set = set()
+            for op in chain_all_ops:
+                if len(op.outputs) != 1:
+                    continue
+                out_name = str(op.outputs[0])
+                if out_name in seen_names:
+                    continue
+                seen_names.add(out_name)
+                _permute_tensor_metadata_if_rank_matches(
+                    model_ir.tensors.get(out_name, None),
+                    perm_post_expected,
+                )
+
+            remove_indices = {int(pre_idx)}
+            if post_idx is not None:
+                remove_indices.add(int(post_idx))
+            for remove_idx in sorted(list(remove_indices), reverse=True):
+                del model_ir.operators[int(remove_idx)]
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"rewritten_erf_transpose_passthrough_chains": int(rewritten)}

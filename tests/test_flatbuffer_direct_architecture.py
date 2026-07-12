@@ -312,6 +312,7 @@ def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> No
 
     input_passthrough_functions = {
         "_optimize_asin_transpose_passthrough_chains",
+        "_optimize_erf_transpose_passthrough_chains",
         "_optimize_hardsigmoid_transpose_passthrough_chains",
         "_optimize_leading_input_transpose_passthrough_chains",
     }

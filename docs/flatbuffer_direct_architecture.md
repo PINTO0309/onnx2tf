@@ -89,6 +89,13 @@ Standalone HardSigmoid decomposition passthrough also lives in
 requires an inverse terminal transpose. Intermediate metadata and output
 lineage are updated through the shared graph mutation utilities.
 
+The strict ERF polynomial decomposition passthrough is colocated in
+`passes/input_passthrough_layout.py`. Its two ABS/SIGN branches, reciprocal
+prelude, exponential branch, four-stage Horner chain, final sign merge, scalar
+constants, exact consumer counts, and inverse terminal permutation are all
+validated before any mutation. This remains a semantic graph pattern and does
+not depend on a model name.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

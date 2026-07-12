@@ -157,10 +157,25 @@ Verification completed with:
 - `1004 passed, 5 deselected, 2 warnings in 125.56s` for the full sequential
   direct suite.
 
-The next increment is the adjacent ERF polynomial decomposition passthrough.
-It can reuse the same canonical graph helpers and singleton predicate, but its
-larger topology needs both a positive fixture and guard-failure fixtures before
-the full-suite gate.
+The ERF polynomial decomposition passthrough now lives in
+`passes/input_passthrough_layout.py`. Its legacy symbol delegates to the exact
+moved implementation. The pass preserves the ABS/SIGN branch split,
+reciprocal prelude, square/exponential branch, four-stage Horner polynomial,
+final sign merge, singleton constants, exact consumer counts, output boundary,
+and inverse-permutation guards. A generated ModelIR fixture exercises the full
+21-operator topology, and a non-singleton coefficient fixture fixes the no-op
+path.
+
+Verification completed with:
+
+- `28 passed` for the focused architecture, utility, and input-passthrough
+  suite;
+- `1006 passed, 5 deselected, 2 warnings in 125.19s` for the full sequential
+  direct suite.
+
+The next input-passthrough increment is the adjacent HardSwish decomposition.
+After that, the larger HardSigmoid-plus-residual-Mul family can be moved with
+separate fixtures for its multi-output and reduction-axis branches.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
