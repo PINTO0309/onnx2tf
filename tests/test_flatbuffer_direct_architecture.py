@@ -382,6 +382,7 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
         if isinstance(node, ast.Name)
     }
     assert "run_clamp_cleanup" in lowerer_names
+    assert "run_squeeze_reshape_identity_cleanup" in lowerer_names
 
 
 def test_attention_layout_rewrites_have_single_owner() -> None:

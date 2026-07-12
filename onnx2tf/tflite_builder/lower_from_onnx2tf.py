@@ -116,6 +116,7 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_duplicate_transpose_fanout as _optimize_duplicate_transpose_fanout_pass,
     run_clamp_cleanup,
     run_duplicate_fanout_cleanup,
+    run_squeeze_reshape_identity_cleanup,
 )
 from onnx2tf.tflite_builder.passes.attention_layout import (
     _optimize_transpose_csp_attention_nhwc_chains as _optimize_transpose_csp_attention_nhwc_chains_pass,
@@ -65501,7 +65502,10 @@ def lower_onnx_to_ir(
         _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
         _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir)
         _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
-        _optimize_squeeze_reshape_identity_chains(model_ir)
+        run_squeeze_reshape_identity_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_fold_mul_add_mul_affine_chains(model_ir)
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
@@ -65609,7 +65613,10 @@ def lower_onnx_to_ir(
         _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
         _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir)
         _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
-        _optimize_squeeze_reshape_identity_chains(model_ir)
+        run_squeeze_reshape_identity_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_fold_mul_add_mul_affine_chains(model_ir)
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
@@ -65718,10 +65725,16 @@ def lower_onnx_to_ir(
         _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
         _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir)
         _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
-        _optimize_squeeze_reshape_identity_chains(model_ir)
+        run_squeeze_reshape_identity_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir)
         _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
-        _optimize_squeeze_reshape_identity_chains(model_ir)
+        run_squeeze_reshape_identity_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
@@ -65798,7 +65811,10 @@ def lower_onnx_to_ir(
     _optimize_fuse_conv_activation_chains(model_ir)
     _resolve_dynamic_reshape_shapes(model_ir)
     _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
-    _optimize_squeeze_reshape_identity_chains(model_ir)
+    run_squeeze_reshape_identity_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _prune_dead_operators(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     _advance_post_progress()
@@ -65982,7 +65998,10 @@ def lower_onnx_to_ir(
             ):
                 break
         _optimize_squeeze_unary_reshape_passthrough_chains(model_ir)
-        _optimize_squeeze_reshape_identity_chains(model_ir)
+        run_squeeze_reshape_identity_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _prune_dead_operators(model_ir)
         _reconcile_static_tensor_shapes(model_ir)
         _advance_post_progress()
@@ -66070,7 +66089,10 @@ def lower_onnx_to_ir(
         _optimize_singleton_nms_maxpool_nhwc_chains(model_ir)
         _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir)
         _optimize_consecutive_reshape_passthrough_chains(model_ir)
-        _optimize_squeeze_reshape_identity_chains(model_ir)
+        run_squeeze_reshape_identity_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(model_ir)
         _optimize_singleton_reshape_concat_post_transpose_nhwc_chains(model_ir)
         # Run OSNet-specific multi-branch gate rewrite at terminal stage so
@@ -66114,7 +66136,10 @@ def lower_onnx_to_ir(
     _optimize_singleton_nms_maxpool_nhwc_chains(model_ir)
     _optimize_flatten_concat_expanddims_to_nhwc_concat(model_ir)
     _optimize_consecutive_reshape_passthrough_chains(model_ir)
-    _optimize_squeeze_reshape_identity_chains(model_ir)
+    run_squeeze_reshape_identity_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_singleton_spatial_nhwc_transpose_reshape_flatten(model_ir)
     _prune_dead_operators(model_ir)
     _reconcile_static_tensor_shapes(model_ir)

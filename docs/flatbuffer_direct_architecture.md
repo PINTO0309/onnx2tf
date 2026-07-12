@@ -204,7 +204,12 @@ Squeeze/Reshape identity cleanup also uses the differential graph index. It
 normalizes explicit or inferred squeeze axes, proves the squeezed and restored
 shapes, rewires only consumers of the round-trip output, then removes both
 operators without rebuilding maps. Squeeze-axis normalization has one shared
-implementation in `core/model_ir_utils.py`.
+implementation in `core/model_ir_utils.py`. All recovery-sweep invocations use
+`run_squeeze_reshape_identity_cleanup`, registered as
+`cleanup.squeeze_reshape_identity` in `POST_LOWERING_CLEANUP`. The existing
+eight call positions remain separate because intervening rewrites can expose
+new round trips; each invocation shares the session LayoutState and avoids its
+transaction snapshot unless a Squeeze has exactly one Reshape consumer.
 
 Consecutive duplicate Transpose/Reshape cleanup calls are executed by
 `run_duplicate_fanout_cleanup`. The runner registers stable

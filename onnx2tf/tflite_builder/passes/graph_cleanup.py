@@ -473,7 +473,12 @@ def run_clamp_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_squeeze_reshape_identity_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_squeeze_reshape_identity_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Remove redundant SQUEEZE -> RESHAPE chains that round-trip to input shape.
 
@@ -484,7 +489,7 @@ def _optimize_squeeze_reshape_identity_chains(model_ir: ModelIR) -> Dict[str, in
       replace all uses of y with x and remove SQUEEZE/RESHAPE.
     """
     rewritten = 0
-    graph_index = ModelIRGraphIndex(model_ir)
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _shape_list(name: str) -> Optional[List[int]]:
         tensor = model_ir.tensors.get(str(name), None)
@@ -598,5 +603,52 @@ def _optimize_squeeze_reshape_identity_chains(model_ir: ModelIR) -> Dict[str, in
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"optimized_squeeze_reshape_identity_chains": int(rewritten)}
+
+
+def run_squeeze_reshape_identity_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Run guarded Squeeze/Reshape round-trip removal transactionally."""
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        for op in pass_state.model_ir.operators:
+            if str(op.op_type) != "SQUEEZE" or len(op.outputs) != 1:
+                continue
+            users = pass_state.graph_index.consumer_indices(str(op.outputs[0]))
+            if len(users) != 1:
+                continue
+            consumer = pass_state.model_ir.operators[int(users[0])]
+            if str(consumer.op_type) == "RESHAPE":
+                return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_squeeze_reshape_identity_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get("optimized_squeeze_reshape_identity_chains", 0)),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="cleanup.squeeze_reshape_identity",
+                phase=PassPhase.POST_LOWERING_CLEANUP,
+                callback=_run,
+                precondition=_has_candidate,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={"optimized_squeeze_reshape_identity_chains": 0},
+    )
+    return {str(key): int(value) for key, value in details.items()}

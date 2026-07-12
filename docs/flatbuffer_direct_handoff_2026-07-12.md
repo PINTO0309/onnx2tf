@@ -581,6 +581,32 @@ positions and decide whether one runner per existing position preserves the
 intended fixed-point behavior or whether adjacent calls can safely share a
 group. Do not collapse those invocations without digest/runtime evidence.
 
+The eight Squeeze/Reshape identity calls occur in distinct recovery sweeps,
+including two calls separated by InstanceNorm rewriting. Because intervening
+passes can expose new round trips, their positions and count were preserved
+one-for-one instead of being collapsed. They now call
+`run_squeeze_reshape_identity_cleanup` with the session LayoutState. Its stable
+ID is `cleanup.squeeze_reshape_identity` in `POST_LOWERING_CLEANUP`; a
+single-consumer Squeeze-to-Reshape precondition avoids snapshots on irrelevant
+graphs, while the raw compatibility helper accepts an optional shared index
+and layout state.
+
+Verification completed with:
+
+- `4 passed, 23 deselected` for ordered Squeeze/Reshape positive/no-op
+  behavior, one-index construction, LayoutState pruning, snapshot avoidance,
+  and architecture ownership;
+- `1031 passed, 5 deselected, 2 warnings in 129.68s` for the full sequential
+  direct suite.
+
+The next step should avoid migrating another large layout rule immediately.
+First inspect the common runner diagnostics: pass results are returned to
+callers but the current production runners discard them. Determine how to
+attach stable pass IDs, iteration counts, skip state, and invariant failures to
+`ConversionSession.diagnostics` without changing the legacy report schemas or
+public return dictionary. Add a focused contract test before wiring production
+sessions.
+
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
 ### Completed work
