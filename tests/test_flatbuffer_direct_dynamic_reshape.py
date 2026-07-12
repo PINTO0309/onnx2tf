@@ -8,6 +8,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _reconcile_static_tensor_shapes,
     _restore_placeholder_matmul_flattened_inputs,
     _resolve_dynamic_reshape_shapes,
+    _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs,
 )
 
 
@@ -98,6 +99,46 @@ def test_shape_reconciliation_repairs_stale_flatten_shape_constant() -> None:
     assert np.asarray(model_ir.tensors["shape"].data).tolist() == [-1, 50176]
     assert model_ir.tensors["y"].shape == [1, 50176]
     assert model_ir.tensors["y"].shape_signature == [-1, 50176]
+
+
+def test_dynamic_unsqueeze_contract_survives_folded_higher_rank_input() -> None:
+    model_ir = ModelIR("folded_squeeze_unsqueeze")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["scores"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 1, 1, 1],
+        shape_signature=[-1, -1, -1, -1],
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([1, 1], dtype=np.int32),
+    )
+    model_ir.tensors["scores"] = TensorIR(
+        name="scores",
+        dtype="FLOAT32",
+        shape=[1, 1],
+        shape_signature=[-1, 1],
+    )
+    model_ir.operators = [
+        OperatorIR(
+            op_type="RESHAPE",
+            inputs=["x", "shape"],
+            outputs=["scores"],
+            options={"newShape": [1, 1]},
+        )
+    ]
+
+    stats = _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
+
+    assert stats == {"rewritten_dynamic_rank1_unsqueeze_reshape_shape_inputs": 1}
+    assert [op.op_type for op in model_ir.operators] == ["RESHAPE"]
+    assert model_ir.operators[0].options["newShape"] == []
+    assert np.asarray(model_ir.tensors["shape"].data).tolist() == [-1, 1]
 
 
 def test_batch_matmul_shape_inference_accepts_unbatched_rhs() -> None:

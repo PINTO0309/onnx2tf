@@ -1087,6 +1087,27 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "9a77ab8f63d543c221797af2d444b22c59a1cbb4a483e4c4caed79f45fcc8c9b"
     )
     assert alike_entry["tflite_max_abs"] == 290.0000057220459
+    for debug_model_name, expected_signature in (
+        (
+            "tmp_alike_debug3.onnx",
+            "224de9b141fb9878c1b1ef289b511c6f87d8844c4eac617b0e897cf0ade38f75",
+        ),
+        (
+            "tmp_alike_debug4.onnx",
+            "55596567db57cb322d3d8364fd9a668b24e93b882334c6d876a1b3af07506601",
+        ),
+    ):
+        debug_entry = next(
+            entry
+            for entry in profile_payload["models"]
+            if entry["model"] == debug_model_name
+        )
+        assert debug_entry["baseline_classification"] == "tflite_fail"
+        assert debug_entry["baseline_reason"] == (
+            "exact_equality_mask_instability_from_float_accumulation"
+        )
+        assert debug_entry["error_signature_sha256"] == expected_signature
+        assert debug_entry["tflite_max_abs"] == 1.0
     assert profile["model_options"]["tiny_decoder_11.onnx"] == {
         "shape_hints": [
             "tokens:1,1",

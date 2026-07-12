@@ -1886,7 +1886,7 @@
       "tier": 2,
       "model": "tmp_alike_debug3.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
+      "baseline_reason": "exact_equality_mask_instability_from_float_accumulation",
       "error_signature_sha256": "224de9b141fb9878c1b1ef289b511c6f87d8844c4eac617b0e897cf0ade38f75",
       "tflite_max_abs": 1.0
     },
@@ -1894,7 +1894,7 @@
       "tier": 2,
       "model": "tmp_alike_debug4.onnx",
       "baseline_classification": "tflite_fail",
-      "baseline_reason": "tflite_fail",
+      "baseline_reason": "exact_equality_mask_instability_from_float_accumulation",
       "error_signature_sha256": "55596567db57cb322d3d8364fd9a668b24e93b882334c6d876a1b3af07506601",
       "tflite_max_abs": 1.0
     },

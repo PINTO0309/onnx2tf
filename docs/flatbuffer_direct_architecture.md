@@ -243,6 +243,21 @@ pair swaps; the associated descriptors move with those indices. Rounding the
 scores before TopK would alter the source model's selection semantics, so the
 converter does not add such a model-specific stabilization rule.
 
+The related `tmp_alike_debug3.onnx` and `tmp_alike_debug4.onnx` probes now run
+to completion after preserving the dynamic `[-1, 1]` output contract when a
+late Squeeze/Unsqueeze fold leaves stale higher-rank input metadata. Before the
+repair, LiteRT attempted to reshape 1,868 runtime elements to `[1, 1]`. The
+serialized shape tensor is now `[-1, 1]`, independent of the stale input rank.
+Their ordinary FLOAT32 outputs remain close: `scores_map` differs by at most
+`2.4020671844482422e-5`, `descriptors` by `3.732740879058838e-6`, and `scores`
+by `7.748603820800781e-7`; `keypoints` is exact. The debug-only exact-equality
+and derived boolean masks can nevertheless flip from those accumulation-order
+differences, producing boolean maximum error `1.0`. Both probes therefore
+remain active non-passes with the normalized reason
+`exact_equality_mask_instability_from_float_accumulation`. Introducing a
+tolerance into ONNX `Equal` would change model semantics, so no such rewrite is
+applied.
+
 The root-only Tier 3 gate at commit `c838b42` contains 71 models. The managed
 result is `docs/baselines/flatbuffer_direct_tier3_root_c838b42.json`: 22
 passed, 15 conversion errors, 17 timeouts, 1 accuracy failure, and 16 missing

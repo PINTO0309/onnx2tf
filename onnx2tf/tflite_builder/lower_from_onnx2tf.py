@@ -1270,9 +1270,6 @@ def _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
             rewritten_ops.append(op)
             continue
 
-        if len(input_signature) != 1:
-            rewritten_ops.append(op)
-            continue
         if output_signature != [-1, 1] and output_signature != [1, -1]:
             rewritten_ops.append(op)
             continue
@@ -1281,6 +1278,22 @@ def _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
             and list(op.options.get("newShape", [])) not in ([], [1, 1])
         ):
             rewritten_ops.append(op)
+            continue
+
+        if len(input_signature) != 1:
+            # Late Squeeze/Unsqueeze folding can remove the rank-1 intermediate
+            # while retaining its two-dimensional output contract. In that
+            # case SHAPE(input) would expose stale higher-rank metadata. Keep
+            # the one runtime-inferred extent directly instead; TFLite RESHAPE
+            # accepts one -1 independently of the input rank.
+            inferred_shape = [int(v) for v in output_signature]
+            shape_tensor.data = np.asarray(inferred_shape, dtype=np.int32)
+            shape_tensor.dtype = "INT32"
+            shape_tensor.shape = [int(len(inferred_shape))]
+            shape_tensor.shape_signature = [int(len(inferred_shape))]
+            op.options["newShape"] = []
+            rewritten_ops.append(op)
+            rewritten += 1
             continue
 
         runtime_shape_name = _unique_tensor_name(f"{output_name}_runtime_shape")
