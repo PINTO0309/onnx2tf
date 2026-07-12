@@ -6,6 +6,9 @@ from typing import Any, List, Optional, Tuple
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import OperatorIR, QuantParamIR
+from onnx2tf.tflite_builder.op_builders.conv import (
+    _infer_conv2d_output_shape_nchw,
+)
 from onnx2tf.tflite_builder.op_builders.shared import make_transpose, resolve_padding
 
 
@@ -355,7 +358,13 @@ def _propagate_shape(ctx: Any, src_tensor_name: str, dst_tensor_name: str) -> No
         if src.shape_signature is not None
         else list(src.shape)
     )
-    if dst.shape == [1] and src.shape != [1]:
+    same_rank_all_ones_placeholder = bool(
+        len(list(dst.shape)) == len(list(src.shape))
+        and list(dst.shape) != list(src.shape)
+        and len(list(dst.shape)) > 0
+        and all(int(v) == 1 for v in list(dst.shape))
+    )
+    if (dst.shape == [1] and src.shape != [1]) or same_rank_all_ones_placeholder:
         dst.shape = list(src.shape)
         dst.shape_signature = list(src_signature)
     elif len(list(dst.shape)) == len(list(src.shape)) and list(dst.shape) == list(src.shape):
@@ -1241,15 +1250,31 @@ def build_qlinear_conv_op(node: Any, ctx: Any) -> None:
         output_shape[1] = int(inferred_output_channels)
         output_tensor.shape = [int(v) for v in list(output_shape)]
 
-    if len(output_shape) != 4 and len(input_shape) == 4:
-        inferred_output_shape = [
-            int(input_shape[0]),
-            int(weights.shape[0]),
-            int(input_shape[2]),
-            int(input_shape[3]),
-        ]
-        ctx.model_ir.tensors[output_name].shape = inferred_output_shape
-        output_shape = inferred_output_shape
+    inferred_output_shape = (
+        _infer_conv2d_output_shape_nchw(
+            node=node,
+            input_shape_nchw=input_shape,
+            weights=weights,
+        )
+        if len(input_shape) == 4
+        and np.asarray(weights).ndim == 4
+        and all(int(v) > 0 for v in input_shape)
+        else None
+    )
+    output_shape_disagrees = bool(
+        inferred_output_shape is not None
+        and [int(v) for v in output_shape]
+        != [int(v) for v in inferred_output_shape]
+    )
+    if inferred_output_shape is not None and (
+        len(output_shape) != 4 or output_shape_disagrees
+    ):
+        output_shape = [int(v) for v in inferred_output_shape]
+        output_tensor.shape = [int(v) for v in output_shape]
+        # Static convolution geometry is authoritative over stale or
+        # placeholder value-info. Dynamic axes are reintroduced from the
+        # input signature below.
+        existing_output_signature = None
     if len(input_shape) != 4 or len(output_shape) != 4:
         raise NotImplementedError(
             "QLinearConv supports only rank-4 tensors in flatbuffer_direct. "

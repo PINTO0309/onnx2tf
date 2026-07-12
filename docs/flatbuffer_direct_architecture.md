@@ -234,6 +234,20 @@ the current fixed-seed final maximum absolute error is
 required ceiling. As with the other U8S8 cases, the converter does not emulate
 host-specific saturating SIMD pair accumulation.
 
+`object_detection_nanodet_2022nov_int8.onnx` is promoted from an active
+accuracy failure to a pass. Its first QLinearConv output shape was absent from
+ONNX value-info and initially materialized as `[1,1,1,1]`. The following
+quantized LeakyRelu and DequantizeLinear retained that placeholder while the
+MaxPool lowering selected its padding strategy. For the actual `[1,24,208,208]`
+input, ONNX `kernel=3`, `stride=2`, `pads=[1,1,1,1]` starts its windows one
+element before the input, whereas TFLite SAME needs only one total padding
+element and places it at the end. This shifted every pooling window. QLinearConv
+now derives static output geometry eagerly, and quantized pass-through ops
+replace same-rank all-one placeholders from their source. MaxPool therefore
+emits explicit negative-infinity padding followed by VALID pooling. All six
+outputs pass sequential comparison; maximum absolute error improved from
+`2.570713758468628` to `4.76837158203125e-7`.
+
 `yolox_nano.onnx` remains an active Tier 2 non-pass with the normalized reason
 `float_conv_accumulation_amplified_by_exp_stride`. The normal sequential
 comparison satisfies the aggregate metric gate with mean absolute error
