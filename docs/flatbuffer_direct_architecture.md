@@ -102,6 +102,13 @@ Pseudo-expanded HardSwish passthrough is another member of
 singleton side constants, linear branch consumers, and an inverse terminal
 transpose. Both residual inputs are rewired through lineage-aware helpers.
 
+The HardSigmoid-plus-residual-Mul passthrough family is also owned by
+`passes/input_passthrough_layout.py`. Its stricter multi-user analysis handles
+the expanded HardSigmoid clamp, residual multiplication, optional Mean branch,
+axis remapping, and cases where a legacy NCHW adapter must be retained for
+other consumers. Constant-vector and graph mutations use only shared core
+helpers.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

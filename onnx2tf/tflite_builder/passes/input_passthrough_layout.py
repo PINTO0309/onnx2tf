@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -12,10 +12,13 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _is_singleton_constant_tensor,
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
+    _read_const_ints_from_tensor,
     _read_transpose_perm,
     _replace_operator_input_at,
+    _replace_tensor_inputs,
     _set_operator_inputs,
     _set_operator_outputs,
+    _write_const_ints_to_tensor,
 )
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -1295,3 +1298,476 @@ def _optimize_hardswish_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[
 
     _prune_unused_tensors(model_ir)
     return {"rewritten_hardswish_transpose_passthrough_chains": int(rewritten)}
+
+
+def _optimize_hardsigmoid_mul_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Fold transpose wrappers around HardSigmoid-expanded residual MUL chains.
+
+    Target:
+      X --TRANSPOSE(P)--> x_t
+      x_t --MUL(alpha)--> m1 --ADD(beta)--> a1 --(MAXIMUM(0)->MINIMUM(1) | RELU_0_TO_1)--> h1
+      MUL(x_t, h1) --> y_t
+      y_t --TRANSPOSE(inv(P))--> Y
+      (optional branch)
+      y_t --MEAN(axes_nchw, keepDims=True)--> m_t --TRANSPOSE(inv(P))--> M
+
+    Rewrite:
+      X --MUL(alpha)--> m1 --ADD(beta)--> a1 --(MAXIMUM(0)->MINIMUM(1) | RELU_0_TO_1)--> h1
+      MUL(X, h1) --> Y
+      MEAN(Y, axes_nhwc, keepDims=True) --> M
+
+    Safety:
+    - Strict HardSigmoid decomposition topology on one branch.
+    - HardSigmoid branch constants must be singleton constants.
+    - Chain on the HardSigmoid branch must be linear.
+    - Optional MEAN branch must be rank-4 constant-axes and only feed inverse post-transpose adapters.
+    """
+    rewritten = 0
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+        model_outputs = set(str(v) for v in model_ir.outputs)
+
+        for pre_idx, pre_op in enumerate(model_ir.operators):
+            if str(pre_op.op_type) != "TRANSPOSE":
+                continue
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+                continue
+
+            pre_input_name = str(pre_op.inputs[0])
+            pre_output_name = str(pre_op.outputs[0])
+
+            perm_pre = _read_transpose_perm(model_ir, pre_op)
+            if perm_pre is None:
+                continue
+            perm_post_expected = _invert_perm(perm_pre)
+            if perm_post_expected is None:
+                continue
+
+            pre_users = [int(v) for v in consumers.get(pre_output_name, [])]
+            if len(pre_users) != 2:
+                continue
+
+            def _try_match_pair(hs_entry_idx: int, residual_mul_idx: int) -> Optional[Dict[str, Any]]:
+                hs_entry_op = model_ir.operators[int(hs_entry_idx)]
+                hs_entry_type = str(hs_entry_op.op_type)
+                hs_data_idx: Optional[int] = None
+                hs_data_input_index: Optional[int] = None
+                hs_out_name: Optional[str] = None
+                hs_intermediate_names: List[str] = []
+
+                if hs_entry_type == "MUL" and len(hs_entry_op.inputs) == 2 and len(hs_entry_op.outputs) == 1:
+                    hs_mul_inputs = [str(v) for v in list(hs_entry_op.inputs)]
+                    if pre_output_name == hs_mul_inputs[0]:
+                        hs_data_input_index = 0
+                        hs_mul_side_name = hs_mul_inputs[1]
+                    elif pre_output_name == hs_mul_inputs[1]:
+                        hs_data_input_index = 1
+                        hs_mul_side_name = hs_mul_inputs[0]
+                    else:
+                        return None
+                    if not _is_singleton_constant_tensor(model_ir, hs_mul_side_name):
+                        return None
+                    hs_data_idx = int(hs_entry_idx)
+                    hs_mul_out_name = str(hs_entry_op.outputs[0])
+
+                    hs_mul_users = [int(v) for v in consumers.get(hs_mul_out_name, [])]
+                    if len(hs_mul_users) != 1:
+                        return None
+                    hs_add_idx = int(hs_mul_users[0])
+                    hs_add_op = model_ir.operators[int(hs_add_idx)]
+                    if str(hs_add_op.op_type) != "ADD" or len(hs_add_op.inputs) != 2 or len(hs_add_op.outputs) != 1:
+                        return None
+                    hs_add_inputs = [str(v) for v in list(hs_add_op.inputs)]
+                    if hs_mul_out_name == hs_add_inputs[0]:
+                        hs_add_side_name = hs_add_inputs[1]
+                    elif hs_mul_out_name == hs_add_inputs[1]:
+                        hs_add_side_name = hs_add_inputs[0]
+                    else:
+                        return None
+                    if not _is_singleton_constant_tensor(model_ir, hs_add_side_name):
+                        return None
+                    hs_add_out_name = str(hs_add_op.outputs[0])
+
+                    hs_add_users = [int(v) for v in consumers.get(hs_add_out_name, [])]
+                    if len(hs_add_users) != 1:
+                        return None
+                    hs_clamp_idx = int(hs_add_users[0])
+                    hs_clamp_op = model_ir.operators[int(hs_clamp_idx)]
+                    hs_intermediate_names = [str(hs_mul_out_name), str(hs_add_out_name)]
+                    if (
+                        str(hs_clamp_op.op_type) == "RELU_0_TO_1"
+                        and len(hs_clamp_op.inputs) == 1
+                        and len(hs_clamp_op.outputs) == 1
+                        and str(hs_clamp_op.inputs[0]) == hs_add_out_name
+                    ):
+                        hs_out_name = str(hs_clamp_op.outputs[0])
+                    else:
+                        if (
+                            str(hs_clamp_op.op_type) != "MAXIMUM"
+                            or len(hs_clamp_op.inputs) != 2
+                            or len(hs_clamp_op.outputs) != 1
+                        ):
+                            return None
+                        hs_max_inputs = [str(v) for v in list(hs_clamp_op.inputs)]
+                        if hs_add_out_name == hs_max_inputs[0]:
+                            hs_max_side_name = hs_max_inputs[1]
+                        elif hs_add_out_name == hs_max_inputs[1]:
+                            hs_max_side_name = hs_max_inputs[0]
+                        else:
+                            return None
+                        if not _is_singleton_constant_tensor(model_ir, hs_max_side_name):
+                            return None
+                        hs_max_out_name = str(hs_clamp_op.outputs[0])
+                        hs_intermediate_names.append(str(hs_max_out_name))
+
+                        hs_max_users = [int(v) for v in consumers.get(hs_max_out_name, [])]
+                        if len(hs_max_users) != 1:
+                            return None
+                        hs_min_idx = int(hs_max_users[0])
+                        hs_min_op = model_ir.operators[int(hs_min_idx)]
+                        if (
+                            str(hs_min_op.op_type) != "MINIMUM"
+                            or len(hs_min_op.inputs) != 2
+                            or len(hs_min_op.outputs) != 1
+                        ):
+                            return None
+                        hs_min_inputs = [str(v) for v in list(hs_min_op.inputs)]
+                        if hs_max_out_name == hs_min_inputs[0]:
+                            hs_min_side_name = hs_min_inputs[1]
+                        elif hs_max_out_name == hs_min_inputs[1]:
+                            hs_min_side_name = hs_min_inputs[0]
+                        else:
+                            return None
+                        if not _is_singleton_constant_tensor(model_ir, hs_min_side_name):
+                            return None
+                        hs_out_name = str(hs_min_op.outputs[0])
+                elif hs_entry_type == "ADD" and len(hs_entry_op.inputs) == 2 and len(hs_entry_op.outputs) == 1:
+                    hs_add_inputs = [str(v) for v in list(hs_entry_op.inputs)]
+                    if pre_output_name == hs_add_inputs[0]:
+                        hs_data_input_index = 0
+                        hs_add_side_name = hs_add_inputs[1]
+                    elif pre_output_name == hs_add_inputs[1]:
+                        hs_data_input_index = 1
+                        hs_add_side_name = hs_add_inputs[0]
+                    else:
+                        return None
+                    if not _is_singleton_constant_tensor(model_ir, hs_add_side_name):
+                        return None
+                    hs_data_idx = int(hs_entry_idx)
+                    hs_add_out_name = str(hs_entry_op.outputs[0])
+                    hs_intermediate_names.append(str(hs_add_out_name))
+
+                    hs_add_users = [int(v) for v in consumers.get(hs_add_out_name, [])]
+                    if len(hs_add_users) != 1:
+                        return None
+                    hs_mul_idx = int(hs_add_users[0])
+                    hs_mul_op = model_ir.operators[int(hs_mul_idx)]
+                    if str(hs_mul_op.op_type) != "MUL" or len(hs_mul_op.inputs) != 2 or len(hs_mul_op.outputs) != 1:
+                        return None
+                    hs_mul_inputs = [str(v) for v in list(hs_mul_op.inputs)]
+                    if hs_add_out_name == hs_mul_inputs[0]:
+                        hs_mul_side_name = hs_mul_inputs[1]
+                    elif hs_add_out_name == hs_mul_inputs[1]:
+                        hs_mul_side_name = hs_mul_inputs[0]
+                    else:
+                        return None
+                    if not _is_singleton_constant_tensor(model_ir, hs_mul_side_name):
+                        return None
+                    hs_out_name = str(hs_mul_op.outputs[0])
+                    hs_intermediate_names.append(str(hs_out_name))
+                else:
+                    return None
+
+                if hs_data_idx is None or hs_data_input_index is None or hs_out_name is None:
+                    return None
+
+                residual_mul_op = model_ir.operators[int(residual_mul_idx)]
+                if (
+                    str(residual_mul_op.op_type) != "MUL"
+                    or len(residual_mul_op.inputs) != 2
+                    or len(residual_mul_op.outputs) != 1
+                ):
+                    return None
+                residual_mul_inputs = [str(v) for v in list(residual_mul_op.inputs)]
+                if pre_output_name == residual_mul_inputs[0] and hs_out_name == residual_mul_inputs[1]:
+                    residual_mul_data_input_index = 0
+                elif pre_output_name == residual_mul_inputs[1] and hs_out_name == residual_mul_inputs[0]:
+                    residual_mul_data_input_index = 1
+                else:
+                    return None
+                residual_mul_out_name = str(residual_mul_op.outputs[0])
+                residual_mul_users = [int(v) for v in consumers.get(residual_mul_out_name, []) if int(v) != int(residual_mul_idx)]
+                if len(residual_mul_users) == 0:
+                    return None
+
+                post_indices: List[int] = []
+                post_output_names: List[str] = []
+                legacy_users: List[int] = []
+                mean_branches: List[Dict[str, Any]] = []
+                valid_users = True
+                for user_idx in residual_mul_users:
+                    user_op = model_ir.operators[int(user_idx)]
+                    if (
+                        str(user_op.op_type) == "TRANSPOSE"
+                        and len(user_op.inputs) >= 2
+                        and len(user_op.outputs) == 1
+                        and str(user_op.inputs[0]) == residual_mul_out_name
+                    ):
+                        perm_post = _read_transpose_perm(model_ir, user_op)
+                        if perm_post is None or perm_post != perm_post_expected:
+                            valid_users = False
+                            break
+                        post_indices.append(int(user_idx))
+                        post_output_names.append(str(user_op.outputs[0]))
+                    elif (
+                        str(user_op.op_type) == "MEAN"
+                        and len(user_op.inputs) >= 2
+                        and len(user_op.outputs) == 1
+                        and str(user_op.inputs[0]) == residual_mul_out_name
+                        and bool(user_op.options.get("keepDims", False))
+                    ):
+                        mean_idx = int(user_idx)
+                        mean_axes_name = str(user_op.inputs[1])
+                        mean_axes_tensor = model_ir.tensors.get(mean_axes_name, None)
+                        mean_axes_vals = _read_const_ints_from_tensor(mean_axes_tensor)
+                        if mean_axes_vals is None or len(mean_axes_vals) == 0:
+                            valid_users = False
+                            break
+                        mean_out_name = str(user_op.outputs[0])
+                        if mean_out_name in model_outputs:
+                            valid_users = False
+                            break
+                        mean_users = [int(v) for v in consumers.get(mean_out_name, [])]
+                        if len(mean_users) == 0:
+                            valid_users = False
+                            break
+                        # Keep legacy NCHW adapter path when MEAN branch terminates
+                        # at graph output through a single inverse transpose.
+                        if len(mean_users) == 1:
+                            only_mean_user_op = model_ir.operators[int(mean_users[0])]
+                            if (
+                                str(only_mean_user_op.op_type) == "TRANSPOSE"
+                                and len(only_mean_user_op.inputs) >= 2
+                                and len(only_mean_user_op.outputs) == 1
+                                and str(only_mean_user_op.inputs[0]) == mean_out_name
+                                and _read_transpose_perm(model_ir, only_mean_user_op) == perm_post_expected
+                                and str(only_mean_user_op.outputs[0]) in model_outputs
+                            ):
+                                legacy_users.append(int(mean_idx))
+                                continue
+                        mean_post_indices: List[int] = []
+                        mean_post_output_names: List[str] = []
+                        for mean_user_idx in mean_users:
+                            mean_user_op = model_ir.operators[int(mean_user_idx)]
+                            if (
+                                str(mean_user_op.op_type) != "TRANSPOSE"
+                                or len(mean_user_op.inputs) < 2
+                                or len(mean_user_op.outputs) != 1
+                                or str(mean_user_op.inputs[0]) != mean_out_name
+                            ):
+                                valid_users = False
+                                break
+                            mean_perm_post = _read_transpose_perm(model_ir, mean_user_op)
+                            if mean_perm_post is None or mean_perm_post != perm_post_expected:
+                                valid_users = False
+                                break
+                            mean_post_output_name = str(mean_user_op.outputs[0])
+                            mean_post_indices.append(int(mean_user_idx))
+                            mean_post_output_names.append(mean_post_output_name)
+                        if not valid_users or len(mean_post_indices) == 0:
+                            valid_users = False
+                            break
+                        mean_branches.append(
+                            {
+                                "mean_idx": int(mean_idx),
+                                "mean_axes_name": str(mean_axes_name),
+                                "mean_axes_vals": [int(v) for v in mean_axes_vals],
+                                "mean_out_name": str(mean_out_name),
+                                "mean_post_indices": [int(v) for v in mean_post_indices],
+                                "mean_post_output_names": [str(v) for v in mean_post_output_names],
+                            }
+                        )
+                    else:
+                        legacy_users.append(int(user_idx))
+                if not valid_users or len(post_indices) == 0:
+                    return None
+
+                return {
+                    "hs_data_idx": int(hs_data_idx),
+                    "hs_data_input_index": int(hs_data_input_index),
+                    "hs_intermediate_names": [str(v) for v in hs_intermediate_names],
+                    "residual_mul_idx": int(residual_mul_idx),
+                    "residual_mul_data_input_index": int(residual_mul_data_input_index),
+                    "residual_mul_out_name": str(residual_mul_out_name),
+                    "post_indices": [int(v) for v in post_indices],
+                    "post_output_names": [str(v) for v in post_output_names],
+                    "legacy_users": [int(v) for v in legacy_users],
+                    "mean_branches": list(mean_branches),
+                }
+
+            matched = _try_match_pair(int(pre_users[0]), int(pre_users[1]))
+            if matched is None:
+                matched = _try_match_pair(int(pre_users[1]), int(pre_users[0]))
+            if matched is None:
+                continue
+
+            hs_data_op = model_ir.operators[int(matched["hs_data_idx"])]
+            residual_mul_op = model_ir.operators[int(matched["residual_mul_idx"])]
+            residual_mul_out_name = str(matched["residual_mul_out_name"])
+            post_indices = [int(v) for v in list(matched.get("post_indices", []))]
+            post_output_names = [str(v) for v in list(matched.get("post_output_names", []))]
+            legacy_users = [int(v) for v in list(matched.get("legacy_users", []))]
+            mean_branches = list(matched.get("mean_branches", []))
+            if len(post_indices) == 0 or len(post_output_names) == 0:
+                continue
+            representative_output_name = str(post_output_names[0])
+
+            _replace_operator_input_at(
+                model_ir=model_ir,
+                op=hs_data_op,
+                input_index=int(matched["hs_data_input_index"]),
+                new_input_name=pre_input_name,
+            )
+            _replace_operator_input_at(
+                model_ir=model_ir,
+                op=residual_mul_op,
+                input_index=int(matched["residual_mul_data_input_index"]),
+                new_input_name=pre_input_name,
+            )
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=residual_mul_op,
+                new_outputs=[representative_output_name],
+            )
+            for alias_output_name in post_output_names[1:]:
+                _replace_tensor_inputs(model_ir, alias_output_name, representative_output_name)
+
+            for intermediate_name in [str(v) for v in list(matched.get("hs_intermediate_names", []))]:
+                _permute_tensor_metadata_if_rank_matches(
+                    model_ir.tensors.get(intermediate_name, None),
+                    perm_post_expected,
+                )
+
+            old_mul_tensor = model_ir.tensors.get(residual_mul_out_name, None)
+            representative_tensor = model_ir.tensors.get(representative_output_name, None)
+            if representative_tensor is not None and old_mul_tensor is not None:
+                representative_tensor.dtype = str(old_mul_tensor.dtype)
+                representative_tensor.quantization = _clone_quantization(old_mul_tensor.quantization)
+                _permute_tensor_metadata_if_rank_matches(
+                    representative_tensor,
+                    perm_post_expected,
+                )
+
+            mean_post_remove_indices: List[int] = []
+            mean_rewrite_ok = True
+            for mean_branch in mean_branches:
+                mean_idx = int(mean_branch["mean_idx"])
+                mean_axes_name = str(mean_branch["mean_axes_name"])
+                mean_axes_vals = [int(v) for v in list(mean_branch["mean_axes_vals"])]
+                mean_out_name = str(mean_branch["mean_out_name"])
+                mean_post_indices = [int(v) for v in list(mean_branch["mean_post_indices"])]
+                mean_post_output_names = [str(v) for v in list(mean_branch["mean_post_output_names"])]
+                if len(mean_post_indices) == 0 or len(mean_post_output_names) == 0:
+                    mean_rewrite_ok = False
+                    break
+
+                mapped_axes: List[int] = []
+                valid_axes = True
+                for axis in mean_axes_vals:
+                    a = int(axis)
+                    if a < 0:
+                        a += 4
+                    if a < 0 or a >= 4:
+                        valid_axes = False
+                        break
+                    mapped_axes.append(int(perm_pre[int(a)]))
+                if not valid_axes:
+                    mean_rewrite_ok = False
+                    break
+
+                mean_op = model_ir.operators[int(mean_idx)]
+                mean_axes_tensor = model_ir.tensors.get(mean_axes_name, None)
+                if mean_axes_tensor is None or not _write_const_ints_to_tensor(mean_axes_tensor, mapped_axes):
+                    mean_rewrite_ok = False
+                    break
+
+                mean_inputs = [str(v) for v in list(mean_op.inputs)]
+                if len(mean_inputs) == 0:
+                    mean_rewrite_ok = False
+                    break
+                mean_inputs[0] = representative_output_name
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=mean_op,
+                    new_inputs=mean_inputs,
+                )
+                _permute_tensor_metadata_if_rank_matches(
+                    model_ir.tensors.get(mean_out_name, None),
+                    perm_post_expected,
+                )
+
+                representative_mean_output_name = str(mean_post_output_names[0])
+                _set_operator_outputs(
+                    model_ir=model_ir,
+                    op=mean_op,
+                    new_outputs=[representative_mean_output_name],
+                )
+                for alias_mean_output_name in mean_post_output_names[1:]:
+                    _replace_tensor_inputs(model_ir, alias_mean_output_name, representative_mean_output_name)
+
+                old_mean_tensor = model_ir.tensors.get(mean_out_name, None)
+                representative_mean_tensor = model_ir.tensors.get(representative_mean_output_name, None)
+                if representative_mean_tensor is not None and old_mean_tensor is not None:
+                    representative_mean_tensor.dtype = str(old_mean_tensor.dtype)
+                    representative_mean_tensor.quantization = _clone_quantization(old_mean_tensor.quantization)
+                    _permute_tensor_metadata_if_rank_matches(
+                        representative_mean_tensor,
+                        perm_post_expected,
+                    )
+
+                mean_post_remove_indices.extend(int(v) for v in mean_post_indices)
+
+            if not mean_rewrite_ok:
+                continue
+
+            preserve_nchw_adapter = len(legacy_users) > 0 or residual_mul_out_name in model_ir.outputs
+            if preserve_nchw_adapter:
+                keep_post_idx = int(post_indices[0])
+                keep_post_op = model_ir.operators[keep_post_idx]
+                keep_perm_name = str(keep_post_op.inputs[1])
+                keep_perm_tensor = model_ir.tensors.get(keep_perm_name, None)
+                if keep_perm_tensor is not None:
+                    keep_perm_tensor.data = np.asarray(perm_pre, dtype=np.int32)
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=keep_post_op,
+                    new_inputs=[representative_output_name, keep_perm_name],
+                )
+                _set_operator_outputs(
+                    model_ir=model_ir,
+                    op=keep_post_op,
+                    new_outputs=[residual_mul_out_name],
+                )
+                post_remove_indices = [int(v) for v in post_indices[1:]]
+            else:
+                post_remove_indices = [int(v) for v in post_indices]
+
+            remove_indices = sorted(
+                list({int(pre_idx), *post_remove_indices, *[int(v) for v in mean_post_remove_indices]}),
+                reverse=True,
+            )
+            for remove_idx in remove_indices:
+                del model_ir.operators[int(remove_idx)]
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"rewritten_hardsigmoid_mul_transpose_passthrough_chains": int(rewritten)}

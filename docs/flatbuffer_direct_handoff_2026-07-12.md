@@ -187,9 +187,24 @@ Verification completed with:
 - `1008 passed, 5 deselected, 2 warnings in 125.48s` for the full sequential
   direct suite.
 
-The next input-passthrough increment is the larger
-HardSigmoid-plus-residual-Mul family. It needs separate fixtures for its
-multi-output and reduction-axis branches before the full-suite gate.
+The larger HardSigmoid-plus-residual-Mul passthrough now completes the current
+`passes/input_passthrough_layout.py` family. The implementation is moved
+mechanically and the legacy symbol delegates to it. Existing characterization
+coverage preserves the expanded clamp, residual Mul, legacy fan-out adapter,
+optional Mean output, reduction-axis remapping, metadata, and output-name
+behavior. Architecture coverage fixes module ownership.
+
+Verification completed with:
+
+- `31 passed, 758 deselected` for focused architecture, utility,
+  input-passthrough, and legacy fan-out characterization;
+- `1008 passed, 5 deselected, 2 warnings in 125.54s` for the full sequential
+  direct suite.
+
+The next extraction should start a separate cohesive layout family rather than
+expanding `input_passthrough_layout.py`. Reassess the remaining lowerer
+functions by phase and shared dependencies; transpose Pad or simple unary
+pre/post chains are preferable before the very large Concat/Add families.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 
