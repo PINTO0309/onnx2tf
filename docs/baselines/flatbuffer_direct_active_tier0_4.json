@@ -2573,9 +2573,11 @@
     {
       "tier": 4,
       "model": "d3net_dnn_double_44.onnx",
-      "baseline_classification": "missing_tflite_report",
-      "baseline_reason": "missing_tflite_report",
-      "error_signature_sha256": "35871fcfe1b5dec06f3f2648a4432501e1816eee08b7452b13a98e0a99e3c0e5"
+      "baseline_classification": "pass",
+      "tflite_max_abs": 7.450580596923828e-08,
+      "keep_shape_absolutely_input_names": [
+        "input"
+      ]
     },
     {
       "tier": 4,

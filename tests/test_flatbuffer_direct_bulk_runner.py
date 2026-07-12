@@ -957,8 +957,8 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
-        "missing_tflite_report": 25,
-        "pass": 338,
+        "missing_tflite_report": 24,
+        "pass": 339,
         "tflite_fail": 31,
         "timeout": 26,
     }
@@ -975,6 +975,9 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
             "kv_cache",
             "offset",
         ],
+    }
+    assert profile["model_options"]["d3net_dnn_double_44.onnx"] == {
+        "keep_shape_absolutely_input_names": ["input"],
     }
     assert profile["model_options"]["conv_tasnet.onnx"] == {
         "keep_shape_absolutely_input_names": ["onnx::Unsqueeze_0"],
