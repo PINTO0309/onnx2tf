@@ -173,9 +173,23 @@ Verification completed with:
 - `1006 passed, 5 deselected, 2 warnings in 125.19s` for the full sequential
   direct suite.
 
-The next input-passthrough increment is the adjacent HardSwish decomposition.
-After that, the larger HardSigmoid-plus-residual-Mul family can be moved with
-separate fixtures for its multi-output and reduction-axis branches.
+The pseudo-expanded HardSwish passthrough now also lives in
+`passes/input_passthrough_layout.py`. It preserves the residual
+`Add → optional Relu6 → Div-or-Mul → Mul(original, branch)` topology,
+singleton constants, strict consumers, inverse terminal permutation, metadata,
+and output-name guards. Focused fixtures cover the Relu6/Div positive path and
+a non-singleton divisor no-op path.
+
+Verification completed with:
+
+- `30 passed` for the focused architecture, utility, and input-passthrough
+  suite;
+- `1008 passed, 5 deselected, 2 warnings in 125.48s` for the full sequential
+  direct suite.
+
+The next input-passthrough increment is the larger
+HardSigmoid-plus-residual-Mul family. It needs separate fixtures for its
+multi-output and reduction-axis branches before the full-suite gate.
 
 ## Previous pause checkpoint — `fb-refactor2` after `19cb989`
 

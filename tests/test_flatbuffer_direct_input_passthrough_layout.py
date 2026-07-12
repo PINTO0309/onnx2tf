@@ -7,6 +7,7 @@ from onnx2tf.tflite_builder.passes.input_passthrough_layout import (
     _optimize_asin_transpose_passthrough_chains,
     _optimize_erf_transpose_passthrough_chains,
     _optimize_hardsigmoid_transpose_passthrough_chains,
+    _optimize_hardswish_transpose_passthrough_chains,
     _optimize_leading_input_transpose_passthrough_chains,
 )
 
@@ -460,3 +461,96 @@ def test_erf_passthrough_rejects_nonsingleton_abs_multiplier() -> None:
     assert stats == {"rewritten_erf_transpose_passthrough_chains": 0}
     assert model_ir.operators[0].op_type == "TRANSPOSE"
     assert model_ir.operators[1].inputs == ["x_nchw"]
+
+
+def _make_hardswish_roundtrip(*, scalar_divisor: bool = True) -> ModelIR:
+    model_ir = ModelIR("input_passthrough_hardswish")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    divisor = (
+        np.asarray(6.0, dtype=np.float32)
+        if scalar_divisor
+        else np.asarray([6.0, 6.0], dtype=np.float32)
+    )
+    divisor_shape = [] if scalar_divisor else [2]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 2, 3]),
+        "to_nchw": _tensor(
+            "to_nchw",
+            [4],
+            dtype="INT32",
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        ),
+        "x_nchw": _tensor("x_nchw", [1, 3, 2, 2]),
+        "three": _tensor(
+            "three",
+            [],
+            data=np.asarray(3.0, dtype=np.float32),
+        ),
+        "added": _tensor("added", [1, 3, 2, 2]),
+        "relu6": _tensor("relu6", [1, 3, 2, 2]),
+        "six": _tensor("six", divisor_shape, data=divisor),
+        "scaled": _tensor("scaled", [1, 3, 2, 2]),
+        "swish_nchw": _tensor("swish_nchw", [1, 3, 2, 2]),
+        "to_nhwc": _tensor(
+            "to_nhwc",
+            [4],
+            dtype="INT32",
+            data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        ),
+        "y": _tensor("y", [1, 2, 2, 3]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["x", "to_nchw"],
+            outputs=["x_nchw"],
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["x_nchw", "three"],
+            outputs=["added"],
+        ),
+        OperatorIR(op_type="RELU6", inputs=["added"], outputs=["relu6"]),
+        OperatorIR(op_type="DIV", inputs=["relu6", "six"], outputs=["scaled"]),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["x_nchw", "scaled"],
+            outputs=["swish_nchw"],
+        ),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["swish_nchw", "to_nhwc"],
+            outputs=["y"],
+        ),
+    ]
+    return model_ir
+
+
+def test_hardswish_passthrough_moves_relu6_decomposition_to_nhwc() -> None:
+    model_ir = _make_hardswish_roundtrip()
+
+    stats = _optimize_hardswish_transpose_passthrough_chains(model_ir)
+
+    assert stats == {"rewritten_hardswish_transpose_passthrough_chains": 1}
+    assert [operator.op_type for operator in model_ir.operators] == [
+        "ADD",
+        "RELU6",
+        "DIV",
+        "MUL",
+    ]
+    assert model_ir.operators[0].inputs == ["x", "three"]
+    assert model_ir.operators[-1].inputs == ["x", "scaled"]
+    assert model_ir.operators[-1].outputs == ["y"]
+    for name in ["added", "relu6", "scaled"]:
+        assert model_ir.tensors[name].shape == [1, 2, 2, 3]
+
+
+def test_hardswish_passthrough_rejects_nonsingleton_divisor() -> None:
+    model_ir = _make_hardswish_roundtrip(scalar_divisor=False)
+
+    stats = _optimize_hardswish_transpose_passthrough_chains(model_ir)
+
+    assert stats == {"rewritten_hardswish_transpose_passthrough_chains": 0}
+    assert model_ir.operators[0].op_type == "TRANSPOSE"
+    assert model_ir.operators[1].inputs == ["x_nchw", "three"]

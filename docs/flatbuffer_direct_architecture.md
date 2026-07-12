@@ -96,6 +96,12 @@ constants, exact consumer counts, and inverse terminal permutation are all
 validated before any mutation. This remains a semantic graph pattern and does
 not depend on a model name.
 
+Pseudo-expanded HardSwish passthrough is another member of
+`passes/input_passthrough_layout.py`. It accepts only the residual
+`Add → optional Relu6 → Div-or-Mul → Mul(original, branch)` topology with
+singleton side constants, linear branch consumers, and an inverse terminal
+transpose. Both residual inputs are rewired through lineage-aware helpers.
+
 ## Dependency boundaries
 
 Default TFLite conversion and ONNX/TFLite accuracy checking must import neither

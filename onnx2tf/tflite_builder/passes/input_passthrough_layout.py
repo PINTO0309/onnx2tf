@@ -1073,3 +1073,225 @@ def _optimize_erf_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, i
 
     _prune_unused_tensors(model_ir)
     return {"rewritten_erf_transpose_passthrough_chains": int(rewritten)}
+
+
+def _optimize_hardswish_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Fold transpose wrappers around pseudo-op-expanded HardSwish-like chains.
+
+    Target:
+      X --TRANSPOSE(P)--> x_t
+      x_t --ADD(c3)--> a --RELU6--> r --(DIV(c6)|MUL(c6_inv))--> d
+        or
+      x_t --ADD(c3)--> a --MUL(c6_inv)--> d
+      MUL(x_t, d) --> y_t
+      y_t --TRANSPOSE(inv(P))--> Y
+
+    Rewrite:
+      X --ADD(c3)--> a --RELU6--> r --(DIV(c6)|MUL(c6_inv))--> d
+        or
+      X --ADD(c3)--> a --MUL(c6_inv)--> d
+      MUL(X, d) --> Y
+
+    Safety:
+    - Strict residual topology (ADD -> optional RELU6 -> (DIV|MUL const) -> residual MUL).
+    - ADD/(DIV|MUL) side inputs must be singleton constants.
+    - Single-consumer chain on the main path.
+    """
+    rewritten = 0
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+
+        for pre_idx, pre_op in enumerate(model_ir.operators):
+            if str(pre_op.op_type) != "TRANSPOSE":
+                continue
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+                continue
+
+            pre_input_name = str(pre_op.inputs[0])
+            pre_output_name = str(pre_op.outputs[0])
+
+            perm_pre = _read_transpose_perm(model_ir, pre_op)
+            if perm_pre is None:
+                continue
+            perm_post_expected = _invert_perm(perm_pre)
+            if perm_post_expected is None:
+                continue
+
+            pre_users = [int(v) for v in consumers.get(pre_output_name, [])]
+            if len(pre_users) != 2:
+                continue
+
+            add_idx = None
+            mul_idx = None
+            for user_idx in pre_users:
+                user_op = model_ir.operators[int(user_idx)]
+                user_type = str(user_op.op_type)
+                if user_type == "ADD":
+                    add_idx = int(user_idx)
+                elif user_type == "MUL":
+                    mul_idx = int(user_idx)
+            if add_idx is None or mul_idx is None:
+                continue
+
+            add_op = model_ir.operators[int(add_idx)]
+            if len(add_op.inputs) != 2 or len(add_op.outputs) != 1:
+                continue
+            add_inputs = [str(v) for v in add_op.inputs]
+            if pre_output_name == add_inputs[0]:
+                add_data_input_index = 0
+                add_side_input_name = add_inputs[1]
+            elif pre_output_name == add_inputs[1]:
+                add_data_input_index = 1
+                add_side_input_name = add_inputs[0]
+            else:
+                continue
+            if not _is_singleton_constant_tensor(model_ir, add_side_input_name):
+                continue
+            add_out_name = str(add_op.outputs[0])
+
+            add_users = [int(v) for v in consumers.get(add_out_name, [])]
+            if len(add_users) != 1:
+                continue
+            stage_out_name: Optional[str] = None
+            intermediates_to_permute: List[str] = [add_out_name]
+
+            stage1_idx = int(add_users[0])
+            stage1_op = model_ir.operators[int(stage1_idx)]
+            stage1_type = str(stage1_op.op_type)
+
+            if stage1_type == "RELU6":
+                if len(stage1_op.inputs) != 1 or len(stage1_op.outputs) != 1:
+                    continue
+                if str(stage1_op.inputs[0]) != add_out_name:
+                    continue
+                relu_out_name = str(stage1_op.outputs[0])
+                intermediates_to_permute.append(relu_out_name)
+
+                relu_users = [int(v) for v in consumers.get(relu_out_name, [])]
+                if len(relu_users) != 1:
+                    continue
+                stage2_idx = int(relu_users[0])
+                stage2_op = model_ir.operators[int(stage2_idx)]
+                stage2_type = str(stage2_op.op_type)
+                if stage2_type not in {"DIV", "MUL"}:
+                    continue
+                if len(stage2_op.inputs) != 2 or len(stage2_op.outputs) != 1:
+                    continue
+                stage2_inputs = [str(v) for v in stage2_op.inputs]
+                if relu_out_name == stage2_inputs[0]:
+                    stage2_side_input_name = stage2_inputs[1]
+                elif relu_out_name == stage2_inputs[1]:
+                    stage2_side_input_name = stage2_inputs[0]
+                else:
+                    continue
+                if not _is_singleton_constant_tensor(model_ir, stage2_side_input_name):
+                    continue
+                stage_out_name = str(stage2_op.outputs[0])
+                intermediates_to_permute.append(stage_out_name)
+            elif stage1_type in {"DIV", "MUL"}:
+                if len(stage1_op.inputs) != 2 or len(stage1_op.outputs) != 1:
+                    continue
+                stage1_inputs = [str(v) for v in stage1_op.inputs]
+                if add_out_name == stage1_inputs[0]:
+                    stage1_side_input_name = stage1_inputs[1]
+                elif add_out_name == stage1_inputs[1]:
+                    stage1_side_input_name = stage1_inputs[0]
+                else:
+                    continue
+                if not _is_singleton_constant_tensor(model_ir, stage1_side_input_name):
+                    continue
+                stage_out_name = str(stage1_op.outputs[0])
+                intermediates_to_permute.append(stage_out_name)
+            else:
+                continue
+
+            if stage_out_name is None:
+                continue
+            stage_users = [int(v) for v in consumers.get(stage_out_name, [])]
+            if len(stage_users) != 1 or int(stage_users[0]) != int(mul_idx):
+                continue
+
+            mul_op = model_ir.operators[int(mul_idx)]
+            if len(mul_op.inputs) != 2 or len(mul_op.outputs) != 1:
+                continue
+            mul_inputs = [str(v) for v in mul_op.inputs]
+            if pre_output_name == mul_inputs[0] and stage_out_name == mul_inputs[1]:
+                mul_data_input_index = 0
+            elif pre_output_name == mul_inputs[1] and stage_out_name == mul_inputs[0]:
+                mul_data_input_index = 1
+            else:
+                continue
+            mul_out_name = str(mul_op.outputs[0])
+
+            mul_users = [int(v) for v in consumers.get(mul_out_name, [])]
+            if len(mul_users) != 1:
+                continue
+            post_idx = int(mul_users[0])
+            post_op = model_ir.operators[int(post_idx)]
+            if str(post_op.op_type) != "TRANSPOSE" or len(post_op.inputs) < 2 or len(post_op.outputs) != 1:
+                continue
+            if str(post_op.inputs[0]) != mul_out_name:
+                continue
+            perm_post = _read_transpose_perm(model_ir, post_op)
+            if perm_post is None or perm_post != perm_post_expected:
+                continue
+            post_output_name = str(post_op.outputs[0])
+
+            # Rewire the pseudo-HardSwish chain to consume NHWC source directly.
+            _replace_operator_input_at(
+                model_ir=model_ir,
+                op=add_op,
+                input_index=int(add_data_input_index),
+                new_input_name=pre_input_name,
+            )
+            _replace_operator_input_at(
+                model_ir=model_ir,
+                op=mul_op,
+                input_index=int(mul_data_input_index),
+                new_input_name=pre_input_name,
+            )
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=mul_op,
+                new_outputs=[post_output_name],
+            )
+
+            # Update intermediate metadata from transposed layout to source layout.
+            for intermediate_name in intermediates_to_permute:
+                _permute_tensor_metadata_if_rank_matches(
+                    model_ir.tensors.get(intermediate_name, None),
+                    perm_post_expected,
+                )
+
+            # Keep final tensor metadata stable on the post-transpose name.
+            pre_input_tensor = model_ir.tensors.get(pre_input_name, None)
+            old_mul_tensor = model_ir.tensors.get(mul_out_name, None)
+            post_output_tensor = model_ir.tensors.get(post_output_name, None)
+            if post_output_tensor is not None:
+                if pre_input_tensor is not None:
+                    post_output_tensor.shape = [int(v) for v in list(pre_input_tensor.shape)]
+                    post_output_tensor.shape_signature = (
+                        [int(v) for v in list(pre_input_tensor.shape_signature)]
+                        if pre_input_tensor.shape_signature is not None
+                        else [int(v) for v in list(pre_input_tensor.shape)]
+                    )
+                if old_mul_tensor is not None:
+                    post_output_tensor.dtype = str(old_mul_tensor.dtype)
+                    post_output_tensor.quantization = _clone_quantization(old_mul_tensor.quantization)
+
+            remove_indices = sorted(list({int(pre_idx), int(post_idx)}), reverse=True)
+            for remove_idx in remove_indices:
+                del model_ir.operators[int(remove_idx)]
+
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"rewritten_hardswish_transpose_passthrough_chains": int(rewritten)}
