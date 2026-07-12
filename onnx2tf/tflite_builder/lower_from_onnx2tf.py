@@ -76243,7 +76243,9 @@ def lower_onnx_to_ir(
                 # partial graph before every node.
                 if str(node.op_type) in {
                     "Attention",
+                    "Gather",
                     "GatherElements",
+                    "LayerNormalization",
                     "MatMul",
                     "MultiHeadAttention",
                 }:

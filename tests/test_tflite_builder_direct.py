@@ -42969,3 +42969,79 @@ def test_flatbuffer_direct_loss_builtin_parity() -> None:
                     rtol=1e-4,
                     atol=1e-4,
                 )
+
+
+def test_flatbuffer_direct_layernorm_recovers_rank_after_contrib_attention() -> None:
+    query = helper.make_tensor_value_info("query", TensorProto.FLOAT, [1, 3, 4])
+    key = helper.make_tensor_value_info("key", TensorProto.FLOAT, [1, 3, 4])
+    value = helper.make_tensor_value_info("value", TensorProto.FLOAT, [1, 3, 4])
+    output = helper.make_tensor_value_info("output", TensorProto.FLOAT, [3, 4])
+    scale = numpy_helper.from_array(np.ones((4,), dtype=np.float32), name="scale")
+    bias = numpy_helper.from_array(np.zeros((4,), dtype=np.float32), name="bias")
+    batch_index = numpy_helper.from_array(
+        np.asarray(0, dtype=np.int64),
+        name="batch_index",
+    )
+    model = helper.make_model(
+        helper.make_graph(
+            [
+                helper.make_node(
+                    "MultiHeadAttention",
+                    ["query", "key", "value"],
+                    ["attention_out"],
+                    name="attention",
+                    num_heads=2,
+                ),
+                helper.make_node(
+                    "LayerNormalization",
+                    ["attention_out", "scale", "bias"],
+                    ["normalized"],
+                    name="layernorm",
+                    axis=-1,
+                    epsilon=1e-5,
+                ),
+                helper.make_node(
+                    "Gather",
+                    ["normalized", "batch_index"],
+                    ["output"],
+                    name="gather_batch",
+                    axis=0,
+                ),
+            ],
+            "layernorm_after_contrib_attention",
+            [query, key, value],
+            [output],
+            [scale, bias, batch_index],
+        ),
+        opset_imports=[helper.make_opsetid("", 17)],
+    )
+
+    model_ir = lower_onnx_to_ir(
+        model,
+        "layernorm_after_contrib_attention",
+        optimize_layout_transpose_chains=False,
+    )
+
+    mean_op = next(
+        op
+        for op in model_ir.operators
+        if op.op_type == "MEAN"
+        and op.outputs == ["layernorm_layernorm_mean"]
+    )
+    axes_tensor = model_ir.tensors[str(mean_op.inputs[1])]
+    np.testing.assert_array_equal(
+        np.asarray(axes_tensor.data),
+        np.asarray([2], dtype=np.int32),
+    )
+    assert model_ir.tensors["attention_out"].shape == [1, 1, 4]
+    assert model_ir.tensors["attention_out"].shape_signature == [1, -1, 4]
+    assert model_ir.tensors["normalized"].shape == [1, 1, 4]
+    assert model_ir.tensors["normalized"].shape_signature == [1, -1, 4]
+    assert model_ir.tensors["output"].shape == [1, 4]
+    assert model_ir.tensors["output"].shape_signature == [-1, 4]
+    assert any(
+        op.op_type == "RESHAPE"
+        and op.outputs == ["output"]
+        and str(op.inputs[0]) == "output_gather_scalar_1d"
+        for op in model_ir.operators
+    )
