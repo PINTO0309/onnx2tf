@@ -135,18 +135,38 @@ def test_duplicate_cleanup_ordered_group_shares_one_index(monkeypatch) -> None:
 
 def test_duplicate_cleanup_ordered_group_rolls_back_invalid_state() -> None:
     model_ir = ModelIR("invalid_ordered_duplicate_cleanup")
+    model_ir.inputs = ["x"]
     model_ir.outputs = ["out"]
-    model_ir.tensors = {"out": _tensor("out", [1])}
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 2, 3]),
+        "perm0": _tensor(
+            "perm0",
+            [4],
+            dtype="INT32",
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        ),
+        "perm1": _tensor(
+            "perm1",
+            [4],
+            dtype="INT32",
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        ),
+        "y0": _tensor("y0", [1, 3, 2, 2]),
+        "y1": _tensor("y1", [1, 3, 2, 2]),
+        "out": _tensor("out", [1]),
+    }
     model_ir.operators = [
+        OperatorIR(op_type="TRANSPOSE", inputs=["x", "perm0"], outputs=["y0"]),
+        OperatorIR(op_type="TRANSPOSE", inputs=["x", "perm1"], outputs=["y1"]),
         OperatorIR(op_type="IDENTITY", inputs=["missing"], outputs=["out"]),
     ]
 
     with pytest.raises(RuntimeError, match="missing_input_tensor"):
         run_duplicate_fanout_cleanup(model_ir)
 
-    assert len(model_ir.operators) == 1
-    assert model_ir.operators[0].inputs == ["missing"]
-    assert model_ir.operators[0].outputs == ["out"]
+    assert len(model_ir.operators) == 3
+    assert model_ir.operators[2].inputs == ["missing"]
+    assert model_ir.operators[2].outputs == ["out"]
 
 
 def test_duplicate_reshape_cleanup_uses_one_incremental_index_refresh(

@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Generic, Iterable, List, Optional, TypeV
 
 StateT = TypeVar("StateT")
 PassCallback = Callable[[StateT], Optional[Dict[str, Any]]]
+PreconditionCallback = Callable[[StateT], bool]
 FingerprintCallback = Callable[[StateT], bytes]
 ValidatorCallback = Callable[[StateT], Iterable[str]]
 CloneCallback = Callable[[StateT], Any]
@@ -29,6 +30,7 @@ class PassSpec(Generic[StateT]):
     pass_id: str
     phase: PassPhase
     callback: PassCallback[StateT]
+    precondition: Optional[PreconditionCallback[StateT]] = None
     priority: int = 100
     max_iterations: int = 1
     transactional: bool = False
@@ -93,6 +95,9 @@ class OrderedPassManager(Generic[StateT]):
             details: Dict[str, Any] = {}
             iterations = 0
             for _ in range(int(spec.max_iterations)):
+                if spec.precondition is not None and not spec.precondition(state):
+                    details["skipped_by_precondition"] = True
+                    break
                 before = self._digest(state)
                 if before is not None:
                     if before in seen:

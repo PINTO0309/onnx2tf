@@ -256,6 +256,47 @@ def test_ordered_pass_manager_orders_and_stops_at_fixed_point() -> None:
     assert results[1].iterations == 3
 
 
+def test_pass_precondition_skips_snapshot_callback_and_validation() -> None:
+    state = {"value": 1}
+    calls = {"clone": 0, "callback": 0, "validator": 0}
+
+    def clone(value: dict) -> dict:
+        calls["clone"] += 1
+        return copy.deepcopy(value)
+
+    def callback(value: dict) -> dict:
+        calls["callback"] += 1
+        value["value"] += 1
+        return {"changed": True}
+
+    def validator(value: dict) -> list[str]:
+        calls["validator"] += 1
+        return []
+
+    manager = OrderedPassManager[dict](
+        validator=validator,
+        clone=clone,
+        restore=lambda value, snapshot: value.update(snapshot),
+    )
+    manager.register(
+        PassSpec(
+            pass_id="guarded",
+            phase=PassPhase.POST_LOWERING_CLEANUP,
+            callback=callback,
+            precondition=lambda value: value["value"] > 10,
+            transactional=True,
+        )
+    )
+
+    results = manager.run(state)
+
+    assert state == {"value": 1}
+    assert calls == {"clone": 0, "callback": 0, "validator": 0}
+    assert results[0].iterations == 0
+    assert results[0].changed is False
+    assert results[0].details == {"skipped_by_precondition": True}
+
+
 def test_transactional_pass_rolls_back_on_invariant_failure() -> None:
     state = {"values": [1]}
     manager = OrderedPassManager[dict](

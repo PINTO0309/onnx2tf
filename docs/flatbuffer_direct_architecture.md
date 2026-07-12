@@ -201,6 +201,12 @@ it at the phase boundary, removes pruned tensors from it, validates it after
 each pass, and resynchronizes it after transactional rollback. Canonical global
 tensor rename and pruning helpers accept the same optional state.
 
+`PassSpec.precondition` provides an explicit, deterministic prerequisite gate.
+When false, the manager records `skipped_by_precondition` with zero iterations
+and performs no fingerprint, snapshot, callback, or validation work. The
+duplicate cleanup group uses cheap candidate scans so transactional deep copies
+are reserved for graphs that may actually change.
+
 The attention module also owns the QKV Slice canonicalization pair. One pass
 replaces compatible Slice branches with Gather/Reshape views; the next replaces
 three compatible branches with a single Split. Both require fully known,

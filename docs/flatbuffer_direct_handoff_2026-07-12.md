@@ -486,6 +486,19 @@ Verification completed with:
 - `1023 passed, 5 deselected, 2 warnings in 130.30s` for the full sequential
   direct suite.
 
+`PassSpec` now has an explicit precondition callback. A false prerequisite
+returns a zero-iteration `skipped_by_precondition` result without fingerprint,
+deep snapshot, callback, or validation work. The ordered duplicate group uses
+cheap Transpose-key and Reshape-input candidate scans, so transaction snapshots
+are created only for graphs that can contain a duplicate. Stable zero-valued
+statistics are still returned for skipped passes.
+
+Verification completed with:
+
+- `19 passed` for core pass-manager and graph-cleanup precondition behavior;
+- `1024 passed, 5 deselected, 2 warnings in 130.57s` for the full sequential
+  direct suite.
+
 Next, extend the ordered cleanup runner with one layout-sensitive pass that
 changes logical/physical annotations, using LayoutState as the validated phase
 contract rather than merely synchronizing at entry.

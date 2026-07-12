@@ -290,12 +290,38 @@ def run_duplicate_fanout_cleanup(
             "changed": bool(stats.get("removed_duplicate_reshape_fanout", 0)),
         }
 
+    def _has_duplicate_transpose_candidate(index: ModelIRGraphIndex) -> bool:
+        seen: set[Tuple[str, Tuple[int, ...]]] = set()
+        for op in index.model_ir.operators:
+            if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 2:
+                continue
+            perm = _read_transpose_perm(index.model_ir, op)
+            if perm is None:
+                continue
+            key = (str(op.inputs[0]), tuple(int(value) for value in perm))
+            if key in seen:
+                return True
+            seen.add(key)
+        return False
+
+    def _has_duplicate_reshape_candidate(index: ModelIRGraphIndex) -> bool:
+        input_counts: Dict[str, int] = {}
+        for op in index.model_ir.operators:
+            if str(op.op_type) != "RESHAPE" or len(op.inputs) < 2:
+                continue
+            input_name = str(op.inputs[0])
+            input_counts[input_name] = int(input_counts.get(input_name, 0)) + 1
+            if input_counts[input_name] > 1:
+                return True
+        return False
+
     if include_transpose:
         manager.register(
             PassSpec(
                 pass_id="cleanup.duplicate_transpose_fanout",
                 phase=PassPhase.POST_LOWERING_CLEANUP,
                 callback=_run_transpose,
+                precondition=_has_duplicate_transpose_candidate,
                 transactional=True,
             )
         )
@@ -304,13 +330,18 @@ def run_duplicate_fanout_cleanup(
             pass_id="cleanup.duplicate_reshape_fanout",
             phase=PassPhase.POST_LOWERING_CLEANUP,
             callback=_run_reshape,
+            precondition=_has_duplicate_reshape_candidate,
             transactional=True,
         )
     )
-    details: Dict[str, int] = {}
+    details: Dict[str, int] = {
+        "removed_duplicate_reshape_fanout": 0,
+    }
+    if include_transpose:
+        details["removed_duplicate_transpose_fanout"] = 0
     for result in manager.run(graph_index):
         for key, value in result.details.items():
-            if key != "changed":
+            if key not in {"changed", "skipped_by_precondition"}:
                 details[str(key)] = int(value)
     return details
 
