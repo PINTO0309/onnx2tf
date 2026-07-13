@@ -294,7 +294,7 @@ quantization dimensions move from NCDHW dimension 1 to NDHWC dimension 4.
 
 The much larger rank-four generic NHWC pre-Concat matcher is being migrated by
 semantic family rather than as one monolithic rule. Its strict float-path
-direct-adapter, unary, and Pad-plus-direct families are owned by
+direct-adapter, unary, Pad-plus-direct, and Dequantize families are owned by
 `passes/nhwc_concat_layout.py`. Every Concat consumer must be an inverse
 NCHW→NHWC Transpose. Direct inputs come from NHWC→NCHW Transpose; the unary
 family permits one or more RELU, RELU6, LOGISTIC, TANH, or GELU operations
@@ -304,13 +304,15 @@ planning uses one shared `ModelIRGraphIndex`, retains shared or public direct
 adapters, rejects unsafe unary/Pad fan-out and public boundaries, validates
 compatible spatial shapes, and applies the rewrites transactionally under
 stable IDs `layout.nhwc_pre_concat_direct`,
-`layout.nhwc_pre_concat_unary`, and `layout.nhwc_pre_concat_pad`. Exclusive
-pads constants are remapped in place; shared or public pads constants use
-copy-on-write so unrelated Pad consumers preserve NCHW semantics. Canonical
-Concat, unary, and Pad per-axis quantization metadata remap NCHW dimension 1
-to NHWC dimension 3. Swish, split, slice, Add, PReLU, Dequantize, Softmax, and
-quantized-post families remain in the legacy matcher until each receives
-bounded characterization.
+`layout.nhwc_pre_concat_unary`, `layout.nhwc_pre_concat_pad`, and
+`layout.nhwc_pre_concat_dequantize`. Exclusive pads constants are remapped in
+place; shared or public pads constants use copy-on-write so unrelated Pad
+consumers preserve NCHW semantics. Dequantize inputs retain source scale and
+zero-point provenance while their output metadata moves to NHWC. Canonical
+Concat, unary, Pad, and Dequantize-output per-axis quantization metadata remap
+NCHW dimension 1 to NHWC dimension 3. Swish, split, slice, Add, PReLU,
+Softmax, and quantized-post families remain in the legacy matcher until each
+receives bounded characterization.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

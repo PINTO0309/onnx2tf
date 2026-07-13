@@ -35,6 +35,9 @@ _PERM_NCHW_TO_NHWC = [0, 2, 3, 1]
 _DIRECT_STATS_KEY = "optimized_transpose_pre_concat_nhwc_direct_chains"
 _UNARY_STATS_KEY = "optimized_transpose_pre_concat_nhwc_unary_chains"
 _PAD_STATS_KEY = "optimized_transpose_pre_concat_nhwc_pad_chains"
+_DEQUANTIZE_STATS_KEY = (
+    "optimized_transpose_pre_concat_nhwc_dequantize_chains"
+)
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
 
@@ -47,6 +50,7 @@ class _NhwcConcatInputPlan:
     remove_adapter: bool
     unary_op: Optional[OperatorIR] = None
     pad_op: Optional[OperatorIR] = None
+    dequantize_op: Optional[OperatorIR] = None
     pads_tensor_name: Optional[str] = None
     pads_nhwc: Optional[np.ndarray] = None
     clone_pads: bool = False
@@ -279,6 +283,73 @@ def _resolve_pad_input_plan(
     )
 
 
+def _resolve_dequantize_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    input_name: str,
+    concat_index: int,
+    model_outputs: set[str],
+) -> Optional[_NhwcConcatInputPlan]:
+    dequantize_op = graph_index.producer(input_name)
+    dequantize_index = (
+        None
+        if dequantize_op is None
+        else graph_index.operator_index(dequantize_op)
+    )
+    if (
+        dequantize_op is None
+        or dequantize_index is None
+        or str(dequantize_op.op_type) != "DEQUANTIZE"
+        or len(dequantize_op.inputs) != 1
+        or len(dequantize_op.outputs) != 1
+        or str(dequantize_op.outputs[0]) != input_name
+        or input_name in model_outputs
+        or set(graph_index.consumer_indices(input_name))
+        != {int(concat_index)}
+    ):
+        return None
+
+    adapter_output_name = str(dequantize_op.inputs[0])
+    adapter_op = graph_index.producer(adapter_output_name)
+    adapter_index = (
+        None if adapter_op is None else graph_index.operator_index(adapter_op)
+    )
+    if (
+        adapter_op is None
+        or adapter_index is None
+        or str(adapter_op.op_type) != "TRANSPOSE"
+        or len(adapter_op.inputs) < 2
+        or len(adapter_op.outputs) != 1
+        or str(adapter_op.outputs[0]) != adapter_output_name
+        or _read_transpose_perm(model_ir, adapter_op)
+        != _PERM_NHWC_TO_NCHW
+        or adapter_output_name in model_outputs
+    ):
+        return None
+
+    source_name = str(adapter_op.inputs[0])
+    source_tensor = model_ir.tensors.get(source_name)
+    output_tensor = model_ir.tensors.get(input_name)
+    if (
+        source_tensor is None
+        or output_tensor is None
+        or len(list(output_tensor.shape)) != 4
+    ):
+        return None
+    return _NhwcConcatInputPlan(
+        kind="dequantize",
+        adapter_op=adapter_op,
+        dequantize_op=dequantize_op,
+        source_name=source_name,
+        output_name=input_name,
+        remove_adapter=(
+            set(graph_index.consumer_indices(adapter_output_name))
+            == {int(dequantize_index)}
+        ),
+    )
+
+
 def _resolve_family_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -314,6 +385,14 @@ def _resolve_family_input_plan(
             concat_index=concat_index,
             model_outputs=model_outputs,
             public_names=public_names,
+        )
+    if family == "dequantize":
+        return _resolve_dequantize_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
         )
     return None
 
@@ -382,8 +461,13 @@ def _resolve_nhwc_concat_candidate(
             pad_count < 1 or len(input_plans) <= pad_count
         ):
             continue
+        dequantize_count = sum(
+            plan.kind == "dequantize" for plan in input_plans
+        )
+        if family == "dequantize" and dequantize_count < 1:
+            continue
 
-        if family in {"unary", "pad"}:
+        if family in {"unary", "pad", "dequantize"}:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
             for input_plan in input_plans:
@@ -396,7 +480,7 @@ def _resolve_nhwc_concat_candidate(
                     shapes_compatible = False
                     break
                 shape = [int(value) for value in tensor.shape]
-                if input_plan.kind in {"unary", "pad"}:
+                if input_plan.kind in {"unary", "pad", "dequantize"}:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
                     reference_shape = shape
@@ -476,6 +560,19 @@ def _has_nhwc_pad_concat_candidate(pass_state: ModelIRPassState) -> bool:
     )
 
 
+def _has_nhwc_dequantize_concat_candidate(
+    pass_state: ModelIRPassState,
+) -> bool:
+    return (
+        _resolve_nhwc_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="dequantize",
+        )
+        is not None
+    )
+
+
 def _optimize_transpose_pre_concat_nhwc_direct_chains(
     model_ir: ModelIR,
     *,
@@ -521,6 +618,21 @@ def _optimize_transpose_pre_concat_nhwc_pad_chains(
     )
 
 
+def _optimize_transpose_pre_concat_nhwc_dequantize_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
+    return _optimize_transpose_pre_concat_nhwc_family(
+        model_ir,
+        family="dequantize",
+        stats_key=_DEQUANTIZE_STATS_KEY,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+
 def _optimize_transpose_pre_concat_nhwc_family(
     model_ir: ModelIR,
     *,
@@ -560,6 +672,27 @@ def _optimize_transpose_pre_concat_nhwc_family(
                 if unary_output_tensor is not None:
                     unary_output_tensor.quantization = _clone_nhwc_quantization(
                         unary_output_tensor.quantization
+                    )
+                new_concat_inputs.append(input_plan.output_name)
+            elif input_plan.dequantize_op is not None:
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=input_plan.dequantize_op,
+                    new_inputs=[input_plan.source_name],
+                    graph_index=graph_index,
+                )
+                dequantize_output_tensor = model_ir.tensors.get(
+                    input_plan.output_name
+                )
+                _permute_tensor_metadata_if_rank_matches(
+                    dequantize_output_tensor,
+                    _PERM_NCHW_TO_NHWC,
+                )
+                if dequantize_output_tensor is not None:
+                    dequantize_output_tensor.quantization = (
+                        _clone_nhwc_quantization(
+                            dequantize_output_tensor.quantization
+                        )
                     )
                 new_concat_inputs.append(input_plan.output_name)
             elif input_plan.pad_op is not None:
@@ -724,6 +857,19 @@ def run_nhwc_concat_layout_cleanup(
         )
         return {**stats, "changed": bool(stats.get(_PAD_STATS_KEY, 0))}
 
+    def _run_dequantize(
+        pass_state: ModelIRPassState,
+    ) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_pre_concat_nhwc_dequantize_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get(_DEQUANTIZE_STATS_KEY, 0)),
+        }
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -751,12 +897,21 @@ def run_nhwc_concat_layout_cleanup(
                 priority=30,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_dequantize",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_dequantize,
+                precondition=_has_nhwc_dequantize_concat_candidate,
+                priority=40,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
             _DIRECT_STATS_KEY: 0,
             _UNARY_STATS_KEY: 0,
             _PAD_STATS_KEY: 0,
+            _DEQUANTIZE_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(

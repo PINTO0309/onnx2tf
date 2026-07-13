@@ -291,6 +291,118 @@ def _pad_model(
     return model_ir
 
 
+def _dequantize_model(
+    *,
+    all_dequantize: bool = False,
+    boundary: str | None = None,
+    shared_adapter: bool = False,
+) -> ModelIR:
+    model_ir = _model()
+    model_ir.tensors["x1_nhwc"].dtype = "INT8"
+    model_ir.tensors["x1_nhwc"].quantization = QuantParamIR(
+        scale=[0.25] * 3,
+        zero_point=[0] * 3,
+        quantized_dimension=3,
+    )
+    model_ir.tensors["x1_nchw"].dtype = "INT8"
+    model_ir.tensors["x1_nchw"].quantization = QuantParamIR(
+        scale=[0.25] * 3,
+        zero_point=[0] * 3,
+        quantized_dimension=1,
+    )
+    dequantize_shape = (
+        [1, 3, 9, 7]
+        if boundary == "spatial_shape_mismatch"
+        else [1, 3, 5, 7]
+    )
+    if boundary == "invalid_dequantize_output_rank":
+        dequantize_shape = [1, 3, 5]
+    model_ir.tensors["x1_dequantized"] = _tensor(
+        "x1_dequantized",
+        dequantize_shape,
+    )
+    model_ir.tensors["x1_dequantized"].quantization = {
+        "scale": [0.5] * 3,
+        "zero_point": [0] * 3,
+        "quantized_dimension": 1,
+    }
+    dequantize_inputs = ["x1_nchw"]
+    if boundary == "invalid_dequantize_arity":
+        model_ir.tensors["extra"] = _tensor("extra", [1])
+        dequantize_inputs.append("extra")
+    model_ir.operators.insert(
+        2,
+        OperatorIR(
+            "CAST" if boundary == "unsupported_dequantize" else "DEQUANTIZE",
+            dequantize_inputs,
+            ["x1_dequantized"],
+        ),
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    concat_op.inputs = ["x0_nchw", "x1_dequantized"]
+
+    if all_dequantize:
+        model_ir.tensors["x0_nhwc"].dtype = "INT8"
+        model_ir.tensors["x0_nhwc"].quantization = QuantParamIR(
+            scale=[0.125] * 2,
+            zero_point=[0] * 2,
+            quantized_dimension=3,
+        )
+        model_ir.tensors["x0_nchw"].dtype = "INT8"
+        model_ir.tensors["x0_nchw"].quantization = QuantParamIR(
+            scale=[0.125] * 2,
+            zero_point=[0] * 2,
+            quantized_dimension=1,
+        )
+        model_ir.tensors["x0_dequantized"] = _tensor(
+            "x0_dequantized",
+            [1, 2, 5, 7],
+        )
+        model_ir.operators.insert(
+            1,
+            OperatorIR(
+                "DEQUANTIZE",
+                ["x0_nchw"],
+                ["x0_dequantized"],
+            ),
+        )
+        concat_op.inputs = ["x0_dequantized", "x1_dequantized"]
+
+    if boundary == "dequantize_output_fanout":
+        model_ir.tensors["dequantize_side"] = _tensor(
+            "dequantize_side",
+            list(dequantize_shape),
+        )
+        model_ir.outputs.append("dequantize_side")
+        model_ir.operators.append(
+            OperatorIR(
+                "IDENTITY",
+                ["x1_dequantized"],
+                ["dequantize_side"],
+            )
+        )
+    if boundary == "public_dequantize_output":
+        model_ir.outputs.append("x1_dequantized")
+    if boundary == "public_dequantize_adapter":
+        model_ir.outputs.append("x1_nchw")
+    if shared_adapter:
+        model_ir.tensors["dequantize_adapter_side"] = _tensor(
+            "dequantize_adapter_side",
+            [1, 3, 5, 7],
+        )
+        model_ir.outputs.append("dequantize_adapter_side")
+        model_ir.operators.append(
+            OperatorIR(
+                "IDENTITY",
+                ["x1_nchw"],
+                ["dequantize_adapter_side"],
+            )
+        )
+    return model_ir
+
+
 def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
     assert actual.inputs == expected.inputs
     assert actual.outputs == expected.outputs
@@ -595,6 +707,88 @@ def test_nhwc_pad_plus_direct_rejects_unsafe_boundary(
     boundary: str,
 ) -> None:
     model_ir = _pad_model(boundary=boundary)
+    original = deepcopy(model_ir)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
+    _assert_model_equal(model_ir, original)
+
+
+def test_nhwc_dequantize_plus_direct_preserves_quantization_provenance() -> None:
+    model_ir = _dequantize_model(shared_adapter=True)
+    source_quantization = deepcopy(model_ir.tensors["x1_nhwc"].quantization)
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    dequantize_op = next(
+        op for op in model_ir.operators if op.op_type == "DEQUANTIZE"
+    )
+    assert dequantize_op.inputs == ["x1_nhwc"]
+    assert model_ir.tensors["x1_nhwc"].quantization == source_quantization
+    assert model_ir.tensors["x1_dequantized"].shape == [1, 5, 7, 3]
+    output_quantization = model_ir.tensors["x1_dequantized"].quantization
+    assert isinstance(output_quantization, dict)
+    assert output_quantization["quantized_dimension"] == 3
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    assert concat_op.inputs == ["x0_nhwc", "x1_dequantized"]
+    assert concat_op.options["axis"] == 3
+    remaining_transposes = [
+        op for op in model_ir.operators if op.op_type == "TRANSPOSE"
+    ]
+    assert [op.outputs for op in remaining_transposes] == [["x1_nchw"]]
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_dequantize"
+    )
+    assert event["status"] == "changed"
+    assert event["metrics"]["snapshot_count"] == 1
+    assert event["metrics"]["fingerprint_count"] == 0
+
+
+def test_nhwc_all_dequantize_inputs_use_indexed_family() -> None:
+    model_ir = _dequantize_model(all_dequantize=True)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    dequantize_ops = [
+        op for op in model_ir.operators if op.op_type == "DEQUANTIZE"
+    ]
+    assert [op.inputs for op in dequantize_ops] == [
+        ["x0_nhwc"],
+        ["x1_nhwc"],
+    ]
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    assert concat_op.inputs == ["x0_dequantized", "x1_dequantized"]
+    assert concat_op.options["axis"] == 3
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "unsupported_dequantize",
+        "invalid_dequantize_arity",
+        "dequantize_output_fanout",
+        "public_dequantize_output",
+        "public_dequantize_adapter",
+        "invalid_dequantize_output_rank",
+        "spatial_shape_mismatch",
+    ],
+)
+def test_nhwc_dequantize_rejects_unsafe_boundary(boundary: str) -> None:
+    model_ir = _dequantize_model(boundary=boundary)
     original = deepcopy(model_ir)
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
