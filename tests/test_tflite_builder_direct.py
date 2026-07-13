@@ -10106,7 +10106,9 @@ def test_flatbuffer_direct_internal_transpose_channel_slice_nhwc_propagation(
     ]
 
 
-def test_flatbuffer_direct_transpose_channel_slice_muladd_nhwc_bridge_chain() -> None:
+def test_flatbuffer_direct_transpose_channel_slice_muladd_nhwc_bridge_chain(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("transpose_channel_slice_muladd_nhwc_bridge_chain_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
@@ -10255,9 +10257,26 @@ def test_flatbuffer_direct_transpose_channel_slice_muladd_nhwc_bridge_chain() ->
         OperatorIR(op_type="ADD", inputs=["s1_nhwc", "add1_bias"], outputs=["y1"]),
         OperatorIR(op_type="ADD", inputs=["y0", "y1"], outputs=["z"]),
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
     assert stats["optimized_transpose_channel_slice_muladd_nhwc_bridge_chains"] == 1
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
     assert not any(
         str(op.op_type) == "TRANSPOSE"
@@ -10281,6 +10300,7 @@ def test_flatbuffer_direct_transpose_channel_slice_muladd_nhwc_bridge_chain() ->
     assert np.array_equal(np.asarray(model_ir.tensors["slice1_size"].data), np.asarray([1, 2, 2, 2], dtype=np.int32))
     mul_const_shape = [int(v) for v in list(model_ir.tensors["mul_const"].shape)]
     assert mul_const_shape in ([1, 1, 1, 2], [1, 2, 1, 1])
+    assert graph_index.operator_indices("TRANSPOSE") == []
 
 
 def test_flatbuffer_direct_transpose_channel_slice_dual_add_bridges_strict(

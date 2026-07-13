@@ -354,6 +354,18 @@ layout state. Its focused multi-branch success case passes with one initial
 index refresh, consistent operator-type indices, and a synchronized final
 layout state. No model conversion or inference was run.
 
+The channel-Slice/Mul/post-Transpose bridge rewrite now uses one differential
+index as well. It enumerates only Transpose roots, passes that index through
+Slice, Mul-constant, and global post-alias rewires, removes all selected
+adapters through `ModelIRGraphIndex.remove_operator`, and synchronizes the
+session layout state after pruning. Each retry snapshots only the existing
+consumer-index mapping so all branches retain the legacy pre-rewrite view;
+this avoids a semantic change in shared-constant and fan-out decisions while
+eliminating graph-map reconstruction and direct operator-list deletion. Its
+focused direct-plus-Mul success graph passes with one initial index refresh,
+no residual Transpose indices, and a consistent final layout state. No model
+conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

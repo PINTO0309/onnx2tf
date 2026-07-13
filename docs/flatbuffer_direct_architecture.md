@@ -771,6 +771,17 @@ rewrites, cloned-constant rewires, NCHW bridge insertion, and removal of the
 internal stem are differential index operations; final pruning synchronizes
 the active `LayoutState`.
 
+The adjacent channel-Slice/Mul/post-Transpose bridge family now shares that
+indexed contract too. Root discovery is restricted to Transpose indices, all
+Slice/Mul/post aliases are rewired through the index-aware canonical helpers,
+and obsolete pre/post adapters are removed differentially. A lightweight
+consumer-index snapshot is taken from the existing index at each retry because
+the legacy matcher intentionally evaluates every branch against the same
+pre-rewrite consumer view. This preserves branch selection and shared-constant
+copy-on-write behavior without reconstructing producer/consumer maps or
+scanning operators for roots. Successful cleanup prunes and synchronizes the
+session `LayoutState`.
+
 Boundary input normalization chains live in
 `passes/boundary_input_chains.py`. The module owns the guarded
 Transpose/Mul/Sum/Reshape NHWC rewrite and the exclusive

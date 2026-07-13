@@ -835,6 +835,9 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
 
 def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Remove NHWC->NCHW transpose stems whose channel slices immediately bridge back to NHWC.
@@ -961,6 +964,7 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
                 model_ir=model_ir,
                 op=mul_op,
                 new_inputs=mul_inputs,
+                graph_index=graph_index,
             )
         else:
             const_tensor.data = np.asarray(rotated)
@@ -1017,13 +1021,18 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
                         return False
         return True
 
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = {
+            str(name): [int(value) for value in values]
+            for name, values in graph_index.consumers.items()
+        }
         model_outputs = set(str(v) for v in model_ir.outputs)
 
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+        for pre_idx in graph_index.operator_indices("TRANSPOSE"):
+            pre_op = model_ir.operators[int(pre_idx)]
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
                 continue
             if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
                 continue
@@ -1066,6 +1075,7 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
                     op=slice_op,
                     input_index=0,
                     new_input_name=pre_in_name,
+                    graph_index=graph_index,
                 )
                 _permute_tensor_metadata_if_rank_matches(
                     model_ir.tensors.get(slice_out_name, None),
@@ -1094,7 +1104,12 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
                         ):
                             rewritable = False
                             break
-                        _replace_tensor_inputs(model_ir, str(user_op.outputs[0]), slice_out_name)
+                        _replace_tensor_inputs(
+                            model_ir,
+                            str(user_op.outputs[0]),
+                            slice_out_name,
+                            graph_index=graph_index,
+                        )
                         remove_indices.add(int(user_idx))
                         continue
 
@@ -1134,7 +1149,12 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
                             model_ir.tensors.get(mul_out_name, None),
                             perm_nchw_to_nhwc,
                         )
-                        _replace_tensor_inputs(model_ir, str(post_op.outputs[0]), mul_out_name)
+                        _replace_tensor_inputs(
+                            model_ir,
+                            str(post_op.outputs[0]),
+                            mul_out_name,
+                            graph_index=graph_index,
+                        )
                         remove_indices.add(int(post_idx))
                         continue
 
@@ -1145,7 +1165,7 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
                 continue
 
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             optimized += 1
             changed = True
@@ -1155,7 +1175,9 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
             break
 
     if optimized > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_channel_slice_muladd_nhwc_bridge_chains": int(optimized)}
 
 

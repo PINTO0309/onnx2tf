@@ -47595,8 +47595,15 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
 
 def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    return _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains_pass(model_ir)
+    return _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_transpose_channel_slice_dual_add_bridges_strict(
@@ -51452,7 +51459,10 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir)
+    _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     run_channel_slice_merge_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
