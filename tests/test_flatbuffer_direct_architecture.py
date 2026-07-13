@@ -617,7 +617,10 @@ def test_nchw_channel_shuffle_cleanup_has_single_owner() -> None:
         and node.module == "onnx2tf.tflite_builder.passes.channel_shuffle"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {function_name}
+    assert {alias.name for alias in imports[0].names} == {
+        function_name,
+        "run_nchw_channel_shuffle_cleanup",
+    }
 
 
 def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
@@ -637,6 +640,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_duplicate_fanout_cleanup",
         "run_flatten_concat_reshape_cleanup",
         "run_mixed_attention_layout_cleanup",
+        "run_nchw_channel_shuffle_cleanup",
         "run_maximum_zero_relu_cleanup",
         "run_qkv_attention_bridge_cleanup",
         "run_qkv_attention_prefix_cleanup",
@@ -672,7 +676,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 151
+    assert len(calls) == 157
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -874,6 +878,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_trailing_output_transpose_cleanup"
     ]
     assert len(trailing_output_transpose_calls) == 4
+
+    nchw_channel_shuffle_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_nchw_channel_shuffle_cleanup"
+    ]
+    assert len(nchw_channel_shuffle_calls) == 6
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:

@@ -3061,3 +3061,36 @@ passed 4 tests, followed by the complete direct selection:
 ```text
 1139 passed, 5 deselected, 2 warnings in 147.89s
 ```
+
+### Indexed NCHW channel-shuffle checkpoint
+
+The new channel-shuffle implementation now accepts one differential
+`ModelIRGraphIndex` and active `LayoutState`. Reshape-to-Gather mutation,
+deterministic index input wiring, both structural removals, and pruning update
+that shared state. The module contains zero whole-graph consumer map rebuilds
+and zero direct operator-list deletes.
+
+`run_nchw_channel_shuffle_cleanup` registers stable ID
+`canonicalize.nchw_channel_shuffle_gather` in the `CANONICALIZE` phase. Its
+model-only preflight requires Reshape and Transpose; the indexed guard proves
+the exact exclusive Reshape→Transpose→Reshape chain, permutation, fully-static
+rank/shape constraints, group/channel factorization, and non-identity shuffle
+before a transactional snapshot. All six production positions now use this
+runner and session diagnostics.
+
+Focused characterization/runner/ownership/efficiency validation passed 7
+tests. Instrumentation proves one initial index refresh and one snapshot on a
+rewrite; intermediate fan-out is rejected with zero snapshots. Tier 1
+`superpoint.onnx` produced six skipped events and zero snapshots/fingerprints;
+sequential `-cotof` retained `max_abs=1.6666e-06`, `rmse=1.62079e-07`, cosine
+similarity `1`, and the strict pass result.
+
+The complete direct regression selection passed:
+
+```text
+1141 passed, 5 deselected, 2 warnings in 148.54s
+```
+
+No dependency or TensorFlow path was added. Inference remained sequential and
+single-process; `/tmp/onnx2tf_nchw_shuffle_superpoint*` was removed after
+metrics inspection.

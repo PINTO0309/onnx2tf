@@ -61,10 +61,19 @@ Reshape→Transpose(group/channel swap)→Reshape block becomes one
 `GATHER(axis=1)` with deterministic shuffle indices, while exclusive
 intermediate edges and rank/shape/group invariants are preserved. The full
 146-line implementation moved with an identical AST; the lowerer exposes only
-a thin compatibility wrapper and its six production positions remain unchanged
-for the indexed-runner checkpoint. This module is the intended home for later
-NHWC shuffle and stale Concat/Gather repairs, avoiding further growth in the
-central lowerer.
+a thin compatibility wrapper. This module is the intended home for later NHWC
+shuffle and stale Concat/Gather repairs, avoiding further growth in the central
+lowerer.
+
+All six production positions now call `run_nchw_channel_shuffle_cleanup`,
+registered as `canonicalize.nchw_channel_shuffle_gather` in `CANONICALIZE`.
+Model-only Reshape+Transpose preflight and an exact indexed guard enforce both
+exclusive intermediate edges, swap permutation, static ranks/shapes, valid
+group/channel factorization, and non-identity shuffle indices before
+snapshotting. Gather mutation, deterministic index tensor creation, structural
+removal, and pruning share one differential index and `LayoutState` under a
+transactional invariant check. The module performs no whole-graph consumer-map
+rebuild and no direct operator-list deletion.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and

@@ -94,6 +94,7 @@ from onnx2tf.tflite_builder.passes.precision import (
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle import (
     _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather as _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather_pass,
+    run_nchw_channel_shuffle_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -58692,7 +58693,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
         _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
-        _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
+        run_nchw_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_transpose_gather_axis_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -58845,7 +58850,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
         _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
-        _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
+        run_nchw_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_transpose_gather_axis_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -58999,7 +59008,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
         _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
-        _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
+        run_nchw_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_transpose_gather_axis_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -59208,7 +59221,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
         _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
-        _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
+        run_nchw_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_transpose_gather_axis_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -59300,7 +59317,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
         _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
-        _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
+        run_nchw_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_transpose_gather_axis_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -59735,7 +59756,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(model_ir)
     _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(model_ir)
     _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
-    _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(model_ir)
+    run_nchw_channel_shuffle_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_transpose_gather_axis_cleanup(
         model_ir,
         layout_state=session.layout_state,

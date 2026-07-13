@@ -1,21 +1,31 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Any, Dict, List
 
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
     _is_fully_known_positive_shape,
     _prune_unused_tensors,
     _read_transpose_perm,
     _set_operator_inputs,
 )
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 
 
 def _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(
     model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
 ) -> Dict[str, int]:
     """
     Collapse NCHW channel-shuffle blocks into a single GATHER(axis=1).
@@ -32,6 +42,7 @@ def _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(
     where C=g*cpg and shuffle_indices[k] = (k % g) * cpg + (k // g).
     """
     optimized = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_shuffle_swap = [0, 2, 1, 3, 4]
 
     def _unique_tensor_name(base: str) -> str:
@@ -44,7 +55,7 @@ def _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
 
         for r1_idx, r1_op in enumerate(model_ir.operators):
             if str(r1_op.op_type) != "RESHAPE" or len(r1_op.inputs) < 1 or len(r1_op.outputs) != 1:
@@ -144,11 +155,12 @@ def _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(
                 model_ir=model_ir,
                 op=r2_op,
                 new_inputs=[x_nchw_name, gather_idx_name],
+                graph_index=graph_index,
             )
             r2_op.options = {"axis": 1, "batchDims": 0}
 
             for remove_idx in sorted([int(r1_idx), int(t1_idx)], reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             optimized += 1
             changed = True
@@ -158,7 +170,150 @@ def _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(
             break
 
     if optimized > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"optimized_nchw_channel_shuffle_reshape_transpose_reshape_to_gather": int(optimized)}
 
 
+def run_nchw_channel_shuffle_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Canonicalize strict static NCHW channel shuffle to Gather."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        found_reshape = False
+        found_transpose = False
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            operator_type = str(operator.op_type)
+            found_reshape = found_reshape or operator_type == "RESHAPE"
+            found_transpose = found_transpose or operator_type == "TRANSPOSE"
+            if found_reshape and found_transpose:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        for r1_op in candidate_model.operators:
+            if (
+                str(r1_op.op_type) != "RESHAPE"
+                or len(r1_op.inputs) < 1
+                or len(r1_op.outputs) != 1
+            ):
+                continue
+            x_name = str(r1_op.inputs[0])
+            r1_output_name = str(r1_op.outputs[0])
+            r1_users = pass_state.graph_index.consumer_indices(r1_output_name)
+            if len(r1_users) != 1:
+                continue
+            transpose_op = candidate_model.operators[int(r1_users[0])]
+            if (
+                str(transpose_op.op_type) != "TRANSPOSE"
+                or len(transpose_op.inputs) < 2
+                or len(transpose_op.outputs) != 1
+                or str(transpose_op.inputs[0]) != r1_output_name
+                or _read_transpose_perm(candidate_model, transpose_op)
+                != [0, 2, 1, 3, 4]
+            ):
+                continue
+            transpose_output_name = str(transpose_op.outputs[0])
+            transpose_users = pass_state.graph_index.consumer_indices(
+                transpose_output_name
+            )
+            if len(transpose_users) != 1:
+                continue
+            r2_op = candidate_model.operators[int(transpose_users[0])]
+            if (
+                str(r2_op.op_type) != "RESHAPE"
+                or len(r2_op.inputs) < 1
+                or len(r2_op.outputs) != 1
+                or str(r2_op.inputs[0]) != transpose_output_name
+            ):
+                continue
+            tensors = [
+                candidate_model.tensors.get(name)
+                for name in (
+                    x_name,
+                    r1_output_name,
+                    transpose_output_name,
+                    str(r2_op.outputs[0]),
+                )
+            ]
+            if any(tensor is None for tensor in tensors):
+                continue
+            shapes = [
+                [int(value) for value in tensor.shape]
+                for tensor in tensors
+                if tensor is not None
+            ]
+            if not all(_is_fully_known_positive_shape(shape) for shape in shapes):
+                continue
+            x_shape, r1_shape, transpose_shape, y_shape = shapes
+            if [len(shape) for shape in shapes] != [4, 5, 5, 4]:
+                continue
+            n, channels, height, width = x_shape
+            groups = int(r1_shape[1])
+            channels_per_group = int(r1_shape[2])
+            if (
+                groups > 1
+                and channels_per_group > 0
+                and groups * channels_per_group == channels
+                and r1_shape == [n, groups, channels_per_group, height, width]
+                and transpose_shape
+                == [n, channels_per_group, groups, height, width]
+                and y_shape == [n, channels, height, width]
+            ):
+                shuffle_indices = np.asarray(
+                    [
+                        (index % groups) * channels_per_group
+                        + (index // groups)
+                        for index in range(channels)
+                    ],
+                    dtype=np.int32,
+                )
+                if not np.array_equal(
+                    shuffle_indices,
+                    np.arange(channels, dtype=np.int32),
+                ):
+                    return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_nchw_channel_shuffle_reshape_transpose_reshape_to_gather",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="canonicalize.nchw_channel_shuffle_gather",
+                phase=PassPhase.CANONICALIZE,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={
+            "optimized_nchw_channel_shuffle_reshape_transpose_reshape_to_gather": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
