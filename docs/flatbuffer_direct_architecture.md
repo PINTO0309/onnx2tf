@@ -225,10 +225,13 @@ adapter, and insertion of one NHWC-to-NCHW bridge for legacy consumers.
 Whole-ModelIR no-op cases cover public Concat and post-adapter tensors, invalid
 pre/post permutations, invalid Concat axis, invalid constant rank or
 incompatible shape, missing constant data, and a constant shared outside the
-Concat. Its function AST exactly matches the characterization checkpoint. The
-lowerer retains a signature-compatible wrapper and the single raw production
-call, preserving order until indexed candidate planning and transactional
-runner integration replace it.
+Concat. Indexed candidate planning validates every conversion and optional
+legacy bridge before mutation, including protection for a public adapter or
+constant. Constant rewrites, Concat/post/legacy input rewrites, differential
+operator removal/insertion, pruning, and layout reconciliation share one
+`ModelIRGraphIndex` and `LayoutState`. The stable transactional runner ID is
+`layout.axis3_const_concat_bridge_nhwc`; the single production position calls
+the runner and the lowerer compatibility wrapper remains available.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

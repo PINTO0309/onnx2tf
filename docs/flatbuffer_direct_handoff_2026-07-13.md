@@ -3,22 +3,22 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `5228444`
-  (`extract axis3 const concat bridge layout pass`)
+- Latest implementation checkpoint: `a261462`
+  (`index axis3 const concat bridge layout pass`)
 - Previous pause checkpoint: `3df2903`
   (`document flatbuffer direct pause checkpoint`)
 - Remote: after this resumed documentation checkpoint is pushed, local and
   `origin/fb-refactor3` must again report `0 0` divergence.
 - Pull request: none; do not create one on resume
-- The axis-3 constant-Concat bridge matcher is mechanically extracted with an
-  exact AST match. Its lowerer wrapper and single raw call remain unchanged;
-  indexed migration is the next coherent unit.
+- The axis-3 constant-Concat bridge matcher uses pure indexed planning,
+  differential graph/layout mutation, and one stable transactional runner.
+  Its lowerer wrapper remains; the raw production call is removed.
 
 ## Completed work
 
-This resumed interval completed thirteen adjacent semantic layout families
+This resumed interval completed fourteen adjacent semantic layout families
 using the staged characterization → mechanical extraction → indexed runner
-process and advanced the fourteenth family through mechanical extraction.
+process.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -153,6 +153,11 @@ process and advanced the fourteenth family through mechanical extraction.
       `passes/axis3_const_concat_layout.py` with exact AST equivalence in
       `5228444`; the compatibility wrapper and single raw production call
       remain.
+    - Added pure indexed constant/topology/bridge planning, protected public
+      adapter and constant boundaries, differential removal/insertion,
+      `LayoutState` reconciliation, stable runner
+      `layout.axis3_const_concat_bridge_nhwc`, and the single production runner
+      call in `a261462`.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -168,9 +173,9 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is indexed candidate planning, differential
-  mutation, `LayoutState` reconciliation, and transactional runner integration
-  for `_optimize_transpose_axis3_const_concat_bridge_nhwc_chains`.
+  The immediate next unit is characterization of
+  `_optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains`, including
+  both production positions and quantized public/fan-out boundaries.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -192,9 +197,9 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this resumed documentation update, the
-working tree is clean at extraction checkpoint `5228444`. The axis-3
-constant-Concat function is singly owned by its focused pass module; indexed
-migration has not begun.
+working tree is clean at indexed checkpoint `a261462`. The axis-3
+constant-Concat function is singly owned by its focused pass module and its
+single production position uses the transactional runner.
 After the documentation commit is pushed, local/remote divergence must be
 `0 0`. The implementation checkpoints since the previous pause changed:
 
@@ -370,6 +375,14 @@ sequential with only one model/process active at a time.
   `51 passed in 20.60s`; the extracted function AST exactly matched `019d3c6`.
 - Full direct selection after mechanical extraction:
   `1309 passed, 5 deselected, 2 warnings in 165.14s`.
+- Indexed axis-3 constant-Concat runner, public-boundary, architecture, and
+  irrelevant-graph efficiency focus: `69 passed in 21.95s`.
+- Tier 1 `superpoint.onnx`, sequential `-tb flatbuffer_direct -cotof` after
+  indexed migration: `evaluation_pass=true`,
+  `max_abs=1.6666017472743988e-06`,
+  `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+- Full direct selection after indexed migration:
+  `1323 passed, 5 deselected, 2 warnings in 166.52s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -401,14 +414,14 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Introduce a pure indexed candidate plan for the axis-3 constant-Concat
-   topology, constant conversions, post branches, and optional legacy bridge.
-3. Apply graph rewrites through one shared `ModelIRGraphIndex` and
-   `LayoutState`, including differential insertion/removal and metadata
-   reconciliation, under a stable ordered pass ID.
-4. Replace the single raw production call with the transactional runner, run
-   focused, Tier 1 sequential `-cotof`, and full direct gates, then commit and
-   push the indexed checkpoint.
+2. Inspect
+   `_optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains`, its two
+   production calls, and all existing direct/quantized coverage.
+3. Move any large inline success fixture to a compact dedicated module and add
+   complete no-op boundaries for adapter/Dequantize/Concat/Quantize fan-out,
+   graph outputs, permutations, axis, and quantization metadata.
+4. Run focused and full direct gates, then commit and push characterization
+   before mechanical extraction.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1200,3 +1213,40 @@ No dependency or TensorFlow path was added, and no inference process was run
 concurrently. Indexed candidate planning, differential graph/layout mutation,
 transactional runner integration, and raw-call replacement remain the next
 checkpoint.
+
+### Indexed axis-3 constant-Concat bridge checkpoint
+
+Checkpoint `a261462` introduced pure indexed planning for the unique leading
+adapter, every exclusive rank-four constant conversion, every inverse post
+branch, the retained-adapter decision, and the optional legacy NCHW bridge.
+All bridge metadata and shape compatibility are validated before mutation.
+Public adapter and constant tensors now reject before snapshot in addition to
+the nine characterized boundaries, preventing graph-output producer loss or
+silent constant-layout changes.
+
+Constant buffers, Concat inputs/axis, post aliases, legacy inputs, adapter/post
+removal, bridge insertion, pruning, and layout reconciliation use one shared
+`ModelIRGraphIndex` and `LayoutState`. The implementation contains no
+whole-graph producer/consumer map construction and no direct operator-list
+insertion or deletion. `run_axis3_const_concat_layout_cleanup` registers stable
+`LAYOUT_PLAN` ID `layout.axis3_const_concat_bridge_nhwc`; the single raw
+production call is replaced with the runner while the lowerer compatibility
+wrapper remains.
+
+Focused success, eleven complete no-op boundaries, runner instrumentation,
+ownership, architecture, and irrelevant-graph efficiency validation passed 69
+tests. The success graph uses one initial index refresh and one snapshot; all
+unsafe boundaries reject before snapshotting. Tier 1 `superpoint.onnx` passed
+sequential `-tb flatbuffer_direct -cotof` with `evaluation_pass=true`,
+`max_abs=1.6666017472743988e-06`, `rmse=1.6207873294228388e-07`, and cosine
+similarity `1.0`.
+
+The complete sequential direct selection passed:
+
+```text
+1323 passed, 5 deselected, 2 warnings in 166.52s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_axis3_const_concat_superpoint` artifacts were removed after
+metrics inspection.
