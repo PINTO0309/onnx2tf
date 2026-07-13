@@ -644,6 +644,50 @@ def _quantized_leaky_model(
     return model_ir
 
 
+def _quantized_slice_model(
+    *,
+    public_slice_output: bool = False,
+) -> ModelIR:
+    model_ir = _quantized_model()
+    model_ir.tensors["a_nhwc"].shape = [1, 5, 7, 4]
+    model_ir.tensors["a_nhwc"].shape_signature = [1, 5, 7, 4]
+    model_ir.tensors["a_nchw"].shape = [1, 4, 5, 7]
+    model_ir.tensors["a_nchw"].shape_signature = [1, 4, 5, 7]
+    model_ir.tensors["slice_begin"] = _int_tensor(
+        "slice_begin",
+        [0, 1, 0, 0],
+    )
+    model_ir.tensors["slice_size"] = _int_tensor(
+        "slice_size",
+        [1, 2, 5, 7],
+    )
+    model_ir.tensors["a_slice"] = _tensor(
+        "a_slice",
+        [1, 2, 5, 7],
+    )
+    model_ir.tensors["a_slice"].quantization = QuantParamIR(
+        scale=[0.4] * 2,
+        zero_point=[0] * 2,
+        quantized_dimension=1,
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    concat_index = model_ir.operators.index(concat_op)
+    model_ir.operators.insert(
+        concat_index,
+        OperatorIR(
+            "SLICE",
+            ["a_nchw", "slice_begin", "slice_size"],
+            ["a_slice"],
+        ),
+    )
+    concat_op.inputs[0] = "a_slice"
+    if public_slice_output:
+        model_ir.outputs.append("a_slice")
+    return model_ir
+
+
 def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
     assert actual.inputs == expected.inputs
     assert actual.outputs == expected.outputs
@@ -1094,6 +1138,53 @@ def test_nhwc_quantized_leaky_input_is_indexed() -> None:
 
 def test_nhwc_quantized_leaky_rejects_public_output() -> None:
     model_ir = _quantized_leaky_model(public_leaky_output=True)
+    original = deepcopy(model_ir)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
+    _assert_model_equal(model_ir, original)
+
+
+def test_nhwc_quantized_slice_input_is_indexed() -> None:
+    model_ir = _quantized_slice_model()
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_quantized_rewritten(
+        model_ir,
+        expected_concat_inputs=["a_slice", "b_nhwc"],
+    )
+    slice_op = next(op for op in model_ir.operators if op.op_type == "SLICE")
+    assert slice_op.inputs == ["a_nhwc", "slice_begin", "slice_size"]
+    np.testing.assert_array_equal(
+        model_ir.tensors["slice_begin"].data,
+        np.asarray([0, 0, 0, 1], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        model_ir.tensors["slice_size"].data,
+        np.asarray([1, 5, 7, 2], dtype=np.int32),
+    )
+    slice_tensor = model_ir.tensors["a_slice"]
+    assert slice_tensor.shape == [1, 5, 7, 2]
+    assert isinstance(slice_tensor.quantization, QuantParamIR)
+    assert slice_tensor.quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_quantized_slice"
+    )
+    assert event["status"] == "changed"
+
+
+def test_nhwc_quantized_slice_rejects_public_output() -> None:
+    model_ir = _quantized_slice_model(public_slice_output=True)
     original = deepcopy(model_ir)
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)

@@ -13958,6 +13958,33 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             )
             if indexed_quantized_leaky_family:
                 continue
+            quantized_slice_actions = [
+                action
+                for action in concat_input_actions
+                if str(action.get("kind", "")) == "slice"
+            ]
+            indexed_quantized_slice_family = (
+                post_quantize_idx is not None
+                and len(quantized_slice_actions) >= 1
+                and all(
+                    str(action.get("kind", "")) in {"direct", "slice"}
+                    for action in concat_input_actions
+                )
+                and all(
+                    _is_indexed_direct_slice_plan(
+                        dict(action.get("plan", {}))
+                    )
+                    and not list(
+                        dict(action.get("plan", {})).get(
+                            "post_transpose_indices",
+                            [],
+                        )
+                    )
+                    for action in quantized_slice_actions
+                )
+            )
+            if indexed_quantized_slice_family:
+                continue
             indexed_unary_family = (
                 post_quantize_idx is None
                 and sum(
@@ -14490,6 +14517,12 @@ def _optimize_transpose_pre_concat_nhwc_chains(
         + int(
             quantized_indexed_stats.get(
                 "optimized_transpose_pre_concat_nhwc_quantized_leaky_chains",
+                0,
+            )
+        )
+        + int(
+            quantized_indexed_stats.get(
+                "optimized_transpose_pre_concat_nhwc_quantized_slice_chains",
                 0,
             )
         )

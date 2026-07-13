@@ -27,11 +27,13 @@ from onnx2tf.tflite_builder.passes.nhwc_concat_layout import (
     _apply_leaky_input_plan,
     _apply_prelu_input_plan,
     _apply_softmax_input_plan,
+    _apply_slice_input_plan,
     _apply_swish_input_plan,
     _resolve_dequantize_input_plan,
     _resolve_leaky_input_plan,
     _resolve_prelu_input_plan,
     _resolve_softmax_input_plan,
+    _resolve_slice_input_plan,
     _resolve_swish_input_plan,
 )
 from onnx2tf.tflite_builder.passes.nhwc_concat_pad import (
@@ -70,6 +72,9 @@ _SOFTMAX_STATS_KEY = (
 )
 _LEAKY_STATS_KEY = (
     "optimized_transpose_pre_concat_nhwc_quantized_leaky_chains"
+)
+_SLICE_STATS_KEY = (
+    "optimized_transpose_pre_concat_nhwc_quantized_slice_chains"
 )
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
@@ -387,6 +392,35 @@ def _resolve_leaky_quantized_input_plan(
     )
 
 
+def _resolve_slice_quantized_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    concat_input: str,
+    concat_index: int,
+    model_outputs: set[str],
+    public_names: set[str],
+) -> Optional[_QuantizedInputPlan]:
+    slice_plan = _resolve_slice_input_plan(
+        model_ir,
+        graph_index,
+        input_name=concat_input,
+        concat_index=concat_index,
+        model_outputs=model_outputs,
+        public_names=public_names,
+    )
+    if slice_plan is None or slice_plan.output_post_adapter_ops:
+        return None
+    return _QuantizedInputPlan(
+        kind="slice",
+        adapter_op=slice_plan.adapter_op,
+        nhwc_plan=slice_plan,
+        concat_input=concat_input,
+        source_name=slice_plan.source_name,
+        remove_adapter=slice_plan.remove_adapter,
+    )
+
+
 def _resolve_quantized_concat_candidate(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -530,6 +564,15 @@ def _resolve_quantized_concat_candidate(
                     concat_index=int(concat_index),
                     model_outputs=model_outputs,
                 )
+            if input_plan is None and family == "slice":
+                input_plan = _resolve_slice_quantized_input_plan(
+                    model_ir,
+                    graph_index,
+                    concat_input=concat_input,
+                    concat_index=int(concat_index),
+                    model_outputs=model_outputs,
+                    public_names=public_names,
+                )
             if input_plan is None and family in {
                 "pad",
                 "unary_pad",
@@ -585,6 +628,9 @@ def _resolve_quantized_concat_candidate(
         leaky_count = sum(plan.kind == "leaky" for plan in input_plans)
         if family == "leaky" and leaky_count < 1:
             continue
+        slice_count = sum(plan.kind == "slice" for plan in input_plans)
+        if family == "slice" and slice_count < 1:
+            continue
         if family in {
             "unary",
             "pad",
@@ -595,6 +641,7 @@ def _resolve_quantized_concat_candidate(
             "prelu",
             "softmax",
             "leaky",
+            "slice",
         }:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
@@ -616,6 +663,7 @@ def _resolve_quantized_concat_candidate(
                     "prelu",
                     "softmax",
                     "leaky",
+                    "slice",
                 }:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
@@ -770,6 +818,19 @@ def _has_quantized_leaky_concat_candidate(
     )
 
 
+def _has_quantized_slice_concat_candidate(
+    pass_state: ModelIRPassState,
+) -> bool:
+    return (
+        _resolve_quantized_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="slice",
+        )
+        is not None
+    )
+
+
 def _optimize_quantized_concat_chains(
     model_ir: ModelIR,
     *,
@@ -793,6 +854,10 @@ def _optimize_quantized_concat_chains(
         materialized_pads: Dict[str, str] = {}
         materialized_alphas: Dict[
             Tuple[str, Optional[Tuple[int, ...]], Tuple[int, ...]],
+            str,
+        ] = {}
+        materialized_int_parameters: Dict[
+            Tuple[str, Tuple[int, ...]],
             str,
         ] = {}
         for input_plan in candidate.input_plans:
@@ -827,6 +892,13 @@ def _optimize_quantized_concat_chains(
                         model_ir,
                         graph_index,
                         input_plan.nhwc_plan,
+                    )
+                elif input_plan.kind == "slice":
+                    _apply_slice_input_plan(
+                        model_ir,
+                        graph_index,
+                        input_plan.nhwc_plan,
+                        materialized=materialized_int_parameters,
                     )
                 else:
                     raise RuntimeError(
@@ -1082,6 +1154,19 @@ def run_nhwc_concat_quantized_layout_cleanup(
             "changed": bool(stats.get(_LEAKY_STATS_KEY, 0)),
         }
 
+    def _run_slice(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_quantized_concat_chains(
+            pass_state.model_ir,
+            family="slice",
+            stats_key=_SLICE_STATS_KEY,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get(_SLICE_STATS_KEY, 0)),
+        }
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -1165,6 +1250,14 @@ def run_nhwc_concat_quantized_layout_cleanup(
                 priority=100,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_quantized_slice",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_slice,
+                precondition=_has_quantized_slice_concat_candidate,
+                priority=110,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -1178,6 +1271,7 @@ def run_nhwc_concat_quantized_layout_cleanup(
             _PRELU_STATS_KEY: 0,
             _SOFTMAX_STATS_KEY: 0,
             _LEAKY_STATS_KEY: 0,
+            _SLICE_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(
