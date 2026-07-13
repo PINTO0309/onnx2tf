@@ -30,7 +30,7 @@ The pseudo-LeakyRelu family runs last under
 `layout.nhwc_pre_concat_leaky`.
 The twelfth through twenty-fourth families are the separate direct, unary,
 Pad-plus-direct, unary-plus-Pad, all-Pad, expanded-Swish, Dequantize, PReLU, and
-Softmax, followed by exact pseudo-LeakyRelu, bounded Slice/Split, and flat Add,
+Softmax, followed by exact pseudo-LeakyRelu, bounded Slice/Split, and Add,
 quantized-post passes
 `layout.nhwc_pre_concat_quantized_direct`,
 `layout.nhwc_pre_concat_quantized_unary`, and
@@ -229,13 +229,12 @@ and every output tensor exactly once. The axis materializer shares Slice's
 copy-on-write cache. Public Split outputs reject, while broader post-adapter
 and mixed-input forms remain in legacy.
 
-The first bounded Add family accepts a flat Add with exactly two direct
-rank-four adapter operands plus direct root-Concat companions. Both Add inputs,
-the Add output, and per-axis metadata move to NHWC. Shared-plan cleanup now
-walks Add operand plans, uses differential consumer state to remove both
-leading adapters, and retains adapters that remain public or live. Recursive
-Add and non-direct operands remain in legacy. Public Add outputs reject before
-mutation.
+The bounded Add family accepts a depth-guarded Add tree whose leaves are direct
+rank-four adapters, plus direct root-Concat companions. Every Add input/output
+and per-axis metadata moves to NHWC exactly once. Shared-plan cleanup walks
+nested operand plans, uses differential consumer state to remove every dead
+leading adapter, and retains adapters that remain public or live. Non-direct
+operands remain in legacy. Public Add outputs reject before mutation.
 
 The lowerer compatibility helper still returns the original aggregate statistic
 and runs the legacy matcher after the direct pass. The legacy matcher now
@@ -265,8 +264,8 @@ Focused verification, all in the existing `uv` environment:
   the preceding combined float-path run passed 176 tests across eight compact
   modules; authoritative collection now contains 212. Including the bounded
   direct and unary/Pad/Swish/Dequantize/PReLU/Softmax/Leaky/Slice/Split/Add
-  quantized-post suites, the compact inventory contains 278 tests across nine
-  modules. The preceding combined run passed 208 tests; the expanded quantized module passes 66 tests, and the focused quantized/Pad
+  quantized-post suites, the compact inventory contains 279 tests across nine
+  modules. The preceding combined run passed 208 tests; the expanded quantized module passes 67 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
   and rewritten layouts. The Swish suite covers both Mul operand orders,
@@ -315,8 +314,8 @@ Focused verification, all in the existing `uv` environment:
   public-output no-op boundary. Split coverage fixes multi-output
   single-application behavior, axis remapping, output metadata, and a public
   output no-op boundary. Add coverage fixes both direct operand rewrites,
-  complete adapter cleanup, output metadata, and a public-output no-op
-  boundary.
+  complete adapter cleanup, two-level recursive application, output metadata,
+  and a public-output no-op boundary.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.

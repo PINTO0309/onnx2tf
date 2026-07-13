@@ -725,6 +725,7 @@ def _quantized_split_model(
 def _quantized_add_model(
     *,
     public_add_output: bool = False,
+    nested: bool = False,
 ) -> ModelIR:
     model_ir = _quantized_model()
     model_ir.inputs.append("a2_nhwc")
@@ -749,7 +750,7 @@ def _quantized_add_model(
         op for op in model_ir.operators if op.op_type == "CONCATENATION"
     )
     concat_index = model_ir.operators.index(concat_op)
-    model_ir.operators[concat_index:concat_index] = [
+    add_operators = [
         OperatorIR(
             "TRANSPOSE",
             ["a2_nhwc", "pre_perm"],
@@ -757,6 +758,39 @@ def _quantized_add_model(
         ),
         OperatorIR("ADD", ["a_nchw", "a2_nchw"], ["a_add"]),
     ]
+    if nested:
+        model_ir.inputs.append("a3_nhwc")
+        model_ir.tensors["a3_nhwc"] = _tensor(
+            "a3_nhwc",
+            [1, 5, 7, 2],
+        )
+        model_ir.tensors["a3_nchw"] = _tensor(
+            "a3_nchw",
+            [1, 2, 5, 7],
+        )
+        model_ir.tensors["a_inner"] = model_ir.tensors.pop("a_add")
+        model_ir.tensors["a_inner"].name = "a_inner"
+        model_ir.tensors["a_add"] = _tensor(
+            "a_add",
+            [1, 2, 5, 7],
+        )
+        model_ir.tensors["a_add"].quantization = QuantParamIR(
+            scale=[0.4] * 2,
+            zero_point=[0] * 2,
+            quantized_dimension=1,
+        )
+        add_operators[1].outputs = ["a_inner"]
+        add_operators.extend(
+            [
+                OperatorIR(
+                    "TRANSPOSE",
+                    ["a3_nhwc", "pre_perm"],
+                    ["a3_nchw"],
+                ),
+                OperatorIR("ADD", ["a_inner", "a3_nchw"], ["a_add"]),
+            ]
+        )
+    model_ir.operators[concat_index:concat_index] = add_operators
     concat_op.inputs[0] = "a_add"
     if public_add_output:
         model_ir.outputs.append("a_add")
@@ -1339,6 +1373,29 @@ def test_nhwc_quantized_flat_add_input_is_indexed() -> None:
         if event["code"] == "layout.nhwc_pre_concat_quantized_add"
     )
     assert event["status"] == "changed"
+
+
+def test_nhwc_quantized_recursive_add_tree_is_indexed() -> None:
+    model_ir = _quantized_add_model(nested=True)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_quantized_rewritten(
+        model_ir,
+        expected_concat_inputs=["a_add", "b_nhwc"],
+    )
+    add_ops = [op for op in model_ir.operators if op.op_type == "ADD"]
+    assert [op.inputs for op in add_ops] == [
+        ["a_nhwc", "a2_nhwc"],
+        ["a_inner", "a3_nhwc"],
+    ]
+    for tensor_name in ("a_inner", "a_add"):
+        tensor = model_ir.tensors[tensor_name]
+        assert tensor.shape == [1, 5, 7, 2]
+        assert isinstance(tensor.quantization, QuantParamIR)
+        assert tensor.quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
 
 
 def test_nhwc_quantized_add_rejects_public_output() -> None:
