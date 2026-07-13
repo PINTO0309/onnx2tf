@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _build_tensor_consumer_map,
+    _build_tensor_producer_map,
     _clone_quantization,
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
@@ -361,6 +363,280 @@ def _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(
     if rewritten > 0 and layout_state is not None:
         layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains": int(rewritten)}
+
+
+def _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Eliminate NCHW round-trips around logistic/sub-gated dual-MUL branches whose MUL
+    outputs are immediately transposed back to NHWC before layout-agnostic consumers.
+
+    Target:
+      g_nhwc --T(0,3,1,2)--> g_nchw --LOGISTIC--> sig_nchw --SUB(1, sig)->sub_nchw
+      a_nhwc --T(0,3,1,2)--> a_nchw
+      b_nhwc --T(0,3,1,2)--> b_nchw
+      MUL(sig_nchw, a_nchw) -> ma_nchw --T(0,2,3,1)--> ma_nhwc
+      MUL(sub_nchw, b_nchw) -> mb_nchw --T(0,2,3,1)--> mb_nhwc
+      ma_nhwc / mb_nhwc then feed NHWC-only consumers (e.g. ADD -> CONV)
+
+    Rewrite:
+      - Bypass all three pre-transposes to NHWC.
+      - Keep LOGISTIC/SUB/MUL in NHWC.
+      - Remove both post-transposes and make the MULs emit NHWC directly.
+    """
+    rewritten = 0
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+    perm_nchw_to_nhwc = [0, 2, 3, 1]
+
+    def _collect_inverse_posts(tensor_name: str) -> Optional[Tuple[List[int], List[str]]]:
+        out_users = [int(v) for v in consumers.get(str(tensor_name), [])]
+        if len(out_users) == 0:
+            return None
+        post_indices_local: List[int] = []
+        post_output_names_local: List[str] = []
+        for user_idx in out_users:
+            user_op = model_ir.operators[int(user_idx)]
+            if (
+                str(user_op.op_type) != "TRANSPOSE"
+                or len(user_op.inputs) < 2
+                or len(user_op.outputs) != 1
+                or str(user_op.inputs[0]) != str(tensor_name)
+                or _read_transpose_perm(model_ir, user_op) != perm_nchw_to_nhwc
+                or str(user_op.outputs[0]) in model_outputs
+            ):
+                return None
+            post_indices_local.append(int(user_idx))
+            post_output_names_local.append(str(user_op.outputs[0]))
+        return post_indices_local, post_output_names_local
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+        producers = _build_tensor_producer_map(model_ir)
+        model_outputs = set(str(v) for v in model_ir.outputs)
+
+        for gate_pre_idx, gate_pre_op in enumerate(model_ir.operators):
+            if str(gate_pre_op.op_type) != "TRANSPOSE" or len(gate_pre_op.inputs) < 2 or len(gate_pre_op.outputs) != 1:
+                continue
+            if _read_transpose_perm(model_ir, gate_pre_op) != perm_nhwc_to_nchw:
+                continue
+
+            gate_pre_in_name = str(gate_pre_op.inputs[0])
+            gate_pre_out_name = str(gate_pre_op.outputs[0])
+            if gate_pre_in_name in model_outputs or gate_pre_out_name in model_outputs:
+                continue
+
+            gate_users = [int(v) for v in consumers.get(gate_pre_out_name, [])]
+            if len(gate_users) != 1:
+                continue
+            logistic_idx = int(gate_users[0])
+            logistic_op = model_ir.operators[int(logistic_idx)]
+            if (
+                str(logistic_op.op_type) != "LOGISTIC"
+                or len(logistic_op.inputs) != 1
+                or len(logistic_op.outputs) != 1
+                or str(logistic_op.inputs[0]) != gate_pre_out_name
+            ):
+                continue
+
+            logistic_out_name = str(logistic_op.outputs[0])
+            if logistic_out_name in model_outputs:
+                continue
+            logistic_users = [int(v) for v in consumers.get(logistic_out_name, [])]
+            if len(logistic_users) != 2:
+                continue
+
+            sub_idx: Optional[int] = None
+            mul_sig_idx: Optional[int] = None
+            for user_idx in logistic_users:
+                user_op = model_ir.operators[int(user_idx)]
+                if str(user_op.op_type) == "SUB":
+                    if sub_idx is not None:
+                        sub_idx = None
+                        break
+                    sub_idx = int(user_idx)
+                elif str(user_op.op_type) == "MUL":
+                    if mul_sig_idx is not None:
+                        mul_sig_idx = None
+                        break
+                    mul_sig_idx = int(user_idx)
+            if sub_idx is None or mul_sig_idx is None:
+                continue
+
+            sub_op = model_ir.operators[int(sub_idx)]
+            if len(sub_op.inputs) != 2 or len(sub_op.outputs) != 1 or str(sub_op.outputs[0]) in model_outputs:
+                continue
+            if str(logistic_out_name) not in {str(v) for v in list(sub_op.inputs)}:
+                continue
+            sub_out_name = str(sub_op.outputs[0])
+            sub_users = [int(v) for v in consumers.get(sub_out_name, [])]
+            if len(sub_users) != 1:
+                continue
+            mul_sub_idx = int(sub_users[0])
+            if int(mul_sub_idx) == int(mul_sig_idx):
+                continue
+
+            mul_sig_op = model_ir.operators[int(mul_sig_idx)]
+            mul_sub_op = model_ir.operators[int(mul_sub_idx)]
+            if (
+                str(mul_sig_op.op_type) != "MUL"
+                or len(mul_sig_op.inputs) != 2
+                or len(mul_sig_op.outputs) != 1
+                or str(mul_sub_op.op_type) != "MUL"
+                or len(mul_sub_op.inputs) != 2
+                or len(mul_sub_op.outputs) != 1
+            ):
+                continue
+
+            def _resolve_pre_for_mul(
+                mul_op: OperatorIR,
+                gate_tensor_candidates: List[str],
+            ) -> Optional[Tuple[int, str, str]]:
+                pre_idx_local: Optional[int] = None
+                pre_in_name_local: Optional[str] = None
+                pre_out_name_local: Optional[str] = None
+                gate_tensor_set = set(str(v) for v in gate_tensor_candidates)
+                for input_name in list(mul_op.inputs):
+                    if str(input_name) in gate_tensor_set:
+                        continue
+                    prod_idx = producers.get(str(input_name), None)
+                    if prod_idx is None:
+                        continue
+                    prod_op = model_ir.operators[int(prod_idx)]
+                    if (
+                        str(prod_op.op_type) == "TRANSPOSE"
+                        and len(prod_op.inputs) >= 2
+                        and len(prod_op.outputs) == 1
+                        and str(prod_op.outputs[0]) == str(input_name)
+                        and _read_transpose_perm(model_ir, prod_op) == perm_nhwc_to_nchw
+                        and str(prod_op.inputs[0]) not in model_outputs
+                        and str(prod_op.outputs[0]) not in model_outputs
+                    ):
+                        pre_idx_local = int(prod_idx)
+                        pre_in_name_local = str(prod_op.inputs[0])
+                        pre_out_name_local = str(prod_op.outputs[0])
+                        break
+                if pre_idx_local is None or pre_in_name_local is None or pre_out_name_local is None:
+                    return None
+                return int(pre_idx_local), str(pre_in_name_local), str(pre_out_name_local)
+
+            sig_pre_info = _resolve_pre_for_mul(
+                mul_sig_op,
+                gate_tensor_candidates=[str(logistic_out_name)],
+            )
+            sub_pre_info = _resolve_pre_for_mul(
+                mul_sub_op,
+                gate_tensor_candidates=[str(sub_out_name)],
+            )
+            if sig_pre_info is None or sub_pre_info is None:
+                continue
+
+            sig_pre_idx, sig_pre_in_name, sig_pre_out_name = sig_pre_info
+            sub_pre_idx, sub_pre_in_name, sub_pre_out_name = sub_pre_info
+            if int(sig_pre_idx) == int(sub_pre_idx):
+                continue
+
+            if set(int(v) for v in consumers.get(str(gate_pre_out_name), [])) != {int(logistic_idx)}:
+                continue
+            if set(int(v) for v in consumers.get(str(sig_pre_out_name), [])) != {int(mul_sig_idx)}:
+                continue
+            if set(int(v) for v in consumers.get(str(sub_pre_out_name), [])) != {int(mul_sub_idx)}:
+                continue
+
+            mul_sig_out_name = str(mul_sig_op.outputs[0])
+            mul_sub_out_name = str(mul_sub_op.outputs[0])
+            if mul_sig_out_name in model_outputs or mul_sub_out_name in model_outputs:
+                continue
+
+            sig_post_info = _collect_inverse_posts(mul_sig_out_name)
+            sub_post_info = _collect_inverse_posts(mul_sub_out_name)
+            if sig_post_info is None or sub_post_info is None:
+                continue
+            sig_post_indices, sig_post_output_names = sig_post_info
+            sub_post_indices, sub_post_output_names = sub_post_info
+
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=logistic_op,
+                new_inputs=[str(gate_pre_in_name)],
+            )
+
+            for mul_op, pre_out_name, pre_in_name in [
+                (mul_sig_op, sig_pre_out_name, sig_pre_in_name),
+                (mul_sub_op, sub_pre_out_name, sub_pre_in_name),
+            ]:
+                mul_inputs = [str(v) for v in list(mul_op.inputs)]
+                replaced = False
+                for input_idx, input_name in enumerate(list(mul_inputs)):
+                    if str(input_name) == str(pre_out_name):
+                        mul_inputs[input_idx] = str(pre_in_name)
+                        replaced = True
+                if not replaced:
+                    break
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=mul_op,
+                    new_inputs=mul_inputs,
+                )
+            else:
+                for tensor_name in [
+                    str(logistic_out_name),
+                    str(sub_out_name),
+                    str(mul_sig_out_name),
+                    str(mul_sub_out_name),
+                ]:
+                    _permute_tensor_metadata_if_rank_matches(
+                        model_ir.tensors.get(str(tensor_name), None),
+                        perm_nchw_to_nhwc,
+                    )
+
+                for mul_op, old_mul_out_name, post_output_names in [
+                    (mul_sig_op, mul_sig_out_name, sig_post_output_names),
+                    (mul_sub_op, mul_sub_out_name, sub_post_output_names),
+                ]:
+                    canonical_post_output_name = str(post_output_names[0])
+                    _set_operator_outputs(
+                        model_ir=model_ir,
+                        op=mul_op,
+                        new_outputs=[canonical_post_output_name],
+                    )
+                    for alias_name in post_output_names[1:]:
+                        _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name)
+
+                    old_mul_out_tensor = model_ir.tensors.get(str(old_mul_out_name), None)
+                    canonical_tensor = model_ir.tensors.get(str(canonical_post_output_name), None)
+                    if old_mul_out_tensor is not None and canonical_tensor is not None:
+                        canonical_tensor.dtype = str(old_mul_out_tensor.dtype)
+                        canonical_tensor.quantization = _clone_quantization(old_mul_out_tensor.quantization)
+                        canonical_tensor.shape = [int(v) for v in list(old_mul_out_tensor.shape)]
+                        canonical_tensor.shape_signature = (
+                            [int(v) for v in list(old_mul_out_tensor.shape_signature)]
+                            if old_mul_out_tensor.shape_signature is not None
+                            else [int(v) for v in list(old_mul_out_tensor.shape)]
+                        )
+                        _permute_tensor_metadata_if_rank_matches(
+                            canonical_tensor,
+                            perm_nchw_to_nhwc,
+                        )
+
+                remove_indices = {
+                    int(gate_pre_idx),
+                    int(sig_pre_idx),
+                    int(sub_pre_idx),
+                    *[int(v) for v in sig_post_indices],
+                    *[int(v) for v in sub_post_indices],
+                }
+                for remove_idx in sorted(remove_indices, reverse=True):
+                    del model_ir.operators[int(remove_idx)]
+
+                rewritten += 1
+                changed = True
+                break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"optimized_transpose_logistic_sub_mul_postadd_nhwc_chains": int(rewritten)}
 
 
 def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:

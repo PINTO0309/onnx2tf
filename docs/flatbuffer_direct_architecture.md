@@ -141,6 +141,14 @@ shared differential graph index and `LayoutState`. The lowerer retains its
 compatibility wrapper, and all five production positions supply session layout
 state and diagnostics to the runner.
 
+The same family module mechanically owns the adjacent post-Add variant, where
+the two Mul outputs cross inverse adapters before their downstream NHWC Add and
+Conv. Compact characterization fixes successful two-output canonicalization
+and gate fan-out, data-adapter fan-out, and public-intermediate rejection. Its
+complete implementation is AST-identical to checkpoint `ea78747`; the lowerer
+keeps a compatibility wrapper and all five production calls remain raw until
+the separate indexed migration checkpoint.
+
 The larger generic two-way shuffle/branch/Concat propagation rule is now
 mechanically owned by the same family. It accepts rank-five Gather selectors or
 rank-four channel Slice selectors, traces one split through an NHWC
