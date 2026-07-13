@@ -3762,8 +3762,19 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
         "_parse_apply_concat_inputs_axis_and_shape",
         "_parse_torch_cat_inputs_and_dim",
         "_normalize_permute_dims_expr",
+        "_parse_channel_last_gather_slice_assign",
+        "_parse_rank4_shape_expr",
+        "_parse_apply_resize_input_size_shape_and_channel_last",
+        "_parse_apply_pool2d_input_channel_last_and_is_max",
+        "_parse_apply_pool2d_assign_with_shape",
+        "_parse_tensor_split_assign",
+        "_parse_apply_softmax_input_axis_and_shape",
+        "_resolve_nhwc_to_nchw_bridge_source",
     ):
         assert function_name in parser_functions
         assert function_name not in exporter_functions
         assert f"{function_name}," in exporter_source
+    assert "_SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN =" in parser_source
+    assert "_SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN =" not in exporter_source
+    assert "_SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN," in exporter_source
     assert "import torch" not in parser_source

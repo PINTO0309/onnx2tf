@@ -266,6 +266,18 @@ pycompile, and diff checks pass. No model conversion or inference was run.
 Resume by extracting only cohesive pure helpers used by the raw-export
 canonicalizer; do not move or edit the 6,677-line canonicalizer as one block.
 
+Eight additional generated-call parsers and their shared dynamic-batch pattern
+now use the same owner. They cover channel-last Gather slices, rank-four shape
+expressions, resize, pool argument/assignment forms, tensor split assignments,
+softmax, and NHWC-to-NCHW bridge sources. Every moved AST and the ShadowFormer
+batch-pattern value exactly matches the exporter checkpoint. Direct fixtures
+cover dynamic batch expressions, pool keyword filtering, normalized split axes,
+and accepted/rejected bridge permutations. Parser and architecture validation
+passes 70 tests; syntax, Ruff, pycompile, and diff checks pass. No model
+conversion or inference was run. Resume with the remaining pure reduction and
+generated-call decoders, leaving graph-aware canonicalization local until their
+ModelIR dependencies can be explicit.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

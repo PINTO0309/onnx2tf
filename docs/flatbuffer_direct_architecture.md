@@ -2001,6 +2001,14 @@ moved function, including the 131,072-entry assignment-parser cache decorator,
 is AST-identical to the previous top-level implementation; nested canonicalizer
 helpers remain local where their semantics are intentionally narrower.
 
+The parser owner also handles eight complete generated-call forms: channel-last
+Gather slicing, static/dynamic-batch rank-four shapes, resize, pool arguments and
+assignments, tensor split assignments, softmax, and NHWC-to-NCHW bridge source
+resolution. The shared ShadowFormer batch-expression pattern moved with this
+group and remains imported by the exporter's narrower structural rewrites. All
+eight function ASTs and the pattern value are identical to their previous
+definitions, bringing the common top-level parser boundary to 20 functions.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
