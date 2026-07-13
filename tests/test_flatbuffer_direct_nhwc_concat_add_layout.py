@@ -490,6 +490,105 @@ def _add_model(
                     )
                 )
     if boundary in {
+        "prelu_operand",
+        "prelu_operand_fanout",
+        "prelu_companion",
+        "prelu_shared_alpha_operands",
+    }:
+        companion = boundary == "prelu_companion"
+        shared_operands = boundary == "prelu_shared_alpha_operands"
+        channels = 2 if companion else 3
+        alpha_data = np.arange(
+            1,
+            channels + 1,
+            dtype=np.float32,
+        ).reshape(1, channels, 1, 1)
+        model_ir.tensors["prelu_alpha"] = TensorIR(
+            name="prelu_alpha",
+            dtype="FLOAT32",
+            shape=[1, channels, 1, 1],
+            shape_signature=[1, channels, 1, 1],
+            data=alpha_data,
+            is_variable=True,
+            quantization=QuantParamIR(
+                scale=[0.1] * channels,
+                zero_point=[0] * channels,
+                quantized_dimension=1,
+            ),
+            logical_layout="NCHW",
+            physical_layout="NCHW",
+            onnx_tensor_name="onnx_prelu_alpha",
+        )
+        if companion:
+            model_ir.tensors["x_prelu"] = _tensor(
+                "x_prelu",
+                [1, 2, 5, 7],
+            )
+            concat_op = next(
+                op
+                for op in model_ir.operators
+                if op.op_type == "CONCATENATION"
+            )
+            concat_index = model_ir.operators.index(concat_op)
+            model_ir.operators.insert(
+                concat_index,
+                OperatorIR(
+                    "PRELU",
+                    ["x_nchw", "prelu_alpha"],
+                    ["x_prelu"],
+                ),
+            )
+            concat_op.inputs[0] = "x_prelu"
+        else:
+            model_ir.tensors["a_prelu"] = _tensor(
+                "a_prelu",
+                [1, 3, 5, 7],
+            )
+            model_ir.tensors["a_prelu"].quantization = QuantParamIR(
+                scale=[0.9] * 3,
+                zero_point=[0] * 3,
+                quantized_dimension=1,
+            )
+            add_op = next(
+                op for op in model_ir.operators if op.op_type == "ADD"
+            )
+            add_index = model_ir.operators.index(add_op)
+            prelu_ops = [
+                OperatorIR(
+                    "PRELU",
+                    ["a_nchw", "prelu_alpha"],
+                    ["a_prelu"],
+                )
+            ]
+            add_op.inputs[0] = "a_prelu"
+            if shared_operands:
+                model_ir.tensors["b_prelu"] = _tensor(
+                    "b_prelu",
+                    [1, 3, 5, 7],
+                )
+                prelu_ops.append(
+                    OperatorIR(
+                        "PRELU",
+                        ["b_nchw", "prelu_alpha"],
+                        ["b_prelu"],
+                    )
+                )
+                add_op.inputs[1] = "b_prelu"
+            model_ir.operators[add_index:add_index] = prelu_ops
+            if boundary == "prelu_operand_fanout":
+                model_ir.tensors["prelu_side"] = _tensor(
+                    "prelu_side",
+                    [1, 3, 5, 7],
+                )
+                model_ir.outputs.append("prelu_side")
+                model_ir.operators.append(
+                    OperatorIR(
+                        "IDENTITY",
+                        ["a_prelu"],
+                        ["prelu_side"],
+                    )
+                )
+    if boundary in {
         "shared_split_add_tree",
         "shared_split_external_consumer",
     }:
@@ -870,6 +969,7 @@ def test_nhwc_direct_only_add_is_indexed(all_add: bool) -> None:
         "pad_operand_fanout",
         "slice_operand_fanout",
         "dequantize_operand_fanout",
+        "prelu_operand_fanout",
     ],
 )
 def test_nhwc_add_rejects_unsafe_or_partial_match(boundary: str) -> None:
@@ -1169,6 +1269,64 @@ def test_nhwc_add_reuses_dequantize_plan(
     )
     if companion:
         assert concat_op.inputs == ["x_dequantized", "sum_nchw"]
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+
+
+@pytest.mark.parametrize("prelu_location", ["operand", "companion"])
+def test_nhwc_add_reuses_prelu_plan(prelu_location: str) -> None:
+    model_ir = _add_model(boundary=f"prelu_{prelu_location}")
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    companion = prelu_location == "companion"
+    source_name = "x_nhwc" if companion else "a_nhwc"
+    output_name = "x_prelu" if companion else "a_prelu"
+    channels = 2 if companion else 3
+    prelu_op = next(
+        op for op in model_ir.operators if op.outputs == [output_name]
+    )
+    assert prelu_op.inputs == [source_name, "prelu_alpha"]
+    assert model_ir.tensors[output_name].shape == [1, 5, 7, channels]
+    alpha = model_ir.tensors["prelu_alpha"]
+    assert alpha.shape == [1, 1, 1, channels]
+    assert isinstance(alpha.quantization, QuantParamIR)
+    assert alpha.quantization.quantized_dimension == 3
+    add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+    assert add_op.inputs == (
+        ["a_nhwc", "b_nhwc"]
+        if companion
+        else ["a_prelu", "b_nhwc"]
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    if companion:
+        assert concat_op.inputs == ["x_prelu", "sum_nchw"]
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+
+
+def test_nhwc_add_reuses_one_shared_prelu_alpha_clone() -> None:
+    model_ir = _add_model(boundary="prelu_shared_alpha_operands")
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    prelu_ops = [op for op in model_ir.operators if op.op_type == "PRELU"]
+    assert len(prelu_ops) == 2
+    alpha_names = {str(op.inputs[1]) for op in prelu_ops}
+    assert len(alpha_names) == 1
+    alpha_name = alpha_names.pop()
+    alpha = model_ir.tensors[alpha_name]
+    assert alpha.shape == [1, 1, 1, 3]
+    assert alpha.is_variable
+    assert alpha.logical_layout == "NCHW"
+    assert alpha.physical_layout == "NCHW"
+    assert alpha.onnx_tensor_name == "onnx_prelu_alpha"
+    assert isinstance(alpha.quantization, QuantParamIR)
+    assert alpha.quantization.quantized_dimension == 3
+    add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+    assert add_op.inputs == ["a_prelu", "b_prelu"]
     assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
 
 

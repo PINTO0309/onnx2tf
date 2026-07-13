@@ -1102,6 +1102,18 @@ def _resolve_add_input_plan(
                 model_outputs=model_outputs,
             )
         if operand_plan is None:
+            operand_plan = _resolve_prelu_input_plan(
+                model_ir,
+                graph_index,
+                input_name=add_input_name,
+                concat_index=int(add_index),
+                model_outputs=model_outputs,
+                public_names={
+                    *[str(name) for name in model_ir.inputs],
+                    *model_outputs,
+                },
+            )
+        if operand_plan is None:
             operand_plan = _resolve_pad_input_plan(
                 model_ir,
                 graph_index,
@@ -1476,6 +1488,16 @@ def _resolve_family_input_plan(
         )
         if dequantize_plan is not None:
             return dequantize_plan
+        prelu_plan = _resolve_prelu_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+            public_names=public_names,
+        )
+        if prelu_plan is not None:
+            return prelu_plan
         pad_plan = _resolve_pad_input_plan(
             model_ir,
             graph_index,
@@ -2052,46 +2074,68 @@ def _apply_prelu_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
     input_plan: _NhwcConcatInputPlan,
+    *,
+    materialized_alphas: Optional[
+        Dict[Tuple[str, Optional[Tuple[int, ...]], Tuple[int, ...]], str]
+    ] = None,
 ) -> None:
     assert input_plan.prelu_op is not None
     assert input_plan.alpha_tensor_name is not None
     assert input_plan.selected_alpha is not None
     alpha_tensor = model_ir.tensors[input_plan.alpha_tensor_name]
     selected_alpha_name = input_plan.alpha_tensor_name
+    if materialized_alphas is None:
+        materialized_alphas = {}
 
     if input_plan.rewrite_alpha:
         selected_alpha = np.asarray(input_plan.selected_alpha)
-        shape, signature = normalize_onnx_shape(list(selected_alpha.shape))
-        selected_quantization = (
-            _clone_permuted_quantization(
-                alpha_tensor.quantization,
-                input_plan.alpha_permutation,
-            )
-            if input_plan.alpha_permutation is not None
-            else _clone_quantization(alpha_tensor.quantization)
+        materialization_key = (
+            input_plan.alpha_tensor_name,
+            input_plan.alpha_permutation,
+            tuple(int(value) for value in selected_alpha.shape),
         )
-        if input_plan.clone_alpha:
-            selected_alpha_name = _unique_tensor_name(
-                model_ir,
-                f"{input_plan.alpha_tensor_name}_nhwc",
-            )
-            model_ir.tensors[selected_alpha_name] = TensorIR(
-                name=selected_alpha_name,
-                dtype=str(alpha_tensor.dtype),
-                shape=[int(value) for value in shape],
-                shape_signature=[int(value) for value in signature],
-                data=np.array(selected_alpha, copy=True),
-                is_variable=bool(alpha_tensor.is_variable),
-                quantization=selected_quantization,
-                logical_layout=str(alpha_tensor.logical_layout),
-                physical_layout=str(alpha_tensor.physical_layout),
-                onnx_tensor_name=alpha_tensor.onnx_tensor_name,
-            )
+        materialized_alpha_name = materialized_alphas.get(
+            materialization_key
+        )
+        if materialized_alpha_name is not None:
+            selected_alpha_name = materialized_alpha_name
         else:
-            alpha_tensor.data = np.array(selected_alpha, copy=True)
-            alpha_tensor.shape = [int(value) for value in shape]
-            alpha_tensor.shape_signature = [int(value) for value in signature]
-            alpha_tensor.quantization = selected_quantization
+            shape, signature = normalize_onnx_shape(
+                list(selected_alpha.shape)
+            )
+            selected_quantization = (
+                _clone_permuted_quantization(
+                    alpha_tensor.quantization,
+                    input_plan.alpha_permutation,
+                )
+                if input_plan.alpha_permutation is not None
+                else _clone_quantization(alpha_tensor.quantization)
+            )
+            if input_plan.clone_alpha:
+                selected_alpha_name = _unique_tensor_name(
+                    model_ir,
+                    f"{input_plan.alpha_tensor_name}_nhwc",
+                )
+                model_ir.tensors[selected_alpha_name] = TensorIR(
+                    name=selected_alpha_name,
+                    dtype=str(alpha_tensor.dtype),
+                    shape=[int(value) for value in shape],
+                    shape_signature=[int(value) for value in signature],
+                    data=np.array(selected_alpha, copy=True),
+                    is_variable=bool(alpha_tensor.is_variable),
+                    quantization=selected_quantization,
+                    logical_layout=str(alpha_tensor.logical_layout),
+                    physical_layout=str(alpha_tensor.physical_layout),
+                    onnx_tensor_name=alpha_tensor.onnx_tensor_name,
+                )
+            else:
+                alpha_tensor.data = np.array(selected_alpha, copy=True)
+                alpha_tensor.shape = [int(value) for value in shape]
+                alpha_tensor.shape_signature = [
+                    int(value) for value in signature
+                ]
+                alpha_tensor.quantization = selected_quantization
+            materialized_alphas[materialization_key] = selected_alpha_name
 
     _set_operator_inputs(
         model_ir=model_ir,
@@ -2439,6 +2483,9 @@ def _apply_add_input_plan(
         Dict[Tuple[str, Tuple[int, ...]], str]
     ] = None,
     materialized_pads: Optional[Dict[str, str]] = None,
+    materialized_prelu_alphas: Optional[
+        Dict[Tuple[str, Optional[Tuple[int, ...]], Tuple[int, ...]], str]
+    ] = None,
     applied_split_operators: Optional[set[int]] = None,
     applied_add_operators: Optional[set[int]] = None,
 ) -> None:
@@ -2453,6 +2500,8 @@ def _apply_add_input_plan(
         materialized_int_parameters = {}
     if materialized_pads is None:
         materialized_pads = {}
+    if materialized_prelu_alphas is None:
+        materialized_prelu_alphas = {}
     if applied_split_operators is None:
         applied_split_operators = set()
     for operand_plan in input_plan.add_operand_plans:
@@ -2473,6 +2522,13 @@ def _apply_add_input_plan(
                 model_ir,
                 graph_index,
                 operand_plan,
+            )
+        elif operand_plan.prelu_op is not None:
+            _apply_prelu_input_plan(
+                model_ir,
+                graph_index,
+                operand_plan,
+                materialized_alphas=materialized_prelu_alphas,
             )
         elif operand_plan.pad_plan is not None:
             apply_nhwc_concat_pad_plan(
@@ -2505,6 +2561,7 @@ def _apply_add_input_plan(
                 operand_plan,
                 materialized_int_parameters=materialized_int_parameters,
                 materialized_pads=materialized_pads,
+                materialized_prelu_alphas=materialized_prelu_alphas,
                 applied_split_operators=applied_split_operators,
                 applied_add_operators=applied_add_operators,
             )
@@ -2587,6 +2644,10 @@ def _optimize_transpose_pre_concat_nhwc_family(
 
         new_concat_inputs: List[str] = []
         materialized_pads: Dict[str, str] = {}
+        materialized_prelu_alphas: Dict[
+            Tuple[str, Optional[Tuple[int, ...]], Tuple[int, ...]],
+            str,
+        ] = {}
         materialized_int_parameters: Dict[
             Tuple[str, Tuple[int, ...]],
             str,
@@ -2639,6 +2700,9 @@ def _optimize_transpose_pre_concat_nhwc_family(
                             materialized_int_parameters
                         ),
                         materialized_pads=materialized_pads,
+                        materialized_prelu_alphas=(
+                            materialized_prelu_alphas
+                        ),
                         applied_split_operators=applied_split_operators,
                         applied_add_operators=applied_add_operators,
                     )
@@ -2665,6 +2729,7 @@ def _optimize_transpose_pre_concat_nhwc_family(
                     model_ir,
                     graph_index,
                     input_plan,
+                    materialized_alphas=materialized_prelu_alphas,
                 )
                 new_concat_inputs.append(input_plan.output_name)
             elif input_plan.dequantize_op is not None:
