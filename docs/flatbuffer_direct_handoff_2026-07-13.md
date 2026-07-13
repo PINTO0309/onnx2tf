@@ -3,8 +3,8 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `f624388`
-  (`characterize concat unary conv layout`)
+- Latest implementation checkpoint: `11e76bd`
+  (`extract concat unary conv layout pass`)
 - Previous pause checkpoint: `3df2903`
   (`document flatbuffer direct pause checkpoint`)
 - Remote: after this resumed documentation checkpoint is pushed, local and
@@ -16,14 +16,14 @@
 - The Dequantize/Concat/Quantize matcher uses pure indexed planning,
   differential graph/layout mutation, and one transactional runner at both
   production positions.
-- The next Concat/optional-unary/post-adapter/Conv family has a dedicated
-  15-case characterization corpus; production and both calls are unchanged.
+- The Concat/optional-unary/post-adapter/Conv matcher is mechanically extracted
+  with exact AST equivalence; its wrapper and both raw calls remain unchanged.
 
 ## Completed work
 
 This resumed interval completed fifteen adjacent semantic layout families
 using the staged characterization → mechanical extraction → indexed runner
-process and established characterization for the sixteenth family.
+process and advanced the sixteenth family through mechanical extraction.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -188,6 +188,8 @@ process and established characterization for the sixteenth family.
       permutations, axis, input/unary type, and non-Conv consumers.
     - Preserved production code and both raw calls exactly; extraction remains
       the next checkpoint.
+    - Moved the complete matcher to `passes/concat_unary_conv_layout.py` with
+      exact AST equivalence in `11e76bd`; the wrapper and both calls remain.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -203,9 +205,9 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is mechanical extraction of
-  `_optimize_transpose_concat_unary_fanout_conv_nhwc_chains` with exact AST
-  equivalence and a single-owner architecture gate.
+  The immediate next unit is indexed candidate planning, differential
+  graph/layout mutation, and transactional runner integration for
+  `_optimize_transpose_concat_unary_fanout_conv_nhwc_chains`.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -227,9 +229,8 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this resumed documentation update, the
-working tree is clean at characterization checkpoint `f624388`. The new
-Concat/unary/Conv tests are committed; production remains unchanged and
-mechanical extraction has not begun.
+working tree is clean at extraction checkpoint `11e76bd`. The focused module
+owns the complete Concat/unary/Conv matcher; indexed migration has not begun.
 After the documentation commit is pushed, local/remote divergence must be
 `0 0`. The implementation checkpoints since the previous pause changed:
 
@@ -241,6 +242,7 @@ After the documentation commit is pushed, local/remote divergence must be
 - `onnx2tf/tflite_builder/passes/elementwise_gate_layout.py`
 - `onnx2tf/tflite_builder/passes/axis3_const_concat_layout.py`
 - `onnx2tf/tflite_builder/passes/dequant_concat_quantize_layout.py`
+- `onnx2tf/tflite_builder/passes/concat_unary_conv_layout.py`
 - `onnx2tf/tflite_builder/passes/dual_postconv_gate_layout.py`
 - `onnx2tf/tflite_builder/passes/multi_branch_gate_layout.py`
 - `onnx2tf/tflite_builder/passes/ndhwc_gate_layout.py`
@@ -437,6 +439,10 @@ sequential with only one model/process active at a time.
 - Dedicated Concat/unary/Conv characterization: `15 passed in 0.31s`.
 - Full direct selection after characterization:
   `1373 passed, 5 deselected, 2 warnings in 172.58s`.
+- Concat/unary/Conv extraction, characterization, and architecture focus:
+  `56 passed in 23.44s`; the extracted function AST exactly matched `f624388`.
+- Full direct selection after mechanical extraction:
+  `1374 passed, 5 deselected, 2 warnings in 175.23s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -468,13 +474,13 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Move `_optimize_transpose_concat_unary_fanout_conv_nhwc_chains`
-   mechanically to a focused pass module while retaining its lowerer wrapper
-   and both raw production calls.
-3. Confirm exact AST equivalence against `f624388` and add a single-owner
-   architecture gate.
-4. Run focused and full direct gates, then commit and push extraction before
-   indexed candidate planning.
+2. Introduce a pure indexed candidate plan for exclusive input adapters,
+   optional unary chains, complete inverse-post fan-out, and Conv-only
+   consumers.
+3. Apply Concat input/axis, unary metadata, post aliases, and adapter removals
+   through one `ModelIRGraphIndex` and `LayoutState` under a stable runner ID.
+4. Replace both raw calls, run focused, Tier 1 sequential `-cotof`, and full
+   direct gates, then commit and push the indexed checkpoint.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1244,6 +1250,28 @@ Production code and the single raw call remain unchanged. No dependency or
 TensorFlow path was added, and no inference process was run concurrently.
 Mechanical extraction with exact AST-equivalence and single-owner gates is the
 next separate checkpoint.
+
+### Concat/unary/Conv mechanical extraction checkpoint
+
+Checkpoint `11e76bd` moved the complete matcher mechanically to
+`passes/concat_unary_conv_layout.py`. Its function AST, including the docstring
+and optional-unary traversal, exactly matches characterization checkpoint
+`f624388`. The lowerer keeps a signature-compatible wrapper and both raw
+production calls.
+
+The architecture gate fixes the focused module as the single implementation
+owner, its lowerer alias and wrapper, and exactly two production calls. Focused
+characterization and architecture validation passed 56 tests. The complete
+sequential direct selection passed:
+
+```text
+1374 passed, 5 deselected, 2 warnings in 175.23s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently. Indexed candidate planning, differential graph/layout mutation,
+transactional runner integration, and raw-call replacement remain the next
+checkpoint.
 
 ### Dequantize/Concat/Quantize mechanical extraction checkpoint
 
