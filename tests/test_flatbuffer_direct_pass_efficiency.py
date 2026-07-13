@@ -252,7 +252,7 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_ndhwc_gate_layout_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 77
+    assert len(diagnostics) == 78
     assert all(event["status"] == "skipped" for event in diagnostics)
     assert all(
         event["metrics"]

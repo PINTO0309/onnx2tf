@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _permute_shape,
     _permute_tensor_metadata_if_rank_matches,
@@ -416,7 +414,12 @@ def _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(
     return {"optimized_transpose_3d_leaky_logistic_muladd_ndhwc_chains": int(rewritten)}
 
 
-def _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate NCDHW bridge transposes around CONV_3D->LEAKY_RELU gated by Unsqueeze(RESHAPE)+MUL.
 
@@ -434,11 +437,12 @@ def _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir: ModelI
     perm_ndhwc_to_ncdhw = [0, 4, 1, 2, 3]
     perm_ncdhw_to_ndhwc = [0, 2, 3, 4, 1]
     perm_nhwc_to_nchw = [0, 3, 1, 2]
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for post_idx, post_op in enumerate(model_ir.operators):
@@ -586,11 +590,13 @@ def _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir: ModelI
                 model_ir=model_ir,
                 op=reshape_op,
                 new_inputs=[str(sem_ndhwc_name), str(reshape_shape_name)],
+                graph_index=graph_index,
             )
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=leaky_op,
                 new_inputs=[str(conv_ndhwc_name)],
+                graph_index=graph_index,
             )
 
             _permute_tensor_metadata_if_rank_matches(
@@ -612,6 +618,7 @@ def _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir: ModelI
                 model_ir=model_ir,
                 op=mul_op,
                 new_outputs=[str(mul_ndhwc_name)],
+                graph_index=graph_index,
             )
             if old_mul_out_tensor is not None and mul_ndhwc_tensor is not None:
                 mul_ndhwc_tensor.dtype = str(old_mul_out_tensor.dtype)
@@ -631,7 +638,7 @@ def _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir: ModelI
                 list({int(sem_pre_idx), int(leaky_pre_idx), int(post_idx)}),
                 reverse=True,
             ):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -640,7 +647,9 @@ def _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir: ModelI
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains": int(rewritten)}
 
 
@@ -821,6 +830,115 @@ def _has_ndhwc_gate_candidate(pass_state: ModelIRPassState) -> bool:
     return False
 
 
+def _has_conv3d_gate_candidate(pass_state: ModelIRPassState) -> bool:
+    model_ir = pass_state.model_ir
+    graph_index = pass_state.graph_index
+    model_outputs = {str(name) for name in model_ir.outputs}
+
+    def _is_transpose(op: OperatorIR | None, permutations: List[List[int]]) -> bool:
+        return bool(
+            op is not None
+            and str(op.op_type) == "TRANSPOSE"
+            and len(op.inputs) >= 2
+            and len(op.outputs) == 1
+            and _read_transpose_perm(model_ir, op) in permutations
+        )
+
+    for post_op in model_ir.operators:
+        if not _is_transpose(post_op, [[0, 2, 3, 4, 1]]):
+            continue
+        mul_out = str(post_op.inputs[0])
+        post_out = str(post_op.outputs[0])
+        if mul_out in model_outputs or post_out in model_outputs:
+            continue
+        mul_op = graph_index.producer(mul_out)
+        mul_index = (
+            None if mul_op is None else graph_index.operator_index(mul_op)
+        )
+        post_index = graph_index.operator_index(post_op)
+        if (
+            mul_op is None
+            or mul_index is None
+            or post_index is None
+            or str(mul_op.op_type) != "MUL"
+            or len(mul_op.inputs) != 2
+            or len(mul_op.outputs) != 1
+            or set(graph_index.consumer_indices(mul_out)) != {post_index}
+        ):
+            continue
+        input_producers = [
+            graph_index.producer(str(name)) for name in mul_op.inputs
+        ]
+        leaky_ops = [
+            op
+            for op in input_producers
+            if op is not None and str(op.op_type) == "LEAKY_RELU"
+        ]
+        reshape_ops = [
+            op
+            for op in input_producers
+            if op is not None and str(op.op_type) == "RESHAPE"
+        ]
+        if len(leaky_ops) != 1 or len(reshape_ops) != 1:
+            continue
+        leaky_op = leaky_ops[0]
+        reshape_op = reshape_ops[0]
+        leaky_index = graph_index.operator_index(leaky_op)
+        reshape_index = graph_index.operator_index(reshape_op)
+        if (
+            leaky_index is None
+            or reshape_index is None
+            or len(leaky_op.inputs) != 1
+            or len(leaky_op.outputs) != 1
+            or len(reshape_op.inputs) < 2
+            or len(reshape_op.outputs) != 1
+        ):
+            continue
+        leaky_out = str(leaky_op.outputs[0])
+        reshape_out = str(reshape_op.outputs[0])
+        if (
+            leaky_out in model_outputs
+            or reshape_out in model_outputs
+            or set(graph_index.consumer_indices(leaky_out)) != {mul_index}
+            or set(graph_index.consumer_indices(reshape_out)) != {mul_index}
+        ):
+            continue
+
+        conv_pre_out = str(leaky_op.inputs[0])
+        conv_pre_op = graph_index.producer(conv_pre_out)
+        if (
+            conv_pre_out in model_outputs
+            or not _is_transpose(conv_pre_op, [[0, 4, 1, 2, 3]])
+            or str(conv_pre_op.inputs[0]) in model_outputs
+            or set(graph_index.consumer_indices(conv_pre_out)) != {leaky_index}
+        ):
+            continue
+
+        semantic_pre_out = str(reshape_op.inputs[0])
+        semantic_pre_op = graph_index.producer(semantic_pre_out)
+        if (
+            semantic_pre_out in model_outputs
+            or not _is_transpose(
+                semantic_pre_op,
+                [[0, 3, 1, 2], [0, 4, 1, 2, 3]],
+            )
+            or str(semantic_pre_op.inputs[0]) in model_outputs
+            or set(graph_index.consumer_indices(semantic_pre_out))
+            != {reshape_index}
+        ):
+            continue
+        shape_values = _read_const_ints_from_tensor(
+            model_ir.tensors.get(str(reshape_op.inputs[1]), None)
+        )
+        if shape_values is None or len(shape_values) != 5:
+            continue
+        mapped_shape = _permute_shape(shape_values, [0, 2, 3, 4, 1])
+        if mapped_shape is None or mapped_shape == shape_values:
+            continue
+        return True
+    return False
+
+
 def run_ndhwc_gate_layout_cleanup(
     model_ir: ModelIR,
     *,
@@ -830,44 +948,63 @@ def run_ndhwc_gate_layout_cleanup(
     """Propagate NDHWC through a guarded LeakyRelu/Logistic gate block."""
 
     def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
-        required = {
-            "TRANSPOSE",
-            "RESHAPE",
-            "LEAKY_RELU",
-            "ADD",
-            "LOGISTIC",
-            "MUL",
-        }
+        required = {"TRANSPOSE", "RESHAPE", "LEAKY_RELU", "MUL"}
         for visited, operator in enumerate(candidate_model.operators, start=1):
             required.discard(str(operator.op_type))
             if not required:
                 return ModelIRPreflightResult(True, visited)
         return ModelIRPreflightResult(False, len(candidate_model.operators))
 
-    stats_key = "optimized_transpose_3d_leaky_logistic_muladd_ndhwc_chains"
+    callbacks = [
+        (
+            "layout.ndhwc_leaky_logistic_gate",
+            10,
+            _has_ndhwc_gate_candidate,
+            _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains,
+            "optimized_transpose_3d_leaky_logistic_muladd_ndhwc_chains",
+        ),
+        (
+            "layout.ndhwc_conv3d_leaky_unsqueeze_gate",
+            20,
+            _has_conv3d_gate_candidate,
+            _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains,
+            "optimized_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains",
+        ),
+    ]
+    specs: List[PassSpec] = []
+    defaults: Dict[str, int] = {}
+    for pass_id, priority, precondition, optimizer, stats_key in callbacks:
+        defaults[stats_key] = 0
 
-    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
+        def _run(
+            pass_state: ModelIRPassState,
+            *,
+            optimizer: Any = optimizer,
+            stats_key: str = stats_key,
+        ) -> Dict[str, int | bool]:
+            stats = optimizer(
+                pass_state.model_ir,
+                graph_index=pass_state.graph_index,
+                layout_state=pass_state.layout_state,
+            )
+            return {**stats, "changed": bool(stats.get(stats_key, 0))}
+
+        specs.append(
+            PassSpec(
+                pass_id=pass_id,
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=precondition,
+                priority=priority,
+                transactional=True,
+            )
         )
-        return {**stats, "changed": bool(stats.get(stats_key, 0))}
 
     details, _ = run_model_ir_pass_group(
         model_ir,
-        specs=[
-            PassSpec(
-                pass_id="layout.ndhwc_leaky_logistic_gate",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run,
-                precondition=_has_ndhwc_gate_candidate,
-                priority=10,
-                transactional=True,
-            )
-        ],
+        specs=specs,
         layout_state=layout_state,
-        default_details={stats_key: 0},
+        default_details=defaults,
         diagnostics=diagnostics,
         preflight=_preflight,
     )

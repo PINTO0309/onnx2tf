@@ -52400,7 +52400,6 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
         _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
@@ -52591,7 +52590,6 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
         _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
@@ -52791,7 +52789,6 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
         _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
@@ -53016,7 +53013,6 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
         _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
@@ -53157,7 +53153,6 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
         _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
@@ -53550,7 +53545,6 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
     _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
     _optimize_fold_conv_mul_add_affine_chains(
         model_ir,
