@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_gather_transpose_nhwc_channel_chains,
+)
+from onnx2tf.tflite_builder.passes.layout_transpose import (
+    run_transpose_gather_channel_fanout_cleanup,
 )
 
 
@@ -107,3 +112,55 @@ def test_transpose_gather_channel_fanout_rejects_public_post() -> None:
         "GATHER",
         "TRANSPOSE",
     ]
+
+
+def test_transpose_gather_channel_fanout_runner_uses_one_index(
+    monkeypatch,
+) -> None:
+    model_ir = _model(public_post=False)
+    refresh_count = 0
+    snapshot_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+    original_snapshot = ModelIRPassState.snapshot
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    def counted_snapshot(pass_state: ModelIRPassState) -> ModelIR:
+        nonlocal snapshot_count
+        snapshot_count += 1
+        return original_snapshot(pass_state)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    monkeypatch.setattr(ModelIRPassState, "snapshot", counted_snapshot)
+    diagnostics: list[dict] = []
+
+    stats = run_transpose_gather_channel_fanout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats["optimized_transpose_gather_transpose_nhwc_channel_chains"] == 1
+    assert [operator.op_type for operator in model_ir.operators].count("TRANSPOSE") == 0
+    assert refresh_count == 1
+    assert snapshot_count == 1
+    assert diagnostics[0]["code"] == "layout.transpose_gather_channel_fanout"
+    assert diagnostics[0]["status"] == "changed"
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
+
+
+def test_transpose_gather_channel_fanout_runner_rejects_public_post() -> None:
+    model_ir = _model(public_post=True)
+    diagnostics: list[dict] = []
+
+    stats = run_transpose_gather_channel_fanout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats["optimized_transpose_gather_transpose_nhwc_channel_chains"] == 0
+    assert diagnostics[0]["status"] == "skipped"
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 0

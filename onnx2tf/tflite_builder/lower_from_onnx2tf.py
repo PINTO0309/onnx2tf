@@ -105,6 +105,7 @@ from onnx2tf.tflite_builder.passes.layout_transpose import (
     run_layout_transpose_cleanup,
     run_trailing_output_transpose_cleanup,
     run_transpose_gather_axis_cleanup,
+    run_transpose_gather_channel_fanout_cleanup,
     run_transpose_unary_binary_fanout_bridge_cleanup,
     run_transpose_unary_fanout_bridge_cleanup,
     run_transpose_unary_passthrough_cleanup,
@@ -59567,7 +59568,11 @@ def lower_onnx_to_ir(
     )
     _optimize_fuse_conv_activation_chains(model_ir)
     _optimize_transpose_pre_argmax_nhwc_terminal_chains(model_ir)
-    _optimize_transpose_gather_transpose_nhwc_channel_chains(model_ir)
+    run_transpose_gather_channel_fanout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_terminal_softmax_transpose_after_nhwc_propagation(model_ir)
     run_boundary_input_normalization_cleanup(
         model_ir,
@@ -59637,7 +59642,11 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_transpose_gather_transpose_nhwc_channel_chains(model_ir)
+    run_transpose_gather_channel_fanout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     if optimize_layout_transpose_chains:
         # Boundary/layout recovery can still recreate NCHW wrappers around MEAN.
         # Run dedicated NHWC passthrough once more in the terminal stage.
@@ -60321,7 +60330,10 @@ def lower_onnx_to_ir(
             infer_model_ir_logical_layouts(fallback_ir)
         _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(fallback_ir)
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(fallback_ir)
-        _optimize_transpose_gather_transpose_nhwc_channel_chains(fallback_ir)
+        run_transpose_gather_channel_fanout_cleanup(
+            fallback_ir,
+            diagnostics=session.diagnostics,
+        )
         _reconcile_static_tensor_shapes(fallback_ir)
         if int(
             _restore_placeholder_matmul_flattened_inputs(fallback_ir).get(
@@ -60504,7 +60516,11 @@ def lower_onnx_to_ir(
     # NHWC<->NCHW wrappers after the earlier dedicated passes have run.
     _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(model_ir)
     _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
-    _optimize_transpose_gather_transpose_nhwc_channel_chains(model_ir)
+    run_transpose_gather_channel_fanout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _reconcile_static_tensor_shapes(model_ir)
     # Absolute-final PRELU cleanup:
     # late layout/broadcast/singleton repairs can still recreate strict

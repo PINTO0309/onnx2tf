@@ -8,7 +8,6 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _all_per_tensor_quantized,
     _broadcast_shape_signatures,
     _broadcast_static_shapes,
-    _build_tensor_consumer_map,
     _clone_quantization,
     _invert_perm,
     _is_singleton_constant_tensor,
@@ -2052,6 +2051,9 @@ def run_trailing_output_transpose_cleanup(
 
 def _optimize_transpose_gather_transpose_nhwc_channel_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
 ) -> Dict[str, int]:
     """
     Fold NHWC<->NCHW adapters around channel-axis Gather into a single NHWC Gather.
@@ -2069,12 +2071,13 @@ def _optimize_transpose_gather_transpose_nhwc_channel_chains(
     - Keeps the pre-transpose when legacy NCHW consumers remain.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -2159,11 +2162,22 @@ def _optimize_transpose_gather_transpose_nhwc_channel_chains(
                 model_ir=model_ir,
                 op=gather_op,
                 new_inputs=[str(pre_input_name), str(gather_op.inputs[1])],
+                graph_index=graph_index,
             )
             representative_output_name = str(post_output_names[0])
-            _set_operator_outputs(model_ir=model_ir, op=gather_op, new_outputs=[representative_output_name])
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=gather_op,
+                new_outputs=[representative_output_name],
+                graph_index=graph_index,
+            )
             for alias_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, alias_name, representative_output_name)
+                _replace_tensor_inputs(
+                    model_ir,
+                    alias_name,
+                    representative_output_name,
+                    graph_index=graph_index,
+                )
 
             remove_indices = list(int(v) for v in post_indices)
             remaining_pre_users = [
@@ -2174,7 +2188,7 @@ def _optimize_transpose_gather_transpose_nhwc_channel_chains(
             if len(remaining_pre_users) == 0 and pre_output_name not in model_outputs:
                 remove_indices.append(int(pre_idx))
             for remove_idx in sorted(remove_indices, reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
             rewritten += 1
             changed = True
             break
@@ -2182,8 +2196,137 @@ def _optimize_transpose_gather_transpose_nhwc_channel_chains(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_gather_transpose_nhwc_channel_chains": int(rewritten)}
+
+
+def run_transpose_gather_channel_fanout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run strict channel-axis Gather multi-post Transpose cleanup."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        found_transpose = False
+        found_gather = False
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            operator_type = str(operator.op_type)
+            found_transpose = found_transpose or operator_type == "TRANSPOSE"
+            found_gather = found_gather or operator_type == "GATHER"
+            if found_transpose and found_gather:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        model_outputs = set(str(name) for name in candidate_model.outputs)
+        for pre_op in candidate_model.operators:
+            if (
+                str(pre_op.op_type) != "TRANSPOSE"
+                or len(pre_op.inputs) < 2
+                or len(pre_op.outputs) != 1
+                or _read_transpose_perm(candidate_model, pre_op) != [0, 3, 1, 2]
+            ):
+                continue
+            pre_output_name = str(pre_op.outputs[0])
+            if pre_output_name in model_outputs:
+                continue
+            pre_users = pass_state.graph_index.consumer_indices(pre_output_name)
+            if len(pre_users) != 1:
+                continue
+            gather_op = candidate_model.operators[int(pre_users[0])]
+            if (
+                str(gather_op.op_type) != "GATHER"
+                or len(gather_op.inputs) < 2
+                or len(gather_op.outputs) != 1
+                or str(gather_op.inputs[0]) != pre_output_name
+            ):
+                continue
+            gather_output_name = str(gather_op.outputs[0])
+            if gather_output_name in model_outputs:
+                continue
+            gather_users = pass_state.graph_index.consumer_indices(
+                gather_output_name
+            )
+            if len(gather_users) == 0:
+                continue
+            valid_posts = True
+            for post_index in gather_users:
+                post_op = candidate_model.operators[int(post_index)]
+                if (
+                    str(post_op.op_type) != "TRANSPOSE"
+                    or len(post_op.inputs) < 2
+                    or len(post_op.outputs) != 1
+                    or str(post_op.inputs[0]) != gather_output_name
+                    or _read_transpose_perm(candidate_model, post_op)
+                    != [0, 2, 3, 1]
+                    or str(post_op.outputs[0]) in model_outputs
+                ):
+                    valid_posts = False
+                    break
+            if not valid_posts:
+                continue
+            gather_input_tensor = candidate_model.tensors.get(pre_output_name)
+            if gather_input_tensor is None or len(gather_input_tensor.shape) != 4:
+                continue
+            gather_options = (
+                dict(gather_op.options)
+                if isinstance(gather_op.options, dict)
+                else {}
+            )
+            gather_axis = int(gather_options.get("axis", 0))
+            if gather_axis < 0:
+                gather_axis += 4
+            gather_batch_dims = int(
+                gather_options.get(
+                    "batchDims",
+                    gather_options.get("batch_dims", 0),
+                )
+            )
+            if gather_axis == 1 and gather_batch_dims == 0:
+                return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_gather_transpose_nhwc_channel_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_transpose_gather_transpose_nhwc_channel_chains",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.transpose_gather_channel_fanout",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={
+            "optimized_transpose_gather_transpose_nhwc_channel_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 

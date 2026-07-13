@@ -2997,10 +2997,46 @@ coalescing and public-post rejection. The complete 134-line
 `_optimize_transpose_gather_transpose_nhwc_channel_chains` implementation then
 moved mechanically into `passes/layout_transpose.py`, adjacent to the general
 axis-remap implementation. Its AST is identical to `b31c548`; the lowerer now
-keeps only a compatibility wrapper, and the three raw production positions are
+keeps only a compatibility wrapper, and the four raw production positions are
 unchanged pending indexed migration. Focused Gather family/ownership validation
 passed 6 tests, followed by the complete direct selection:
 
 ```text
 1134 passed, 5 deselected, 2 warnings in 149.26s
 ```
+
+### Indexed Transpose/Gather channel fan-out checkpoint
+
+The channel fan-out implementation now accepts one differential
+`ModelIRGraphIndex` and the active `LayoutState`. Gather input/output
+retargeting, multi-post alias rewiring, conditional pre removal, all post
+removals, and pruning update that shared state. The layout family consequently
+retains zero whole-graph producer/consumer map builders and zero direct
+operator-list deletions.
+
+`run_transpose_gather_channel_fanout_cleanup` registers stable ID
+`layout.transpose_gather_channel_fanout` in `LAYOUT_PLAN`. Its model-only
+preflight requires Transpose and Gather; the indexed guard proves the exact
+exclusive pre→Gather topology, rank-four input, axis 1, zero batch dimensions,
+complete inverse-post fan-out, and protected public outputs before taking a
+transactional snapshot. Four production positions were found and migrated:
+three operate on the main ModelIR/session LayoutState, while the separately
+built no-layout fallback IR lets the runner construct its own state and only
+shares session diagnostics.
+
+Focused Gather runner/characterization/architecture/efficiency validation
+passed 9 tests, including one-index/one-snapshot instrumentation and a
+public-post rejection with zero snapshots. Tier 1 `superpoint.onnx` executed
+the three main-path positions; all skipped with zero snapshots/fingerprints,
+and sequential `-cotof` retained `max_abs=1.6666e-06`,
+`rmse=1.62079e-07`, cosine similarity `1`, and the strict pass result.
+
+After the fallback position was migrated, the complete direct selection passed:
+
+```text
+1136 passed, 5 deselected, 2 warnings in 147.64s
+```
+
+No dependency or TensorFlow path was added. Inference remained sequential and
+single-process; `/tmp/onnx2tf_gather_channel_superpoint*` was removed after
+metrics inspection.

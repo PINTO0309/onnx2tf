@@ -486,10 +486,19 @@ same module. It requires an exclusive NHWC→NCHW pre-Transpose, rank-four
 Gather with `axis=1`/`batchDims=0`, and one or more non-public inverse-post
 Transposes; it rewrites the Gather to NHWC axis 3 and coalesces post aliases.
 The full 134-line implementation moved with an identical AST, while the
-lowerer keeps a compatibility wrapper and its three production positions stay
-unchanged pending indexed migration. It remains separate from the general
-single-post axis-remap runner so pass ordering and public-output behavior do
-not change implicitly.
+lowerer keeps a compatibility wrapper and its four production positions stay
+unchanged. It remains separate from the general single-post axis-remap runner
+so pass ordering and public-output behavior do not change implicitly.
+
+All four positions now call `run_transpose_gather_channel_fanout_cleanup`,
+registered as `layout.transpose_gather_channel_fanout` in `LAYOUT_PLAN`.
+Model-only Transpose+Gather preflight and an exact indexed guard enforce the
+exclusive pre edge, rank, axis, batch dimensions, complete inverse-post fan-out,
+and public-output protection before snapshotting. Gather retargeting, alias
+rewiring, structural removal, and pruning share one differential index and
+`LayoutState` transactionally. Three normal positions use the conversion
+session state; the separately constructed no-layout fallback IR lets the
+runner construct its own LayoutState while still recording session diagnostics.
 
 Strict canonical NHWC→NCHW Transpose→unary-chain→inverse Transpose passthrough
 is mechanically owned by the same family. Only linear layout-agnostic unary

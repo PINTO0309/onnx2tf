@@ -570,6 +570,7 @@ def test_layout_transpose_cleanup_has_single_owner() -> None:
         "run_layout_transpose_cleanup",
         "run_trailing_output_transpose_cleanup",
         "run_transpose_gather_axis_cleanup",
+        "run_transpose_gather_channel_fanout_cleanup",
         "run_transpose_unary_binary_fanout_bridge_cleanup",
         "run_transpose_unary_fanout_bridge_cleanup",
         "run_transpose_unary_passthrough_cleanup",
@@ -613,6 +614,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_singleton_spatial_reshape_cleanup",
         "run_terminal_quantize_dequantize_cleanup",
         "run_transpose_gather_axis_cleanup",
+        "run_transpose_gather_channel_fanout_cleanup",
         "run_transpose_unary_binary_fanout_bridge_cleanup",
         "run_transpose_unary_fanout_bridge_cleanup",
         "run_transpose_unary_passthrough_cleanup",
@@ -627,7 +629,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 147
+    assert len(calls) == 151
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -789,6 +791,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_transpose_gather_axis_cleanup"
     ]
     assert len(transpose_gather_axis_calls) == 8
+
+    transpose_gather_channel_fanout_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_transpose_gather_channel_fanout_cleanup"
+    ]
+    assert len(transpose_gather_channel_fanout_calls) == 4
 
     transpose_unary_calls = [
         call
