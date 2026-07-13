@@ -548,3 +548,445 @@ def _apply_feature_last_sequence_layouts(
                 shape_tensor.shape_signature = [int(len(raw_shape_values))]
         any_changed = True
     return any_changed
+
+
+def _collect_feature_last_sequence_tensor_names(model_ir: ModelIR) -> Set[str]:
+    graph_index = ModelIRGraphIndex(model_ir)
+    consumers = graph_index.consumers
+    producers = graph_index.producers
+
+    def _is_time_major_recurrent_bridge(output_name: str) -> bool:
+        for consumer_idx in consumers.get(str(output_name), []):
+            consumer = model_ir.operators[int(consumer_idx)]
+            if str(consumer.op_type) != "TRANSPOSE" or len(consumer.outputs) != 1:
+                continue
+            perm = _read_transpose_perm(model_ir, consumer)
+            if perm != [1, 0, 2]:
+                continue
+            transpose_output_name = str(consumer.outputs[0])
+            for next_idx in consumers.get(transpose_output_name, []):
+                next_op_type = str(model_ir.operators[int(next_idx)].op_type)
+                if next_op_type in {
+                    "BIDIRECTIONAL_SEQUENCE_LSTM",
+                    "UNIDIRECTIONAL_SEQUENCE_LSTM",
+                    "UNIDIRECTIONAL_SEQUENCE_RNN",
+                }:
+                    return True
+        return False
+
+    def _trace_feature_last_rhs_seed(tensor_name: str) -> Optional[str]:
+        visited: Set[str] = set()
+        worklist: List[str] = [str(tensor_name)]
+        passthrough_ops = {
+            "CAST",
+            "EXPAND_DIMS",
+            "GATHER",
+            "GATHER_ND",
+            "IDENTITY",
+            "RESHAPE",
+            "SLICE",
+            "SQUEEZE",
+            "STRIDED_SLICE",
+            "TRANSPOSE",
+        }
+        while len(worklist) > 0:
+            current_name = str(worklist.pop())
+            if current_name in visited:
+                continue
+            visited.add(current_name)
+            current_tensor = model_ir.tensors.get(current_name, None)
+            if current_tensor is not None:
+                current_rank = len(list(current_tensor.shape))
+                current_layout = normalize_logical_layout(current_tensor.logical_layout)
+                if current_rank in {3, 4, 5} and is_channel_last_logical_layout(current_layout):
+                    return current_name
+            producer_idx = producers.get(current_name, None)
+            if producer_idx is None:
+                continue
+            producer = model_ir.operators[int(producer_idx)]
+            if str(producer.op_type) not in passthrough_ops or len(producer.inputs) == 0:
+                continue
+            worklist.append(str(producer.inputs[0]))
+        return None
+
+    def _trace_feature_last_passthrough_inputs(tensor_name: str) -> Set[str]:
+        traced_names: Set[str] = set()
+        visited: Set[str] = set()
+        worklist: List[str] = [str(tensor_name)]
+        passthrough_ops = {
+            "AVERAGE_POOL_2D",
+            "CAST",
+            "EXPAND_DIMS",
+            "IDENTITY",
+            "LEAKY_RELU",
+            "LOGISTIC",
+            "MAX_POOL_2D",
+            "PAD",
+            "PADV2",
+            "RELU",
+            "RELU6",
+            "RESHAPE",
+            "SQUEEZE",
+            "STRIDED_SLICE",
+            "TRANSPOSE",
+        }
+        while len(worklist) > 0:
+            current_name = str(worklist.pop())
+            if current_name in visited:
+                continue
+            visited.add(current_name)
+            traced_names.add(current_name)
+            producer_idx = producers.get(current_name, None)
+            if producer_idx is None:
+                continue
+            producer = model_ir.operators[int(producer_idx)]
+            if str(producer.op_type) not in passthrough_ops or len(producer.inputs) == 0:
+                continue
+            upstream_name = str(producer.inputs[0])
+            traced_names.add(upstream_name)
+            worklist.append(upstream_name)
+        return traced_names
+
+    roots: Set[str] = set()
+    if _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island(model_ir):
+        for tensor_name, tensor in model_ir.tensors.items():
+            rank = len(list(tensor.shape))
+            layout = normalize_logical_layout(tensor.logical_layout)
+            if rank in {4, 5} and is_channel_last_logical_layout(layout):
+                roots.add(str(tensor_name))
+    for tensor_name, tensor in model_ir.tensors.items():
+        normalized_name = str(tensor_name)
+        rank = len(list(tensor.shape))
+        layout = normalize_logical_layout(tensor.logical_layout)
+        lowered_name = normalized_name.lower()
+        if (
+            rank in {3, 4, 5}
+            and is_channel_last_logical_layout(layout)
+            and any(token in lowered_name for token in ("_nwc", "_nhwc", "_ndhwc"))
+        ):
+            roots.add(normalized_name)
+    for op in model_ir.operators:
+        op_type = str(op.op_type)
+        if op_type == "BATCH_MATMUL" and len(op.inputs) >= 2:
+            rhs_seed = _trace_feature_last_rhs_seed(str(op.inputs[1]))
+            if rhs_seed is not None:
+                roots.add(rhs_seed)
+        if op_type == "TRANSPOSE" and len(op.inputs) >= 1 and len(op.outputs) == 1:
+            input_name = str(op.inputs[0])
+            output_name = str(op.outputs[0])
+            output_tensor = model_ir.tensors.get(output_name, None)
+            input_tensor = model_ir.tensors.get(input_name, None)
+            if output_tensor is None:
+                continue
+            rank = len(list(output_tensor.shape))
+            if rank != 3:
+                continue
+            perm = _read_transpose_perm(model_ir, op)
+            if (
+                perm == [1, 0, 2]
+                and input_tensor is not None
+                and (
+                    is_channel_last_logical_layout(normalize_logical_layout(input_tensor.logical_layout))
+                    or is_channel_last_logical_layout(normalize_logical_layout(output_tensor.logical_layout))
+                )
+            ):
+                roots.add(input_name)
+                roots.add(output_name)
+                continue
+            if perm != _perm_cf_to_cl(rank):
+                continue
+            producer_idx = producers.get(input_name, None)
+            if producer_idx is None:
+                continue
+            producer = model_ir.operators[int(producer_idx)]
+            if str(producer.op_type) != "RESHAPE" or len(producer.outputs) != 1:
+                continue
+            roots.add(output_name)
+            continue
+        if op_type != "RESHAPE" or len(op.outputs) != 1:
+            continue
+        output_name = str(op.outputs[0])
+        output_tensor = model_ir.tensors.get(output_name, None)
+        if output_tensor is None:
+            continue
+        rank = len(list(output_tensor.shape))
+        if rank not in {3, 4, 5}:
+            continue
+        input_tensor = model_ir.tensors.get(str(op.inputs[0]), None) if len(op.inputs) >= 1 else None
+        if (
+            output_name in set(str(v) for v in model_ir.outputs)
+            and input_tensor is not None
+            and len(list(input_tensor.shape)) >= rank
+            and len(list(output_tensor.shape)) >= 1
+            and len(list(input_tensor.shape)) >= 1
+            and int(list(output_tensor.shape)[-1]) == int(list(input_tensor.shape)[-1])
+        ):
+            roots.add(output_name)
+            continue
+        if (
+            input_tensor is not None
+            and len(list(input_tensor.shape)) >= rank
+            and is_channel_last_logical_layout(normalize_logical_layout(input_tensor.logical_layout))
+            and len(list(output_tensor.shape)) >= 1
+            and len(list(input_tensor.shape)) >= 1
+            and int(list(output_tensor.shape)[-1]) == int(list(input_tensor.shape)[-1])
+        ):
+            roots.add(output_name)
+            continue
+        if _is_channel_last_factorized_reshape(input_tensor, output_tensor):
+            roots.add(output_name)
+            continue
+        if _is_channel_last_factorized_rank3_sequence_reshape(input_tensor, output_tensor):
+            roots.add(output_name)
+            continue
+        if input_tensor is not None and rank == 3 and len(list(input_tensor.shape)) == 3:
+            input_shape = [int(v) for v in list(input_tensor.shape)]
+            output_shape = [int(v) for v in list(output_tensor.shape)]
+            if (
+                int(np.prod(input_shape, dtype=np.int64)) == int(np.prod(output_shape, dtype=np.int64))
+                and is_channel_last_logical_layout(normalize_logical_layout(input_tensor.logical_layout))
+            ):
+                for consumer_idx in consumers.get(output_name, []):
+                    consumer = model_ir.operators[int(consumer_idx)]
+                    if (
+                        str(consumer.op_type) != "BATCH_MATMUL"
+                        or len(consumer.inputs) < 2
+                        or str(consumer.inputs[0]) != output_name
+                        or not bool(consumer.options.get("adjX", False))
+                    ):
+                        continue
+                    rhs_tensor = model_ir.tensors.get(str(consumer.inputs[1]), None)
+                    if rhs_tensor is None or len(list(rhs_tensor.shape)) < 2:
+                        continue
+                    rhs_contract = int(list(rhs_tensor.shape)[-2])
+                    if rhs_contract != int(input_shape[-1]):
+                        continue
+                    roots.add(output_name)
+                    break
+                if output_name in roots:
+                    continue
+        if input_tensor is not None and rank == 3 and len(list(input_tensor.shape)) in {4, 5}:
+            input_shape = [int(v) for v in list(input_tensor.shape)]
+            output_shape = [int(v) for v in list(output_tensor.shape)]
+            if (
+                int(np.prod(input_shape, dtype=np.int64)) == int(np.prod(output_shape, dtype=np.int64))
+                and _is_time_major_recurrent_bridge(output_name)
+            ):
+                roots.add(output_name)
+                input_name = str(op.inputs[0])
+                roots.add(input_name)
+                producer: Optional[OperatorIR] = None
+                producer_output_name = ""
+                producer_rank = -1
+                producer_idx = producers.get(input_name, None)
+                if producer_idx is not None:
+                    producer = model_ir.operators[int(producer_idx)]
+                    producer_output_name = str(producer.outputs[0]) if len(producer.outputs) == 1 else ""
+                    producer_output_tensor = (
+                        model_ir.tensors.get(producer_output_name, None)
+                        if producer_output_name != ""
+                        else None
+                    )
+                    producer_rank = (
+                        len(list(producer_output_tensor.shape))
+                        if producer_output_tensor is not None
+                        else -1
+                    )
+                if (
+                    producer is not None
+                    and str(producer.op_type) == "TRANSPOSE"
+                    and producer_rank in {4, 5}
+                ):
+                    if len(producer.inputs) >= 1:
+                        producer_input_name = str(producer.inputs[0])
+                        roots.update(_trace_feature_last_passthrough_inputs(producer_input_name))
+                    roots.add(producer_output_name)
+                continue
+            if (
+                int(np.prod(input_shape[1:], dtype=np.int64))
+                == int(np.prod(output_shape[1:], dtype=np.int64))
+                and (
+                    is_channel_last_logical_layout(normalize_logical_layout(input_tensor.logical_layout))
+                    or int(input_shape[-1]) == 1
+                )
+            ):
+                for consumer_idx in consumers.get(output_name, []):
+                    consumer = model_ir.operators[int(consumer_idx)]
+                    if (
+                        str(consumer.op_type) != "BATCH_MATMUL"
+                        or len(consumer.inputs) < 2
+                        or str(consumer.inputs[1]) != output_name
+                    ):
+                        continue
+                    lhs_tensor = model_ir.tensors.get(str(consumer.inputs[0]), None)
+                    if lhs_tensor is None or len(list(lhs_tensor.shape)) < 2:
+                        continue
+                    lhs_shape = [int(v) for v in list(lhs_tensor.shape)]
+                    if int(lhs_shape[-1]) != int(output_shape[-2]):
+                        continue
+                    roots.add(output_name)
+                    break
+                if output_name in roots:
+                    continue
+        raw_shape = op.options.get("onnxRawNewShape", None)
+        new_shape = op.options.get("newShape", None)
+        if not isinstance(raw_shape, list) or not isinstance(new_shape, list):
+            continue
+        raw_shape_values = [int(v) for v in list(raw_shape)]
+        new_shape_values = [int(v) for v in list(new_shape)]
+        if raw_shape_values == new_shape_values:
+            continue
+        if len(raw_shape_values) != rank or len(new_shape_values) != rank:
+            continue
+        if consumers.get(output_name):
+            if any(
+                str(model_ir.operators[int(consumer_idx)].op_type) == "TRANSPOSE"
+                and _read_transpose_perm(model_ir, model_ir.operators[int(consumer_idx)]) == _perm_cf_to_cl(rank)
+                for consumer_idx in consumers.get(output_name, [])
+            ):
+                continue
+        roots.add(output_name)
+
+    return _propagate_feature_last_tensor_names(
+        model_ir,
+        roots,
+        graph_index=graph_index,
+    )
+
+
+def _is_rank4_channel_last_dynamic_tensor(tensor: Optional[TensorIR]) -> bool:
+    if tensor is None or isinstance(tensor.data, np.ndarray):
+        return False
+    return (
+        len(list(tensor.shape)) == 4
+        and is_channel_last_logical_layout(normalize_logical_layout(tensor.logical_layout))
+    )
+
+
+def _is_pytorch_channel_first_safe_rank4_island_op(
+    model_ir: ModelIR,
+    op: OperatorIR,
+) -> bool:
+    op_type = str(op.op_type)
+    passthrough_op_types = {
+        "ADD",
+        "AVERAGE_POOL_2D",
+        "CONCATENATION",
+        "CONV_2D",
+        "DEPTHWISE_CONV_2D",
+        "DIV",
+        "LEAKY_RELU",
+        "LOGISTIC",
+        "MAX_POOL_2D",
+        "MAXIMUM",
+        "MINIMUM",
+        "MUL",
+        "RELU",
+        "RELU6",
+        "SUB",
+        "TANH",
+    }
+    if op_type in passthrough_op_types:
+        relevant_dynamic_tensors = [
+            tensor
+            for tensor_name in list(op.inputs) + list(op.outputs)
+            for tensor in [model_ir.tensors.get(str(tensor_name), None)]
+            if _is_rank4_channel_last_dynamic_tensor(tensor)
+        ]
+        return len(relevant_dynamic_tensors) > 0
+    return False
+
+
+def _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island(
+    model_ir: ModelIR,
+) -> bool:
+    public_boundary_names = [str(name) for name in list(model_ir.inputs) + list(model_ir.outputs)]
+    if len(public_boundary_names) == 0:
+        return False
+    for tensor_name in public_boundary_names:
+        tensor = model_ir.tensors.get(tensor_name, None)
+        if tensor is None:
+            return False
+        rank = len(list(tensor.shape))
+        if rank not in {4, 5}:
+            return False
+        if not is_channel_last_logical_layout(normalize_logical_layout(tensor.logical_layout)):
+            return False
+    if any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators):
+        return False
+    for op in model_ir.operators:
+        if not _is_pytorch_channel_first_safe_rank4_island_op(model_ir, op):
+            return False
+    return True
+
+
+def _shrink_preserved_channel_last_regions_for_pytorch(
+    model_ir: ModelIR,
+    preserve_channel_last_tensor_names: Set[str],
+    producer_index: Optional[Dict[str, int]] = None,
+    consumers: Optional[Dict[str, List[int]]] = None,
+) -> Set[str]:
+    if len(preserve_channel_last_tensor_names) == 0:
+        return set()
+    if _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island(model_ir):
+        return {str(name) for name in preserve_channel_last_tensor_names}
+    if producer_index is None or consumers is None:
+        graph_index = ModelIRGraphIndex(model_ir)
+        producer_index = graph_index.producers
+        consumers = graph_index.consumers
+
+    public_boundary_names = {str(name) for name in list(model_ir.inputs) + list(model_ir.outputs)}
+    shrunken_preserve_names: Set[str] = {
+        str(name) for name in preserve_channel_last_tensor_names
+    }
+    for tensor_name in sorted(str(name) for name in preserve_channel_last_tensor_names):
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if not _is_rank4_channel_last_dynamic_tensor(tensor):
+            continue
+        if str(tensor_name) in public_boundary_names:
+            continue
+        producer_idx = producer_index.get(str(tensor_name), None)
+        if producer_idx is None:
+            continue
+        producer_op = model_ir.operators[int(producer_idx)]
+        if not _is_pytorch_channel_first_safe_rank4_island_op(model_ir, producer_op):
+            continue
+        consumer_indices = consumers.get(str(tensor_name), [])
+        if len(consumer_indices) == 0:
+            continue
+        if any(
+            str(model_ir.operators[int(consumer_idx)].op_type) == "DEPTHWISE_CONV_2D"
+            for consumer_idx in consumer_indices
+        ):
+            continue
+        if any(
+            not _is_pytorch_channel_first_safe_rank4_island_op(
+                model_ir,
+                model_ir.operators[int(consumer_idx)],
+            )
+            for consumer_idx in consumer_indices
+        ):
+            continue
+        shrunken_preserve_names.discard(str(tensor_name))
+    return shrunken_preserve_names
+
+
+def _restore_non_preserved_channel_first_layouts(
+    model_ir: ModelIR,
+    preserve_channel_last_tensor_names: Set[str],
+) -> None:
+    public_layout_bridge_tensor_names = {
+        str(name)
+        for name in list(model_ir.metadata.get("public_layout_bridge_tensor_names", []))
+    }
+    for tensor_name, tensor in model_ir.tensors.items():
+        if str(tensor_name) in preserve_channel_last_tensor_names:
+            continue
+        if str(tensor_name) in public_layout_bridge_tensor_names:
+            continue
+        rank = len(list(tensor.shape))
+        if rank not in {3, 4, 5}:
+            continue
+        layout = normalize_logical_layout(tensor.logical_layout)
+        if is_channel_last_logical_layout(layout):
+            tensor.logical_layout = channel_first_logical_layout(rank)

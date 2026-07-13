@@ -101,6 +101,15 @@ function AST is identical to checkpoint `51b49a6`. Direct Reshape restoration
 and empty-preserve-set fast-path cases bring the focused suite to 79 passing
 tests. The exporter retains only the ordered calls.
 
+Feature-last seed collection, rank-four channel-last island capability,
+preserved-region shrinking, and non-preserved channel-first restoration now
+share the same Torch-free owner. The collector constructs one
+`ModelIRGraphIndex`; shrink uses caller-provided maps or one indexed fallback
+instead of its former ad hoc map builder. Complete-island, partial safe-region,
+public-boundary, and public-layout-bridge decisions remain unchanged. After
+normalizing the indexed fallback substitution, all six moved function ASTs are
+identical to checkpoint `db18f97`. Focused validation now passes 82 tests.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

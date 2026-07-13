@@ -414,6 +414,17 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "_is_transpose_sandwiched_last_axis_softmax_op," in exporter_source
     assert "def _apply_feature_last_sequence_layouts(" not in exporter_source
     assert "_apply_feature_last_sequence_layouts," in exporter_source
+    focused_layout_owner_functions = {
+        "_collect_feature_last_sequence_tensor_names",
+        "_is_pytorch_channel_first_safe_rank4_island_op",
+        "_is_pytorch_preserved_channel_last_rank4_or_rank5_model_island",
+        "_shrink_preserved_channel_last_regions_for_pytorch",
+        "_restore_non_preserved_channel_first_layouts",
+    }
+    for function_name in focused_layout_owner_functions:
+        assert f"def {function_name}(" not in exporter_source
+        assert f"{function_name}," in exporter_source
+    assert "def _is_rank4_channel_last_dynamic_tensor(" not in exporter_source
     assert "ModelIRGraphIndex" in pass_source
     assert "for candidate in model_ir.operators" not in pass_source
     assert "def _propagate_feature_last_tensor_names(" in pass_source
@@ -431,6 +442,9 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
         for node in pass_tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+    assert focused_layout_owner_functions | {
+        "_is_rank4_channel_last_dynamic_tensor"
+    } <= set(pass_functions)
     validator_source = ast.get_source_segment(
         exporter_source,
         exporter_functions["validate_channel_first_exportability"],
@@ -439,8 +453,8 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "softmax_graph_index: Optional[ModelIRGraphIndex] = None" in validator_source
     assert "graph_index=softmax_graph_index" in validator_source
     collector_source = ast.get_source_segment(
-        exporter_source,
-        exporter_functions["_collect_feature_last_sequence_tensor_names"],
+        pass_source,
+        pass_functions["_collect_feature_last_sequence_tensor_names"],
     )
     assert collector_source is not None
     assert "graph_index = ModelIRGraphIndex(model_ir)" in collector_source

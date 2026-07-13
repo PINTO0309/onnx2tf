@@ -6,10 +6,14 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _apply_feature_last_sequence_layouts,
+    _collect_feature_last_sequence_tensor_names,
     _is_attention_like_softmax_op,
+    _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island,
     _is_transpose_sandwiched_last_axis_softmax_op,
     _propagate_channel_last_layouts,
     _propagate_feature_last_tensor_names,
+    _restore_non_preserved_channel_first_layouts,
+    _shrink_preserved_channel_last_regions_for_pytorch,
 )
 
 
@@ -273,3 +277,62 @@ def test_feature_last_application_skips_index_for_empty_preserve_set(
 
     assert changed is False
     assert refresh_count == 0
+
+
+def test_feature_last_collector_keeps_complete_channel_last_island() -> None:
+    model_ir = ModelIR(name="complete_channel_last_island")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 3, 4], layout="NHWC"),
+        "y": _tensor("y", [1, 2, 3, 4], layout="NHWC"),
+    }
+    model_ir.operators = [OperatorIR("RELU", ["x"], ["y"])]
+
+    preserved = _collect_feature_last_sequence_tensor_names(model_ir)
+
+    assert preserved == {"x", "y"}
+    assert _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island(
+        model_ir
+    ) is True
+
+
+def test_feature_last_shrink_removes_safe_internal_region_only() -> None:
+    model_ir = ModelIR(name="partially_safe_channel_last_region")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        name: _tensor(name, [1, 2, 3, 4], layout="NHWC")
+        for name in ["x", "middle", "y", "custom_output"]
+    }
+    model_ir.operators = [
+        OperatorIR("RELU", ["x"], ["middle"]),
+        OperatorIR("RELU", ["middle"], ["y"]),
+        OperatorIR("CUSTOM", ["y"], ["custom_output"]),
+    ]
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    shrunken = _shrink_preserved_channel_last_regions_for_pytorch(
+        model_ir,
+        {"x", "middle", "y"},
+        producer_index=graph_index.producers,
+        consumers=graph_index.consumers,
+    )
+
+    assert shrunken == {"x", "y"}
+
+
+def test_restore_non_preserved_channel_first_layouts_respects_boundaries() -> None:
+    model_ir = ModelIR(name="restore_channel_first")
+    model_ir.tensors = {
+        "restore": _tensor("restore", [1, 2, 3, 4], layout="NHWC"),
+        "preserve": _tensor("preserve", [1, 2, 3, 4], layout="NHWC"),
+        "bridge": _tensor("bridge", [1, 2, 3, 4], layout="NHWC"),
+    }
+    model_ir.metadata["public_layout_bridge_tensor_names"] = ["bridge"]
+
+    _restore_non_preserved_channel_first_layouts(model_ir, {"preserve"})
+
+    assert model_ir.tensors["restore"].logical_layout == "NCHW"
+    assert model_ir.tensors["preserve"].logical_layout == "NHWC"
+    assert model_ir.tensors["bridge"].logical_layout == "NHWC"

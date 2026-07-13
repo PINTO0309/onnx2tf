@@ -1710,6 +1710,13 @@ raw ONNX Reshape shape restoration, and constant-shape updates remain in this
 single Torch-free canonicalization owner, while the exporter contains only the
 ordered invocations.
 
+Feature-last seed discovery and its rank-four island policy are co-located in
+the same module. The module also owns preserved-region shrinking and restoration
+of non-preserved tensors to channel-first layouts. These functions share the
+collector's graph index or accept the normalizer's existing producer/consumer
+maps, so the exporter no longer implements a second layout-region policy or ad
+hoc fallback map construction.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
