@@ -5,6 +5,7 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
+import onnx2tf.tflite_builder.passes.nhwc_concat_layout as nhwc_concat_layout
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
@@ -473,6 +474,30 @@ def test_nhwc_direct_pre_concat_multi_post_is_transactionally_optimized(
         "snapshot_count": 1,
         "fingerprint_count": 0,
     }
+
+
+def test_nhwc_direct_precondition_reuses_prepared_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model()
+    calls: dict[str, int] = {}
+    original_resolver = nhwc_concat_layout._resolve_nhwc_concat_candidate
+
+    def counted_resolver(*args, family: str, **kwargs):
+        calls[family] = int(calls.get(family, 0)) + 1
+        return original_resolver(*args, family=family, **kwargs)
+
+    monkeypatch.setattr(
+        nhwc_concat_layout,
+        "_resolve_nhwc_concat_candidate",
+        counted_resolver,
+    )
+
+    stats = nhwc_concat_layout.run_nhwc_concat_layout_cleanup(model_ir)
+
+    assert stats[nhwc_concat_layout._DIRECT_STATS_KEY] == 1
+    assert calls["direct"] == 2
+    assert sum(calls.values()) == len(nhwc_concat_layout._NHWC_FAMILY_SPECS) + 1
 
 
 @pytest.mark.parametrize(

@@ -291,6 +291,16 @@ Prepared data is isolated per conversion session and cleared during rollback,
 so restored ModelIR objects cannot retain stale operator references. The next
 candidate search after a successful rewrite remains unchanged.
 
+The float NHWC Concat runner now uses the same declarative structure. One table
+owns its eleven family names, statistics keys, and priorities; frozen specs,
+callbacks, preconditions, defaults, and preflight are constructed once. Its
+candidate search enumerates only indexed `CONCATENATION` positions, and a
+successful precondition passes the exact candidate to the common family
+optimizer through session-local prepared data. All existing family-specific
+optimizer wrappers remain available. The module changed from 3,120 to 2,881
+lines while preserving stable pass IDs, order, statistics, transactions, and
+legacy fallback ownership.
+
 The adjacent legacy ownership gate now builds action-kind counts once. Seven
 simple quantized family contracts declare only allowed and required kinds;
 all-Pad keeps its minimum-arity guard, and Slice/Split/Add keep their
@@ -395,6 +405,10 @@ Focused verification, all in the existing `uv` environment:
   isolation, rollback clearing, exact resolver-call accounting, and the full
   focused selection passed `97 tests in 0.44s`; targeted compilation and Ruff
   also passed.
+- After converting the float runner to declarative frozen specs, indexed Concat
+  enumeration, and prepared-candidate reuse, all nine compact float/quantized
+  NHWC Concat modules passed `284 tests in 0.77s`; the focused float module
+  passed `44 tests in 0.36s` and targeted compilation/Ruff passed.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.

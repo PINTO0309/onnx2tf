@@ -60,6 +60,19 @@ _SLICE_STATS_KEY = "optimized_transpose_pre_concat_nhwc_slice_chains"
 _SPLIT_STATS_KEY = "optimized_transpose_pre_concat_nhwc_split_chains"
 _ADD_STATS_KEY = "optimized_transpose_pre_concat_nhwc_add_chains"
 _LEAKY_STATS_KEY = "optimized_transpose_pre_concat_nhwc_leaky_chains"
+_NHWC_FAMILY_SPECS: Tuple[Tuple[str, str, int], ...] = (
+    ("direct", _DIRECT_STATS_KEY, 10),
+    ("unary", _UNARY_STATS_KEY, 20),
+    ("pad", _PAD_STATS_KEY, 30),
+    ("dequantize", _DEQUANTIZE_STATS_KEY, 40),
+    ("prelu", _PRELU_STATS_KEY, 50),
+    ("softmax", _SOFTMAX_STATS_KEY, 60),
+    ("swish", _SWISH_STATS_KEY, 70),
+    ("slice", _SLICE_STATS_KEY, 80),
+    ("split", _SPLIT_STATS_KEY, 90),
+    ("add", _ADD_STATS_KEY, 100),
+    ("leaky", _LEAKY_STATS_KEY, 110),
+)
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 _MAX_ADD_PLAN_DEPTH = 64
 
@@ -1594,12 +1607,10 @@ def _resolve_nhwc_concat_candidate(
         *[str(name) for name in model_ir.inputs],
         *model_outputs,
     }
-    for concat_op in model_ir.operators:
-        concat_index = graph_index.operator_index(concat_op)
+    for concat_index in graph_index.operator_indices("CONCATENATION"):
+        concat_op = model_ir.operators[int(concat_index)]
         if (
-            concat_index is None
-            or str(concat_op.op_type) != "CONCATENATION"
-            or len(concat_op.inputs) == 0
+            len(concat_op.inputs) == 0
             or len(concat_op.outputs) != 1
         ):
             continue
@@ -1791,129 +1802,6 @@ def _resolve_nhwc_concat_candidate(
             post_output_names=tuple(post_output_names),
         )
     return None
-
-
-def _has_nhwc_direct_concat_candidate(pass_state: ModelIRPassState) -> bool:
-    return (
-        _resolve_nhwc_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="direct",
-        )
-        is not None
-    )
-
-
-def _has_nhwc_unary_concat_candidate(pass_state: ModelIRPassState) -> bool:
-    return (
-        _resolve_nhwc_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="unary",
-        )
-        is not None
-    )
-
-
-def _has_nhwc_pad_concat_candidate(pass_state: ModelIRPassState) -> bool:
-    return (
-        _resolve_nhwc_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="pad",
-        )
-        is not None
-    )
-
-
-def _has_nhwc_dequantize_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_nhwc_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="dequantize",
-        )
-        is not None
-    )
-
-
-def _has_nhwc_prelu_concat_candidate(pass_state: ModelIRPassState) -> bool:
-    return (
-        _resolve_nhwc_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="prelu",
-        )
-        is not None
-    )
-
-
-def _has_nhwc_softmax_concat_candidate(pass_state: ModelIRPassState) -> bool:
-    return (
-        _resolve_nhwc_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="softmax",
-        )
-        is not None
-    )
-
-
-def _has_nhwc_swish_concat_candidate(pass_state: ModelIRPassState) -> bool:
-    return (
-        _resolve_nhwc_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="swish",
-        )
-        is not None
-    )
-
-
-def _has_nhwc_slice_concat_candidate(pass_state: ModelIRPassState) -> bool:
-    return (
-        _resolve_nhwc_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="slice",
-        )
-        is not None
-    )
-
-
-def _has_nhwc_split_concat_candidate(pass_state: ModelIRPassState) -> bool:
-    return (
-        _resolve_nhwc_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="split",
-        )
-        is not None
-    )
-
-
-def _has_nhwc_add_concat_candidate(pass_state: ModelIRPassState) -> bool:
-    return (
-        _resolve_nhwc_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="add",
-        )
-        is not None
-    )
-
-
-def _has_nhwc_leaky_concat_candidate(pass_state: ModelIRPassState) -> bool:
-    return (
-        _resolve_nhwc_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="leaky",
-        )
-        is not None
-    )
 
 
 def _optimize_transpose_pre_concat_nhwc_direct_chains(
@@ -2674,17 +2562,21 @@ def _optimize_transpose_pre_concat_nhwc_family(
     stats_key: str,
     graph_index: ModelIRGraphIndex | None = None,
     layout_state: LayoutState | None = None,
+    initial_candidate: _NhwcConcatCandidate | None = None,
 ) -> Dict[str, int]:
     """Lift one strict direct/unary NCHW Concat family into NHWC."""
 
     optimized = 0
     graph_index = graph_index or ModelIRGraphIndex(model_ir)
     while True:
-        candidate = _resolve_nhwc_concat_candidate(
-            model_ir,
-            graph_index,
-            family=family,
-        )
+        candidate = initial_candidate
+        initial_candidate = None
+        if candidate is None:
+            candidate = _resolve_nhwc_concat_candidate(
+                model_ir,
+                graph_index,
+                family=family,
+            )
         if candidate is None:
             break
 
@@ -2904,6 +2796,72 @@ def _optimize_transpose_pre_concat_nhwc_family(
     return {stats_key: int(optimized)}
 
 
+def _prepared_nhwc_candidate_key(family: str) -> str:
+    return f"nhwc_concat:{family}"
+
+
+def _make_nhwc_concat_callback(family: str, stats_key: str):
+    prepared_key = _prepared_nhwc_candidate_key(family)
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_pre_concat_nhwc_family(
+            pass_state.model_ir,
+            family=family,
+            stats_key=stats_key,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+            initial_candidate=pass_state.take_prepared_pass_data(
+                prepared_key
+            ),
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get(stats_key, 0)),
+        }
+
+    return _run
+
+
+def _make_nhwc_concat_precondition(family: str):
+    prepared_key = _prepared_nhwc_candidate_key(family)
+
+    def _prepare_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate = _resolve_nhwc_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family=family,
+        )
+        if candidate is None:
+            return False
+        pass_state.set_prepared_pass_data(prepared_key, candidate)
+        return True
+
+    return _prepare_candidate
+
+
+_NHWC_PASS_SPECS = tuple(
+    PassSpec(
+        pass_id=f"layout.nhwc_pre_concat_{family}",
+        phase=PassPhase.LAYOUT_PLAN,
+        callback=_make_nhwc_concat_callback(family, stats_key),
+        precondition=_make_nhwc_concat_precondition(family),
+        priority=priority,
+        transactional=True,
+    )
+    for family, stats_key, priority in _NHWC_FAMILY_SPECS
+)
+_NHWC_DEFAULT_DETAILS = {
+    stats_key: 0 for _, stats_key, _ in _NHWC_FAMILY_SPECS
+}
+
+
+def _preflight_nhwc_concat_layout(model_ir: ModelIR):
+    return preflight_required_op_types(
+        model_ir,
+        {"TRANSPOSE", "CONCATENATION"},
+    )
+
+
 def run_nhwc_concat_layout_cleanup(
     model_ir: ModelIR,
     *,
@@ -2912,209 +2870,12 @@ def run_nhwc_concat_layout_cleanup(
 ) -> Dict[str, int]:
     """Run the transactional rank-four Concat layout family group."""
 
-    def _run_direct(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_pre_concat_nhwc_direct_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {**stats, "changed": bool(stats.get(_DIRECT_STATS_KEY, 0))}
-
-    def _run_unary(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_pre_concat_nhwc_unary_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {**stats, "changed": bool(stats.get(_UNARY_STATS_KEY, 0))}
-
-    def _run_pad(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_pre_concat_nhwc_pad_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {**stats, "changed": bool(stats.get(_PAD_STATS_KEY, 0))}
-
-    def _run_dequantize(
-        pass_state: ModelIRPassState,
-    ) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_pre_concat_nhwc_dequantize_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_DEQUANTIZE_STATS_KEY, 0)),
-        }
-
-    def _run_prelu(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_pre_concat_nhwc_prelu_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {**stats, "changed": bool(stats.get(_PRELU_STATS_KEY, 0))}
-
-    def _run_softmax(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_pre_concat_nhwc_softmax_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {**stats, "changed": bool(stats.get(_SOFTMAX_STATS_KEY, 0))}
-
-    def _run_swish(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_pre_concat_nhwc_swish_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {**stats, "changed": bool(stats.get(_SWISH_STATS_KEY, 0))}
-
-    def _run_slice(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_pre_concat_nhwc_slice_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {**stats, "changed": bool(stats.get(_SLICE_STATS_KEY, 0))}
-
-    def _run_split(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_pre_concat_nhwc_split_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {**stats, "changed": bool(stats.get(_SPLIT_STATS_KEY, 0))}
-
-    def _run_add(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_pre_concat_nhwc_add_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {**stats, "changed": bool(stats.get(_ADD_STATS_KEY, 0))}
-
-    def _run_leaky(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_pre_concat_nhwc_leaky_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {**stats, "changed": bool(stats.get(_LEAKY_STATS_KEY, 0))}
-
     details, _ = run_model_ir_pass_group(
         model_ir,
-        specs=[
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_direct",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_direct,
-                precondition=_has_nhwc_direct_concat_candidate,
-                priority=10,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_unary",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_unary,
-                precondition=_has_nhwc_unary_concat_candidate,
-                priority=20,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_pad",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_pad,
-                precondition=_has_nhwc_pad_concat_candidate,
-                priority=30,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_dequantize",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_dequantize,
-                precondition=_has_nhwc_dequantize_concat_candidate,
-                priority=40,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_prelu",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_prelu,
-                precondition=_has_nhwc_prelu_concat_candidate,
-                priority=50,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_softmax",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_softmax,
-                precondition=_has_nhwc_softmax_concat_candidate,
-                priority=60,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_swish",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_swish,
-                precondition=_has_nhwc_swish_concat_candidate,
-                priority=70,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_slice",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_slice,
-                precondition=_has_nhwc_slice_concat_candidate,
-                priority=80,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_split",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_split,
-                precondition=_has_nhwc_split_concat_candidate,
-                priority=90,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_add",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_add,
-                precondition=_has_nhwc_add_concat_candidate,
-                priority=100,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_leaky",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_leaky,
-                precondition=_has_nhwc_leaky_concat_candidate,
-                priority=110,
-                transactional=True,
-            ),
-        ],
+        specs=_NHWC_PASS_SPECS,
         layout_state=layout_state,
-        default_details={
-            _DIRECT_STATS_KEY: 0,
-            _UNARY_STATS_KEY: 0,
-            _PAD_STATS_KEY: 0,
-            _DEQUANTIZE_STATS_KEY: 0,
-            _PRELU_STATS_KEY: 0,
-            _SOFTMAX_STATS_KEY: 0,
-            _SWISH_STATS_KEY: 0,
-            _SLICE_STATS_KEY: 0,
-            _SPLIT_STATS_KEY: 0,
-            _ADD_STATS_KEY: 0,
-            _LEAKY_STATS_KEY: 0,
-        },
+        default_details=_NHWC_DEFAULT_DETAILS,
         diagnostics=diagnostics,
-        preflight=lambda candidate_model: preflight_required_op_types(
-            candidate_model,
-            {"TRANSPOSE", "CONCATENATION"},
-        ),
+        preflight=_preflight_nhwc_concat_layout,
     )
     return {str(key): int(value) for key, value in details.items()}

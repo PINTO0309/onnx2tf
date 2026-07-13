@@ -324,6 +324,16 @@ stable IDs `layout.nhwc_pre_concat_direct`,
 `layout.nhwc_pre_concat_prelu`, `layout.nhwc_pre_concat_softmax`, and
 `layout.nhwc_pre_concat_swish`, `layout.nhwc_pre_concat_slice`, and
 `layout.nhwc_pre_concat_split`, plus `layout.nhwc_pre_concat_add`.
+One ordered table owns all eleven family names, statistics keys, and priorities;
+frozen callbacks, preconditions, `PassSpec` objects, defaults, and preflight are
+derived once at module import. Candidate enumeration uses the shared
+operator-type index and visits only `CONCATENATION` positions. A successful
+precondition passes its validated candidate through session-local prepared
+data, so the callback does not immediately repeat the same search. The legacy
+family-specific optimizer wrappers remain signature-compatible while the
+runner itself uses the common family optimizer. This declarative conversion
+reduced the module from 3,120 to 2,881 lines without changing pass order or
+fallback ownership.
 Exclusive pads constants are remapped in place; shared or public pads
 constants use copy-on-write so unrelated Pad consumers preserve NCHW
 semantics. Dequantize inputs retain source scale and zero-point provenance
