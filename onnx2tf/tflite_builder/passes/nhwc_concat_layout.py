@@ -61,6 +61,7 @@ _SPLIT_STATS_KEY = "optimized_transpose_pre_concat_nhwc_split_chains"
 _ADD_STATS_KEY = "optimized_transpose_pre_concat_nhwc_add_chains"
 _LEAKY_STATS_KEY = "optimized_transpose_pre_concat_nhwc_leaky_chains"
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
+_MAX_ADD_PLAN_DEPTH = 64
 
 
 @dataclass(frozen=True)
@@ -958,7 +959,17 @@ def _resolve_add_input_plan(
     input_name: str,
     concat_index: int,
     model_outputs: set[str],
+    visited_add_outputs: Optional[frozenset[str]] = None,
 ) -> Optional[_NhwcConcatInputPlan]:
+    visited_add_outputs = visited_add_outputs or frozenset()
+    if (
+        input_name in visited_add_outputs
+        or len(visited_add_outputs) >= _MAX_ADD_PLAN_DEPTH
+    ):
+        return None
+    next_visited_add_outputs = frozenset(
+        {*visited_add_outputs, input_name}
+    )
     add_op = graph_index.producer(input_name)
     add_index = None if add_op is None else graph_index.operator_index(add_op)
     if (
@@ -1036,6 +1047,15 @@ def _resolve_add_input_plan(
                 },
             )
         if operand_plan is None:
+            operand_plan = _resolve_add_input_plan(
+                model_ir,
+                graph_index,
+                input_name=add_input_name,
+                concat_index=int(add_index),
+                model_outputs=model_outputs,
+                visited_add_outputs=next_visited_add_outputs,
+            )
+        if operand_plan is None:
             return None
         adapter_output_tensor = model_ir.tensors.get(add_input_name)
         if adapter_output_tensor is None or len(list(adapter_output_tensor.shape)) != 4:
@@ -1046,31 +1066,32 @@ def _resolve_add_input_plan(
     unique_remove_flags: List[bool] = []
     seen_adapter_ids: set[int] = set()
     for operand_plan in operand_plans:
-        adapter_op = operand_plan.adapter_op
-        if id(adapter_op) in seen_adapter_ids:
-            continue
-        seen_adapter_ids.add(id(adapter_op))
-        unique_adapter_ops.append(adapter_op)
-        unique_remove_flags.append(bool(operand_plan.remove_adapter))
+        for adapter_offset, adapter_op in enumerate(
+            (
+                operand_plan.adapter_op,
+                *operand_plan.extra_source_adapter_ops,
+            )
+        ):
+            if id(adapter_op) in seen_adapter_ids:
+                continue
+            seen_adapter_ids.add(id(adapter_op))
+            unique_adapter_ops.append(adapter_op)
+            unique_remove_flags.append(
+                bool(operand_plan.remove_adapter)
+                if adapter_offset == 0
+                else False
+            )
     add_input_names = tuple(
         operand_plan.source_name
         if operand_plan.kind == "direct"
         else operand_plan.output_name
         for operand_plan in operand_plans
     )
-    nested_post_adapter_ops = tuple(
-        post_op
-        for operand_plan in operand_plans
-        for post_op in operand_plan.output_post_adapter_ops
-    )
     return _NhwcConcatInputPlan(
         kind="add",
         adapter_op=unique_adapter_ops[0],
         add_op=add_op,
-        output_post_adapter_ops=(
-            *tuple(output_post_adapter_ops),
-            *nested_post_adapter_ops,
-        ),
+        output_post_adapter_ops=tuple(output_post_adapter_ops),
         add_input_names=add_input_names,
         add_operand_plans=tuple(operand_plans),
         extra_source_adapter_ops=tuple(unique_adapter_ops[1:]),
@@ -2225,14 +2246,24 @@ def _apply_add_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
     input_plan: _NhwcConcatInputPlan,
+    *,
+    materialized_int_parameters: Optional[
+        Dict[Tuple[str, Tuple[int, ...]], str]
+    ] = None,
+    applied_split_operators: Optional[set[int]] = None,
+    applied_add_operators: Optional[set[int]] = None,
 ) -> None:
     assert input_plan.add_op is not None
     assert len(input_plan.add_input_names) == 2
-    materialized_int_parameters: Dict[
-        Tuple[str, Tuple[int, ...]],
-        str,
-    ] = {}
-    applied_split_operators: set[int] = set()
+    add_operator_id = id(input_plan.add_op)
+    if applied_add_operators is None:
+        applied_add_operators = set()
+    if add_operator_id in applied_add_operators:
+        return
+    if materialized_int_parameters is None:
+        materialized_int_parameters = {}
+    if applied_split_operators is None:
+        applied_split_operators = set()
     for operand_plan in input_plan.add_operand_plans:
         if operand_plan.unary_op is not None:
             _apply_unary_input_plan(
@@ -2256,6 +2287,15 @@ def _apply_add_input_plan(
                     materialized=materialized_int_parameters,
                 )
                 applied_split_operators.add(split_operator_id)
+        elif operand_plan.add_op is not None:
+            _apply_add_input_plan(
+                model_ir,
+                graph_index,
+                operand_plan,
+                materialized_int_parameters=materialized_int_parameters,
+                applied_split_operators=applied_split_operators,
+                applied_add_operators=applied_add_operators,
+            )
     _set_operator_inputs(
         model_ir=model_ir,
         op=input_plan.add_op,
@@ -2278,6 +2318,7 @@ def _apply_add_input_plan(
             dst_name=input_plan.output_name,
             graph_index=graph_index,
         )
+    applied_add_operators.add(add_operator_id)
 
 
 def _apply_leaky_input_plan(
@@ -2382,8 +2423,12 @@ def _optimize_transpose_pre_concat_nhwc_family(
                         model_ir,
                         graph_index,
                         input_plan,
+                        materialized_int_parameters=(
+                            materialized_int_parameters
+                        ),
+                        applied_split_operators=applied_split_operators,
+                        applied_add_operators=applied_add_operators,
                     )
-                    applied_add_operators.add(add_operator_id)
                 new_concat_inputs.append(input_plan.output_name)
             elif input_plan.leaky_neg_op is not None:
                 leaky_operator_id = id(input_plan.leaky_neg_op)
@@ -2496,22 +2541,33 @@ def _optimize_transpose_pre_concat_nhwc_family(
                 for output_name in output_names
             )
 
+        def _walk_input_plans(
+            input_plans: Tuple[_NhwcConcatInputPlan, ...],
+        ) -> List[_NhwcConcatInputPlan]:
+            plans: List[_NhwcConcatInputPlan] = []
+            for input_plan in input_plans:
+                plans.append(input_plan)
+                plans.extend(_walk_input_plans(input_plan.add_operand_plans))
+            return plans
+
+        all_input_plans = _walk_input_plans(candidate.input_plans)
+
         remove_ops = [
             *[
                 plan.adapter_op
-                for plan in candidate.input_plans
+                for plan in all_input_plans
                 if plan.remove_adapter
                 or _adapter_is_now_removable(plan.adapter_op)
             ],
             *[
                 adapter_op
-                for plan in candidate.input_plans
+                for plan in all_input_plans
                 for adapter_op in plan.extra_source_adapter_ops
                 if _adapter_is_now_removable(adapter_op)
             ],
             *[
                 adapter_op
-                for plan in candidate.input_plans
+                for plan in all_input_plans
                 for adapter_op in plan.output_post_adapter_ops
             ],
             *candidate.post_ops,

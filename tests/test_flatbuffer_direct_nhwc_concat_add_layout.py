@@ -259,6 +259,81 @@ def _add_model(
             ),
         )
         add_op.inputs[0] = "a_split0"
+    if boundary in {"recursive_operand", "recursive_operand_post"}:
+        model_ir.inputs.append("c_nhwc")
+        model_ir.tensors["c_nhwc"] = _tensor(
+            "c_nhwc",
+            [1, 5, 7, 3],
+        )
+        model_ir.tensors["c_nchw"] = _tensor(
+            "c_nchw",
+            [1, 3, 5, 7],
+        )
+        model_ir.tensors["inner_sum_nchw"] = _tensor(
+            "inner_sum_nchw",
+            [1, 3, 5, 7],
+        )
+        model_ir.tensors["inner_sum_nchw"].quantization = QuantParamIR(
+            scale=[0.5] * 3,
+            zero_point=[0] * 3,
+            quantized_dimension=1,
+        )
+        add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+        add_index = model_ir.operators.index(add_op)
+        model_ir.operators[add_index:add_index] = [
+            OperatorIR(
+                "TRANSPOSE",
+                ["c_nhwc", "pre_perm"],
+                ["c_nchw"],
+            ),
+            OperatorIR(
+                "ADD",
+                ["a_nchw", "b_nchw"],
+                ["inner_sum_nchw"],
+                options={"fusedActivationFunction": "NONE"},
+            ),
+        ]
+        add_op.inputs = ["inner_sum_nchw", "c_nchw"]
+        if boundary == "recursive_operand_post":
+            model_ir.tensors["inner_sum_nhwc"] = _tensor(
+                "inner_sum_nhwc",
+                [1, 5, 7, 3],
+            )
+            model_ir.tensors["inner_observed"] = _tensor(
+                "inner_observed",
+                [1, 5, 7, 3],
+            )
+            model_ir.operators.extend(
+                [
+                    OperatorIR(
+                        "TRANSPOSE",
+                        ["inner_sum_nchw", "post_perm"],
+                        ["inner_sum_nhwc"],
+                    ),
+                    OperatorIR(
+                        "RELU",
+                        ["inner_sum_nhwc"],
+                        ["inner_observed"],
+                    ),
+                ]
+            )
+            model_ir.outputs.append("inner_observed")
+    if boundary == "recursive_cycle":
+        model_ir.tensors["inner_sum_nchw"] = _tensor(
+            "inner_sum_nchw",
+            [1, 3, 5, 7],
+        )
+        add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+        add_index = model_ir.operators.index(add_op)
+        model_ir.operators.insert(
+            add_index,
+            OperatorIR(
+                "ADD",
+                ["sum_nchw", "a_nchw"],
+                ["inner_sum_nchw"],
+            ),
+        )
+        add_op.inputs = ["inner_sum_nchw", "b_nchw"]
     if boundary == "public_concat":
         model_ir.outputs.append("concat_nchw")
     if boundary == "public_post":
@@ -359,6 +434,7 @@ def test_nhwc_direct_only_add_is_indexed(all_add: bool) -> None:
         "wrong_post_permutation",
         "public_concat",
         "public_post",
+        "recursive_cycle",
     ],
 )
 def test_nhwc_add_rejects_unsafe_or_partial_match(boundary: str) -> None:
@@ -521,6 +597,51 @@ def test_nhwc_add_split_operand_is_indexed() -> None:
         if event["code"] == "layout.nhwc_pre_concat_add"
     )
     assert event["status"] == "changed"
+
+
+def test_nhwc_recursive_add_operand_is_indexed_once() -> None:
+    model_ir = _add_model(boundary="recursive_operand")
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    inner_add = next(
+        op for op in model_ir.operators if op.outputs == ["inner_sum_nchw"]
+    )
+    outer_add = next(
+        op for op in model_ir.operators if op.outputs == ["sum_nchw"]
+    )
+    assert inner_add.inputs == ["a_nhwc", "b_nhwc"]
+    assert outer_add.inputs == ["inner_sum_nchw", "c_nhwc"]
+    assert model_ir.tensors["inner_sum_nchw"].shape == [1, 5, 7, 3]
+    inner_quantization = model_ir.tensors["inner_sum_nchw"].quantization
+    assert isinstance(inner_quantization, QuantParamIR)
+    assert inner_quantization.quantized_dimension == 3
+    assert model_ir.tensors["sum_nchw"].shape == [1, 5, 7, 3]
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_add"
+    )
+    assert event["status"] == "changed"
+
+
+def test_nhwc_recursive_add_keeps_nested_post_bound_to_inner_output() -> None:
+    model_ir = _add_model(boundary="recursive_operand_post")
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    observer = next(
+        op for op in model_ir.operators if op.outputs == ["inner_observed"]
+    )
+    assert observer.inputs == ["inner_sum_nchw"]
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
 
 
 def test_nhwc_add_output_post_adapter_is_indexed() -> None:
