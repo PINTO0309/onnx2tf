@@ -155,6 +155,15 @@ before transaction creation. All six and seven respective production
 positions use the ordered runners and session diagnostics. The module performs
 no whole-graph map construction or direct operator-list insertion/deletion.
 
+The adjacent LayerNorm-statistics layout pair is mechanically owned by
+`passes/layernorm_layout.py`. One rewrite propagates NHWC through two keep-dims
+Mean statistics branches behind an NHWC→NCHW adapter, conditionally removing
+that adapter; the other reuses an existing NCHW→NHWC projection. Both preserve
+the strict centered-tensor fan-out guard, constant-axis remapping, rank-four
+contract, public boundaries, and tensor metadata. Their complete ASTs match
+checkpoint `d7866d2`; the lowerer keeps compatibility wrappers and the two
+original production positions pending indexed runner migration.
+
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and
 internal tensor metadata agree and no axis-sensitive gather/slice consumer

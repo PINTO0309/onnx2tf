@@ -675,6 +675,53 @@ def test_mean_layout_rewrites_have_single_owner() -> None:
     }
 
 
+def test_layernorm_layout_rewrites_have_single_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "layernorm_layout.py"
+    )
+    function_names = {
+        "_optimize_transpose_layernorm_stats_nhwc_propagation_chains",
+        "_optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains",
+    }
+
+    pass_tree = ast.parse(pass_path.read_text(encoding="utf-8"))
+    assert function_names <= {
+        node.name
+        for node in pass_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowering_functions = {
+        node.name: node
+        for node in lowering_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for function_name in function_names:
+        wrapper_names = {
+            node.id
+            for node in ast.walk(lowering_functions[function_name])
+            if isinstance(node, ast.Name)
+        }
+        assert f"{function_name}_pass" in wrapper_names
+
+    imports = [
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "onnx2tf.tflite_builder.passes.layernorm_layout"
+    ]
+    assert len(imports) == 1
+    assert {alias.name for alias in imports[0].names} == function_names
+
+
 def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

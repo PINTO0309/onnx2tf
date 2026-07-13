@@ -3320,3 +3320,30 @@ The complete sequential direct regression selection passed:
 No dependency or TensorFlow path was added. The temporary
 `/tmp/onnx2tf_mean_layout_superpoint` artifacts were removed after metrics
 inspection.
+
+### LayerNorm statistics characterization and mechanical extraction
+
+The next bounded family is the pair of generic LayerNorm-statistics layout
+rewrites. Checkpoint `d7866d2` added compact fixtures for both entry forms: an
+NHWC→NCHW adapter that becomes dead after propagation and an existing
+NCHW→NHWC projection that is reused. The fixtures also fix the safety contract
+that a centered SUB result with a non-square fan-out rejects both rewrites
+without changing axes or topology.
+
+Both complete implementations moved mechanically to
+`passes/layernorm_layout.py`, with ASTs identical to `d7866d2`. Rank-four and
+permutation checks, two Mean axis maps, keep-dims requirements, public-output
+guards, square-branch exclusivity, metadata permutation, and conditional
+leading-Transpose removal are unchanged. The lowerer retains only
+signature-compatible wrappers, and both production call positions remain
+unchanged pending the separate indexed migration.
+
+Focused characterization, legacy, and ownership validation passed 7 tests.
+The complete sequential direct regression selection passed:
+
+```text
+1159 passed, 5 deselected, 2 warnings in 149.65s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently.
