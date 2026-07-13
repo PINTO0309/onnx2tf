@@ -175,14 +175,19 @@ def _add_model(
         )
     if boundary == "public_add_output":
         model_ir.outputs.append("sum_nchw")
-    if boundary == "add_adapter_fanout":
+    if boundary in {"add_adapter_fanout", "add_second_adapter_fanout"}:
+        adapter_name = (
+            "b_nchw"
+            if boundary == "add_second_adapter_fanout"
+            else "a_nchw"
+        )
         model_ir.tensors["adapter_side"] = _tensor(
             "adapter_side",
-            list(a_adapter_shape),
+            list(model_ir.tensors[adapter_name].shape),
         )
         model_ir.outputs.append("adapter_side")
         model_ir.operators.append(
-            OperatorIR("IDENTITY", ["a_nchw"], ["adapter_side"])
+            OperatorIR("IDENTITY", [adapter_name], ["adapter_side"])
         )
     if boundary == "public_add_adapter":
         model_ir.outputs.append("a_nchw")
@@ -319,7 +324,11 @@ def test_nhwc_add_rejects_unsafe_or_partial_match(boundary: str) -> None:
 
 @pytest.mark.parametrize(
     "boundary",
-    ["add_adapter_fanout", "public_add_adapter"],
+    [
+        "add_adapter_fanout",
+        "add_second_adapter_fanout",
+        "public_add_adapter",
+    ],
 )
 def test_nhwc_add_retains_shared_or_public_source_adapter(
     boundary: str,
@@ -337,7 +346,12 @@ def test_nhwc_add_retains_shared_or_public_source_adapter(
     remaining_transposes = [
         op for op in model_ir.operators if op.op_type == "TRANSPOSE"
     ]
-    assert [op.outputs for op in remaining_transposes] == [["a_nchw"]]
+    retained_adapter = (
+        "b_nchw"
+        if boundary == "add_second_adapter_fanout"
+        else "a_nchw"
+    )
+    assert [op.outputs for op in remaining_transposes] == [[retained_adapter]]
     event = next(
         event
         for event in diagnostics
@@ -346,15 +360,32 @@ def test_nhwc_add_retains_shared_or_public_source_adapter(
     assert event["status"] == "changed"
 
 
-@pytest.mark.parametrize(
-    "boundary",
-    [
-        "adapter_shared_with_concat",
-        "unary_operand",
-    ],
-)
-def test_nhwc_add_broader_legacy_cases_remain_available(boundary: str) -> None:
-    model_ir = _add_model(boundary=boundary)
+def test_nhwc_add_adapter_shared_with_root_concat_is_indexed() -> None:
+    model_ir = _add_model(boundary="adapter_shared_with_concat")
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_add_rewritten(model_ir)
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    assert concat_op.inputs == ["x_nhwc", "a_nhwc", "sum_nchw"]
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_add"
+    )
+    assert event["status"] == "changed"
+
+
+def test_nhwc_add_unary_operand_remains_in_legacy() -> None:
+    model_ir = _add_model(boundary="unary_operand")
     diagnostics: list[dict] = []
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(

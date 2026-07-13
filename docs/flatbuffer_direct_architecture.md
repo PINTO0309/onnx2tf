@@ -349,9 +349,11 @@ Concat input produced by a non-recursive two-input Add whose operands each
 come from a rank-four NHWC→NCHW adapter. Both Add inputs are rewired together,
 exclusive adapters are removed, shared/public adapters remain for external
 consumers, exact inverse output adapters are bypassed, and Add output shape
-and per-axis quantization move into NHWC. Adapter-sharing with the root Concat,
-unary/Swish/Split operand, recursive Add, and broader mixed-input
-quantized-post families remain in legacy until independently characterized.
+and per-axis quantization move into NHWC. Source-adapter removal is decided
+from the post-rewrite GraphIndex, allowing an adapter shared with the root
+Concat to be removed only after every selected consumer is rewired. Unary,
+Swish, or Split operands, recursive Add, and broader mixed-input quantized-post
+families remain in legacy until independently characterized.
 The indexed
 pseudo-LeakyRelu family recognizes the complete
 `ReLU(x) - alpha * ReLU(-x)` diamond with either Mul operand order and direct

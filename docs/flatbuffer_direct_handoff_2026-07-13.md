@@ -100,9 +100,11 @@ removed, shared/public adapters remain for external consumers, operator
 options are retained, and Add-output shape and per-axis quantization are
 remapped once. Valid non-public inverse output adapters are bypassed and their
 consumers are rewired to the NHWC Add output; public post aliases and invalid
-ranks reject before mutation. Adapter sharing with the root Concat, unary
-operands, recursive Add, and other mixed operand families deliberately remain
-in legacy.
+ranks reject before mutation. Source-adapter removal uses the post-rewrite
+GraphIndex rather than coupled precomputed flags: external/public consumers
+retain the adapter, while an adapter shared with the root Concat is removed
+after both Add and Concat are rewired. Unary operands, recursive Add, and other
+mixed operand families deliberately remain in legacy.
 The pseudo-LeakyRelu family proves the exact
 `ReLU(x) - alpha * ReLU(-x)` topology. It accepts either Mul operand order,
 requires scalar alpha, preserves Sub order, and supports direct or unary
@@ -152,9 +154,9 @@ Focused verification, all in the existing `uv` environment:
 - Direct, unary, Pad, Dequantize, PReLU, Softmax, expanded-Swish,
   pseudo-LeakyRelu, and bounded Slice/Split/Add ModelIR characterization:
   the preceding combined float-path run passed 176 tests across eight compact
-  modules; the expanded inventory now contains 179. Including the bounded
+  modules; the expanded inventory now contains 180. Including the bounded
   direct and unary/Pad quantized-post suites, the compact inventory contains
-  221 tests across nine modules. The preceding combined run passed 208 tests;
+  222 tests across nine modules. The preceding combined run passed 208 tests;
   the expanded quantized module passes 42 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
@@ -168,8 +170,9 @@ Focused verification, all in the existing `uv` environment:
   copy-on-write, shared/public source-adapter retention, output-post-adapter
   bypass, and fifteen no-op boundaries. The
   Add suite covers mixed/all-Add success, shared/public source-adapter
-  retention, output-post-adapter bypass, thirteen complete no-op boundaries,
-  and two broader cases retained in legacy. The pseudo-LeakyRelu suite
+  retention in both operand positions, root-Concat adapter sharing,
+  output-post-adapter bypass, thirteen complete no-op boundaries, and one
+  unary-operand case retained in legacy. The pseudo-LeakyRelu suite
   covers both alpha operand orders, direct/unary/all-Leaky success, twenty
   complete no-op boundaries, and one Pad-mixed legacy fallback. The quantized
   suite covers canonical and multiple post outputs, shared/public adapter
@@ -184,8 +187,7 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize the root-shared or unary-operand Add subfamily.
-Keep recursive
+Next work should characterize the unary-operand Add subfamily. Keep recursive
 Add and mixed Swish/Add interactions in legacy until independently fixed. Do
 not begin with a Tier 0–4 corpus run, and do not create a pull request.
 

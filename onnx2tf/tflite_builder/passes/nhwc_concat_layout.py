@@ -81,7 +81,7 @@ class _NhwcConcatInputPlan:
     split_op: Optional[OperatorIR] = None
     add_op: Optional[OperatorIR] = None
     add_source_names: Tuple[str, ...] = ()
-    extra_removable_adapter_ops: Tuple[OperatorIR, ...] = ()
+    extra_source_adapter_ops: Tuple[OperatorIR, ...] = ()
     output_post_adapter_ops: Tuple[OperatorIR, ...] = ()
     leaky_neg_op: Optional[OperatorIR] = None
     leaky_pos_relu_op: Optional[OperatorIR] = None
@@ -1020,7 +1020,6 @@ def _resolve_add_input_plan(
             or _read_transpose_perm(model_ir, adapter_op)
             != _PERM_NHWC_TO_NCHW
             or int(add_index) not in adapter_consumers
-            or int(concat_index) in adapter_consumers
         ):
             return None
         source_name = str(adapter_op.inputs[0])
@@ -1058,14 +1057,7 @@ def _resolve_add_input_plan(
         add_op=add_op,
         output_post_adapter_ops=tuple(output_post_adapter_ops),
         add_source_names=tuple(source_names),
-        extra_removable_adapter_ops=tuple(
-            adapter_op
-            for adapter_op, remove_adapter in zip(
-                unique_adapter_ops[1:],
-                unique_remove_flags[1:],
-            )
-            if remove_adapter
-        ),
+        extra_source_adapter_ops=tuple(unique_adapter_ops[1:]),
         source_name=source_names[0],
         output_name=input_name,
         remove_adapter=unique_remove_flags[0],
@@ -2434,16 +2426,31 @@ def _optimize_transpose_pre_concat_nhwc_family(
                 old_concat_tensor.quantization
             )
 
+        public_names = {
+            *[str(name) for name in model_ir.inputs],
+            *[str(name) for name in model_ir.outputs],
+        }
+
+        def _adapter_is_now_removable(adapter_op: OperatorIR) -> bool:
+            output_names = [str(name) for name in adapter_op.outputs]
+            return bool(output_names) and all(
+                output_name not in public_names
+                and not graph_index.consumer_indices(output_name)
+                for output_name in output_names
+            )
+
         remove_ops = [
             *[
                 plan.adapter_op
                 for plan in candidate.input_plans
                 if plan.remove_adapter
+                or _adapter_is_now_removable(plan.adapter_op)
             ],
             *[
                 adapter_op
                 for plan in candidate.input_plans
-                for adapter_op in plan.extra_removable_adapter_ops
+                for adapter_op in plan.extra_source_adapter_ops
+                if _adapter_is_now_removable(adapter_op)
             ],
             *[
                 adapter_op
