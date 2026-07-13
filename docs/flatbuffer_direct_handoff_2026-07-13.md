@@ -193,6 +193,17 @@ channel-first metadata, and exactly one index refresh without importing Torch.
 The six-file focused selection passes 98 tests; no model conversion or
 inference was run.
 
+`prepare_model_ir_for_native_pytorch()` now lives in the Torch-free
+normalization module as well. Static and counter-bounded WHILE rewrites,
+recurrent canonicalization, channel-first normalization, public bridge
+insertion, and boundary alignment retain their established order. Bridge and
+alignment steps share one preparation-boundary graph index; recursive subgraph
+op-type collection and the layout-agnostic fallback policy moved with the
+orchestration. Direct preparation tests verify two total index refreshes,
+dynamic boundary signatures, public layout metadata, source immutability, and
+subgraph op discovery. The normalization/architecture selection passes 59
+tests; no model conversion or inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

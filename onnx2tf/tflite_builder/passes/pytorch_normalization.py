@@ -19,10 +19,15 @@ from onnx2tf.tflite_builder.passes.pytorch_compat import (
     _remove_redundant_layout_transposes,
     _rewrite_atan2_ones_like_to_atan,
 )
+from onnx2tf.tflite_builder.passes.pytorch_control_flow import (
+    _rewrite_counter_bounded_while_ops_for_native_export,
+    _rewrite_static_while_ops_for_native_export,
+)
 from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _align_public_boundary_shapes_to_onnx_contract,
     _apply_feature_last_sequence_layouts,
     _collect_feature_last_sequence_tensor_names,
+    _ensure_public_boundary_layout_bridges,
     _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island,
     _propagate_pytorch_friendly_layouts,
     _restore_non_preserved_channel_first_layouts,
@@ -34,6 +39,7 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
 )
 from onnx2tf.tflite_builder.passes.pytorch_recurrent import (
     _repair_orphan_recurrent_step_tensors,
+    _rewrite_recurrent_ops_for_native_export,
 )
 from onnx2tf.tflite_builder.pytorch_export_errors import (
     ModelIRPyTorchExportError,
@@ -253,3 +259,104 @@ def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
         graph_index=layout_graph_index,
     )
     return normalized
+
+
+def _collect_model_op_types(model_ir: ModelIR) -> set[str]:
+    op_types = {str(op.op_type) for op in model_ir.operators}
+    for subgraph in model_ir.subgraphs:
+        op_types.update(_collect_model_op_types(subgraph))
+    return op_types
+
+
+def _is_layout_agnostic_native_model_ir(model_ir: ModelIR) -> bool:
+    channel_sensitive_ops = {
+        "AVERAGE_POOL_2D",
+        "CONV_2D",
+        "CONV_3D",
+        "CONV_3D_TRANSPOSE",
+        "DEPTHWISE_CONV_2D",
+        "MAX_POOL_2D",
+        "NON_MAX_SUPPRESSION_V4",
+        "RESIZE_BILINEAR",
+        "RESIZE_NEAREST_NEIGHBOR",
+        "TRANSPOSE_CONV",
+    }
+    return len(_collect_model_op_types(model_ir) & channel_sensitive_ops) == 0
+
+
+def prepare_model_ir_for_native_pytorch(model_ir: ModelIR) -> ModelIR:
+    original_boundary_shape_map = model_ir.metadata.get(
+        "onnx_boundary_shape_signature_map",
+        {},
+    )
+    if not isinstance(original_boundary_shape_map, dict):
+        original_boundary_shape_map = {}
+    original_public_layout_map = model_ir.metadata.get(
+        "onnx_public_layout_map",
+        {},
+    )
+    if not isinstance(original_public_layout_map, dict):
+        original_public_layout_map = {}
+    original_public_boundary_shapes: Dict[str, List[int]] = {}
+    original_public_boundary_layouts: Dict[str, str] = {}
+    for tensor_name in list(model_ir.inputs) + list(model_ir.outputs):
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            continue
+        boundary_shape = original_boundary_shape_map.get(
+            str(tensor_name),
+            tensor.shape_signature or tensor.shape,
+        )
+        original_public_boundary_shapes[str(tensor_name)] = [
+            int(value) for value in list(boundary_shape)
+        ]
+        explicit_public_layout = original_public_layout_map.get(
+            str(tensor_name),
+            None,
+        )
+        original_public_boundary_layouts[str(tensor_name)] = (
+            normalize_logical_layout(
+                explicit_public_layout
+                if explicit_public_layout is not None
+                else tensor.logical_layout
+            )
+        )
+    rewritten_model_ir = _rewrite_recurrent_ops_for_native_export(
+        _rewrite_counter_bounded_while_ops_for_native_export(
+            _rewrite_static_while_ops_for_native_export(model_ir)
+        )
+    )
+    try:
+        prepared = normalize_model_ir_for_pytorch_channel_first(
+            rewritten_model_ir
+        )
+    except ModelIRPyTorchExportError:
+        if not _is_layout_agnostic_native_model_ir(rewritten_model_ir):
+            raise
+        prepared = copy.deepcopy(rewritten_model_ir)
+        infer_model_ir_logical_layouts(prepared)
+        prepared.metadata["assume_channel_last_layout_tensor_names"] = []
+    prepared_public_layout_map = {
+        str(name): str(layout)
+        for name, layout in original_public_boundary_layouts.items()
+        if layout != LOGICAL_LAYOUT_UNKNOWN
+    }
+    prepared.metadata["onnx_public_layout_map"] = prepared_public_layout_map
+    prepared.metadata["onnx_boundary_shape_signature_map"] = {
+        str(name): [int(value) for value in list(shape)]
+        for name, shape in original_public_boundary_shapes.items()
+        if str(name) in prepared_public_layout_map
+        or str(name) in original_public_layout_map
+    }
+    boundary_graph_index = ModelIRGraphIndex(prepared)
+    _ensure_public_boundary_layout_bridges(
+        model_ir=prepared,
+        desired_public_shape_map=original_public_boundary_shapes,
+        desired_public_layout_map=original_public_boundary_layouts,
+        graph_index=boundary_graph_index,
+    )
+    _align_public_boundary_shapes_to_onnx_contract(
+        prepared,
+        graph_index=boundary_graph_index,
+    )
+    return prepared

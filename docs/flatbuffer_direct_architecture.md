@@ -1790,6 +1790,15 @@ inspection uses the same index rather than a raw operator scan. The exporter
 imports this single orchestration entry point, making the full normalizer
 directly testable without importing Torch.
 
+Native PyTorch preparation is owned by the same module. Static-WHILE,
+counter-bounded-WHILE, and recurrent compatibility rewrites execute in their
+established order before the channel-first normalizer. A second preparation-
+boundary graph index is then shared by public bridge insertion and final public
+shape/layout alignment. Recursive root/subgraph op-type collection and the
+layout-agnostic fallback capability policy are also centralized here; the
+exporter retains compatibility imports for the public internal entry points and
+artifact generation only.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

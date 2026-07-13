@@ -141,22 +141,18 @@ from onnx2tf.tflite_builder.passes.pytorch_compat import (
     _is_reshape_only_residual_layout_bridge_transpose,
     _restore_same_average_pool_exclude_pad_correction_for_native_runtime,
 )
-from onnx2tf.tflite_builder.passes.pytorch_control_flow import (
-    _rewrite_counter_bounded_while_ops_for_native_export,
-    _rewrite_static_while_ops_for_native_export,
-)
 from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
-    _align_public_boundary_shapes_to_onnx_contract,
     _collect_feature_last_sequence_tensor_names,
     _ensure_public_boundary_layout_bridges,
 )
 from onnx2tf.tflite_builder.passes.pytorch_normalization import (
+    _collect_model_op_types,
     normalize_model_ir_for_pytorch_channel_first,
+    prepare_model_ir_for_native_pytorch,
 )
 from onnx2tf.tflite_builder.passes.pytorch_recurrent import (
     _can_direct_codegen_sequence_lstm_op,
     _can_direct_codegen_sequence_rnn_op,
-    _rewrite_recurrent_ops_for_native_export,
     _sequence_lstm_index_spec,
     _sequence_lstm_input_name,
 )
@@ -10097,86 +10093,6 @@ def get_supported_pytorch_kernel_op_types() -> Set[str]:
 
 
 
-
-
-def _is_layout_agnostic_native_model_ir(model_ir: ModelIR) -> bool:
-    channel_sensitive_ops = {
-        "CONV_2D",
-        "DEPTHWISE_CONV_2D",
-        "TRANSPOSE_CONV",
-        "CONV_3D",
-        "CONV_3D_TRANSPOSE",
-        "MAX_POOL_2D",
-        "AVERAGE_POOL_2D",
-        "RESIZE_BILINEAR",
-        "RESIZE_NEAREST_NEIGHBOR",
-        "NON_MAX_SUPPRESSION_V4",
-    }
-    op_types = _collect_model_op_types(model_ir)
-    return len(op_types & channel_sensitive_ops) == 0
-
-
-def prepare_model_ir_for_native_pytorch(model_ir: ModelIR) -> ModelIR:
-    original_boundary_shape_map = model_ir.metadata.get("onnx_boundary_shape_signature_map", {})
-    if not isinstance(original_boundary_shape_map, dict):
-        original_boundary_shape_map = {}
-    original_public_layout_map = model_ir.metadata.get("onnx_public_layout_map", {})
-    if not isinstance(original_public_layout_map, dict):
-        original_public_layout_map = {}
-    original_public_boundary_shapes: Dict[str, List[int]] = {}
-    original_public_boundary_layouts: Dict[str, str] = {}
-    for tensor_name in list(model_ir.inputs) + list(model_ir.outputs):
-        tensor = model_ir.tensors.get(str(tensor_name), None)
-        if tensor is None:
-            continue
-        boundary_shape = original_boundary_shape_map.get(str(tensor_name), tensor.shape_signature or tensor.shape)
-        original_public_boundary_shapes[str(tensor_name)] = [int(v) for v in list(boundary_shape)]
-        explicit_public_layout = original_public_layout_map.get(str(tensor_name), None)
-        resolved_public_layout = normalize_logical_layout(
-            explicit_public_layout if explicit_public_layout is not None else tensor.logical_layout
-        )
-        original_public_boundary_layouts[str(tensor_name)] = resolved_public_layout
-    rewritten_model_ir = _rewrite_recurrent_ops_for_native_export(
-        _rewrite_counter_bounded_while_ops_for_native_export(
-            _rewrite_static_while_ops_for_native_export(model_ir)
-        )
-    )
-    try:
-        prepared = normalize_model_ir_for_pytorch_channel_first(rewritten_model_ir)
-    except ModelIRPyTorchExportError:
-        if not _is_layout_agnostic_native_model_ir(rewritten_model_ir):
-            raise
-        prepared = copy.deepcopy(rewritten_model_ir)
-        infer_model_ir_logical_layouts(prepared)
-        prepared.metadata["assume_channel_last_layout_tensor_names"] = []
-    prepared_public_layout_map = {
-        str(name): str(layout)
-        for name, layout in original_public_boundary_layouts.items()
-        if layout != LOGICAL_LAYOUT_UNKNOWN
-    }
-    prepared.metadata["onnx_public_layout_map"] = prepared_public_layout_map
-    prepared.metadata["onnx_boundary_shape_signature_map"] = {
-        str(name): [int(v) for v in list(shape)]
-        for name, shape in original_public_boundary_shapes.items()
-        if str(name) in prepared_public_layout_map
-        or str(name) in original_public_layout_map
-    }
-    _ensure_public_boundary_layout_bridges(
-        model_ir=prepared,
-        desired_public_shape_map=original_public_boundary_shapes,
-        desired_public_layout_map=original_public_boundary_layouts,
-    )
-    _align_public_boundary_shapes_to_onnx_contract(prepared)
-    return prepared
-
-
-def _collect_model_op_types(model_ir: ModelIR) -> Set[str]:
-    ops: Set[str] = set()
-    for op in model_ir.operators:
-        ops.add(str(op.op_type))
-    for subgraph in model_ir.subgraphs:
-        ops.update(_collect_model_op_types(subgraph))
-    return ops
 
 
 def _ensure_supported_ops(model_ir: ModelIR) -> None:

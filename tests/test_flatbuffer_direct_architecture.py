@@ -304,6 +304,7 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
     recurrent_source = recurrent_path.read_text(encoding="utf-8")
     recurrent_tree = ast.parse(recurrent_source)
     normalization_source = normalization_path.read_text(encoding="utf-8")
+    normalization_tree = ast.parse(normalization_source)
     assert "def _remove_redundant_layout_transposes(" not in exporter_source
     assert "_remove_redundant_layout_transposes," not in exporter_source
     assert "_remove_redundant_layout_transposes," in normalization_source
@@ -322,7 +323,7 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
     assert 'operator_indices("TRANSPOSE")' in source
     operator_stream_assignments = [
         node
-        for tree in (exporter_tree, control_flow_tree)
+        for tree in (exporter_tree, control_flow_tree, normalization_tree)
         for node in ast.walk(tree)
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
         for target in (
@@ -335,10 +336,13 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
     assert operator_stream_assignments == []
     assert "def _rewrite_static_while_ops_for_native_export(" not in exporter_source
     assert "def _rewrite_counter_bounded_while_ops_for_native_export(" not in exporter_source
-    assert "_rewrite_static_while_ops_for_native_export," in exporter_source
-    assert "_rewrite_counter_bounded_while_ops_for_native_export," in exporter_source
+    assert "_rewrite_static_while_ops_for_native_export," not in exporter_source
+    assert "_rewrite_counter_bounded_while_ops_for_native_export," not in exporter_source
+    assert "_rewrite_static_while_ops_for_native_export," in normalization_source
+    assert "_rewrite_counter_bounded_while_ops_for_native_export," in normalization_source
     assert "def _rewrite_recurrent_ops_for_native_export(" not in exporter_source
-    assert "_rewrite_recurrent_ops_for_native_export," in exporter_source
+    assert "_rewrite_recurrent_ops_for_native_export," not in exporter_source
+    assert "_rewrite_recurrent_ops_for_native_export," in normalization_source
     assert "def _clone_model_ir_without_root_operators(" in control_flow_source
     assert "for op_index, source_op in enumerate(model_ir.operators):" in control_flow_source
     assert "ModelIRGraphIndex" in control_flow_source
@@ -474,7 +478,8 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
         not in exporter_source
     )
     assert "def _align_public_boundary_shapes_to_onnx_contract(" not in exporter_source
-    assert "_align_public_boundary_shapes_to_onnx_contract," in exporter_source
+    assert "_align_public_boundary_shapes_to_onnx_contract," not in exporter_source
+    assert "_align_public_boundary_shapes_to_onnx_contract," in normalization_source
     assert "def _align_public_boundary_shapes_to_onnx_contract(" in pass_source
     assert "def _has_recurrent_sequence_context(" not in exporter_source
     assert "def _has_recurrent_sequence_context(" in pass_source
@@ -518,6 +523,12 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
         for node in normalization_tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+    assert {
+        "_collect_model_op_types",
+        "_is_layout_agnostic_native_model_ir",
+        "normalize_model_ir_for_pytorch_channel_first",
+        "prepare_model_ir_for_native_pytorch",
+    } <= set(normalization_functions)
     assert focused_layout_owner_functions | {
         "_is_pytorch_channel_first_safe_rank4_island_op",
         "_is_rank4_channel_last_dynamic_tensor",
@@ -542,6 +553,18 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "_build_model_ir_producer_consumer_index(normalized)" not in normalizer_source
     assert normalizer_source.count("graph_index=layout_graph_index") >= 7
     assert "consumers=layout_graph_index.consumers" in normalizer_source
+    prepare_source = ast.get_source_segment(
+        normalization_source,
+        normalization_functions["prepare_model_ir_for_native_pytorch"],
+    )
+    assert prepare_source is not None
+    assert "def prepare_model_ir_for_native_pytorch(" not in exporter_source
+    assert "prepare_model_ir_for_native_pytorch," in exporter_source
+    assert "_rewrite_static_while_ops_for_native_export(model_ir)" in prepare_source
+    assert "_rewrite_counter_bounded_while_ops_for_native_export(" in prepare_source
+    assert "_rewrite_recurrent_ops_for_native_export(" in prepare_source
+    assert "boundary_graph_index = ModelIRGraphIndex(prepared)" in prepare_source
+    assert "graph_index=boundary_graph_index" in prepare_source
     collector_source = ast.get_source_segment(
         pass_source,
         pass_functions["_collect_feature_last_sequence_tensor_names"],
