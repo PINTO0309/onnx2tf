@@ -247,6 +247,14 @@ fixtures. The exporter keeps only the imported emitter name expected by the
 stored generated pipeline. Emitter and architecture validation passes 68 tests;
 syntax, Ruff, and diff checks pass. No model conversion or inference was run.
 
+Native Concat emission and its channel-last axis-sensitive consumer guard now
+live in the Torch-free emitter module. GatherElements coordinate construction,
+channel-first/fused emission, materialized NHWC bridges, alias omission, and
+exact-shape `_apply_concat` fallback remain in one implementation. Direct tests
+fix the NHWC bridge, Gather channel-axis safety fallback, and exact-shape
+runtime reshape behavior. Emitter and architecture validation passes 71 tests;
+syntax, Ruff, and diff checks pass. No model conversion or inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

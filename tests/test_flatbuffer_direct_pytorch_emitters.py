@@ -3,6 +3,7 @@ from __future__ import annotations
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_emitters import (
     _emit_native_binary_op_for_codegen_impl,
+    _emit_native_concat_op_for_codegen,
     _emit_native_shape_transform_misc_op_for_codegen,
     _emit_native_transpose_op_for_codegen,
     _emit_native_unary_op_for_codegen,
@@ -614,3 +615,142 @@ def test_transpose_emitter_preserves_alias_only_and_runtime_paths() -> None:
     ]
     assert aliases == {}
     assert runtime_imports == {"_shape_list", "_torch_permute"}
+
+
+def _emit_concat(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    aliases: dict[str, str],
+    runtime_imports: set[str],
+    forward_lines: list[str],
+    channel_first_spec: tuple[int, list[int], list[int]] | None,
+    stored_shape: list[int] | None,
+    exact_shape: list[int] | None = None,
+    target_shape: list[int] | None = None,
+) -> bool:
+    return _emit_native_concat_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_index=5,
+        outputs=["y"],
+        output_vars=["y_var"],
+        output_target_shape="[1, 2, 4, 6]",
+        channel_first_tensor_expr_aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"tensor_{name}",
+        derived_local_var_name_fn=lambda _name, _prefix: "y_var_cf_0",
+        activation_lines_fn=(
+            lambda name, fused: []
+            if fused == "NONE"
+            else [f"activate({name}, {fused})"]
+        ),
+        resolve_concat_axis_for_channel_first_fn=(
+            lambda _op: channel_first_spec
+        ),
+        channel_first_concat_input_expr_fn=lambda name: f"cf_{name}",
+        tensor_shape_list_fn=lambda _name: stored_shape,
+        can_omit_materialized_channel_last_alias_fn=lambda _name: False,
+        target_shape_literal_fn=lambda _name: "[1, 2, 4, 6]",
+        tensor_exact_static_shape_list_fn=lambda _name: exact_shape,
+        target_shape_values_fn=lambda _name: target_shape,
+    )
+
+
+def _concat_model_ir(*, output_layout: str) -> tuple[ModelIR, OperatorIR]:
+    model_ir = ModelIR(name="concat_emitter")
+    model_ir.tensors = {
+        "lhs": TensorIR("lhs", "FLOAT32", [1, 2, 4, 3]),
+        "rhs": TensorIR("rhs", "FLOAT32", [1, 2, 4, 3]),
+        "y": TensorIR(
+            "y",
+            "FLOAT32",
+            [1, 2, 4, 6],
+            logical_layout=output_layout,
+        ),
+    }
+    op = OperatorIR("CONCATENATION", ["lhs", "rhs"], ["y"], {"axis": 3})
+    model_ir.operators = [op]
+    return model_ir, op
+
+
+def test_concat_emitter_materializes_channel_first_output_bridge() -> None:
+    model_ir, op = _concat_model_ir(output_layout="NHWC")
+    aliases: dict[str, str] = {}
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_concat(
+        model_ir=model_ir,
+        op=op,
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        channel_first_spec=(1, [1, 6, 2, 4], [0, 2, 3, 1]),
+        stored_shape=[1, 2, 4, 6],
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var_cf_0 = torch.cat([cf_lhs, cf_rhs], dim=1)",
+        "y_var = _align_tensor_to_target_shape("
+        "y_var_cf_0.permute(0, 2, 3, 1).contiguous(), [1, 2, 4, 6])",
+    ]
+    assert aliases == {"y": "y_var_cf_0"}
+    assert runtime_imports == {"_align_tensor_to_target_shape"}
+
+
+def test_concat_emitter_keeps_channel_axis_sensitive_consumer_layout() -> None:
+    model_ir, op = _concat_model_ir(output_layout="NHWC")
+    model_ir.operators.append(
+        OperatorIR("GATHER", ["y", "indices"], ["gathered"], {"axis": 3})
+    )
+    aliases = {"y": "stale_alias"}
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_concat(
+        model_ir=model_ir,
+        op=op,
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        channel_first_spec=(1, [1, 6, 2, 4], [0, 2, 3, 1]),
+        stored_shape=[1, 2, 4, 6],
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var = _apply_concat([tensor_lhs, tensor_rhs], axis=3, "
+        "target_shape=[1, 2, 4, 6], fused='NONE')"
+    ]
+    assert aliases == {}
+    assert runtime_imports == {"_apply_concat"}
+
+
+def test_concat_emitter_preserves_exact_shape_fallback() -> None:
+    model_ir, op = _concat_model_ir(output_layout="UNKNOWN")
+    aliases = {"y": "stale_alias"}
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_concat(
+        model_ir=model_ir,
+        op=op,
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        channel_first_spec=None,
+        stored_shape=None,
+        exact_shape=[1, 48],
+        target_shape=[1, 2, 4, 6],
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var = torch.reshape(_apply_concat([tensor_lhs, tensor_rhs], "
+        "axis=3, target_shape=[1, 2, 4, 6], fused='NONE'), [1, 48])"
+    ]
+    assert aliases == {}
+    assert runtime_imports == {"_apply_concat"}

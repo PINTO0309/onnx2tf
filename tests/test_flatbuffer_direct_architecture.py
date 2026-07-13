@@ -3394,6 +3394,11 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
     assert "_emit_native_unary_op_for_codegen" in emitter_functions
     assert "_emit_native_shape_transform_misc_op_for_codegen" in emitter_functions
     assert "_emit_native_binary_op_for_codegen_impl" in emitter_functions
+    assert "_emit_native_concat_op_for_codegen" in emitter_functions
+    assert (
+        "_concat_channel_first_codegen_breaks_channel_last_consumers_for_codegen"
+        in emitter_functions
+    )
     assert "_emit_native_transpose_op_for_codegen" in emitter_functions
     assert "_DIRECT_CODEGEN_UNARY_EXPRESSIONS:" in emitter_source
     assert "def _emit_native_unary_op_for_codegen(" not in exporter_source
@@ -3413,6 +3418,12 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
     assert "forward_lines.append(" not in binary_wrapper_source
     assert "def _emit_native_transpose_op_for_codegen(" not in exporter_source
     assert "_emit_native_transpose_op_for_codegen," in exporter_source
+    assert "def _emit_native_concat_op_for_codegen(" not in exporter_source
+    assert "_emit_native_concat_op_for_codegen," in exporter_source
+    assert (
+        "def _concat_channel_first_codegen_breaks_channel_last_consumers_for_codegen("
+        not in exporter_source
+    )
     assert (
         "def _emit_native_shape_transform_misc_op_for_codegen("
         not in exporter_source

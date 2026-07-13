@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, Sequence, Set
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from onnx2tf.tflite_builder.ir import (
     LOGICAL_LAYOUT_UNKNOWN,
     ModelIR,
     OperatorIR,
+    channel_last_logical_layout,
     channel_first_logical_layout,
     is_channel_first_logical_layout,
     is_channel_last_logical_layout,
@@ -21,6 +22,7 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _is_inconsistent_standard_layout_transpose,
     _perm_cf_to_cl,
     _read_transpose_perm,
+    _tensor_name_suggests_channel_last_layout_for_codegen,
 )
 from onnx2tf.tflite_builder.passes.pytorch_compat import (
     _is_reshape_only_residual_layout_bridge_transpose,
@@ -698,4 +700,274 @@ def _emit_native_transpose_op_for_codegen(
         f"{output_vars[0]} = _torch_permute("
         f"{tensor_expr_fn(str(op.inputs[0]))}, {perm_expr})"
     )
+    return True
+
+
+def _concat_channel_first_codegen_breaks_channel_last_consumers_for_codegen(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+) -> bool:
+    if str(op.op_type) != "CONCATENATION" or len(op.outputs) != 1:
+        return False
+    output_name = str(op.outputs[0])
+    output_tensor = model_ir.tensors.get(output_name, None)
+    if output_tensor is None:
+        return False
+    output_shape = [int(value) for value in list(output_tensor.shape)]
+    output_rank = len(output_shape)
+    if output_rank not in {3, 4, 5}:
+        return False
+    output_layout = normalize_logical_layout(output_tensor.logical_layout)
+    output_looks_channel_last = is_channel_last_logical_layout(output_layout) or (
+        output_layout == LOGICAL_LAYOUT_UNKNOWN
+        and _tensor_name_suggests_channel_last_layout_for_codegen(output_name)
+    )
+    if not output_looks_channel_last:
+        return False
+    channel_axis = output_rank - 1
+    for consumer_op in model_ir.operators:
+        consumer_type = str(consumer_op.op_type)
+        if consumer_type == "GATHER":
+            if (
+                len(consumer_op.inputs) < 2
+                or str(consumer_op.inputs[0]) != output_name
+            ):
+                continue
+            axis = int(consumer_op.options.get("axis", 0))
+            if axis < 0:
+                axis += output_rank
+            if axis == channel_axis:
+                return True
+            continue
+        if consumer_type == "SPLIT":
+            if (
+                len(consumer_op.inputs) == 0
+                or str(consumer_op.inputs[-1]) != output_name
+            ):
+                continue
+            axis = int(consumer_op.options.get("axis", 0))
+            if len(consumer_op.inputs) >= 2:
+                axis_values = _constant_int_list(
+                    model_ir.tensors.get(str(consumer_op.inputs[0]), None)
+                )
+                if axis_values is not None and len(axis_values) == 1:
+                    axis = int(axis_values[0])
+            if axis < 0:
+                axis += output_rank
+            if axis == channel_axis:
+                return True
+            continue
+        if consumer_type == "UNPACK":
+            if (
+                len(consumer_op.inputs) == 0
+                or str(consumer_op.inputs[0]) != output_name
+            ):
+                continue
+            axis = int(consumer_op.options.get("axis", 0))
+            if axis < 0:
+                axis += output_rank
+            if axis == channel_axis:
+                return True
+    return False
+
+
+def _emit_native_concat_op_for_codegen(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    op_index: int,
+    outputs: Sequence[str],
+    output_vars: Sequence[str],
+    output_target_shape: str,
+    channel_first_tensor_expr_aliases: Dict[str, str],
+    runtime_imports: Set[str],
+    forward_lines: List[str],
+    tensor_expr_fn: Callable[[str], str],
+    derived_local_var_name_fn: Callable[[str, str], str],
+    activation_lines_fn: Callable[[str, str], List[str]],
+    resolve_concat_axis_for_channel_first_fn: Callable[
+        [OperatorIR], Optional[Tuple[int, List[int], List[int]]]
+    ],
+    channel_first_concat_input_expr_fn: Callable[[str], Optional[str]],
+    tensor_shape_list_fn: Callable[[str], Optional[List[int]]],
+    can_omit_materialized_channel_last_alias_fn: Callable[[str], bool],
+    target_shape_literal_fn: Callable[[str], str],
+    tensor_exact_static_shape_list_fn: Callable[[str], Optional[List[int]]],
+    target_shape_values_fn: Callable[[str], Optional[List[int]]],
+) -> bool:
+    if str(op.op_type) != "CONCATENATION":
+        return False
+    axis = int(op.options.get("axis", 0))
+    gather_elements_axis_coord_input_index = next(
+        (
+            index
+            for index, name in enumerate(op.inputs)
+            if str(name).endswith("_gather_elements_axis_coord")
+        ),
+        None,
+    )
+    gather_elements_coords_concat = bool(
+        str(outputs[0]).endswith("_gather_elements_coords")
+        and gather_elements_axis_coord_input_index is not None
+        and axis == len(op.inputs)
+    )
+    if gather_elements_coords_concat:
+        assert gather_elements_axis_coord_input_index is not None
+        axis_coord_expr = tensor_expr_fn(
+            str(op.inputs[gather_elements_axis_coord_input_index])
+        )
+        coord_shape_var = f"_gather_elements_coords_shape_{op_index}"
+        coord_vars: List[str] = []
+        forward_lines.append(
+            f"{coord_shape_var} = "
+            f"[int(v) for v in list({axis_coord_expr}.shape[:-1])]"
+        )
+        for dim_index in range(len(op.inputs)):
+            if dim_index == gather_elements_axis_coord_input_index:
+                coord_vars.append(axis_coord_expr)
+                continue
+            coord_var = f"_gather_elements_coord_{op_index}_{dim_index}"
+            view_shape_var = (
+                f"_gather_elements_coord_view_shape_{op_index}_{dim_index}"
+            )
+            forward_lines.append(
+                f"{view_shape_var} = [1] * {len(op.inputs)}"
+            )
+            forward_lines.append(
+                f"{view_shape_var}[{dim_index}] = "
+                f"{coord_shape_var}[{dim_index}]"
+            )
+            forward_lines.append(
+                f"{coord_var} = torch.arange("
+                f"{coord_shape_var}[{dim_index}], "
+                f"dtype={axis_coord_expr}.dtype, "
+                f"device={axis_coord_expr}.device)"
+                f".reshape(*{view_shape_var}, 1)"
+                f".expand(*{coord_shape_var}, 1)"
+            )
+            coord_vars.append(coord_var)
+        forward_lines.append(
+            f"{output_vars[0]} = torch.cat([{', '.join(coord_vars)}], "
+            f"dim={len(op.inputs)})"
+        )
+        return True
+    concat_cf_spec = resolve_concat_axis_for_channel_first_fn(op)
+    concat_cf_inputs = [
+        channel_first_concat_input_expr_fn(str(name)) for name in op.inputs
+    ]
+    output_tensor = model_ir.tensors.get(outputs[0], None)
+    output_layout = (
+        normalize_logical_layout(output_tensor.logical_layout)
+        if output_tensor is not None
+        else LOGICAL_LAYOUT_UNKNOWN
+    )
+    output_rank = (
+        len(list(output_tensor.shape)) if output_tensor is not None else 0
+    )
+    has_channel_last_axis_sensitive_consumer = (
+        _concat_channel_first_codegen_breaks_channel_last_consumers_for_codegen(
+            model_ir=model_ir,
+            op=op,
+        )
+    )
+    if (
+        concat_cf_spec is not None
+        and output_rank in {4, 5}
+        and output_layout
+        in {
+            LOGICAL_LAYOUT_UNKNOWN,
+            channel_first_logical_layout(output_rank),
+            channel_last_logical_layout(output_rank),
+        }
+        and not has_channel_last_axis_sensitive_consumer
+        and all(input_expr is not None for input_expr in concat_cf_inputs)
+    ):
+        concat_cf_axis, concat_cf_output_shape, concat_perm_from_cf = (
+            concat_cf_spec
+        )
+        fused = str(op.options.get("fusedActivationFunction", "NONE"))
+        stored_output_shape = tensor_shape_list_fn(outputs[0]) or []
+        raw_matches_stored_shape = [
+            int(value) for value in list(concat_cf_output_shape)
+        ] == [int(value) for value in list(stored_output_shape)]
+        needs_materialized_output_bridge = (
+            len(concat_perm_from_cf) == output_rank
+            and [int(value) for value in list(concat_perm_from_cf)]
+            != [int(value) for value in list(range(output_rank))]
+            and not raw_matches_stored_shape
+        )
+        if (
+            is_channel_first_logical_layout(output_layout)
+            and raw_matches_stored_shape
+        ):
+            raw_output_var = output_vars[0]
+            channel_first_tensor_expr_aliases.pop(str(outputs[0]), None)
+        elif (
+            output_layout == LOGICAL_LAYOUT_UNKNOWN
+            and not needs_materialized_output_bridge
+        ):
+            raw_output_var = output_vars[0]
+            channel_first_tensor_expr_aliases[str(outputs[0])] = raw_output_var
+        else:
+            raw_output_var = derived_local_var_name_fn(
+                f"{output_vars[0]}_cf", "t"
+            )
+            channel_first_tensor_expr_aliases[str(outputs[0])] = raw_output_var
+        forward_lines.append(
+            f"{raw_output_var} = torch.cat("
+            f"[{', '.join(str(value) for value in concat_cf_inputs)}], "
+            f"dim={int(concat_cf_axis)})"
+        )
+        forward_lines.extend(activation_lines_fn(raw_output_var, fused))
+        if raw_output_var != output_vars[0]:
+            if can_omit_materialized_channel_last_alias_fn(outputs[0]):
+                return True
+            if needs_materialized_output_bridge:
+                runtime_imports.add("_align_tensor_to_target_shape")
+                forward_lines.append(
+                    f"{output_vars[0]} = _align_tensor_to_target_shape("
+                    f"{raw_output_var}.permute("
+                    f"{', '.join(str(int(value)) for value in concat_perm_from_cf)}"
+                    f").contiguous(), {target_shape_literal_fn(outputs[0])})"
+                )
+            else:
+                perm_to_output = logical_layout_permutation(
+                    source_layout=channel_first_logical_layout(output_rank),
+                    target_layout=output_layout,
+                )
+                if perm_to_output is None:
+                    raise ModelIRPyTorchExportError(
+                        "Native PyTorch-like model.py codegen could not derive "
+                        "a channel-first concat bridge. "
+                        f"output={outputs[0]} output_layout={output_layout} "
+                        f"rank={output_rank}"
+                    )
+                runtime_imports.add("_align_tensor_to_target_shape")
+                forward_lines.append(
+                    f"{output_vars[0]} = _align_tensor_to_target_shape("
+                    f"{raw_output_var}.permute("
+                    f"{', '.join(str(int(value)) for value in perm_to_output)}"
+                    f").contiguous(), {target_shape_literal_fn(outputs[0])})"
+                )
+        return True
+    inputs_expr = ", ".join(
+        tensor_expr_fn(str(name)) for name in op.inputs
+    )
+    runtime_imports.add("_apply_concat")
+    concat_expr = (
+        f"_apply_concat([{inputs_expr}], axis={axis}, "
+        f"target_shape={output_target_shape}, "
+        f"fused={str(op.options.get('fusedActivationFunction', 'NONE'))!r})"
+    )
+    exact_output_shape = tensor_exact_static_shape_list_fn(outputs[0])
+    target_output_shape = target_shape_values_fn(outputs[0])
+    if exact_output_shape is not None and (
+        target_output_shape is None
+        or [int(value) for value in list(exact_output_shape)]
+        != [int(value) for value in list(target_output_shape)]
+    ):
+        concat_expr = f"torch.reshape({concat_expr}, {repr(exact_output_shape)})"
+    channel_first_tensor_expr_aliases.pop(str(outputs[0]), None)
+    forward_lines.append(f"{output_vars[0]} = {concat_expr}")
     return True

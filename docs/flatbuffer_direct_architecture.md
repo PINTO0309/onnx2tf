@@ -1837,6 +1837,14 @@ channel-last aliases, constant/runtime permutations, and runtime-helper imports
 retain their established behavior. The exporter and stored generated pipeline
 continue to resolve the same imported function name.
 
+Concat source emission and its channel-last axis-sensitive consumer guard are
+co-located in `pytorch_emitters.py`. GatherElements coordinate construction,
+channel-first concatenation and fused activation, NHWC/NDHWC materialization,
+omitted aliases, and exact-shape runtime fallback therefore share one focused
+owner. Gather, Split, and Unpack channel-axis consumers continue to block unsafe
+channel-first emission. The generated pipeline again resolves the unchanged
+imported emitter name directly.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
