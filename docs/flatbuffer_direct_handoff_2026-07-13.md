@@ -3,24 +3,22 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `64702b2` (`index dual mul concat layout pass`)
-- Latest documentation checkpoint before this pause update: `0f81b7b`
-  (`document indexed dual mul concat checkpoint`)
-- Remote: before this pause update, `origin/fb-refactor3` is aligned with
-  local `HEAD` at `0f81b7b` (`0 0` divergence). After the documentation-only
-  pause commit is pushed, local and remote must again report `0 0`.
+- Latest implementation checkpoint: `019d3c6`
+  (`characterize axis3 const concat bridge layout`)
+- Previous pause checkpoint: `3df2903`
+  (`document flatbuffer direct pause checkpoint`)
+- Remote: after this resumed documentation checkpoint is pushed, local and
+  `origin/fb-refactor3` must again report `0 0` divergence.
 - Pull request: none; do not create one on resume
-- The axis-3 constant-Concat bridge unit described below has not been modified;
-  no partial implementation or test fixture exists in the working tree.
-- The final pause commit contains this documentation update only. After it is
-  pushed, the expected working-tree state is clean and local/remote divergence
-  is `0 0`.
+- The axis-3 constant-Concat bridge behavior is characterized in a dedicated
+  compact corpus. Its production matcher and single call remain unchanged;
+  mechanical extraction is the next coherent unit.
 
 ## Completed work
 
 This resumed interval completed thirteen adjacent semantic layout families
 using the staged characterization → mechanical extraction → indexed runner
-process.
+process and established characterization for the fourteenth family.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -140,6 +138,17 @@ process.
     - Added pure indexed topology/broadcast planning, differential
       copy-on-write and graph/layout mutation, corrected post metadata, stable
       runner `layout.dual_mul_concat_nhwc`, and six runner calls in `64702b2`.
+14. Axis-3 constant-Concat bridge characterization
+    - Moved the sole 132-line central success fixture to
+      `tests/test_flatbuffer_direct_axis3_const_concat_layout.py` in `019d3c6`.
+    - Added compact success variants for multiple inverse post branches and a
+      safely shared leading adapter, while retaining the legacy NCHW-consumer
+      bridge case.
+    - Added nine complete no-op boundaries for public Concat/post tensors,
+      invalid pre/post permutations, invalid axis, constant rank/shape/data,
+      and a constant shared outside the Concat.
+    - Preserved the central production matcher and its single call exactly;
+      extraction is intentionally deferred to the next checkpoint.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -155,9 +164,9 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is
-  `_optimize_transpose_axis3_const_concat_bridge_nhwc_chains`: establish a
-  dedicated compact success/rejection corpus before mechanical extraction.
+  The immediate next unit is mechanical extraction of
+  `_optimize_transpose_axis3_const_concat_bridge_nhwc_chains` with exact AST
+  equivalence and a single-owner architecture gate.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -178,12 +187,11 @@ The overall Goal is not complete. In particular:
 
 ## Branch and changed files
 
-Current branch is `fb-refactor3`. Before this pause-document update, the
-working tree is clean at `0f81b7b`, which already contains the documentation
-for implementation checkpoint `64702b2`. The next axis-3 constant-Concat
-bridge unit is unstarted. After the documentation-only pause commit is pushed,
-local/remote divergence must be `0 0`. The implementation checkpoints since
-the previous pause changed:
+Current branch is `fb-refactor3`. Before this resumed documentation update, the
+working tree is clean at characterization checkpoint `019d3c6`. The axis-3
+constant-Concat production matcher is unchanged and extraction has not begun.
+After the documentation commit is pushed, local/remote divergence must be
+`0 0`. The implementation checkpoints since the previous pause changed:
 
 - `docs/flatbuffer_direct_architecture.md`
 - `docs/flatbuffer_direct_handoff_2026-07-12.md`
@@ -202,11 +210,11 @@ the previous pause changed:
 - `tests/test_flatbuffer_direct_osnet_gate_layout.py`
 - `tests/test_flatbuffer_direct_pass_efficiency.py`
 - `tests/test_flatbuffer_direct_se_layout.py`
+- `tests/test_flatbuffer_direct_axis3_const_concat_layout.py`
 - `tests/test_tflite_builder_direct.py`
 
-The final handoff checkpoint updates only
-`docs/flatbuffer_direct_handoff_2026-07-13.md`. No implementation or test file
-remains uncommitted after it.
+The resumed handoff checkpoint updates documentation only. No implementation
+or test file remains uncommitted after it.
 
 ## Tests executed
 
@@ -346,6 +354,12 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 - Full direct selection after indexed dual-Mul/Concat migration:
   `1297 passed, 5 deselected, 2 warnings in 165.59s`.
+- Dedicated axis-3 constant-Concat bridge characterization:
+  `12 passed in 0.29s`.
+- Residual central selection after moving the fixture:
+  `756 deselected in 0.37s`; no duplicate central test remains.
+- Full direct selection after characterization:
+  `1308 passed, 5 deselected, 2 warnings in 166.51s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -377,13 +391,14 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Inspect `_optimize_transpose_axis3_const_concat_bridge_nhwc_chains`, all
-   production positions, and existing success coverage to freeze behavior.
-3. Add a compact dedicated corpus covering post fan-out, retained NCHW users,
-   public boundaries, permutation/axis, shape compatibility, and shared
-   constants.
-4. Run focused and full direct gates, then commit and push characterization
-   before mechanical extraction.
+2. Move the complete
+   `_optimize_transpose_axis3_const_concat_bridge_nhwc_chains` implementation
+   mechanically to a focused pass module while retaining a signature-compatible
+   lowerer wrapper and the single raw production call.
+3. Add an AST-equivalence check against `019d3c6` and a single-owner
+   architecture gate.
+4. Run focused and full direct gates, then commit and push extraction before
+   introducing indexed candidate planning or a transactional runner.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1124,3 +1139,32 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_dual_mul_concat_superpoint` artifacts were removed after metrics
 inspection.
+
+### Axis-3 constant-Concat bridge characterization checkpoint
+
+Checkpoint `019d3c6` moved the only 132-line embedded success fixture to
+`tests/test_flatbuffer_direct_axis3_const_concat_layout.py`. The compact base
+graph retains one NHWC-to-NCHW input adapter, a rank-four NCHW constant,
+axis-3 Concat, an inverse post adapter, and a legacy NCHW consumer. It proves
+constant NCHW-to-NHWC conversion, axis remapping to 2, post-adapter bypass,
+and insertion of exactly one NHWC-to-NCHW bridge for legacy consumers.
+
+Two additional success variants prove that every inverse post branch is
+bypassed and that a leading adapter shared with an unrelated consumer is
+retained. Nine parameterized rejection cases prove a complete ModelIR no-op
+for public Concat/post tensors, invalid pre/post permutations, invalid Concat
+axis, invalid constant rank or incompatible shape, missing constant data, and
+a constant shared outside the Concat. Snapshots compare every operator,
+option, tensor dtype, shape, signature, and constant value.
+
+Focused characterization passed 12 tests. The complete sequential direct
+selection passed:
+
+```text
+1308 passed, 5 deselected, 2 warnings in 166.51s
+```
+
+Production code and the single raw call remain unchanged. No dependency or
+TensorFlow path was added, and no inference process was run concurrently.
+Mechanical extraction with exact AST-equivalence and single-owner gates is the
+next separate checkpoint.

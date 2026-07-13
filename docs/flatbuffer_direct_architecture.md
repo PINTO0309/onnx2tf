@@ -216,6 +216,18 @@ reconciliation share one graph index and `LayoutState`.
 `layout.dual_mul_concat_nhwc`; all six production positions call the
 transactional runner and the compatibility wrapper remains available.
 
+The following axis-3 constant-Concat bridge rule now has a dedicated compact
+characterization corpus in
+`tests/test_flatbuffer_direct_axis3_const_concat_layout.py`. It fixes the
+exclusive input-adapter rewrite, conversion of NCHW constant inputs, axis-2
+NHWC Concat, bypass of every inverse post adapter, retention of a shared input
+adapter, and insertion of one NHWC-to-NCHW bridge for legacy consumers.
+Whole-ModelIR no-op cases cover public Concat and post-adapter tensors, invalid
+pre/post permutations, invalid Concat axis, invalid constant rank or
+incompatible shape, missing constant data, and a constant shared outside the
+Concat. The production matcher and its single call remain central and
+unchanged at this checkpoint; mechanical extraction is the next step.
+
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization
