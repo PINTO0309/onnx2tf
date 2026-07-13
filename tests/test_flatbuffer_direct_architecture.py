@@ -305,6 +305,37 @@ def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:
     assert "ModelIRGraphIndex" in pass_source
 
 
+def test_dead_operator_pruning_uses_batch_graph_index_compaction() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "graph_cleanup.py"
+    )
+    graph_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "core" / "graph.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    pass_source = pass_path.read_text(encoding="utf-8")
+    pass_tree = ast.parse(pass_source)
+    prune_node = next(
+        node
+        for node in pass_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "prune_dead_operators"
+    )
+    prune_source = ast.get_source_segment(pass_source, prune_node)
+    assert prune_source is not None
+    assert "prune_dead_operators as _prune_dead_operators_pass" in lowering_source
+    assert "return _prune_dead_operators_pass(" in lowering_source
+    assert "remove_operators(remove_indices)" in prune_source
+    assert "model_ir.operators =" not in prune_source
+    assert "def remove_operators(" in graph_path.read_text(encoding="utf-8")
+
+
 def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

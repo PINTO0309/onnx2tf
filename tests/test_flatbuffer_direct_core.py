@@ -245,6 +245,35 @@ def test_model_ir_index_incremental_insert_remove_shifts_references() -> None:
     assert index.consumers == refreshed.consumers
 
 
+def test_model_ir_index_batch_remove_compacts_references_once() -> None:
+    model_ir = ModelIR(name="batch_remove")
+    model_ir.inputs = ["x", "y"]
+    model_ir.outputs = ["out"]
+    model_ir.operators = [
+        OperatorIR("ADD", ["x", "y"], ["a"]),
+        OperatorIR("MUL", ["a", "y"], ["b"]),
+        OperatorIR("IDENTITY", ["x"], ["dead0"]),
+        OperatorIR("SUB", ["b", "y"], ["out"]),
+        OperatorIR("IDENTITY", ["y"], ["dead1"]),
+    ]
+    dead0 = model_ir.operators[2]
+    dead1 = model_ir.operators[4]
+    index = ModelIRGraphIndex(model_ir)
+
+    removed = index.remove_operators([4, 2, 4])
+
+    assert removed == [dead0, dead1]
+    assert [op.op_type for op in model_ir.operators] == ["ADD", "MUL", "SUB"]
+    assert index.operator_indices("IDENTITY") == []
+    assert index.operator_indices_for_types({"ADD", "MUL", "SUB"}) == [0, 1, 2]
+    refreshed = ModelIRGraphIndex(model_ir)
+    assert index.producers == refreshed.producers
+    assert index.consumers == refreshed.consumers
+    assert index.duplicate_producers == refreshed.duplicate_producers
+    assert index._operator_indices_by_id == refreshed._operator_indices_by_id
+    assert index._operator_indices_by_type == refreshed._operator_indices_by_type
+
+
 def test_model_ir_pass_state_prepared_data_is_session_local_and_rollback_safe() -> None:
     first = ModelIRPassState(_add_model_ir())
     second = ModelIRPassState(_add_model_ir())

@@ -481,6 +481,20 @@ flatten tensor, and final layout consistency. The main production call passes
 the session layout state; fallback relowering retains the self-indexing
 compatibility call. No model conversion or inference was run.
 
+Graph-wide dead-code pruning now uses a dedicated batch index operation.
+`ModelIRGraphIndex.remove_operators()` validates and deduplicates selected
+positions, detaches their edges against the original graph, filters operators
+once, and compacts every producer, consumer, duplicate-producer, object, and
+operator-type reference through one old-to-new mapping. It performs no index
+refresh and avoids the quadratic cost of repeated single removals.
+`passes/graph_cleanup.py` owns the unchanged reverse-liveness policy, including
+live variable-state mutation retention, and applies the dead set through that
+batch primitive. Tensor pruning receives the active layout state at all main
+lowering call sites. Focused core, cleanup, and architecture fixtures cover
+non-contiguous/deduplicated removal, refreshed-index equivalence, interleaved
+live/dead chains, one initial refresh, tensor pruning, and layout consistency.
+No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

@@ -248,6 +248,7 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_maximum_minimum_relu0to1_chains as _optimize_maximum_minimum_relu0to1_chains_pass,
     _optimize_duplicate_reshape_fanout as _optimize_duplicate_reshape_fanout_pass,
     _optimize_duplicate_transpose_fanout as _optimize_duplicate_transpose_fanout_pass,
+    prune_dead_operators as _prune_dead_operators_pass,
     run_clamp_cleanup,
     run_consecutive_reshape_cleanup,
     run_consecutive_mul_constants_cleanup,
@@ -375,51 +376,17 @@ def _append_model_outputs_preserving_order(
     model_ir.outputs = list(dict.fromkeys(merged_outputs))
 
 
-def _prune_dead_operators(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Remove operators that do not contribute to graph outputs.
-
-    This pass performs a reverse liveness walk from model outputs and keeps only
-    operators whose outputs are required by downstream live operators or graph outputs.
-    """
-    if len(model_ir.operators) == 0:
-        return {"removed_dead_operators": 0}
-
-    live_tensors = set(model_ir.outputs)
-    keep_flags = [False for _ in model_ir.operators]
-
-    for op_idx in range(len(model_ir.operators) - 1, -1, -1):
-        op = model_ir.operators[op_idx]
-        outputs = list(op.outputs)
-        outputs_live = any(out_name in live_tensors for out_name in outputs)
-
-        # Some kernels (e.g. UNIDIRECTIONAL_SEQUENCE_RNN) mutate variable input
-        # tensors in-place. Keep such ops when a live tensor depends on that
-        # variable state even if the op's explicit outputs are currently dead.
-        mutates_live_variable_input = False
-        if not outputs_live:
-            for input_name in op.inputs:
-                if input_name not in live_tensors:
-                    continue
-                input_tensor = model_ir.tensors.get(str(input_name), None)
-                if input_tensor is not None and bool(input_tensor.is_variable):
-                    mutates_live_variable_input = True
-                    break
-
-        if outputs_live or mutates_live_variable_input:
-            keep_flags[op_idx] = True
-            for input_name in op.inputs:
-                live_tensors.add(input_name)
-
-    removed = int(sum(1 for keep in keep_flags if not keep))
-    if removed == 0:
-        return {"removed_dead_operators": 0}
-
-    model_ir.operators = [
-        op for idx, op in enumerate(model_ir.operators) if keep_flags[idx]
-    ]
-    _prune_unused_tensors(model_ir)
-    return {"removed_dead_operators": removed}
+def _prune_dead_operators(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    return _prune_dead_operators_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _find_unbound_nonconstant_operator_inputs(model_ir: ModelIR) -> List[Dict[str, Any]]:
@@ -50891,7 +50858,7 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _prune_dead_operators(model_ir)
+    _prune_dead_operators(model_ir, layout_state=session.layout_state)
     _reconcile_static_tensor_shapes(model_ir)
     _advance_post_progress()
     if optimize_layout_transpose_chains:
@@ -51267,7 +51234,7 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _prune_dead_operators(model_ir)
+        _prune_dead_operators(model_ir, layout_state=session.layout_state)
         _reconcile_static_tensor_shapes(model_ir)
         _advance_post_progress()
     _set_post_progress_desc("terminal cleanup passes")
@@ -51550,7 +51517,7 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _prune_dead_operators(model_ir)
+    _prune_dead_operators(model_ir, layout_state=session.layout_state)
     _reconcile_static_tensor_shapes(model_ir)
     _resolve_dynamic_reshape_shapes(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
@@ -51573,7 +51540,7 @@ def lower_onnx_to_ir(
     # Final cleanup for residual transpose bridges introduced in late SiNet blocks.
     _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
     _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
-    _prune_dead_operators(model_ir)
+    _prune_dead_operators(model_ir, layout_state=session.layout_state)
     _reconcile_static_tensor_shapes(model_ir)
     # Dead-op pruning can unblock strict locality guards in this rewrite.
     _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
@@ -51667,7 +51634,7 @@ def lower_onnx_to_ir(
     _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
     _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
     _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
-    _prune_dead_operators(model_ir)
+    _prune_dead_operators(model_ir, layout_state=session.layout_state)
     _reconcile_static_tensor_shapes(model_ir)
     # Late transpose/layout rewrites can invalidate previously resolved
     # RESHAPE constants. Re-resolve once at absolute end.

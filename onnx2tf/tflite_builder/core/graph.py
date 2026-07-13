@@ -467,3 +467,65 @@ class ModelIRGraphIndex:
             for op_type, values in self._operator_indices_by_type.items()
         }
         return op
+
+    def remove_operators(
+        self,
+        operator_indices: Iterable[int],
+    ) -> List[OperatorIR]:
+        """Remove several operators with one index compaction."""
+
+        indices = sorted({int(value) for value in operator_indices})
+        if len(indices) == 0:
+            return []
+        op_count = len(self.model_ir.operators)
+        if indices[0] < 0 or indices[-1] >= op_count:
+            raise IndexError(f"operator index out of range: {indices}")
+
+        removed_set = set(indices)
+        removed_ops = [self.model_ir.operators[index] for index in indices]
+        for index, op in zip(indices, removed_ops):
+            self._detach_operator(
+                index,
+                inputs=op.inputs,
+                outputs=op.outputs,
+            )
+
+        old_to_new: Dict[int, int] = {}
+        kept_ops: List[OperatorIR] = []
+        for old_index, op in enumerate(self.model_ir.operators):
+            if old_index in removed_set:
+                continue
+            old_to_new[int(old_index)] = len(kept_ops)
+            kept_ops.append(op)
+        self.model_ir.operators[:] = kept_ops
+
+        self.producers = {
+            name: old_to_new[int(value)]
+            for name, value in self.producers.items()
+            if int(value) in old_to_new
+        }
+        self.duplicate_producers = {
+            name: [old_to_new[int(value)] for value in values]
+            for name, values in self.duplicate_producers.items()
+            if all(int(value) in old_to_new for value in values)
+        }
+        self.consumers = {
+            name: [old_to_new[int(value)] for value in values]
+            for name, values in self.consumers.items()
+            if all(int(value) in old_to_new for value in values)
+        }
+        self._operator_indices_by_id = {
+            operator_id: old_to_new[int(value)]
+            for operator_id, value in self._operator_indices_by_id.items()
+            if int(value) in old_to_new
+        }
+        self._operator_indices_by_type = {
+            op_type: [
+                old_to_new[int(value)]
+                for value in values
+                if int(value) in old_to_new
+            ]
+            for op_type, values in self._operator_indices_by_type.items()
+            if any(int(value) in old_to_new for value in values)
+        }
+        return removed_ops

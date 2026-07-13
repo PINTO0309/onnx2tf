@@ -1552,6 +1552,16 @@ is layout-aware. This removes another lowerer-wide consumer-map construction,
 complete operator-list filter, and direct MatMul input mutation while retaining
 the existing compatibility wrapper and call order.
 
+`ModelIRGraphIndex.remove_operators()` provides batch removal for graph-wide
+cleanup. It detaches all selected edges against the original index, filters the
+operator list once, and remaps producer, consumer, object, and type indices
+through one old-to-new table without calling `refresh()`. Dead-code pruning is
+owned by `passes/graph_cleanup.py`: one reverse liveness walk retains graph
+outputs and live variable-state mutations, then sends all dead positions to
+that batch primitive and prunes tensors with the active `LayoutState`. Main
+lowering calls pass session layout state; the compatibility wrapper remains in
+the lowerer.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
