@@ -1024,6 +1024,18 @@ def _resolve_add_input_plan(
                 model_outputs=model_outputs,
             )
         if operand_plan is None:
+            operand_plan = _resolve_split_input_plan(
+                model_ir,
+                graph_index,
+                input_name=add_input_name,
+                concat_index=int(add_index),
+                model_outputs=model_outputs,
+                public_names={
+                    *[str(name) for name in model_ir.inputs],
+                    *model_outputs,
+                },
+            )
+        if operand_plan is None:
             return None
         adapter_output_tensor = model_ir.tensors.get(add_input_name)
         if adapter_output_tensor is None or len(list(adapter_output_tensor.shape)) != 4:
@@ -1046,11 +1058,19 @@ def _resolve_add_input_plan(
         else operand_plan.output_name
         for operand_plan in operand_plans
     )
+    nested_post_adapter_ops = tuple(
+        post_op
+        for operand_plan in operand_plans
+        for post_op in operand_plan.output_post_adapter_ops
+    )
     return _NhwcConcatInputPlan(
         kind="add",
         adapter_op=unique_adapter_ops[0],
         add_op=add_op,
-        output_post_adapter_ops=tuple(output_post_adapter_ops),
+        output_post_adapter_ops=(
+            *tuple(output_post_adapter_ops),
+            *nested_post_adapter_ops,
+        ),
         add_input_names=add_input_names,
         add_operand_plans=tuple(operand_plans),
         extra_source_adapter_ops=tuple(unique_adapter_ops[1:]),
@@ -2208,6 +2228,11 @@ def _apply_add_input_plan(
 ) -> None:
     assert input_plan.add_op is not None
     assert len(input_plan.add_input_names) == 2
+    materialized_int_parameters: Dict[
+        Tuple[str, Tuple[int, ...]],
+        str,
+    ] = {}
+    applied_split_operators: set[int] = set()
     for operand_plan in input_plan.add_operand_plans:
         if operand_plan.unary_op is not None:
             _apply_unary_input_plan(
@@ -2221,6 +2246,16 @@ def _apply_add_input_plan(
                 graph_index,
                 operand_plan,
             )
+        elif operand_plan.split_op is not None:
+            split_operator_id = id(operand_plan.split_op)
+            if split_operator_id not in applied_split_operators:
+                _apply_split_input_plan(
+                    model_ir,
+                    graph_index,
+                    operand_plan,
+                    materialized=materialized_int_parameters,
+                )
+                applied_split_operators.add(split_operator_id)
     _set_operator_inputs(
         model_ir=model_ir,
         op=input_plan.add_op,

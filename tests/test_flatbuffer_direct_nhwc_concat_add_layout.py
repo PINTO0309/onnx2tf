@@ -234,6 +234,31 @@ def _add_model(
             ),
         ]
         add_op.inputs[0] = "a_swish"
+    if boundary == "split_operand":
+        model_ir.tensors["a_nhwc"].shape = [1, 5, 7, 6]
+        model_ir.tensors["a_nhwc"].shape_signature = [1, 5, 7, 6]
+        model_ir.tensors["a_nchw"].shape = [1, 6, 5, 7]
+        model_ir.tensors["a_nchw"].shape_signature = [1, 6, 5, 7]
+        model_ir.tensors["split_axis"] = _int_tensor("split_axis", [1])
+        model_ir.tensors["a_split0"] = _tensor(
+            "a_split0",
+            [1, 3, 5, 7],
+        )
+        model_ir.tensors["a_split1"] = _tensor(
+            "a_split1",
+            [1, 3, 5, 7],
+        )
+        add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+        add_index = model_ir.operators.index(add_op)
+        model_ir.operators.insert(
+            add_index,
+            OperatorIR(
+                "SPLIT",
+                ["split_axis", "a_nchw"],
+                ["a_split0", "a_split1"],
+            ),
+        )
+        add_op.inputs[0] = "a_split0"
     if boundary == "public_concat":
         model_ir.outputs.append("concat_nchw")
     if boundary == "public_post":
@@ -458,6 +483,37 @@ def test_nhwc_add_swish_operand_is_indexed() -> None:
     assert mul_op.inputs == ["a_logistic", "a_nhwc"]
     assert model_ir.tensors["a_logistic"].shape == [1, 5, 7, 3]
     assert model_ir.tensors["a_swish"].shape == [1, 5, 7, 3]
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_add"
+    )
+    assert event["status"] == "changed"
+
+
+def test_nhwc_add_split_operand_is_indexed() -> None:
+    model_ir = _add_model(boundary="split_operand")
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_add_rewritten(
+        model_ir,
+        expected_inputs=["a_split0", "b_nhwc"],
+    )
+    split_op = next(op for op in model_ir.operators if op.op_type == "SPLIT")
+    assert split_op.inputs[1] == "a_nhwc"
+    np.testing.assert_array_equal(
+        model_ir.tensors[split_op.inputs[0]].data,
+        np.asarray([3], dtype=np.int32),
+    )
+    for output_name in ("a_split0", "a_split1"):
+        assert model_ir.tensors[output_name].shape == [1, 5, 7, 3]
     assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
     event = next(
         event
