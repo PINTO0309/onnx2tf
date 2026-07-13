@@ -470,7 +470,7 @@ adapter maps every selected plan into `_QuantizedInputPlan`. The additional
 rank-four source guard for Dequantize and the no-secondary-post-adapter guard
 for Slice/Split are explicit family sets. Add remains separate because it
 recursively validates bounded leaf plans. These staged declarative changes
-reduced `nhwc_concat_quantized_layout.py` from 1,549 to 994 lines without
+reduced `nhwc_concat_quantized_layout.py` from 1,549 to 986 lines without
 changing the ordered pass contract or the legacy fallback boundary.
 
 Candidate acceptance is also declarative. Each family now records allowed and
@@ -479,7 +479,11 @@ spatial shapes must be reconciled. One validator replaces thirteen count
 branches, and an import-time invariant requires the input-contract family set
 to match the pass table. The resolver maps and input contracts remain separate:
 the former select safe graph plans, while the latter validate the complete
-Concat input combination.
+Concat input combination. Unary and Pad companion resolution is enabled
+directly from each contract's allowed kinds instead of maintaining duplicate
+family lists. The four shared apply operations with a common signature use a
+matching applier map; an import-time invariant prevents resolver/apply coverage
+from drifting while contextual PReLU/Slice/Split application remains explicit.
 
 The legacy ownership boundary uses the same compact style. Simple quantized
 families are described by allowed and required action-kind sets after one

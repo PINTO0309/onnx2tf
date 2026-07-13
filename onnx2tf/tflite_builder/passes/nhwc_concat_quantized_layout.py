@@ -113,11 +113,25 @@ _SHARED_PUBLIC_INPUT_RESOLVERS = {
     "slice": _resolve_slice_input_plan,
     "split": _resolve_split_input_plan,
 }
+_SHARED_SIMPLE_INPUT_APPLIERS = {
+    "swish": _apply_swish_input_plan,
+    "dequantize": _apply_dequantize_input_plan,
+    "softmax": _apply_softmax_input_plan,
+    "leaky": _apply_leaky_input_plan,
+}
+_SHARED_CONTEXTUAL_APPLIER_FAMILIES = frozenset(
+    {"prelu", "slice", "split"}
+)
 _SHARED_QUANTIZED_INPUT_FAMILIES = frozenset(
     {*_SHARED_INPUT_RESOLVERS, *_SHARED_PUBLIC_INPUT_RESOLVERS}
 )
 _SHARED_SOURCE_RANK_FOUR_FAMILIES = frozenset({"dequantize"})
 _SHARED_REJECT_POST_ADAPTER_FAMILIES = frozenset({"slice", "split"})
+if _SHARED_QUANTIZED_INPUT_FAMILIES != (
+    set(_SHARED_SIMPLE_INPUT_APPLIERS)
+    | _SHARED_CONTEXTUAL_APPLIER_FAMILIES
+):
+    raise RuntimeError("shared quantized Concat resolvers and appliers diverged")
 
 
 @dataclass(frozen=True)
@@ -578,13 +592,10 @@ def _resolve_quantized_concat_candidate(
                 concat_index=int(concat_index),
                 model_outputs=model_outputs,
             )
-            if input_plan is None and family in {
-                "unary",
-                "unary_pad",
-                "swish",
-                "leaky",
-                "add",
-            }:
+            if (
+                input_plan is None
+                and "unary" in contract.allowed_kinds
+            ):
                 input_plan = _resolve_unary_input_plan(
                     model_ir,
                     graph_index,
@@ -613,11 +624,7 @@ def _resolve_quantized_concat_candidate(
                     concat_index=int(concat_index),
                     model_outputs=model_outputs,
                 )
-            if input_plan is None and family in {
-                "pad",
-                "unary_pad",
-                "all_pad",
-            }:
+            if input_plan is None and "pad" in contract.allowed_kinds:
                 input_plan = _resolve_pad_input_plan(
                     model_ir,
                     graph_index,
@@ -718,14 +725,11 @@ def _optimize_quantized_concat_chains(
         applied_add_operators: set[int] = set()
         for input_plan in candidate.input_plans:
             if input_plan.nhwc_plan is not None:
-                if input_plan.kind == "dequantize":
-                    _apply_dequantize_input_plan(
-                        model_ir,
-                        graph_index,
-                        input_plan.nhwc_plan,
-                    )
-                elif input_plan.kind == "swish":
-                    _apply_swish_input_plan(
+                simple_applier = _SHARED_SIMPLE_INPUT_APPLIERS.get(
+                    input_plan.kind
+                )
+                if simple_applier is not None:
+                    simple_applier(
                         model_ir,
                         graph_index,
                         input_plan.nhwc_plan,
@@ -736,18 +740,6 @@ def _optimize_quantized_concat_chains(
                         graph_index,
                         input_plan.nhwc_plan,
                         materialized_alphas=materialized_alphas,
-                    )
-                elif input_plan.kind == "softmax":
-                    _apply_softmax_input_plan(
-                        model_ir,
-                        graph_index,
-                        input_plan.nhwc_plan,
-                    )
-                elif input_plan.kind == "leaky":
-                    _apply_leaky_input_plan(
-                        model_ir,
-                        graph_index,
-                        input_plan.nhwc_plan,
                     )
                 elif input_plan.kind == "slice":
                     _apply_slice_input_plan(

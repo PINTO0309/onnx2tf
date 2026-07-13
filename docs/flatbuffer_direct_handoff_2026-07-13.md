@@ -256,7 +256,7 @@ two maps: one for the common resolver signature and one for resolvers requiring
 public tensor names. A single adapter applies the explicit Dequantize rank and
 Slice/Split post-adapter guards before mapping the result into
 `_QuantizedInputPlan`. Add remains separate because it recursively validates
-bounded leaf plans. The staged refactor reduced the module from 1,549 to 994
+bounded leaf plans. The staged refactor reduced the module from 1,549 to 986
 lines while preserving all thirteen quantized family IDs and their order.
 
 Candidate input acceptance now has a parallel immutable contract per family:
@@ -265,7 +265,11 @@ policy. A common validator replaces the thirteen count branches, and an
 import-time invariant prevents the pass and input-contract family sets from
 drifting. Resolver selection and whole-Concat input acceptance remain separate
 contracts, preventing family-specific graph guards from leaking back into the
-combination validator.
+combination validator. Unary and Pad candidate resolution is now derived from
+each contract's allowed kinds rather than duplicate family-name lists. The four
+common-signature apply operations use an applier map, with an import-time
+resolver/apply coverage invariant; contextual PReLU/Slice/Split and recursive
+Add application remain explicit. The module is now 986 lines.
 
 The adjacent legacy ownership gate now builds action-kind counts once. Seven
 simple quantized family contracts declare only allowed and required kinds;
