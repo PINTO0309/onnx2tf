@@ -318,6 +318,18 @@ passes 73 tests; syntax, Ruff, pycompile, diff, and AST-equivalence checks pass.
 No model conversion or inference was run. Resume with another cohesive pure
 source-rewrite family; do not start broad canonicalizer extraction as one block.
 
+Five more graph-independent layout rewrites moved to
+`pytorch_source_rewrites.py`: boundary transpose/Conv folding, duplicate
+permute-chain collapse, public bridge-alias inlining, channel-last PReLU bridge
+folding, and rank-4 reshape/permute/Conv folding. All five ASTs match the prior
+exporter checkpoint exactly. One direct success fixture and one no-op path per
+rewrite keep the extraction locally testable. Rewrite and architecture
+validation passes 83 tests; syntax, Ruff, pycompile, diff, and AST-equivalence
+checks pass. Graph-aware GatherND boundary repair remains in the exporter by
+design. No model conversion or inference was run. Resume with the remaining
+pure GAP/hardsigmoid/binary rewrite helpers before changing graph-aware repair
+policy.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

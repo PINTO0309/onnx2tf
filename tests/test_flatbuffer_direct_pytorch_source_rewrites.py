@@ -3,8 +3,13 @@ from __future__ import annotations
 import pytest
 
 from onnx2tf.tflite_builder.pytorch_source_rewrites import (
+    _collapse_redundant_torch_permute_chains,
+    _fold_boundary_transpose_pad_conv_bridges,
     _fold_channel_first_gap_conv_bridges,
     _fold_channel_last_affine_conv_bridges,
+    _fold_channel_last_prelu_bridges,
+    _fold_rank4_reshape_permute_conv_bridges,
+    _inline_trivial_public_layout_bridge_aliases,
     _rewrite_channel_first_gap_outputs_to_explicit_channel_last,
     _rewrite_channel_first_se_scale_binary_bridges,
     _rewrite_channel_last_gap_means_to_reduce_mean,
@@ -84,10 +89,71 @@ def test_channel_last_gap_rewrite_handles_rank3_and_rank4_permute_forms() -> Non
     ]
 
 
+def test_boundary_transpose_conv_rewrite_removes_redundant_input_bridge() -> None:
+    assert _fold_boundary_transpose_pad_conv_bridges(
+        [
+            "conv0=self.conv_block_0(x_nhwc.permute(0, 2, 3, 1).contiguous())",
+            "y=_torch_permute(conv0, [0, 2, 3, 1])",
+        ]
+    ) == [
+        "conv0 = self.conv_block_0(x_nhwc)",
+        "y=_torch_permute(conv0, [0, 2, 3, 1])",
+    ]
+
+
+def test_redundant_permute_rewrite_collapses_matching_chain() -> None:
+    assert _collapse_redundant_torch_permute_chains(
+        ["out=_torch_permute(x, [0, 2, 3, 1]).permute(0, 2, 3, 1).contiguous()"]
+    ) == ["out=_torch_permute(x, [0, 2, 3, 1])"]
+
+
+def test_public_layout_bridge_rewrite_inlines_alias() -> None:
+    assert _inline_trivial_public_layout_bridge_aliases(
+        [
+            "foo_public_layout_bridge=foo_cf",
+            "bar = torch.add(foo_public_layout_bridge, other)",
+            "baz = _torch_permute(foo_public_layout_bridge, [0, 3, 1, 2])",
+        ]
+    ) == [
+        "bar = torch.add(foo_cf, other)",
+        "baz = _torch_permute(foo_cf, [0, 3, 1, 2])",
+    ]
+
+
+def test_channel_last_prelu_rewrite_folds_round_trip_bridges() -> None:
+    assert _fold_channel_last_prelu_bridges(
+        [
+            "x_cf=_torch_permute(x, [0, 3, 1, 2])",
+            "x_prelu=self.prelu_0(x_cf)",
+            "y=_torch_permute(x_prelu, [0, 2, 3, 1])",
+        ]
+    ) == [
+        "y = self.prelu_0(x.permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()"
+    ]
+
+
+def test_rank4_reshape_permute_conv_rewrite_folds_layout_round_trip() -> None:
+    assert _fold_rank4_reshape_permute_conv_bridges(
+        [
+            "x_reshaped = torch.reshape(input=x_cf, shape=(1, 16, 4, 4))",
+            "x_nhwc = torch.reshape(input=x_reshaped.permute(0, 2, 3, 1).contiguous(), shape=(1, 4, 4, 16))",
+            "y = _align_tensor_to_target_shape(self.conv_block_0(x_nhwc.permute(0, 3, 1, 2).contiguous()), (1, 32, 4, 4))",
+        ]
+    ) == [
+        "x_reshaped = torch.reshape(input=x_cf, shape=(1, 16, 4, 4))",
+        "y = _align_tensor_to_target_shape(self.conv_block_0(x_reshaped), [1, 32, 4, 4])",
+    ]
+
+
 @pytest.mark.parametrize(
     "rewrite",
     [
+        _collapse_redundant_torch_permute_chains,
+        _fold_boundary_transpose_pad_conv_bridges,
         _fold_channel_first_gap_conv_bridges,
+        _fold_channel_last_prelu_bridges,
+        _fold_rank4_reshape_permute_conv_bridges,
+        _inline_trivial_public_layout_bridge_aliases,
         _rewrite_channel_last_gap_means_to_reduce_mean,
         _rewrite_channel_first_gap_outputs_to_explicit_channel_last,
         _rewrite_channel_first_se_scale_binary_bridges,
