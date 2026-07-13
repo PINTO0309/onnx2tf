@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_emitters import (
+    _emit_native_binary_op_for_codegen_impl,
     _emit_native_shape_transform_misc_op_for_codegen,
     _emit_native_unary_op_for_codegen,
 )
@@ -291,3 +292,180 @@ def test_shape_transform_emitter_preserves_axis_and_output_contracts() -> None:
         assert emitted is True
         assert forward_lines == expected_lines
         assert runtime_imports == expected_imports
+
+
+def _emit_binary(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    aliases: dict[str, str],
+    runtime_imports: set[str],
+    forward_lines: list[str],
+    dtypes: dict[str, str] | None = None,
+    scalar_literals: dict[str, str] | None = None,
+    can_emit_channel_first: bool = False,
+    runtime_passthrough: str | None = None,
+    requires_runtime_alignment: bool = False,
+    uncertain_tensors: set[str] | None = None,
+    preferred_anchor: str | None = None,
+) -> bool:
+    return _emit_native_binary_op_for_codegen_impl(
+        model_ir=model_ir,
+        op=op,
+        op_index=7,
+        outputs=["y"],
+        output_vars=["y_var"],
+        output_target_shape="[1, 2, 4, 3]",
+        channel_first_tensor_expr_aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        runtime_shape_uncertain_tensors=uncertain_tensors or set(),
+        tensor_dtype_name_fn=lambda name: (dtypes or {}).get(name),
+        binary_operand_expr_fn=lambda name, other: f"expr_{name}_vs_{other}",
+        scalar_literal_expr_fn=lambda name: (scalar_literals or {}).get(name),
+        can_emit_channel_first_binary_op_fn=(
+            lambda _op: can_emit_channel_first
+        ),
+        channel_first_binary_input_expr_fn=(
+            lambda name, _other: f"cf_{name}"
+        ),
+        derived_local_var_name_fn=lambda _name, _prefix: "y_var_cf_0",
+        can_omit_materialized_channel_last_alias_fn=lambda _name: False,
+        target_shape_literal_fn=lambda _name: "[1, 2, 4, 3]",
+        emit_maybe_aligned_expr_fn=(
+            lambda *, output_name, expr, inferred_shape: (
+                f"aligned({output_name}, {expr}, {inferred_shape})"
+            )
+        ),
+        binary_runtime_shape_passthrough_operand_fn=(
+            lambda _lhs, _rhs: runtime_passthrough
+        ),
+        binary_requires_runtime_alignment_fn=(
+            lambda _lhs, _rhs, _output: requires_runtime_alignment
+        ),
+        preferred_binary_alignment_anchor_fn=(
+            lambda _lhs, _rhs, _output: preferred_anchor
+        ),
+        activation_lines_fn=(
+            lambda name, fused: []
+            if fused == "NONE"
+            else [f"activate({name}, {fused})"]
+        ),
+        binary_output_target_shape_literal_fn=(
+            lambda **_kwargs: "[9, 8]"
+        ),
+    )
+
+
+def _binary_model_ir(*, output_layout: str = "UNKNOWN") -> ModelIR:
+    model_ir = ModelIR(name="binary_emitter")
+    output_shape = (
+        [1, 2, 4, 3] if output_layout == "NHWC" else [1, 3, 2, 4]
+    )
+    model_ir.tensors = {
+        "lhs": TensorIR("lhs", "FLOAT32", [1, 3, 2, 4]),
+        "rhs": TensorIR("rhs", "FLOAT32", [1, 3, 2, 4]),
+        "y": TensorIR(
+            "y",
+            "FLOAT32",
+            output_shape,
+            logical_layout=output_layout,
+        ),
+    }
+    return model_ir
+
+
+def test_binary_emitter_preserves_integer_division_and_bool_scalar_rules() -> None:
+    model_ir = _binary_model_ir()
+    cases = [
+        (
+            OperatorIR("DIV", ["lhs", "rhs"], ["y"]),
+            {"lhs": "INT32", "rhs": "INT64"},
+            {},
+            "y_var = aligned(y, torch.div(expr_lhs_vs_rhs, expr_rhs_vs_lhs, "
+            "rounding_mode='trunc'), None)",
+        ),
+        (
+            OperatorIR("EQUAL", ["lhs", "rhs"], ["y"]),
+            {},
+            {"rhs": "True"},
+            "y_var = aligned(y, torch.eq(expr_lhs_vs_rhs, "
+            "torch.as_tensor(True, dtype=expr_lhs_vs_rhs.dtype, "
+            "device=expr_lhs_vs_rhs.device)), None)",
+        ),
+    ]
+
+    for op, dtypes, scalar_literals, expected_line in cases:
+        aliases = {"y": "stale_alias"}
+        runtime_imports: set[str] = set()
+        forward_lines: list[str] = []
+        emitted = _emit_binary(
+            model_ir=model_ir,
+            op=op,
+            aliases=aliases,
+            runtime_imports=runtime_imports,
+            forward_lines=forward_lines,
+            dtypes=dtypes,
+            scalar_literals=scalar_literals,
+        )
+        assert emitted is True
+        assert forward_lines == [expected_line]
+        assert aliases == {}
+        assert runtime_imports == set()
+
+
+def test_binary_emitter_materializes_channel_last_bridge_after_activation() -> None:
+    model_ir = _binary_model_ir(output_layout="NHWC")
+    aliases: dict[str, str] = {}
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_binary(
+        model_ir=model_ir,
+        op=OperatorIR(
+            "ADD",
+            ["lhs", "rhs"],
+            ["y"],
+            {"fusedActivationFunction": "RELU6"},
+        ),
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        can_emit_channel_first=True,
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var_cf_0 = torch.add(cf_lhs, cf_rhs)",
+        "activate(y_var_cf_0, RELU6)",
+        "y_var = _align_tensor_to_target_shape("
+        "y_var_cf_0.permute(0, 2, 3, 1).contiguous(), [1, 2, 4, 3])",
+    ]
+    assert aliases == {"y": "y_var_cf_0"}
+    assert runtime_imports == {"_align_tensor_to_target_shape"}
+
+
+def test_binary_emitter_uses_uncertain_operand_as_alignment_anchor() -> None:
+    model_ir = _binary_model_ir()
+    aliases = {"y": "stale_alias"}
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_binary(
+        model_ir=model_ir,
+        op=OperatorIR("MUL", ["lhs", "rhs"], ["y"]),
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        requires_runtime_alignment=True,
+        uncertain_tensors={"lhs"},
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "_binary_lhs_7, _binary_rhs_7 = _align_binary_inputs_to_anchor("
+        "expr_lhs_vs_rhs, expr_rhs_vs_lhs, [9, 8])",
+        "y_var = aligned(y, torch.mul(_binary_lhs_7, _binary_rhs_7), None)",
+    ]
+    assert aliases == {}
+    assert runtime_imports == {"_align_binary_inputs_to_anchor"}

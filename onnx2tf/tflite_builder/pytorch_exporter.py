@@ -58,7 +58,9 @@ from onnx2tf.tflite_builder.pytorch_export_errors import (
     NativePyTorchGenerationTimeoutError,
 )
 from onnx2tf.tflite_builder.pytorch_emitters import (
+    _DIRECT_CODEGEN_BINARY_FUNCTIONS,
     _DIRECT_CODEGEN_UNARY_EXPRESSIONS,
+    _emit_native_binary_op_for_codegen_impl,
     _emit_native_shape_transform_misc_op_for_codegen,
     _emit_native_unary_op_for_codegen,
 )
@@ -5231,135 +5233,50 @@ def _emit_native_binary_op_for_codegen(
     preferred_binary_alignment_anchor_fn: Callable[[str, str, str], Optional[str]],
     activation_lines_fn: Callable[[str, str], List[str]],
 ) -> bool:
-    op_type = str(op.op_type)
-    if op_type not in _DIRECT_CODEGEN_BINARY_FUNCTIONS:
-        return False
-    fn_name = _DIRECT_CODEGEN_BINARY_FUNCTIONS[op_type]
-    fused = str(op.options.get("fusedActivationFunction", "NONE"))
-    lhs_name = str(op.inputs[0])
-    rhs_name = str(op.inputs[1])
-    output_name = str(outputs[0])
-    resolved_output_target_shape = _binary_output_target_shape_literal_for_codegen(
+    return _emit_native_binary_op_for_codegen_impl(
         model_ir=model_ir,
-        lhs_name=lhs_name,
-        rhs_name=rhs_name,
-        output_name=output_name,
-        fallback_literal=output_target_shape,
-    )
-    lhs_dtype_name = tensor_dtype_name_fn(lhs_name)
-    rhs_dtype_name = tensor_dtype_name_fn(rhs_name)
-    lhs_expr = binary_operand_expr_fn(lhs_name, rhs_name)
-    rhs_scalar_literal = scalar_literal_expr_fn(rhs_name)
-    if op_type in {"MAXIMUM", "MINIMUM"}:
-        rhs_scalar_literal = None
-    rhs_expr = rhs_scalar_literal or binary_operand_expr_fn(rhs_name, lhs_name)
-    if (
-        rhs_scalar_literal in {"True", "False"}
-        and op_type in {"EQUAL", "NOT_EQUAL"}
-    ):
-        rhs_expr = (
-            f"torch.as_tensor({rhs_scalar_literal}, "
-            f"dtype={lhs_expr}.dtype, device={lhs_expr}.device)"
-        )
-    is_integer_div = (
-        op_type == "DIV"
-        and lhs_dtype_name in {"INT8", "INT16", "INT32", "INT64", "UINT8"}
-        and rhs_dtype_name in {"INT8", "INT16", "INT32", "INT64", "UINT8"}
-    )
-    runtime_shape_passthrough_operand = binary_runtime_shape_passthrough_operand_fn(lhs_name, rhs_name)
-    requires_runtime_alignment = binary_requires_runtime_alignment_fn(
-        lhs_name, rhs_name, str(outputs[0])
-    )
-
-    def _binary_expr(left_expr: str, right_expr: str) -> str:
-        if is_integer_div:
-            return (
-                f"torch.div({left_expr}, {right_expr}, "
-                "rounding_mode='trunc')"
-            )
-        return f"{fn_name}({left_expr}, {right_expr})"
-
-    if can_emit_channel_first_binary_op_fn(op) and runtime_shape_passthrough_operand is None:
-        output_tensor = model_ir.tensors.get(output_name, None)
-        output_var = output_vars[0]
-        output_rank = len(list(output_tensor.shape)) if output_tensor is not None else 0
-        output_layout = normalize_logical_layout(
-            output_tensor.logical_layout if output_tensor is not None else LOGICAL_LAYOUT_UNKNOWN
-        )
-        raw_output_var = (
-            output_var
-            if output_layout == LOGICAL_LAYOUT_UNKNOWN or output_name in set(model_ir.outputs)
-            else derived_local_var_name_fn(f"{output_var}_cf", "t")
-        )
-        lhs_cf_expr = channel_first_binary_input_expr_fn(lhs_name, rhs_name)
-        rhs_cf_expr = channel_first_binary_input_expr_fn(rhs_name, lhs_name)
-        if lhs_cf_expr is None or rhs_cf_expr is None:
-            raise ModelIRPyTorchExportError(
-                "Native PyTorch-like model.py codegen expected channel-first-capable binary inputs. "
-                f"op={op_type} lhs={lhs_name} rhs={rhs_name}"
-            )
-        channel_first_tensor_expr_aliases[output_name] = raw_output_var
-        forward_lines.append(f"{raw_output_var} = {_binary_expr(lhs_cf_expr, rhs_cf_expr)}")
-        forward_lines.extend(activation_lines_fn(raw_output_var, fused))
-        if (
-            output_tensor is not None
-            and is_channel_last_logical_layout(output_layout)
-            and output_rank in {3, 4, 5}
-        ):
-            if can_omit_materialized_channel_last_alias_fn(output_name):
-                return True
-            perm_to_output = logical_layout_permutation(
-                source_layout=channel_first_logical_layout(output_rank),
-                target_layout=output_layout,
-            )
-            if perm_to_output is not None:
-                runtime_imports.add("_align_tensor_to_target_shape")
-                forward_lines.append(
-                    f"{output_var} = _align_tensor_to_target_shape("
-                    f"{raw_output_var}.permute({', '.join(str(int(v)) for v in perm_to_output)}).contiguous(), "
-                    f"{target_shape_literal_fn(output_name)})"
+        op=op,
+        op_index=op_index,
+        outputs=outputs,
+        output_vars=output_vars,
+        output_target_shape=output_target_shape,
+        channel_first_tensor_expr_aliases=channel_first_tensor_expr_aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        runtime_shape_uncertain_tensors=runtime_shape_uncertain_tensors,
+        tensor_dtype_name_fn=tensor_dtype_name_fn,
+        binary_operand_expr_fn=binary_operand_expr_fn,
+        scalar_literal_expr_fn=scalar_literal_expr_fn,
+        can_emit_channel_first_binary_op_fn=can_emit_channel_first_binary_op_fn,
+        channel_first_binary_input_expr_fn=channel_first_binary_input_expr_fn,
+        derived_local_var_name_fn=derived_local_var_name_fn,
+        can_omit_materialized_channel_last_alias_fn=(
+            can_omit_materialized_channel_last_alias_fn
+        ),
+        target_shape_literal_fn=target_shape_literal_fn,
+        emit_maybe_aligned_expr_fn=emit_maybe_aligned_expr_fn,
+        binary_runtime_shape_passthrough_operand_fn=(
+            binary_runtime_shape_passthrough_operand_fn
+        ),
+        binary_requires_runtime_alignment_fn=(
+            binary_requires_runtime_alignment_fn
+        ),
+        preferred_binary_alignment_anchor_fn=(
+            preferred_binary_alignment_anchor_fn
+        ),
+        activation_lines_fn=activation_lines_fn,
+        binary_output_target_shape_literal_fn=(
+            lambda *, lhs_name, rhs_name, output_name, fallback_literal: (
+                _binary_output_target_shape_literal_for_codegen(
+                    model_ir=model_ir,
+                    lhs_name=lhs_name,
+                    rhs_name=rhs_name,
+                    output_name=output_name,
+                    fallback_literal=fallback_literal,
                 )
-                return True
-        return True
-    channel_first_tensor_expr_aliases.pop(str(outputs[0]), None)
-    if rhs_scalar_literal is not None:
-        forward_lines.append(
-            f"{output_vars[0]} = {emit_maybe_aligned_expr_fn(output_name=outputs[0], expr=_binary_expr(lhs_expr, rhs_expr), inferred_shape=None)}"
-        )
-    elif runtime_shape_passthrough_operand is not None:
-        forward_lines.append(
-            f"{output_vars[0]} = {_binary_expr(lhs_expr, rhs_expr)}"
-        )
-    elif requires_runtime_alignment:
-        lhs_uncertain = lhs_name in runtime_shape_uncertain_tensors
-        rhs_uncertain = rhs_name in runtime_shape_uncertain_tensors
-        preferred_anchor = preferred_binary_alignment_anchor_fn(lhs_name, rhs_name, str(outputs[0]))
-        lhs_var = f"_binary_lhs_{op_index}"
-        rhs_var = f"_binary_rhs_{op_index}"
-        if lhs_uncertain ^ rhs_uncertain or preferred_anchor is not None:
-            runtime_imports.add("_align_binary_inputs_to_anchor")
-            if lhs_uncertain or preferred_anchor == "lhs":
-                forward_lines.append(
-                    f"{lhs_var}, {rhs_var} = _align_binary_inputs_to_anchor({lhs_expr}, {binary_operand_expr_fn(rhs_name, lhs_name)}, {resolved_output_target_shape})"
-                )
-            else:
-                forward_lines.append(
-                    f"{rhs_var}, {lhs_var} = _align_binary_inputs_to_anchor({binary_operand_expr_fn(rhs_name, lhs_name)}, {lhs_expr}, {resolved_output_target_shape})"
-                )
-        else:
-            runtime_imports.add("_align_binary_inputs")
-            forward_lines.append(
-                f"{lhs_var}, {rhs_var} = _align_binary_inputs({lhs_expr}, {binary_operand_expr_fn(rhs_name, lhs_name)}, {resolved_output_target_shape})"
             )
-        forward_lines.append(
-            f"{output_vars[0]} = {emit_maybe_aligned_expr_fn(output_name=outputs[0], expr=_binary_expr(lhs_var, rhs_var), inferred_shape=None)}"
-        )
-    else:
-        forward_lines.append(
-            f"{output_vars[0]} = {emit_maybe_aligned_expr_fn(output_name=outputs[0], expr=_binary_expr(lhs_expr, rhs_expr), inferred_shape=None)}"
-        )
-    forward_lines.extend(activation_lines_fn(output_vars[0], fused))
-    return True
+        ),
+    )
 
 
 def _emit_native_transpose_op_for_codegen(
@@ -37108,25 +37025,6 @@ _DIRECT_CODEGEN_MODULE_OP_TYPES: Set[str] = {
     "UNIDIRECTIONAL_SEQUENCE_RNN",
     "UNIDIRECTIONAL_SEQUENCE_LSTM",
     "BIDIRECTIONAL_SEQUENCE_LSTM",
-}
-
-_DIRECT_CODEGEN_BINARY_FUNCTIONS: Dict[str, str] = {
-    "ADD": "torch.add",
-    "ATAN2": "torch.atan2",
-    "DIV": "torch.div",
-    "EQUAL": "torch.eq",
-    "FLOOR_MOD": "torch.remainder",
-    "GREATER": "torch.gt",
-    "GREATER_EQUAL": "torch.ge",
-    "LESS": "torch.lt",
-    "LOGICAL_AND": "torch.logical_and",
-    "LOGICAL_OR": "torch.logical_or",
-    "MAXIMUM": "torch.maximum",
-    "MINIMUM": "torch.minimum",
-    "MUL": "torch.mul",
-    "NOT_EQUAL": "torch.ne",
-    "POW": "torch.pow",
-    "SUB": "torch.sub",
 }
 
 _DIRECT_CODEGEN_SUPPORTED_OP_TYPES: Set[str] = (

@@ -1819,6 +1819,16 @@ pipeline's remaining families use one policy. The generated pipeline keeps the
 same imported global function names, avoiding a compatibility wrapper or source
 template change.
 
+Binary expression selection and source emission are also owned by
+`pytorch_emitters.py`. Integer division, scalar comparison coercion,
+channel-first aliases, fused activations, channel-last materialization, and
+runtime broadcast alignment now live together with the complete binary dispatch
+table. The stored generated pipeline still calls its original exporter global;
+that name is a thin compatibility adapter which injects the exporter's existing
+broadcast target-shape policy into the Torch-free emitter. The adapter contains
+no statement-emission logic, and its shape policy can be separated later without
+changing the pipeline contract.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

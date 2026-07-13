@@ -227,6 +227,17 @@ Unpack, and Split output construction. Emitter and architecture validation
 passes 63 tests; syntax, Ruff, and diff checks pass. No model conversion or
 inference was run.
 
+The native binary expression table and all statement-emission branches now
+live in `pytorch_emitters.py`. This includes truncating integer division, bool
+scalar dtype/device coercion, channel-first aliases, fused activation order,
+NHWC materialization, runtime-shape passthrough, and both anchored and symmetric
+broadcast alignment. The generated pipeline keeps its original call signature:
+the exporter retains only a delegation adapter which injects the existing
+broadcast target-shape resolver, and an AST gate rejects statement emission in
+that adapter. Direct binary fixtures cover the highest-risk branches. Emitter
+and architecture validation passes 66 tests; syntax, Ruff, and diff checks
+pass. No model conversion or inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC
