@@ -1643,6 +1643,10 @@ the original root stream once, deep-copy retained operators once, and append
 retained or generated operators directly in established order. This keeps the
 source and result independent and leaves WHILE body/condition subgraphs intact,
 without cloning a root operator stream that would immediately be discarded.
+Static-WHILE, counter-bounded-WHILE, and recurrent-sequence entry points use
+copy-on-write preflight: a no-op returns the borrowed input, which is safe
+because the following channel-first normalizer creates its own deep copy before
+mutation. A proven expansion still clones before modifying any graph state.
 The exporter architecture gate detects attribute assignments through the AST,
 so alternate local names cannot silently reintroduce complete operator-list
 replacement.

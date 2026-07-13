@@ -12169,7 +12169,7 @@ def _rewrite_recurrent_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
         "BIDIRECTIONAL_SEQUENCE_LSTM",
     }
     if not any(str(op.op_type) in recurrent_op_types for op in model_ir.operators):
-        return copy.deepcopy(model_ir)
+        return model_ir
     if all(
         (
             str(op.op_type) == "UNIDIRECTIONAL_SEQUENCE_RNN"
@@ -12182,7 +12182,7 @@ def _rewrite_recurrent_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
         or str(op.op_type) not in recurrent_op_types
         for op in model_ir.operators
     ):
-        return copy.deepcopy(model_ir)
+        return model_ir
     try:
         rewritten_model_ir, _ = rewrite_model_ir_unroll_recurrent_ops(
             model_ir=model_ir,
@@ -12442,6 +12442,11 @@ def _ensure_tensor_shape_literal(
 
 
 def _rewrite_static_while_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
+    if not any(
+        _match_static_unrollable_while_op(model_ir, op) is not None
+        for op in model_ir.operators
+    ):
+        return model_ir
     rewritten = _clone_model_ir_without_root_operators(model_ir)
     used_names: Set[str] = set(str(name) for name in rewritten.tensors.keys())
 
@@ -12543,6 +12548,11 @@ def _rewrite_static_while_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
 
 
 def _rewrite_counter_bounded_while_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
+    if not any(
+        _match_counter_bounded_unrollable_while_op(model_ir, op) is not None
+        for op in model_ir.operators
+    ):
+        return model_ir
     rewritten = _clone_model_ir_without_root_operators(model_ir)
     used_names: Set[str] = set(str(name) for name in rewritten.tensors.keys())
 

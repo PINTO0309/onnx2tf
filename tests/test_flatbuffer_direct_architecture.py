@@ -295,6 +295,25 @@ def test_pytorch_compat_rewrite_uses_differential_graph_index() -> None:
     assert "_clone_model_ir_without_root_operators," in exporter_source
     assert "for op_index, source_op in enumerate(model_ir.operators):" in exporter_source
 
+    exporter_functions = {
+        node.name: node
+        for node in exporter_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    copy_on_write_functions = {
+        "_rewrite_recurrent_ops_for_native_export",
+        "_rewrite_static_while_ops_for_native_export",
+        "_rewrite_counter_bounded_while_ops_for_native_export",
+    }
+    for function_name in copy_on_write_functions:
+        function_source = ast.get_source_segment(
+            exporter_source,
+            exporter_functions[function_name],
+        )
+        assert function_source is not None
+        assert "return copy.deepcopy(model_ir)" not in function_source
+        assert "return model_ir" in function_source
+
 
 def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:
     lowering_path = (

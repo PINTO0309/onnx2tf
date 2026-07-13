@@ -13,6 +13,11 @@ and appends retained or expanded operators directly to the new stream.
 This preserves the prior independent-copy contract, complete WHILE subgraphs,
 operator ordering, and generated-name order while removing an eagerly cloned
 operator list and the peak lifetime in which both root streams were retained.
+Copy-on-write preflight now returns the borrowed input unchanged when no static
+WHILE, counter-bounded WHILE, or unsupported recurrent-sequence rewrite is
+required. The mandatory channel-first normalizer remains the single owner copy
+in that common path, instead of receiving the fourth consecutive deep copy. A
+matched rewrite still produces a fully independent ModelIR before mutation.
 An AST architecture gate now rejects assignments to any object's `operators`
 attribute in the PyTorch exporter instead of checking only the literal
 `model_ir.operators =` spelling. Focused Torch-free compatibility and
