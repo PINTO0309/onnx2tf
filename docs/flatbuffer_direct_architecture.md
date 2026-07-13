@@ -536,8 +536,17 @@ operand orientations, exact producer/consumer exclusivity, matching and inverse
 permutations, public outputs, per-tensor quantization compatibility, static
 broadcasts, and intermediate/post shapes. The rewrite shares one differential
 index and `LayoutState` for all edge retargeting, fan-out coalescing, optional
-adapter retention, structural removals, and pruning. This family module now has
-no whole-graph producer/consumer-map rebuilds or direct operator-list deletes.
+adapter retention, structural removals, and pruning. These indexed
+implementations have no whole-graph producer/consumer-map rebuilds or direct
+operator-list deletes.
+
+Trailing output-side layout Transpose passthrough is mechanically owned by the
+same family. It handles direct terminal output Transposes and strictly linear
+unary/singleton-binary tails while preserving protected layout boundaries,
+Softmax output contracts, symmetric binary bridge candidates, public names,
+and inverse-permuted metadata. The full 271-line implementation moved with an
+identical AST; the lowerer keeps a compatibility wrapper and its four
+production positions remain unchanged for the indexed-runner checkpoint.
 
 General consecutive Reshape passthrough cleanup is also owned by
 `passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,

@@ -454,6 +454,7 @@ def test_layout_transpose_cleanup_has_single_owner() -> None:
         "_is_identity_perm",
         "_is_inverse_perm",
         "_optimize_layout_transpose_chains",
+        "_optimize_trailing_output_transpose_passthrough_chains",
         "_optimize_transpose_gather_transpose_axis_remap_nhwc_chains",
         "_optimize_transpose_unary_binary_full_post_fanout_bridges",
         "_optimize_transpose_unary_fanout_inverse_post_bridges",
@@ -521,6 +522,19 @@ def test_layout_transpose_cleanup_has_single_owner() -> None:
         "_optimize_transpose_unary_binary_full_post_fanout_bridges_pass"
         in binary_fanout_wrapper_names
     )
+    trailing_output_wrapper_names = {
+        node.id
+        for node in ast.walk(
+            lowering_functions[
+                "_optimize_trailing_output_transpose_passthrough_chains"
+            ]
+        )
+        if isinstance(node, ast.Name)
+    }
+    assert (
+        "_optimize_trailing_output_transpose_passthrough_chains_pass"
+        in trailing_output_wrapper_names
+    )
     imports = [
         node
         for node in lowering_tree.body
@@ -532,6 +546,7 @@ def test_layout_transpose_cleanup_has_single_owner() -> None:
         "_is_identity_perm",
         "_is_inverse_perm",
         "_optimize_layout_transpose_chains",
+        "_optimize_trailing_output_transpose_passthrough_chains",
         "_optimize_transpose_gather_transpose_axis_remap_nhwc_chains",
         "_optimize_transpose_unary_binary_full_post_fanout_bridges",
         "_optimize_transpose_unary_fanout_inverse_post_bridges",

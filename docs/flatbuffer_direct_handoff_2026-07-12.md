@@ -2925,3 +2925,24 @@ The complete direct regression selection passed:
 No dependency or TensorFlow path was added. Inference remained sequential and
 single-process; `/tmp/onnx2tf_transpose_unary_binary_superpoint*` was deleted
 after metrics inspection.
+
+### Trailing output Transpose extraction
+
+The next selected rule is the 271-line, four-position
+`_optimize_trailing_output_transpose_passthrough_chains`. Before movement,
+checkpoint `8c1427b` added three characterization cases covering direct
+terminal output retargeting, a unary plus singleton-binary output chain with
+metadata permutation, and rejection of an explicitly protected layout
+boundary.
+
+The implementation then moved mechanically into `passes/layout_transpose.py`.
+Its AST is identical to the implementation in `8c1427b`; the lowerer now keeps
+only the compatibility wrapper. All existing layout-permutation, Softmax,
+symmetric binary bridge, protected-boundary, fan-out, graph-output, singleton
+constant, and metadata guards are unchanged, as are all four raw production
+positions pending the indexed migration. Related family/ownership validation
+passed 22 tests, followed by the full direct selection:
+
+```text
+1129 passed, 5 deselected, 2 warnings in 149.30s
+```
