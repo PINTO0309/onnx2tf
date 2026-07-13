@@ -102,6 +102,7 @@ from onnx2tf.tflite_builder.passes.layout_transpose import (
     _optimize_transpose_unary_passthrough_chains as _optimize_transpose_unary_passthrough_chains_pass,
     run_layout_transpose_cleanup,
     run_transpose_gather_axis_cleanup,
+    run_transpose_unary_binary_fanout_bridge_cleanup,
     run_transpose_unary_fanout_bridge_cleanup,
     run_transpose_unary_passthrough_cleanup,
 )
@@ -59303,7 +59304,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir)
+        run_transpose_unary_binary_fanout_bridge_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
         _optimize_trailing_output_transpose_passthrough_chains(model_ir)
@@ -59446,7 +59451,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir)
+        run_transpose_unary_binary_fanout_bridge_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
         _optimize_trailing_output_transpose_passthrough_chains(model_ir)
@@ -59598,7 +59607,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir)
+        run_transpose_unary_binary_fanout_bridge_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
         _optimize_trailing_output_transpose_passthrough_chains(model_ir)
@@ -59635,7 +59648,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir)
+        run_transpose_unary_binary_fanout_bridge_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir)
         _optimize_transpose_binary_single_post_bridges_safe(model_ir)
         _optimize_transpose_binary_mixed_fanout_bridges_safe(model_ir)
@@ -59771,7 +59788,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir)
+        run_transpose_unary_binary_fanout_bridge_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
         _optimize_trailing_output_transpose_passthrough_chains(model_ir)
@@ -59814,7 +59835,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir)
+        run_transpose_unary_binary_fanout_bridge_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)

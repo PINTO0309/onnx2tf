@@ -8,8 +8,6 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _all_per_tensor_quantized,
     _broadcast_shape_signatures,
     _broadcast_static_shapes,
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _invert_perm,
     _permute_shape,
@@ -61,6 +59,12 @@ _TRANSPOSE_UNARY_FANOUT_OPS = frozenset(
         "TANH",
         "GELU",
     }
+)
+_TRANSPOSE_UNARY_BINARY_FANOUT_UNARY_OPS = frozenset(
+    {"RELU", "RELU6", "RELU_0_TO_1", "HARD_SWISH", "LOGISTIC", "TANH", "GELU"}
+)
+_TRANSPOSE_UNARY_BINARY_FANOUT_BINARY_OPS = frozenset(
+    {"ADD", "SUB", "MUL", "DIV"}
 )
 
 
@@ -1008,7 +1012,12 @@ def run_transpose_unary_fanout_bridge_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_unary_binary_full_post_fanout_bridges(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Fold transpose wrappers around unary->binary chains with inverse post-transpose fanout.
 
@@ -1032,17 +1041,16 @@ def _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir: ModelIR)
     - Intermediate tensors and post outputs are not graph outputs.
     """
     rewritten = 0
-    unary_ops = {"RELU", "RELU6", "RELU_0_TO_1", "HARD_SWISH", "LOGISTIC", "TANH", "GELU"}
-    binary_ops = {"ADD", "SUB", "MUL", "DIV"}
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for mid_idx, mid_op in enumerate(model_ir.operators):
-            if str(mid_op.op_type) not in binary_ops:
+            if str(mid_op.op_type) not in _TRANSPOSE_UNARY_BINARY_FANOUT_BINARY_OPS:
                 continue
             if len(mid_op.inputs) != 2 or len(mid_op.outputs) != 1:
                 continue
@@ -1066,7 +1074,7 @@ def _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir: ModelIR)
                     continue
                 unary_op = model_ir.operators[int(unary_idx)]
                 if (
-                    str(unary_op.op_type) not in unary_ops
+                    str(unary_op.op_type) not in _TRANSPOSE_UNARY_BINARY_FANOUT_UNARY_OPS
                     or len(unary_op.inputs) != 1
                     or len(unary_op.outputs) != 1
                     or str(unary_op.outputs[0]) != unary_input_name
@@ -1229,6 +1237,7 @@ def _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir: ModelIR)
                 model_ir=model_ir,
                 op=unary_op,
                 new_inputs=[raw_unary_input_name],
+                graph_index=graph_index,
             )
 
             if unary_on_lhs:
@@ -1239,11 +1248,13 @@ def _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir: ModelIR)
                 model_ir=model_ir,
                 op=mid_op,
                 new_inputs=new_binary_inputs,
+                graph_index=graph_index,
             )
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=mid_op,
                 new_outputs=[canonical_post_output],
+                graph_index=graph_index,
             )
 
             unary_out_tensor = model_ir.tensors.get(unary_input_name, None)
@@ -1276,7 +1287,12 @@ def _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir: ModelIR)
                     canonical_tensor.quantization = _clone_quantization(out_tensor.quantization)
 
             for post_output_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, post_output_name, canonical_post_output)
+                _replace_tensor_inputs(
+                    model_ir,
+                    post_output_name,
+                    canonical_post_output,
+                    graph_index=graph_index,
+                )
 
             if len(legacy_users) > 0:
                 # Keep one adapter transpose for legacy NCHW consumers.
@@ -1287,11 +1303,13 @@ def _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir: ModelIR)
                     model_ir=model_ir,
                     op=keep_post_op,
                     new_inputs=[canonical_post_output, keep_post_perm_name],
+                    graph_index=graph_index,
                 )
                 _set_operator_outputs(
                     model_ir=model_ir,
                     op=keep_post_op,
                     new_outputs=[out_name],
+                    graph_index=graph_index,
                 )
                 post_remove_indices = [int(v) for v in post_indices[1:]]
             else:
@@ -1302,7 +1320,7 @@ def _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir: ModelIR)
                 reverse=True,
             )
             for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -1311,8 +1329,251 @@ def _optimize_transpose_unary_binary_full_post_fanout_bridges(model_ir: ModelIR)
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_transpose_unary_binary_full_post_fanout_bridges": int(rewritten)}
+
+
+def run_transpose_unary_binary_fanout_bridge_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run strict Transpose/unary/binary inverse-post fan-out cleanup."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        found_transpose = False
+        found_unary = False
+        found_binary = False
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            operator_type = str(operator.op_type)
+            found_transpose = found_transpose or operator_type == "TRANSPOSE"
+            found_unary = (
+                found_unary
+                or operator_type in _TRANSPOSE_UNARY_BINARY_FANOUT_UNARY_OPS
+            )
+            found_binary = (
+                found_binary
+                or operator_type in _TRANSPOSE_UNARY_BINARY_FANOUT_BINARY_OPS
+            )
+            if found_transpose and found_unary and found_binary:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        consumers = pass_state.graph_index.consumers
+        producers = pass_state.graph_index.producers
+        model_outputs = set(str(name) for name in candidate_model.outputs)
+
+        for mid_idx, mid_op in enumerate(candidate_model.operators):
+            if (
+                str(mid_op.op_type)
+                not in _TRANSPOSE_UNARY_BINARY_FANOUT_BINARY_OPS
+                or len(mid_op.inputs) != 2
+                or len(mid_op.outputs) != 1
+            ):
+                continue
+            in0_name = str(mid_op.inputs[0])
+            in1_name = str(mid_op.inputs[1])
+            out_name = str(mid_op.outputs[0])
+            if (
+                in0_name in model_outputs
+                or in1_name in model_outputs
+                or out_name in model_outputs
+            ):
+                continue
+
+            for unary_on_lhs in (True, False):
+                unary_input_name = in0_name if unary_on_lhs else in1_name
+                other_input_name = in1_name if unary_on_lhs else in0_name
+                unary_idx = producers.get(unary_input_name)
+                if unary_idx is None:
+                    continue
+                unary_op = candidate_model.operators[int(unary_idx)]
+                if (
+                    str(unary_op.op_type)
+                    not in _TRANSPOSE_UNARY_BINARY_FANOUT_UNARY_OPS
+                    or len(unary_op.inputs) != 1
+                    or len(unary_op.outputs) != 1
+                    or str(unary_op.outputs[0]) != unary_input_name
+                ):
+                    continue
+                pre_unary_out_name = str(unary_op.inputs[0])
+                pre_unary_idx = producers.get(pre_unary_out_name)
+                pre_other_idx = producers.get(other_input_name)
+                if pre_unary_idx is None or pre_other_idx is None:
+                    continue
+                pre_unary_op = candidate_model.operators[int(pre_unary_idx)]
+                pre_other_op = candidate_model.operators[int(pre_other_idx)]
+                if (
+                    str(pre_unary_op.op_type) != "TRANSPOSE"
+                    or len(pre_unary_op.inputs) < 2
+                    or len(pre_unary_op.outputs) != 1
+                    or str(pre_unary_op.outputs[0]) != pre_unary_out_name
+                    or str(pre_other_op.op_type) != "TRANSPOSE"
+                    or len(pre_other_op.inputs) < 2
+                    or len(pre_other_op.outputs) != 1
+                    or str(pre_other_op.outputs[0]) != other_input_name
+                ):
+                    continue
+                if set(consumers.get(pre_unary_out_name, [])) != {int(unary_idx)}:
+                    continue
+                if set(consumers.get(unary_input_name, [])) != {int(mid_idx)}:
+                    continue
+                if set(consumers.get(other_input_name, [])) != {int(mid_idx)}:
+                    continue
+                perm_pre = _read_transpose_perm(candidate_model, pre_unary_op)
+                if (
+                    perm_pre is None
+                    or _read_transpose_perm(candidate_model, pre_other_op)
+                    != perm_pre
+                ):
+                    continue
+
+                out_users = [
+                    int(index)
+                    for index in consumers.get(out_name, [])
+                    if int(index) != int(mid_idx)
+                ]
+                if len(out_users) == 0 or pre_unary_out_name in model_outputs:
+                    continue
+                post_output_names: List[str] = []
+                valid_users = True
+                for user_idx in out_users:
+                    post_op = candidate_model.operators[int(user_idx)]
+                    if (
+                        str(post_op.op_type) == "TRANSPOSE"
+                        and len(post_op.inputs) >= 2
+                        and len(post_op.outputs) == 1
+                        and str(post_op.inputs[0]) == out_name
+                    ):
+                        post_perm = _read_transpose_perm(candidate_model, post_op)
+                        post_output_name = str(post_op.outputs[0])
+                        if (
+                            post_perm is None
+                            or not _is_inverse_perm(perm_pre, post_perm)
+                            or post_output_name in model_outputs
+                        ):
+                            valid_users = False
+                            break
+                        post_output_names.append(post_output_name)
+                if not valid_users or len(post_output_names) == 0:
+                    continue
+
+                raw_unary_tensor = candidate_model.tensors.get(
+                    str(pre_unary_op.inputs[0])
+                )
+                raw_other_tensor = candidate_model.tensors.get(
+                    str(pre_other_op.inputs[0])
+                )
+                unary_input_tensor = candidate_model.tensors.get(unary_input_name)
+                other_input_tensor = candidate_model.tensors.get(other_input_name)
+                out_tensor = candidate_model.tensors.get(out_name)
+                if not _all_per_tensor_quantized(
+                    [
+                        raw_unary_tensor,
+                        raw_other_tensor,
+                        unary_input_tensor,
+                        other_input_tensor,
+                        out_tensor,
+                    ]
+                ):
+                    continue
+                raw_shape_unary = (
+                    list(raw_unary_tensor.shape)
+                    if raw_unary_tensor is not None
+                    else None
+                )
+                raw_shape_other = (
+                    list(raw_other_tensor.shape)
+                    if raw_other_tensor is not None
+                    else None
+                )
+                raw_broadcast_shape = _broadcast_static_shapes(
+                    raw_shape_unary,
+                    raw_shape_other,
+                )
+                if raw_broadcast_shape is not None:
+                    expected_mid_shape = _permute_shape(
+                        list(raw_broadcast_shape),
+                        perm_pre,
+                    )
+                    if expected_mid_shape is None:
+                        continue
+                    in0_tensor = candidate_model.tensors.get(in0_name)
+                    in1_tensor = candidate_model.tensors.get(in1_name)
+                    mid_broadcast_shape = _broadcast_static_shapes(
+                        list(in0_tensor.shape) if in0_tensor is not None else None,
+                        list(in1_tensor.shape) if in1_tensor is not None else None,
+                    )
+                    if (
+                        mid_broadcast_shape is not None
+                        and not _shapes_match_if_known(
+                            mid_broadcast_shape,
+                            expected_mid_shape,
+                        )
+                    ):
+                        continue
+                    if not _shapes_match_if_known(
+                        list(out_tensor.shape) if out_tensor is not None else None,
+                        expected_mid_shape,
+                    ):
+                        continue
+                    if any(
+                        not _shapes_match_if_known(
+                            list(post_tensor.shape)
+                            if post_tensor is not None
+                            else None,
+                            raw_broadcast_shape,
+                        )
+                        for post_tensor in (
+                            candidate_model.tensors.get(name)
+                            for name in post_output_names
+                        )
+                    ):
+                        continue
+                return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_unary_binary_full_post_fanout_bridges(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "rewritten_transpose_unary_binary_full_post_fanout_bridges",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.transpose_unary_binary_fanout_bridge",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={
+            "rewritten_transpose_unary_binary_full_post_fanout_bridges": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 

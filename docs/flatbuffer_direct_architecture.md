@@ -525,8 +525,19 @@ pre-permutations, static/dynamic broadcast metadata, quantization-grid guards,
 multiple inverse-post branches, and the optional legacy adapter. Its complete
 305-line implementation moved with an identical AST after broadcast signature
 reconciliation became a shared core helper. The lowerer retains a thin
-compatibility wrapper, while its six production positions remain unchanged for
-the subsequent indexed-runner checkpoint.
+compatibility wrapper.
+
+All six production positions now invoke
+`run_transpose_unary_binary_fanout_bridge_cleanup`, registered as
+`layout.transpose_unary_binary_fanout_bridge` in `LAYOUT_PLAN`. Model-only
+preflight requires Transpose, the supported unary family, and the supported
+binary family. Before snapshotting, the indexed guard checks both candidate
+operand orientations, exact producer/consumer exclusivity, matching and inverse
+permutations, public outputs, per-tensor quantization compatibility, static
+broadcasts, and intermediate/post shapes. The rewrite shares one differential
+index and `LayoutState` for all edge retargeting, fan-out coalescing, optional
+adapter retention, structural removals, and pruning. This family module now has
+no whole-graph producer/consumer-map rebuilds or direct operator-list deletes.
 
 General consecutive Reshape passthrough cleanup is also owned by
 `passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,

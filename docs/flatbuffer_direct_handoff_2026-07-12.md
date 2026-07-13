@@ -2891,3 +2891,37 @@ direct selection:
 ```text
 1124 passed, 5 deselected, 2 warnings in 148.32s
 ```
+
+### Indexed unary/binary fan-out checkpoint
+
+The unary→binary rule now accepts and reuses one `ModelIRGraphIndex` and the
+active `LayoutState`. All unary/binary input and output retargeting, duplicate
+post-output consumer rewiring, optional legacy adapter mutation, structural
+removal, and pruning update that state incrementally. Consequently,
+`passes/layout_transpose.py` now contains zero whole-graph producer/consumer
+map builder calls and zero direct operator-list deletions.
+
+`run_transpose_unary_binary_fanout_bridge_cleanup` registers stable ID
+`layout.transpose_unary_binary_fanout_bridge` in `LAYOUT_PLAN`. Its model-only
+preflight requires the three relevant op capabilities. Its indexed guard
+checks both unary operand orientations and all existing exclusivity,
+permutation, public-output, quantization-grid, broadcast, intermediate-shape,
+and post-shape invariants before a transactional snapshot. All six production
+positions now use the runner with session diagnostics.
+
+Focused runner/characterization/architecture/efficiency validation passed 7
+tests. The positive synthetic graph proves one initial index refresh and one
+snapshot; a public post output is rejected before snapshotting. Tier 1
+`superpoint.onnx` had no exact candidate, so all six invocations skipped with
+zero snapshots/fingerprints. Sequential `-cotof` still passed with
+`max_abs=1.6666e-06`, `rmse=1.62079e-07`, and cosine similarity `1`.
+
+The complete direct regression selection passed:
+
+```text
+1126 passed, 5 deselected, 2 warnings in 150.60s
+```
+
+No dependency or TensorFlow path was added. Inference remained sequential and
+single-process; `/tmp/onnx2tf_transpose_unary_binary_superpoint*` was deleted
+after metrics inspection.
