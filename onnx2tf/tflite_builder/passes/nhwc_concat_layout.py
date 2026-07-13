@@ -1106,6 +1106,18 @@ def _resolve_add_input_plan(
                 },
             )
         if operand_plan is None:
+            operand_plan = _resolve_slice_input_plan(
+                model_ir,
+                graph_index,
+                input_name=add_input_name,
+                concat_index=int(add_index),
+                model_outputs=model_outputs,
+                public_names={
+                    *[str(name) for name in model_ir.inputs],
+                    *model_outputs,
+                },
+            )
+        if operand_plan is None:
             operand_plan = _resolve_split_input_plan(
                 model_ir,
                 graph_index,
@@ -1457,6 +1469,16 @@ def _resolve_family_input_plan(
         )
         if pad_plan is not None:
             return pad_plan
+        slice_plan = _resolve_slice_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+            public_names=public_names,
+        )
+        if slice_plan is not None:
+            return slice_plan
         return _resolve_split_input_plan(
             model_ir,
             graph_index,
@@ -2412,6 +2434,13 @@ def _apply_add_input_plan(
                 graph_index,
                 operand_plan.pad_plan,
                 materialized_pads=materialized_pads,
+            )
+        elif operand_plan.slice_op is not None:
+            _apply_slice_input_plan(
+                model_ir,
+                graph_index,
+                operand_plan,
+                materialized=materialized_int_parameters,
             )
         elif operand_plan.split_op is not None:
             split_operator_id = id(operand_plan.split_op)

@@ -343,6 +343,87 @@ def _add_model(
                     OperatorIR("IDENTITY", ["a_pad"], ["pad_side"])
                 )
     if boundary in {
+        "slice_operand",
+        "slice_operand_fanout",
+        "slice_companion",
+    }:
+        model_ir.tensors["slice_begin"] = _int_tensor(
+            "slice_begin",
+            [0, 0, 0, 0],
+        )
+        if boundary == "slice_companion":
+            model_ir.tensors["x_nhwc"].shape = [1, 5, 7, 4]
+            model_ir.tensors["x_nhwc"].shape_signature = [1, 5, 7, 4]
+            model_ir.tensors["x_nchw"].shape = [1, 4, 5, 7]
+            model_ir.tensors["x_nchw"].shape_signature = [1, 4, 5, 7]
+            model_ir.tensors["slice_size"] = _int_tensor(
+                "slice_size",
+                [1, 2, 5, 7],
+            )
+            model_ir.tensors["x_slice"] = _tensor(
+                "x_slice",
+                [1, 2, 5, 7],
+            )
+            concat_op = next(
+                op
+                for op in model_ir.operators
+                if op.op_type == "CONCATENATION"
+            )
+            concat_index = model_ir.operators.index(concat_op)
+            model_ir.operators.insert(
+                concat_index,
+                OperatorIR(
+                    "SLICE",
+                    ["x_nchw", "slice_begin", "slice_size"],
+                    ["x_slice"],
+                ),
+            )
+            concat_op.inputs[0] = "x_slice"
+        else:
+            model_ir.tensors["a_nhwc"].shape = [1, 5, 7, 6]
+            model_ir.tensors["a_nhwc"].shape_signature = [1, 5, 7, 6]
+            model_ir.tensors["a_nchw"].shape = [1, 6, 5, 7]
+            model_ir.tensors["a_nchw"].shape_signature = [1, 6, 5, 7]
+            model_ir.tensors["slice_size"] = _int_tensor(
+                "slice_size",
+                [1, 3, 5, 7],
+            )
+            model_ir.tensors["a_slice"] = _tensor(
+                "a_slice",
+                [1, 3, 5, 7],
+            )
+            model_ir.tensors["a_slice"].quantization = QuantParamIR(
+                scale=[0.8] * 3,
+                zero_point=[0] * 3,
+                quantized_dimension=1,
+            )
+            add_op = next(
+                op for op in model_ir.operators if op.op_type == "ADD"
+            )
+            add_index = model_ir.operators.index(add_op)
+            model_ir.operators.insert(
+                add_index,
+                OperatorIR(
+                    "SLICE",
+                    ["a_nchw", "slice_begin", "slice_size"],
+                    ["a_slice"],
+                ),
+            )
+            add_op.inputs[0] = "a_slice"
+            if boundary == "slice_operand_fanout":
+                model_ir.tensors["slice_side"] = _tensor(
+                    "slice_side",
+                    [1, 3, 5, 7],
+                )
+                model_ir.outputs.append("slice_side")
+                model_ir.operators.append(
+                    OperatorIR(
+                        "IDENTITY",
+                        ["a_slice"],
+                        ["slice_side"],
+                    )
+                )
+    if boundary in {
         "shared_split_add_tree",
         "shared_split_external_consumer",
     }:
@@ -721,6 +802,7 @@ def test_nhwc_direct_only_add_is_indexed(all_add: bool) -> None:
         "split_shared_root_external_consumer",
         "shared_add_fanout_external_consumer",
         "pad_operand_fanout",
+        "slice_operand_fanout",
     ],
 )
 def test_nhwc_add_rejects_unsafe_or_partial_match(boundary: str) -> None:
@@ -923,6 +1005,61 @@ def test_nhwc_add_reuses_bounded_pad_plan(pad_location: str) -> None:
     assert model_ir.tensors[pad_output].shape == expected_pad_shape
     if pad_location == "operand":
         quantization = model_ir.tensors[pad_output].quantization
+        assert isinstance(quantization, QuantParamIR)
+        assert quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+
+
+@pytest.mark.parametrize("slice_location", ["operand", "companion"])
+def test_nhwc_add_reuses_bounded_slice_plan(slice_location: str) -> None:
+    model_ir = _add_model(boundary=f"slice_{slice_location}")
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    slice_output = (
+        "a_slice" if slice_location == "operand" else "x_slice"
+    )
+    slice_op = next(
+        op for op in model_ir.operators if op.outputs == [slice_output]
+    )
+    expected_source = (
+        "a_nhwc" if slice_location == "operand" else "x_nhwc"
+    )
+    assert slice_op.inputs == [
+        expected_source,
+        "slice_begin",
+        "slice_size",
+    ]
+    expected_channels = 3 if slice_location == "operand" else 2
+    np.testing.assert_array_equal(
+        model_ir.tensors["slice_begin"].data,
+        np.asarray([0, 0, 0, 0], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        model_ir.tensors["slice_size"].data,
+        np.asarray([1, 5, 7, expected_channels], dtype=np.int32),
+    )
+    assert model_ir.tensors[slice_output].shape == [
+        1,
+        5,
+        7,
+        expected_channels,
+    ]
+    add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+    expected_add_inputs = (
+        ["a_slice", "b_nhwc"]
+        if slice_location == "operand"
+        else ["a_nhwc", "b_nhwc"]
+    )
+    assert add_op.inputs == expected_add_inputs
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    if slice_location == "companion":
+        assert concat_op.inputs == ["x_slice", "sum_nchw"]
+    if slice_location == "operand":
+        quantization = model_ir.tensors[slice_output].quantization
         assert isinstance(quantization, QuantParamIR)
         assert quantization.quantized_dimension == 3
     assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
