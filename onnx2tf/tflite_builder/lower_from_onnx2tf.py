@@ -49843,8 +49843,15 @@ def _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chain
 
 def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    return _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks_pass(model_ir)
+    return _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_boundary_input_layout_transposes(
@@ -51490,7 +51497,10 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(model_ir)
+    _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_transpose_swish_residual_concat_closure_nhwc_chains(model_ir)
     _optimize_transpose_dequant_logistic_mul_quantize_bridges(model_ir)
     _optimize_transpose_swish_qdq_nhwc_islands(model_ir)

@@ -13,7 +13,6 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _broadcast_static_shapes,
-    _build_tensor_consumer_map,
     _clone_quantization,
     _is_fully_known_positive_shape,
     _permute_tensor_metadata_if_rank_matches,
@@ -3056,6 +3055,9 @@ def run_channel_slice_merge_layout_cleanup(
 
 def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Remove NHWC<->NCHW boundary transpose round-trips around STRIDED_SLICE QDQ-CONCAT stems.
@@ -3080,14 +3082,15 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
 
     perm_nchw_to_nhwc = [0, 2, 3, 1]
 
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
         model_inputs = set(str(v) for v in model_ir.inputs)
         model_outputs = set(str(v) for v in model_ir.outputs)
 
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+        for pre_idx in graph_index.operator_indices("TRANSPOSE"):
+            pre_op = model_ir.operators[int(pre_idx)]
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
                 continue
 
             input_name = str(pre_op.inputs[0])
@@ -3101,7 +3104,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
             if _read_transpose_perm(model_ir, pre_op) != [0, 3, 1, 2]:
                 continue
 
-            internal_users = [int(v) for v in consumers.get(internal_name, [])]
+            internal_users = graph_index.consumer_indices(internal_name)
             if len(internal_users) == 0:
                 continue
 
@@ -3150,7 +3153,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
                 if slice_out in model_outputs:
                     valid = False
                     break
-                slice_users = [int(v) for v in consumers.get(slice_out, [])]
+                slice_users = graph_index.consumer_indices(slice_out)
                 if len(slice_users) != 1:
                     valid = False
                     break
@@ -3164,7 +3167,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
                     break
 
                 q_out = str(q_op.outputs[0])
-                q_users = [int(v) for v in consumers.get(q_out, [])]
+                q_users = graph_index.consumer_indices(q_out)
                 if len(q_users) != 1:
                     valid = False
                     break
@@ -3178,7 +3181,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
                     break
 
                 dq_out = str(dq_op.outputs[0])
-                dq_users = [int(v) for v in consumers.get(dq_out, [])]
+                dq_users = graph_index.consumer_indices(dq_out)
                 if len(dq_users) != 1:
                     valid = False
                     break
@@ -3226,7 +3229,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
             concat_out = str(concat_op.outputs[0])
             if concat_out in model_outputs:
                 continue
-            concat_users = [int(v) for v in consumers.get(concat_out, [])]
+            concat_users = graph_index.consumer_indices(concat_out)
             if len(concat_users) != 1:
                 continue
             q_concat_idx = int(concat_users[0])
@@ -3239,7 +3242,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
             q_concat_out = str(q_concat_op.outputs[0])
             if q_concat_out in model_outputs:
                 continue
-            post_indices = [int(v) for v in consumers.get(q_concat_out, [])]
+            post_indices = graph_index.consumer_indices(q_concat_out)
             if len(post_indices) == 0:
                 continue
             post_output_names: List[str] = []
@@ -3311,6 +3314,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
                     model_ir=model_ir,
                     op=slice_op,
                     new_inputs=[input_name, begin_name, end_name, stride_name],
+                    graph_index=graph_index,
                 )
                 _permute_tensor_metadata_if_rank_matches(
                     model_ir.tensors.get(str(slice_op.outputs[0]), None),
@@ -3349,9 +3353,15 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
                 model_ir=model_ir,
                 op=q_concat_op,
                 new_outputs=[canonical_post_output],
+                graph_index=graph_index,
             )
             for alias_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, alias_name, canonical_post_output)
+                _replace_tensor_inputs(
+                    model_ir,
+                    alias_name,
+                    canonical_post_output,
+                    graph_index=graph_index,
+                )
 
             canonical_tensor = model_ir.tensors.get(canonical_post_output, None)
             q_concat_tensor = model_ir.tensors.get(q_concat_out, None)
@@ -3370,7 +3380,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
                 reverse=True,
             )
             for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
                 if int(remove_idx) in post_indices:
                     removed_post_transposes += 1
             removed_boundary += 1
@@ -3380,7 +3390,9 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if removed_boundary > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {
         "removed_boundary_input_transpose_stridedslice_blocks": int(removed_boundary),
         "rewritten_boundary_stridedslices": int(rewritten_slices),

@@ -11826,7 +11826,9 @@ def test_flatbuffer_direct_transpose_stridedslice_pad_concat_mul_add_posttranspo
             assert int(op.options.get("endMask", -1)) == 11
 
 
-def test_flatbuffer_direct_boundary_input_transpose_stridedslice_qdq_concat_elides_roundtrip() -> None:
+def test_flatbuffer_direct_boundary_input_transpose_stridedslice_qdq_concat_elides_roundtrip(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("boundary_input_transpose_stridedslice_qdq_concat_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y", "z"]
@@ -12076,14 +12078,32 @@ def test_flatbuffer_direct_boundary_input_transpose_stridedslice_qdq_concat_elid
         OperatorIR(op_type="RELU", inputs=["post0"], outputs=["y"]),
         OperatorIR(op_type="RELU", inputs=["post1"], outputs=["z"]),
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
     assert stats["removed_boundary_input_transpose_stridedslice_blocks"] == 1
     assert stats["rewritten_boundary_stridedslices"] == 4
     assert stats["rewritten_boundary_qdq_concat_axis"] == 1
     assert stats["removed_boundary_post_transposes"] == 2
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
     assert not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+    assert graph_index.operator_indices("TRANSPOSE") == []
 
     concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
     assert int(concat_op.options.get("axis", -1)) == 3

@@ -366,6 +366,19 @@ focused direct-plus-Mul success graph passes with one initial index refresh,
 no residual Transpose indices, and a consistent final layout state. No model
 conversion or inference was run.
 
+The boundary StridedSlice/QDQ/Concat round-trip family now completes the
+channel-slice module's direct-mutation cleanup. Candidate Transpose roots and
+every Slice→Quantize→Dequantize→Concat→Quantize→Transpose edge are read from
+one index before mutation. StridedSlice input replacement, quantized Concat
+output canonicalization, secondary post-alias replacement, and removal of the
+boundary/post Transposes all update that same index. The production wrapper
+forwards the session layout state, and layout-aware pruning reconciles the
+canonical output tensor. The four-branch focused success graph passes with one
+initial index refresh, no remaining Transpose indices, and a consistent layout
+state. `channel_slice_layout.py` now contains neither whole-graph consumer-map
+construction nor direct operator-list insertion/deletion. No model conversion
+or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

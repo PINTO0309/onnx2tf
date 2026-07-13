@@ -782,6 +782,16 @@ copy-on-write behavior without reconstructing producer/consumer maps or
 scanning operators for roots. Successful cleanup prunes and synchronizes the
 session `LayoutState`.
 
+The boundary StridedSlice/QDQ/Concat round-trip rewrite completes the indexed
+migration of this module. It validates the complete multi-branch topology from
+one live index before mutation, then applies StridedSlice inputs, quantized
+Concat output aliasing, and all post-alias rewires through index-aware helpers.
+The shared boundary and trailing Transposes are removed differentially, with
+layout-aware pruning after the retry loop. Consequently
+`passes/channel_slice_layout.py` no longer builds whole-graph consumer maps or
+inserts/deletes operators directly; its legacy function entry points remain
+signature compatible through optional keyword state.
+
 Boundary input normalization chains live in
 `passes/boundary_input_chains.py`. The module owns the guarded
 Transpose/Mul/Sum/Reshape NHWC rewrite and the exclusive
