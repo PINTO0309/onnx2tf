@@ -3,22 +3,22 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `019d3c6`
-  (`characterize axis3 const concat bridge layout`)
+- Latest implementation checkpoint: `5228444`
+  (`extract axis3 const concat bridge layout pass`)
 - Previous pause checkpoint: `3df2903`
   (`document flatbuffer direct pause checkpoint`)
 - Remote: after this resumed documentation checkpoint is pushed, local and
   `origin/fb-refactor3` must again report `0 0` divergence.
 - Pull request: none; do not create one on resume
-- The axis-3 constant-Concat bridge behavior is characterized in a dedicated
-  compact corpus. Its production matcher and single call remain unchanged;
-  mechanical extraction is the next coherent unit.
+- The axis-3 constant-Concat bridge matcher is mechanically extracted with an
+  exact AST match. Its lowerer wrapper and single raw call remain unchanged;
+  indexed migration is the next coherent unit.
 
 ## Completed work
 
 This resumed interval completed thirteen adjacent semantic layout families
 using the staged characterization → mechanical extraction → indexed runner
-process and established characterization for the fourteenth family.
+process and advanced the fourteenth family through mechanical extraction.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -149,6 +149,10 @@ process and established characterization for the fourteenth family.
       and a constant shared outside the Concat.
     - Preserved the central production matcher and its single call exactly;
       extraction is intentionally deferred to the next checkpoint.
+    - Moved the complete matcher to
+      `passes/axis3_const_concat_layout.py` with exact AST equivalence in
+      `5228444`; the compatibility wrapper and single raw production call
+      remain.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -164,9 +168,9 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is mechanical extraction of
-  `_optimize_transpose_axis3_const_concat_bridge_nhwc_chains` with exact AST
-  equivalence and a single-owner architecture gate.
+  The immediate next unit is indexed candidate planning, differential
+  mutation, `LayoutState` reconciliation, and transactional runner integration
+  for `_optimize_transpose_axis3_const_concat_bridge_nhwc_chains`.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -188,8 +192,9 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this resumed documentation update, the
-working tree is clean at characterization checkpoint `019d3c6`. The axis-3
-constant-Concat production matcher is unchanged and extraction has not begun.
+working tree is clean at extraction checkpoint `5228444`. The axis-3
+constant-Concat function is singly owned by its focused pass module; indexed
+migration has not begun.
 After the documentation commit is pushed, local/remote divergence must be
 `0 0`. The implementation checkpoints since the previous pause changed:
 
@@ -199,6 +204,7 @@ After the documentation commit is pushed, local/remote divergence must be
 - `onnx2tf/tflite_builder/core/model_ir_utils.py`
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`
 - `onnx2tf/tflite_builder/passes/elementwise_gate_layout.py`
+- `onnx2tf/tflite_builder/passes/axis3_const_concat_layout.py`
 - `onnx2tf/tflite_builder/passes/dual_postconv_gate_layout.py`
 - `onnx2tf/tflite_builder/passes/multi_branch_gate_layout.py`
 - `onnx2tf/tflite_builder/passes/ndhwc_gate_layout.py`
@@ -360,6 +366,10 @@ sequential with only one model/process active at a time.
   `756 deselected in 0.37s`; no duplicate central test remains.
 - Full direct selection after characterization:
   `1308 passed, 5 deselected, 2 warnings in 166.51s`.
+- Axis-3 constant-Concat extraction, characterization, and architecture focus:
+  `51 passed in 20.60s`; the extracted function AST exactly matched `019d3c6`.
+- Full direct selection after mechanical extraction:
+  `1309 passed, 5 deselected, 2 warnings in 165.14s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -391,14 +401,14 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Move the complete
-   `_optimize_transpose_axis3_const_concat_bridge_nhwc_chains` implementation
-   mechanically to a focused pass module while retaining a signature-compatible
-   lowerer wrapper and the single raw production call.
-3. Add an AST-equivalence check against `019d3c6` and a single-owner
-   architecture gate.
-4. Run focused and full direct gates, then commit and push extraction before
-   introducing indexed candidate planning or a transactional runner.
+2. Introduce a pure indexed candidate plan for the axis-3 constant-Concat
+   topology, constant conversions, post branches, and optional legacy bridge.
+3. Apply graph rewrites through one shared `ModelIRGraphIndex` and
+   `LayoutState`, including differential insertion/removal and metadata
+   reconciliation, under a stable ordered pass ID.
+4. Replace the single raw production call with the transactional runner, run
+   focused, Tier 1 sequential `-cotof`, and full direct gates, then commit and
+   push the indexed checkpoint.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1168,3 +1178,25 @@ Production code and the single raw call remain unchanged. No dependency or
 TensorFlow path was added, and no inference process was run concurrently.
 Mechanical extraction with exact AST-equivalence and single-owner gates is the
 next separate checkpoint.
+
+### Axis-3 constant-Concat bridge mechanical extraction checkpoint
+
+Checkpoint `5228444` moved the complete matcher mechanically to
+`passes/axis3_const_concat_layout.py`. Its function AST, including the
+docstring and nested helpers, exactly matches characterization checkpoint
+`019d3c6`. The lowerer keeps a signature-compatible wrapper and the single raw
+production call, so pass order and retry behavior remain unchanged.
+
+The architecture gate fixes the focused module as the single implementation
+owner, its lowerer alias and wrapper, and exactly one production call. Focused
+characterization and architecture validation passed 51 tests. The complete
+sequential direct selection passed:
+
+```text
+1309 passed, 5 deselected, 2 warnings in 165.14s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently. Indexed candidate planning, differential graph/layout mutation,
+transactional runner integration, and raw-call replacement remain the next
+checkpoint.
