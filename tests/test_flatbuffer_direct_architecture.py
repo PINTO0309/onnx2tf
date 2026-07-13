@@ -399,6 +399,27 @@ def test_dynamic_range_quantization_uses_differential_graph_index() -> None:
     assert "graph_index.replace_operator_inputs(" in function_source
 
 
+def test_quantization_identity_elision_uses_batch_graph_index_removal() -> None:
+    quantization_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "quantization.py"
+    )
+    source = quantization_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function_node = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_elide_identity_operators"
+    )
+    function_source = ast.get_source_segment(source, function_node)
+    assert function_source is not None
+    assert "model_ir.operators =" not in function_source
+    assert "ModelIRGraphIndex(model_ir)" in function_source
+    assert "graph_index.replace_operator_inputs(" in function_source
+    assert "graph_index.replace_operator_outputs(" in function_source
+    assert "graph_index.remove_operators(" in function_source
+
+
 def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

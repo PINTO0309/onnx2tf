@@ -5,6 +5,7 @@ import numpy as np
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.quantization import (
+    _elide_identity_operators,
     build_dynamic_range_quantized_model_ir,
 )
 
@@ -56,3 +57,45 @@ def test_dynamic_range_quantization_inserts_one_shared_dequantize(monkeypatch) -
     assert quantized.tensors["constant"].quantization is not None
     assert model_ir.tensors["constant"].dtype == "FLOAT32"
     assert model_ir.operators == [first_add, second_add]
+
+
+def test_quantization_identity_elision_promotes_graph_output_producer(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("identity_output")
+    model_ir.inputs = ["x", "bias"]
+    model_ir.outputs = ["y"]
+    add_op = OperatorIR("ADD", ["x", "bias"], ["mid"])
+    identity_op = OperatorIR("IDENTITY", ["mid"], ["y"])
+    model_ir.operators = [add_op, identity_op]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    _elide_identity_operators(model_ir)
+
+    assert refresh_count == 1
+    assert model_ir.operators == [add_op]
+    assert add_op.outputs == ["y"]
+    assert model_ir.outputs == ["y"]
+
+
+def test_quantization_identity_elision_resolves_boundary_chain() -> None:
+    model_ir = ModelIR("identity_input_chain")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.operators = [
+        OperatorIR("IDENTITY", ["x"], ["mid"]),
+        OperatorIR("IDENTITY", ["mid"], ["y"]),
+    ]
+
+    _elide_identity_operators(model_ir)
+
+    assert model_ir.operators == []
+    assert model_ir.outputs == ["x"]

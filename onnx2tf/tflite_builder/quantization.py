@@ -713,7 +713,13 @@ def _used_tensor_names(model_ir: ModelIR) -> Set[str]:
 
 
 def _elide_identity_operators(model_ir: ModelIR) -> None:
-    rewritten: List[OperatorIR] = []
+    candidate_ops = list(model_ir.operators)
+    if not any(str(op.op_type) == "IDENTITY" for op in candidate_ops):
+        return
+
+    graph_index = ModelIRGraphIndex(model_ir)
+    retained_ops: List[OperatorIR] = []
+    removed_ops: List[OperatorIR] = []
     replacements: Dict[str, str] = {}
     graph_outputs = {str(v) for v in model_ir.outputs}
 
@@ -725,10 +731,18 @@ def _elide_identity_operators(model_ir: ModelIR) -> None:
             current = replacements[current]
         return current
 
-    for op in model_ir.operators:
-        op.inputs = [resolve(str(v)) if str(v) != "" else v for v in op.inputs]
+    for op in candidate_ops:
+        op_index = graph_index.operator_index(op)
+        if op_index is None:
+            continue
+        new_inputs = [
+            resolve(str(value)) if str(value) != "" else value
+            for value in op.inputs
+        ]
+        if new_inputs != list(op.inputs):
+            graph_index.replace_operator_inputs(int(op_index), new_inputs)
         if str(op.op_type) != "IDENTITY" or len(op.inputs) != 1 or len(op.outputs) != 1:
-            rewritten.append(op)
+            retained_ops.append(op)
             continue
         input_name = resolve(str(op.inputs[0]))
         output_name = str(op.outputs[0])
@@ -736,22 +750,52 @@ def _elide_identity_operators(model_ir: ModelIR) -> None:
             producer = next(
                 (
                     candidate
-                    for candidate in reversed(rewritten)
+                    for candidate in reversed(retained_ops)
                     if input_name in [str(v) for v in candidate.outputs]
                 ),
                 None,
             )
             if producer is not None and input_name not in {str(v) for v in model_ir.inputs}:
-                producer.outputs = [output_name if str(v) == input_name else v for v in producer.outputs]
+                producer_index = graph_index.operator_index(producer)
+                if producer_index is None:
+                    retained_ops.append(op)
+                    continue
+                graph_index.replace_operator_outputs(
+                    int(producer_index),
+                    [
+                        output_name if str(value) == input_name else value
+                        for value in producer.outputs
+                    ],
+                )
                 replacements[input_name] = output_name
+                removed_ops.append(op)
                 continue
         replacements[output_name] = input_name
+        removed_ops.append(op)
 
-    for op in rewritten:
-        op.inputs = [resolve(str(v)) if str(v) != "" else v for v in op.inputs]
-        op.outputs = [resolve(str(v)) if str(v) != "" else v for v in op.outputs]
+    for op in retained_ops:
+        op_index = graph_index.operator_index(op)
+        if op_index is None:
+            continue
+        new_inputs = [
+            resolve(str(value)) if str(value) != "" else value
+            for value in op.inputs
+        ]
+        new_outputs = [
+            resolve(str(value)) if str(value) != "" else value
+            for value in op.outputs
+        ]
+        if new_inputs != list(op.inputs):
+            graph_index.replace_operator_inputs(int(op_index), new_inputs)
+        if new_outputs != list(op.outputs):
+            graph_index.replace_operator_outputs(int(op_index), new_outputs)
     model_ir.outputs = [resolve(str(v)) for v in model_ir.outputs]
-    model_ir.operators = rewritten
+    remove_indices = [
+        index
+        for op in removed_ops
+        if (index := graph_index.operator_index(op)) is not None
+    ]
+    graph_index.remove_operators(remove_indices)
 
 
 def _same_qparam_tensor_names_for_op(op: OperatorIR) -> List[str]:

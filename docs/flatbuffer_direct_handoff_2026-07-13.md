@@ -529,6 +529,16 @@ not carry forward. A focused shared-constant fixture proves one initial
 refresh, exact Dequantize placement, both consumer rewires, INT8 qparams, and
 immutability of the source ModelIR. No model conversion or inference was run.
 
+Full-integer Identity elision is indexed as well. It retains the existing
+forward replacement order, transitive Identity-chain resolution, and graph-
+output producer promotion semantics. Retained inputs and outputs are rewired
+through index primitives, and all eliminated Identity objects are compacted in
+one batch. Graphs without Identity operators return before index construction.
+Focused producer-promotion and boundary-chain fixtures prove exact final
+outputs, surviving operator identity, and one initial refresh. The
+quantization module no longer rebuilds its complete operator list for Identity
+cleanup. No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

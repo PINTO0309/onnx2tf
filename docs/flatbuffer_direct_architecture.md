@@ -1590,6 +1590,14 @@ operator-cloning pass and complete list assignment are removed, reducing copy
 volume while preserving operator axis semantics and ONNX provenance already
 carried by the initial ModelIR clone.
 
+Full-integer Identity elision also uses one differential index. Its ordered
+replacement table preserves Identity-chain resolution and the special graph-
+output producer promotion rule. Retained operator inputs/outputs are updated
+through index primitives, then all elided Identity objects are removed in one
+batch compaction. A no-Identity preflight avoids index construction entirely.
+The quantization module no longer assigns a rebuilt operator list for this
+cleanup.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
