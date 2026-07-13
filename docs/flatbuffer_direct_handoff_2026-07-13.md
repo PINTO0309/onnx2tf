@@ -3,8 +3,8 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `11e76bd`
-  (`extract concat unary conv layout pass`)
+- Latest implementation checkpoint: `b86b31a`
+  (`index concat unary conv layout pass`)
 - Previous pause checkpoint: `3df2903`
   (`document flatbuffer direct pause checkpoint`)
 - Remote: after this resumed documentation checkpoint is pushed, local and
@@ -16,14 +16,15 @@
 - The Dequantize/Concat/Quantize matcher uses pure indexed planning,
   differential graph/layout mutation, and one transactional runner at both
   production positions.
-- The Concat/optional-unary/post-adapter/Conv matcher is mechanically extracted
-  with exact AST equivalence; its wrapper and both raw calls remain unchanged.
+- The Concat/optional-unary/post-adapter/Conv matcher uses pure indexed
+  planning, differential graph/layout mutation, and one transactional runner
+  at both production positions.
 
 ## Completed work
 
-This resumed interval completed fifteen adjacent semantic layout families
+This resumed interval completed sixteen adjacent semantic layout families
 using the staged characterization → mechanical extraction → indexed runner
-process and advanced the sixteenth family through mechanical extraction.
+process.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -190,6 +191,10 @@ process and advanced the sixteenth family through mechanical extraction.
       the next checkpoint.
     - Moved the complete matcher to `passes/concat_unary_conv_layout.py` with
       exact AST equivalence in `11e76bd`; the wrapper and both calls remain.
+    - Added pure indexed adapter/unary/post/Conv planning, rank-four guards,
+      differential graph/layout mutation, stable runner
+      `layout.concat_unary_conv_nhwc`, and both production runner calls in
+      `b86b31a`.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -205,9 +210,9 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is indexed candidate planning, differential
-  graph/layout mutation, and transactional runner integration for
-  `_optimize_transpose_concat_unary_fanout_conv_nhwc_chains`.
+  The immediate next unit is characterization of
+  `_optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains`, including
+  all seven production positions and generic SPP topology boundaries.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -229,8 +234,9 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this resumed documentation update, the
-working tree is clean at extraction checkpoint `11e76bd`. The focused module
-owns the complete Concat/unary/Conv matcher; indexed migration has not begun.
+working tree is clean at indexed checkpoint `b86b31a`. The focused module owns
+the complete Concat/unary/Conv matcher and both production positions use the
+transactional runner.
 After the documentation commit is pushed, local/remote divergence must be
 `0 0`. The implementation checkpoints since the previous pause changed:
 
@@ -443,6 +449,14 @@ sequential with only one model/process active at a time.
   `56 passed in 23.44s`; the extracted function AST exactly matched `f624388`.
 - Full direct selection after mechanical extraction:
   `1374 passed, 5 deselected, 2 warnings in 175.23s`.
+- Indexed Concat/unary/Conv runner, rank boundary, architecture, and
+  irrelevant-graph efficiency focus: `76 passed in 24.25s`.
+- Tier 1 `superpoint.onnx`, sequential `-tb flatbuffer_direct -cotof` after
+  indexed migration: `evaluation_pass=true`,
+  `max_abs=1.6666017472743988e-06`,
+  `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+- Full direct selection after indexed migration:
+  `1390 passed, 5 deselected, 2 warnings in 173.99s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -474,13 +488,12 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Introduce a pure indexed candidate plan for exclusive input adapters,
-   optional unary chains, complete inverse-post fan-out, and Conv-only
-   consumers.
-3. Apply Concat input/axis, unary metadata, post aliases, and adapter removals
-   through one `ModelIRGraphIndex` and `LayoutState` under a stable runner ID.
-4. Replace both raw calls, run focused, Tier 1 sequential `-cotof`, and full
-   direct gates, then commit and push the indexed checkpoint.
+2. Inspect `_optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains`,
+   all seven calls, and any existing SPP-model-specific fixture.
+3. Build a compact generic two-island SPP corpus with fan-out, public tensor,
+   adapter permutation, axis, constant, and Conv consumer boundaries.
+4. Run focused and full direct gates, then commit and push characterization
+   before mechanical extraction.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1272,6 +1285,40 @@ No dependency or TensorFlow path was added, and no inference process was run
 concurrently. Indexed candidate planning, differential graph/layout mutation,
 transactional runner integration, and raw-call replacement remain the next
 checkpoint.
+
+### Indexed Concat/unary/Conv checkpoint
+
+Checkpoint `b86b31a` introduced a pure indexed plan for every exclusive input
+adapter, optional accepted-unary chain, complete inverse-post fan-out, and
+Conv2D/DepthwiseConv2D consumer set. Rank-four source, Concat, unary, and post
+metadata are validated before mutation; a new invalid-rank boundary rejects
+before snapshot in addition to the thirteen characterized cases.
+
+Concat input and axis mutation, Concat/unary metadata permutation, post alias
+replacement, adapter/post removal, pruning, and layout reconciliation use one
+shared `ModelIRGraphIndex` and `LayoutState`. The implementation contains no
+whole-graph producer/consumer map construction and no direct operator-list
+deletion. `run_concat_unary_conv_layout_cleanup` registers stable
+`LAYOUT_PLAN` ID `layout.concat_unary_conv_nhwc`; both raw production calls are
+replaced with the runner while the lowerer wrapper remains.
+
+Focused success, fourteen complete no-op boundaries, runner instrumentation,
+ownership, architecture, and irrelevant-graph efficiency validation passed 76
+tests. The two-unary/two-post success graph uses one initial index refresh and
+one snapshot; all unsafe boundaries reject before snapshotting. Tier 1
+`superpoint.onnx` passed sequential `-tb flatbuffer_direct -cotof` with
+`evaluation_pass=true`, `max_abs=1.6666017472743988e-06`,
+`rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+
+The complete sequential direct selection passed:
+
+```text
+1390 passed, 5 deselected, 2 warnings in 173.99s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_concat_unary_conv_superpoint` artifacts were removed after
+metrics inspection.
 
 ### Dequantize/Concat/Quantize mechanical extraction checkpoint
 
