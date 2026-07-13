@@ -7,6 +7,8 @@ import sys
 import types
 import zipfile
 
+import pytest
+
 from onnx2tf.tflite_builder.pytorch_artifact_exporters import (
     _export_dynamo_onnx_from_generated_package,
     _export_exported_program_from_generated_package,
@@ -20,6 +22,7 @@ from onnx2tf.tflite_builder.pytorch_exported_program_child import (
     _EXPORTED_PROGRAM_CHILD_SCRIPT,
 )
 from onnx2tf.tflite_builder.pytorch_exported_program_archive import (
+    _fold_inverse_permute_round_trips_in_exported_program_archive,
     _strip_stack_traces_from_exported_program_archive,
 )
 
@@ -61,6 +64,15 @@ def test_exported_program_archive_cleanup_strips_only_stack_traces(
     assert cleaned == {
         "graph": {"nodes": [{"name": "node_0", "metadata": {"keep": 7}}]}
     }
+
+
+def test_exported_program_archive_optimizer_rejects_missing_archive(
+    tmp_path,
+) -> None:
+    with pytest.raises(FileNotFoundError, match="ExportedProgram archive not found"):
+        _fold_inverse_permute_round_trips_in_exported_program_archive(
+            tmp_path / "missing.pt2"
+        )
 
 
 def test_torchscript_export_records_non_native_skip_without_child(
@@ -157,9 +169,6 @@ def test_exported_program_records_non_native_skip_without_hooks(
             unexpected_hook
         ),
         reapply_post_export_final_model_repairs_fn=unexpected_hook,
-        fold_inverse_permute_round_trips_in_exported_program_archive_fn=(
-            unexpected_hook
-        ),
     )
 
     assert result is None

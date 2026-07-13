@@ -224,15 +224,13 @@ model conversion or inference was run.
 
 The exposed ExportedProgram host now lives in
 `pytorch_artifact_exporters.py`. Its public-signature wrapper supplies explicit
-temporary source-rewrite, final-repair, and inverse-permute-archive-fold
-callbacks; the artifact owner retains metadata, skip, input,
-single-child, timeout, cleanup, and error ordering. After normalizing those three
+temporary source-rewrite and final-repair callbacks; the artifact owner retains
+metadata, skip, input, single-child, timeout, cleanup, and error ordering. After normalizing those two
 callback names, the host AST exactly matches the previous implementation. A
 non-native-package fixture proves skip metadata and that no callback or child is
 invoked. Artifact and architecture validation passes 68 tests; syntax, Ruff,
 and diff checks pass. No model conversion or inference was run. Resume by
-characterizing the 2,015-line inverse-permute archive optimizer before changing
-its algorithm.
+isolating the archive algorithms without changing their behavior.
 
 The 46-line stack-trace archive cleanup now has a Torch-free owner in
 `pytorch_exported_program_archive.py`, and the artifact host calls it directly.
@@ -241,8 +239,20 @@ proves recursive removal from `models/model.json` while retaining unrelated JSON
 fields and a binary archive entry. The host remains AST-equivalent after
 normalizing the removed callback to the direct helper. Artifact and architecture
 validation passes 69 tests; syntax, Ruff, and diff checks pass. No model
-conversion or inference was run. Resume by characterizing the inverse-permute
-archive optimizer's major pattern families before mechanical ownership changes.
+conversion or inference was run.
+
+The 2,015-line inverse-permute/FX archive optimizer now shares the archive owner.
+It is AST-identical to the former exporter implementation after excluding one
+local delayed `import torch`; the artifact host is likewise identical after
+normalizing the removed callback to its direct helper. Importing the module does
+not load Torch, and a missing archive fails before the optional dependency is
+requested. The exporter retains only an imported compatibility alias. Artifact
+and architecture validation passes 70 tests; syntax, Ruff, py_compile, and diff
+checks pass. The full optimizer execution tests remain uncollectable because
+Python 3.12 resolves the incompatible Python 3.10 libtorch. No model conversion
+or inference was run. Resume with generated-source rewrite/canonicalization
+separation; do not alter archive matching logic until a compatible Torch runtime
+is available.
 
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/

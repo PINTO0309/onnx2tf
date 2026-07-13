@@ -11,6 +11,7 @@ from onnx2tf.tflite_builder.pytorch_exported_program_child import (
     _EXPORTED_PROGRAM_CHILD_SCRIPT,
 )
 from onnx2tf.tflite_builder.pytorch_exported_program_archive import (
+    _fold_inverse_permute_round_trips_in_exported_program_archive,
     _strip_stack_traces_from_exported_program_archive,
 )
 from onnx2tf.tflite_builder.pytorch_export_support import (
@@ -466,9 +467,6 @@ def _export_exported_program_from_generated_package(
         ..., Any
     ],
     reapply_post_export_final_model_repairs_fn: Callable[[Path], None],
-    fold_inverse_permute_round_trips_in_exported_program_archive_fn: Callable[
-        [Path], None
-    ],
 ) -> Optional[str]:
     try:
         package_path, metadata_path, metadata = _load_generated_package_export_metadata(
@@ -590,7 +588,7 @@ def _export_exported_program_from_generated_package(
             ) from ex
         last_error_message = str(ex)
     try:
-        fold_inverse_permute_round_trips_in_exported_program_archive_fn(
+        _fold_inverse_permute_round_trips_in_exported_program_archive(
             exported_program_path
         )
     except Exception:

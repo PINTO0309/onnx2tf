@@ -91,7 +91,16 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_artifact_exporters.py",
 ]
 
-PYTORCH_PURE_UTILITY_FILES = DEPENDENCY_SCOPED_FILES[:-2]
+PYTORCH_PURE_UTILITY_FILES = [
+    path
+    for path in DEPENDENCY_SCOPED_FILES
+    if path.name
+    not in {
+        "pytorch_artifact_exporters.py",
+        "pytorch_export_support.py",
+        "pytorch_exported_program_archive.py",
+    }
+]
 
 
 def _dependency_scoped_python_files():
@@ -3693,7 +3702,6 @@ def test_exported_program_artifact_host_has_focused_owner() -> None:
     for callback_name in (
         "_temporarily_rewrite_generated_model_source_for_exported_program",
         "_reapply_post_export_final_model_repairs",
-        "_fold_inverse_permute_round_trips_in_exported_program_archive",
     ):
         assert callback_name in wrapper_source
     assert "def _strip_stack_traces_from_exported_program_archive(" in (
@@ -3704,4 +3712,16 @@ def test_exported_program_artifact_host_has_focused_owner() -> None:
     )
     assert "_strip_stack_traces_from_exported_program_archive(" in (
         artifact_source
+    )
+    assert (
+        "def _fold_inverse_permute_round_trips_in_exported_program_archive("
+        in archive_source
+    )
+    assert (
+        "def _fold_inverse_permute_round_trips_in_exported_program_archive("
+        not in exporter_source
+    )
+    assert (
+        "_fold_inverse_permute_round_trips_in_exported_program_archive("
+        in artifact_source
     )
