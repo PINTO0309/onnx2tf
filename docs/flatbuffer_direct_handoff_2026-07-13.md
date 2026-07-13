@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `ae3c00b` (`extract conv3d gate layout pass`)
+- Latest implementation checkpoint: `a470cce` (`index conv3d gate layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `ae3c00b`
+  `a470cce` and the documentation checkpoint
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -13,9 +13,8 @@
 
 ## Completed work
 
-This resumed interval completed six adjacent semantic layout families using
-the staged characterization → mechanical extraction → indexed runner process,
-then characterized and mechanically extracted the seventh family.
+This resumed interval completed ten adjacent semantic layout families using
+the staged characterization → mechanical extraction → indexed runner process.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -84,7 +83,13 @@ then characterized and mechanically extracted the seventh family.
     - Replaced a 176-line central fixture with compact 4D/5D success variants
       and six unsafe-boundary cases in `49c72b9`.
     - Mechanically moved the complete matcher beside its NDHWC sibling with AST
-      equivalence in `ae3c00b`. Indexed integration remains the next checkpoint.
+      equivalence in `ae3c00b`.
+    - Migrated producer/consumer reads, rewrites, structural removals, pruning,
+      and layout synchronization to shared indexed state in `a470cce`.
+    - Registered stable ordered pass ID
+      `layout.ndhwc_conv3d_leaky_unsqueeze_gate` after the rank-five gate,
+      removed all six raw production calls, and retained the compatibility
+      wrapper.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -100,10 +105,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the already extracted
-  `_optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains` family: migrate
-  it to shared graph/layout state and integrate it as the second ordered NDHWC
-  gate spec at all six production positions.
+  The immediate next unit is
+  `_optimize_transpose_cost_volume_scatter_ndhwc_chains`: first move its large
+  central success fixture to a dedicated compact characterization module and
+  add unsafe-boundary no-op cases before any mechanical extraction.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -125,7 +130,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `ae3c00b`; after the documentation
+implementation working tree is clean at `a470cce`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -229,6 +234,14 @@ sequential with only one model/process active at a time.
   `55 passed in 17.93s`.
 - Full direct selection after Conv3D mechanical extraction:
   `1224 passed, 5 deselected, 2 warnings in 157.08s`.
+- Indexed Conv3D runner, rank-five sibling, architecture, and efficiency
+  focus: `67 passed in 17.27s`.
+- Tier 1 `superpoint.onnx`, sequential `-tb flatbuffer_direct -cotof` after
+  indexed Conv3D migration: `evaluation_pass=true`,
+  `max_abs=1.6666017472743988e-06`,
+  `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+- Full direct selection after indexed Conv3D migration:
+  `1232 passed, 5 deselected, 2 warnings in 154.69s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -260,13 +273,13 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Migrate every producer/consumer read, constant-shape mutation, metadata
-   update, and structural removal in the extracted Conv3D matcher to shared
-   graph/layout state.
-3. Add a second ordered spec to the NDHWC family runner, preserving the
-   rank-five-gate-before-Conv3D-gate order, and remove all six raw calls.
-4. Extend success/rejection instrumentation and efficiency expectations, then
-   run focused, sequential Tier 1, and full direct gates.
+2. Inspect the existing cost-volume/scatter success fixture and matcher call
+   positions; record the exact current behavior before moving code.
+3. Move that central fixture to a dedicated compact test module and add
+   fan-out, public-boundary, permutation, and shape/rank rejection cases that
+   preserve the legacy no-op contract.
+4. Run the focused characterization and direct regression gate, then commit
+   and push the characterization checkpoint before mechanical extraction.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -710,3 +723,41 @@ complete sequential direct selection passed:
 
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently.
+
+### Indexed Conv3D gate checkpoint
+
+Checkpoint `a470cce` migrated the extracted Conv3D gate matcher to shared
+`ModelIRGraphIndex` and `LayoutState`. Producer/consumer traversal, semantic
+Reshape and Conv-side LeakyRelu rewrites, gated Mul output canonicalization,
+constant-shape remapping, structural removals, pruning, metadata, and layout
+reconciliation now use differential state. Both matchers in
+`passes/ndhwc_gate_layout.py` contain no whole-graph map builder and no direct
+operator-list deletion.
+
+`run_ndhwc_gate_layout_cleanup` now registers a second stable `LAYOUT_PLAN` ID,
+`layout.ndhwc_conv3d_leaky_unsqueeze_gate`, after
+`layout.ndhwc_leaky_logistic_gate`. Its indexed guard proves the inverse Mul
+output adapter, exclusive LeakyRelu and Reshape branches, accepted rank-four or
+rank-five semantic adapter, rank-five Conv adapter, public boundaries, and
+rank-five remappable Reshape constant before snapshotting. All six production
+groups invoke the shared runner once; the legacy raw calls were removed while
+the compatibility wrapper remains available.
+
+Focused runner, sibling, ownership, architecture, and irrelevant-graph
+efficiency validation passed 67 tests. Both accepted semantic-rank fixtures
+use one initial index refresh and one snapshot. Conv-adapter, LeakyRelu, and
+Reshape fan-out, public intermediate, invalid permutation, and invalid
+reshape-rank variants all reject before snapshotting. Tier 1
+`superpoint.onnx` passed sequential `-tb flatbuffer_direct -cotof` with
+`evaluation_pass=true`, `max_abs=1.6666017472743988e-06`,
+`rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+
+The complete sequential direct selection passed:
+
+```text
+1232 passed, 5 deselected, 2 warnings in 154.69s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_conv3d_gate_superpoint` artifacts were removed after metrics
+inspection.

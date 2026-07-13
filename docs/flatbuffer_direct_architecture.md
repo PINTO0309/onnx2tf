@@ -156,15 +156,20 @@ reconciliation share one differential index and `LayoutState`. The lowerer
 retains a compatibility wrapper, and all six production calls supply session
 layout state and diagnostics to the runner.
 
-The same family module mechanically owns the adjacent Conv3D/LeakyRelu/gate
-variant. It removes a rank-five Conv adapter, accepts either a rank-four NHWC
-or rank-five NDHWC semantic adapter before the gate Reshape, remaps the
-five-dimensional shape, and canonicalizes the gated Mul output. Its dedicated
-corpus replaces a 176-line central inline fixture and fixes both accepted input
-ranks plus Conv-adapter, LeakyRelu, and Reshape fan-out, public-intermediate,
-permutation, and reshape-rank rejection. The complete implementation is
-AST-identical to checkpoint `49c72b9`; all six production calls remain raw
-until the separate indexed migration checkpoint.
+The same family module owns the adjacent Conv3D/LeakyRelu/gate variant. It
+removes a rank-five Conv adapter, accepts either a rank-four NHWC or rank-five
+NDHWC semantic adapter before the gate Reshape, remaps the five-dimensional
+shape, and canonicalizes the gated Mul output. Its dedicated corpus replaces a
+176-line central inline fixture and fixes both accepted input ranks plus
+Conv-adapter, LeakyRelu, and Reshape fan-out, public-intermediate, permutation,
+and reshape-rank rejection. The family runner registers it as the second
+ordered `LAYOUT_PLAN` spec with stable ID
+`layout.ndhwc_conv3d_leaky_unsqueeze_gate`, after the rank-five gate spec.
+Indexed producer/consumer traversal, input/output rewrites, structural
+removals, pruning, metadata, and layout reconciliation reuse the same
+differential graph index and `LayoutState`. Each of the six production groups
+invokes the runner once, preserving the original rule order; the lowerer
+compatibility wrapper remains available.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
