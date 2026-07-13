@@ -303,6 +303,11 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
             active_model_names.append(model_name)
     if len(model_names) != len(set(model_names)):
         raise ValueError(f"Regression profile contains duplicate model names. path={path}")
+    if tiers != sorted(tiers):
+        raise ValueError(
+            "Regression profile models must be ordered by non-decreasing tier. "
+            f"path={path}"
+        )
     declared_model_count = int(payload.get("model_count", len(model_names)))
     if declared_model_count != len(model_names):
         raise ValueError(
@@ -778,14 +783,22 @@ def run_flatbuffer_direct_bulk_verification(
     )
     if profile is not None:
         allowed_names = set(profile["active_model_names"])
-        discovered_names = {os.path.basename(path) for path in models}
+        discovered_by_name = {
+            os.path.basename(path): path
+            for path in models
+            if os.path.basename(path) in allowed_names
+        }
+        discovered_names = set(discovered_by_name)
         missing_names = sorted(allowed_names - discovered_names)
         if missing_names:
             raise RuntimeError(
                 "Regression-profile models are missing from the current root corpus. "
                 f"missing_models={missing_names}"
             )
-        models = [path for path in models if os.path.basename(path) in allowed_names]
+        models = [
+            discovered_by_name[model_name]
+            for model_name in profile["active_model_names"]
+        ]
     models_sha256 = _models_sha256(models)
     normalized_skip_model_names = sorted(
         {

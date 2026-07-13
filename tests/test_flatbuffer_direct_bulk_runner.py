@@ -1031,6 +1031,66 @@ def test_regression_profile_accepts_recorded_tflite_numeric_exception(
     assert state["summary"]["strict_fail_count"] == 0
 
 
+def test_regression_profile_runs_models_in_declared_tier_order(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from onnx import TensorProto, helper, save
+
+    def _model(path: Path, *, node_count: int) -> None:
+        x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+        y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
+        nodes = []
+        current = "x"
+        for index in range(node_count):
+            output = "y" if index == node_count - 1 else f"v{index}"
+            nodes.append(helper.make_node("Relu", [current], [output]))
+            current = output
+        save(helper.make_model(helper.make_graph(nodes, "g", [x], [y])), path)
+
+    tier_zero = tmp_path / "z_tier_zero.onnx"
+    tier_one = tmp_path / "a_tier_one.onnx"
+    _model(tier_zero, node_count=1)
+    _model(tier_one, node_count=50)
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 1,
+                "max_nodes": 199,
+                "models": [
+                    {"tier": 0, "model": tier_zero.name},
+                    {"tier": 1, "model": tier_one.name},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: List[str] = []
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        model_path = Path(cmd[cmd.index("-i") + 1])
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        calls.append(model_path.name)
+        _write_accuracy_report(
+            path=artifact_dir / f"{model_path.stem}_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+        regression_profile=str(profile_path),
+    )
+
+    assert calls == [tier_zero.name, tier_one.name]
+    assert [entry["model"] for entry in state["entries"]] == calls
+
+
 def test_regression_profile_accepts_tier_four_models(tmp_path) -> None:
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(
@@ -1065,6 +1125,27 @@ def test_regression_profile_rejects_tier_five_models(tmp_path) -> None:
     )
 
     with pytest.raises(ValueError, match="only Tier 0-4 models"):
+        bulk_runner._load_regression_profile(str(profile_path))
+
+
+def test_regression_profile_rejects_decreasing_tier_order(tmp_path) -> None:
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 1,
+                "max_nodes": 199,
+                "models": [
+                    {"tier": 1, "model": "later.onnx"},
+                    {"tier": 0, "model": "earlier.onnx"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="non-decreasing tier"):
         bulk_runner._load_regression_profile(str(profile_path))
 
 
