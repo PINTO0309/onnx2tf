@@ -277,9 +277,23 @@ def test_pytorch_compat_rewrite_uses_differential_graph_index() -> None:
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
     )
     exporter_source = exporter_path.read_text(encoding="utf-8")
+    exporter_tree = ast.parse(exporter_source)
     assert "def _remove_redundant_layout_transposes(" not in exporter_source
     assert "_remove_redundant_layout_transposes," in exporter_source
-    assert "model_ir.operators =" not in exporter_source
+    operator_stream_assignments = [
+        node
+        for node in ast.walk(exporter_tree)
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+        for target in (
+            list(node.targets)
+            if isinstance(node, ast.Assign)
+            else [node.target]
+        )
+        if isinstance(target, ast.Attribute) and target.attr == "operators"
+    ]
+    assert operator_stream_assignments == []
+    assert "_clone_model_ir_without_root_operators," in exporter_source
+    assert "for op_index, source_op in enumerate(model_ir.operators):" in exporter_source
 
 
 def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:

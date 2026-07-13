@@ -1,5 +1,24 @@
 # flatbuffer_direct refactor handoff — 2026-07-13
 
+## `fb-refactor4` PyTorch WHILE stream checkpoint
+
+The two native-PyTorch WHILE expansion paths no longer deep-copy the complete
+root operator list and then replace it with a second list. A Torch-free helper
+in `passes/pytorch_compat.py` deep-clones tensors, metadata, and complete
+subgraphs while starting the root graph with an empty operator stream. Static
+trip-count and counter-bounded WHILE expansion then reads the original root
+operators in stable order, deep-copies each retained operator exactly once,
+and appends retained or expanded operators directly to the new stream.
+
+This preserves the prior independent-copy contract, complete WHILE subgraphs,
+operator ordering, and generated-name order while removing an eagerly cloned
+operator list and the peak lifetime in which both root streams were retained.
+An AST architecture gate now rejects assignments to any object's `operators`
+attribute in the PyTorch exporter instead of checking only the literal
+`model_ir.operators =` spelling. Focused Torch-free compatibility and
+architecture validation passed 59 tests. No ONNX conversion, inference,
+dependency change, TensorFlow import, or parallel process was involved.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

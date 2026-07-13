@@ -6,9 +6,44 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_compat import (
+    _clone_model_ir_without_root_operators,
     _remove_redundant_layout_transposes,
     _restore_same_average_pool_exclude_pad_correction_for_native_runtime,
 )
+
+
+def test_root_operator_stream_clone_avoids_eager_operator_duplication() -> None:
+    model_ir = ModelIR(name="while_expansion_source")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.metadata = {"nested": {"value": 1}}
+    model_ir.tensors["x"] = TensorIR("x", "FLOAT32", [1], [1])
+    model_ir.tensors["y"] = TensorIR("y", "FLOAT32", [1], [1])
+    model_ir.operators.append(
+        OperatorIR(
+            "RELU",
+            ["x"],
+            ["y"],
+            {"fusedActivationFunction": "NONE"},
+            axis_semantics={"axis": "logical"},
+            version=2,
+            onnx_node_name="relu_0",
+            onnx_op_type="Relu",
+        )
+    )
+    subgraph = ModelIR(name="body")
+    subgraph.operators.append(OperatorIR("IDENTITY", ["x"], ["y"]))
+    model_ir.subgraphs.append(subgraph)
+
+    cloned = _clone_model_ir_without_root_operators(model_ir)
+
+    assert cloned.operators == []
+    assert [op.op_type for op in model_ir.operators] == ["RELU"]
+    assert [op.op_type for op in cloned.subgraphs[0].operators] == ["IDENTITY"]
+    assert cloned.tensors["x"] is not model_ir.tensors["x"]
+    assert cloned.subgraphs[0] is not model_ir.subgraphs[0]
+    assert cloned.metadata == model_ir.metadata
+    assert cloned.metadata is not model_ir.metadata
 
 
 def _layout_transpose_model(*, graph_output: bool) -> ModelIR:

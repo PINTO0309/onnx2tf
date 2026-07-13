@@ -146,6 +146,7 @@ from onnx2tf.tflite_builder.pytorch_onnx_optimizer import (
     _optimize_dynamo_exported_onnx_in_place,
 )
 from onnx2tf.tflite_builder.passes.pytorch_compat import (
+    _clone_model_ir_without_root_operators,
     _remove_redundant_layout_transposes,
     _restore_same_average_pool_exclude_pad_correction_for_native_runtime,
 )
@@ -12441,17 +12442,15 @@ def _ensure_tensor_shape_literal(
 
 
 def _rewrite_static_while_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
-    rewritten = copy.deepcopy(model_ir)
+    rewritten = _clone_model_ir_without_root_operators(model_ir)
     used_names: Set[str] = set(str(name) for name in rewritten.tensors.keys())
-    expanded_ops: List[OperatorIR] = []
-    changed = False
 
-    for op_index, op in enumerate(rewritten.operators):
+    for op_index, source_op in enumerate(model_ir.operators):
+        op = copy.deepcopy(source_op)
         match = _match_static_unrollable_while_op(rewritten, op)
         if match is None:
-            expanded_ops.append(op)
+            rewritten.operators.append(op)
             continue
-        changed = True
         body_subgraph = cast(ModelIR, match["body_subgraph"])
         iterations = (
             max(0, int(match["trip_count"]) - int(match["iter_init"]))
@@ -12492,7 +12491,7 @@ def _rewrite_static_while_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
                     shape=target_tensor.shape_signature or target_tensor.shape,
                     used_names=used_names,
                 )
-                expanded_ops.append(
+                rewritten.operators.append(
                     OperatorIR(
                         op_type="RESHAPE",
                         inputs=[source_name, shape_name],
@@ -12537,27 +12536,22 @@ def _rewrite_static_while_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
                     local_map[output_str] = str(mapped_name)
                     cloned_outputs.append(str(mapped_name))
                 cloned_op.outputs = cloned_outputs
-                expanded_ops.append(cloned_op)
+                rewritten.operators.append(cloned_op)
             current_values = [str(local_map[str(name)]) for name in body_subgraph.outputs]
 
-    if not changed:
-        return rewritten
-    rewritten.operators = expanded_ops
     return rewritten
 
 
 def _rewrite_counter_bounded_while_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
-    rewritten = copy.deepcopy(model_ir)
+    rewritten = _clone_model_ir_without_root_operators(model_ir)
     used_names: Set[str] = set(str(name) for name in rewritten.tensors.keys())
-    expanded_ops: List[OperatorIR] = []
-    changed = False
 
-    for op_index, op in enumerate(rewritten.operators):
+    for op_index, source_op in enumerate(model_ir.operators):
+        op = copy.deepcopy(source_op)
         match = _match_counter_bounded_unrollable_while_op(rewritten, op)
         if match is None:
-            expanded_ops.append(op)
+            rewritten.operators.append(op)
             continue
-        changed = True
         body_subgraph = cast(ModelIR, match["body_subgraph"])
         max_iterations = int(match["max_iterations"])
 
@@ -12602,7 +12596,7 @@ def _rewrite_counter_bounded_while_ops_for_native_export(model_ir: ModelIR) -> M
                     local_map[output_str] = str(mapped_name)
                     cloned_outputs.append(str(mapped_name))
                 cloned_op.outputs = cloned_outputs
-                expanded_ops.append(cloned_op)
+                rewritten.operators.append(cloned_op)
 
             next_values: List[str] = []
             current_cond_name = str(current_values[2])
@@ -12620,7 +12614,7 @@ def _rewrite_counter_bounded_while_ops_for_native_export(model_ir: ModelIR) -> M
                         cloned_tensor = _clone_tensor(rewritten.tensors[str(output_name)])
                         cloned_tensor.name = str(gated_name)
                         rewritten.tensors[str(gated_name)] = cloned_tensor
-                    expanded_ops.append(
+                    rewritten.operators.append(
                         OperatorIR(
                             op_type="LOGICAL_AND",
                             inputs=[current_cond_name, str(local_map[str(body_subgraph.outputs[2])])],
@@ -12639,7 +12633,7 @@ def _rewrite_counter_bounded_while_ops_for_native_export(model_ir: ModelIR) -> M
                     cloned_tensor = _clone_tensor(rewritten.tensors[str(output_name)])
                     cloned_tensor.name = str(gated_name)
                     rewritten.tensors[str(gated_name)] = cloned_tensor
-                expanded_ops.append(
+                rewritten.operators.append(
                     OperatorIR(
                         op_type="SELECT",
                         inputs=[
@@ -12654,9 +12648,6 @@ def _rewrite_counter_bounded_while_ops_for_native_export(model_ir: ModelIR) -> M
                 next_values.append(str(gated_name))
             current_values = next_values
 
-    if not changed:
-        return rewritten
-    rewritten.operators = expanded_ops
     return rewritten
 
 

@@ -1635,6 +1635,18 @@ clone semantics. The PyTorch exporter no longer owns a consumer-map builder or
 complete operator-list deletion, and the pass can be tested without importing
 Torch.
 
+Native-PyTorch WHILE compatibility expansion uses the same Torch-free boundary
+for root-graph cloning. `_clone_model_ir_without_root_operators()` deep-clones
+tensors, metadata, and complete subgraphs but deliberately leaves the root
+operator stream empty. Static trip-count and counter-bounded expanders consume
+the original root stream once, deep-copy retained operators once, and append
+retained or generated operators directly in established order. This keeps the
+source and result independent and leaves WHILE body/condition subgraphs intact,
+without cloning a root operator stream that would immediately be discarded.
+The exporter architecture gate detects attribute assignments through the AST,
+so alternate local names cannot silently reintroduce complete operator-list
+replacement.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
