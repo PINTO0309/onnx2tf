@@ -201,6 +201,14 @@ and layout synchronization share one graph index and `LayoutState`.
 `layout.add_concat_const_suffix_nhwc`; all five production positions call the
 transactional runner and the lowerer compatibility wrapper remains available.
 
+The adjacent dual-Mul/Concat round-trip rule remains in the central lowerer
+pending mechanical extraction. Its dedicated compact corpus fixes a shared
+NHWC-to-NCHW data adapter, two Mul branches, channel Concat, inverse output
+adapter, downstream consumer, and copy-on-write for an NCHW constant shared
+outside the island. Whole-ModelIR no-op cases cover adapter/Mul/Concat fan-out,
+public intermediate/post outputs, both invalid permutations, invalid Concat
+axis, missing constant data, and branches that do not share the adapted input.
+
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization

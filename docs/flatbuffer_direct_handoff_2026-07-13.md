@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `1b8c307` (`index add concat suffix layout pass`)
+- Latest implementation checkpoint: `82d8777` (`characterize dual mul concat layout`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `1b8c307` and the documentation checkpoint
+  `82d8777` and the documentation checkpoint
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -14,7 +14,8 @@
 ## Completed work
 
 This resumed interval completed twelve adjacent semantic layout families using
-the staged characterization → mechanical extraction → indexed runner process.
+the staged characterization → mechanical extraction → indexed runner process,
+then characterized the next dual-Mul/Concat family.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -120,6 +121,14 @@ the staged characterization → mechanical extraction → indexed runner process
     - Added shared indexed candidate/mutation state, suffix-constant
       copy-on-write, corrected post-tensor metadata, stable transactional runner
       `layout.add_concat_const_suffix_nhwc`, and five runner calls in `1b8c307`.
+13. Dual-Mul/Concat layout
+    - Moved the 131-line central success fixture to a dedicated compact corpus
+      in `82d8777`, retaining shared-constant copy-on-write coverage.
+    - Added ten whole-ModelIR no-op boundaries for adapter/Mul/Concat fan-out,
+      public tensors, permutations, axis, missing constant, and non-shared data
+      branches.
+    - Preserved production behavior and all six raw call positions;
+      mechanical extraction remains the next checkpoint.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -135,9 +144,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is
-  `_optimize_transpose_dual_mul_concat_prepost_nhwc_chains`: establish compact
-  success/rejection characterization before mechanical extraction.
+  The immediate next unit is the characterized
+  `_optimize_transpose_dual_mul_concat_prepost_nhwc_chains`: move it
+  mechanically to a focused pass-family module, prove AST identity, and retain
+  all six raw production positions until indexed migration.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -159,7 +169,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `1b8c307`; after the documentation
+implementation working tree is clean at `82d8777`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -306,6 +316,11 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 - Full direct selection after indexed Add/Concat suffix migration:
   `1275 passed, 5 deselected, 2 warnings in 158.36s`.
+- Dedicated dual-Mul/Concat characterization: `11 passed in 0.29s`.
+- Focused dual-Mul selection including residual central-name coverage:
+  `12 passed, 756 deselected in 2.71s`.
+- Full direct selection after moving the fixture and adding ten boundaries:
+  `1285 passed, 5 deselected, 2 warnings in 165.06s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -337,12 +352,13 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Inspect `_optimize_transpose_dual_mul_concat_prepost_nhwc_chains`, its
-   production positions, and existing coverage to freeze exact behavior.
-3. Add a dedicated compact success graph plus fan-out, public-boundary,
-   permutation, axis, and shared-constant cases.
-4. Run focused and full direct gates, then commit and push characterization
-   before mechanical extraction.
+2. Move `_optimize_transpose_dual_mul_concat_prepost_nhwc_chains` mechanically
+   from the central lowerer to a focused pass-family module while retaining a
+   signature-compatible wrapper.
+3. Add AST-equivalence and single-owner architecture coverage, preserving all
+   six raw production call positions and ordering.
+4. Run focused and full direct gates, then commit and push extraction before
+   indexed mutation changes.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -999,3 +1015,31 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_add_concat_suffix_superpoint` artifacts were removed after
 metrics inspection.
+
+### Dual-Mul/Concat characterization checkpoint
+
+Checkpoint `82d8777` moved the 131-line embedded success fixture to
+`tests/test_flatbuffer_direct_dual_mul_concat_layout.py`. The compact graph
+retains the shared data adapter, two Mul branches, channel Concat, inverse
+output adapter, downstream Relu, and an external NCHW consumer of one Mul
+constant. It proves direct NHWC data inputs, axis-3 Concat, canonical output
+aliasing, in-place conversion of an exclusive constant, and an NHWC clone for
+the externally shared constant while its original buffer remains NCHW.
+
+Ten parameterized boundaries prove a complete ModelIR no-op for pre-adapter
+fan-out, Mul-output fan-out, Concat fan-out, public Concat/post tensors, invalid
+pre/post permutations, invalid Concat axis, missing constant data, and Mul
+branches that do not share one adapted data input. Snapshots compare every
+operator, option, tensor dtype, shape, signature, and constant value.
+Production code and all six raw call positions remain unchanged.
+
+Focused characterization passed 11 tests. The complete sequential direct
+selection passed:
+
+```text
+1285 passed, 5 deselected, 2 warnings in 165.06s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently. Mechanical extraction with AST-equivalence and ownership gates
+is the next separate checkpoint.
