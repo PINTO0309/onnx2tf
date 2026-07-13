@@ -1598,6 +1598,15 @@ batch compaction. A no-Identity preflight avoids index construction entirely.
 The quantization module no longer assigns a rebuilt operator list for this
 cleanup.
 
+Strict integer boundary construction shares one graph index after Identity
+elision. Graph-input replacement visits only indexed consumers, and full-
+integer graph-output conversion updates the indexed producer rather than
+rescanning every operator. Boundary `QUANTIZE` operators are inserted in input
+order before the unchanged core graph and output `QUANTIZE`/`DEQUANTIZE`
+operators are appended in output order after quantization analysis, preserving
+report indices. The former `pre_ops + clone.operators + post_ops` assignment is
+removed.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

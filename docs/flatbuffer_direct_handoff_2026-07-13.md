@@ -539,6 +539,17 @@ outputs, surviving operator identity, and one initial refresh. The
 quantization module no longer rebuilds its complete operator list for Identity
 cleanup. No model conversion or inference was run.
 
+Strict integer boundary construction now continues with one graph index after
+Identity elision. Each graph input rewires only its indexed consumers; output
+dtype bridges rename the indexed producer instead of scanning every operator.
+The core quantization/report loop still sees exactly the original core order.
+Afterward, input `QUANTIZE` operators are inserted in declared input order and
+output `QUANTIZE`/`DEQUANTIZE` operators are appended in declared output order.
+This removes the complete `pre + core + post` list assignment. A focused float-
+IO strict-integer fixture proves one initial refresh, exact boundary/core
+operator order, connected boundary names, preserved public output, and source
+ModelIR immutability. No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

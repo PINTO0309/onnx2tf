@@ -6,7 +6,9 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.quantization import (
     _elide_identity_operators,
+    TensorCalibrationRange,
     build_dynamic_range_quantized_model_ir,
+    build_integer_quantized_model_ir,
 )
 
 
@@ -99,3 +101,51 @@ def test_quantization_identity_elision_resolves_boundary_chain() -> None:
 
     assert model_ir.operators == []
     assert model_ir.outputs == ["x"]
+
+
+def test_strict_integer_float_io_inserts_indexed_boundary_ops(monkeypatch) -> None:
+    model_ir = ModelIR("strict_integer_boundary")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1, 4], [1, 4]),
+        "constant": TensorIR(
+            "constant",
+            "FLOAT32",
+            [4],
+            [4],
+            data=np.asarray([0.25, -0.5, 1.0, -2.0], dtype=np.float32),
+        ),
+        "y": TensorIR("y", "FLOAT32", [1, 4], [1, 4]),
+    }
+    model_ir.operators = [OperatorIR("ADD", ["x", "constant"], ["y"])]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    quantized = build_integer_quantized_model_ir(
+        model_ir,
+        quant_type="per-tensor",
+        calibration_ranges={
+            "x": TensorCalibrationRange(-1.0, 1.0, 1),
+            "y": TensorCalibrationRange(-2.0, 2.0, 1),
+        },
+    )
+
+    assert refresh_count == 1
+    assert [op.op_type for op in quantized.operators] == [
+        "QUANTIZE",
+        "ADD",
+        "DEQUANTIZE",
+    ]
+    assert quantized.operators[1].inputs[0] == quantized.operators[0].outputs[0]
+    assert quantized.operators[1].outputs[0] == quantized.operators[2].inputs[0]
+    assert quantized.outputs == quantized.operators[2].outputs
+    assert model_ir.operators[0].inputs == ["x", "constant"]
+    assert model_ir.operators[0].outputs == ["y"]

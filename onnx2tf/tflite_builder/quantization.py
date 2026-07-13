@@ -1310,6 +1310,7 @@ def _build_strict_full_integer_model_ir(
     )
     clone = _clone_model_ir(model_ir)
     _elide_identity_operators(clone)
+    graph_index = ModelIRGraphIndex(clone)
     internal_dtype = str(internal_activation_dtype).upper()
     input_dtype = str(input_quant_dtype).upper()
     output_dtype = str(output_quant_dtype).upper()
@@ -1343,6 +1344,32 @@ def _build_strict_full_integer_model_ir(
 
     pre_ops: List[OperatorIR] = []
     post_ops: List[OperatorIR] = []
+
+    def replace_all_operator_inputs(old_name: str, new_name: str) -> None:
+        for op_index in sorted(set(graph_index.consumer_indices(str(old_name)))):
+            op = clone.operators[int(op_index)]
+            new_inputs = [
+                str(new_name) if str(value) == str(old_name) else value
+                for value in op.inputs
+            ]
+            if new_inputs != list(op.inputs):
+                graph_index.replace_operator_inputs(int(op_index), new_inputs)
+
+    def replace_producer_outputs(old_name: str, new_name: str) -> None:
+        producer = graph_index.producer(str(old_name))
+        if producer is None:
+            return
+        producer_index = graph_index.operator_index(producer)
+        if producer_index is None:
+            return
+        graph_index.replace_operator_outputs(
+            int(producer_index),
+            [
+                str(new_name) if str(value) == str(old_name) else value
+                for value in producer.outputs
+            ],
+        )
+
     if not full_integer_io:
         for input_name in list(clone.inputs):
             old_tensor = clone.tensors[str(input_name)]
@@ -1372,8 +1399,7 @@ def _build_strict_full_integer_model_ir(
                 logical_layout=old_tensor.logical_layout,
             )
             pre_ops.append(OperatorIR(op_type="QUANTIZE", inputs=[str(input_name)], outputs=[q_name]))
-            for op in clone.operators:
-                op.inputs = [q_name if str(v) == str(input_name) else v for v in op.inputs]
+            replace_all_operator_inputs(str(input_name), q_name)
             report["quantized_tensors"][q_name] = {
                 "dtype": internal_dtype,
                 "kind": "activation",
@@ -1439,26 +1465,20 @@ def _build_strict_full_integer_model_ir(
                     logical_layout=old_tensor.logical_layout,
                 )
                 pre_ops.append(OperatorIR(op_type="QUANTIZE", inputs=[str(input_name)], outputs=[internal_name]))
-                for op in clone.operators:
-                    op.inputs = [internal_name if str(v) == str(input_name) else v for v in op.inputs]
+                replace_all_operator_inputs(str(input_name), internal_name)
                 report["quantized_tensors"][internal_name] = {
                     "dtype": internal_dtype,
                     "kind": "activation",
                     "qparams": _quant_param_to_report(internal_qparams),
                 }
 
-        producer_by_output = {
-            str(output_name): op
-            for op in clone.operators
-            for output_name in op.outputs
-        }
         for output_name in list(clone.outputs):
             old_tensor = clone.tensors[str(output_name)]
             if old_tensor.dtype != "FLOAT32":
                 continue
             if output_dtype == internal_dtype:
                 continue
-            producer_op = producer_by_output.get(str(output_name), None)
+            producer_op = graph_index.producer(str(output_name))
             fixed_external = fixed_activation_qparams_for_op(
                 op_type=str(producer_op.op_type) if producer_op is not None else "",
                 dtype=output_dtype,
@@ -1487,8 +1507,7 @@ def _build_strict_full_integer_model_ir(
                 quantization=None,
                 logical_layout=old_tensor.logical_layout,
             )
-            for op in clone.operators:
-                op.outputs = [internal_name if str(v) == str(output_name) else v for v in op.outputs]
+            replace_producer_outputs(str(output_name), internal_name)
             old_tensor.dtype = output_dtype
             old_tensor.quantization = external_qparams
             old_tensor.data = None
@@ -1666,7 +1685,10 @@ def _build_strict_full_integer_model_ir(
             }
         )
 
-    clone.operators = pre_ops + clone.operators + post_ops
+    for op_index, pre_op in enumerate(pre_ops):
+        graph_index.insert_operator(int(op_index), pre_op)
+    for post_op in post_ops:
+        graph_index.append_operator(post_op)
     _validate_strict_full_integer_model_ir(
         model_ir=clone,
         allow_float_boundary=not full_integer_io,
