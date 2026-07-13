@@ -255,6 +255,13 @@ default metrics are derived from it. A common wrapper also maps shared float
 plans into `_QuantizedInputPlan`. The refactor reduced the module from 1,549 to
 1,126 lines while preserving all thirteen quantized family IDs and their order.
 
+Candidate input acceptance now has a parallel immutable contract per family:
+allowed/required kinds, minimum arity, exact counts, and shape-validation
+policy. A common validator replaces the thirteen count branches, and an
+import-time invariant prevents the pass and input-contract family sets from
+drifting. The current module is 1,134 lines, 415 below the original 1,549-line
+state.
+
 The adjacent legacy ownership gate now builds action-kind counts once. Seven
 simple quantized family contracts declare only allowed and required kinds;
 all-Pad keeps its minimum-arity guard, and Slice/Split/Add keep their

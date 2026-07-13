@@ -469,6 +469,13 @@ remain explicit. This removed 423 lines of repeated dispatch code from
 `nhwc_concat_quantized_layout.py` (1,549 to 1,126 lines) without changing the
 ordered pass contract.
 
+Candidate acceptance is also declarative. Each family now records allowed and
+required input kinds, minimum arity, exact-count constraints, and whether
+spatial shapes must be reconciled. One validator replaces thirteen count
+branches, and an import-time invariant requires the input-contract family set
+to match the pass table. The current module is 1,134 lines, still 415 below the
+pre-table implementation.
+
 The legacy ownership boundary uses the same compact style. Simple quantized
 families are described by allowed and required action-kind sets after one
 action multiset is built. Only Slice, Split, and Add retain plan-aware
