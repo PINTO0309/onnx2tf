@@ -305,3 +305,28 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_elementwise_gate_superpoint` artifacts were removed after
 metrics inspection.
+
+### Multi-branch gate characterization and mechanical extraction
+
+Checkpoint `13ec048` replaced the missing model-specific coverage with a
+compact generic two-branch graph. It proves branch adapter removal, independent
+Mean-axis constant cloning/remapping, Logistic/Mul leaf propagation, Add-root
+output canonicalization, and a complete gate-fan-out rejection. Focused
+characterization passed 2 tests.
+
+The complete 518-line matcher moved mechanically to
+`passes/multi_branch_gate_layout.py`, with an AST including docstrings that
+matches `13ec048`. Despite its historical OSNet name, the test and matcher are
+defined only by generic topology. The lowerer keeps a signature-compatible
+wrapper and the one production call remains unchanged until indexed migration.
+An architecture test fixes ownership.
+
+Focused characterization and ownership validation passed 3 tests. The
+complete sequential direct selection passed:
+
+```text
+1186 passed, 5 deselected, 2 warnings in 151.88s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently.

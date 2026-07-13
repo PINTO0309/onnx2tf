@@ -112,6 +112,14 @@ differential index and `LayoutState` transactionally. The entire extracted
 indexed channel-shuffle subset has no whole-graph map builders or direct
 operator-list deletion.
 
+Generic multi-branch gate/Add-tree propagation, historically named for OSNet,
+is mechanically owned by `passes/multi_branch_gate_layout.py`. The rule is
+topology-driven: each rank-four branch has a layout adapter, Relu, keep-dims
+Mean, Logistic gate adapter, and Mul leaf; two or more leaves feed an Add tree
+and inverse output bridge. Its complete 518-line implementation is
+AST-identical to checkpoint `13ec048`. The lowerer keeps a compatibility
+wrapper and its single production position pending indexed migration.
+
 The larger generic two-way shuffle/branch/Concat propagation rule is now
 mechanically owned by the same family. It accepts rank-five Gather selectors or
 rank-four channel Slice selectors, traces one split through an NHWC
