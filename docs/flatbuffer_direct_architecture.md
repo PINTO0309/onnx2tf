@@ -141,6 +141,16 @@ shared differential graph index and `LayoutState`. The lowerer retains its
 compatibility wrapper, and all five production positions supply session layout
 state and diagnostics to the runner.
 
+The rank-five LeakyRelu/Logistic/two-Add propagation rule is mechanically
+owned by `passes/ndhwc_gate_layout.py`. It maps a four-dimensional base through
+Reshape into NDHWC, removes independent skip/gate NCDHW adapters, and
+canonicalizes both inverse output bridges. Its dedicated compact corpus
+replaces a 177-line central inline fixture and fixes base fan-out, gate fan-out,
+public-intermediate, permutation, and reshape-rank rejection. The complete
+implementation is AST-identical to checkpoint `ee3d2fd`; the lowerer keeps a
+compatibility wrapper and all six production calls remain unchanged until the
+separate indexed migration checkpoint.
+
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization
