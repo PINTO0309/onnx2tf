@@ -2165,8 +2165,9 @@
     {
       "tier": 3,
       "model": "encoder.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 1.9293278455734253e-05
+      "baseline_classification": "timeout",
+      "baseline_reason": "user_approved_timeout_after_600s",
+      "error_signature_sha256": "2347ce95c7a93231a34b5d76d4387d3de16b1a7b51e339ebbc3e8c1f1c3357f1"
     },
     {
       "tier": 3,

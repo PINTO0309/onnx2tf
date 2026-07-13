@@ -1197,17 +1197,17 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     profile = bulk_runner._load_regression_profile(str(profile_path))
 
     assert profile["model_count"] == 420
-    assert profile["active_model_count"] == 394
-    assert profile["excluded_model_count"] == 26
-    assert profile["excluded_baseline_classification_counts"] == {"timeout": 26}
+    assert profile["active_model_count"] == 393
+    assert profile["excluded_model_count"] == 27
+    assert profile["excluded_baseline_classification_counts"] == {"timeout": 27}
     assert profile["tiers"] == [0, 1, 2, 3, 4]
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 6,
-        "pass": 368,
+        "pass": 367,
         "tflite_fail": 20,
-        "timeout": 26,
+        "timeout": 27,
     }
     assert profile["acceptance_reasons"] == {
         "deim_hgnetv2_n_wholebody28_1250query_fp16.onnx": (
@@ -1217,10 +1217,24 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
             "user_approved_topk_index_instability_from_near_tied_scores"
         ),
     }
+    profile_payload = json.loads(profile_path.read_text(encoding="utf-8"))
+    encoder_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "encoder.onnx"
+    )
+    assert encoder_entry == {
+        "tier": 3,
+        "model": "encoder.onnx",
+        "baseline_classification": "timeout",
+        "baseline_reason": "user_approved_timeout_after_600s",
+        "error_signature_sha256": (
+            "2347ce95c7a93231a34b5d76d4387d3de16b1a7b51e339ebbc3e8c1f1c3357f1"
+        ),
+    }
     assert profile["model_options"]["silero_vad.onnx"] == {
         "keep_shape_absolutely_input_names": ["input", "state", "sr"],
     }
-    profile_payload = json.loads(profile_path.read_text(encoding="utf-8"))
     for model_name in (
         "anime-gan-v2.onnx",
         "anime-gan-v2_org.onnx",
@@ -1379,17 +1393,6 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "model": "maskrcnn_resnet50_fpn.onnx",
         "baseline_classification": "pass",
         "tflite_max_abs": 0.0,
-    }
-    encoder_entry = next(
-        entry
-        for entry in profile_payload["models"]
-        if entry["model"] == "encoder.onnx"
-    )
-    assert encoder_entry == {
-        "tier": 3,
-        "model": "encoder.onnx",
-        "baseline_classification": "pass",
-        "tflite_max_abs": 1.9293278455734253e-05,
     }
     tiny_decoder_entry = next(
         entry
