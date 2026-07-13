@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `8d149cb` (`extract dual postconv gate layout pass`)
+- Latest implementation checkpoint: `cc828c8` (`index dual postconv gate layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `8d149cb`
+  `cc828c8`
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -63,8 +63,8 @@ then characterized and mechanically extracted the seventh family.
      `ed6d8c1`.
    - Mechanically moved the complete implementation to
      `passes/dual_postconv_gate_layout.py` with AST equivalence in `8d149cb`.
-     The five legacy production positions remain unchanged until the separate
-     indexed migration.
+   - Migrated the matcher and all five production positions to shared indexed
+     state and a stable ordered runner in `cc828c8`.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -80,10 +80,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the already extracted
-  `_optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains` family:
-  migrate it to shared graph/layout state, add an ordered runner, and replace
-  all five raw production calls.
+  The immediate next unit is the adjacent
+  `_optimize_transpose_logistic_sub_mul_postadd_nhwc_chains` family: audit its
+  call positions and existing coverage, then characterize generic success and
+  unsafe fan-out/public boundaries before extraction.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -105,7 +105,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `8d149cb`; after the documentation
+implementation working tree is clean at `cc828c8`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -169,6 +169,14 @@ sequential with only one model/process active at a time.
 - Dual-postconv extraction and ownership focus: `38 passed in 18.99s`.
 - Full direct selection after mechanical extraction:
   `1193 passed, 5 deselected, 2 warnings in 169.93s`.
+- Indexed dual-postconv runner, architecture, and efficiency focus:
+  `46 passed in 19.29s`.
+- Tier 1 `superpoint.onnx`, sequential `-tb flatbuffer_direct -cotof` after
+  indexed dual-postconv migration: `evaluation_pass=true`,
+  `max_abs=1.6666017472743988e-06`,
+  `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+- Full direct selection after indexed dual-postconv migration:
+  `1197 passed, 5 deselected, 2 warnings in 161.48s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -200,16 +208,13 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Audit every producer/consumer read and mutation in
-   `passes/dual_postconv_gate_layout.py`, then add optional `graph_index` and
-   `layout_state` parameters without changing deep matching semantics.
-3. Add a stable ordered `LAYOUT_PLAN` runner with model-only preflight and an
-   indexed complementary-gate/two-branch guard. Replace all five raw production
-   calls while retaining the compatibility wrapper.
-4. Extend the compact fixtures to prove one initial index refresh and one
-   success snapshot, while every unsafe boundary rejects before snapshotting.
-5. Run focused tests, sequential Tier 1 `superpoint.onnx -cotof`, and the full
-   direct selection before committing and pushing the indexed checkpoint.
+2. Audit every call and existing fixture for
+   `_optimize_transpose_logistic_sub_mul_postadd_nhwc_chains` and record the
+   exact topology variants it accepts.
+3. Add compact generic success and no-op characterization for gate fan-out,
+   data-adapter fan-out, and public boundaries.
+4. Commit characterization separately, then mechanically extract with
+   AST-equivalence proof before indexed mutation.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -464,3 +469,39 @@ complete sequential direct selection passed:
 
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently.
+
+### Indexed dual-postconv gate checkpoint
+
+Checkpoint `cc828c8` migrated the extracted complementary-gate matcher to
+shared `ModelIRGraphIndex` and `LayoutState`. Producer/consumer traversal,
+Logistic/Mul/Add input rewrites, Add output canonicalization, post-output alias
+rewrites, structural removals, pruning, metadata, and layout reconciliation
+now use differential state. The implementation contains no whole-graph map
+builder and no direct operator-list deletion.
+
+`run_dual_postconv_gate_layout_cleanup` registers stable `LAYOUT_PLAN` ID
+`layout.dual_postconv_complementary_gate_nhwc`. Its model-only required-op
+preflight skips irrelevant graphs without state construction. Its indexed
+guard proves the exclusive Logistic/Sub complementary gate, distinct data
+adapters, two Mul/Add branches, inverse output adapters, public boundaries, and
+allowed data fan-out before the complete matcher retains deeper checks. All
+five production positions now supply session layout state and diagnostics; the
+lowerer compatibility wrapper remains available.
+
+Focused runner, ownership, architecture, and irrelevant-graph efficiency
+validation passed 46 tests. The successful two-Conv fixture uses one initial
+index refresh and one snapshot. Gate fan-out, data-adapter fan-out, and public
+intermediate variants all reject before snapshotting. Tier 1
+`superpoint.onnx` passed sequential `-tb flatbuffer_direct -cotof` with
+`evaluation_pass=true`, `max_abs=1.6666017472743988e-06`,
+`rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+
+The complete sequential direct selection passed:
+
+```text
+1197 passed, 5 deselected, 2 warnings in 161.48s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_dual_postconv_superpoint` artifacts were removed after metrics
+inspection.
