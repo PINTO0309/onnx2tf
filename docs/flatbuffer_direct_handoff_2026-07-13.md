@@ -136,6 +136,14 @@ channel-first; the 3D fixture fixes metadata fallback and NDHWC output. Emitter
 and architecture validation passes 78 tests; syntax, Ruff, and diff checks
 pass. No model conversion or inference was run.
 
+Regular Conv3D source emission now has its own Torch-free owner. Direct module
+calls preserve NCDHW aliases and NDHWC output materialization; unsupported
+direct calls retain `_apply_module_conv3d`, target-shape/layout, alias cleanup,
+and activation behavior. Focused tests cover both paths. The dispatcher keeps
+only one Conv3D mention for fused-module raw-layout classification. Emitter and
+architecture validation passes 80 tests; syntax, Ruff, and diff checks pass. No
+model conversion or inference was run.
+
 Channel-first normalization now owns one graph index for its complete mutable
 layout phase. Feature-last collection, both friendly-layout worklists,
 Transpose cleanup, ATAN2-to-ATAN canonicalization, recurrent orphan repair,

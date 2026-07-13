@@ -395,6 +395,87 @@ def _emit_native_transpose_conv3d_module_op_for_codegen(
     return True
 
 
+def _emit_native_conv3d_module_op_for_codegen(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    op_type: str,
+    attr_name: str,
+    outputs: Sequence[str],
+    output_vars: Sequence[str],
+    output_target_shape: str,
+    channel_first_tensor_expr_aliases: Dict[str, str],
+    runtime_imports: Set[str],
+    forward_lines: List[str],
+    tensor_expr_fn: Callable[[str], str],
+    derived_local_var_name_fn: Callable[[str, str], str],
+    emit_module_output_expr_fn: Callable[..., str],
+    can_emit_direct_module_call_fn: Callable[[OperatorIR], bool],
+    activation_lines_fn: Callable[[str, str], List[str]],
+) -> bool:
+    if op_type != "CONV_3D":
+        return False
+    output_name = str(outputs[0])
+    output_tensor = model_ir.tensors.get(output_name, None)
+    output_layout = normalize_logical_layout(
+        output_tensor.logical_layout
+        if output_tensor is not None
+        else LOGICAL_LAYOUT_UNKNOWN
+    )
+    raw_output_layout = (
+        channel_first_logical_layout(len(list(output_tensor.shape)))
+        if output_tensor is not None
+        else LOGICAL_LAYOUT_UNKNOWN
+    )
+    needs_materialized_output_bridge = (
+        output_tensor is not None
+        and len(list(output_tensor.shape)) in {3, 4, 5}
+        and output_layout != LOGICAL_LAYOUT_UNKNOWN
+        and output_layout != raw_output_layout
+    )
+    raw_output_var = (
+        derived_local_var_name_fn(f"{output_vars[0]}_cf", "t")
+        if needs_materialized_output_bridge
+        else output_vars[0]
+    )
+    used_direct_module_call = can_emit_direct_module_call_fn(op)
+    if used_direct_module_call:
+        if needs_materialized_output_bridge:
+            channel_first_tensor_expr_aliases[output_name] = raw_output_var
+        else:
+            channel_first_tensor_expr_aliases.pop(output_name, None)
+        forward_lines.append(
+            f"{raw_output_var} = self.{attr_name}("
+            f"{tensor_expr_fn(str(op.inputs[0]))})"
+        )
+    else:
+        runtime_imports.add("_apply_module_conv3d")
+        target_layout = normalize_logical_layout(
+            model_ir.tensors[outputs[0]].logical_layout
+        )
+        forward_lines.append(
+            f"{output_vars[0]} = _apply_module_conv3d("
+            f"self.{attr_name}, {tensor_expr_fn(str(op.inputs[0]))}, "
+            f"target_shape={output_target_shape}, "
+            f"target_logical_layout={repr(target_layout)}, fused='NONE')"
+        )
+        channel_first_tensor_expr_aliases.pop(output_name, None)
+    fused = str(op.options.get("fusedActivationFunction", "NONE"))
+    if used_direct_module_call and raw_output_var != output_vars[0]:
+        if fused != "NONE":
+            forward_lines[-1] = forward_lines[-1].replace(
+                f"{output_vars[0]} =", f"{raw_output_var} =", 1
+            )
+        output_expr = emit_module_output_expr_fn(
+            output_name=output_name,
+            expr=raw_output_var,
+            raw_output_layout=raw_output_layout,
+        )
+        forward_lines.append(f"{output_vars[0]} = {output_expr}")
+    forward_lines.extend(activation_lines_fn(output_vars[0], fused))
+    return True
+
+
 def _emit_native_shape_transform_misc_op_for_codegen(
     *,
     model_ir: ModelIR,

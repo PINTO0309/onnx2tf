@@ -62,6 +62,7 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
     _DIRECT_CODEGEN_UNARY_EXPRESSIONS,
     _emit_native_binary_op_for_codegen_impl,
     _emit_native_concat_op_for_codegen,
+    _emit_native_conv3d_module_op_for_codegen,
     _emit_native_fully_connected_module_op_for_codegen,
     _emit_native_prelu_module_op_for_codegen,
     _emit_native_recurrent_module_op_for_codegen,
@@ -4908,48 +4909,23 @@ def _emit_native_direct_module_op_for_codegen(
         activation_lines_fn=activation_lines_fn,
     ):
         return True
-    if op_type == "CONV_3D":
-        output_name = str(outputs[0])
-        output_tensor = model_ir.tensors.get(output_name, None)
-        output_layout = normalize_logical_layout(
-            output_tensor.logical_layout if output_tensor is not None else LOGICAL_LAYOUT_UNKNOWN
-        )
-        raw_output_layout = (
-            channel_first_logical_layout(len(list(output_tensor.shape)))
-            if output_tensor is not None
-            else LOGICAL_LAYOUT_UNKNOWN
-        )
-        needs_materialized_output_bridge = (
-            output_tensor is not None
-            and len(list(output_tensor.shape)) in {3, 4, 5}
-            and output_layout != LOGICAL_LAYOUT_UNKNOWN
-            and output_layout != raw_output_layout
-        )
-        raw_output_var = (
-            derived_local_var_name_fn(f"{output_vars[0]}_cf", "t")
-            if needs_materialized_output_bridge
-            else output_vars[0]
-        )
-        used_direct_module_call = can_emit_direct_module_call_fn(op)
-        if used_direct_module_call:
-            if needs_materialized_output_bridge:
-                channel_first_tensor_expr_aliases[output_name] = raw_output_var
-            else:
-                channel_first_tensor_expr_aliases.pop(output_name, None)
-            forward_lines.append(f"{raw_output_var} = self.{attr_name}({tensor_expr_fn(str(op.inputs[0]))})")
-        else:
-            runtime_imports.add("_apply_module_conv3d")
-            forward_lines.append(
-                f"{output_vars[0]} = _apply_module_conv3d(self.{attr_name}, {tensor_expr_fn(str(op.inputs[0]))}, target_shape={output_target_shape}, target_logical_layout={repr(normalize_logical_layout(model_ir.tensors[outputs[0]].logical_layout))}, fused='NONE')"
-            )
-            channel_first_tensor_expr_aliases.pop(output_name, None)
-        if used_direct_module_call and raw_output_var != output_vars[0]:
-            if fused != "NONE":
-                forward_lines[-1] = forward_lines[-1].replace(f"{output_vars[0]} =", f"{raw_output_var} =", 1)
-            forward_lines.append(
-                f"{output_vars[0]} = {emit_module_output_expr_fn(output_name=output_name, expr=raw_output_var, raw_output_layout=raw_output_layout)}"
-            )
-        forward_lines.extend(activation_lines_fn(output_vars[0], fused))
+    if _emit_native_conv3d_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=op_type,
+        attr_name=attr_name,
+        outputs=outputs,
+        output_vars=output_vars,
+        output_target_shape=output_target_shape,
+        channel_first_tensor_expr_aliases=channel_first_tensor_expr_aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=tensor_expr_fn,
+        derived_local_var_name_fn=derived_local_var_name_fn,
+        emit_module_output_expr_fn=emit_module_output_expr_fn,
+        can_emit_direct_module_call_fn=can_emit_direct_module_call_fn,
+        activation_lines_fn=activation_lines_fn,
+    ):
         return True
     if _emit_native_transpose_conv3d_module_op_for_codegen(
         model_ir=model_ir,

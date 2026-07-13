@@ -4,6 +4,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_emitters import (
     _emit_native_binary_op_for_codegen_impl,
     _emit_native_concat_op_for_codegen,
+    _emit_native_conv3d_module_op_for_codegen,
     _emit_native_fully_connected_module_op_for_codegen,
     _emit_native_prelu_module_op_for_codegen,
     _emit_native_recurrent_module_op_for_codegen,
@@ -1055,3 +1056,102 @@ def test_transpose_conv3d_module_emitter_preserves_shape_fallback() -> None:
         "target_logical_layout='NDHWC', fused='NONE')"
     ]
     assert runtime_imports == {"_apply_module_transpose_conv3d"}
+
+
+def test_conv3d_module_emitter_materializes_channel_last_output() -> None:
+    model_ir = ModelIR(name="conv3d_emitter")
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1, 3, 2, 4, 4]),
+        "y": TensorIR(
+            "y",
+            "FLOAT32",
+            [1, 2, 4, 4, 5],
+            logical_layout="NDHWC",
+        ),
+    }
+    op = OperatorIR(
+        "CONV_3D",
+        ["x", "weight", "bias"],
+        ["y"],
+        {"fusedActivationFunction": "RELU"},
+    )
+    aliases: dict[str, str] = {}
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_native_conv3d_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=str(op.op_type),
+        attr_name="conv3d_0",
+        outputs=["y"],
+        output_vars=["y_var"],
+        output_target_shape="[1, 2, 4, 4, 5]",
+        channel_first_tensor_expr_aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"expr_{name}",
+        derived_local_var_name_fn=lambda _name, _prefix: "y_var_cf_0",
+        emit_module_output_expr_fn=(
+            lambda *, output_name, expr, raw_output_layout: (
+                f"bridge({output_name}, {expr}, {raw_output_layout})"
+            )
+        ),
+        can_emit_direct_module_call_fn=lambda _op: True,
+        activation_lines_fn=lambda name, fused: [
+            f"activate({name}, {fused})"
+        ],
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var_cf_0 = self.conv3d_0(expr_x)",
+        "y_var = bridge(y, y_var_cf_0, NCDHW)",
+        "activate(y_var, RELU)",
+    ]
+    assert aliases == {"y": "y_var_cf_0"}
+    assert runtime_imports == set()
+
+
+def test_conv3d_module_emitter_preserves_runtime_helper_fallback() -> None:
+    model_ir = ModelIR(name="conv3d_runtime_emitter")
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1, 3, 2, 4, 4]),
+        "y": TensorIR(
+            "y",
+            "FLOAT32",
+            [1, 5, 2, 4, 4],
+            logical_layout="NCDHW",
+        ),
+    }
+    op = OperatorIR("CONV_3D", ["x", "weight", "bias"], ["y"])
+    aliases = {"y": "stale_alias"}
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_native_conv3d_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=str(op.op_type),
+        attr_name="conv3d_0",
+        outputs=["y"],
+        output_vars=["y_var"],
+        output_target_shape="[1, 5, 2, 4, 4]",
+        channel_first_tensor_expr_aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"expr_{name}",
+        derived_local_var_name_fn=lambda _name, _prefix: "unused",
+        emit_module_output_expr_fn=lambda **_kwargs: "unused",
+        can_emit_direct_module_call_fn=lambda _op: False,
+        activation_lines_fn=lambda _name, _fused: [],
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var = _apply_module_conv3d(self.conv3d_0, expr_x, "
+        "target_shape=[1, 5, 2, 4, 4], "
+        "target_logical_layout='NCDHW', fused='NONE')"
+    ]
+    assert aliases == {}
+    assert runtime_imports == {"_apply_module_conv3d"}

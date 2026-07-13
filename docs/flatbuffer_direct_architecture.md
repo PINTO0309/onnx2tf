@@ -1868,6 +1868,13 @@ activation ordering. The legacy named-NHWC override for a channel-first
 TransposeConv2D tensor remains explicit in the 2D emitter. Only fused modules
 and regular Conv2D/depthwise/Conv3D remain substantial direct-dispatch logic.
 
+Regular Conv3D direct and runtime-helper emission is now a focused emitter as
+well. It owns NCDHW raw-output annotation, NDHWC materialization aliases,
+direct-module capability fallback, module-output bridging, and activation order.
+The only remaining `CONV_3D` check in the dispatcher belongs to the still-
+central fused-module raw-layout classification; the ordinary Conv3D branch is
+gone.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
