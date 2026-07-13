@@ -623,6 +623,26 @@ def _is_singleton_constant_tensor(
     return int(array.size) == 1
 
 
+def _is_scalar_like_tensor(
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> bool:
+    tensor = model_ir.tensors.get(str(tensor_name), None)
+    if tensor is None:
+        return False
+    if tensor.data is not None:
+        try:
+            return int(np.asarray(tensor.data).size) == 1
+        except Exception:
+            return False
+    shape = list(tensor.shape) if tensor.shape is not None else []
+    if len(shape) == 0:
+        return False
+    if any(int(dim) <= 0 for dim in shape):
+        return False
+    return all(int(dim) == 1 for dim in shape)
+
+
 def _read_singleton_constant_float(
     model_ir: ModelIR,
     tensor_name: str,

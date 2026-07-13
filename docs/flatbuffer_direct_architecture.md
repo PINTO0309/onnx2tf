@@ -225,6 +225,15 @@ replacement, structural removal, pruning, and layout synchronization update
 the differential index/state. The complete SE module now has no whole-graph
 map builders or direct operator-list deletion.
 
+The adjacent rank-four elementwise gate family is mechanically owned by
+`passes/elementwise_gate_layout.py`. It contains SUM/Logistic/Sub/Mul/Add,
+weighted-Add Swish, nested weighted-Add Swish, and Logistic/Mul/Add propagation
+rules. Their complete 342-, 321-, 298-, and 346-line implementations are
+AST-identical to checkpoint `1623762`; all five production positions per rule
+remain unchanged pending indexed migration. Scalar-like tensor recognition is
+now a shared `core/model_ir_utils.py` utility, with the lowerer preserving its
+compatibility import.
+
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and
 internal tensor metadata agree and no axis-sensitive gather/slice consumer

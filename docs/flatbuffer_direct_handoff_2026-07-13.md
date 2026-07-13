@@ -241,3 +241,31 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_se_fc_superpoint` artifacts were removed after metrics
 inspection.
+
+### Elementwise gate characterization and mechanical extraction
+
+Checkpoint `1623762` added the missing compact SUM/Logistic/Sub/Mul/Add
+characterization. The successful graph proves three leading adapter removals,
+SUM axis remapping from NCHW axis 1 to NHWC axis 3, canonical ADD output, and
+downstream rewiring. A reduction-input side consumer proves a complete no-op.
+Together with existing Logistic/Mul/Add, weighted Swish, nested weighted
+Swish, and legacy-user fixtures, focused characterization passed 6 tests.
+
+The four complete implementations moved mechanically to
+`passes/elementwise_gate_layout.py`. Their ASTs, including docstrings, match
+`1623762`; the lowerer keeps signature-compatible wrappers and all five raw
+production positions per rule until the separate indexed migration. The
+previous lowerer-local `_is_scalar_like_tensor` helper moved unchanged to
+`core/model_ir_utils.py`, while remaining a compatibility import from the
+lowerer. Ownership tests fix both boundaries.
+
+Focused characterization, legacy, and ownership validation passed 7 tests.
+The complete sequential direct selection passed:
+
+```text
+1181 passed, 5 deselected, 2 warnings in 166.23s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently. Next work is the indexed migration of these four extracted
+rules.
