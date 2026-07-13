@@ -1043,7 +1043,7 @@ def test_complementary_gate_layout_rewrites_have_single_owner() -> None:
     }
 
 
-def test_ndhwc_gate_layout_rewrite_has_single_owner() -> None:
+def test_ndhwc_gate_layout_rewrites_have_single_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -1054,26 +1054,30 @@ def test_ndhwc_gate_layout_rewrite_has_single_owner() -> None:
         / "passes"
         / "ndhwc_gate_layout.py"
     )
-    function_name = (
+    indexed_function_name = (
         "_optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains"
     )
+    function_names = {
+        indexed_function_name,
+        "_optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains",
+    }
     pass_tree = ast.parse(pass_path.read_text(encoding="utf-8"))
     pass_functions = {
         node.name: node
         for node in pass_tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    assert function_name in pass_functions
+    assert function_names <= set(pass_functions)
     referenced_names = {
         node.id
-        for node in ast.walk(pass_functions[function_name])
+        for node in ast.walk(pass_functions[indexed_function_name])
         if isinstance(node, ast.Name)
     }
     assert "_build_tensor_consumer_map" not in referenced_names
     assert "_build_tensor_producer_map" not in referenced_names
     assert not any(
         isinstance(node, ast.Delete)
-        for node in ast.walk(pass_functions[function_name])
+        for node in ast.walk(pass_functions[indexed_function_name])
     )
 
     lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
@@ -1082,12 +1086,13 @@ def test_ndhwc_gate_layout_rewrite_has_single_owner() -> None:
         for node in lowering_tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    wrapper_names = {
-        node.id
-        for node in ast.walk(lowering_functions[function_name])
-        if isinstance(node, ast.Name)
-    }
-    assert f"{function_name}_pass" in wrapper_names
+    for function_name in function_names:
+        wrapper_names = {
+            node.id
+            for node in ast.walk(lowering_functions[function_name])
+            if isinstance(node, ast.Name)
+        }
+        assert f"{function_name}_pass" in wrapper_names
     imports = [
         node
         for node in lowering_tree.body
@@ -1095,8 +1100,7 @@ def test_ndhwc_gate_layout_rewrite_has_single_owner() -> None:
         and node.module == "onnx2tf.tflite_builder.passes.ndhwc_gate_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {
-        function_name,
+    assert {alias.name for alias in imports[0].names} == function_names | {
         "run_ndhwc_gate_layout_cleanup",
     }
 
