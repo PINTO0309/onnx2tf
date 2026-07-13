@@ -723,6 +723,9 @@ def _resolve_slice_input_plan(
     adapter_index = (
         None if adapter_op is None else graph_index.operator_index(adapter_op)
     )
+    adapter_consumers = set(
+        graph_index.consumer_indices(adapter_output_name)
+    )
     if (
         adapter_op is None
         or adapter_index is None
@@ -732,9 +735,7 @@ def _resolve_slice_input_plan(
         or str(adapter_op.outputs[0]) != adapter_output_name
         or _read_transpose_perm(model_ir, adapter_op)
         != _PERM_NHWC_TO_NCHW
-        or adapter_output_name in model_outputs
-        or set(graph_index.consumer_indices(adapter_output_name))
-        != {int(slice_index)}
+        or int(slice_index) not in adapter_consumers
     ):
         return None
 
@@ -777,7 +778,10 @@ def _resolve_slice_input_plan(
         slice_op=slice_op,
         source_name=source_name,
         output_name=input_name,
-        remove_adapter=True,
+        remove_adapter=(
+            adapter_consumers == {int(slice_index)}
+            and adapter_output_name not in model_outputs
+        ),
         adapter_output_name=adapter_output_name,
         begin_tensor_name=begin_tensor_name,
         size_tensor_name=size_tensor_name,

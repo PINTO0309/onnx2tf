@@ -12635,7 +12635,6 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
         ]
         return (
             str(source_plan.get("kind", "")) == "direct"
-            and bool(source_plan.get("remove_pre", False))
             and list(plan.get("post_transpose_indices", [])) == []
             and slice_group_indices == [slice_idx]
             and source_tensor is not None

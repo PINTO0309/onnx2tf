@@ -331,7 +331,6 @@ def test_nhwc_slice_copy_on_write_preserves_shared_or_public_begin(
         "unsupported_slice",
         "slice_output_fanout",
         "public_slice_output",
-        "public_slice_adapter",
         "invalid_adapter_rank",
         "invalid_slice_output_rank",
         "invalid_begin_length",
@@ -357,10 +356,35 @@ def test_nhwc_slice_rejects_unsafe_or_partial_match(boundary: str) -> None:
 
 @pytest.mark.parametrize(
     "boundary",
-    ["slice_adapter_fanout", "slice_output_post_transpose"],
+    ["slice_adapter_fanout", "public_slice_adapter"],
 )
-def test_nhwc_slice_broader_legacy_cases_remain_available(boundary: str) -> None:
+def test_nhwc_slice_retains_shared_or_public_source_adapter(
+    boundary: str,
+) -> None:
     model_ir = _slice_model(boundary=boundary)
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_slice_rewritten(model_ir)
+    remaining_transposes = [
+        op for op in model_ir.operators if op.op_type == "TRANSPOSE"
+    ]
+    assert [op.outputs for op in remaining_transposes] == [["x1_nchw"]]
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_slice"
+    )
+    assert event["status"] == "changed"
+
+
+def test_nhwc_slice_output_post_adapter_remains_in_legacy() -> None:
+    model_ir = _slice_model(boundary="slice_output_post_transpose")
     diagnostics: list[dict] = []
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(

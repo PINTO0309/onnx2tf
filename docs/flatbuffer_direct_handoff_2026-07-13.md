@@ -10,8 +10,9 @@ GELU. It also owns the one-or-more-Pad-plus-direct path and the one-or-more
 Dequantize path and the one-or-more PReLU path, each with or without direct
 inputs. It also owns exactly one Softmax plus at least one direct input, and
 one or more expanded-Swish diamonds with direct or unary companion inputs.
-The bounded Slice family additionally owns one or more exclusive direct-source
-Slice inputs, optionally with direct inputs. The bounded Split family owns one
+The bounded Slice family additionally owns one or more direct-source Slice
+inputs, optionally with direct inputs, while retaining shared/public source
+adapters. The bounded Split family owns one
 or more outputs from an exclusive direct-source Split, again optionally with
 direct inputs. The bounded Add family owns the non-recursive direct-only Add
 input form. The exact pseudo-LeakyRelu diamond is the eleventh family. All
@@ -68,16 +69,17 @@ residual inputs, public adapter/Logistic/Mul outputs, and fan-out from any
 internal edge before mutation. Rejecting a public Logistic output is an
 intentional correctness improvement over the legacy matcher because rewriting
 that public tensor would otherwise silently change its layout contract.
-The bounded Slice family requires an exclusive rank-four NHWC→NCHW source
-adapter and an exclusive rank-four Slice output. It remaps begin/size vectors,
-Slice output shape, and per-axis quantization into NHWC. Exclusive parameter
-tensors are updated once in place; shared or public parameters are cloned with
-dtype, variable state, quantization, layout, and ONNX provenance preserved.
-This closes two legacy correctness gaps: shared/public Slice parameters are no
-longer silently mutated, and Slice-output quantization dimension 1 is remapped
-to dimension 3. Shared source adapters and Slice outputs with valid inverse
-post adapters deliberately remain in the legacy matcher so this bounded
-ownership transfer cannot remove existing behavior.
+The bounded Slice family requires a rank-four NHWC→NCHW source adapter and an
+exclusive rank-four Slice output. It remaps begin/size vectors, Slice output
+shape, and per-axis quantization into NHWC. Exclusive parameter tensors are
+updated once in place; shared or public parameters are cloned with dtype,
+variable state, quantization, layout, and ONNX provenance preserved. Shared or
+public source adapters remain intact for their existing consumers while only
+the Slice is rewired to NHWC. This closes two legacy correctness gaps:
+shared/public Slice parameters are no longer silently mutated, and
+Slice-output quantization dimension 1 is remapped to dimension 3. Slice
+outputs with valid inverse post adapters deliberately remain in the legacy
+matcher so this bounded ownership transfer cannot remove existing behavior.
 The bounded Split family validates all outputs as rank four and requires each
 to be unused or consumed only by the selected Concat. One Split may therefore
 supply multiple Concat inputs while its source, axis, output metadata, and
@@ -153,8 +155,9 @@ Focused verification, all in the existing `uv` environment:
   all-Swish inputs, and fourteen whole-ModelIR unsafe/partial-match no-op
   boundaries. The Slice
   suite covers mixed and all-Slice success, shared/public parameter
-  copy-on-write, fifteen complete no-op boundaries, and two broader cases that
-  must continue through the legacy fallback. The Split suite covers both axis
+  copy-on-write, shared/public source-adapter retention, fourteen complete
+  no-op boundaries, and one post-adapter case that must continue through the
+  legacy fallback. The Split suite covers both axis
   signs, multi-output single-application behavior, shared/public axis
   copy-on-write, fifteen no-op boundaries, and two preserved legacy cases. The
   Add suite covers mixed/all-Add success, fourteen complete no-op boundaries,
@@ -173,8 +176,8 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize one remaining shared-adapter/post-adapter
-Slice/Split/Add subfamily. Keep recursive
+Next work should characterize the Slice post-adapter family or one remaining
+shared-adapter/post-adapter Split/Add subfamily. Keep recursive
 Add and mixed Swish/Add interactions in legacy until independently fixed. Do
 not begin with a Tier 0–4 corpus run, and do not create a pull request.
 
