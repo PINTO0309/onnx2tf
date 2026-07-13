@@ -1702,6 +1702,14 @@ rank-five outputs extend the queue. This preserves unsupported-op boundaries
 and works for non-topological operator order without the previous repeated
 complete scans.
 
+The layout-application entry point is also owned by
+`passes/pytorch_layout_validation.py`. It consumes a caller-provided consumer
+index when available and otherwise builds one `ModelIRGraphIndex`; an empty
+preserve set returns before index construction. Transpose/Reshape decisions,
+raw ONNX Reshape shape restoration, and constant-shape updates remain in this
+single Torch-free canonicalization owner, while the exporter contains only the
+ordered invocations.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

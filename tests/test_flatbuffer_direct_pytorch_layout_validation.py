@@ -5,6 +5,7 @@ import numpy as np
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
+    _apply_feature_last_sequence_layouts,
     _is_attention_like_softmax_op,
     _is_transpose_sandwiched_last_axis_softmax_op,
     _propagate_channel_last_layouts,
@@ -214,3 +215,61 @@ def test_channel_last_layout_worklist_ignores_unsafe_ops() -> None:
 
     assert changed is False
     assert model_ir.tensors["y"].logical_layout == "UNKNOWN"
+
+
+def test_feature_last_application_restores_preserved_reshape_contract() -> None:
+    model_ir = ModelIR(name="preserved_feature_last_reshape")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 3]),
+        "shape": _tensor(
+            "shape",
+            [3],
+            data=np.asarray([1, 3, 2], dtype=np.int32),
+        ),
+        "y": _tensor("y", [1, 3, 2]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            "RESHAPE",
+            ["x", "shape"],
+            ["y"],
+            {
+                "newShape": [1, 3, 2],
+                "onnxRawNewShape": [1, 2, 3],
+            },
+        )
+    ]
+
+    changed = _apply_feature_last_sequence_layouts(model_ir, {"y"})
+
+    assert changed is True
+    assert model_ir.tensors["y"].logical_layout == "NWC"
+    assert model_ir.tensors["y"].shape == [1, 2, 3]
+    assert model_ir.tensors["y"].shape_signature == [1, 2, 3]
+    assert model_ir.operators[0].options["newShape"] == [1, 2, 3]
+    np.testing.assert_array_equal(
+        model_ir.tensors["shape"].data,
+        np.asarray([1, 2, 3], dtype=np.int32),
+    )
+
+
+def test_feature_last_application_skips_index_for_empty_preserve_set(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(name="no_preserved_feature_last")
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    changed = _apply_feature_last_sequence_layouts(model_ir, set())
+
+    assert changed is False
+    assert refresh_count == 0

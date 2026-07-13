@@ -405,12 +405,15 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     )
     exporter_source = exporter_path.read_text(encoding="utf-8")
     pass_source = pass_path.read_text(encoding="utf-8")
+    pass_tree = ast.parse(pass_source)
     assert "def _is_attention_like_softmax_op(" not in exporter_source
     assert (
         "def _is_transpose_sandwiched_last_axis_softmax_op(" not in exporter_source
     )
     assert "_is_attention_like_softmax_op," in exporter_source
     assert "_is_transpose_sandwiched_last_axis_softmax_op," in exporter_source
+    assert "def _apply_feature_last_sequence_layouts(" not in exporter_source
+    assert "_apply_feature_last_sequence_layouts," in exporter_source
     assert "ModelIRGraphIndex" in pass_source
     assert "for candidate in model_ir.operators" not in pass_source
     assert "def _propagate_feature_last_tensor_names(" in pass_source
@@ -421,6 +424,11 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     exporter_functions = {
         node.name: node
         for node in exporter_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    pass_functions = {
+        node.name: node
+        for node in pass_tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     validator_source = ast.get_source_segment(
@@ -439,8 +447,8 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "_propagate_feature_last_tensor_names(" in collector_source
     assert "while changed:" not in collector_source
     apply_layout_source = ast.get_source_segment(
-        exporter_source,
-        exporter_functions["_apply_feature_last_sequence_layouts"],
+        pass_source,
+        pass_functions["_apply_feature_last_sequence_layouts"],
     )
     assert apply_layout_source is not None
     assert "_propagate_channel_last_layouts(" in apply_layout_source

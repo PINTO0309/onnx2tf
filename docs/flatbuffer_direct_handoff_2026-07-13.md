@@ -92,6 +92,15 @@ unsupported operators stop propagation. This handles non-topological operator
 order without rescanning the graph. Reverse-order-chain and unsafe-boundary
 fixtures bring the focused suite to 77 passing tests.
 
+`_apply_feature_last_sequence_layouts()` itself is now owned by the Torch-free
+layout-validation module. Its established Transpose/Reshape layout decisions,
+raw ONNX Reshape contract restoration, and shape-constant update order are
+unchanged; only the fallback producer/consumer construction now comes from one
+`ModelIRGraphIndex`. After normalizing that intentional substitution, the moved
+function AST is identical to checkpoint `51b49a6`. Direct Reshape restoration
+and empty-preserve-set fast-path cases bring the focused suite to 79 passing
+tests. The exporter retains only the ordered calls.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC
