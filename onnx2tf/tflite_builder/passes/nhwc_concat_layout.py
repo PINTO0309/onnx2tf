@@ -1326,6 +1326,7 @@ def _resolve_family_input_plan(
     concat_index: int,
     model_outputs: set[str],
     public_names: set[str],
+    allowed_split_consumer_indices: Optional[frozenset[int]] = None,
 ) -> Optional[_NhwcConcatInputPlan]:
     direct_plan = _resolve_direct_input_plan(
         model_ir,
@@ -1414,12 +1415,26 @@ def _resolve_family_input_plan(
             public_names=public_names,
         )
     if family == "add":
-        return _resolve_add_input_plan(
+        add_plan = _resolve_add_input_plan(
             model_ir,
             graph_index,
             input_name=input_name,
             concat_index=concat_index,
             model_outputs=model_outputs,
+            allowed_split_consumer_indices=(
+                allowed_split_consumer_indices
+            ),
+        )
+        if add_plan is not None:
+            return add_plan
+        return _resolve_split_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+            public_names=public_names,
+            allowed_consumer_indices=allowed_split_consumer_indices,
         )
     if family == "leaky":
         unary_plan = _resolve_unary_input_plan(
@@ -1477,6 +1492,27 @@ def _resolve_nhwc_concat_candidate(
         ):
             continue
 
+        allowed_split_consumer_indices: Optional[frozenset[int]] = None
+        if family == "add":
+            selected_consumer_indices = {int(concat_index)}
+            add_tree_valid = True
+            for input_name in [str(name) for name in concat_op.inputs]:
+                add_indices = _collect_upstream_add_indices(
+                    graph_index,
+                    input_name=input_name,
+                )
+                if add_indices is None:
+                    add_tree_valid = False
+                    break
+                selected_consumer_indices.update(
+                    int(index) for index in add_indices
+                )
+            if not add_tree_valid:
+                continue
+            allowed_split_consumer_indices = frozenset(
+                selected_consumer_indices
+            )
+
         input_plans: List[_NhwcConcatInputPlan] = []
         inputs_valid = True
         for input_name in [str(name) for name in concat_op.inputs]:
@@ -1488,6 +1524,9 @@ def _resolve_nhwc_concat_candidate(
                 concat_index=int(concat_index),
                 model_outputs=model_outputs,
                 public_names=public_names,
+                allowed_split_consumer_indices=(
+                    allowed_split_consumer_indices
+                ),
             )
             if input_plan is None:
                 inputs_valid = False

@@ -354,18 +354,19 @@ bypassed, and every Add output shape and per-axis quantization moves into
 NHWC. Recursive planning tracks visited Add outputs, rejects cycles, and
 stops at a maximum depth of 64. Shared application state ensures that nested
 Add and Split operators and cloned integer parameters are materialized only
-once. One Split may feed different Add nodes in the same selected Add tree:
-planning first collects the bounded Add operator set and permits Split-output
-consumers only inside that set or through exact inverse adapters. Any external
-consumer rejects the whole candidate. Each nested output post-adapter remains
-associated with its own Add; cleanup walks the complete input-plan tree only
-after the rewrites succeed.
+once. One Split may feed different Add nodes and a separate input of the same
+root Concat. Candidate planning first collects the bounded Add operator set,
+adds the root Concat, and permits Split-output consumers only inside that set
+or through exact inverse adapters. This candidate-wide set makes matching
+independent of Concat input order; any external consumer rejects the whole
+candidate. Each nested output post-adapter remains associated with its own
+Add; cleanup walks the complete input-plan tree only after the rewrites
+succeed.
 Source-adapter removal is decided from the post-rewrite GraphIndex, allowing an
 adapter shared with the root Concat to be removed only after every selected
 consumer is rewired.
-Split outputs shared between the Add tree and separate root-Concat inputs, and
-broader mixed-input quantized-post families, remain in legacy until
-independently characterized.
+Add-output fan-out across multiple selected branches and broader mixed-input
+quantized-post families remain in legacy until independently characterized.
 The indexed
 pseudo-LeakyRelu family recognizes the complete
 `ReLU(x) - alpha * ReLU(-x)` diamond with either Mul operand order and direct

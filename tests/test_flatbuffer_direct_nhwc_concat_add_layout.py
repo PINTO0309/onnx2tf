@@ -307,6 +307,55 @@ def _add_model(
             model_ir.operators.append(
                 OperatorIR("IDENTITY", ["a_split1"], ["split_side"])
             )
+    if boundary in {
+        "split_shared_root_concat",
+        "split_shared_root_external_consumer",
+    }:
+        model_ir.tensors["a_nhwc"].shape = [1, 5, 7, 6]
+        model_ir.tensors["a_nhwc"].shape_signature = [1, 5, 7, 6]
+        model_ir.tensors["a_nchw"].shape = [1, 6, 5, 7]
+        model_ir.tensors["a_nchw"].shape_signature = [1, 6, 5, 7]
+        model_ir.tensors["split_axis"] = _int_tensor("split_axis", [1])
+        for split_output_name in ["a_split0", "a_split1"]:
+            model_ir.tensors[split_output_name] = _tensor(
+                split_output_name,
+                [1, 3, 5, 7],
+            )
+        add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+        add_index = model_ir.operators.index(add_op)
+        model_ir.operators.insert(
+            add_index,
+            OperatorIR(
+                "SPLIT",
+                ["split_axis", "a_nchw"],
+                ["a_split0", "a_split1"],
+            ),
+        )
+        add_op.inputs[0] = "a_split0"
+        concat_op = next(
+            op for op in model_ir.operators if op.op_type == "CONCATENATION"
+        )
+        concat_op.inputs = ["x_nchw", "sum_nchw", "a_split1"]
+        for tensor_name, shape in {
+            "concat_nchw": [1, 8, 5, 7],
+            "concat_nhwc": [1, 5, 7, 8],
+            "y": [1, 5, 7, 8],
+        }.items():
+            model_ir.tensors[tensor_name].shape = list(shape)
+            model_ir.tensors[tensor_name].shape_signature = list(shape)
+        if boundary == "split_shared_root_external_consumer":
+            model_ir.tensors["split_root_side"] = _tensor(
+                "split_root_side",
+                [1, 3, 5, 7],
+            )
+            model_ir.outputs.append("split_root_side")
+            model_ir.operators.append(
+                OperatorIR(
+                    "IDENTITY",
+                    ["a_split1"],
+                    ["split_root_side"],
+                )
+            )
     if boundary in {"recursive_operand", "recursive_operand_post"}:
         model_ir.inputs.append("c_nhwc")
         model_ir.tensors["c_nhwc"] = _tensor(
@@ -484,6 +533,7 @@ def test_nhwc_direct_only_add_is_indexed(all_add: bool) -> None:
         "public_post",
         "recursive_cycle",
         "shared_split_external_consumer",
+        "split_shared_root_external_consumer",
     ],
 )
 def test_nhwc_add_rejects_unsafe_or_partial_match(boundary: str) -> None:
@@ -718,6 +768,39 @@ def test_nhwc_shared_split_outputs_feed_one_recursive_add_tree() -> None:
         assert tensor.shape == [1, 5, 7, 3]
         assert isinstance(tensor.quantization, QuantParamIR)
         assert tensor.quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+
+
+@pytest.mark.parametrize("split_input_first", [False, True])
+def test_nhwc_split_outputs_feed_add_and_same_root_concat(
+    split_input_first: bool,
+) -> None:
+    model_ir = _add_model(boundary="split_shared_root_concat")
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    if split_input_first:
+        concat_op.inputs = ["a_split1", "x_nchw", "sum_nchw"]
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    expected_inputs = (
+        ["a_split1", "x_nhwc", "sum_nchw"]
+        if split_input_first
+        else ["x_nhwc", "sum_nchw", "a_split1"]
+    )
+    assert concat_op.inputs == expected_inputs
+    split_op = next(op for op in model_ir.operators if op.op_type == "SPLIT")
+    assert split_op.inputs == ["split_axis", "a_nhwc"]
+    np.testing.assert_array_equal(
+        model_ir.tensors["split_axis"].data,
+        np.asarray([3], dtype=np.int32),
+    )
+    add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+    assert add_op.inputs == ["a_split0", "b_nhwc"]
+    for tensor_name in ["a_split0", "a_split1"]:
+        assert model_ir.tensors[tensor_name].shape == [1, 5, 7, 3]
     assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
 
 
