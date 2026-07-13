@@ -36,6 +36,11 @@ from onnx2tf.tflite_builder.ir import (
     TensorIR,
     normalize_onnx_shape,
 )
+from onnx2tf.tflite_builder.passes.nhwc_concat_pad import (
+    NhwcConcatPadPlan,
+    apply_nhwc_concat_pad_plan,
+    resolve_nhwc_concat_pad_plan,
+)
 
 
 _PERM_NHWC_TO_NCHW = [0, 3, 1, 2]
@@ -66,7 +71,7 @@ class _NhwcConcatInputPlan:
     output_name: str
     remove_adapter: bool
     unary_op: Optional[OperatorIR] = None
-    pad_op: Optional[OperatorIR] = None
+    pad_plan: Optional[NhwcConcatPadPlan] = None
     dequantize_op: Optional[OperatorIR] = None
     prelu_op: Optional[OperatorIR] = None
     softmax_op: Optional[OperatorIR] = None
@@ -80,9 +85,6 @@ class _NhwcConcatInputPlan:
     leaky_neg_op: Optional[OperatorIR] = None
     leaky_pos_relu_op: Optional[OperatorIR] = None
     leaky_tensor_names: Tuple[str, ...] = ()
-    pads_tensor_name: Optional[str] = None
-    pads_nhwc: Optional[np.ndarray] = None
-    clone_pads: bool = False
     alpha_tensor_name: Optional[str] = None
     selected_alpha: Optional[np.ndarray] = None
     alpha_permutation: Optional[Tuple[int, ...]] = None
@@ -292,81 +294,23 @@ def _resolve_pad_input_plan(
     model_outputs: set[str],
     public_names: set[str],
 ) -> Optional[_NhwcConcatInputPlan]:
-    pad_op = graph_index.producer(input_name)
-    pad_index = (
-        None if pad_op is None else graph_index.operator_index(pad_op)
+    pad_plan = resolve_nhwc_concat_pad_plan(
+        model_ir,
+        graph_index,
+        output_name=input_name,
+        concat_index=concat_index,
+        model_outputs=model_outputs,
+        public_names=public_names,
     )
-    if (
-        pad_op is None
-        or pad_index is None
-        or str(pad_op.op_type) != "PAD"
-        or len(pad_op.inputs) < 2
-        or len(pad_op.outputs) != 1
-        or str(pad_op.outputs[0]) != input_name
-        or input_name in model_outputs
-        or set(graph_index.consumer_indices(input_name))
-        != {int(concat_index)}
-    ):
+    if pad_plan is None:
         return None
-
-    adapter_output_name = str(pad_op.inputs[0])
-    adapter_op = graph_index.producer(adapter_output_name)
-    adapter_index = (
-        None if adapter_op is None else graph_index.operator_index(adapter_op)
-    )
-    if (
-        adapter_op is None
-        or adapter_index is None
-        or str(adapter_op.op_type) != "TRANSPOSE"
-        or len(adapter_op.inputs) < 2
-        or len(adapter_op.outputs) != 1
-        or str(adapter_op.outputs[0]) != adapter_output_name
-        or _read_transpose_perm(model_ir, adapter_op)
-        != _PERM_NHWC_TO_NCHW
-        or adapter_output_name in model_outputs
-    ):
-        return None
-
-    source_name = str(adapter_op.inputs[0])
-    source_tensor = model_ir.tensors.get(source_name)
-    output_tensor = model_ir.tensors.get(input_name)
-    pads_tensor_name = str(pad_op.inputs[1])
-    pads_tensor = model_ir.tensors.get(pads_tensor_name)
-    if (
-        source_tensor is None
-        or output_tensor is None
-        or len(list(output_tensor.shape)) != 4
-        or pads_tensor is None
-        or pads_tensor.data is None
-    ):
-        return None
-    try:
-        pads_pairs = np.asarray(pads_tensor.data).reshape(4, 2)
-    except Exception:
-        return None
-    if int(pads_pairs.size) != 8:
-        return None
-    pads_nhwc = np.asarray(
-        [pads_pairs[0], pads_pairs[2], pads_pairs[3], pads_pairs[1]],
-        dtype=pads_pairs.dtype,
-    )
     return _NhwcConcatInputPlan(
         kind="pad",
-        adapter_op=adapter_op,
-        pad_op=pad_op,
-        source_name=source_name,
+        adapter_op=pad_plan.adapter_op,
+        pad_plan=pad_plan,
+        source_name=pad_plan.source_name,
         output_name=input_name,
-        remove_adapter=(
-            set(graph_index.consumer_indices(adapter_output_name))
-            == {int(pad_index)}
-        ),
-        pads_tensor_name=pads_tensor_name,
-        pads_nhwc=np.asarray(pads_nhwc),
-        clone_pads=(
-            pads_tensor_name in public_names
-            or set(graph_index.consumer_indices(pads_tensor_name))
-            != {int(pad_index)}
-        ),
+        remove_adapter=pad_plan.remove_adapter,
     )
 
 
@@ -2329,60 +2273,13 @@ def _optimize_transpose_pre_concat_nhwc_family(
                         )
                     )
                 new_concat_inputs.append(input_plan.output_name)
-            elif input_plan.pad_op is not None:
-                assert input_plan.pads_tensor_name is not None
-                assert input_plan.pads_nhwc is not None
-                pads_tensor_name = input_plan.pads_tensor_name
-                rewritten_pads_name = materialized_pads.get(pads_tensor_name)
-                if rewritten_pads_name is None:
-                    pads_tensor = model_ir.tensors[pads_tensor_name]
-                    rewritten_pads_name = pads_tensor_name
-                    if input_plan.clone_pads:
-                        rewritten_pads_name = _unique_tensor_name(
-                            model_ir,
-                            f"{pads_tensor_name}_nhwc",
-                        )
-                        model_ir.tensors[rewritten_pads_name] = TensorIR(
-                            name=rewritten_pads_name,
-                            dtype=str(pads_tensor.dtype),
-                            shape=[4, 2],
-                            shape_signature=[4, 2],
-                            data=np.array(input_plan.pads_nhwc, copy=True),
-                            is_variable=bool(pads_tensor.is_variable),
-                            quantization=_clone_quantization(
-                                pads_tensor.quantization
-                            ),
-                            logical_layout=str(pads_tensor.logical_layout),
-                            physical_layout=str(pads_tensor.physical_layout),
-                            onnx_tensor_name=pads_tensor.onnx_tensor_name,
-                        )
-                    else:
-                        pads_tensor.data = np.array(
-                            input_plan.pads_nhwc,
-                            copy=True,
-                        )
-                        pads_tensor.shape = [4, 2]
-                        pads_tensor.shape_signature = [4, 2]
-                    materialized_pads[pads_tensor_name] = rewritten_pads_name
-
-                new_pad_inputs = [str(name) for name in input_plan.pad_op.inputs]
-                new_pad_inputs[0] = input_plan.source_name
-                new_pad_inputs[1] = rewritten_pads_name
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=input_plan.pad_op,
-                    new_inputs=new_pad_inputs,
-                    graph_index=graph_index,
+            elif input_plan.pad_plan is not None:
+                apply_nhwc_concat_pad_plan(
+                    model_ir,
+                    graph_index,
+                    input_plan.pad_plan,
+                    materialized_pads=materialized_pads,
                 )
-                pad_output_tensor = model_ir.tensors.get(input_plan.output_name)
-                _permute_tensor_metadata_if_rank_matches(
-                    pad_output_tensor,
-                    _PERM_NCHW_TO_NHWC,
-                )
-                if pad_output_tensor is not None:
-                    pad_output_tensor.quantization = _clone_nhwc_quantization(
-                        pad_output_tensor.quantization
-                    )
                 new_concat_inputs.append(input_plan.output_name)
             else:
                 new_concat_inputs.append(input_plan.source_name)
