@@ -4,6 +4,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_emitters import (
     _emit_native_binary_op_for_codegen_impl,
     _emit_native_shape_transform_misc_op_for_codegen,
+    _emit_native_transpose_op_for_codegen,
     _emit_native_unary_op_for_codegen,
 )
 
@@ -469,3 +470,147 @@ def test_binary_emitter_uses_uncertain_operand_as_alignment_anchor() -> None:
     ]
     assert aliases == {}
     assert runtime_imports == {"_align_binary_inputs_to_anchor"}
+
+
+def _emit_transpose(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    aliases: dict[str, str],
+    runtime_imports: set[str],
+    forward_lines: list[str],
+    preserve_names: set[str] | None = None,
+    folded_expr: str | None = None,
+    stale_hint: bool = False,
+    binary_consumers: bool = False,
+) -> bool:
+    return _emit_native_transpose_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        outputs=[str(name) for name in op.outputs],
+        output_vars=["y_var"],
+        preserve_channel_last_tensor_names=preserve_names or set(),
+        consumer_index={},
+        producer_index={},
+        channel_first_tensor_expr_aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"tensor_{name}",
+        tensor_expr_for_channel_first_bridge_fn=(
+            lambda _name, _perm: folded_expr
+        ),
+        can_fold_channel_last_alias_slice_consumer_fn=(
+            lambda _op, *, expected_input_name: False
+        ),
+        all_consumers_are_channel_first_binary_ops_fn=(
+            lambda _name: binary_consumers
+        ),
+        can_omit_materialized_channel_last_alias_fn=lambda _name: False,
+        has_channel_last_consumer_hint_for_same_shape_transpose_fn=(
+            lambda _op: stale_hint
+        ),
+        is_batchless_rank3_public_output_transpose_fn=lambda _op: False,
+        target_shape_literal_fn=lambda _name: "[1, 2, 4, 3]",
+    )
+
+
+def _transpose_model_ir(
+    *,
+    input_layout: str = "UNKNOWN",
+    output_layout: str = "UNKNOWN",
+) -> ModelIR:
+    model_ir = ModelIR(name="transpose_emitter")
+    model_ir.tensors = {
+        "x": TensorIR(
+            "x",
+            "FLOAT32",
+            [1, 3, 2, 4],
+            logical_layout=input_layout,
+        ),
+        "y": TensorIR(
+            "y",
+            "FLOAT32",
+            [1, 2, 4, 3],
+            logical_layout=output_layout,
+        ),
+    }
+    return model_ir
+
+
+def test_transpose_emitter_preserves_elision_and_folded_alias_paths() -> None:
+    model_ir = _transpose_model_ir()
+    op = OperatorIR("TRANSPOSE", ["x"], ["y"], {"perm": [0, 2, 3, 1]})
+
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+    aliases: dict[str, str] = {}
+    emitted = _emit_transpose(
+        model_ir=model_ir,
+        op=op,
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        preserve_names={"x"},
+        stale_hint=True,
+    )
+    assert emitted is True
+    assert forward_lines == ["y_var = tensor_x"]
+    assert aliases == {}
+    assert runtime_imports == set()
+
+    forward_lines.clear()
+    emitted = _emit_transpose(
+        model_ir=model_ir,
+        op=op,
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        preserve_names={"x"},
+        folded_expr="folded_x_cf",
+    )
+    assert emitted is True
+    assert forward_lines == ["y_var = folded_x_cf"]
+    assert aliases == {"y": "y_var"}
+    assert runtime_imports == set()
+
+
+def test_transpose_emitter_preserves_alias_only_and_runtime_paths() -> None:
+    channel_model_ir = _transpose_model_ir(
+        input_layout="NCHW",
+        output_layout="NHWC",
+    )
+    op = OperatorIR("TRANSPOSE", ["x"], ["y"], {"perm": [0, 2, 3, 1]})
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+    aliases: dict[str, str] = {}
+
+    emitted = _emit_transpose(
+        model_ir=channel_model_ir,
+        op=op,
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        preserve_names={"x"},
+        binary_consumers=True,
+    )
+    assert emitted is True
+    assert forward_lines == []
+    assert aliases == {"y": "tensor_x"}
+    assert runtime_imports == set()
+
+    runtime_model_ir = _transpose_model_ir()
+    aliases.clear()
+    emitted = _emit_transpose(
+        model_ir=runtime_model_ir,
+        op=op,
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        preserve_names={"x"},
+    )
+    assert emitted is True
+    assert forward_lines == [
+        "y_var = _torch_permute(tensor_x, [0, 2, 3, 1])"
+    ]
+    assert aliases == {}
+    assert runtime_imports == {"_shape_list", "_torch_permute"}

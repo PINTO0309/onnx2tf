@@ -319,7 +319,11 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
     assert "_reject_residual_layout_transposes," not in exporter_source
     assert "_reject_residual_layout_transposes," in normalization_source
     assert "def _is_reshape_only_residual_layout_bridge_transpose(" not in exporter_source
-    assert "_is_reshape_only_residual_layout_bridge_transpose," in exporter_source
+    assert "_is_reshape_only_residual_layout_bridge_transpose," not in exporter_source
+    emitter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_emitters.py"
+    ).read_text(encoding="utf-8")
+    assert "_is_reshape_only_residual_layout_bridge_transpose," in emitter_source
     assert "def _reject_residual_layout_transposes(" in source
     assert 'operator_indices("TRANSPOSE")' in source
     operator_stream_assignments = [
@@ -3390,6 +3394,7 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
     assert "_emit_native_unary_op_for_codegen" in emitter_functions
     assert "_emit_native_shape_transform_misc_op_for_codegen" in emitter_functions
     assert "_emit_native_binary_op_for_codegen_impl" in emitter_functions
+    assert "_emit_native_transpose_op_for_codegen" in emitter_functions
     assert "_DIRECT_CODEGEN_UNARY_EXPRESSIONS:" in emitter_source
     assert "def _emit_native_unary_op_for_codegen(" not in exporter_source
     assert "_emit_native_unary_op_for_codegen," in exporter_source
@@ -3406,6 +3411,8 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
     assert "_emit_native_binary_op_for_codegen_impl(" in binary_wrapper_source
     assert "_binary_output_target_shape_literal_for_codegen(" in binary_wrapper_source
     assert "forward_lines.append(" not in binary_wrapper_source
+    assert "def _emit_native_transpose_op_for_codegen(" not in exporter_source
+    assert "_emit_native_transpose_op_for_codegen," in exporter_source
     assert (
         "def _emit_native_shape_transform_misc_op_for_codegen("
         not in exporter_source

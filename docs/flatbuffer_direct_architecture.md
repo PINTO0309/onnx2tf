@@ -1829,6 +1829,14 @@ broadcast target-shape policy into the Torch-free emitter. The adapter contains
 no statement-emission logic, and its shape policy can be separated later without
 changing the pipeline contract.
 
+Transpose source emission is directly owned by `pytorch_emitters.py` with no
+exporter adapter. It reuses the Torch-free layout and compatibility policies for
+permutation decoding, inconsistent-layout elision, residual Reshape bridges, and
+channel-first aliases. Fold-only Slice/binary consumers, omitted materialized
+channel-last aliases, constant/runtime permutations, and runtime-helper imports
+retain their established behavior. The exporter and stored generated pipeline
+continue to resolve the same imported function name.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

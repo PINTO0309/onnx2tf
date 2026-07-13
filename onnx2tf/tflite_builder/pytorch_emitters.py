@@ -16,6 +16,15 @@ from onnx2tf.tflite_builder.pytorch_export_errors import (
     ModelIRPyTorchExportError,
 )
 from onnx2tf.tflite_builder.pytorch_codegen_utils import _constant_int_list
+from onnx2tf.tflite_builder.pytorch_layout_utils import (
+    _is_inconsistent_same_layout_transpose,
+    _is_inconsistent_standard_layout_transpose,
+    _perm_cf_to_cl,
+    _read_transpose_perm,
+)
+from onnx2tf.tflite_builder.passes.pytorch_compat import (
+    _is_reshape_only_residual_layout_bridge_transpose,
+)
 
 
 _DIRECT_CODEGEN_UNARY_EXPRESSIONS: Dict[str, str] = {
@@ -472,4 +481,221 @@ def _emit_native_binary_op_for_codegen_impl(
         )
         forward_lines.append(f"{output_vars[0]} = {aligned_expr}")
     forward_lines.extend(activation_lines_fn(output_vars[0], fused))
+    return True
+
+
+def _emit_native_transpose_op_for_codegen(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    outputs: Sequence[str],
+    output_vars: Sequence[str],
+    preserve_channel_last_tensor_names: Set[str],
+    consumer_index: Dict[str, List[int]],
+    producer_index: Dict[str, int],
+    channel_first_tensor_expr_aliases: Dict[str, str],
+    runtime_imports: Set[str],
+    forward_lines: List[str],
+    tensor_expr_fn: Callable[[str], str],
+    tensor_expr_for_channel_first_bridge_fn: Callable[
+        [str, Sequence[int]], Optional[str]
+    ],
+    can_fold_channel_last_alias_slice_consumer_fn: Callable[..., bool],
+    all_consumers_are_channel_first_binary_ops_fn: Callable[[str], bool],
+    can_omit_materialized_channel_last_alias_fn: Callable[[str], bool],
+    has_channel_last_consumer_hint_for_same_shape_transpose_fn: Callable[
+        [OperatorIR], bool
+    ],
+    is_batchless_rank3_public_output_transpose_fn: Callable[
+        [OperatorIR], bool
+    ],
+    target_shape_literal_fn: Callable[[str], str],
+) -> bool:
+    if str(op.op_type) != "TRANSPOSE":
+        return False
+    transpose_related_names = {
+        str(value) for value in list(op.inputs) + list(op.outputs)
+    }
+    stale_channel_last_transpose = (
+        has_channel_last_consumer_hint_for_same_shape_transpose_fn(op)
+    )
+    batchless_public_output_transpose = (
+        is_batchless_rank3_public_output_transpose_fn(op)
+    )
+    transpose_perm = _read_transpose_perm(model_ir, op)
+    transpose_input_name = str(op.inputs[0]) if len(op.inputs) >= 1 else ""
+    transpose_output_name = str(outputs[0]) if len(outputs) == 1 else ""
+    transpose_input_tensor = model_ir.tensors.get(transpose_input_name, None)
+    transpose_output_tensor = model_ir.tensors.get(transpose_output_name, None)
+    transpose_consumer_indices = [
+        int(value) for value in consumer_index.get(transpose_output_name, [])
+    ]
+    reshape_only_consumers = len(transpose_consumer_indices) > 0 and all(
+        str(model_ir.operators[int(consumer_idx)].op_type) == "RESHAPE"
+        for consumer_idx in transpose_consumer_indices
+    )
+    allow_transpose_elision = stale_channel_last_transpose or not any(
+        name in preserve_channel_last_tensor_names
+        for name in transpose_related_names
+    )
+    if batchless_public_output_transpose or allow_transpose_elision and (
+        stale_channel_last_transpose
+        or _is_reshape_only_residual_layout_bridge_transpose(
+            model_ir=model_ir,
+            op=op,
+            consumers=consumer_index,
+        )
+        or _is_inconsistent_standard_layout_transpose(
+            input_tensor=(
+                model_ir.tensors.get(str(op.inputs[0]), None)
+                if len(op.inputs) >= 1
+                else None
+            ),
+            output_tensor=(
+                model_ir.tensors.get(str(outputs[0]), None)
+                if len(outputs) == 1
+                else None
+            ),
+            perm=transpose_perm,
+        )
+        or _is_inconsistent_same_layout_transpose(
+            input_tensor=(
+                model_ir.tensors.get(str(op.inputs[0]), None)
+                if len(op.inputs) >= 1
+                else None
+            ),
+            output_tensor=(
+                model_ir.tensors.get(str(outputs[0]), None)
+                if len(outputs) == 1
+                else None
+            ),
+            perm=transpose_perm,
+        )
+        and not reshape_only_consumers
+    ):
+        forward_lines.append(
+            f"{output_vars[0]} = {tensor_expr_fn(str(op.inputs[0]))}"
+        )
+        return True
+    folded_channel_first_expr = (
+        None
+        if transpose_perm is None
+        else tensor_expr_for_channel_first_bridge_fn(
+            transpose_input_name,
+            transpose_perm,
+        )
+    )
+    if folded_channel_first_expr is not None:
+        output_layout = normalize_logical_layout(
+            transpose_output_tensor.logical_layout
+            if transpose_output_tensor is not None
+            else LOGICAL_LAYOUT_UNKNOWN
+        )
+        if (
+            transpose_output_tensor is not None
+            and output_layout == LOGICAL_LAYOUT_UNKNOWN
+        ):
+            channel_first_tensor_expr_aliases[transpose_output_name] = (
+                output_vars[0]
+            )
+        else:
+            channel_first_tensor_expr_aliases.pop(transpose_output_name, None)
+        forward_lines.append(f"{output_vars[0]} = {folded_channel_first_expr}")
+        return True
+    if transpose_input_tensor is not None and transpose_output_tensor is not None:
+        rank = len(list(transpose_input_tensor.shape))
+        expected_cf_to_cl_perm = _perm_cf_to_cl(rank)
+        input_cf_expr = channel_first_tensor_expr_aliases.get(
+            transpose_input_name, None
+        )
+        if input_cf_expr is None and is_channel_first_logical_layout(
+            normalize_logical_layout(transpose_input_tensor.logical_layout)
+        ):
+            input_cf_expr = tensor_expr_fn(transpose_input_name)
+        if (
+            input_cf_expr is not None
+            and expected_cf_to_cl_perm is not None
+            and list(transpose_perm or []) == list(expected_cf_to_cl_perm)
+            and len(consumer_index.get(transpose_output_name, [])) > 0
+            and all(
+                can_fold_channel_last_alias_slice_consumer_fn(
+                    model_ir.operators[int(consumer_idx)],
+                    expected_input_name=transpose_output_name,
+                )
+                for consumer_idx in consumer_index.get(
+                    transpose_output_name, []
+                )
+            )
+        ):
+            channel_first_tensor_expr_aliases[transpose_output_name] = str(
+                input_cf_expr
+            )
+            return True
+        if (
+            input_cf_expr is not None
+            and expected_cf_to_cl_perm is not None
+            and list(transpose_perm or []) == list(expected_cf_to_cl_perm)
+            and all_consumers_are_channel_first_binary_ops_fn(
+                transpose_output_name
+            )
+        ):
+            channel_first_tensor_expr_aliases[transpose_output_name] = str(
+                input_cf_expr
+            )
+            return True
+        if (
+            input_cf_expr is not None
+            and expected_cf_to_cl_perm is not None
+            and list(transpose_perm or []) == list(expected_cf_to_cl_perm)
+            and can_omit_materialized_channel_last_alias_fn(
+                transpose_output_name
+            )
+        ):
+            channel_first_tensor_expr_aliases[transpose_output_name] = str(
+                input_cf_expr
+            )
+            return True
+    runtime_imports.add("_shape_list")
+    runtime_imports.add("_torch_permute")
+    if len(op.inputs) >= 2:
+        const_perm_values = _constant_int_list(
+            model_ir.tensors.get(str(op.inputs[1]), None)
+        )
+        if const_perm_values is not None:
+            perm_values = [int(value) for value in list(const_perm_values)]
+            input_layout = normalize_logical_layout(
+                transpose_input_tensor.logical_layout
+                if transpose_input_tensor is not None
+                else LOGICAL_LAYOUT_UNKNOWN
+            )
+            output_layout = normalize_logical_layout(
+                transpose_output_tensor.logical_layout
+                if transpose_output_tensor is not None
+                else LOGICAL_LAYOUT_UNKNOWN
+            )
+            if (
+                reshape_only_consumers
+                and input_layout != LOGICAL_LAYOUT_UNKNOWN
+                and input_layout == output_layout
+            ):
+                forward_lines.append(
+                    f"{output_vars[0]} = {tensor_expr_fn(str(op.inputs[0]))}"
+                    f".permute("
+                    f"{', '.join(str(int(value)) for value in perm_values)}"
+                    ").contiguous()"
+                )
+                return True
+            perm_expr = repr(perm_values)
+        else:
+            perm_expr = (
+                f"_shape_list({tensor_expr_fn(str(op.inputs[1]))})"
+            )
+    else:
+        perm_expr = repr(
+            [int(value) for value in list(op.options.get("perm", []))]
+        )
+    forward_lines.append(
+        f"{output_vars[0]} = _torch_permute("
+        f"{tensor_expr_fn(str(op.inputs[0]))}, {perm_expr})"
+    )
     return True

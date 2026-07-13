@@ -238,6 +238,15 @@ that adapter. Direct binary fixtures cover the highest-risk branches. Emitter
 and architecture validation passes 66 tests; syntax, Ruff, and diff checks
 pass. No model conversion or inference was run.
 
+Native Transpose emission now has the same direct Torch-free owner. It imports
+the existing permutation, inconsistent-layout, and residual-Reshape policies
+from their focused layout/compatibility modules rather than retaining exporter
+copies. Stale bridge elision, folded channel-first expressions, alias-only
+channel-last bridges, and explicit runtime permutation paths have direct
+fixtures. The exporter keeps only the imported emitter name expected by the
+stored generated pipeline. Emitter and architecture validation passes 68 tests;
+syntax, Ruff, and diff checks pass. No model conversion or inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC
