@@ -726,6 +726,7 @@ def _quantized_add_model(
     *,
     public_add_output: bool = False,
     nested: bool = False,
+    unary_leaf: bool = False,
 ) -> ModelIR:
     model_ir = _quantized_model()
     model_ir.inputs.append("a2_nhwc")
@@ -758,6 +759,21 @@ def _quantized_add_model(
         ),
         OperatorIR("ADD", ["a_nchw", "a2_nchw"], ["a_add"]),
     ]
+    if unary_leaf:
+        model_ir.tensors["a_relu"] = _tensor(
+            "a_relu",
+            [1, 2, 5, 7],
+        )
+        model_ir.tensors["a_relu"].quantization = QuantParamIR(
+            scale=[0.35] * 2,
+            zero_point=[0] * 2,
+            quantized_dimension=1,
+        )
+        add_operators.insert(
+            1,
+            OperatorIR("RELU", ["a_nchw"], ["a_relu"]),
+        )
+        add_operators[2].inputs[0] = "a_relu"
     if nested:
         model_ir.inputs.append("a3_nhwc")
         model_ir.tensors["a3_nhwc"] = _tensor(
@@ -1395,6 +1411,27 @@ def test_nhwc_quantized_recursive_add_tree_is_indexed() -> None:
         assert tensor.shape == [1, 5, 7, 2]
         assert isinstance(tensor.quantization, QuantParamIR)
         assert tensor.quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+
+
+def test_nhwc_quantized_add_supported_unary_leaf_is_indexed() -> None:
+    model_ir = _quantized_add_model(unary_leaf=True)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_quantized_rewritten(
+        model_ir,
+        expected_concat_inputs=["a_add", "b_nhwc"],
+    )
+    unary_op = next(op for op in model_ir.operators if op.outputs == ["a_relu"])
+    add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+    assert unary_op.inputs == ["a_nhwc"]
+    assert add_op.inputs == ["a_relu", "a2_nhwc"]
+    unary_tensor = model_ir.tensors["a_relu"]
+    assert unary_tensor.shape == [1, 5, 7, 2]
+    assert isinstance(unary_tensor.quantization, QuantParamIR)
+    assert unary_tensor.quantization.quantized_dimension == 3
     assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
 
 

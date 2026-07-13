@@ -230,7 +230,8 @@ copy-on-write cache. Public Split outputs reject, while broader post-adapter
 and mixed-input forms remain in legacy.
 
 The bounded Add family accepts a depth-guarded Add tree whose leaves are direct
-rank-four adapters, plus direct root-Concat companions. Every Add input/output
+rank-four adapters or supported unary branches, plus direct root-Concat
+companions. Every Add input/output
 and per-axis metadata moves to NHWC exactly once. Shared-plan cleanup walks
 nested operand plans, uses differential consumer state to remove every dead
 leading adapter, and retains adapters that remain public or live. Non-direct
@@ -264,8 +265,8 @@ Focused verification, all in the existing `uv` environment:
   the preceding combined float-path run passed 176 tests across eight compact
   modules; authoritative collection now contains 212. Including the bounded
   direct and unary/Pad/Swish/Dequantize/PReLU/Softmax/Leaky/Slice/Split/Add
-  quantized-post suites, the compact inventory contains 279 tests across nine
-  modules. The preceding combined run passed 208 tests; the expanded quantized module passes 67 tests, and the focused quantized/Pad
+  quantized-post suites, the compact inventory contains 280 tests across nine
+  modules. The preceding combined run passed 208 tests; the expanded quantized module passes 68 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
   and rewritten layouts. The Swish suite covers both Mul operand orders,
@@ -314,8 +315,8 @@ Focused verification, all in the existing `uv` environment:
   public-output no-op boundary. Split coverage fixes multi-output
   single-application behavior, axis remapping, output metadata, and a public
   output no-op boundary. Add coverage fixes both direct operand rewrites,
-  complete adapter cleanup, two-level recursive application, output metadata,
-  and a public-output no-op boundary.
+  complete adapter cleanup, two-level recursive application, a supported unary
+  leaf, output metadata, and a public-output no-op boundary.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.

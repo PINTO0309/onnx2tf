@@ -468,17 +468,17 @@ def _resolve_add_quantized_input_plan(
     concat_index: int,
     model_outputs: set[str],
 ) -> Optional[_QuantizedInputPlan]:
-    def _has_only_direct_add_leaves(
+    def _has_only_supported_add_leaves(
         input_plan: _NhwcConcatInputPlan,
     ) -> bool:
-        if input_plan.kind == "direct":
+        if input_plan.kind in {"direct", "unary"}:
             return True
         return (
             input_plan.kind == "add"
             and not input_plan.output_post_adapter_ops
             and len(input_plan.add_operand_plans) == 2
             and all(
-                _has_only_direct_add_leaves(operand_plan)
+                _has_only_supported_add_leaves(operand_plan)
                 for operand_plan in input_plan.add_operand_plans
             )
         )
@@ -492,7 +492,7 @@ def _resolve_add_quantized_input_plan(
     )
     if (
         add_plan is None
-        or not _has_only_direct_add_leaves(add_plan)
+        or not _has_only_supported_add_leaves(add_plan)
     ):
         return None
     return _QuantizedInputPlan(
