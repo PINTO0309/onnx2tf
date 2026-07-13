@@ -330,18 +330,20 @@ to the NHWC source and remaps Logistic and Mul output metadata. Adapter,
 Logistic, or Mul fan-out and public boundaries are rejected before mutation;
 public Logistic output rejection deliberately closes an unsafe legacy case.
 The bounded Slice family accepts one or more rank-four Slice inputs whose
-Slice output is exclusive, optionally together with direct inputs. Begin and
-size vectors are remapped from NCHW to NHWC;
+output consumers are limited to the selected Concat and exact inverse
+adapters, optionally together with direct inputs. Begin and size vectors are
+remapped from NCHW to NHWC;
 shared/public parameter tensors use copy-on-write with tensor provenance
 retained, shared/public source adapters remain for their external consumers,
-and Slice-output per-axis quantization follows the layout change.
+exact inverse output adapters are bypassed, and Slice-output per-axis
+quantization follows the layout change.
 The bounded Split family accepts one or more outputs from a rank-four Split
 whose outputs are unused or consumed only by the selected Concat. It remaps
 the Split axis to 3 once per operator, uses copy-on-write for a shared/public
 axis tensor, retains shared/public source adapters for external consumers, and
 moves every Split output's shape and per-axis quantization into NHWC.
-Slice/Split-output post adapters, Swish-source Slice, and Swish/Add-connected
-Split remain in the legacy matcher. The bounded Add family accepts a direct
+Split-output post adapters, Swish-source Slice, and Swish/Add-connected Split
+remain in the legacy matcher. The bounded Add family accepts a direct
 Concat input produced by a non-recursive two-input Add whose operands each
 come from a rank-four NHWC→NCHW adapter. Both Add inputs are rewired together,
 exclusive adapters are removed, shared/public adapters remain for external

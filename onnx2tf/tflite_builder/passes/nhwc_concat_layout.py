@@ -82,6 +82,7 @@ class _NhwcConcatInputPlan:
     add_op: Optional[OperatorIR] = None
     add_source_names: Tuple[str, ...] = ()
     extra_removable_adapter_ops: Tuple[OperatorIR, ...] = ()
+    output_post_adapter_ops: Tuple[OperatorIR, ...] = ()
     leaky_neg_op: Optional[OperatorIR] = None
     leaky_pos_relu_op: Optional[OperatorIR] = None
     leaky_tensor_names: Tuple[str, ...] = ()
@@ -713,10 +714,30 @@ def _resolve_slice_input_plan(
         or len(slice_op.outputs) != 1
         or str(slice_op.outputs[0]) != input_name
         or input_name in model_outputs
-        or set(graph_index.consumer_indices(input_name))
-        != {int(concat_index)}
+        or int(concat_index)
+        not in set(graph_index.consumer_indices(input_name))
     ):
         return None
+
+    output_post_adapter_ops: List[OperatorIR] = []
+    for consumer_index in graph_index.consumer_indices(input_name):
+        if int(consumer_index) == int(concat_index):
+            continue
+        post_op = model_ir.operators[int(consumer_index)]
+        if (
+            str(post_op.op_type) != "TRANSPOSE"
+            or len(post_op.inputs) < 2
+            or len(post_op.outputs) != 1
+            or str(post_op.inputs[0]) != input_name
+            or _read_transpose_perm(model_ir, post_op)
+            != _PERM_NCHW_TO_NHWC
+            or str(post_op.outputs[0]) in model_outputs
+        ):
+            return None
+        post_tensor = model_ir.tensors.get(str(post_op.outputs[0]))
+        if post_tensor is None or len(list(post_tensor.shape)) != 4:
+            return None
+        output_post_adapter_ops.append(post_op)
 
     adapter_output_name = str(slice_op.inputs[0])
     adapter_op = graph_index.producer(adapter_output_name)
@@ -778,6 +799,7 @@ def _resolve_slice_input_plan(
         slice_op=slice_op,
         source_name=source_name,
         output_name=input_name,
+        output_post_adapter_ops=tuple(output_post_adapter_ops),
         remove_adapter=(
             adapter_consumers == {int(slice_index)}
             and adapter_output_name not in model_outputs
@@ -2077,6 +2099,13 @@ def _apply_slice_input_plan(
         output_tensor.quantization = _clone_nhwc_quantization(
             output_tensor.quantization
         )
+    for post_op in input_plan.output_post_adapter_ops:
+        _replace_tensor_inputs(
+            model_ir=model_ir,
+            src_name=str(post_op.outputs[0]),
+            dst_name=input_plan.output_name,
+            graph_index=graph_index,
+        )
 
 
 def _apply_split_input_plan(
@@ -2363,6 +2392,11 @@ def _optimize_transpose_pre_concat_nhwc_family(
                 adapter_op
                 for plan in candidate.input_plans
                 for adapter_op in plan.extra_removable_adapter_ops
+            ],
+            *[
+                adapter_op
+                for plan in candidate.input_plans
+                for adapter_op in plan.output_post_adapter_ops
             ],
             *candidate.post_ops,
         ]

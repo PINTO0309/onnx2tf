@@ -175,6 +175,19 @@ def _slice_model(
                 OperatorIR("IDENTITY", ["slice_nhwc"], ["slice_side"]),
             ]
         )
+    if boundary == "public_slice_post":
+        model_ir.tensors["slice_nhwc"] = _tensor(
+            "slice_nhwc",
+            [1, 5, 7, 2],
+        )
+        model_ir.outputs.append("slice_nhwc")
+        model_ir.operators.append(
+            OperatorIR(
+                "TRANSPOSE",
+                ["x1_slice", "post_perm"],
+                ["slice_nhwc"],
+            )
+        )
     if boundary == "public_slice_output":
         model_ir.outputs.append("x1_slice")
     if boundary == "slice_adapter_fanout":
@@ -331,6 +344,7 @@ def test_nhwc_slice_copy_on_write_preserves_shared_or_public_begin(
         "unsupported_slice",
         "slice_output_fanout",
         "public_slice_output",
+        "public_slice_post",
         "invalid_adapter_rank",
         "invalid_slice_output_rank",
         "invalid_begin_length",
@@ -383,7 +397,7 @@ def test_nhwc_slice_retains_shared_or_public_source_adapter(
     assert event["status"] == "changed"
 
 
-def test_nhwc_slice_output_post_adapter_remains_in_legacy() -> None:
+def test_nhwc_slice_output_post_adapter_is_indexed() -> None:
     model_ir = _slice_model(boundary="slice_output_post_transpose")
     diagnostics: list[dict] = []
 
@@ -393,8 +407,15 @@ def test_nhwc_slice_output_post_adapter_remains_in_legacy() -> None:
     )
 
     assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
-    assert not any(
-        event["code"] == "layout.nhwc_pre_concat_slice"
-        and event["status"] == "changed"
-        for event in diagnostics
+    _assert_slice_rewritten(model_ir)
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    side_identity = next(
+        op for op in model_ir.operators if op.outputs == ["slice_side"]
     )
+    assert side_identity.inputs == ["x1_slice"]
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_slice"
+    )
+    assert event["status"] == "changed"

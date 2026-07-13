@@ -78,9 +78,9 @@ variable state, quantization, layout, and ONNX provenance preserved. Shared or
 public source adapters remain intact for their existing consumers while only
 the Slice is rewired to NHWC. This closes two legacy correctness gaps:
 shared/public Slice parameters are no longer silently mutated, and
-Slice-output quantization dimension 1 is remapped to dimension 3. Slice
-outputs with valid inverse post adapters deliberately remain in the legacy
-matcher so this bounded ownership transfer cannot remove existing behavior.
+Slice-output quantization dimension 1 is remapped to dimension 3. Valid
+non-public inverse output adapters are bypassed and their consumers are
+rewired to the NHWC Slice output; public post aliases reject before mutation.
 The bounded Split family validates all outputs as rank four and requires each
 to be unused or consumed only by the selected Concat. One Split may therefore
 supply multiple Concat inputs while its source, axis, output metadata, and
@@ -147,19 +147,19 @@ Focused verification, all in the existing `uv` environment:
 
 - Direct, unary, Pad, Dequantize, PReLU, Softmax, expanded-Swish,
   pseudo-LeakyRelu, and bounded Slice/Split/Add ModelIR characterization:
-  `176 passed` across eight compact modules. Including the bounded direct and
-  unary/Pad quantized-post suites, the compact inventory contains 218 tests
-  across nine modules. The preceding combined run passed 208 tests; the
-  expanded quantized module passes 42 tests, and the focused quantized/Pad
+  the preceding combined float-path run passed 176 tests across eight compact
+  modules; the expanded inventory now contains 177. Including the bounded
+  direct and unary/Pad quantized-post suites, the compact inventory contains
+  219 tests across nine modules. The preceding combined run passed 208 tests;
+  the expanded quantized module passes 42 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
   and rewritten layouts. The Swish suite covers both Mul operand orders,
   all-Swish inputs, and fourteen whole-ModelIR unsafe/partial-match no-op
   boundaries. The Slice
   suite covers mixed and all-Slice success, shared/public parameter
-  copy-on-write, shared/public source-adapter retention, fourteen complete
-  no-op boundaries, and one post-adapter case that must continue through the
-  legacy fallback. The Split suite covers both axis
+  copy-on-write, shared/public source-adapter retention, output-post-adapter
+  bypass, and fifteen complete no-op boundaries. The Split suite covers both axis
   signs, multi-output single-application behavior, shared/public axis
   copy-on-write, shared/public source-adapter retention, fourteen no-op
   boundaries, and one preserved post-adapter legacy case. The
@@ -180,8 +180,8 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize a Slice/Split post-adapter family or the
-root-shared/post-adapter Add subfamily. Keep recursive
+Next work should characterize the Split post-adapter family or the root-shared
+or post-adapter Add subfamily. Keep recursive
 Add and mixed Swish/Add interactions in legacy until independently fixed. Do
 not begin with a Tier 0–4 corpus run, and do not create a pull request.
 
