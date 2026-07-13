@@ -340,6 +340,10 @@ and one owns Swish/Leaky resolvers that permit unary companions. An import-time
 invariant requires these maps to cover every declared family except direct and
 recursive Add. Add remains explicit because it carries the candidate-wide
 consumer set through recursive planning.
+Within the Add root-companion path, one ordered resolver tuple preserves the
+existing Dequantize→PReLU→Softmax→Leaky→Pad→Slice precedence. Split remains the
+final explicit resolver because it alone receives the candidate-wide allowed
+consumer set.
 Candidate combination acceptance is a separate immutable contract table. Each
 family declares allowed and required input kinds, exact-count constraints, and
 whether spatial shapes must be reconciled. One validator replaces the repeated

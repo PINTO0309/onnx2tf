@@ -1517,6 +1517,14 @@ _FAMILY_UNARY_COMPANION_RESOLVERS = {
     "swish": _resolve_swish_input_plan,
     "leaky": _resolve_leaky_input_plan,
 }
+_ADD_FALLBACK_INPUT_RESOLVERS = (
+    (_resolve_dequantize_input_plan, False),
+    (_resolve_prelu_input_plan, True),
+    (_resolve_softmax_input_plan, False),
+    (_resolve_leaky_input_plan, False),
+    (_resolve_pad_input_plan, True),
+    (_resolve_slice_input_plan, True),
+)
 _MAPPED_INPUT_FAMILIES = {
     *_FAMILY_INPUT_RESOLVERS,
     *_FAMILY_PUBLIC_INPUT_RESOLVERS,
@@ -1598,63 +1606,28 @@ def _resolve_family_input_plan(
         )
         if add_plan is not None:
             return add_plan
-        dequantize_plan = _resolve_dequantize_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-        )
-        if dequantize_plan is not None:
-            return dequantize_plan
-        prelu_plan = _resolve_prelu_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-            public_names=public_names,
-        )
-        if prelu_plan is not None:
-            return prelu_plan
-        softmax_plan = _resolve_softmax_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-        )
-        if softmax_plan is not None:
-            return softmax_plan
-        leaky_plan = _resolve_leaky_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-        )
-        if leaky_plan is not None:
-            return leaky_plan
-        pad_plan = _resolve_pad_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-            public_names=public_names,
-        )
-        if pad_plan is not None:
-            return pad_plan
-        slice_plan = _resolve_slice_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-            public_names=public_names,
-        )
-        if slice_plan is not None:
-            return slice_plan
+        for fallback_resolver, requires_public_names in (
+            _ADD_FALLBACK_INPUT_RESOLVERS
+        ):
+            if requires_public_names:
+                fallback_plan = fallback_resolver(
+                    model_ir,
+                    graph_index,
+                    input_name=input_name,
+                    concat_index=concat_index,
+                    model_outputs=model_outputs,
+                    public_names=public_names,
+                )
+            else:
+                fallback_plan = fallback_resolver(
+                    model_ir,
+                    graph_index,
+                    input_name=input_name,
+                    concat_index=concat_index,
+                    model_outputs=model_outputs,
+                )
+            if fallback_plan is not None:
+                return fallback_plan
         return _resolve_split_input_plan(
             model_ir,
             graph_index,

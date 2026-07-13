@@ -307,6 +307,12 @@ retains its unique-operator guard. The module remains below its original 3,120
 lines while preserving stable pass IDs, order, statistics, transactions, and
 legacy fallback ownership.
 
+Add root-companion fallback resolution now uses one ordered tuple for
+Dequantize, PReLU, Softmax, pseudo-LeakyRelu, Pad, and Slice. This preserves the
+original precedence and public-name signatures. Split remains the final
+explicit resolver because it alone consumes the candidate-wide allowed
+consumer set.
+
 The adjacent legacy ownership gate now builds action-kind counts once. Seven
 simple quantized family contracts declare only allowed and required kinds;
 all-Pad keeps its minimum-arity guard, and Slice/Split/Add keep their
@@ -421,6 +427,9 @@ Focused verification, all in the existing `uv` environment:
 - After replacing float family count/shape branches with immutable input
   contracts and one validator, the same nine-module selection remained
   `284 passed in 0.77s`; targeted compilation, Ruff, and diff checks passed.
+- After consolidating the ordered Add root-companion fallback resolvers, the
+  same selection remained `284 passed in 0.77s`; targeted compilation, Ruff,
+  and diff checks passed.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.
