@@ -28,12 +28,14 @@ from onnx2tf.tflite_builder.passes.nhwc_concat_layout import (
     _apply_prelu_input_plan,
     _apply_softmax_input_plan,
     _apply_slice_input_plan,
+    _apply_split_input_plan,
     _apply_swish_input_plan,
     _resolve_dequantize_input_plan,
     _resolve_leaky_input_plan,
     _resolve_prelu_input_plan,
     _resolve_softmax_input_plan,
     _resolve_slice_input_plan,
+    _resolve_split_input_plan,
     _resolve_swish_input_plan,
 )
 from onnx2tf.tflite_builder.passes.nhwc_concat_pad import (
@@ -75,6 +77,9 @@ _LEAKY_STATS_KEY = (
 )
 _SLICE_STATS_KEY = (
     "optimized_transpose_pre_concat_nhwc_quantized_slice_chains"
+)
+_SPLIT_STATS_KEY = (
+    "optimized_transpose_pre_concat_nhwc_quantized_split_chains"
 )
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
@@ -421,6 +426,35 @@ def _resolve_slice_quantized_input_plan(
     )
 
 
+def _resolve_split_quantized_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    concat_input: str,
+    concat_index: int,
+    model_outputs: set[str],
+    public_names: set[str],
+) -> Optional[_QuantizedInputPlan]:
+    split_plan = _resolve_split_input_plan(
+        model_ir,
+        graph_index,
+        input_name=concat_input,
+        concat_index=concat_index,
+        model_outputs=model_outputs,
+        public_names=public_names,
+    )
+    if split_plan is None or split_plan.output_post_adapter_ops:
+        return None
+    return _QuantizedInputPlan(
+        kind="split",
+        adapter_op=split_plan.adapter_op,
+        nhwc_plan=split_plan,
+        concat_input=concat_input,
+        source_name=split_plan.source_name,
+        remove_adapter=split_plan.remove_adapter,
+    )
+
+
 def _resolve_quantized_concat_candidate(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -573,6 +607,15 @@ def _resolve_quantized_concat_candidate(
                     model_outputs=model_outputs,
                     public_names=public_names,
                 )
+            if input_plan is None and family == "split":
+                input_plan = _resolve_split_quantized_input_plan(
+                    model_ir,
+                    graph_index,
+                    concat_input=concat_input,
+                    concat_index=int(concat_index),
+                    model_outputs=model_outputs,
+                    public_names=public_names,
+                )
             if input_plan is None and family in {
                 "pad",
                 "unary_pad",
@@ -631,6 +674,9 @@ def _resolve_quantized_concat_candidate(
         slice_count = sum(plan.kind == "slice" for plan in input_plans)
         if family == "slice" and slice_count < 1:
             continue
+        split_count = sum(plan.kind == "split" for plan in input_plans)
+        if family == "split" and split_count < 1:
+            continue
         if family in {
             "unary",
             "pad",
@@ -642,6 +688,7 @@ def _resolve_quantized_concat_candidate(
             "softmax",
             "leaky",
             "slice",
+            "split",
         }:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
@@ -664,6 +711,7 @@ def _resolve_quantized_concat_candidate(
                     "softmax",
                     "leaky",
                     "slice",
+                    "split",
                 }:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
@@ -831,6 +879,19 @@ def _has_quantized_slice_concat_candidate(
     )
 
 
+def _has_quantized_split_concat_candidate(
+    pass_state: ModelIRPassState,
+) -> bool:
+    return (
+        _resolve_quantized_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="split",
+        )
+        is not None
+    )
+
+
 def _optimize_quantized_concat_chains(
     model_ir: ModelIR,
     *,
@@ -860,6 +921,7 @@ def _optimize_quantized_concat_chains(
             Tuple[str, Tuple[int, ...]],
             str,
         ] = {}
+        applied_split_operators: set[int] = set()
         for input_plan in candidate.input_plans:
             if input_plan.nhwc_plan is not None:
                 if input_plan.kind == "dequantize":
@@ -900,6 +962,17 @@ def _optimize_quantized_concat_chains(
                         input_plan.nhwc_plan,
                         materialized=materialized_int_parameters,
                     )
+                elif input_plan.kind == "split":
+                    assert input_plan.nhwc_plan.split_op is not None
+                    split_operator_id = id(input_plan.nhwc_plan.split_op)
+                    if split_operator_id not in applied_split_operators:
+                        _apply_split_input_plan(
+                            model_ir,
+                            graph_index,
+                            input_plan.nhwc_plan,
+                            materialized=materialized_int_parameters,
+                        )
+                        applied_split_operators.add(split_operator_id)
                 else:
                     raise RuntimeError(
                         "unsupported shared quantized Concat input plan: "
@@ -1167,6 +1240,19 @@ def run_nhwc_concat_quantized_layout_cleanup(
             "changed": bool(stats.get(_SLICE_STATS_KEY, 0)),
         }
 
+    def _run_split(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_quantized_concat_chains(
+            pass_state.model_ir,
+            family="split",
+            stats_key=_SPLIT_STATS_KEY,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get(_SPLIT_STATS_KEY, 0)),
+        }
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -1258,6 +1344,14 @@ def run_nhwc_concat_quantized_layout_cleanup(
                 priority=110,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_quantized_split",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_split,
+                precondition=_has_quantized_split_concat_candidate,
+                priority=120,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -1272,6 +1366,7 @@ def run_nhwc_concat_quantized_layout_cleanup(
             _SOFTMAX_STATS_KEY: 0,
             _LEAKY_STATS_KEY: 0,
             _SLICE_STATS_KEY: 0,
+            _SPLIT_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(

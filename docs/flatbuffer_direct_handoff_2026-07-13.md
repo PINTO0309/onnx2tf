@@ -28,9 +28,9 @@ stable IDs `layout.nhwc_pre_concat_direct` and
 seven production positions, followed by `layout.nhwc_pre_concat_add`.
 The pseudo-LeakyRelu family runs last under
 `layout.nhwc_pre_concat_leaky`.
-The twelfth through twenty-second families are the separate direct, unary,
+The twelfth through twenty-third families are the separate direct, unary,
 Pad-plus-direct, unary-plus-Pad, all-Pad, expanded-Swish, Dequantize, PReLU, and
-Softmax, followed by exact pseudo-LeakyRelu and bounded Slice,
+Softmax, followed by exact pseudo-LeakyRelu and bounded Slice/Split,
 quantized-post passes
 `layout.nhwc_pre_concat_quantized_direct`,
 `layout.nhwc_pre_concat_quantized_unary`, and
@@ -42,7 +42,8 @@ quantized-post passes
 `layout.nhwc_pre_concat_quantized_prelu` and
 `layout.nhwc_pre_concat_quantized_softmax`, followed by
 `layout.nhwc_pre_concat_quantized_leaky` and
-`layout.nhwc_pre_concat_quantized_slice`, in
+`layout.nhwc_pre_concat_quantized_slice`, followed by
+`layout.nhwc_pre_concat_quantized_split`, in
 `passes/nhwc_concat_quantized_layout.py`.
 
 The direct pass removes only exclusive, non-public leading adapters. Shared or
@@ -165,7 +166,7 @@ move to NHWC exactly once. This adds the alpha-first form that the legacy
 matcher attempted but could not select. All public/fan-out internal edges,
 rank errors, and partial diamonds reject before snapshot. Pad companions
 deliberately remain in legacy.
-The direct/unary/Pad/unary-plus-Pad/all-Pad/expanded-Swish/Dequantize/PReLU/Softmax/Leaky/Slice
+The direct/unary/Pad/unary-plus-Pad/all-Pad/expanded-Swish/Dequantize/PReLU/Softmax/Leaky/Slice/Split
 quantized-post families validate
 `adapters → optional bounded branch → Concat → Quantize → inverse Transpose(s)`
 independently of the float group. They move Concat and supported branches to
@@ -220,9 +221,16 @@ step requires the Slice output to feed only the root Concat; Slice outputs with
 secondary inverse adapters remain in legacy. Output metadata and per-axis
 quantization move to NHWC, while public Slice outputs reject before mutation.
 
+The bounded Split family similarly requires a constant channel axis and no
+secondary inverse output adapters. Multiple outputs from one Split may feed the
+same root Concat; a shared applied-operator set rewrites the Split input, axis,
+and every output tensor exactly once. The axis materializer shares Slice's
+copy-on-write cache. Public Split outputs reject, while broader post-adapter
+and mixed-input forms remain in legacy.
+
 The lowerer compatibility helper still returns the original aggregate statistic
 and runs the legacy matcher after the direct pass. The legacy matcher now
-skips the twenty-two indexed families, but continues to own broader
+skips the twenty-three indexed families, but continues to own broader
 Split/Slice/Add/Leaky interactions and remaining mixed quantized-post paths.
 
 Changed files for this checkpoint:
@@ -247,9 +255,9 @@ Focused verification, all in the existing `uv` environment:
   pseudo-LeakyRelu, and bounded Slice/Split/Add ModelIR characterization:
   the preceding combined float-path run passed 176 tests across eight compact
   modules; authoritative collection now contains 212. Including the bounded
-  direct and unary/Pad/Swish/Dequantize/PReLU/Softmax/Leaky/Slice
-  quantized-post suites, the compact inventory contains 274 tests across nine
-  modules. The preceding combined run passed 208 tests; the expanded quantized module passes 62 tests, and the focused quantized/Pad
+  direct and unary/Pad/Swish/Dequantize/PReLU/Softmax/Leaky/Slice/Split
+  quantized-post suites, the compact inventory contains 276 tests across nine
+  modules. The preceding combined run passed 208 tests; the expanded quantized module passes 64 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
   and rewritten layouts. The Swish suite covers both Mul operand orders,
@@ -295,7 +303,9 @@ Focused verification, all in the existing `uv` environment:
   Exact pseudo-LeakyRelu coverage fixes Sub order, both NHWC source arms, all
   internal quantization axes, and a public-output no-op boundary. Slice
   coverage fixes channel begin/size remapping, output metadata, and a
-  public-output no-op boundary.
+  public-output no-op boundary. Split coverage fixes multi-output
+  single-application behavior, axis remapping, output metadata, and a public
+  output no-op boundary.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.
