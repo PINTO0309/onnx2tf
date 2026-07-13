@@ -151,6 +151,7 @@ from onnx2tf.tflite_builder.passes.cost_volume_scatter_layout import (
 )
 from onnx2tf.tflite_builder.passes.add_concat_suffix_layout import (
     _optimize_transpose_add_concat_const_suffix_nhwc_chains as _optimize_transpose_add_concat_const_suffix_nhwc_chains_pass,
+    run_add_concat_suffix_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -51607,7 +51608,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
+        run_add_concat_suffix_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
         _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
@@ -51801,7 +51806,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
+        run_add_concat_suffix_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
         _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
@@ -52004,7 +52013,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
+        run_add_concat_suffix_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
         _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
@@ -52232,7 +52245,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
+        run_add_concat_suffix_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
         _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
@@ -52376,7 +52393,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
+        run_add_concat_suffix_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir)
         for _ in range(2):
             rewritten_instnorm = int(

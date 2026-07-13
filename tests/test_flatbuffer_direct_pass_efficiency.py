@@ -108,6 +108,9 @@ from onnx2tf.tflite_builder.passes.ndhwc_gate_layout import (
 from onnx2tf.tflite_builder.passes.cost_volume_scatter_layout import (
     run_cost_volume_scatter_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.add_concat_suffix_layout import (
+    run_add_concat_suffix_layout_cleanup,
+)
 
 
 def _identity_chain(operator_count: int) -> ModelIR:
@@ -254,9 +257,10 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_dual_postconv_gate_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_ndhwc_gate_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_cost_volume_scatter_layout_cleanup(model_ir, diagnostics=diagnostics)
+    run_add_concat_suffix_layout_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 79
+    assert len(diagnostics) == 80
     assert all(event["status"] == "skipped" for event in diagnostics)
     assert all(
         event["metrics"]

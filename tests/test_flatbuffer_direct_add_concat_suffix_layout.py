@@ -5,9 +5,13 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_add_concat_const_suffix_nhwc_chains,
+)
+from onnx2tf.tflite_builder.passes.add_concat_suffix_layout import (
+    run_add_concat_suffix_layout_cleanup,
 )
 
 
@@ -118,6 +122,8 @@ def _model(*, boundary: str | None = None) -> ModelIR:
         "add_output_fanout": "add0_nchw",
         "concat_fanout": "concat_nchw",
         "mul_output_fanout": "mul_nchw",
+        "mul_constant_fanout": "mul_const",
+        "add_constant_fanout": "add_const",
     }
     if boundary in side_sources:
         source = side_sources[boundary]
@@ -189,6 +195,49 @@ def test_add_concat_suffix_layout_characterization() -> None:
     conv_op = next(op for op in model_ir.operators if op.op_type == "CONV_2D")
     assert conv_op.inputs[0] == "suffix_nhwc"
     assert model_ir.tensors["concat_nchw"].shape == [1, 2, 3, 8]
+    assert model_ir.tensors["suffix_nhwc"].shape == [1, 2, 3, 8]
+
+
+@pytest.mark.parametrize(
+    ("boundary", "constant_name", "suffix_op_type"),
+    [
+        ("mul_constant_fanout", "mul_const", "MUL"),
+        ("add_constant_fanout", "add_const", "ADD"),
+    ],
+)
+def test_add_concat_suffix_layout_clones_shared_suffix_constant(
+    boundary: str,
+    constant_name: str,
+    suffix_op_type: str,
+) -> None:
+    model_ir = _model(boundary=boundary)
+    original_data = np.asarray(model_ir.tensors[constant_name].data).copy()
+
+    stats = _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
+
+    assert stats["optimized_transpose_add_concat_const_suffix_nhwc_chains"] == 1
+    np.testing.assert_array_equal(
+        model_ir.tensors[constant_name].data,
+        original_data,
+    )
+    assert model_ir.tensors[constant_name].shape == [1, 8, 1, 1]
+    side_op = next(op for op in model_ir.operators if op.outputs == ["side"])
+    assert side_op.inputs == [constant_name]
+    suffix_op = next(
+        op
+        for op in model_ir.operators
+        if op.op_type == suffix_op_type
+        and any(
+            name.startswith(f"{constant_name}_layout") for name in op.inputs
+        )
+    )
+    clone_name = next(
+        name for name in suffix_op.inputs if name.startswith(f"{constant_name}_layout")
+    )
+    np.testing.assert_array_equal(
+        model_ir.tensors[clone_name].data,
+        np.transpose(original_data, [0, 2, 3, 1]),
+    )
 
 
 @pytest.mark.parametrize(
@@ -212,4 +261,68 @@ def test_add_concat_suffix_layout_rejects_unsafe_boundary(boundary: str) -> None
     stats = _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
 
     assert stats["optimized_transpose_add_concat_const_suffix_nhwc_chains"] == 0
+    _assert_model_equal(model_ir, original)
+
+
+def test_add_concat_suffix_layout_runner_reuses_one_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model()
+    diagnostics: list[dict[str, object]] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_add_concat_suffix_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    stats_key = "optimized_transpose_add_concat_const_suffix_nhwc_chains"
+    assert stats[stats_key] == 1
+    assert refresh_count == 1
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "layout.add_concat_const_suffix_nhwc"
+    assert diagnostics[0]["changed"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "branch_adapter_fanout",
+        "add_output_fanout",
+        "concat_fanout",
+        "mul_output_fanout",
+        "public_intermediate",
+        "public_post_output",
+        "permutation",
+        "concat_axis",
+        "missing_constant",
+    ],
+)
+def test_add_concat_suffix_layout_runner_rejects_before_snapshot(
+    boundary: str,
+) -> None:
+    model_ir = _model(boundary=boundary)
+    original = deepcopy(model_ir)
+    diagnostics: list[dict[str, object]] = []
+
+    stats = run_add_concat_suffix_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    stats_key = "optimized_transpose_add_concat_const_suffix_nhwc_chains"
+    assert stats[stats_key] == 0
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["changed"] is False
+    assert diagnostics[0]["skipped_by_precondition"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 0
     _assert_model_equal(model_ir, original)
