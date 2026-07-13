@@ -243,9 +243,13 @@ preservation of `QuantParamIR`. A shared leading adapter remains for unrelated
 NCHW consumers. Whole-ModelIR no-op cases cover Dequantize, Concat, and
 quantized-output fan-out; public pre/Dequantize/Concat/Quantize/post tensors;
 invalid pre/post permutations; invalid Concat axis; and a non-Dequantize
-branch. Its function AST exactly matches the characterization checkpoint. The
-lowerer retains a signature-compatible wrapper and both raw production calls,
-preserving order until indexed planning and runner integration replace them.
+branch. Pure indexed planning now validates every adapter, Dequantize branch,
+rank-four Concat→Quantize edge, quantization record, post branch, and canonical
+alias before mutation. Dequantize inputs, Concat axis, Quantize output, post
+aliases, adapter/post removals, pruning, and metadata/layout reconciliation use
+one `ModelIRGraphIndex` and `LayoutState`. The stable transactional runner ID is
+`layout.dequant_concat_quantize_nhwc`; both production positions call it and
+the lowerer compatibility wrapper remains available.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

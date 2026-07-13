@@ -3,8 +3,8 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `35a4cb1`
-  (`extract dequant concat quantize layout pass`)
+- Latest implementation checkpoint: `3be0c3e`
+  (`index dequant concat quantize layout pass`)
 - Previous pause checkpoint: `3df2903`
   (`document flatbuffer direct pause checkpoint`)
 - Remote: after this resumed documentation checkpoint is pushed, local and
@@ -13,14 +13,15 @@
 - The axis-3 constant-Concat bridge matcher uses pure indexed planning,
   differential graph/layout mutation, and one stable transactional runner.
   Its lowerer wrapper remains; the raw production call is removed.
-- The Dequantize/Concat/Quantize matcher is mechanically extracted with exact
-  AST equivalence; its lowerer wrapper and two raw calls remain unchanged.
+- The Dequantize/Concat/Quantize matcher uses pure indexed planning,
+  differential graph/layout mutation, and one transactional runner at both
+  production positions.
 
 ## Completed work
 
-This resumed interval completed fourteen adjacent semantic layout families
+This resumed interval completed fifteen adjacent semantic layout families
 using the staged characterization → mechanical extraction → indexed runner
-process and advanced the fifteenth family through mechanical extraction.
+process.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -172,6 +173,10 @@ process and advanced the fifteenth family through mechanical extraction.
     - Moved the complete matcher to
       `passes/dequant_concat_quantize_layout.py` with exact AST equivalence in
       `35a4cb1`; the compatibility wrapper and both raw calls remain.
+    - Added pure indexed topology and quantization-metadata planning,
+      differential graph/layout mutation, stable runner
+      `layout.dequant_concat_quantize_nhwc`, and both production runner calls
+      in `3be0c3e`.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -187,9 +192,9 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is indexed candidate planning, differential
-  graph/layout mutation, and transactional runner integration for
-  `_optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains`.
+  The immediate next unit is characterization of
+  `_optimize_transpose_concat_unary_fanout_conv_nhwc_chains`, including both
+  production positions and unary/post/Conv fan-out boundaries.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -211,9 +216,9 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this resumed documentation update, the
-working tree is clean at extraction checkpoint `35a4cb1`. The focused module
-owns the complete Dequantize/Concat/Quantize matcher; indexed migration has not
-begun.
+working tree is clean at indexed checkpoint `3be0c3e`. The focused module owns
+the complete Dequantize/Concat/Quantize matcher and both production positions
+use the transactional runner.
 After the documentation commit is pushed, local/remote divergence must be
 `0 0`. The implementation checkpoints since the previous pause changed:
 
@@ -408,6 +413,15 @@ sequential with only one model/process active at a time.
   `ea74ffd`.
 - Full direct selection after mechanical extraction:
   `1339 passed, 5 deselected, 2 warnings in 176.09s`.
+- Indexed Dequantize/Concat/Quantize runner, metadata/rank boundary,
+  architecture, and irrelevant-graph efficiency focus:
+  `78 passed in 21.88s`.
+- Tier 1 `superpoint.onnx`, sequential `-tb flatbuffer_direct -cotof` after
+  indexed migration: `evaluation_pass=true`,
+  `max_abs=1.6666017472743988e-06`,
+  `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+- Full direct selection after indexed migration:
+  `1358 passed, 5 deselected, 2 warnings in 173.55s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -439,14 +453,13 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Introduce a pure indexed candidate plan for every leading adapter,
-   Dequantize branch, exclusive Concat→Quantize edge, inverse post branch, and
-   canonical quantized-output alias.
-3. Apply all rewrites and removals through one `ModelIRGraphIndex` and
-   `LayoutState` under a stable transactional pass ID, preserving complete
-   quantization metadata.
-4. Replace both raw calls with the runner, run focused, Tier 1 sequential
-   `-cotof`, and full direct gates, then commit and push the indexed checkpoint.
+2. Inspect `_optimize_transpose_concat_unary_fanout_conv_nhwc_chains`, both
+   production calls, and existing Concat/unary/Conv coverage.
+3. Add a compact dedicated success corpus and complete no-op boundaries for
+   input adapters, Concat/unary fan-out, post adapters, Conv-only consumers,
+   public tensors, permutations, and axis.
+4. Run focused and full direct gates, then commit and push characterization
+   before mechanical extraction.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1238,6 +1251,42 @@ No dependency or TensorFlow path was added, and no inference process was run
 concurrently. Indexed candidate planning, differential graph/layout mutation,
 transactional runner integration, and raw-call replacement remain the next
 checkpoint.
+
+### Indexed Dequantize/Concat/Quantize checkpoint
+
+Checkpoint `3be0c3e` introduced pure indexed plans for every leading adapter,
+exclusive Dequantize branch, rank-four Concat→Quantize edge, inverse post
+branch, canonical quantized output, and adapter-removal decision. Quantize and
+source quantization metadata and rank-four Concat metadata are validated before
+mutation; three new malformed-metadata/rank cases reject before snapshot in
+addition to the twelve characterized boundaries.
+
+Dequantize input rewrites, metadata permutations, Concat axis mutation,
+Quantize output canonicalization, post-alias replacement, adapter/post removal,
+pruning, and layout reconciliation use one shared `ModelIRGraphIndex` and
+`LayoutState`. The implementation contains no whole-graph producer/consumer
+map construction and no direct operator-list deletion. The stable
+`LAYOUT_PLAN` ID is `layout.dequant_concat_quantize_nhwc`; both raw production
+calls are replaced with `run_dequant_concat_quantize_layout_cleanup`, while the
+lowerer compatibility wrapper remains.
+
+Focused success, fifteen complete no-op boundaries, runner instrumentation,
+ownership, architecture, and irrelevant-graph efficiency validation passed 78
+tests. The two-post success graph uses one initial index refresh and one
+snapshot; all unsafe boundaries reject before snapshotting. Tier 1
+`superpoint.onnx` passed sequential `-tb flatbuffer_direct -cotof` with
+`evaluation_pass=true`, `max_abs=1.6666017472743988e-06`,
+`rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+
+The complete sequential direct selection passed:
+
+```text
+1358 passed, 5 deselected, 2 warnings in 173.55s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_dequant_concat_quantize_superpoint` artifacts were removed after
+metrics inspection.
 
 ### Axis-3 constant-Concat bridge mechanical extraction checkpoint
 
