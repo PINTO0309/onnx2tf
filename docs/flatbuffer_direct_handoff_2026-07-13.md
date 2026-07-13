@@ -298,6 +298,16 @@ tests; syntax, Ruff, pycompile, and diff checks pass. No model conversion or
 inference was run. The common generated-source parsing/scanning boundary now has
 36 functions; resume with a separately characterized source-rewrite family.
 
+The first generated-source rewrite family now has a Torch-free owner in
+`pytorch_source_rewrites.py`. It contains channel-first GAP-to-Conv folding,
+explicit channel-last GAP output rewriting, and SE scale/binary bridge cleanup.
+All three ASTs exactly match the exporter checkpoint. Two direct success
+fixtures prove redundant bridge removal and channel-last mean emission, while a
+parameterized no-op fixture covers every rewrite. Rewrite and architecture
+validation passes 69 tests; syntax, Ruff, pycompile, and diff checks pass. No
+model conversion or inference was run. Resume by moving another cohesive source
+rewrite family only after adding its direct success/no-op characterization.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted
