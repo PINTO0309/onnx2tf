@@ -463,18 +463,23 @@ quantized inputs remain in legacy.
 
 The quantized-post runner is declarative: one ordered table owns each family
 name, stable statistics key, and priority. Pass IDs, callbacks, preconditions,
-and default diagnostics are generated from that table. Shared float plans use
-one wrapper into `_QuantizedInputPlan`; only family-specific safety guards
-remain explicit. This removed 423 lines of repeated dispatch code from
-`nhwc_concat_quantized_layout.py` (1,549 to 1,126 lines) without changing the
-ordered pass contract.
+and default diagnostics are generated from that table. Shared float-plan
+resolution is likewise declarative: one resolver map covers the common
+signature, a second covers resolvers that require public tensor names, and one
+adapter maps every selected plan into `_QuantizedInputPlan`. The additional
+rank-four source guard for Dequantize and the no-secondary-post-adapter guard
+for Slice/Split are explicit family sets. Add remains separate because it
+recursively validates bounded leaf plans. These staged declarative changes
+reduced `nhwc_concat_quantized_layout.py` from 1,549 to 994 lines without
+changing the ordered pass contract or the legacy fallback boundary.
 
 Candidate acceptance is also declarative. Each family now records allowed and
 required input kinds, minimum arity, exact-count constraints, and whether
 spatial shapes must be reconciled. One validator replaces thirteen count
 branches, and an import-time invariant requires the input-contract family set
-to match the pass table. The current module is 1,134 lines, still 415 below the
-pre-table implementation.
+to match the pass table. The resolver maps and input contracts remain separate:
+the former select safe graph plans, while the latter validate the complete
+Concat input combination.
 
 The legacy ownership boundary uses the same compact style. Simple quantized
 families are described by allowed and required action-kind sets after one

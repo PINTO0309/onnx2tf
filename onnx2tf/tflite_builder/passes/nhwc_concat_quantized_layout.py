@@ -102,6 +102,22 @@ _QUANTIZED_FAMILY_SPECS: Tuple[Tuple[str, str, int], ...] = (
     ("add", _ADD_STATS_KEY, 130),
 )
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
+_SHARED_INPUT_RESOLVERS = {
+    "swish": _resolve_swish_input_plan,
+    "dequantize": _resolve_dequantize_input_plan,
+    "softmax": _resolve_softmax_input_plan,
+    "leaky": _resolve_leaky_input_plan,
+}
+_SHARED_PUBLIC_INPUT_RESOLVERS = {
+    "prelu": _resolve_prelu_input_plan,
+    "slice": _resolve_slice_input_plan,
+    "split": _resolve_split_input_plan,
+}
+_SHARED_QUANTIZED_INPUT_FAMILIES = frozenset(
+    {*_SHARED_INPUT_RESOLVERS, *_SHARED_PUBLIC_INPUT_RESOLVERS}
+)
+_SHARED_SOURCE_RANK_FOUR_FAMILIES = frozenset({"dequantize"})
+_SHARED_REJECT_POST_ADAPTER_FAMILIES = frozenset({"slice", "split"})
 
 
 @dataclass(frozen=True)
@@ -365,161 +381,51 @@ def _wrap_shared_input_plan(
     )
 
 
-def _resolve_swish_quantized_input_plan(
+def _resolve_shared_quantized_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
     *,
-    concat_input: str,
-    concat_index: int,
-    model_outputs: set[str],
-) -> Optional[_QuantizedInputPlan]:
-    return _wrap_shared_input_plan(
-        concat_input=concat_input,
-        input_plan=_resolve_swish_input_plan(
-            model_ir,
-            graph_index,
-            input_name=concat_input,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-        ),
-    )
-
-
-def _resolve_dequantize_quantized_input_plan(
-    model_ir: ModelIR,
-    graph_index: ModelIRGraphIndex,
-    *,
-    concat_input: str,
-    concat_index: int,
-    model_outputs: set[str],
-) -> Optional[_QuantizedInputPlan]:
-    dequantize_plan = _resolve_dequantize_input_plan(
-        model_ir,
-        graph_index,
-        input_name=concat_input,
-        concat_index=concat_index,
-        model_outputs=model_outputs,
-    )
-    if dequantize_plan is None:
-        return None
-    source_tensor = model_ir.tensors.get(dequantize_plan.source_name)
-    if source_tensor is None or len(list(source_tensor.shape)) != 4:
-        return None
-    return _wrap_shared_input_plan(
-        concat_input=concat_input,
-        input_plan=dequantize_plan,
-    )
-
-
-def _resolve_prelu_quantized_input_plan(
-    model_ir: ModelIR,
-    graph_index: ModelIRGraphIndex,
-    *,
+    family: str,
     concat_input: str,
     concat_index: int,
     model_outputs: set[str],
     public_names: set[str],
 ) -> Optional[_QuantizedInputPlan]:
-    return _wrap_shared_input_plan(
-        concat_input=concat_input,
-        input_plan=_resolve_prelu_input_plan(
+    public_resolver = _SHARED_PUBLIC_INPUT_RESOLVERS.get(family)
+    if public_resolver is not None:
+        input_plan = public_resolver(
             model_ir,
             graph_index,
             input_name=concat_input,
             concat_index=concat_index,
             model_outputs=model_outputs,
             public_names=public_names,
-        ),
-    )
-
-
-def _resolve_softmax_quantized_input_plan(
-    model_ir: ModelIR,
-    graph_index: ModelIRGraphIndex,
-    *,
-    concat_input: str,
-    concat_index: int,
-    model_outputs: set[str],
-) -> Optional[_QuantizedInputPlan]:
-    return _wrap_shared_input_plan(
-        concat_input=concat_input,
-        input_plan=_resolve_softmax_input_plan(
+        )
+    else:
+        resolver = _SHARED_INPUT_RESOLVERS.get(family)
+        if resolver is None:
+            return None
+        input_plan = resolver(
             model_ir,
             graph_index,
             input_name=concat_input,
             concat_index=concat_index,
             model_outputs=model_outputs,
-        ),
-    )
-
-
-def _resolve_leaky_quantized_input_plan(
-    model_ir: ModelIR,
-    graph_index: ModelIRGraphIndex,
-    *,
-    concat_input: str,
-    concat_index: int,
-    model_outputs: set[str],
-) -> Optional[_QuantizedInputPlan]:
-    return _wrap_shared_input_plan(
-        concat_input=concat_input,
-        input_plan=_resolve_leaky_input_plan(
-            model_ir,
-            graph_index,
-            input_name=concat_input,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-        ),
-    )
-
-
-def _resolve_slice_quantized_input_plan(
-    model_ir: ModelIR,
-    graph_index: ModelIRGraphIndex,
-    *,
-    concat_input: str,
-    concat_index: int,
-    model_outputs: set[str],
-    public_names: set[str],
-) -> Optional[_QuantizedInputPlan]:
-    slice_plan = _resolve_slice_input_plan(
-        model_ir,
-        graph_index,
-        input_name=concat_input,
-        concat_index=concat_index,
-        model_outputs=model_outputs,
-        public_names=public_names,
-    )
-    if slice_plan is None or slice_plan.output_post_adapter_ops:
+        )
+    if input_plan is None:
+        return None
+    if family in _SHARED_SOURCE_RANK_FOUR_FAMILIES:
+        source_tensor = model_ir.tensors.get(input_plan.source_name)
+        if source_tensor is None or len(list(source_tensor.shape)) != 4:
+            return None
+    if (
+        family in _SHARED_REJECT_POST_ADAPTER_FAMILIES
+        and input_plan.output_post_adapter_ops
+    ):
         return None
     return _wrap_shared_input_plan(
         concat_input=concat_input,
-        input_plan=slice_plan,
-    )
-
-
-def _resolve_split_quantized_input_plan(
-    model_ir: ModelIR,
-    graph_index: ModelIRGraphIndex,
-    *,
-    concat_input: str,
-    concat_index: int,
-    model_outputs: set[str],
-    public_names: set[str],
-) -> Optional[_QuantizedInputPlan]:
-    split_plan = _resolve_split_input_plan(
-        model_ir,
-        graph_index,
-        input_name=concat_input,
-        concat_index=concat_index,
-        model_outputs=model_outputs,
-        public_names=public_names,
-    )
-    if split_plan is None or split_plan.output_post_adapter_ops:
-        return None
-    return _wrap_shared_input_plan(
-        concat_input=concat_input,
-        input_plan=split_plan,
+        input_plan=input_plan,
     )
 
 
@@ -686,60 +592,14 @@ def _resolve_quantized_concat_candidate(
                     concat_index=int(concat_index),
                     model_outputs=model_outputs,
                 )
-            if input_plan is None and family == "swish":
-                input_plan = _resolve_swish_quantized_input_plan(
+            if (
+                input_plan is None
+                and family in _SHARED_QUANTIZED_INPUT_FAMILIES
+            ):
+                input_plan = _resolve_shared_quantized_input_plan(
                     model_ir,
                     graph_index,
-                    concat_input=concat_input,
-                    concat_index=int(concat_index),
-                    model_outputs=model_outputs,
-                )
-            if input_plan is None and family == "dequantize":
-                input_plan = _resolve_dequantize_quantized_input_plan(
-                    model_ir,
-                    graph_index,
-                    concat_input=concat_input,
-                    concat_index=int(concat_index),
-                    model_outputs=model_outputs,
-                )
-            if input_plan is None and family == "prelu":
-                input_plan = _resolve_prelu_quantized_input_plan(
-                    model_ir,
-                    graph_index,
-                    concat_input=concat_input,
-                    concat_index=int(concat_index),
-                    model_outputs=model_outputs,
-                    public_names=public_names,
-                )
-            if input_plan is None and family == "softmax":
-                input_plan = _resolve_softmax_quantized_input_plan(
-                    model_ir,
-                    graph_index,
-                    concat_input=concat_input,
-                    concat_index=int(concat_index),
-                    model_outputs=model_outputs,
-                )
-            if input_plan is None and family == "leaky":
-                input_plan = _resolve_leaky_quantized_input_plan(
-                    model_ir,
-                    graph_index,
-                    concat_input=concat_input,
-                    concat_index=int(concat_index),
-                    model_outputs=model_outputs,
-                )
-            if input_plan is None and family == "slice":
-                input_plan = _resolve_slice_quantized_input_plan(
-                    model_ir,
-                    graph_index,
-                    concat_input=concat_input,
-                    concat_index=int(concat_index),
-                    model_outputs=model_outputs,
-                    public_names=public_names,
-                )
-            if input_plan is None and family == "split":
-                input_plan = _resolve_split_quantized_input_plan(
-                    model_ir,
-                    graph_index,
+                    family=family,
                     concat_input=concat_input,
                     concat_index=int(concat_index),
                     model_outputs=model_outputs,

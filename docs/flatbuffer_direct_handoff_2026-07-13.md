@@ -251,16 +251,21 @@ Split/Slice/Add/Leaky interactions and remaining mixed quantized-post paths.
 The quantized-post module no longer repeats one precondition, callback, and
 `PassSpec` block per family. A single ordered table now owns family name,
 statistics key, and priority; stable pass IDs, callbacks, preconditions, and
-default metrics are derived from it. A common wrapper also maps shared float
-plans into `_QuantizedInputPlan`. The refactor reduced the module from 1,549 to
-1,126 lines while preserving all thirteen quantized family IDs and their order.
+default metrics are derived from it. Shared float-plan resolution also uses
+two maps: one for the common resolver signature and one for resolvers requiring
+public tensor names. A single adapter applies the explicit Dequantize rank and
+Slice/Split post-adapter guards before mapping the result into
+`_QuantizedInputPlan`. Add remains separate because it recursively validates
+bounded leaf plans. The staged refactor reduced the module from 1,549 to 994
+lines while preserving all thirteen quantized family IDs and their order.
 
 Candidate input acceptance now has a parallel immutable contract per family:
 allowed/required kinds, minimum arity, exact counts, and shape-validation
 policy. A common validator replaces the thirteen count branches, and an
 import-time invariant prevents the pass and input-contract family sets from
-drifting. The current module is 1,134 lines, 415 below the original 1,549-line
-state.
+drifting. Resolver selection and whole-Concat input acceptance remain separate
+contracts, preventing family-specific graph guards from leaking back into the
+combination validator.
 
 The adjacent legacy ownership gate now builds action-kind counts once. Seven
 simple quantized family contracts declare only allowed and required kinds;
@@ -356,6 +361,9 @@ Focused verification, all in the existing `uv` environment:
   public-output no-op boundary. Dequantize/PReLU/Softmax/Leaky/Pad/Slice/Split
   leaves use the same already characterized shared apply paths.
   Root-companion coverage includes expanded-Swish plus supported unary.
+- After consolidating the seven shared quantized input resolvers, the focused
+  quantized-post module passed `70 tests in 0.38s`; Python compilation, targeted
+  Ruff, and `git diff --check` also passed.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.
@@ -365,10 +373,10 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize the next bounded quantized-post family. Keep
-uncharacterized interactions in
-legacy until independently fixed. Do
-not begin with a Tier 0–4 corpus run, and do not create a pull request.
+Next work should continue reducing duplicated quantized candidate/apply
+dispatch while preserving the characterized contracts. Keep uncharacterized
+interactions in legacy until independently fixed. Do not begin with a Tier 0–4
+corpus run, and do not create a pull request.
 
 The section below records the preceding rank-five checkpoint and remains as
 historical context.
