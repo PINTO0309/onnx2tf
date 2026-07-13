@@ -160,6 +160,19 @@ def _add_model(
                 OperatorIR("IDENTITY", ["sum_nhwc"], ["sum_side"]),
             ]
         )
+    if boundary == "public_add_post":
+        model_ir.tensors["sum_nhwc"] = _tensor(
+            "sum_nhwc",
+            [1, 5, 7, 3],
+        )
+        model_ir.outputs.append("sum_nhwc")
+        model_ir.operators.append(
+            OperatorIR(
+                "TRANSPOSE",
+                ["sum_nchw", "post_perm"],
+                ["sum_nhwc"],
+            )
+        )
     if boundary == "public_add_output":
         model_ir.outputs.append("sum_nchw")
     if boundary == "add_adapter_fanout":
@@ -282,6 +295,7 @@ def test_nhwc_direct_only_add_is_indexed(all_add: bool) -> None:
         "unsupported_add",
         "add_output_fanout",
         "public_add_output",
+        "public_add_post",
         "invalid_source_rank",
         "invalid_adapter_rank",
         "invalid_add_output_rank",
@@ -336,7 +350,6 @@ def test_nhwc_add_retains_shared_or_public_source_adapter(
     "boundary",
     [
         "adapter_shared_with_concat",
-        "add_output_post_transpose",
         "unary_operand",
     ],
 )
@@ -355,3 +368,27 @@ def test_nhwc_add_broader_legacy_cases_remain_available(boundary: str) -> None:
         and event["status"] == "changed"
         for event in diagnostics
     )
+
+
+def test_nhwc_add_output_post_adapter_is_indexed() -> None:
+    model_ir = _add_model(boundary="add_output_post_transpose")
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_add_rewritten(model_ir)
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    side_identity = next(
+        op for op in model_ir.operators if op.outputs == ["sum_side"]
+    )
+    assert side_identity.inputs == ["sum_nchw"]
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_add"
+    )
+    assert event["status"] == "changed"

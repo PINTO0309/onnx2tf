@@ -968,10 +968,30 @@ def _resolve_add_input_plan(
         or len(add_op.outputs) != 1
         or str(add_op.outputs[0]) != input_name
         or input_name in model_outputs
-        or set(graph_index.consumer_indices(input_name))
-        != {int(concat_index)}
+        or int(concat_index)
+        not in set(graph_index.consumer_indices(input_name))
     ):
         return None
+
+    output_post_adapter_ops: List[OperatorIR] = []
+    for consumer_index in graph_index.consumer_indices(input_name):
+        if int(consumer_index) == int(concat_index):
+            continue
+        post_op = model_ir.operators[int(consumer_index)]
+        if (
+            str(post_op.op_type) != "TRANSPOSE"
+            or len(post_op.inputs) < 2
+            or len(post_op.outputs) != 1
+            or str(post_op.inputs[0]) != input_name
+            or _read_transpose_perm(model_ir, post_op)
+            != _PERM_NCHW_TO_NHWC
+            or str(post_op.outputs[0]) in model_outputs
+        ):
+            return None
+        post_tensor = model_ir.tensors.get(str(post_op.outputs[0]))
+        if post_tensor is None or len(list(post_tensor.shape)) != 4:
+            return None
+        output_post_adapter_ops.append(post_op)
 
     output_tensor = model_ir.tensors.get(input_name)
     if output_tensor is None or len(list(output_tensor.shape)) != 4:
@@ -1036,6 +1056,7 @@ def _resolve_add_input_plan(
         kind="add",
         adapter_op=unique_adapter_ops[0],
         add_op=add_op,
+        output_post_adapter_ops=tuple(output_post_adapter_ops),
         add_source_names=tuple(source_names),
         extra_removable_adapter_ops=tuple(
             adapter_op
@@ -2190,6 +2211,13 @@ def _apply_add_input_plan(
     if output_tensor is not None:
         output_tensor.quantization = _clone_nhwc_quantization(
             output_tensor.quantization
+        )
+    for post_op in input_plan.output_post_adapter_ops:
+        _replace_tensor_inputs(
+            model_ir=model_ir,
+            src_name=str(post_op.outputs[0]),
+            dst_name=input_plan.output_name,
+            graph_index=graph_index,
         )
 
 

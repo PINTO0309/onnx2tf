@@ -12694,6 +12694,12 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
         add_idx = int(plan.get("add_idx", -1))
         actions = [dict(action) for action in plan.get("actions", [])]
         input_name = str(plan.get("input_name", ""))
+        post_transpose_indices = {
+            int(value)
+            for value in list(
+                plan.get("removable_post_transpose_indices", [])
+            )
+        }
         return (
             add_idx >= 0
             and add_idx < len(model_ir.operators)
@@ -12707,11 +12713,10 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
                 for action in actions
             )
             and len(list(plan.get("new_add_inputs", []))) == 2
-            and list(plan.get("removable_post_transpose_indices", [])) == []
             and set(
                 int(value) for value in consumers.get(input_name, [])
             )
-            == {int(concat_idx)}
+            == {int(concat_idx), *post_transpose_indices}
         )
 
     def _try_rewrite_add_input_to_nhwc(
