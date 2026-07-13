@@ -1917,6 +1917,16 @@ preserved as a second implementation. Deterministic differential validation
 over 300 generated stage specifications fixes exact return-value equivalence
 with the previous composite builder.
 
+Forward-source partitioning and its single-use static Reshape-chain folding now
+share that stage-codegen owner. Large forward bodies retain the same liveness-
+based 18/28/36-line partition policy, deterministic boundary score, generated
+method signatures, and inline fallback. Adjacent foldable Reshape pairs are
+kept within one stage and reduced using the shared reshape-target policy. The
+exporter imports only the partitioning entry point used by the stored pipeline;
+the nested folder is no longer exporter-owned. Differential checks cover 250
+deterministic forward bodies and representative literal, inferred, fan-out, and
+multi-step Reshape chains with exact old/new return equality.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

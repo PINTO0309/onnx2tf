@@ -3514,5 +3514,10 @@ def test_native_pytorch_stage_codegen_has_single_owner() -> None:
     assert "def _build_named_encoder_methods_composite(" in stage_source
     assert "def _build_named_encoder_methods_composite(" not in exporter_source
     assert "_build_named_encoder_methods_composite," in exporter_source
+    assert "def _build_forward_stage_methods(" in stage_source
+    assert "def _build_forward_stage_methods(" not in exporter_source
+    assert "_build_forward_stage_methods," in exporter_source
+    assert "def _fold_single_use_static_reshape_chains(" in stage_source
+    assert "def _fold_single_use_static_reshape_chains(" not in exporter_source
     assert "def _build_named_encoder_methods(" not in exporter_source
     assert "import torch" not in stage_source

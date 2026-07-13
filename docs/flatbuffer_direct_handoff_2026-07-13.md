@@ -172,9 +172,19 @@ was removed from the exporter. Three direct fixtures cover inline, grouped, and
 attention/FFN paths; 300 deterministic generated stage specifications return
 exactly the same values as the pre-extraction implementation. Stage and
 architecture validation passes 61 tests; syntax, Ruff, and diff checks pass.
-No model conversion or inference was run. Resume with the forward-stage
-partition/reshape-folding boundary, then separate artifact exporters only when
-their shared metadata and child-process dependencies can be explicit.
+No model conversion or inference was run.
+
+Forward-stage partitioning and single-use static Reshape-chain folding now
+share the same Torch-free owner. The 18/28/36-line liveness-based partition
+policy, stage signatures, calls, specs, reshape-boundary protection, and inline
+fallback are unchanged; an unused local tensor-name reverse map exposed by
+Ruff after extraction was removed. Four reshape-chain cases and 250
+deterministic forward bodies match the pre-extraction implementation exactly.
+Direct stage and architecture validation passes 65 tests; syntax, Ruff, and
+diff checks pass. No model conversion or inference was run. Resume by
+separating artifact exporters only where metadata and child-process
+dependencies can be made explicit; keep the large raw-source canonicalizer as
+a later, separately characterized boundary.
 
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
