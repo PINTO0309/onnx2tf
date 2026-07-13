@@ -297,7 +297,10 @@ callbacks, preconditions, defaults, and preflight are constructed once. Its
 candidate search enumerates only indexed `CONCATENATION` positions, and a
 successful precondition passes the exact candidate to the common family
 optimizer through session-local prepared data. All existing family-specific
-optimizer wrappers remain available. The module changed from 3,120 to 2,881
+optimizer wrappers remain available. Common-signature, public-name, and
+unary-companion resolver maps now own every non-direct/non-Add family, with an
+import-time coverage invariant. Recursive Add stays explicit because it needs
+candidate-wide consumer ownership. The module changed from 3,120 to 2,850
 lines while preserving stable pass IDs, order, statistics, transactions, and
 legacy fallback ownership.
 
@@ -409,6 +412,9 @@ Focused verification, all in the existing `uv` environment:
   enumeration, and prepared-candidate reuse, all nine compact float/quantized
   NHWC Concat modules passed `284 tests in 0.77s`; the focused float module
   passed `44 tests in 0.36s` and targeted compilation/Ruff passed.
+- After replacing non-Add float family dispatch with three resolver maps and a
+  declared-family coverage invariant, the same compact selection remained
+  `284 passed in 0.77s`; targeted compilation, Ruff, and diff checks passed.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.

@@ -332,8 +332,14 @@ precondition passes its validated candidate through session-local prepared
 data, so the callback does not immediately repeat the same search. The legacy
 family-specific optimizer wrappers remain signature-compatible while the
 runner itself uses the common family optimizer. This declarative conversion
-reduced the module from 3,120 to 2,881 lines without changing pass order or
+reduced the module from 3,120 to 2,850 lines without changing pass order or
 fallback ownership.
+Input-plan dispatch is also declarative for non-Add families: one map owns the
+common resolver signature, one owns resolvers requiring public tensor names,
+and one owns Swish/Leaky resolvers that permit unary companions. An import-time
+invariant requires these maps to cover every declared family except direct and
+recursive Add. Add remains explicit because it carries the candidate-wide
+consumer set through recursive planning.
 Exclusive pads constants are remapped in place; shared or public pads
 constants use copy-on-write so unrelated Pad consumers preserve NCHW
 semantics. Dequantize inputs retain source scale and zero-point provenance

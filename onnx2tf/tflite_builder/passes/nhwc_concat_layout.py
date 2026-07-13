@@ -1398,6 +1398,32 @@ def _resolve_leaky_input_plan(
     )
 
 
+_FAMILY_INPUT_RESOLVERS = {
+    "unary": _resolve_unary_input_plan,
+    "dequantize": _resolve_dequantize_input_plan,
+    "softmax": _resolve_softmax_input_plan,
+}
+_FAMILY_PUBLIC_INPUT_RESOLVERS = {
+    "pad": _resolve_pad_input_plan,
+    "prelu": _resolve_prelu_input_plan,
+    "slice": _resolve_slice_input_plan,
+    "split": _resolve_split_input_plan,
+}
+_FAMILY_UNARY_COMPANION_RESOLVERS = {
+    "swish": _resolve_swish_input_plan,
+    "leaky": _resolve_leaky_input_plan,
+}
+_MAPPED_INPUT_FAMILIES = {
+    *_FAMILY_INPUT_RESOLVERS,
+    *_FAMILY_PUBLIC_INPUT_RESOLVERS,
+    *_FAMILY_UNARY_COMPANION_RESOLVERS,
+}
+if _MAPPED_INPUT_FAMILIES != {
+    family for family, _, _ in _NHWC_FAMILY_SPECS
+} - {"direct", "add"}:
+    raise RuntimeError("NHWC Concat families and input resolvers diverged")
+
+
 def _resolve_family_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -1418,33 +1444,18 @@ def _resolve_family_input_plan(
     )
     if direct_plan is not None:
         return direct_plan
-    if family == "unary":
-        return _resolve_unary_input_plan(
+    resolver = _FAMILY_INPUT_RESOLVERS.get(family)
+    if resolver is not None:
+        return resolver(
             model_ir,
             graph_index,
             input_name=input_name,
             concat_index=concat_index,
             model_outputs=model_outputs,
         )
-    if family == "pad":
-        return _resolve_pad_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-            public_names=public_names,
-        )
-    if family == "dequantize":
-        return _resolve_dequantize_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-        )
-    if family == "prelu":
-        return _resolve_prelu_input_plan(
+    public_resolver = _FAMILY_PUBLIC_INPUT_RESOLVERS.get(family)
+    if public_resolver is not None:
+        return public_resolver(
             model_ir,
             graph_index,
             input_name=input_name,
@@ -1452,15 +1463,8 @@ def _resolve_family_input_plan(
             model_outputs=model_outputs,
             public_names=public_names,
         )
-    if family == "softmax":
-        return _resolve_softmax_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-        )
-    if family == "swish":
+    companion_resolver = _FAMILY_UNARY_COMPANION_RESOLVERS.get(family)
+    if companion_resolver is not None:
         unary_plan = _resolve_unary_input_plan(
             model_ir,
             graph_index,
@@ -1470,30 +1474,12 @@ def _resolve_family_input_plan(
         )
         if unary_plan is not None:
             return unary_plan
-        return _resolve_swish_input_plan(
+        return companion_resolver(
             model_ir,
             graph_index,
             input_name=input_name,
             concat_index=concat_index,
             model_outputs=model_outputs,
-        )
-    if family == "slice":
-        return _resolve_slice_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-            public_names=public_names,
-        )
-    if family == "split":
-        return _resolve_split_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-            public_names=public_names,
         )
     if family == "add":
         add_plan = _resolve_add_input_plan(
@@ -1573,23 +1559,6 @@ def _resolve_family_input_plan(
             model_outputs=model_outputs,
             public_names=public_names,
             allowed_consumer_indices=allowed_candidate_consumer_indices,
-        )
-    if family == "leaky":
-        unary_plan = _resolve_unary_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
-        )
-        if unary_plan is not None:
-            return unary_plan
-        return _resolve_leaky_input_plan(
-            model_ir,
-            graph_index,
-            input_name=input_name,
-            concat_index=concat_index,
-            model_outputs=model_outputs,
         )
     return None
 
