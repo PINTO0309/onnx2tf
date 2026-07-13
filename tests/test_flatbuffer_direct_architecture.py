@@ -66,6 +66,7 @@ DEPENDENCY_SCOPED_FILES = [
     / "op_builders"
     / "qlinear_pool.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_utils.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_capabilities.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_layout_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_layout_passes.py",
@@ -3803,6 +3804,38 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
     assert "_SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN =" not in exporter_source
     assert "_SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN," in exporter_source
     assert "import torch" not in parser_source
+
+
+def test_pytorch_capability_registry_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    capability_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_capabilities.py"
+    ).read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    capability_functions = {
+        node.name
+        for node in ast.parse(capability_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    for function_name in (
+        "_ensure_no_custom_ops",
+        "_ensure_supported_ops",
+        "get_supported_pytorch_kernel_op_types",
+    ):
+        assert function_name in capability_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," in exporter_source
+    assert "_DIRECT_CODEGEN_SUPPORTED_OP_TYPES: Set[str] =" in capability_source
+    assert "_DIRECT_CODEGEN_SUPPORTED_OP_TYPES: Set[str] =" not in exporter_source
+    assert "_DIRECT_CODEGEN_SUPPORTED_OP_TYPES," in exporter_source
+    assert "import torch" not in capability_source
 
 
 def test_generated_pytorch_graph_source_rewrites_have_single_owner() -> None:

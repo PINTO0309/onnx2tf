@@ -2157,6 +2157,13 @@ must not import TensorFlow. Image trace data is resized with the existing
 PyTorch dependency so TorchScript, Dynamo ONNX, and ExportedProgram generation
 does not require the TensorFlow optional extra.
 
+PyTorch op capability selection lives in the Torch-free
+`pytorch_capabilities.py`. It composes direct emitter module/unary/binary
+declarations with the existing runtime-kernel set, owns explicit CUSTOM
+rejection and unsupported-op diagnostics, and returns a defensive copy from the
+public supported-kernel query. The registry expression and all three functions
+are AST-identical to their former exporter definitions.
+
 ## Runtime-check memory boundary
 
 The direct backend releases the legacy GraphSurgeon graph before ModelIR

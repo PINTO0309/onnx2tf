@@ -396,6 +396,16 @@ shape signatures and layouts. Artifact-support and architecture validation
 passes 76 tests; syntax, Ruff, pycompile, diff, and AST-equivalence checks pass.
 No model conversion or inference was run.
 
+PyTorch capability selection now has a single Torch-free owner in
+`pytorch_capabilities.py`. The direct-codegen registry composes the existing
+emitter module/unary/binary declarations, while runtime kernels, explicit CUSTOM
+rejection, and normalized unsupported-op diagnostics retain their established
+contracts. The registry AST and all three function ASTs match the prior exporter
+checkpoint. Direct tests cover defensive query copies, a declared direct op,
+unknown-op diagnostics, and CUSTOM rejection. Capability and architecture
+validation passes 71 tests; syntax, Ruff, pycompile, diff, and AST-equivalence
+checks pass. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted
