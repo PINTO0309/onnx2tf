@@ -23,11 +23,17 @@ counter-bounded matchers, shape-literal creation, and both rewrite entry points
 now have this module as their single implementation owner. The 42k-line
 exporter imports only the two ordered entry points; it no longer contains this
 approximately 470-line control-flow implementation.
+Each matcher now constructs one `ModelIRGraphIndex` for its WHILE body and
+reuses it for iterator, alias, condition, comparison, and Cast producer
+lookups. The former repeated linear body scans are removed. Any duplicate
+producer on a required edge rejects the optimization before cloning or
+mutation, rather than selecting an order-dependent producer.
 An AST architecture gate now rejects assignments to any object's `operators`
 attribute in the PyTorch exporter instead of checking only the literal
 `model_ir.operators =` spelling. Focused Torch-free compatibility and
 architecture validation, including direct two-iteration static and
-counter-bounded expansion fixtures, passed 62 tests. No ONNX conversion, inference,
+counter-bounded expansion fixtures and a duplicate-producer rejection, passed
+63 tests. No ONNX conversion, inference,
 dependency change, TensorFlow import, or parallel process was involved.
 
 ## `fb-refactor4` rank-four bounded-family checkpoint

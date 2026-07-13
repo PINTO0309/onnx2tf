@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, cast
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_layout_utils import _clone_tensor
 
@@ -68,12 +69,13 @@ def _constant_scalar_value(tensor: Optional[TensorIR]) -> Optional[Any]:
 def _reshape_alias_source_name(
     subgraph: ModelIR,
     tensor_name: str,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Optional[str]:
-    producer: Optional[OperatorIR] = None
-    for op in subgraph.operators:
-        if str(tensor_name) in {str(v) for v in op.outputs}:
-            producer = op
-            break
+    graph_index = graph_index or ModelIRGraphIndex(subgraph)
+    if str(tensor_name) in graph_index.duplicate_producers:
+        return None
+    producer = graph_index.producer(str(tensor_name))
     if producer is None:
         return None
     if str(producer.op_type) != "RESHAPE" or len(producer.inputs) == 0:
@@ -147,11 +149,10 @@ def _match_static_unrollable_while_op(
     body_trip_out = str(body_subgraph.outputs[1])
     body_cond_out = str(body_subgraph.outputs[2])
 
-    iter_out_producer: Optional[OperatorIR] = None
-    for candidate in body_subgraph.operators:
-        if body_iter_out in {str(v) for v in candidate.outputs}:
-            iter_out_producer = candidate
-            break
+    body_graph_index = ModelIRGraphIndex(body_subgraph)
+    if body_iter_out in body_graph_index.duplicate_producers:
+        return None
+    iter_out_producer = body_graph_index.producer(body_iter_out)
     if (
         iter_out_producer is None
         or str(iter_out_producer.op_type) != "ADD"
@@ -164,9 +165,23 @@ def _match_static_unrollable_while_op(
     )
     if not isinstance(iter_plus_one_value, (int, np.integer)) or int(iter_plus_one_value) != 1:
         return None
-    if _reshape_alias_source_name(body_subgraph, body_trip_out) != body_trip_in:
+    if (
+        _reshape_alias_source_name(
+            body_subgraph,
+            body_trip_out,
+            graph_index=body_graph_index,
+        )
+        != body_trip_in
+    ):
         return None
-    if _reshape_alias_source_name(body_subgraph, body_cond_out) != body_cond_in:
+    if (
+        _reshape_alias_source_name(
+            body_subgraph,
+            body_cond_out,
+            graph_index=body_graph_index,
+        )
+        != body_cond_in
+    ):
         return None
     return {
         "iter_init": int(iter_value),
@@ -199,8 +214,13 @@ def _match_counter_bounded_unrollable_while_op(
         body_subgraph=body_subgraph,
     ):
         return None
+    body_graph_index = ModelIRGraphIndex(body_subgraph)
     for state_offset in range(4, len(op.inputs)):
-        alias_source = _reshape_alias_source_name(body_subgraph, str(body_subgraph.outputs[state_offset]))
+        alias_source = _reshape_alias_source_name(
+            body_subgraph,
+            str(body_subgraph.outputs[state_offset]),
+            graph_index=body_graph_index,
+        )
         if alias_source is not None:
             state_output_raw = str(alias_source)
         else:
@@ -209,11 +229,10 @@ def _match_counter_bounded_unrollable_while_op(
                 state_output_raw = str(body_subgraph.outputs[state_offset]).replace("_out", "_out_raw")
             if state_output_raw not in body_subgraph.tensors:
                 continue
-        cond_producer: Optional[OperatorIR] = None
-        for candidate in body_subgraph.operators:
-            if str(body_subgraph.outputs[2]) in {str(v) for v in candidate.outputs}:
-                cond_producer = candidate
-                break
+        cond_output_name = str(body_subgraph.outputs[2])
+        if cond_output_name in body_graph_index.duplicate_producers:
+            return None
+        cond_producer = body_graph_index.producer(cond_output_name)
         if cond_producer is None:
             return None
         compare_output_name = str(body_subgraph.outputs[2])
@@ -229,24 +248,22 @@ def _match_counter_bounded_unrollable_while_op(
                 invert_compare = True
             else:
                 return None
-            compare_op = None
-            for candidate in body_subgraph.operators:
-                if compare_output_name in {str(v) for v in candidate.outputs}:
-                    compare_op = candidate
-                    break
+            if compare_output_name in body_graph_index.duplicate_producers:
+                return None
+            compare_op = body_graph_index.producer(compare_output_name)
             if compare_op is None:
                 return None
         if str(compare_op.op_type) not in {"LESS", "GREATER_EQUAL"} or len(compare_op.inputs) != 2:
             return None
         lhs_name = str(compare_op.inputs[0])
         rhs_name = str(compare_op.inputs[1])
-        lhs_cast: Optional[OperatorIR] = None
-        rhs_cast: Optional[OperatorIR] = None
-        for candidate in body_subgraph.operators:
-            if lhs_name in {str(v) for v in candidate.outputs}:
-                lhs_cast = candidate
-            if rhs_name in {str(v) for v in candidate.outputs}:
-                rhs_cast = candidate
+        if (
+            lhs_name in body_graph_index.duplicate_producers
+            or rhs_name in body_graph_index.duplicate_producers
+        ):
+            return None
+        lhs_cast = body_graph_index.producer(lhs_name)
+        rhs_cast = body_graph_index.producer(rhs_name)
         if lhs_cast is None or rhs_cast is None:
             return None
         if str(lhs_cast.op_type) != "CAST" or str(rhs_cast.op_type) != "CAST":
@@ -504,4 +521,3 @@ def _rewrite_counter_bounded_while_ops_for_native_export(model_ir: ModelIR) -> M
             current_values = next_values
 
     return rewritten
-

@@ -1653,6 +1653,10 @@ mutation. A proven expansion still clones before modifying any graph state.
 The exporter imports only the two ordered rewrite entry points, so control-flow
 canonicalization can be validated with synthetic ModelIR without importing
 Torch.
+Both matchers build one `ModelIRGraphIndex` per candidate body and reuse it for
+all producer and Reshape-alias queries. Required edges with duplicate producers
+are rejected before cloning, making the rewrite deterministic while replacing
+the former repeated linear scans of the body operator list.
 The exporter architecture gate detects attribute assignments through the AST,
 so alternate local names cannot silently reintroduce complete operator-list
 replacement.

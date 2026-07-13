@@ -308,6 +308,8 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
     assert "_rewrite_counter_bounded_while_ops_for_native_export," in exporter_source
     assert "def _clone_model_ir_without_root_operators(" in control_flow_source
     assert "for op_index, source_op in enumerate(model_ir.operators):" in control_flow_source
+    assert "ModelIRGraphIndex" in control_flow_source
+    assert "for candidate in body_subgraph.operators:" not in control_flow_source
 
     exporter_functions = {
         node.name: node

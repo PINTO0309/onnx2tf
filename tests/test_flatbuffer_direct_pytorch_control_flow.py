@@ -284,6 +284,18 @@ def test_static_while_rewrite_streams_independent_provenance_complete_ops() -> N
     assert logistic_ops[-1].outputs == ["y"]
 
 
+def test_static_while_rewrite_rejects_duplicate_body_producer() -> None:
+    source = _static_while_model_ir()
+    source.subgraphs[1].operators.append(
+        OperatorIR("IDENTITY", ["iter_in"], ["iter_body"])
+    )
+
+    rewritten = _rewrite_static_while_ops_for_native_export(source)
+
+    assert rewritten is source
+    assert [op.op_type for op in source.operators] == ["IDENTITY", "WHILE"]
+
+
 def test_counter_bounded_while_rewrite_streams_masked_outputs() -> None:
     source = _counter_bounded_while_model_ir()
 
