@@ -470,8 +470,9 @@ adapter maps every selected plan into `_QuantizedInputPlan`. The additional
 rank-four source guard for Dequantize and the no-secondary-post-adapter guard
 for Slice/Split are explicit family sets. Add remains separate because it
 recursively validates bounded leaf plans. These staged declarative changes
-reduced `nhwc_concat_quantized_layout.py` from 1,549 to 986 lines without
-changing the ordered pass contract or the legacy fallback boundary.
+keep `nhwc_concat_quantized_layout.py` materially below its original
+1,549 lines without changing the ordered pass contract or the legacy fallback
+boundary.
 
 Candidate acceptance is also declarative. Each family now records allowed and
 required input kinds, minimum arity, exact-count constraints, and whether
@@ -484,6 +485,12 @@ directly from each contract's allowed kinds instead of maintaining duplicate
 family lists. The four shared apply operations with a common signature use a
 matching applier map; an import-time invariant prevents resolver/apply coverage
 from drifting while contextual PReLU/Slice/Split application remains explicit.
+The thirteen frozen `PassSpec` objects, callbacks, preconditions, default
+statistics, and model-only preflight are constructed once at module import
+rather than on every runner call. Adapter liveness and recursive shared-plan
+walking are top-level functions rather than closures recreated for every
+candidate. Each invocation therefore allocates only its pass manager/session
+state while retaining the same transactional snapshots and diagnostics.
 
 The legacy ownership boundary uses the same compact style. Simple quantized
 families are described by allowed and required action-kind sets after one

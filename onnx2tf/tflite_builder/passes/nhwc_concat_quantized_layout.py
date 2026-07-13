@@ -692,6 +692,31 @@ def _has_quantized_concat_candidate(
         )
         is not None
     )
+
+
+def _adapter_is_now_removable(
+    adapter_op: OperatorIR,
+    *,
+    graph_index: ModelIRGraphIndex,
+    public_names: set[str],
+) -> bool:
+    output_names = [str(name) for name in adapter_op.outputs]
+    return bool(output_names) and all(
+        output_name not in public_names
+        and not graph_index.consumer_indices(output_name)
+        for output_name in output_names
+    )
+
+
+def _walk_shared_plans(
+    input_plan: _NhwcConcatInputPlan,
+) -> List[_NhwcConcatInputPlan]:
+    plans = [input_plan]
+    for operand_plan in input_plan.add_operand_plans:
+        plans.extend(_walk_shared_plans(operand_plan))
+    return plans
+
+
 def _optimize_quantized_concat_chains(
     model_ir: ModelIR,
     *,
@@ -860,22 +885,6 @@ def _optimize_quantized_concat_chains(
             *[str(name) for name in model_ir.outputs],
         }
 
-        def _adapter_is_now_removable(adapter_op: OperatorIR) -> bool:
-            output_names = [str(name) for name in adapter_op.outputs]
-            return bool(output_names) and all(
-                output_name not in public_names
-                and not graph_index.consumer_indices(output_name)
-                for output_name in output_names
-            )
-
-        def _walk_shared_plans(
-            input_plan: _NhwcConcatInputPlan,
-        ) -> List[_NhwcConcatInputPlan]:
-            plans = [input_plan]
-            for operand_plan in input_plan.add_operand_plans:
-                plans.extend(_walk_shared_plans(operand_plan))
-            return plans
-
         shared_plans = [
             shared_plan
             for input_plan in candidate.input_plans
@@ -887,19 +896,31 @@ def _optimize_quantized_concat_chains(
             input_plan.adapter_op
             for input_plan in candidate.input_plans
             if input_plan.remove_adapter
-            or _adapter_is_now_removable(input_plan.adapter_op)
+            or _adapter_is_now_removable(
+                input_plan.adapter_op,
+                graph_index=graph_index,
+                public_names=public_names,
+            )
         )
         remove_ops.extend(
             shared_plan.adapter_op
             for shared_plan in shared_plans
             if shared_plan.remove_adapter
-            or _adapter_is_now_removable(shared_plan.adapter_op)
+            or _adapter_is_now_removable(
+                shared_plan.adapter_op,
+                graph_index=graph_index,
+                public_names=public_names,
+            )
         )
         remove_ops.extend(
             adapter_op
             for shared_plan in shared_plans
             for adapter_op in shared_plan.extra_source_adapter_ops
-            if _adapter_is_now_removable(adapter_op)
+            if _adapter_is_now_removable(
+                adapter_op,
+                graph_index=graph_index,
+                public_names=public_names,
+            )
         )
         remove_ops.extend(
             post_op
@@ -925,6 +946,58 @@ def _optimize_quantized_concat_chains(
     return {stats_key: int(optimized)}
 
 
+def _make_quantized_concat_callback(family: str, stats_key: str):
+    def _run(
+        pass_state: ModelIRPassState,
+    ) -> Dict[str, int | bool]:
+        stats = _optimize_quantized_concat_chains(
+            pass_state.model_ir,
+            family=family,
+            stats_key=stats_key,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get(stats_key, 0)),
+        }
+
+    return _run
+
+
+def _make_quantized_concat_precondition(family: str):
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        return _has_quantized_concat_candidate(
+            pass_state,
+            family=family,
+        )
+
+    return _has_candidate
+
+
+_QUANTIZED_PASS_SPECS = tuple(
+    PassSpec(
+        pass_id=f"layout.nhwc_pre_concat_quantized_{family}",
+        phase=PassPhase.LAYOUT_PLAN,
+        callback=_make_quantized_concat_callback(family, stats_key),
+        precondition=_make_quantized_concat_precondition(family),
+        priority=priority,
+        transactional=True,
+    )
+    for family, stats_key, priority in _QUANTIZED_FAMILY_SPECS
+)
+_QUANTIZED_DEFAULT_DETAILS = {
+    stats_key: 0 for _, stats_key, _ in _QUANTIZED_FAMILY_SPECS
+}
+
+
+def _preflight_quantized_concat_layout(model_ir: ModelIR):
+    return preflight_required_op_types(
+        model_ir,
+        {"TRANSPOSE", "CONCATENATION", "QUANTIZE"},
+    )
+
+
 def run_nhwc_concat_quantized_layout_cleanup(
     model_ir: ModelIR,
     *,
@@ -932,55 +1005,12 @@ def run_nhwc_concat_quantized_layout_cleanup(
     diagnostics: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, int]:
     """Lift bounded Concat→Quantize post-adapter families into NHWC."""
-
-    def _make_callback(family: str, stats_key: str):
-        def _run(
-            pass_state: ModelIRPassState,
-        ) -> Dict[str, int | bool]:
-            stats = _optimize_quantized_concat_chains(
-                pass_state.model_ir,
-                family=family,
-                stats_key=stats_key,
-                graph_index=pass_state.graph_index,
-                layout_state=pass_state.layout_state,
-            )
-            return {
-                **stats,
-                "changed": bool(stats.get(stats_key, 0)),
-            }
-
-        return _run
-
-    specs = [
-        PassSpec(
-            pass_id=f"layout.nhwc_pre_concat_quantized_{family}",
-            phase=PassPhase.LAYOUT_PLAN,
-            callback=_make_callback(family, stats_key),
-            precondition=(
-                lambda pass_state, family=family: (
-                    _has_quantized_concat_candidate(
-                        pass_state,
-                        family=family,
-                    )
-                )
-            ),
-            priority=priority,
-            transactional=True,
-        )
-        for family, stats_key, priority in _QUANTIZED_FAMILY_SPECS
-    ]
     details, _ = run_model_ir_pass_group(
         model_ir,
-        specs=specs,
+        specs=_QUANTIZED_PASS_SPECS,
         layout_state=layout_state,
-        default_details={
-            stats_key: 0
-            for _, stats_key, _ in _QUANTIZED_FAMILY_SPECS
-        },
+        default_details=_QUANTIZED_DEFAULT_DETAILS,
         diagnostics=diagnostics,
-        preflight=lambda candidate_model: preflight_required_op_types(
-            candidate_model,
-            {"TRANSPOSE", "CONCATENATION", "QUANTIZE"},
-        ),
+        preflight=_preflight_quantized_concat_layout,
     )
     return {str(key): int(value) for key, value in details.items()}
