@@ -25,9 +25,11 @@ from onnx2tf.tflite_builder.passes.nhwc_concat_layout import (
     _NhwcConcatInputPlan,
     _apply_dequantize_input_plan,
     _apply_prelu_input_plan,
+    _apply_softmax_input_plan,
     _apply_swish_input_plan,
     _resolve_dequantize_input_plan,
     _resolve_prelu_input_plan,
+    _resolve_softmax_input_plan,
     _resolve_swish_input_plan,
 )
 from onnx2tf.tflite_builder.passes.nhwc_concat_pad import (
@@ -60,6 +62,9 @@ _DEQUANTIZE_STATS_KEY = (
 )
 _PRELU_STATS_KEY = (
     "optimized_transpose_pre_concat_nhwc_quantized_prelu_chains"
+)
+_SOFTMAX_STATS_KEY = (
+    "optimized_transpose_pre_concat_nhwc_quantized_softmax_chains"
 )
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
@@ -323,6 +328,33 @@ def _resolve_prelu_quantized_input_plan(
     )
 
 
+def _resolve_softmax_quantized_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    concat_input: str,
+    concat_index: int,
+    model_outputs: set[str],
+) -> Optional[_QuantizedInputPlan]:
+    softmax_plan = _resolve_softmax_input_plan(
+        model_ir,
+        graph_index,
+        input_name=concat_input,
+        concat_index=concat_index,
+        model_outputs=model_outputs,
+    )
+    if softmax_plan is None:
+        return None
+    return _QuantizedInputPlan(
+        kind="softmax",
+        adapter_op=softmax_plan.adapter_op,
+        nhwc_plan=softmax_plan,
+        concat_input=concat_input,
+        source_name=softmax_plan.source_name,
+        remove_adapter=softmax_plan.remove_adapter,
+    )
+
+
 def _resolve_quantized_concat_candidate(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -450,6 +482,14 @@ def _resolve_quantized_concat_candidate(
                     model_outputs=model_outputs,
                     public_names=public_names,
                 )
+            if input_plan is None and family == "softmax":
+                input_plan = _resolve_softmax_quantized_input_plan(
+                    model_ir,
+                    graph_index,
+                    concat_input=concat_input,
+                    concat_index=int(concat_index),
+                    model_outputs=model_outputs,
+                )
             if input_plan is None and family in {
                 "pad",
                 "unary_pad",
@@ -496,6 +536,12 @@ def _resolve_quantized_concat_candidate(
         prelu_count = sum(plan.kind == "prelu" for plan in input_plans)
         if family == "prelu" and prelu_count < 1:
             continue
+        softmax_count = sum(plan.kind == "softmax" for plan in input_plans)
+        if family == "softmax" and (
+            softmax_count != 1
+            or len(input_plans) - softmax_count < 1
+        ):
+            continue
         if family in {
             "unary",
             "pad",
@@ -504,6 +550,7 @@ def _resolve_quantized_concat_candidate(
             "swish",
             "dequantize",
             "prelu",
+            "softmax",
         }:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
@@ -523,6 +570,7 @@ def _resolve_quantized_concat_candidate(
                     "swish",
                     "dequantize",
                     "prelu",
+                    "softmax",
                 }:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
@@ -651,6 +699,19 @@ def _has_quantized_prelu_concat_candidate(
     )
 
 
+def _has_quantized_softmax_concat_candidate(
+    pass_state: ModelIRPassState,
+) -> bool:
+    return (
+        _resolve_quantized_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="softmax",
+        )
+        is not None
+    )
+
+
 def _optimize_quantized_concat_chains(
     model_ir: ModelIR,
     *,
@@ -696,6 +757,12 @@ def _optimize_quantized_concat_chains(
                         graph_index,
                         input_plan.nhwc_plan,
                         materialized_alphas=materialized_alphas,
+                    )
+                elif input_plan.kind == "softmax":
+                    _apply_softmax_input_plan(
+                        model_ir,
+                        graph_index,
+                        input_plan.nhwc_plan,
                     )
                 else:
                     raise RuntimeError(
@@ -925,6 +992,19 @@ def run_nhwc_concat_quantized_layout_cleanup(
             "changed": bool(stats.get(_PRELU_STATS_KEY, 0)),
         }
 
+    def _run_softmax(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_quantized_concat_chains(
+            pass_state.model_ir,
+            family="softmax",
+            stats_key=_SOFTMAX_STATS_KEY,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get(_SOFTMAX_STATS_KEY, 0)),
+        }
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -992,6 +1072,14 @@ def run_nhwc_concat_quantized_layout_cleanup(
                 priority=80,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_quantized_softmax",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_softmax,
+                precondition=_has_quantized_softmax_concat_candidate,
+                priority=90,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -1003,6 +1091,7 @@ def run_nhwc_concat_quantized_layout_cleanup(
             _SWISH_STATS_KEY: 0,
             _DEQUANTIZE_STATS_KEY: 0,
             _PRELU_STATS_KEY: 0,
+            _SOFTMAX_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(

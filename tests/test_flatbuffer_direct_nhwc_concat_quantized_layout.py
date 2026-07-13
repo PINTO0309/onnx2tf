@@ -557,6 +557,39 @@ def _quantized_prelu_model(
     return model_ir
 
 
+def _quantized_softmax_model(
+    *,
+    public_softmax_output: bool = False,
+) -> ModelIR:
+    model_ir = _quantized_model()
+    model_ir.tensors["a_softmax"] = _tensor(
+        "a_softmax",
+        [1, 2, 5, 7],
+    )
+    model_ir.tensors["a_softmax"].quantization = QuantParamIR(
+        scale=[0.4] * 2,
+        zero_point=[0] * 2,
+        quantized_dimension=1,
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    concat_index = model_ir.operators.index(concat_op)
+    model_ir.operators.insert(
+        concat_index,
+        OperatorIR(
+            "SOFTMAX",
+            ["a_nchw"],
+            ["a_softmax"],
+            options={"beta": 0.75},
+        ),
+    )
+    concat_op.inputs[0] = "a_softmax"
+    if public_softmax_output:
+        model_ir.outputs.append("a_softmax")
+    return model_ir
+
+
 def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
     assert actual.inputs == expected.inputs
     assert actual.outputs == expected.outputs
@@ -900,6 +933,61 @@ def test_nhwc_quantized_prelu_input_is_indexed() -> None:
 
 def test_nhwc_quantized_prelu_rejects_public_output() -> None:
     model_ir = _quantized_prelu_model(public_prelu_output=True)
+    original = deepcopy(model_ir)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
+    _assert_model_equal(model_ir, original)
+
+
+def test_nhwc_quantized_softmax_input_is_indexed() -> None:
+    model_ir = _quantized_softmax_model()
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_quantized_rewritten(
+        model_ir,
+        expected_concat_inputs=["a_softmax", "b_nhwc"],
+    )
+    softmax_op = next(
+        op for op in model_ir.operators if op.op_type == "SOFTMAX"
+    )
+    assert softmax_op.options == {"beta": 0.75}
+    assert softmax_op.inputs == ["a_nchw_axis_last"]
+    assert softmax_op.outputs == ["a_softmax_axis_last"]
+    assert model_ir.tensors["a_nchw_axis_last"].shape == [1, 5, 2, 7]
+    assert model_ir.tensors["a_softmax_axis_last"].shape == [1, 5, 2, 7]
+    softmax_tensor = model_ir.tensors["a_softmax"]
+    assert softmax_tensor.shape == [1, 5, 7, 2]
+    assert isinstance(softmax_tensor.quantization, QuantParamIR)
+    assert softmax_tensor.quantization.quantized_dimension == 3
+    local_transposes = [
+        op for op in model_ir.operators if op.op_type == "TRANSPOSE"
+    ]
+    assert len(local_transposes) == 2
+    assert local_transposes[0].inputs[0] == "a_nhwc"
+    assert local_transposes[1].outputs == ["a_softmax"]
+    assert local_transposes[0].inputs[1] == local_transposes[1].inputs[1]
+    np.testing.assert_array_equal(
+        model_ir.tensors[local_transposes[0].inputs[1]].data,
+        np.asarray([0, 1, 3, 2], dtype=np.int32),
+    )
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_quantized_softmax"
+    )
+    assert event["status"] == "changed"
+
+
+def test_nhwc_quantized_softmax_rejects_public_output() -> None:
+    model_ir = _quantized_softmax_model(public_softmax_output=True)
     original = deepcopy(model_ir)
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)

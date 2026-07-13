@@ -14468,6 +14468,12 @@ def _optimize_transpose_pre_concat_nhwc_chains(
             )
         )
         + int(
+            quantized_indexed_stats.get(
+                "optimized_transpose_pre_concat_nhwc_quantized_softmax_chains",
+                0,
+            )
+        )
+        + int(
             legacy_stats.get(
                 "optimized_transpose_pre_concat_nhwc_chains",
                 0,

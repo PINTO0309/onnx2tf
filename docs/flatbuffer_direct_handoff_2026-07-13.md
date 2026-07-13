@@ -28,8 +28,9 @@ stable IDs `layout.nhwc_pre_concat_direct` and
 seven production positions, followed by `layout.nhwc_pre_concat_add`.
 The pseudo-LeakyRelu family runs last under
 `layout.nhwc_pre_concat_leaky`.
-The twelfth through nineteenth families are the separate direct, unary,
-Pad-plus-direct, unary-plus-Pad, all-Pad, expanded-Swish, Dequantize, and PReLU
+The twelfth through twentieth families are the separate direct, unary,
+Pad-plus-direct, unary-plus-Pad, all-Pad, expanded-Swish, Dequantize, PReLU, and
+Softmax
 quantized-post passes
 `layout.nhwc_pre_concat_quantized_direct`,
 `layout.nhwc_pre_concat_quantized_unary`, and
@@ -38,7 +39,8 @@ quantized-post passes
 `layout.nhwc_pre_concat_quantized_all_pad`, followed by
 `layout.nhwc_pre_concat_quantized_swish` and
 `layout.nhwc_pre_concat_quantized_dequantize`, followed by
-`layout.nhwc_pre_concat_quantized_prelu`, in
+`layout.nhwc_pre_concat_quantized_prelu` and
+`layout.nhwc_pre_concat_quantized_softmax`, in
 `passes/nhwc_concat_quantized_layout.py`.
 
 The direct pass removes only exclusive, non-public leading adapters. Shared or
@@ -161,7 +163,7 @@ move to NHWC exactly once. This adds the alpha-first form that the legacy
 matcher attempted but could not select. All public/fan-out internal edges,
 rank errors, and partial diamonds reject before snapshot. Pad companions
 deliberately remain in legacy.
-The direct/unary/Pad/unary-plus-Pad/all-Pad/expanded-Swish/Dequantize/PReLU
+The direct/unary/Pad/unary-plus-Pad/all-Pad/expanded-Swish/Dequantize/PReLU/Softmax
 quantized-post families validate
 `adapters → optional bounded branch → Concat → Quantize → inverse Transpose(s)`
 independently of the float group. They move Concat and supported branches to
@@ -195,9 +197,17 @@ broadcast form in place when exclusive; shared or public alpha constants use
 provenance-preserving copy-on-write. PReLU output shapes and per-axis metadata
 move to NHWC, while public PReLU output boundaries reject before mutation.
 
+Softmax uses the already characterized axis-preserving float plan. The outer
+NHWC→NCHW adapter becomes a local NHWC→NHCW adapter, Softmax stays last-axis,
+and a local NHCW→NHWC adapter feeds the NHWC Concat. Beta and tensor provenance
+are retained. The family requires exactly one Softmax plus at least one direct
+companion; public Softmax outputs reject before mutation. The legacy matcher's
+existing quantized-Softmax safety gate already rejects this post-Quantize
+topology, so no duplicate legacy rewrite remains reachable.
+
 The lowerer compatibility helper still returns the original aggregate statistic
 and runs the legacy matcher after the direct pass. The legacy matcher now
-skips the nineteen indexed families, but continues to own broader
+skips the twenty indexed families, but continues to own broader
 Split/Slice/Add/Leaky interactions and remaining mixed quantized-post paths.
 
 Changed files for this checkpoint:
@@ -222,9 +232,9 @@ Focused verification, all in the existing `uv` environment:
   pseudo-LeakyRelu, and bounded Slice/Split/Add ModelIR characterization:
   the preceding combined float-path run passed 176 tests across eight compact
   modules; authoritative collection now contains 212. Including the bounded
-  direct and unary/Pad/Swish/Dequantize/PReLU quantized-post suites, the compact
-  inventory contains 268 tests across nine modules. The preceding combined run
-  passed 208 tests; the expanded quantized module passes 56 tests, and the focused quantized/Pad
+  direct and unary/Pad/Swish/Dequantize/PReLU/Softmax quantized-post suites, the
+  compact inventory contains 270 tests across nine modules. The preceding
+  combined run passed 208 tests; the expanded quantized module passes 58 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
   and rewritten layouts. The Swish suite covers both Mul operand orders,
@@ -265,7 +275,8 @@ Focused verification, all in the existing `uv` environment:
   a public logistic-intermediate no-op boundary, plus Dequantize success with
   per-axis metadata remapping and public-output/invalid-rank no-op boundaries.
   PReLU coverage fixes alpha permutation, output metadata remapping, and a
-  public-output no-op boundary.
+  public-output no-op boundary. Softmax coverage fixes the two local NHCW
+  adapters, beta retention, output metadata, and a public-output no-op boundary.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.
