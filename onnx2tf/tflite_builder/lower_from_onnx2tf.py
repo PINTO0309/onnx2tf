@@ -167,6 +167,7 @@ from onnx2tf.tflite_builder.passes.dequant_concat_quantize_layout import (
 )
 from onnx2tf.tflite_builder.passes.concat_unary_conv_layout import (
     _optimize_transpose_concat_unary_fanout_conv_nhwc_chains as _optimize_transpose_concat_unary_fanout_conv_nhwc_chains_pass,
+    run_concat_unary_conv_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -51993,7 +51994,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(model_ir)
     _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
     _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
-    _optimize_transpose_concat_unary_fanout_conv_nhwc_chains(model_ir)
+    run_concat_unary_conv_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     if optimize_layout_transpose_chains:
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
@@ -52202,7 +52207,11 @@ def lower_onnx_to_ir(
     _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
     _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
-    _optimize_transpose_concat_unary_fanout_conv_nhwc_chains(model_ir)
+    run_concat_unary_conv_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     if optimize_layout_transpose_chains:
         run_layout_transpose_cleanup(
