@@ -3446,3 +3446,153 @@ The complete sequential direct regression selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_terminal_mean_superpoint` artifacts were removed after metrics
 inspection.
+
+## 2026-07-13 regression-recovery checkpoint after `30bde99`
+
+This checkpoint records the bounded follow-up to the Tier 0 through Tier 4
+regression-candidate audit. It does not resume the broader refactoring goal.
+The implementation tip before this documentation-only checkpoint was
+`30bde993c22b06e0e2a089b20a1e5b176c742701` on `fb-refactor3`, already pushed
+to `origin/fb-refactor3` with a clean worktree.
+
+### Completed work
+
+- Commit `04addad` makes transactional pass validation compare invariant
+  problems before and after a rewrite. A transaction is rolled back only when
+  it introduces a new problem; temporary problems inherited from an earlier
+  stage are no longer blamed on an unrelated pass. Problem order and duplicate
+  multiplicity remain deterministic. Final, non-transactional validation is
+  still strict and rejects every remaining problem.
+- Commit `30bde99` adds a sequential accuracy-evaluation fallback. A fully
+  static model is evaluated with LiteRT's default delegates first. Evaluation
+  is retried without default delegates only when the primary report fails
+  either the existing `evaluation_pass` criterion or the hard
+  `max_abs_error <= 1e-1` contract. The two evaluations never overlap, the
+  better report is selected deterministically, and a failed fallback preserves
+  the completed primary report.
+- The public CLI, Python API, accuracy-report JSON schema, artifact names, and
+  exit behavior are unchanged. No dependency was added and neither change
+  introduces a TensorFlow import into the direct path.
+- The four regressions specific to the `fb-refactor3` pass-manager behavior now
+  pass: `birdnet.onnx`, `imageclassifier.onnx`,
+  `model_resnet15x224_swish-072.onnx`, and `resnet18-v1-7.onnx`.
+- The three delegate-evaluation regressions now pass:
+  `keras_rnn.onnx`, `pose_estimation_mediapipe_2023mar.onnx`, and
+  `pose_estimation_mediapipe_2023mar_int8bq.onnx`.
+- A representative eight-model sentinel set and the complete 74-model
+  blast-radius cohort for the affected duplicate-Transpose, Reshape, and
+  terminal-Mean passes passed sequential conversion and numeric evaluation.
+
+### Changed files and design decisions
+
+The two implementation commits changed only these files:
+
+- `onnx2tf/tflite_builder/core/passes.py`
+- `onnx2tf/tflite_builder/accuracy_evaluator.py`
+- `tests/test_flatbuffer_direct_core.py`
+- `tests/test_accuracy_evaluator_onnx_worker_path.py`
+
+This handoff section additionally changes only this Markdown file. The pass
+manager deliberately uses a global before/after invariant delta rather than a
+model-name exception or a short allowlist of pass IDs: `birdnet.onnx` can carry
+the same temporary mismatch through the earlier
+`layout.conv_attention_nhwc` pass, so scoping the behavior to the initially
+observed three passes is not correct. The final validator remains the point at
+which all temporary problems must have been repaired.
+
+The evaluator fallback is capability- and result-based rather than
+model-specific. It does not retry dynamic-input models on the delegate path,
+does not retry an already strict-pass report, and never creates concurrent
+inference workers. The report comparison order is: hard numeric contract,
+`evaluation_pass`, maximum absolute error, RMSE, mean absolute error, and
+cosine similarity.
+
+### Validation performed
+
+All commands used the `uv` environment. Model conversion and inference were
+run one model at a time.
+
+- The two focused/related pytest selections passed 92 and 65 tests,
+  respectively: 157 distinct tests passed in total.
+- The selections covered core pass transactions, graph cleanup, terminal Mean
+  layout, pass efficiency, seeded evaluator inputs, ONNX worker behavior,
+  inverse partial pivots, input layout, name mapping, subprocess isolation,
+  architecture constraints, and optional-TensorFlow import boundaries.
+- Python bytecode compilation of all four changed Python files passed.
+- `git diff --check` passed.
+- Final strict numeric results for the seven recovered models were:
+
+| Model | `max_abs_error` | Result |
+| --- | ---: | --- |
+| `birdnet.onnx` | `6.4849853515625e-05` | pass |
+| `imageclassifier.onnx` | `6.67572021484375e-06` | pass |
+| `model_resnet15x224_swish-072.onnx` | `7.43865966796875e-05` | pass |
+| `resnet18-v1-7.onnx` | `7.152557373046875e-06` | pass |
+| `keras_rnn.onnx` | `6.258487701416016e-07` | pass |
+| `pose_estimation_mediapipe_2023mar.onnx` | `0.05517578125` | pass |
+| `pose_estimation_mediapipe_2023mar_int8bq.onnx` | `0.0443115234375` | pass |
+
+All seven reported `evaluation_pass=true` and returned exit status zero. All
+74 blast-radius models also satisfied the strict numeric contract. The one
+initial `tiny_decoder_11.onnx` invocation lacked its managed shape and
+keep-absolute-transpose options; rerunning it with the baseline profile passed
+with `max_abs_error=3.1948089599609375e-05`, so it is not a regression.
+`new_encoder.onnx` spent most of a 267-second direct invocation producing its
+operator-error report; conversion itself remained approximately four seconds.
+`maskrcnn_resnet50_fpn.onnx` passed in approximately 324 seconds versus the
+previous approximately 352 seconds.
+
+GitHub Actions returned no run records for `fb-refactor3`, so external CI is
+not confirmed by this checkpoint.
+
+### Known issues and incomplete work
+
+No focused test or final targeted model validation is failing. The broader
+Tier 0 through Tier 4 corpus has not been rerun in full after these two fixes;
+the evidence is the seven targeted models, eight sentinels, and 74-model
+blast-radius cohort.
+
+Fifteen of the 22 investigated candidates other than
+`superpoint_lightglue_end2end_fused_cpu.onnx` remain unresolved:
+
+- Producer-rank handling: `dpt_levit_224_224x224_org.onnx` and
+  `dpt_levit_224_224x224_.onnx`. The known first-bad commit is `881b714`; no
+  guarded fix has been implemented.
+- GRU behavior: `double_gru.onnx`. The known first-bad commit is `94af81b`; no
+  guarded fix has been implemented.
+- Numeric mismatches whose first-bad commit or minimal cause is not yet fixed:
+  `model1.onnx` and `fast_acvnet_generalization_opset16_192x320.onnx`.
+- Runtime/report failures inherited from the comparison baseline:
+  `silero_vad.onnx`, `paddlepaddle_26_ocr.onnx`,
+  `bread_nonfm_180x320.onnx`, `conv_tasnet_dnn_ins.onnx`,
+  `bread_180x320.onnx`, `spkrec-resnet-voxceleb.onnx`, `gtcrn_simple.onnx`,
+  `conv_tasnet_dnn_r_1_1_2_44100.onnx`, `conv_tasnet_dnn.onnx`, and
+  `htdemucs_ft_onnx_1sec.onnx`. These require a separate minimal-reproduction
+  and report-generation audit and were not caused by the two fixes above.
+
+The excluded expected-timeout models remain outside the corpus, DEIM remains
+classified as successful as directed, and
+`superpoint_lightglue_end2end_fused_cpu.onnx` remains outside this bounded
+22-model investigation. Tier-wide warm-up/three-run median conversion-time and
+peak-RSS measurements have not been performed, so the formal efficiency gates
+are also still open.
+
+Compact logs and JSON reports remain under
+`/tmp/onnx2tf_safe_fixes_fb31716`,
+`/tmp/onnx2tf_safe_fix_sentinels_fb31716`,
+`/tmp/onnx2tf_safe_fix_pass74_fb31716`, and
+`/tmp/onnx2tf_safe_fixes_final2_fb31716`. Generated TFLite files (approximately
+6.2 GB) were deleted. `/tmp/onnx2tf_safe_fixes_final_fb31716` contains only a
+small, non-authoritative log set from the reverted pass-ID-scoping experiment.
+
+### First work on resume
+
+Do not begin with Tier 5. First rerun the fixed-order, single-process Tier 0
+through Tier 4 active corpus using each model's managed baseline options,
+excluding expected timeouts and retaining the directed DEIM-success
+classification. Compare success counts, normalized failure signatures, and
+strict `max_abs_error <= 1e-1` results with the saved baseline. If that gate is
+clean, make a separate checkpoint before investigating the two DPT models at
+`881b714`; their known, narrow producer-rank boundary is the best next repair
+candidate. Continue to commit and push at safe checkpoints only, and do not
+open a pull request.
