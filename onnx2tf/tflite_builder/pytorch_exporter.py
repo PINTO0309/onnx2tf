@@ -144,6 +144,7 @@ from onnx2tf.tflite_builder.pytorch_source_rewrites import (
     _fold_channel_last_prelu_bridges,
     _fold_rank4_reshape_permute_conv_bridges,
     _inline_trivial_public_layout_bridge_aliases,
+    _prune_dead_forward_lines,
     _repair_channel_last_gap_conv_inputs,
     _rewrite_channel_first_gap_outputs_to_explicit_channel_last,
     _rewrite_channel_first_se_scale_binary_bridges,
@@ -5330,50 +5331,6 @@ def _is_batchless_rank3_public_output_transpose_for_codegen(
     return False
 
 
-def _prune_dead_forward_lines(
-    lines: Sequence[str],
-    *,
-    input_var_names: Sequence[str],
-    output_var_names: Sequence[str],
-) -> List[str]:
-    if len(lines) == 0:
-        return []
-
-    parsed_statements: List[ast.stmt] = []
-    top_level_assigned_names: List[List[str]] = []
-    raw_used_names: List[List[str]] = []
-    for line in lines:
-        statement = ast.parse(str(line)).body[0]
-        parsed_statements.append(statement)
-        top_level_assigned_names.append(_extract_statement_assignments(statement))
-        raw_used_names.append(_extract_statement_loads(statement))
-
-    local_name_candidates: Set[str] = {str(name) for name in list(input_var_names)}
-    local_name_candidates.update(str(name) for name in list(output_var_names))
-    for assigned_names in top_level_assigned_names:
-        local_name_candidates.update(str(name) for name in assigned_names)
-
-    assigned_names_by_line: List[List[str]] = []
-    used_names_by_line: List[List[str]] = []
-    for assigned_names, used_names in zip(top_level_assigned_names, raw_used_names):
-        assigned_filtered = [str(name) for name in assigned_names if str(name) in local_name_candidates]
-        used_filtered = [str(name) for name in used_names if str(name) in local_name_candidates]
-        assigned_names_by_line.append(assigned_filtered)
-        used_names_by_line.append(used_filtered)
-
-    live_names: Set[str] = {str(name) for name in list(output_var_names)}
-    kept_lines_reversed: List[str] = []
-    for line_index in range(len(lines) - 1, -1, -1):
-        assigned_names = assigned_names_by_line[line_index]
-        used_names = used_names_by_line[line_index]
-        if len(assigned_names) > 0 and all(str(name) not in live_names for name in assigned_names):
-            continue
-        kept_lines_reversed.append(str(lines[line_index]))
-        for name in assigned_names:
-            live_names.discard(str(name))
-        live_names.update(str(name) for name in used_names)
-    kept_lines_reversed.reverse()
-    return kept_lines_reversed
 
 
 

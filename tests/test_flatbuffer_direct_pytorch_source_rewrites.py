@@ -11,6 +11,7 @@ from onnx2tf.tflite_builder.pytorch_source_rewrites import (
     _fold_channel_last_prelu_bridges,
     _fold_rank4_reshape_permute_conv_bridges,
     _inline_trivial_public_layout_bridge_aliases,
+    _prune_dead_forward_lines,
     _repair_channel_last_gap_conv_inputs,
     _rewrite_channel_first_gap_outputs_to_explicit_channel_last,
     _rewrite_channel_first_se_scale_binary_bridges,
@@ -209,6 +210,38 @@ def test_channel_last_gap_conv_repair_ignores_scalar_dim_mean() -> None:
     ]
 
     assert _repair_channel_last_gap_conv_inputs(lines) == lines
+
+
+def test_dead_forward_line_pruning_removes_unreachable_assignment() -> None:
+    assert _prune_dead_forward_lines(
+        [
+            "x = torch.relu(input0)",
+            "dead = torch.neg(input0)",
+            "y = torch.add(x, input0)",
+        ],
+        input_var_names=["input0"],
+        output_var_names=["y"],
+    ) == [
+        "x = torch.relu(input0)",
+        "y = torch.add(x, input0)",
+    ]
+
+
+def test_dead_forward_line_pruning_keeps_multi_output_dependencies() -> None:
+    lines = [
+        "pair = torch.chunk(input0, 2)",
+        "left, right = pair",
+        "y = torch.add(left, right)",
+    ]
+
+    assert (
+        _prune_dead_forward_lines(
+            lines,
+            input_var_names=["input0"],
+            output_var_names=["y"],
+        )
+        == lines
+    )
 
 
 @pytest.mark.parametrize(

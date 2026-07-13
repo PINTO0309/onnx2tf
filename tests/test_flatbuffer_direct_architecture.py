@@ -3892,6 +3892,7 @@ def test_generated_pytorch_gap_se_rewrites_have_single_owner() -> None:
         "_fold_channel_last_prelu_bridges",
         "_fold_rank4_reshape_permute_conv_bridges",
         "_inline_trivial_public_layout_bridge_aliases",
+        "_prune_dead_forward_lines",
         "_repair_channel_last_gap_conv_inputs",
         "_rewrite_channel_first_gap_outputs_to_explicit_channel_last",
         "_rewrite_channel_first_se_scale_binary_bridges",

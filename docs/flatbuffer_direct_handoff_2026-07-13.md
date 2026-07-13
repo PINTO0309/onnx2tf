@@ -379,6 +379,14 @@ and architecture validation passes 70 tests; syntax, Ruff, pycompile, diff, and
 AST-equivalence checks pass. No model conversion or inference was run. The
 exporter now imports the graph query and ordered rewrite instead of owning them.
 
+Generated forward-line pruning now lives with the pure source rewrites. The
+44-line backward-liveness implementation is AST-identical to the exporter
+checkpoint and takes explicit input/output variable names. Direct cases cover
+unreachable assignment removal and multi-assignment dependency preservation.
+Rewrite and architecture validation passes 94 tests; syntax, Ruff, pycompile,
+diff, and AST-equivalence checks pass. No model conversion or inference was
+run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

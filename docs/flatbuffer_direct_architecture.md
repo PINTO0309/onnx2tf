@@ -2035,7 +2035,9 @@ well. Channel-last binary bridge-chain folding uses the same callback-based
 boundary for local-name and constant-layout decisions. All twelve ASTs are
 identical to their former exporter definitions. Channel-last GAP/Conv input
 repair now uses the shared rank-4 shape policy and is the thirteenth pure
-rewrite owned here; its AST is likewise unchanged.
+rewrite owned here; its AST is likewise unchanged. Backward liveness pruning of
+generated forward lines is also owned here and accepts explicit public input and
+output variable names instead of consulting graph state.
 Direct fixtures fix each
 rewrite's representative success form and unmatched-source no-op behavior.
 Graph-aware GatherND boundary repair is deliberately not mixed into this pure
