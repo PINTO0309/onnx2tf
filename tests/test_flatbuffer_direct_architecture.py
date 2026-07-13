@@ -77,6 +77,7 @@ DEPENDENCY_SCOPED_FILES = [
     / "tflite_builder"
     / "pytorch_onnx_artifact_support.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_stages.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_source_parser.py",
     REPO_ROOT
     / "onnx2tf"
     / "tflite_builder"
@@ -3725,3 +3726,44 @@ def test_exported_program_artifact_host_has_focused_owner() -> None:
         "_fold_inverse_permute_round_trips_in_exported_program_archive("
         in artifact_source
     )
+
+
+def test_generated_pytorch_source_parsers_have_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    parser_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_source_parser.py"
+    ).read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    parser_functions = {
+        node.name
+        for node in ast.parse(parser_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    for function_name in (
+        "_parse_int_list_literal",
+        "_strip_outer_parentheses",
+        "_split_top_level_csv_exprs",
+        "_parse_binary_add_args",
+        "_parse_binary_mul_args",
+        "_parse_align_tensor_target_shape_expr",
+        "_parse_simple_assignment_line_cached",
+        "_parse_simple_assignment_line",
+        "_parse_rank4_shape_literal",
+        "_parse_apply_concat_inputs_axis_and_shape",
+        "_parse_torch_cat_inputs_and_dim",
+        "_normalize_permute_dims_expr",
+    ):
+        assert function_name in parser_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," in exporter_source
+    assert "import torch" not in parser_source

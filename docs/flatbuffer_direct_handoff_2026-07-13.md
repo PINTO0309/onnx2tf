@@ -254,6 +254,18 @@ or inference was run. Resume with generated-source rewrite/canonicalization
 separation; do not alter archive matching logic until a compatible Torch runtime
 is available.
 
+Twelve reusable generated-source parsers now live in the Torch-free
+`pytorch_source_parser.py`. The move covers nested CSV, outer parentheses,
+binary/alignment arguments, cached assignment lines, rank-four shapes, runtime
+Concat/`torch.cat`, integer lists, and permutation dimensions. All twelve ASTs,
+including the assignment parser's `functools.lru_cache(maxsize=131072)`
+decorator, exactly match the prior exporter definitions. Direct fixtures cover
+nested expressions, positional/keyword forms, annotations, shapes, and balanced
+syntax; parser and architecture validation passes 67 tests. Syntax, Ruff,
+pycompile, and diff checks pass. No model conversion or inference was run.
+Resume by extracting only cohesive pure helpers used by the raw-export
+canonicalizer; do not move or edit the 6,677-line canonicalizer as one block.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

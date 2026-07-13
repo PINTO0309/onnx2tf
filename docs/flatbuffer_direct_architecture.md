@@ -1991,6 +1991,16 @@ Torch suite; the current Python 3.12 environment cannot load its Python 3.10
 libtorch, so this checkpoint uses exact AST equivalence and an import-free
 missing-archive contract rather than new Torch execution.
 
+Reusable generated-Python expression parsing now has a Torch-free owner in
+`pytorch_source_parser.py`. Top-level CSV splitting, balanced outer-parenthesis
+removal, binary/alignment arguments, cached simple assignments, rank-four shape
+literals, runtime Concat/`torch.cat` arguments, integer lists, and permutation
+dimension normalization form one 12-function boundary. The exporter imports the
+same private names used throughout canonicalization and source rewrites. Every
+moved function, including the 131,072-entry assignment-parser cache decorator,
+is AST-identical to the previous top-level implementation; nested canonicalizer
+helpers remain local where their semantics are intentionally narrower.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
