@@ -1799,6 +1799,17 @@ layout-agnostic fallback capability policy are also centralized here; the
 exporter retains compatibility imports for the public internal entry points and
 artifact generation only.
 
+Native PyTorch operation emission is being separated behind a Torch-free,
+callback-driven boundary in `pytorch_emitters.py`. The unary operator family is
+the first owner: its complete expression table and channel-first/channel-last
+bridge emitter moved together, while tensor naming, alignment, omission, and
+shape policy remain explicit callbacks supplied by the exporter. This keeps the
+generated Python source and runtime-helper selection unchanged, permits direct
+ModelIR code-generation tests without importing Torch, and prevents the central
+exporter from regaining a duplicate unary implementation through an architecture
+ownership gate. Subsequent binary and shape-transform families can move through
+the same boundary independently.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

@@ -68,6 +68,7 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_bridge_passes.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_model_passes.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_optimizer.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_emitters.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_errors.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_support.py",
 ]
@@ -3362,3 +3363,26 @@ def test_qlinear_pool_builders_stay_in_family_module() -> None:
     }
     assert expected <= family_functions
     assert expected.isdisjoint(legacy_functions)
+
+
+def test_native_pytorch_unary_emitter_has_single_owner() -> None:
+    exporter_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    )
+    emitter_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_emitters.py"
+    )
+    exporter_source = exporter_path.read_text(encoding="utf-8")
+    emitter_source = emitter_path.read_text(encoding="utf-8")
+    emitter_functions = {
+        node.name
+        for node in ast.parse(emitter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    assert "_emit_native_unary_op_for_codegen" in emitter_functions
+    assert "_DIRECT_CODEGEN_UNARY_EXPRESSIONS:" in emitter_source
+    assert "def _emit_native_unary_op_for_codegen(" not in exporter_source
+    assert "_emit_native_unary_op_for_codegen," in exporter_source
+    assert "_DIRECT_CODEGEN_UNARY_EXPRESSIONS:" not in exporter_source
+    assert "_DIRECT_CODEGEN_UNARY_EXPRESSIONS," in exporter_source

@@ -204,6 +204,18 @@ dynamic boundary signatures, public layout metadata, source immutability, and
 subgraph op discovery. The normalization/architecture selection passes 59
 tests; no model conversion or inference was run.
 
+The native unary code emitter and its complete expression table now have one
+Torch-free owner in `pytorch_emitters.py`. The exporter supplies its existing
+tensor-expression, alias, shape, alignment, and local-name policies as
+callbacks, so generated statements and runtime-helper imports retain the
+established contract while the central exporter loses 123 implementation
+lines. Direct tests fix channel-first output, materialized NHWC bridge,
+fallback alignment, LeakyReLU option, and unsupported-op no-mutation behavior.
+An architecture gate fixes both the function and table ownership and includes
+the new module in the TensorFlow-import boundary. Emitter and architecture
+validation passes 61 tests. Syntax, Ruff, and diff checks pass; no model
+conversion, inference, dependency change, or parallel process was involved.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC
