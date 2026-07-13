@@ -9,6 +9,8 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
     _emit_native_recurrent_module_op_for_codegen,
     _emit_native_shape_transform_misc_op_for_codegen,
     _emit_native_transpose_op_for_codegen,
+    _emit_native_transpose_conv2d_module_op_for_codegen,
+    _emit_native_transpose_conv3d_module_op_for_codegen,
     _emit_native_unary_op_for_codegen,
 )
 
@@ -942,3 +944,114 @@ def test_prelu_module_emitter_uses_alignment_policy_fallback() -> None:
     assert forward_lines == [
         "y_var = aligned(y, self.prelu_0(expr_x), [1, 4])"
     ]
+
+
+def test_transpose_conv2d_module_emitter_preserves_named_nhwc_override() -> None:
+    import numpy as np
+
+    model_ir = ModelIR(name="transpose_conv2d_emitter")
+    model_ir.tensors = {
+        "output_shape": TensorIR(
+            "output_shape",
+            "INT32",
+            [4],
+            data=np.asarray([1, 8, 8, 4], dtype=np.int32),
+        ),
+        "x": TensorIR("x", "FLOAT32", [1, 3, 4, 4]),
+        "y_nhwc": TensorIR(
+            "y_nhwc",
+            "FLOAT32",
+            [1, 4, 8, 8],
+            logical_layout="NCHW",
+        ),
+    }
+    op = OperatorIR(
+        "TRANSPOSE_CONV",
+        ["output_shape", "weight", "x"],
+        ["y_nhwc"],
+        {"fusedActivationFunction": "RELU"},
+    )
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_native_transpose_conv2d_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=str(op.op_type),
+        attr_name="transpose_conv2d_0",
+        outputs=["y_nhwc"],
+        output_vars=["y_var"],
+        output_target_shape="[1, 8, 8, 4]",
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"expr_{name}",
+        activation_lines_fn=lambda name, fused: [
+            f"activate({name}, {fused})"
+        ],
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var = _apply_module_transpose_conv2d("
+        "expr_x, self.transpose_conv2d_0.weight, "
+        "self.transpose_conv2d_0.bias, "
+        "list(self.transpose_conv2d_0.stride), "
+        "list(self.transpose_conv2d_0.padding), "
+        "list(self.transpose_conv2d_0.dilation), "
+        "list(self.transpose_conv2d_0.output_padding), "
+        "self.transpose_conv2d_0.groups, target_shape=[1, 4, 8, 8], "
+        "fallback_shape=[1, 8, 8, 4], target_logical_layout='NHWC', "
+        "fused='NONE')",
+        "activate(y_var, RELU)",
+    ]
+    assert runtime_imports == {"_apply_module_transpose_conv2d"}
+
+
+def test_transpose_conv3d_module_emitter_preserves_shape_fallback() -> None:
+    model_ir = ModelIR(name="transpose_conv3d_emitter")
+    model_ir.tensors = {
+        "output_shape": TensorIR("output_shape", "INT32", [5]),
+        "x": TensorIR("x", "FLOAT32", [1, 3, 2, 4, 4]),
+        "y": TensorIR(
+            "y",
+            "FLOAT32",
+            [1, 2, 8, 8, 5],
+            logical_layout="NDHWC",
+        ),
+    }
+    op = OperatorIR(
+        "CONV_3D_TRANSPOSE",
+        ["output_shape", "weight", "x"],
+        ["y"],
+    )
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_native_transpose_conv3d_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=str(op.op_type),
+        attr_name="transpose_conv3d_0",
+        outputs=["y"],
+        output_vars=["y_var"],
+        output_target_shape="[1, 2, 8, 8, 5]",
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"expr_{name}",
+        activation_lines_fn=lambda _name, _fused: [],
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var = _apply_module_transpose_conv3d("
+        "expr_x, self.transpose_conv3d_0.weight, "
+        "self.transpose_conv3d_0.bias, "
+        "list(self.transpose_conv3d_0.stride), "
+        "list(self.transpose_conv3d_0.padding), "
+        "list(self.transpose_conv3d_0.dilation), "
+        "list(self.transpose_conv3d_0.output_padding), "
+        "self.transpose_conv3d_0.groups, target_shape=[1, 2, 8, 8, 5], "
+        "fallback_shape=[1, 2, 8, 8, 5], "
+        "target_logical_layout='NDHWC', fused='NONE')"
+    ]
+    assert runtime_imports == {"_apply_module_transpose_conv3d"}

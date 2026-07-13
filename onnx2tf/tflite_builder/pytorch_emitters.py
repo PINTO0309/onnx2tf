@@ -284,6 +284,117 @@ def _emit_native_prelu_module_op_for_codegen(
     return True
 
 
+def _emit_native_transpose_conv2d_module_op_for_codegen(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    op_type: str,
+    attr_name: str,
+    outputs: Sequence[str],
+    output_vars: Sequence[str],
+    output_target_shape: str,
+    runtime_imports: Set[str],
+    forward_lines: List[str],
+    tensor_expr_fn: Callable[[str], str],
+    activation_lines_fn: Callable[[str, str], List[str]],
+) -> bool:
+    if op_type != "TRANSPOSE_CONV":
+        return False
+    runtime_imports.add("_apply_module_transpose_conv2d")
+    output_shape_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+    output_tensor = model_ir.tensors.get(str(outputs[0]), None)
+    fallback_shape = (
+        [
+            int(value)
+            for value in np.asarray(output_shape_tensor.data)
+            .reshape(-1)
+            .tolist()
+        ]
+        if output_shape_tensor is not None
+        and isinstance(output_shape_tensor.data, np.ndarray)
+        else [int(value) for value in list(model_ir.tensors[outputs[0]].shape)]
+    )
+    transpose_conv_target_shape = output_target_shape
+    transpose_conv_target_layout = normalize_logical_layout(
+        model_ir.tensors[outputs[0]].logical_layout
+    )
+    if (
+        output_tensor is not None
+        and len(list(output_tensor.shape)) == 4
+        and is_channel_first_logical_layout(transpose_conv_target_layout)
+        and _tensor_name_suggests_channel_last_layout_for_codegen(
+            str(outputs[0])
+        )
+    ):
+        transpose_conv_target_shape = repr(
+            [int(value) for value in list(output_tensor.shape)]
+        )
+        transpose_conv_target_layout = "NHWC"
+    forward_lines.append(
+        f"{output_vars[0]} = _apply_module_transpose_conv2d("
+        f"{tensor_expr_fn(str(op.inputs[2]))}, "
+        f"self.{attr_name}.weight, self.{attr_name}.bias, "
+        f"list(self.{attr_name}.stride), list(self.{attr_name}.padding), "
+        f"list(self.{attr_name}.dilation), "
+        f"list(self.{attr_name}.output_padding), self.{attr_name}.groups, "
+        f"target_shape={transpose_conv_target_shape}, "
+        f"fallback_shape={repr(fallback_shape)}, "
+        f"target_logical_layout={repr(transpose_conv_target_layout)}, "
+        "fused='NONE')"
+    )
+    fused = str(op.options.get("fusedActivationFunction", "NONE"))
+    forward_lines.extend(activation_lines_fn(output_vars[0], fused))
+    return True
+
+
+def _emit_native_transpose_conv3d_module_op_for_codegen(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    op_type: str,
+    attr_name: str,
+    outputs: Sequence[str],
+    output_vars: Sequence[str],
+    output_target_shape: str,
+    runtime_imports: Set[str],
+    forward_lines: List[str],
+    tensor_expr_fn: Callable[[str], str],
+    activation_lines_fn: Callable[[str, str], List[str]],
+) -> bool:
+    if op_type != "CONV_3D_TRANSPOSE":
+        return False
+    runtime_imports.add("_apply_module_transpose_conv3d")
+    output_shape_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+    fallback_shape = (
+        [
+            int(value)
+            for value in np.asarray(output_shape_tensor.data)
+            .reshape(-1)
+            .tolist()
+        ]
+        if output_shape_tensor is not None
+        and isinstance(output_shape_tensor.data, np.ndarray)
+        else [int(value) for value in list(model_ir.tensors[outputs[0]].shape)]
+    )
+    target_layout = normalize_logical_layout(
+        model_ir.tensors[outputs[0]].logical_layout
+    )
+    forward_lines.append(
+        f"{output_vars[0]} = _apply_module_transpose_conv3d("
+        f"{tensor_expr_fn(str(op.inputs[2]))}, "
+        f"self.{attr_name}.weight, self.{attr_name}.bias, "
+        f"list(self.{attr_name}.stride), list(self.{attr_name}.padding), "
+        f"list(self.{attr_name}.dilation), "
+        f"list(self.{attr_name}.output_padding), self.{attr_name}.groups, "
+        f"target_shape={output_target_shape}, "
+        f"fallback_shape={repr(fallback_shape)}, "
+        f"target_logical_layout={repr(target_layout)}, fused='NONE')"
+    )
+    fused = str(op.options.get("fusedActivationFunction", "NONE"))
+    forward_lines.extend(activation_lines_fn(output_vars[0], fused))
+    return True
+
+
 def _emit_native_shape_transform_misc_op_for_codegen(
     *,
     model_ir: ModelIR,

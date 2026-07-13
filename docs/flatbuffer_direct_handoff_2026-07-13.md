@@ -128,6 +128,14 @@ randomized ModelIR graphs produce exactly the same tensor layouts as the former
 whole-graph fixed-point loop. The focused suite now passes 86 tests; no model
 conversion or inference was run.
 
+TransposeConv2D and TransposeConv3D emission have been split into distinct
+Torch-free functions. Both preserve module parameter expressions, output-shape
+constant/fallback behavior, target layout, and post-call fused activation. The
+2D fixture also fixes the legacy `_nhwc`-named output override when metadata is
+channel-first; the 3D fixture fixes metadata fallback and NDHWC output. Emitter
+and architecture validation passes 78 tests; syntax, Ruff, and diff checks
+pass. No model conversion or inference was run.
+
 Channel-first normalization now owns one graph index for its complete mutable
 layout phase. Feature-last collection, both friendly-layout worklists,
 Transpose cleanup, ATAN2-to-ATAN canonicalization, recurrent orphan repair,

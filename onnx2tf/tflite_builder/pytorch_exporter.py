@@ -66,6 +66,8 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
     _emit_native_prelu_module_op_for_codegen,
     _emit_native_recurrent_module_op_for_codegen,
     _emit_native_shape_transform_misc_op_for_codegen,
+    _emit_native_transpose_conv2d_module_op_for_codegen,
+    _emit_native_transpose_conv3d_module_op_for_codegen,
     _emit_native_transpose_op_for_codegen,
     _emit_native_unary_op_for_codegen,
 )
@@ -4892,34 +4894,19 @@ def _emit_native_direct_module_op_for_codegen(
                 f"{output_vars[0]} = {emit_module_output_expr_fn(output_name=output_name, expr=raw_output_var, raw_output_layout=raw_output_layout)}"
             )
         return True
-    if op_type == "TRANSPOSE_CONV":
-        runtime_imports.add("_apply_module_transpose_conv2d")
-        output_shape_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
-        output_tensor = model_ir.tensors.get(str(outputs[0]), None)
-        fallback_shape = (
-            [int(v) for v in np.asarray(output_shape_tensor.data).reshape(-1).tolist()]
-            if output_shape_tensor is not None and isinstance(output_shape_tensor.data, np.ndarray)
-            else [int(v) for v in list(model_ir.tensors[outputs[0]].shape)]
-        )
-        transpose_conv_target_shape = output_target_shape
-        transpose_conv_target_layout = normalize_logical_layout(model_ir.tensors[outputs[0]].logical_layout)
-        if (
-            output_tensor is not None
-            and len(list(output_tensor.shape)) == 4
-            and is_channel_first_logical_layout(transpose_conv_target_layout)
-            and _tensor_name_suggests_channel_last_layout_for_codegen(str(outputs[0]))
-        ):
-            transpose_conv_target_shape = repr([int(v) for v in list(output_tensor.shape)])
-            transpose_conv_target_layout = "NHWC"
-        forward_lines.append(
-            f"{output_vars[0]} = _apply_module_transpose_conv2d("
-            f"{tensor_expr_fn(str(op.inputs[2]))}, self.{attr_name}.weight, self.{attr_name}.bias, "
-            f"list(self.{attr_name}.stride), list(self.{attr_name}.padding), list(self.{attr_name}.dilation), "
-            f"list(self.{attr_name}.output_padding), self.{attr_name}.groups, "
-            f"target_shape={transpose_conv_target_shape}, fallback_shape={repr(fallback_shape)}, "
-            f"target_logical_layout={repr(transpose_conv_target_layout)}, fused='NONE')"
-        )
-        forward_lines.extend(activation_lines_fn(output_vars[0], fused))
+    if _emit_native_transpose_conv2d_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=op_type,
+        attr_name=attr_name,
+        outputs=outputs,
+        output_vars=output_vars,
+        output_target_shape=output_target_shape,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=tensor_expr_fn,
+        activation_lines_fn=activation_lines_fn,
+    ):
         return True
     if op_type == "CONV_3D":
         output_name = str(outputs[0])
@@ -4964,23 +4951,19 @@ def _emit_native_direct_module_op_for_codegen(
             )
         forward_lines.extend(activation_lines_fn(output_vars[0], fused))
         return True
-    if op_type == "CONV_3D_TRANSPOSE":
-        runtime_imports.add("_apply_module_transpose_conv3d")
-        output_shape_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
-        fallback_shape = (
-            [int(v) for v in np.asarray(output_shape_tensor.data).reshape(-1).tolist()]
-            if output_shape_tensor is not None and isinstance(output_shape_tensor.data, np.ndarray)
-            else [int(v) for v in list(model_ir.tensors[outputs[0]].shape)]
-        )
-        forward_lines.append(
-            f"{output_vars[0]} = _apply_module_transpose_conv3d("
-            f"{tensor_expr_fn(str(op.inputs[2]))}, self.{attr_name}.weight, self.{attr_name}.bias, "
-            f"list(self.{attr_name}.stride), list(self.{attr_name}.padding), list(self.{attr_name}.dilation), "
-            f"list(self.{attr_name}.output_padding), self.{attr_name}.groups, "
-            f"target_shape={output_target_shape}, fallback_shape={repr(fallback_shape)}, "
-            f"target_logical_layout={repr(normalize_logical_layout(model_ir.tensors[outputs[0]].logical_layout))}, fused='NONE')"
-        )
-        forward_lines.extend(activation_lines_fn(output_vars[0], fused))
+    if _emit_native_transpose_conv3d_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=op_type,
+        attr_name=attr_name,
+        outputs=outputs,
+        output_vars=output_vars,
+        output_target_shape=output_target_shape,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=tensor_expr_fn,
+        activation_lines_fn=activation_lines_fn,
+    ):
         return True
     if _emit_native_fully_connected_module_op_for_codegen(
         op=op,

@@ -1861,6 +1861,13 @@ emitter. The dispatcher retains only ordered delegation for both families;
 convolution families and fused-module emission remain its final substantial
 responsibilities.
 
+TransposeConv2D and TransposeConv3D now have separate focused emitters. They own
+constant or tensor-metadata fallback output shapes, module weight/bias/stride/
+padding/dilation/output-padding arguments, target logical layout, and fused-
+activation ordering. The legacy named-NHWC override for a channel-first
+TransposeConv2D tensor remains explicit in the 2D emitter. Only fused modules
+and regular Conv2D/depthwise/Conv3D remain substantial direct-dispatch logic.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
