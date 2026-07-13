@@ -761,6 +761,16 @@ channel-axis constant conversion, and bridge-localization semantics are
 unchanged. Pruning and final layout synchronization cover every newly created
 adapter tensor without rebuilding producer/consumer maps.
 
+The corresponding internal Transpose/channel-Slice propagation rewrite uses
+the same optional state contract. Indexed Transpose roots and consumers replace
+its repeated map construction, while the propagation loop visits only its
+declared unary, binary, Concat, Slice, Conv, and Pool operator families. A lazy
+per-constant consumer snapshot preserves the original copy-on-write decision
+when multiple converted binary operators share one NCHW constant. Input
+rewrites, cloned-constant rewires, NCHW bridge insertion, and removal of the
+internal stem are differential index operations; final pruning synchronizes
+the active `LayoutState`.
+
 Boundary input normalization chains live in
 `passes/boundary_input_chains.py`. The module owns the guarded
 Transpose/Mul/Sum/Reshape NHWC rewrite and the exclusive

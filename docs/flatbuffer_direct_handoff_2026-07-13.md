@@ -342,6 +342,18 @@ call supplies the session layout state. The focused bridge and no-bridge
 success cases pass with one initial index refresh and a consistent final layout
 state; no model conversion or inference was run.
 
+The internal Transpose/channel-Slice NHWC propagation family is indexed as
+well. It discovers candidate Transposes and all tensor consumers through one
+`ModelIRGraphIndex`, restricts fixed-point propagation to the supported
+operator-type union, updates Slice and cloned-constant inputs differentially,
+inserts legacy NCHW bridges through the index, and removes the original stem
+without direct operator-list mutation. Its lazy initial-consumer cache retains
+the legacy copy-on-write behavior for constants shared by multiple binary
+operators even as indexed rewires proceed. The lowerer forwards the session
+layout state. Its focused multi-branch success case passes with one initial
+index refresh, consistent operator-type indices, and a synchronized final
+layout state. No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

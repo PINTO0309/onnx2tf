@@ -9843,7 +9843,9 @@ def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_o
     assert graph_index.operator_indices("TRANSPOSE") == [5]
 
 
-def test_flatbuffer_direct_internal_transpose_channel_slice_nhwc_propagation() -> None:
+def test_flatbuffer_direct_internal_transpose_channel_slice_nhwc_propagation(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("internal_transpose_channel_slice_nhwc_propagation_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nchw"]
@@ -10046,9 +10048,26 @@ def test_flatbuffer_direct_internal_transpose_channel_slice_nhwc_propagation() -
         ),
         OperatorIR(op_type="RELU", inputs=["add1_out"], outputs=["y_nchw"]),
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
     assert stats["removed_internal_transpose_channel_slice_stems"] == 1
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
     assert not any(
         str(op.op_type) == "TRANSPOSE"
@@ -10080,6 +10099,11 @@ def test_flatbuffer_direct_internal_transpose_channel_slice_nhwc_propagation() -
 
     # Legacy NCHW consumer keeps one localized adapter.
     assert any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+    assert graph_index.operator_indices("TRANSPOSE") == [
+        index
+        for index, operator in enumerate(model_ir.operators)
+        if str(operator.op_type) == "TRANSPOSE"
+    ]
 
 
 def test_flatbuffer_direct_transpose_channel_slice_muladd_nhwc_bridge_chain() -> None:
