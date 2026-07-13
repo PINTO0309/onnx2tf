@@ -1853,6 +1853,14 @@ contract, and the generated alignment call and runtime-helper import are
 unchanged. Conv, transpose-Conv, fully connected, and PReLU branches remain in
 the dispatcher for subsequent independent extraction.
 
+FullyConnected and PReLU are the next separated direct-module families.
+FullyConnected owns its direct module call and fused-activation ordering in a
+small emitter. PReLU owns parameter-count detection, NHWC/NWC/NDHWC parameter-
+axis bridges, shape-preserving fast paths, and alignment fallback in a separate
+emitter. The dispatcher retains only ordered delegation for both families;
+convolution families and fused-module emission remain its final substantial
+responsibilities.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
+import numpy as np
+
 from onnx2tf.tflite_builder.ir import (
     LOGICAL_LAYOUT_UNKNOWN,
     ModelIR,
@@ -157,6 +159,129 @@ def _emit_native_recurrent_module_op_for_codegen(
         runtime_imports.add("_align_tensor_to_target_shape")
         return True
     return False
+
+
+def _emit_native_fully_connected_module_op_for_codegen(
+    *,
+    op: OperatorIR,
+    op_type: str,
+    attr_name: str,
+    output_vars: Sequence[str],
+    forward_lines: List[str],
+    tensor_expr_fn: Callable[[str], str],
+    activation_lines_fn: Callable[[str, str], List[str]],
+) -> bool:
+    if op_type != "FULLY_CONNECTED":
+        return False
+    fused = str(op.options.get("fusedActivationFunction", "NONE"))
+    forward_lines.append(
+        f"{output_vars[0]} = self.{attr_name}("
+        f"{tensor_expr_fn(str(op.inputs[0]))})"
+    )
+    forward_lines.extend(activation_lines_fn(output_vars[0], fused))
+    return True
+
+
+def _emit_native_prelu_module_op_for_codegen(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    op_type: str,
+    attr_name: str,
+    outputs: Sequence[str],
+    output_vars: Sequence[str],
+    forward_lines: List[str],
+    tensor_expr_fn: Callable[[str], str],
+    emit_maybe_aligned_expr_fn: Callable[..., str],
+    tensor_shape_list_fn: Callable[[str], Optional[List[int]]],
+    should_skip_align_for_shape_preserving_unary_fn: Callable[
+        [str, str], bool
+    ],
+) -> bool:
+    if op_type != "PRELU":
+        return False
+    prelu_input_name = str(op.inputs[0])
+    prelu_input_expr = tensor_expr_fn(prelu_input_name)
+    prelu_input_tensor = model_ir.tensors.get(prelu_input_name, None)
+    prelu_output_tensor = model_ir.tensors.get(outputs[0], None)
+    prelu_input_layout = (
+        normalize_logical_layout(prelu_input_tensor.logical_layout)
+        if prelu_input_tensor is not None
+        else LOGICAL_LAYOUT_UNKNOWN
+    )
+    prelu_output_layout = (
+        normalize_logical_layout(prelu_output_tensor.logical_layout)
+        if prelu_output_tensor is not None
+        else LOGICAL_LAYOUT_UNKNOWN
+    )
+    prelu_rank = (
+        len(list(prelu_input_tensor.shape))
+        if prelu_input_tensor is not None
+        else 0
+    )
+    prelu_num_parameters = 1
+    prelu_weight_tensor = (
+        model_ir.tensors.get(str(op.inputs[1]), None)
+        if len(op.inputs) >= 2
+        else None
+    )
+    if prelu_weight_tensor is not None:
+        if isinstance(prelu_weight_tensor.data, np.ndarray):
+            prelu_num_parameters = max(
+                1, int(np.asarray(prelu_weight_tensor.data).size)
+            )
+        elif len(list(prelu_weight_tensor.shape)) > 0:
+            shape_values = [
+                int(value)
+                for value in list(prelu_weight_tensor.shape)
+                if int(value) > 0
+            ]
+            if len(shape_values) > 0:
+                prelu_num_parameters = max(
+                    1, int(np.prod(shape_values, dtype=np.int64))
+                )
+    expr = f"self.{attr_name}({prelu_input_expr})"
+    if (
+        prelu_num_parameters > 1
+        and prelu_rank in {3, 4, 5}
+        and is_channel_last_logical_layout(prelu_input_layout)
+    ):
+        pre_perm = logical_layout_permutation(
+            source_layout=prelu_input_layout,
+            target_layout=channel_first_logical_layout(prelu_rank),
+        )
+        post_perm = logical_layout_permutation(
+            source_layout=channel_first_logical_layout(prelu_rank),
+            target_layout=(
+                prelu_output_layout
+                if is_channel_last_logical_layout(prelu_output_layout)
+                else prelu_input_layout
+            ),
+        )
+        if pre_perm is not None and post_perm is not None:
+            permuted_input_expr = (
+                f"{prelu_input_expr}.permute("
+                f"{', '.join(str(int(value)) for value in pre_perm)}"
+                ").contiguous()"
+            )
+            expr = (
+                f"self.{attr_name}({permuted_input_expr}).permute("
+                f"{', '.join(str(int(value)) for value in post_perm)}"
+                ").contiguous()"
+            )
+    inferred_shape = tensor_shape_list_fn(str(op.inputs[0]))
+    if should_skip_align_for_shape_preserving_unary_fn(
+        str(op.inputs[0]), str(outputs[0])
+    ):
+        forward_lines.append(f"{output_vars[0]} = {expr}")
+    else:
+        aligned_expr = emit_maybe_aligned_expr_fn(
+            output_name=str(outputs[0]),
+            expr=expr,
+            inferred_shape=inferred_shape,
+        )
+        forward_lines.append(f"{output_vars[0]} = {aligned_expr}")
+    return True
 
 
 def _emit_native_shape_transform_misc_op_for_codegen(

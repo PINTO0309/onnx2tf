@@ -4,6 +4,8 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_emitters import (
     _emit_native_binary_op_for_codegen_impl,
     _emit_native_concat_op_for_codegen,
+    _emit_native_fully_connected_module_op_for_codegen,
+    _emit_native_prelu_module_op_for_codegen,
     _emit_native_recurrent_module_op_for_codegen,
     _emit_native_shape_transform_misc_op_for_codegen,
     _emit_native_transpose_op_for_codegen,
@@ -825,3 +827,118 @@ def test_recurrent_module_emitter_rejects_unrelated_op_without_mutation() -> Non
     assert emitted is False
     assert runtime_imports == {"existing_helper"}
     assert forward_lines == ["existing_line"]
+
+
+def test_fully_connected_module_emitter_preserves_fused_activation_order() -> None:
+    forward_lines: list[str] = []
+    op = OperatorIR(
+        "FULLY_CONNECTED",
+        ["x", "weight", "bias"],
+        ["y"],
+        {"fusedActivationFunction": "RELU6"},
+    )
+
+    emitted = _emit_native_fully_connected_module_op_for_codegen(
+        op=op,
+        op_type=str(op.op_type),
+        attr_name="linear_0",
+        output_vars=["y_var"],
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"expr_{name}",
+        activation_lines_fn=lambda name, fused: [
+            f"activate({name}, {fused})"
+        ],
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var = self.linear_0(expr_x)",
+        "activate(y_var, RELU6)",
+    ]
+
+
+def test_prelu_module_emitter_bridges_channel_last_parameter_axis() -> None:
+    import numpy as np
+
+    model_ir = ModelIR(name="prelu_emitter")
+    model_ir.tensors = {
+        "x": TensorIR(
+            "x",
+            "FLOAT32",
+            [1, 2, 4, 3],
+            logical_layout="NHWC",
+        ),
+        "slope": TensorIR(
+            "slope",
+            "FLOAT32",
+            [3],
+            data=np.asarray([0.1, 0.2, 0.3], dtype=np.float32),
+        ),
+        "y": TensorIR(
+            "y",
+            "FLOAT32",
+            [1, 2, 4, 3],
+            logical_layout="NHWC",
+        ),
+    }
+    op = OperatorIR("PRELU", ["x", "slope"], ["y"])
+    forward_lines: list[str] = []
+
+    emitted = _emit_native_prelu_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=str(op.op_type),
+        attr_name="prelu_0",
+        outputs=["y"],
+        output_vars=["y_var"],
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"expr_{name}",
+        emit_maybe_aligned_expr_fn=lambda **_kwargs: "unused",
+        tensor_shape_list_fn=lambda _name: [1, 2, 4, 3],
+        should_skip_align_for_shape_preserving_unary_fn=(
+            lambda _input, _output: True
+        ),
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var = self.prelu_0("
+        "expr_x.permute(0, 3, 1, 2).contiguous())"
+        ".permute(0, 2, 3, 1).contiguous()"
+    ]
+
+
+def test_prelu_module_emitter_uses_alignment_policy_fallback() -> None:
+    model_ir = ModelIR(name="prelu_alignment")
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1, 4]),
+        "slope": TensorIR("slope", "FLOAT32", [1]),
+        "y": TensorIR("y", "FLOAT32", [1, 4]),
+    }
+    op = OperatorIR("PRELU", ["x", "slope"], ["y"])
+    forward_lines: list[str] = []
+
+    emitted = _emit_native_prelu_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=str(op.op_type),
+        attr_name="prelu_0",
+        outputs=["y"],
+        output_vars=["y_var"],
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"expr_{name}",
+        emit_maybe_aligned_expr_fn=(
+            lambda *, output_name, expr, inferred_shape: (
+                f"aligned({output_name}, {expr}, {inferred_shape})"
+            )
+        ),
+        tensor_shape_list_fn=lambda _name: [1, 4],
+        should_skip_align_for_shape_preserving_unary_fn=(
+            lambda _input, _output: False
+        ),
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var = aligned(y, self.prelu_0(expr_x), [1, 4])"
+    ]

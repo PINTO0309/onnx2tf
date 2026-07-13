@@ -256,6 +256,15 @@ bidirectional LSTM state arguments plus unrelated-op no-mutation behavior.
 Emitter and architecture validation passes 73 tests; syntax, Ruff, and diff
 checks pass. No model conversion or inference was run.
 
+FullyConnected and PReLU have also left the direct-module dispatcher.
+FullyConnected preserves direct-call then fused-activation order. PReLU retains
+constant/shape-derived parameter counts, channel-last-to-channel-first parameter
+axis permutation and restoration, the shape-preserving fast path, and the
+existing alignment callback. Direct tests cover fused FullyConnected, NHWC
+multi-parameter PReLU, and alignment fallback. Emitter and architecture
+validation passes 76 tests; syntax, Ruff, and diff checks pass. No model
+conversion or inference was run.
+
 Native Concat emission and its channel-last axis-sensitive consumer guard now
 live in the Torch-free emitter module. GatherElements coordinate construction,
 channel-first/fused emission, materialized NHWC bridges, alias omission, and

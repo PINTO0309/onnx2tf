@@ -3397,6 +3397,11 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
     assert "_emit_native_concat_op_for_codegen" in emitter_functions
     assert "_emit_native_recurrent_module_op_for_codegen" in emitter_functions
     assert (
+        "_emit_native_fully_connected_module_op_for_codegen"
+        in emitter_functions
+    )
+    assert "_emit_native_prelu_module_op_for_codegen" in emitter_functions
+    assert (
         "_concat_channel_first_codegen_breaks_channel_last_consumers_for_codegen"
         in emitter_functions
     )
@@ -3437,6 +3442,13 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
         not in direct_module_source
     )
     assert 'if op_type == "BIDIRECTIONAL_SEQUENCE_LSTM"' not in direct_module_source
+    assert (
+        "_emit_native_fully_connected_module_op_for_codegen("
+        in direct_module_source
+    )
+    assert "_emit_native_prelu_module_op_for_codegen(" in direct_module_source
+    assert 'if op_type == "FULLY_CONNECTED"' not in direct_module_source
+    assert 'if op_type == "PRELU"' not in direct_module_source
     assert (
         "def _emit_native_shape_transform_misc_op_for_codegen("
         not in exporter_source

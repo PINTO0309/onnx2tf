@@ -62,6 +62,8 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
     _DIRECT_CODEGEN_UNARY_EXPRESSIONS,
     _emit_native_binary_op_for_codegen_impl,
     _emit_native_concat_op_for_codegen,
+    _emit_native_fully_connected_module_op_for_codegen,
+    _emit_native_prelu_module_op_for_codegen,
     _emit_native_recurrent_module_op_for_codegen,
     _emit_native_shape_transform_misc_op_for_codegen,
     _emit_native_transpose_op_for_codegen,
@@ -4980,63 +4982,31 @@ def _emit_native_direct_module_op_for_codegen(
         )
         forward_lines.extend(activation_lines_fn(output_vars[0], fused))
         return True
-    if op_type == "FULLY_CONNECTED":
-        forward_lines.append(f"{output_vars[0]} = self.{attr_name}({tensor_expr_fn(str(op.inputs[0]))})")
-        forward_lines.extend(activation_lines_fn(output_vars[0], fused))
+    if _emit_native_fully_connected_module_op_for_codegen(
+        op=op,
+        op_type=op_type,
+        attr_name=attr_name,
+        output_vars=output_vars,
+        forward_lines=forward_lines,
+        tensor_expr_fn=tensor_expr_fn,
+        activation_lines_fn=activation_lines_fn,
+    ):
         return True
-    if op_type == "PRELU":
-        prelu_input_name = str(op.inputs[0])
-        prelu_input_expr = tensor_expr_fn(prelu_input_name)
-        prelu_input_tensor = model_ir.tensors.get(prelu_input_name, None)
-        prelu_output_tensor = model_ir.tensors.get(outputs[0], None)
-        prelu_input_layout = (
-            normalize_logical_layout(prelu_input_tensor.logical_layout)
-            if prelu_input_tensor is not None
-            else LOGICAL_LAYOUT_UNKNOWN
-        )
-        prelu_output_layout = (
-            normalize_logical_layout(prelu_output_tensor.logical_layout)
-            if prelu_output_tensor is not None
-            else LOGICAL_LAYOUT_UNKNOWN
-        )
-        prelu_rank = len(list(prelu_input_tensor.shape)) if prelu_input_tensor is not None else 0
-        prelu_num_parameters = 1
-        prelu_weight_tensor = model_ir.tensors.get(str(op.inputs[1]), None) if len(op.inputs) >= 2 else None
-        if prelu_weight_tensor is not None:
-            if isinstance(prelu_weight_tensor.data, np.ndarray):
-                prelu_num_parameters = max(1, int(np.asarray(prelu_weight_tensor.data).size))
-            elif len(list(prelu_weight_tensor.shape)) > 0:
-                shape_values = [int(v) for v in list(prelu_weight_tensor.shape) if int(v) > 0]
-                if len(shape_values) > 0:
-                    prelu_num_parameters = max(1, int(np.prod(shape_values, dtype=np.int64)))
-        expr = f"self.{attr_name}({prelu_input_expr})"
-        if (
-            prelu_num_parameters > 1
-            and prelu_rank in {3, 4, 5}
-            and is_channel_last_logical_layout(prelu_input_layout)
-        ):
-            pre_perm = logical_layout_permutation(
-                source_layout=prelu_input_layout,
-                target_layout=channel_first_logical_layout(prelu_rank),
-            )
-            post_perm = logical_layout_permutation(
-                source_layout=channel_first_logical_layout(prelu_rank),
-                target_layout=prelu_output_layout if is_channel_last_logical_layout(prelu_output_layout) else prelu_input_layout,
-            )
-            if pre_perm is not None and post_perm is not None:
-                permuted_input_expr = (
-                    f"{prelu_input_expr}.permute({', '.join(str(int(v)) for v in pre_perm)}).contiguous()"
-                )
-                expr = (
-                    f"self.{attr_name}({permuted_input_expr}).permute({', '.join(str(int(v)) for v in post_perm)}).contiguous()"
-                )
-        inferred_shape = tensor_shape_list_fn(str(op.inputs[0]))
-        if should_skip_align_for_shape_preserving_unary_fn(str(op.inputs[0]), str(outputs[0])):
-            forward_lines.append(f"{output_vars[0]} = {expr}")
-        else:
-            forward_lines.append(
-                f"{output_vars[0]} = {emit_maybe_aligned_expr_fn(output_name=str(outputs[0]), expr=expr, inferred_shape=inferred_shape)}"
-            )
+    if _emit_native_prelu_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=op_type,
+        attr_name=attr_name,
+        outputs=outputs,
+        output_vars=output_vars,
+        forward_lines=forward_lines,
+        tensor_expr_fn=tensor_expr_fn,
+        emit_maybe_aligned_expr_fn=emit_maybe_aligned_expr_fn,
+        tensor_shape_list_fn=tensor_shape_list_fn,
+        should_skip_align_for_shape_preserving_unary_fn=(
+            should_skip_align_for_shape_preserving_unary_fn
+        ),
+    ):
         return True
     return False
 
