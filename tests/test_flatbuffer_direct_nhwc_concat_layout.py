@@ -119,6 +119,59 @@ def _model(*, boundary: str | None = None) -> ModelIR:
     return model_ir
 
 
+def _unary_model(
+    *,
+    unary_op: str = "RELU",
+    boundary: str | None = None,
+) -> ModelIR:
+    model_ir = _model()
+    if boundary == "spatial_shape_mismatch":
+        model_ir.tensors["x1_nhwc"].shape = [1, 9, 7, 3]
+        model_ir.tensors["x1_nhwc"].shape_signature = [1, 9, 7, 3]
+        model_ir.tensors["x1_nchw"].shape = [1, 3, 9, 7]
+        model_ir.tensors["x1_nchw"].shape_signature = [1, 3, 9, 7]
+    unary_shape = (
+        [1, 3, 9, 7]
+        if boundary == "spatial_shape_mismatch"
+        else [1, 3, 5, 7]
+    )
+    if boundary == "invalid_unary_rank":
+        unary_shape = [1, 3, 5]
+    model_ir.tensors["x1_unary"] = _tensor("x1_unary", unary_shape)
+    model_ir.operators.insert(
+        2,
+        OperatorIR(unary_op, ["x1_nchw"], ["x1_unary"]),
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    concat_op.inputs = ["x0_nchw", "x1_unary"]
+
+    if boundary == "unary_output_fanout":
+        model_ir.tensors["unary_side"] = _tensor(
+            "unary_side",
+            list(unary_shape),
+        )
+        model_ir.outputs.append("unary_side")
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", ["x1_unary"], ["unary_side"])
+        )
+    if boundary == "public_unary_output":
+        model_ir.outputs.append("x1_unary")
+    if boundary == "unary_adapter_fanout":
+        model_ir.tensors["adapter_side"] = _tensor(
+            "adapter_side",
+            list(model_ir.tensors["x1_nchw"].shape),
+        )
+        model_ir.outputs.append("adapter_side")
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", ["x1_nchw"], ["adapter_side"])
+        )
+    if boundary == "public_unary_adapter":
+        model_ir.outputs.append("x1_nchw")
+    return model_ir
+
+
 def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
     assert actual.inputs == expected.inputs
     assert actual.outputs == expected.outputs
@@ -205,6 +258,75 @@ def test_nhwc_direct_pre_concat_multi_post_is_transactionally_optimized(
 )
 def test_nhwc_direct_pre_concat_rejects_unsafe_boundary(boundary: str) -> None:
     model_ir = _model(boundary=boundary)
+    original = deepcopy(model_ir)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
+    _assert_model_equal(model_ir, original)
+
+
+@pytest.mark.parametrize(
+    "unary_op",
+    ["RELU", "RELU6", "LOGISTIC", "TANH", "GELU"],
+)
+def test_nhwc_one_unary_plus_direct_pre_concat_is_indexed(
+    unary_op: str,
+) -> None:
+    model_ir = _unary_model(unary_op=unary_op)
+    model_ir.tensors["x1_unary"].quantization = {
+        "scale": [0.5] * 3,
+        "zero_point": [0] * 3,
+        "quantized_dimension": 1,
+    }
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    unary = next(op for op in model_ir.operators if op.op_type == unary_op)
+    assert unary.inputs == ["x1_nhwc"]
+    assert model_ir.tensors["x1_unary"].shape == [1, 5, 7, 3]
+    quantization = model_ir.tensors["x1_unary"].quantization
+    assert isinstance(quantization, dict)
+    assert quantization["quantized_dimension"] == 3
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    assert concat_op.inputs == ["x0_nhwc", "x1_unary"]
+    assert concat_op.outputs == ["post0_nhwc"]
+    assert concat_op.options["axis"] == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    unary_event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_unary"
+    )
+    assert unary_event["status"] == "changed"
+    assert unary_event["metrics"]["snapshot_count"] == 1
+    assert unary_event["metrics"]["fingerprint_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("boundary", "unary_op"),
+    [
+        ("unsupported_unary", "ABS"),
+        ("unary_output_fanout", "RELU"),
+        ("public_unary_output", "RELU"),
+        ("unary_adapter_fanout", "RELU"),
+        ("public_unary_adapter", "RELU"),
+        ("spatial_shape_mismatch", "RELU"),
+        ("invalid_unary_rank", "RELU"),
+    ],
+)
+def test_nhwc_one_unary_plus_direct_rejects_unsafe_boundary(
+    boundary: str,
+    unary_op: str,
+) -> None:
+    model_ir = _unary_model(unary_op=unary_op, boundary=boundary)
     original = deepcopy(model_ir)
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)

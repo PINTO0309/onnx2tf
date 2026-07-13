@@ -177,8 +177,8 @@ from onnx2tf.tflite_builder.passes.ndhwc_concat_layout import (
     _optimize_transpose_pre_concat_ndhwc_chains as _optimize_transpose_pre_concat_ndhwc_chains_pass,
     run_ndhwc_concat_layout_cleanup,
 )
-from onnx2tf.tflite_builder.passes.nhwc_concat_direct_layout import (
-    run_nhwc_concat_direct_layout_cleanup,
+from onnx2tf.tflite_builder.passes.nhwc_concat_layout import (
+    run_nhwc_concat_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -13738,6 +13738,21 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             # for mixed input families and the separate quantized-post family.
             if all_direct_input_actions and post_quantize_idx is None:
                 continue
+            indexed_unary_family = (
+                post_quantize_idx is None
+                and len(concat_input_actions) > 1
+                and sum(
+                    str(action.get("kind", "")) == "unary"
+                    for action in concat_input_actions
+                )
+                == 1
+                and all(
+                    str(action.get("kind", "")) in {"direct", "unary"}
+                    for action in concat_input_actions
+                )
+            )
+            if indexed_unary_family:
+                continue
             nhwc_inputs_ok = True
             nhwc_ref_shape: Optional[List[int]] = None
             for action in concat_input_actions:
@@ -13952,9 +13967,9 @@ def _optimize_transpose_pre_concat_nhwc_chains(
     layout_state: Any = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, int]:
-    """Run the indexed direct family before the remaining legacy families."""
+    """Run indexed bounded families before the remaining legacy families."""
 
-    direct_stats = run_nhwc_concat_direct_layout_cleanup(
+    indexed_stats = run_nhwc_concat_layout_cleanup(
         model_ir,
         layout_state=layout_state,
         diagnostics=diagnostics,
@@ -13962,8 +13977,14 @@ def _optimize_transpose_pre_concat_nhwc_chains(
     legacy_stats = _optimize_transpose_pre_concat_nhwc_chains_legacy(model_ir)
     return {
         "optimized_transpose_pre_concat_nhwc_chains": int(
-            direct_stats.get(
+            indexed_stats.get(
                 "optimized_transpose_pre_concat_nhwc_direct_chains",
+                0,
+            )
+        )
+        + int(
+            indexed_stats.get(
+                "optimized_transpose_pre_concat_nhwc_unary_chains",
                 0,
             )
         )

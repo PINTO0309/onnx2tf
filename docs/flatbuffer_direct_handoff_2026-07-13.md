@@ -1,40 +1,43 @@
 # flatbuffer_direct refactor handoff — 2026-07-13
 
-## `fb-refactor4` rank-four direct-adapter checkpoint
+## `fb-refactor4` rank-four direct/unary checkpoint
 
-The first bounded family of the 2,117-line rank-four generic NHWC pre-Concat
-matcher is now separated. `passes/nhwc_concat_direct_layout.py` owns the
-strict float path in which every input is an NHWC→NCHW Transpose and every
-Concat consumer is an inverse NCHW→NHWC Transpose. It uses one
-`ModelIRGraphIndex`, a transactional ordered pass with stable ID
-`layout.nhwc_pre_concat_direct`, and the conversion session's `LayoutState`
-and diagnostics at all seven production positions.
+The first two bounded families of the 2,117-line rank-four generic NHWC
+pre-Concat matcher are now separated. `passes/nhwc_concat_layout.py` owns the
+strict all-direct float path and the exactly-one-unary-plus-direct float path.
+The unary allowlist is RELU, RELU6, LOGISTIC, TANH, and GELU. Both share one
+`ModelIRGraphIndex`/`LayoutState` pass group and run transactionally under
+stable IDs `layout.nhwc_pre_concat_direct` and
+`layout.nhwc_pre_concat_unary` at all seven production positions.
 
-The pass removes only exclusive, non-public leading adapters. Shared or public
-leading adapters remain for their other consumers while the Concat is rewired
-to the NHWC source. Public Concat/post tensors, invalid permutations or ranks,
+The direct pass removes only exclusive, non-public leading adapters. Shared or
+public direct adapters remain for their other consumers while the Concat is
+rewired to the NHWC source. Public Concat/post tensors, invalid permutations
+or ranks,
 non-Transpose Concat fan-out, and wrong axes are rejected without mutation.
 Stale spatial metadata remains accepted for this algebraically strict family,
 matching the previous intentional behavior. Canonical per-axis quantization
-now remaps NCHW dimension 1 to NHWC dimension 3.
+now remaps NCHW dimension 1 to NHWC dimension 3. The unary family additionally
+requires exclusive, non-public unary adapters and output, plus compatible
+NHWC batch/spatial metadata, and remaps unary output quantization metadata.
 
 The lowerer compatibility helper still returns the original aggregate statistic
 and runs the legacy matcher after the direct pass. The legacy matcher now
-skips only float all-direct candidates, but continues to own mixed unary,
-swish, split, slice, Add, Pad, PReLU, Dequantize, and Softmax inputs plus the
-separate quantized-post path.
+skips the two indexed families, but continues to own multi-unary, swish, split,
+slice, Add, Pad, PReLU, Dequantize, and Softmax inputs plus the separate
+quantized-post path.
 
 Changed files for this checkpoint:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`
-- `onnx2tf/tflite_builder/passes/nhwc_concat_direct_layout.py`
-- `tests/test_flatbuffer_direct_nhwc_concat_direct_layout.py`
+- `onnx2tf/tflite_builder/passes/nhwc_concat_layout.py`
+- `tests/test_flatbuffer_direct_nhwc_concat_layout.py`
 - `docs/flatbuffer_direct_architecture.md`
 - `docs/flatbuffer_direct_handoff_2026-07-13.md`
 
 Focused verification, all in the existing `uv` environment:
 
-- New direct-adapter ModelIR characterization: `9 passed`.
+- Direct and one-unary ModelIR characterization: `21 passed`.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.
@@ -44,11 +47,10 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should select one more bounded rank-four family. The lowest-risk
-candidate is the one-unary-plus-direct float path because it shares the same
-post boundary but has a small, explicit operator allowlist. First add compact
-success/no-op characterization; then move only that family into the indexed
-pass. Do not begin with a Tier 0–4 corpus run, and do not create a pull request.
+Next work should characterize multi-unary combinations and then decide whether
+the unary resolver can safely accept one-or-more unary inputs without changing
+the exclusive boundary contract. Do not begin with a Tier 0–4 corpus run, and
+do not create a pull request.
 
 The section below records the preceding rank-five checkpoint and remains as
 historical context.
