@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `af26412` (`extract dual mul concat layout pass`)
+- Latest implementation checkpoint: `64702b2` (`index dual mul concat layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `af26412` and the documentation checkpoint
+  `64702b2` and the documentation checkpoint
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -13,9 +13,9 @@
 
 ## Completed work
 
-This resumed interval completed twelve adjacent semantic layout families using
-the staged characterization → mechanical extraction → indexed runner process,
-then characterized the next dual-Mul/Concat family.
+This resumed interval completed thirteen adjacent semantic layout families
+using the staged characterization → mechanical extraction → indexed runner
+process.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -132,6 +132,9 @@ then characterized the next dual-Mul/Concat family.
     - Moved the complete matcher to `passes/dual_mul_concat_layout.py` with AST
       equivalence in `af26412`; the compatibility wrapper and all six raw
       positions remain.
+    - Added pure indexed topology/broadcast planning, differential
+      copy-on-write and graph/layout mutation, corrected post metadata, stable
+      runner `layout.dual_mul_concat_nhwc`, and six runner calls in `64702b2`.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -147,10 +150,9 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the extracted
-  `_optimize_transpose_dual_mul_concat_prepost_nhwc_chains`: move it
-  to shared graph/layout state and replace all six raw production positions
-  with a stable transactional runner.
+  The immediate next unit is
+  `_optimize_transpose_axis3_const_concat_bridge_nhwc_chains`: establish a
+  dedicated compact success/rejection corpus before mechanical extraction.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -172,7 +174,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `af26412`; after the documentation
+implementation working tree is clean at `64702b2`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -328,6 +330,14 @@ sequential with only one model/process active at a time.
   `49 passed in 20.24s`; the extracted function AST exactly matched `82d8777`.
 - Full direct selection after mechanical extraction:
   `1286 passed, 5 deselected, 2 warnings in 163.50s`.
+- Indexed dual-Mul/Concat runner, broadcast-plan, architecture, and efficiency
+  focus: `64 passed in 20.85s`.
+- Tier 1 `superpoint.onnx`, sequential `-tb flatbuffer_direct -cotof` after
+  indexed migration: `evaluation_pass=true`,
+  `max_abs=1.6666017472743988e-06`,
+  `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+- Full direct selection after indexed dual-Mul/Concat migration:
+  `1297 passed, 5 deselected, 2 warnings in 165.59s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -359,12 +369,13 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Separate the complete dual-Mul candidate plan from mutation and reuse it as
-   the indexed precondition, including broadcast/constant feasibility.
-3. Migrate copy-on-write, inputs/outputs, structural removal, pruning, and
-   layout metadata to one graph index/state and stable runner.
-4. Replace all six raw calls, then run focused, sequential Tier 1, and full
-   direct gates before committing and pushing indexed migration.
+2. Inspect `_optimize_transpose_axis3_const_concat_bridge_nhwc_chains`, all
+   production positions, and existing success coverage to freeze behavior.
+3. Add a compact dedicated corpus covering post fan-out, retained NCHW users,
+   public boundaries, permutation/axis, shape compatibility, and shared
+   constants.
+4. Run focused and full direct gates, then commit and push characterization
+   before mechanical extraction.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1071,3 +1082,37 @@ No dependency or TensorFlow path was added, and no inference process was run
 concurrently. Indexed candidate planning, differential copy-on-write, layout
 state reconciliation, runner integration, and raw-call replacement remain the
 next checkpoint.
+
+### Indexed dual-Mul/Concat checkpoint
+
+Checkpoint `64702b2` introduced a pure indexed plan that proves the shared data
+adapter, two exclusive Mul branches, Concat/post topology, public boundaries,
+constant presence, rank, target broadcast compatibility, and whether each
+constant requires cloning before any mutation. This prevents a later invalid
+constant from leaving an earlier branch partially converted.
+
+Constant copy-on-write and Mul input replacement now update one
+`ModelIRGraphIndex`; Concat output aliasing, pre/post adapter removal, pruning,
+and metadata reconciliation share the same `LayoutState`. The canonical post
+tensor keeps its once-permuted NHWC shape instead of receiving the legacy
+second metadata permutation. `run_dual_mul_concat_layout_cleanup` registers
+stable `LAYOUT_PLAN` ID `layout.dual_mul_concat_nhwc`; all six production
+positions now call it with session state and diagnostics.
+
+Focused success, ten complete no-op boundaries, runner instrumentation,
+ownership, architecture, and irrelevant-graph efficiency validation passed 64
+tests. The success graph uses one initial index refresh and one snapshot; all
+unsafe boundaries reject before snapshotting. Tier 1 `superpoint.onnx` passed
+sequential `-tb flatbuffer_direct -cotof` with `evaluation_pass=true`,
+`max_abs=1.6666017472743988e-06`, `rmse=1.6207873294228388e-07`, and cosine
+similarity `1.0`.
+
+The complete sequential direct selection passed:
+
+```text
+1297 passed, 5 deselected, 2 warnings in 165.59s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_dual_mul_concat_superpoint` artifacts were removed after metrics
+inspection.

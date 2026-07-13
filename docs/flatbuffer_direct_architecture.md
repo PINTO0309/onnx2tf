@@ -208,9 +208,13 @@ output adapter, downstream consumer, and copy-on-write for an NCHW constant
 shared outside the island. Whole-ModelIR no-op cases cover adapter/Mul/Concat
 fan-out, public intermediate/post outputs, both invalid permutations, invalid
 Concat axis, missing constant data, and branches that do not share the adapted
-input. The extracted implementation is AST-identical to checkpoint `82d8777`;
-the lowerer retains a compatibility wrapper and all six raw production calls
-until indexed migration.
+input. Pure indexed candidate planning validates topology and constant
+broadcast feasibility before mutation. Copy-on-write, input/output rewrites,
+structural removal, pruning, corrected output metadata, and layout
+reconciliation share one graph index and `LayoutState`.
+`run_dual_mul_concat_layout_cleanup` registers stable `LAYOUT_PLAN` ID
+`layout.dual_mul_concat_nhwc`; all six production positions call the
+transactional runner and the compatibility wrapper remains available.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
