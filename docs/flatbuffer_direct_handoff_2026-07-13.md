@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `fcf24b2` (`characterize add concat suffix layout`)
+- Latest implementation checkpoint: `73f96ca` (`extract add concat suffix layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `fcf24b2` and the documentation checkpoint
+  `73f96ca` and the documentation checkpoint
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -115,6 +115,9 @@ then characterized the next Add/Concat/constant-suffix family.
       missing suffix constant.
     - Preserved production behavior and all five raw call positions;
       mechanical extraction remains the next checkpoint.
+    - Moved the complete matcher to `passes/add_concat_suffix_layout.py` with
+      AST equivalence in `73f96ca`; the compatibility wrapper and all five raw
+      production positions remain.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -130,10 +133,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the characterized
+  The immediate next unit is the extracted
   `_optimize_transpose_add_concat_const_suffix_nhwc_chains`: move it
-  mechanically to a focused pass-family module, prove AST identity, and retain
-  all five raw production positions until indexed migration.
+  to shared graph/layout state, protect shared suffix constants, and replace
+  all five raw production positions with a stable transactional runner.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -155,7 +158,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `fcf24b2`; after the documentation
+implementation working tree is clean at `73f96ca`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -289,6 +292,11 @@ sequential with only one model/process active at a time.
 - Full direct selection after adding the previously missing success and nine
   unsafe-boundary cases:
   `1262 passed, 5 deselected, 2 warnings in 195.24s`.
+- Add/Concat/constant-suffix extraction, characterization, and ownership focus:
+  `47 passed in 18.70s`; the extracted function AST exactly matched
+  `fcf24b2`.
+- Full direct selection after mechanical extraction:
+  `1263 passed, 5 deselected, 2 warnings in 158.07s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -320,13 +328,12 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Move `_optimize_transpose_add_concat_const_suffix_nhwc_chains` mechanically
-   from the central lowerer to a focused pass-family module while leaving a
-   signature-compatible wrapper.
-3. Add AST-equivalence and single-owner architecture coverage, preserving all
-   five raw production call positions and their ordering.
-4. Run focused and full direct gates, then commit and push the extraction
-   checkpoint before indexed mutation changes.
+2. Add shared-constant fan-out characterization for both suffix constants and
+   define copy-on-write behavior so unrelated consumers remain NCHW.
+3. Migrate topology reads, rewrites, aliasing, structural removals, pruning,
+   and layout reconciliation to one shared index/state and stable runner.
+4. Replace all five raw calls, then run focused, sequential Tier 1, and full
+   direct gates before committing and pushing the indexed checkpoint.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -925,3 +932,24 @@ selection passed:
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently. Mechanical extraction with AST-equivalence and ownership gates
 is the next separate unit.
+
+### Add/Concat/constant-suffix mechanical extraction checkpoint
+
+Checkpoint `73f96ca` moved the complete 271-line matcher mechanically to
+`passes/add_concat_suffix_layout.py`. Its function AST, including docstring,
+exactly matches checkpoint `fcf24b2`. The central lowerer now retains only a
+signature-compatible wrapper, while all five raw production positions remain
+unchanged so rule order and retry behavior are identical.
+
+The architecture gate fixes the focused module as the single implementation
+owner, the lowerer import alias and wrapper, and exactly five production calls.
+Focused characterization and ownership validation passed 47 tests. The
+complete sequential direct selection passed:
+
+```text
+1263 passed, 5 deselected, 2 warnings in 158.07s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently. Shared-constant copy-on-write, indexed mutation, transactional
+runner integration, and raw-call replacement remain the next checkpoint.

@@ -187,14 +187,15 @@ removals, pruning, metadata, and layout reconciliation use one differential
 graph index and `LayoutState`. The six production positions now call the
 transactional runner; the lowerer compatibility wrapper remains available.
 
-The adjacent Add/Concat/constant-suffix rule remains in the central lowerer
-pending mechanical extraction. Its dedicated compact corpus fixes two branch
-adapters, a shared base adapter, two Add fan-ins, channel Concat, rank-four
-MUL/ADD suffix constants, inverse output adaptation, and downstream consumer
-aliasing. Whole-ModelIR no-op cases cover branch and intermediate fan-out,
-public pre/post outputs, invalid leading permutation, invalid Concat axis, and
-a missing suffix constant. This frozen contract precedes any ownership or
-mutation change.
+The adjacent Add/Concat/constant-suffix rule is mechanically owned by
+`passes/add_concat_suffix_layout.py`. Its dedicated compact corpus fixes two
+branch adapters, a shared base adapter, two Add fan-ins, channel Concat,
+rank-four MUL/ADD suffix constants, inverse output adaptation, and downstream
+consumer aliasing. Whole-ModelIR no-op cases cover branch and intermediate
+fan-out, public pre/post outputs, invalid leading permutation, invalid Concat
+axis, and a missing suffix constant. The extracted implementation is
+AST-identical to checkpoint `fcf24b2`; the lowerer retains a compatibility
+wrapper and all five raw production calls until indexed migration.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
