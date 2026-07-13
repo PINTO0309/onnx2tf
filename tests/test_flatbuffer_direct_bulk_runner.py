@@ -969,6 +969,68 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
     }
 
 
+def test_regression_profile_accepts_recorded_tflite_numeric_exception(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from onnx import TensorProto, helper, save
+
+    model_path = tmp_path / "accepted.onnx"
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
+    node = helper.make_node("Relu", ["x"], ["y"])
+    save(helper.make_model(helper.make_graph([node], "g", [x], [y])), model_path)
+
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 1,
+                "max_nodes": 49,
+                "models": [
+                    {
+                        "tier": 0,
+                        "model": model_path.name,
+                        "baseline_classification": "pass",
+                        "acceptance_reason": "approved_unstable_topk_indices",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        _write_accuracy_report(
+            path=artifact_dir / "accepted_accuracy_report.json",
+            evaluation_pass=False,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+        regression_profile=str(profile_path),
+    )
+
+    entry = state["entries"][0]
+    assert entry["classification"] == "pass"
+    assert entry["strict_pass"] is True
+    assert entry["accepted_by_profile"] is True
+    assert entry["profile_acceptance_reason"] == "approved_unstable_topk_indices"
+    assert entry["unaccepted_classification"] == "tflite_fail"
+    assert entry["unaccepted_strict_pass"] is False
+    assert entry["unaccepted_reason"] == "tflite_fail"
+    assert entry["tflite_accuracy_pass"] is False
+    assert entry["tflite_max_abs"] == 1.0
+    assert state["summary"]["counts"]["pass"] == 1
+    assert state["summary"]["strict_fail_count"] == 0
+
+
 def test_regression_profile_accepts_tier_four_models(tmp_path) -> None:
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(
@@ -1012,6 +1074,8 @@ def test_regression_profile_rejects_tier_five_models(tmp_path) -> None:
         ({"eval_num_samples": 0}, "positive integer"),
         ({"eval_num_samples": True}, "positive integer"),
         ({"accuracy_only": "true"}, "must be a boolean"),
+        ({"acceptance_reason": ""}, "non-empty string"),
+        ({"acceptance_reason": 1}, "non-empty string"),
     ],
 )
 def test_regression_profile_rejects_invalid_evaluation_options(
@@ -1063,6 +1127,14 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
         "pass": 368,
         "tflite_fail": 20,
         "timeout": 26,
+    }
+    assert profile["acceptance_reasons"] == {
+        "deim_hgnetv2_n_wholebody28_1250query_fp16.onnx": (
+            "user_approved_topk_index_instability_from_near_tied_scores"
+        ),
+        "deim_hgnetv2_s_wholebody28_ft_1250query_fixed.onnx": (
+            "user_approved_topk_index_instability_from_near_tied_scores"
+        ),
     }
     assert profile["model_options"]["silero_vad.onnx"] == {
         "keep_shape_absolutely_input_names": ["input", "state", "sr"],

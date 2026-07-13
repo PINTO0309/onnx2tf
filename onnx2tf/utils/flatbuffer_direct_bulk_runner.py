@@ -218,6 +218,7 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
     baseline_classification_counts: Dict[str, int] = {}
     excluded_baseline_classification_counts: Dict[str, int] = {}
     model_options: Dict[str, Dict[str, Any]] = {}
+    acceptance_reasons: Dict[str, str] = {}
     for entry in model_entries:
         if not isinstance(entry, dict):
             raise ValueError(f"Invalid regression profile model entry. path={path}")
@@ -274,6 +275,17 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
             normalized_options["accuracy_only"] = bool(raw_accuracy_only)
         if normalized_options:
             model_options[model_name] = normalized_options
+        raw_acceptance_reason = entry.get("acceptance_reason", None)
+        if raw_acceptance_reason is not None:
+            if (
+                not isinstance(raw_acceptance_reason, str)
+                or str(raw_acceptance_reason).strip() == ""
+            ):
+                raise ValueError(
+                    "Regression profile acceptance_reason must be a non-empty string. "
+                    f"path={path} model={model_name!r}"
+                )
+            acceptance_reasons[model_name] = str(raw_acceptance_reason).strip()
         baseline_classification = str(
             entry.get("baseline_classification", "unspecified")
         )
@@ -324,6 +336,7 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
         "recursive": False,
         "tiers": sorted(set(tiers)),
         "model_options": model_options,
+        "acceptance_reasons": acceptance_reasons,
         "baseline_classification_counts": dict(
             sorted(baseline_classification_counts.items())
         ),
@@ -528,6 +541,37 @@ def _classify_reports(
         "tflite_max_abs": tflite_max_abs,
         "pytorch_max_abs": pytorch_max_abs,
     }
+
+
+def _apply_profile_acceptance(
+    classification: Dict[str, Any],
+    *,
+    acceptance_reason: str,
+) -> Dict[str, Any]:
+    """Accept a recorded numeric exception without hiding its raw result."""
+
+    reason = str(acceptance_reason).strip()
+    if reason == "" or str(classification.get("classification", "")) != "tflite_fail":
+        return classification
+
+    accepted = dict(classification)
+    accepted.update(
+        {
+            "classification": "pass",
+            "strict_pass": True,
+            "reason": f"profile_acceptance:{reason}",
+            "accepted_by_profile": True,
+            "profile_acceptance_reason": reason,
+            "unaccepted_classification": str(
+                classification.get("classification", "")
+            ),
+            "unaccepted_strict_pass": bool(
+                classification.get("strict_pass", False)
+            ),
+            "unaccepted_reason": str(classification.get("reason", "")),
+        }
+    )
+    return accepted
 
 
 def _build_summary(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -1073,6 +1117,14 @@ def run_flatbuffer_direct_bulk_verification(
                 pytorch_report=pytorch_report,
                 require_pytorch_report=bool(include_pytorch_artifacts),
             )
+            if profile is not None:
+                classification = _apply_profile_acceptance(
+                    classification,
+                    acceptance_reason=profile.get("acceptance_reasons", {}).get(
+                        model_name,
+                        "",
+                    ),
+                )
             entry["classification"] = str(classification["classification"])
             entry["strict_pass"] = bool(classification["strict_pass"])
             entry["reason"] = str(classification["reason"])
@@ -1080,6 +1132,15 @@ def run_flatbuffer_direct_bulk_verification(
             entry["pytorch_accuracy_pass"] = classification["pytorch_accuracy_pass"]
             entry["tflite_max_abs"] = classification["tflite_max_abs"]
             entry["pytorch_max_abs"] = classification["pytorch_max_abs"]
+            for optional_key in (
+                "accepted_by_profile",
+                "profile_acceptance_reason",
+                "unaccepted_classification",
+                "unaccepted_strict_pass",
+                "unaccepted_reason",
+            ):
+                if optional_key in classification:
+                    entry[optional_key] = classification[optional_key]
             entry["duration_sec"] = float(time.time() - started)
             entry.update(
                 _normalized_error_signature(
