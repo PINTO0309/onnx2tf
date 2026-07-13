@@ -52512,7 +52512,8 @@ def lower_onnx_to_ir(
         _reconcile_static_tensor_shapes(model_ir)
         _topologically_sort_operators(model_ir)
     final_pad_layout_stats = repair_channel_last_inputs_for_channel_first_pad(
-        model_ir
+        model_ir,
+        layout_state=session.layout_state,
     )
     if int(
         final_pad_layout_stats.get(

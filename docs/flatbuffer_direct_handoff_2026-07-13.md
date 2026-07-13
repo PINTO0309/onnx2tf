@@ -317,6 +317,18 @@ It enumerates indexed Transpose roots, updates the Conv input through the index,
 removes the stale adapter differentially, prunes through the shared helper, and
 synchronizes LayoutState after changing tensor layout metadata.
 
+The final channel-last-input/channel-first-Pad repair now follows the same
+contract. Its original static shape-equation guard is unchanged, but root
+discovery is restricted to indexed `PAD`, `PADV2`, and `MIRROR_PAD` operators.
+Pad input replacement and NHWC-to-NCHW adapter insertion update one
+`ModelIRGraphIndex` differentially, then restart against the current graph.
+The late lowerer call passes the session `LayoutState`, which is synchronized
+after successful repair. Focused validation passed all four Pad layout tests;
+instrumentation proves one initial index refresh and a consistent final layout
+state. `py_compile`, targeted Ruff, and `git diff --check` also pass. No ONNX
+conversion or inference test was run for this checkpoint, following the active
+implementation-first validation policy.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

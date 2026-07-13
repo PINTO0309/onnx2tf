@@ -852,6 +852,16 @@ rewrite that can retain one local NCHW adapter for legacy consumers. Padding
 axis rotation, dynamic metadata, quantization, fan-out slots, and output names
 are preserved; lowerer symbols remain compatibility wrappers.
 
+The final channel-last-input/channel-first-Pad repair also uses this indexed
+contract. It enumerates only `PAD`, `PADV2`, and `MIRROR_PAD` roots, retains the
+existing full static input/output/padding shape proof, rewires the selected Pad
+input through `ModelIRGraphIndex`, and inserts the required NHWC-to-NCHW
+Transpose differentially. Each successful insertion restarts from the updated
+index, preserving graph order without rebuilding producer/consumer maps or
+mutating the operator list directly. The late lowerer call supplies the active
+`LayoutState`, which is synchronized after newly materialized adapter tensors
+are added.
+
 The same Pad module owns the guarded
 `Transpose → Pad → Mul → Transpose → Add` NHWC propagation rewrite. It proves
 static broadcast compatibility, rotates Pad and rank-four Mul constants only
