@@ -198,6 +198,99 @@ def _all_unary_model(*, fanout_input: int | None = None) -> ModelIR:
     return model_ir
 
 
+def _pad_model(
+    *,
+    boundary: str | None = None,
+    shared_pads: bool = False,
+    shared_adapter: bool = False,
+) -> ModelIR:
+    model_ir = _model()
+    model_ir.tensors["x1_nhwc"].shape = [1, 4, 7, 3]
+    model_ir.tensors["x1_nhwc"].shape_signature = [1, 4, 7, 3]
+    model_ir.tensors["x1_nchw"].shape = [1, 3, 4, 7]
+    model_ir.tensors["x1_nchw"].shape_signature = [1, 3, 4, 7]
+    pad_output_shape = (
+        [1, 3, 9, 7]
+        if boundary == "spatial_shape_mismatch"
+        else [1, 3, 5, 7]
+    )
+    if boundary == "invalid_pad_output_rank":
+        pad_output_shape = [1, 3, 5]
+    pads_data = np.asarray(
+        [[0, 0], [0, 0], [0, 1], [0, 0]],
+        dtype=np.int32,
+    )
+    if boundary == "invalid_pads_shape":
+        pads_data = np.asarray(
+            [[0, 0], [0, 0], [0, 1]],
+            dtype=np.int32,
+        )
+    model_ir.tensors["pads_nchw"] = TensorIR(
+        "pads_nchw",
+        "INT32",
+        list(pads_data.shape),
+        list(pads_data.shape),
+        data=None if boundary == "missing_pads_data" else pads_data,
+    )
+    model_ir.tensors["pad_value"] = TensorIR(
+        "pad_value",
+        "FLOAT32",
+        [1],
+        [1],
+        data=np.asarray([0.25], dtype=np.float32),
+    )
+    model_ir.tensors["x1_pad"] = _tensor("x1_pad", pad_output_shape)
+    model_ir.operators.insert(
+        2,
+        OperatorIR(
+            "MIRROR_PAD" if boundary == "unsupported_pad" else "PAD",
+            ["x1_nchw", "pads_nchw", "pad_value"],
+            ["x1_pad"],
+        ),
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    concat_op.inputs = ["x0_nchw", "x1_pad"]
+
+    if boundary == "pad_output_fanout":
+        model_ir.tensors["pad_side"] = _tensor(
+            "pad_side",
+            list(pad_output_shape),
+        )
+        model_ir.outputs.append("pad_side")
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", ["x1_pad"], ["pad_side"])
+        )
+    if boundary == "public_pad_output":
+        model_ir.outputs.append("x1_pad")
+    if boundary == "public_pad_adapter":
+        model_ir.outputs.append("x1_nchw")
+    if shared_adapter:
+        model_ir.tensors["adapter_side"] = _tensor(
+            "adapter_side",
+            [1, 3, 4, 7],
+        )
+        model_ir.outputs.append("adapter_side")
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", ["x1_nchw"], ["adapter_side"])
+        )
+    if shared_pads:
+        model_ir.tensors["outside_pad"] = _tensor(
+            "outside_pad",
+            [1, 2, 6, 7],
+        )
+        model_ir.outputs.append("outside_pad")
+        model_ir.operators.append(
+            OperatorIR(
+                "PAD",
+                ["x0_nchw", "pads_nchw", "pad_value"],
+                ["outside_pad"],
+            )
+        )
+    return model_ir
+
+
 def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
     assert actual.inputs == expected.inputs
     assert actual.outputs == expected.outputs
@@ -404,6 +497,104 @@ def test_nhwc_all_unary_rejects_fanout_without_partial_mutation(
     fanout_input: int,
 ) -> None:
     model_ir = _all_unary_model(fanout_input=fanout_input)
+    original = deepcopy(model_ir)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
+    _assert_model_equal(model_ir, original)
+
+
+def test_nhwc_pad_plus_direct_pre_concat_is_indexed() -> None:
+    model_ir = _pad_model(shared_adapter=True)
+    model_ir.tensors["x1_pad"].quantization = QuantParamIR(
+        scale=[0.25] * 3,
+        zero_point=[0] * 3,
+        quantized_dimension=1,
+    )
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    pad_op = next(op for op in model_ir.operators if op.op_type == "PAD")
+    assert pad_op.inputs == ["x1_nhwc", "pads_nchw", "pad_value"]
+    np.testing.assert_array_equal(
+        model_ir.tensors["pads_nchw"].data,
+        np.asarray(
+            [[0, 0], [0, 1], [0, 0], [0, 0]],
+            dtype=np.int32,
+        ),
+    )
+    assert model_ir.tensors["x1_pad"].shape == [1, 5, 7, 3]
+    quantization = model_ir.tensors["x1_pad"].quantization
+    assert isinstance(quantization, QuantParamIR)
+    assert quantization.quantized_dimension == 3
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    assert concat_op.inputs == ["x0_nhwc", "x1_pad"]
+    assert concat_op.options["axis"] == 3
+    remaining_transposes = [
+        op for op in model_ir.operators if op.op_type == "TRANSPOSE"
+    ]
+    assert [op.outputs for op in remaining_transposes] == [["x1_nchw"]]
+    pad_event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_pad"
+    )
+    assert pad_event["status"] == "changed"
+    assert pad_event["metrics"]["snapshot_count"] == 1
+    assert pad_event["metrics"]["fingerprint_count"] == 0
+
+
+def test_nhwc_pad_clones_shared_pads_constant() -> None:
+    model_ir = _pad_model(shared_pads=True)
+    original_pads = np.array(model_ir.tensors["pads_nchw"].data, copy=True)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    pad_ops = [op for op in model_ir.operators if op.op_type == "PAD"]
+    rewritten_pad = next(op for op in pad_ops if op.outputs == ["x1_pad"])
+    outside_pad = next(op for op in pad_ops if op.outputs == ["outside_pad"])
+    assert outside_pad.inputs[1] == "pads_nchw"
+    np.testing.assert_array_equal(
+        model_ir.tensors["pads_nchw"].data,
+        original_pads,
+    )
+    rewritten_pads_name = rewritten_pad.inputs[1]
+    assert rewritten_pads_name != "pads_nchw"
+    np.testing.assert_array_equal(
+        model_ir.tensors[rewritten_pads_name].data,
+        np.asarray(
+            [[0, 0], [0, 1], [0, 0], [0, 0]],
+            dtype=np.int32,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "unsupported_pad",
+        "pad_output_fanout",
+        "public_pad_output",
+        "public_pad_adapter",
+        "missing_pads_data",
+        "invalid_pads_shape",
+        "invalid_pad_output_rank",
+        "spatial_shape_mismatch",
+    ],
+)
+def test_nhwc_pad_plus_direct_rejects_unsafe_boundary(
+    boundary: str,
+) -> None:
+    model_ir = _pad_model(boundary=boundary)
     original = deepcopy(model_ir)
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
+
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
@@ -20,13 +22,19 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_outputs,
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
-from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR
+from onnx2tf.tflite_builder.ir import (
+    ModelIR,
+    OperatorIR,
+    QuantParamIR,
+    TensorIR,
+)
 
 
 _PERM_NHWC_TO_NCHW = [0, 3, 1, 2]
 _PERM_NCHW_TO_NHWC = [0, 2, 3, 1]
 _DIRECT_STATS_KEY = "optimized_transpose_pre_concat_nhwc_direct_chains"
 _UNARY_STATS_KEY = "optimized_transpose_pre_concat_nhwc_unary_chains"
+_PAD_STATS_KEY = "optimized_transpose_pre_concat_nhwc_pad_chains"
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
 
@@ -38,6 +46,10 @@ class _NhwcConcatInputPlan:
     output_name: str
     remove_adapter: bool
     unary_op: Optional[OperatorIR] = None
+    pad_op: Optional[OperatorIR] = None
+    pads_tensor_name: Optional[str] = None
+    pads_nhwc: Optional[np.ndarray] = None
+    clone_pads: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,6 +78,246 @@ def _clone_nhwc_quantization(quantization: Any) -> Any:
     return cloned
 
 
+def _unique_tensor_name(model_ir: ModelIR, base: str) -> str:
+    name = str(base)
+    suffix = 1
+    while name in model_ir.tensors:
+        name = f"{base}_{suffix}"
+        suffix += 1
+    return name
+
+
+def _resolve_direct_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    input_name: str,
+    concat_index: int,
+    model_outputs: set[str],
+) -> Optional[_NhwcConcatInputPlan]:
+    adapter_op = graph_index.producer(input_name)
+    if (
+        adapter_op is None
+        or str(adapter_op.op_type) != "TRANSPOSE"
+        or len(adapter_op.inputs) < 2
+        or len(adapter_op.outputs) != 1
+        or str(adapter_op.outputs[0]) != input_name
+        or _read_transpose_perm(model_ir, adapter_op)
+        != _PERM_NHWC_TO_NCHW
+    ):
+        return None
+    source_name = str(adapter_op.inputs[0])
+    source_tensor = model_ir.tensors.get(source_name)
+    consumers = set(graph_index.consumer_indices(input_name))
+    if (
+        source_tensor is None
+        or len(list(source_tensor.shape)) != 4
+        or int(concat_index) not in consumers
+    ):
+        return None
+    return _NhwcConcatInputPlan(
+        kind="direct",
+        adapter_op=adapter_op,
+        source_name=source_name,
+        output_name=input_name,
+        remove_adapter=(
+            consumers == {int(concat_index)}
+            and input_name not in model_outputs
+        ),
+    )
+
+
+def _resolve_unary_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    input_name: str,
+    concat_index: int,
+    model_outputs: set[str],
+) -> Optional[_NhwcConcatInputPlan]:
+    unary_op = graph_index.producer(input_name)
+    unary_index = (
+        None if unary_op is None else graph_index.operator_index(unary_op)
+    )
+    if (
+        unary_op is None
+        or unary_index is None
+        or str(unary_op.op_type) not in _UNARY_OPS
+        or len(unary_op.inputs) != 1
+        or len(unary_op.outputs) != 1
+        or str(unary_op.outputs[0]) != input_name
+        or input_name in model_outputs
+        or set(graph_index.consumer_indices(input_name))
+        != {int(concat_index)}
+    ):
+        return None
+
+    adapter_output_name = str(unary_op.inputs[0])
+    adapter_op = graph_index.producer(adapter_output_name)
+    adapter_index = (
+        None if adapter_op is None else graph_index.operator_index(adapter_op)
+    )
+    if (
+        adapter_op is None
+        or adapter_index is None
+        or str(adapter_op.op_type) != "TRANSPOSE"
+        or len(adapter_op.inputs) < 2
+        or len(adapter_op.outputs) != 1
+        or str(adapter_op.outputs[0]) != adapter_output_name
+        or _read_transpose_perm(model_ir, adapter_op)
+        != _PERM_NHWC_TO_NCHW
+        or adapter_output_name in model_outputs
+        or set(graph_index.consumer_indices(adapter_output_name))
+        != {int(unary_index)}
+    ):
+        return None
+
+    source_name = str(adapter_op.inputs[0])
+    source_tensor = model_ir.tensors.get(source_name)
+    output_tensor = model_ir.tensors.get(input_name)
+    if (
+        source_tensor is None
+        or len(list(source_tensor.shape)) != 4
+        or output_tensor is None
+        or len(list(output_tensor.shape)) != 4
+    ):
+        return None
+    return _NhwcConcatInputPlan(
+        kind="unary",
+        adapter_op=adapter_op,
+        unary_op=unary_op,
+        source_name=source_name,
+        output_name=input_name,
+        remove_adapter=True,
+    )
+
+
+def _resolve_pad_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    input_name: str,
+    concat_index: int,
+    model_outputs: set[str],
+    public_names: set[str],
+) -> Optional[_NhwcConcatInputPlan]:
+    pad_op = graph_index.producer(input_name)
+    pad_index = (
+        None if pad_op is None else graph_index.operator_index(pad_op)
+    )
+    if (
+        pad_op is None
+        or pad_index is None
+        or str(pad_op.op_type) != "PAD"
+        or len(pad_op.inputs) < 2
+        or len(pad_op.outputs) != 1
+        or str(pad_op.outputs[0]) != input_name
+        or input_name in model_outputs
+        or set(graph_index.consumer_indices(input_name))
+        != {int(concat_index)}
+    ):
+        return None
+
+    adapter_output_name = str(pad_op.inputs[0])
+    adapter_op = graph_index.producer(adapter_output_name)
+    adapter_index = (
+        None if adapter_op is None else graph_index.operator_index(adapter_op)
+    )
+    if (
+        adapter_op is None
+        or adapter_index is None
+        or str(adapter_op.op_type) != "TRANSPOSE"
+        or len(adapter_op.inputs) < 2
+        or len(adapter_op.outputs) != 1
+        or str(adapter_op.outputs[0]) != adapter_output_name
+        or _read_transpose_perm(model_ir, adapter_op)
+        != _PERM_NHWC_TO_NCHW
+        or adapter_output_name in model_outputs
+    ):
+        return None
+
+    source_name = str(adapter_op.inputs[0])
+    source_tensor = model_ir.tensors.get(source_name)
+    output_tensor = model_ir.tensors.get(input_name)
+    pads_tensor_name = str(pad_op.inputs[1])
+    pads_tensor = model_ir.tensors.get(pads_tensor_name)
+    if (
+        source_tensor is None
+        or output_tensor is None
+        or len(list(output_tensor.shape)) != 4
+        or pads_tensor is None
+        or pads_tensor.data is None
+    ):
+        return None
+    try:
+        pads_pairs = np.asarray(pads_tensor.data).reshape(4, 2)
+    except Exception:
+        return None
+    if int(pads_pairs.size) != 8:
+        return None
+    pads_nhwc = np.asarray(
+        [pads_pairs[0], pads_pairs[2], pads_pairs[3], pads_pairs[1]],
+        dtype=pads_pairs.dtype,
+    )
+    return _NhwcConcatInputPlan(
+        kind="pad",
+        adapter_op=adapter_op,
+        pad_op=pad_op,
+        source_name=source_name,
+        output_name=input_name,
+        remove_adapter=(
+            set(graph_index.consumer_indices(adapter_output_name))
+            == {int(pad_index)}
+        ),
+        pads_tensor_name=pads_tensor_name,
+        pads_nhwc=np.asarray(pads_nhwc),
+        clone_pads=(
+            pads_tensor_name in public_names
+            or set(graph_index.consumer_indices(pads_tensor_name))
+            != {int(pad_index)}
+        ),
+    )
+
+
+def _resolve_family_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    family: str,
+    input_name: str,
+    concat_index: int,
+    model_outputs: set[str],
+    public_names: set[str],
+) -> Optional[_NhwcConcatInputPlan]:
+    direct_plan = _resolve_direct_input_plan(
+        model_ir,
+        graph_index,
+        input_name=input_name,
+        concat_index=concat_index,
+        model_outputs=model_outputs,
+    )
+    if direct_plan is not None:
+        return direct_plan
+    if family == "unary":
+        return _resolve_unary_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+        )
+    if family == "pad":
+        return _resolve_pad_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+            public_names=public_names,
+        )
+    return None
+
+
 def _resolve_nhwc_concat_candidate(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -75,6 +327,10 @@ def _resolve_nhwc_concat_candidate(
     """Find one strict float-path direct or unary Concat island."""
 
     model_outputs = {str(name) for name in model_ir.outputs}
+    public_names = {
+        *[str(name) for name in model_ir.inputs],
+        *model_outputs,
+    }
     for concat_op in model_ir.operators:
         concat_index = graph_index.operator_index(concat_op)
         if (
@@ -101,105 +357,19 @@ def _resolve_nhwc_concat_candidate(
         input_plans: List[_NhwcConcatInputPlan] = []
         inputs_valid = True
         for input_name in [str(name) for name in concat_op.inputs]:
-            adapter_op = graph_index.producer(input_name)
-            if (
-                adapter_op is not None
-                and str(adapter_op.op_type) == "TRANSPOSE"
-                and len(adapter_op.inputs) >= 2
-                and len(adapter_op.outputs) == 1
-                and str(adapter_op.outputs[0]) == input_name
-                and _read_transpose_perm(model_ir, adapter_op)
-                == _PERM_NHWC_TO_NCHW
-            ):
-                source_name = str(adapter_op.inputs[0])
-                source_tensor = model_ir.tensors.get(source_name)
-                adapter_consumers = set(graph_index.consumer_indices(input_name))
-                if (
-                    source_tensor is None
-                    or len(list(source_tensor.shape)) != 4
-                    or int(concat_index) not in adapter_consumers
-                ):
-                    inputs_valid = False
-                    break
-                input_plans.append(
-                    _NhwcConcatInputPlan(
-                        kind="direct",
-                        adapter_op=adapter_op,
-                        source_name=source_name,
-                        output_name=input_name,
-                        remove_adapter=(
-                            adapter_consumers == {int(concat_index)}
-                            and input_name not in model_outputs
-                        ),
-                    )
-                )
-                continue
-
-            if family != "unary":
-                inputs_valid = False
-                break
-            unary_op = graph_index.producer(input_name)
-            unary_index = (
-                None
-                if unary_op is None
-                else graph_index.operator_index(unary_op)
+            input_plan = _resolve_family_input_plan(
+                model_ir,
+                graph_index,
+                family=family,
+                input_name=input_name,
+                concat_index=int(concat_index),
+                model_outputs=model_outputs,
+                public_names=public_names,
             )
-            if (
-                unary_op is None
-                or unary_index is None
-                or str(unary_op.op_type) not in _UNARY_OPS
-                or len(unary_op.inputs) != 1
-                or len(unary_op.outputs) != 1
-                or str(unary_op.outputs[0]) != input_name
-                or input_name in model_outputs
-                or set(graph_index.consumer_indices(input_name))
-                != {int(concat_index)}
-            ):
+            if input_plan is None:
                 inputs_valid = False
                 break
-            adapter_output_name = str(unary_op.inputs[0])
-            adapter_op = graph_index.producer(adapter_output_name)
-            adapter_index = (
-                None
-                if adapter_op is None
-                else graph_index.operator_index(adapter_op)
-            )
-            if (
-                adapter_op is None
-                or adapter_index is None
-                or str(adapter_op.op_type) != "TRANSPOSE"
-                or len(adapter_op.inputs) < 2
-                or len(adapter_op.outputs) != 1
-                or str(adapter_op.outputs[0]) != adapter_output_name
-                or _read_transpose_perm(model_ir, adapter_op)
-                != _PERM_NHWC_TO_NCHW
-                or adapter_output_name in model_outputs
-                or set(graph_index.consumer_indices(adapter_output_name))
-                != {int(unary_index)}
-            ):
-                inputs_valid = False
-                break
-            source_name = str(adapter_op.inputs[0])
-            source_tensor = model_ir.tensors.get(source_name)
-            output_tensor = model_ir.tensors.get(input_name)
-            if (
-                source_tensor is None
-                or len(list(source_tensor.shape)) != 4
-                or output_tensor is None
-                or len(list(output_tensor.shape)) != 4
-            ):
-                inputs_valid = False
-                break
-            input_plans.append(
-                _NhwcConcatInputPlan(
-                    kind="unary",
-                    adapter_op=adapter_op,
-                    unary_op=unary_op,
-                    source_name=source_name,
-                    output_name=input_name,
-                    remove_adapter=True,
-                )
-            )
+            input_plans.append(input_plan)
         if not inputs_valid or not input_plans:
             continue
         unary_count = sum(plan.kind == "unary" for plan in input_plans)
@@ -207,8 +377,13 @@ def _resolve_nhwc_concat_candidate(
             continue
         if family == "unary" and unary_count < 1:
             continue
+        pad_count = sum(plan.kind == "pad" for plan in input_plans)
+        if family == "pad" and (
+            pad_count < 1 or len(input_plans) <= pad_count
+        ):
+            continue
 
-        if family == "unary":
+        if family in {"unary", "pad"}:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
             for input_plan in input_plans:
@@ -221,7 +396,7 @@ def _resolve_nhwc_concat_candidate(
                     shapes_compatible = False
                     break
                 shape = [int(value) for value in tensor.shape]
-                if input_plan.kind == "unary":
+                if input_plan.kind in {"unary", "pad"}:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
                     reference_shape = shape
@@ -290,6 +465,17 @@ def _has_nhwc_unary_concat_candidate(pass_state: ModelIRPassState) -> bool:
     )
 
 
+def _has_nhwc_pad_concat_candidate(pass_state: ModelIRPassState) -> bool:
+    return (
+        _resolve_nhwc_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="pad",
+        )
+        is not None
+    )
+
+
 def _optimize_transpose_pre_concat_nhwc_direct_chains(
     model_ir: ModelIR,
     *,
@@ -320,6 +506,21 @@ def _optimize_transpose_pre_concat_nhwc_unary_chains(
     )
 
 
+def _optimize_transpose_pre_concat_nhwc_pad_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
+    return _optimize_transpose_pre_concat_nhwc_family(
+        model_ir,
+        family="pad",
+        stats_key=_PAD_STATS_KEY,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+
 def _optimize_transpose_pre_concat_nhwc_family(
     model_ir: ModelIR,
     *,
@@ -342,6 +543,7 @@ def _optimize_transpose_pre_concat_nhwc_family(
             break
 
         new_concat_inputs: List[str] = []
+        materialized_pads: Dict[str, str] = {}
         for input_plan in candidate.input_plans:
             if input_plan.unary_op is not None:
                 _set_operator_inputs(
@@ -358,6 +560,61 @@ def _optimize_transpose_pre_concat_nhwc_family(
                 if unary_output_tensor is not None:
                     unary_output_tensor.quantization = _clone_nhwc_quantization(
                         unary_output_tensor.quantization
+                    )
+                new_concat_inputs.append(input_plan.output_name)
+            elif input_plan.pad_op is not None:
+                assert input_plan.pads_tensor_name is not None
+                assert input_plan.pads_nhwc is not None
+                pads_tensor_name = input_plan.pads_tensor_name
+                rewritten_pads_name = materialized_pads.get(pads_tensor_name)
+                if rewritten_pads_name is None:
+                    pads_tensor = model_ir.tensors[pads_tensor_name]
+                    rewritten_pads_name = pads_tensor_name
+                    if input_plan.clone_pads:
+                        rewritten_pads_name = _unique_tensor_name(
+                            model_ir,
+                            f"{pads_tensor_name}_nhwc",
+                        )
+                        model_ir.tensors[rewritten_pads_name] = TensorIR(
+                            name=rewritten_pads_name,
+                            dtype=str(pads_tensor.dtype),
+                            shape=[4, 2],
+                            shape_signature=[4, 2],
+                            data=np.array(input_plan.pads_nhwc, copy=True),
+                            is_variable=bool(pads_tensor.is_variable),
+                            quantization=_clone_quantization(
+                                pads_tensor.quantization
+                            ),
+                            logical_layout=str(pads_tensor.logical_layout),
+                            physical_layout=str(pads_tensor.physical_layout),
+                            onnx_tensor_name=pads_tensor.onnx_tensor_name,
+                        )
+                    else:
+                        pads_tensor.data = np.array(
+                            input_plan.pads_nhwc,
+                            copy=True,
+                        )
+                        pads_tensor.shape = [4, 2]
+                        pads_tensor.shape_signature = [4, 2]
+                    materialized_pads[pads_tensor_name] = rewritten_pads_name
+
+                new_pad_inputs = [str(name) for name in input_plan.pad_op.inputs]
+                new_pad_inputs[0] = input_plan.source_name
+                new_pad_inputs[1] = rewritten_pads_name
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=input_plan.pad_op,
+                    new_inputs=new_pad_inputs,
+                    graph_index=graph_index,
+                )
+                pad_output_tensor = model_ir.tensors.get(input_plan.output_name)
+                _permute_tensor_metadata_if_rank_matches(
+                    pad_output_tensor,
+                    _PERM_NCHW_TO_NHWC,
+                )
+                if pad_output_tensor is not None:
+                    pad_output_tensor.quantization = _clone_nhwc_quantization(
+                        pad_output_tensor.quantization
                     )
                 new_concat_inputs.append(input_plan.output_name)
             else:
@@ -459,6 +716,14 @@ def run_nhwc_concat_layout_cleanup(
         )
         return {**stats, "changed": bool(stats.get(_UNARY_STATS_KEY, 0))}
 
+    def _run_pad(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_pre_concat_nhwc_pad_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {**stats, "changed": bool(stats.get(_PAD_STATS_KEY, 0))}
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -478,9 +743,21 @@ def run_nhwc_concat_layout_cleanup(
                 priority=20,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_pad",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_pad,
+                precondition=_has_nhwc_pad_concat_candidate,
+                priority=30,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
-        default_details={_DIRECT_STATS_KEY: 0, _UNARY_STATS_KEY: 0},
+        default_details={
+            _DIRECT_STATS_KEY: 0,
+            _UNARY_STATS_KEY: 0,
+            _PAD_STATS_KEY: 0,
+        },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(
             candidate_model,

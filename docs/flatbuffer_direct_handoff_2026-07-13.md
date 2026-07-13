@@ -1,15 +1,16 @@
 # flatbuffer_direct refactor handoff — 2026-07-13
 
-## `fb-refactor4` rank-four direct/unary checkpoint
+## `fb-refactor4` rank-four direct/unary/Pad checkpoint
 
-The first two bounded families of the 2,117-line rank-four generic NHWC
+The first three bounded families of the 2,117-line rank-four generic NHWC
 pre-Concat matcher are now separated. `passes/nhwc_concat_layout.py` owns the
 strict all-direct float path and the one-or-more-unary float path, with or
 without direct inputs. The unary allowlist is RELU, RELU6, LOGISTIC, TANH, and
-GELU. Both share one
+GELU. It also owns the one-or-more-Pad-plus-direct path. All three share one
 `ModelIRGraphIndex`/`LayoutState` pass group and run transactionally under
 stable IDs `layout.nhwc_pre_concat_direct` and
-`layout.nhwc_pre_concat_unary` at all seven production positions.
+`layout.nhwc_pre_concat_unary`, and `layout.nhwc_pre_concat_pad` at all seven
+production positions.
 
 The direct pass removes only exclusive, non-public leading adapters. Shared or
 public direct adapters remain for their other consumers while the Concat is
@@ -21,11 +22,15 @@ matching the previous intentional behavior. Canonical per-axis quantization
 now remaps NCHW dimension 1 to NHWC dimension 3. The unary family additionally
 requires exclusive, non-public unary adapters and output, plus compatible
 NHWC batch/spatial metadata, and remaps unary output quantization metadata.
+The Pad family preserves optional Pad inputs, retains a shared leading
+adapter, and remaps Pad output metadata. Exclusive pads constants are updated
+in place; pads constants shared with any other operator or public boundary are
+cloned and only the selected Pad input is rewired, preserving other consumers.
 
 The lowerer compatibility helper still returns the original aggregate statistic
 and runs the legacy matcher after the direct pass. The legacy matcher now
-skips the two indexed families, but continues to own swish, split, slice, Add,
-Pad, PReLU, Dequantize, and Softmax inputs plus the separate
+skips the three indexed families, but continues to own swish, split, slice,
+Add, PReLU, Dequantize, and Softmax inputs plus the separate
 quantized-post path.
 
 Changed files for this checkpoint:
@@ -38,7 +43,7 @@ Changed files for this checkpoint:
 
 Focused verification, all in the existing `uv` environment:
 
-- Direct and unary ModelIR characterization: `24 passed`.
+- Direct, unary, and Pad ModelIR characterization: `34 passed`.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.
@@ -48,9 +53,9 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should audit the bounded Pad-plus-direct family, beginning with its
-constant ownership and copy-on-write behavior. Do not begin with a Tier 0–4
-corpus run, and do not create a pull request.
+Next work should audit the bounded Dequantize-plus-direct family and its
+quantization provenance. Do not begin with a Tier 0–4 corpus run, and do not
+create a pull request.
 
 The section below records the preceding rank-five checkpoint and remains as
 historical context.
