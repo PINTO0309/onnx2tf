@@ -8,8 +8,6 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _all_per_tensor_quantized,
     _broadcast_shape_signatures,
     _broadcast_static_shapes,
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _invert_perm,
     _is_singleton_constant_tensor,
@@ -69,6 +67,37 @@ _TRANSPOSE_UNARY_BINARY_FANOUT_UNARY_OPS = frozenset(
 _TRANSPOSE_UNARY_BINARY_FANOUT_BINARY_OPS = frozenset(
     {"ADD", "SUB", "MUL", "DIV"}
 )
+_TRAILING_OUTPUT_LAYOUT_PERMS = frozenset(
+    {
+        (0, 2, 1),
+        (0, 3, 1, 2),
+        (0, 2, 3, 1),
+        (0, 4, 1, 2, 3),
+        (0, 2, 3, 4, 1),
+    }
+)
+_TRAILING_OUTPUT_UNARY_OPS = frozenset(
+    {
+        "RELU",
+        "RELU6",
+        "RELU_0_TO_1",
+        "HARD_SWISH",
+        "LEAKY_RELU",
+        "LOGISTIC",
+        "TANH",
+        "GELU",
+        "ABS",
+        "NEG",
+        "SQRT",
+        "EXP",
+        "FLOOR",
+        "CEIL",
+    }
+)
+_TRAILING_OUTPUT_BINARY_OPS = frozenset(
+    {"ADD", "SUB", "MUL", "DIV", "MAXIMUM", "MINIMUM"}
+)
+_PRESERVE_LAYOUT_BOUNDARY_MARKER = "__preserve_layout_boundary__"
 
 
 def _is_identity_perm(perm: List[int]) -> bool:
@@ -86,6 +115,58 @@ def _is_inverse_perm(perm_a: List[int], perm_b: List[int]) -> bool:
         if perm_b[value] != idx:
             return False
     return True
+
+
+def _is_symmetric_terminal_binary_bridge_candidate(
+    model_ir: ModelIR,
+    *,
+    pre_input_name: str,
+    perm_pre: List[int],
+    consumers: Dict[str, List[int]],
+    producers: Dict[str, int],
+) -> bool:
+    producer_idx = producers.get(pre_input_name)
+    if producer_idx is None:
+        return False
+    producer_op = model_ir.operators[int(producer_idx)]
+    if (
+        str(producer_op.op_type) not in {"ADD", "SUB", "MUL", "DIV"}
+        or len(producer_op.inputs) != 2
+        or len(producer_op.outputs) != 1
+        or str(producer_op.outputs[0]) != pre_input_name
+    ):
+        return False
+    mid_in0 = str(producer_op.inputs[0])
+    mid_in1 = str(producer_op.inputs[1])
+    pre0_idx = producers.get(mid_in0)
+    pre1_idx = producers.get(mid_in1)
+    if pre0_idx is None or pre1_idx is None:
+        return False
+    pre0_op = model_ir.operators[int(pre0_idx)]
+    pre1_op = model_ir.operators[int(pre1_idx)]
+    if (
+        str(pre0_op.op_type) != "TRANSPOSE"
+        or str(pre1_op.op_type) != "TRANSPOSE"
+        or len(pre0_op.inputs) < 2
+        or len(pre1_op.inputs) < 2
+        or len(pre0_op.outputs) != 1
+        or len(pre1_op.outputs) != 1
+        or str(pre0_op.outputs[0]) != mid_in0
+        or str(pre1_op.outputs[0]) != mid_in1
+        or set(int(index) for index in consumers.get(mid_in0, []))
+        != {int(producer_idx)}
+        or set(int(index) for index in consumers.get(mid_in1, []))
+        != {int(producer_idx)}
+    ):
+        return False
+    perm_mid0 = _read_transpose_perm(model_ir, pre0_op)
+    perm_mid1 = _read_transpose_perm(model_ir, pre1_op)
+    return bool(
+        perm_mid0 is not None
+        and perm_mid1 is not None
+        and perm_mid0 == perm_mid1
+        and _is_inverse_perm(perm_mid0, perm_pre)
+    )
 
 def _optimize_layout_transpose_chains(
     model_ir: ModelIR,
@@ -1580,7 +1661,12 @@ def run_transpose_unary_binary_fanout_bridge_cleanup(
 
 
 
-def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_trailing_output_transpose_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate trailing layout transposes on output-side passthrough chains.
 
@@ -1597,36 +1683,12 @@ def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) ->
     - Layout metadata is updated by applying inverse(P).
     """
     rewritten = 0
-    preserve_layout_boundary_marker = "__preserve_layout_boundary__"
-    layout_perms = {
-        (0, 2, 1),       # NCW -> NWC
-        (0, 3, 1, 2),    # NHWC -> NCHW
-        (0, 2, 3, 1),    # NCHW -> NHWC
-        (0, 4, 1, 2, 3), # NDHWC -> NCDHW
-        (0, 2, 3, 4, 1), # NCDHW -> NDHWC
-    }
-    unary_passthrough_ops = {
-        "RELU",
-        "RELU6",
-        "RELU_0_TO_1",
-        "HARD_SWISH",
-        "LEAKY_RELU",
-        "LOGISTIC",
-        "TANH",
-        "GELU",
-        "ABS",
-        "NEG",
-        "SQRT",
-        "EXP",
-        "FLOOR",
-        "CEIL",
-    }
-    binary_passthrough_ops = {"ADD", "SUB", "MUL", "DIV", "MAXIMUM", "MINIMUM"}
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -1635,7 +1697,9 @@ def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) ->
             if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
                 continue
             pre_opts = dict(pre_op.options) if isinstance(pre_op.options, dict) else {}
-            preserve_layout_boundary = bool(pre_opts.get(preserve_layout_boundary_marker, False))
+            preserve_layout_boundary = bool(
+                pre_opts.get(_PRESERVE_LAYOUT_BOUNDARY_MARKER, False)
+            )
 
             pre_input_name = str(pre_op.inputs[0])
             pre_output_name = str(pre_op.outputs[0])
@@ -1643,7 +1707,7 @@ def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) ->
             perm_pre = _read_transpose_perm(model_ir, pre_op)
             if perm_pre is None:
                 continue
-            if tuple(int(v) for v in list(perm_pre)) not in layout_perms:
+            if tuple(int(v) for v in list(perm_pre)) not in _TRAILING_OUTPUT_LAYOUT_PERMS:
                 # Keep non-layout terminal transposes (e.g. [1,0]) to preserve
                 # ONNX output contracts such as [N,C] descriptor tensors.
                 continue
@@ -1665,7 +1729,7 @@ def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) ->
                 op = model_ir.operators[int(op_idx)]
                 op_type = str(op.op_type)
 
-                if op_type in unary_passthrough_ops:
+                if op_type in _TRAILING_OUTPUT_UNARY_OPS:
                     if len(op.inputs) != 1 or len(op.outputs) != 1:
                         break
                     if str(op.inputs[0]) != current_tensor:
@@ -1677,7 +1741,7 @@ def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) ->
                     current_tensor = out_name
                     continue
 
-                if op_type in binary_passthrough_ops:
+                if op_type in _TRAILING_OUTPUT_BINARY_OPS:
                     if len(op.inputs) != 2 or len(op.outputs) != 1:
                         break
                     input_0 = str(op.inputs[0])
@@ -1708,46 +1772,13 @@ def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) ->
                     continue
                 # Leave terminal transpose for symmetric transpose-binary patterns so
                 # dedicated bridge passes can remove both pre-transposes safely.
-                terminal_binary_bridge_candidate = False
-                producer_idx = producers.get(pre_input_name, None)
-                if producer_idx is not None:
-                    producer_op = model_ir.operators[int(producer_idx)]
-                    producer_type = str(producer_op.op_type)
-                    if (
-                        producer_type in {"ADD", "SUB", "MUL", "DIV"}
-                        and len(producer_op.inputs) == 2
-                        and len(producer_op.outputs) == 1
-                        and str(producer_op.outputs[0]) == pre_input_name
-                    ):
-                        mid_in0 = str(producer_op.inputs[0])
-                        mid_in1 = str(producer_op.inputs[1])
-                        pre0_idx = producers.get(mid_in0, None)
-                        pre1_idx = producers.get(mid_in1, None)
-                        if pre0_idx is not None and pre1_idx is not None:
-                            pre0_op = model_ir.operators[int(pre0_idx)]
-                            pre1_op = model_ir.operators[int(pre1_idx)]
-                            if (
-                                str(pre0_op.op_type) == "TRANSPOSE"
-                                and str(pre1_op.op_type) == "TRANSPOSE"
-                                and len(pre0_op.inputs) >= 2
-                                and len(pre1_op.inputs) >= 2
-                                and len(pre0_op.outputs) == 1
-                                and len(pre1_op.outputs) == 1
-                                and str(pre0_op.outputs[0]) == mid_in0
-                                and str(pre1_op.outputs[0]) == mid_in1
-                                and set(int(v) for v in consumers.get(mid_in0, [])) == {int(producer_idx)}
-                                and set(int(v) for v in consumers.get(mid_in1, [])) == {int(producer_idx)}
-                            ):
-                                perm_mid0 = _read_transpose_perm(model_ir, pre0_op)
-                                perm_mid1 = _read_transpose_perm(model_ir, pre1_op)
-                                if (
-                                    perm_mid0 is not None
-                                    and perm_mid1 is not None
-                                    and perm_mid0 == perm_mid1
-                                    and _is_inverse_perm(perm_mid0, perm_pre)
-                                ):
-                                    terminal_binary_bridge_candidate = True
-                if terminal_binary_bridge_candidate:
+                if _is_symmetric_terminal_binary_bridge_candidate(
+                    model_ir,
+                    pre_input_name=pre_input_name,
+                    perm_pre=perm_pre,
+                    consumers=consumers,
+                    producers=producers,
+                ):
                     continue
 
                 if pre_output_name not in model_outputs:
@@ -1773,6 +1804,7 @@ def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) ->
                     model_ir=model_ir,
                     op=producer_op,
                     new_outputs=new_outputs,
+                    graph_index=graph_index,
                 )
                 src_tensor = model_ir.tensors.get(pre_input_name, None)
                 dst_tensor = model_ir.tensors.get(pre_output_name, None)
@@ -1785,7 +1817,7 @@ def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) ->
                         if src_tensor.shape_signature is not None
                         else [int(v) for v in list(src_tensor.shape)]
                     )
-                del model_ir.operators[int(pre_idx)]
+                graph_index.remove_operator(int(pre_idx))
                 rewritten += 1
                 changed = True
                 break
@@ -1808,13 +1840,14 @@ def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) ->
             # Rewire chain head to bypass pre-transpose.
             first_op = chain_ops[0]
             first_inputs = [str(v) for v in list(first_op.inputs)]
-            if str(first_op.op_type) in unary_passthrough_ops:
+            if str(first_op.op_type) in _TRAILING_OUTPUT_UNARY_OPS:
                 if len(first_inputs) != 1 or first_inputs[0] != pre_output_name:
                     continue
                 _set_operator_inputs(
                     model_ir=model_ir,
                     op=first_op,
                     new_inputs=[pre_input_name],
+                    graph_index=graph_index,
                 )
             else:
                 if len(first_inputs) != 2:
@@ -1832,6 +1865,7 @@ def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) ->
                     model_ir=model_ir,
                     op=first_op,
                     new_inputs=first_inputs,
+                    graph_index=graph_index,
                 )
 
             # Adjust metadata from transposed layout back to source layout.
@@ -1841,7 +1875,7 @@ def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) ->
                     perm_inv,
                 )
 
-            del model_ir.operators[int(pre_idx)]
+            graph_index.remove_operator(int(pre_idx))
             rewritten += 1
             changed = True
             break
@@ -1849,8 +1883,169 @@ def _optimize_trailing_output_transpose_passthrough_chains(model_ir: ModelIR) ->
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"rewritten_trailing_output_transpose_passthrough_chains": int(rewritten)}
+
+
+def run_trailing_output_transpose_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run guarded output-side layout Transpose passthrough cleanup."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            if str(operator.op_type) == "TRANSPOSE":
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        consumers = pass_state.graph_index.consumers
+        producers = pass_state.graph_index.producers
+        model_outputs = set(str(name) for name in candidate_model.outputs)
+
+        for pre_op in candidate_model.operators:
+            if (
+                str(pre_op.op_type) != "TRANSPOSE"
+                or len(pre_op.inputs) < 2
+                or len(pre_op.outputs) != 1
+            ):
+                continue
+            pre_options = (
+                dict(pre_op.options) if isinstance(pre_op.options, dict) else {}
+            )
+            preserve_boundary = bool(
+                pre_options.get(_PRESERVE_LAYOUT_BOUNDARY_MARKER, False)
+            )
+            pre_input_name = str(pre_op.inputs[0])
+            pre_output_name = str(pre_op.outputs[0])
+            perm_pre = _read_transpose_perm(candidate_model, pre_op)
+            if (
+                perm_pre is None
+                or tuple(int(value) for value in perm_pre)
+                not in _TRAILING_OUTPUT_LAYOUT_PERMS
+                or _invert_perm(perm_pre) is None
+            ):
+                continue
+
+            chain_ops: List[OperatorIR] = []
+            current_tensor = pre_output_name
+            while True:
+                current_users = consumers.get(current_tensor, [])
+                if len(current_users) != 1:
+                    break
+                operator = candidate_model.operators[int(current_users[0])]
+                operator_type = str(operator.op_type)
+                if operator_type in _TRAILING_OUTPUT_UNARY_OPS:
+                    if (
+                        len(operator.inputs) != 1
+                        or len(operator.outputs) != 1
+                        or str(operator.inputs[0]) != current_tensor
+                    ):
+                        break
+                    chain_ops.append(operator)
+                    current_tensor = str(operator.outputs[0])
+                    continue
+                if operator_type in _TRAILING_OUTPUT_BINARY_OPS:
+                    if len(operator.inputs) != 2 or len(operator.outputs) != 1:
+                        break
+                    input0 = str(operator.inputs[0])
+                    input1 = str(operator.inputs[1])
+                    if input0 == current_tensor:
+                        side_input_name = input1
+                    elif input1 == current_tensor:
+                        side_input_name = input0
+                    else:
+                        break
+                    if not _is_singleton_constant_tensor(
+                        candidate_model,
+                        side_input_name,
+                    ):
+                        break
+                    chain_ops.append(operator)
+                    current_tensor = str(operator.outputs[0])
+                    continue
+                break
+
+            if len(chain_ops) == 0:
+                if preserve_boundary:
+                    continue
+                if _is_symmetric_terminal_binary_bridge_candidate(
+                    candidate_model,
+                    pre_input_name=pre_input_name,
+                    perm_pre=perm_pre,
+                    consumers=consumers,
+                    producers=producers,
+                ):
+                    continue
+                if (
+                    pre_output_name not in model_outputs
+                    or len(consumers.get(pre_output_name, [])) != 0
+                ):
+                    continue
+                producer_idx = producers.get(pre_input_name)
+                if producer_idx is None:
+                    continue
+                producer_op = candidate_model.operators[int(producer_idx)]
+                if (
+                    str(producer_op.op_type) != "SOFTMAX"
+                    and pre_input_name
+                    in {str(name) for name in producer_op.outputs}
+                ):
+                    return True
+                continue
+
+            if current_tensor not in model_outputs:
+                continue
+            if preserve_boundary and not (
+                len(chain_ops) == 1 and str(chain_ops[0].op_type) == "TANH"
+            ):
+                continue
+            if len(consumers.get(current_tensor, [])) == 0:
+                return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_trailing_output_transpose_passthrough_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "rewritten_trailing_output_transpose_passthrough_chains",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.trailing_output_transpose_passthrough",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={
+            "rewritten_trailing_output_transpose_passthrough_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 

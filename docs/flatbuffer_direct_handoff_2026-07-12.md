@@ -2946,3 +2946,39 @@ passed 22 tests, followed by the full direct selection:
 ```text
 1129 passed, 5 deselected, 2 warnings in 149.30s
 ```
+
+### Indexed trailing output Transpose checkpoint
+
+The trailing-output implementation now accepts one differential
+`ModelIRGraphIndex` and the active `LayoutState`. Direct producer-output
+retargeting, chain-head input bypass, Transpose removal, inverse-permuted
+metadata, and pruning update those shared structures. The symmetric binary
+bridge exclusion was factored into one read-only predicate shared by the
+rewrite and candidate guard. `passes/layout_transpose.py` again has zero
+whole-graph producer/consumer builder calls and zero direct operator-list
+deletions.
+
+`run_trailing_output_transpose_cleanup` registers stable ID
+`layout.trailing_output_transpose_passthrough` in `LAYOUT_PLAN`. Its indexed
+guard distinguishes direct terminal and passthrough-chain cases and enforces
+the existing permutation, protected-boundary, public-output, internal-fan-out,
+Softmax, singleton-constant, and symmetric-bridge conditions before taking a
+transactional snapshot. All four production positions now use this runner and
+session diagnostics.
+
+Focused direct-terminal, passthrough-chain, protected-boundary,
+architecture/ownership, and irrelevant-graph efficiency validation passed 9
+tests. Tier 1 `superpoint.onnx` had no exact candidate: all four runner events
+skipped with zero snapshots and fingerprints. Sequential
+`-tb flatbuffer_direct -cotof` retained `max_abs=1.6666e-06`,
+`rmse=1.62079e-07`, cosine similarity `1`, and the strict pass result.
+
+The complete direct regression selection passed:
+
+```text
+1132 passed, 5 deselected, 2 warnings in 148.32s
+```
+
+No dependency or TensorFlow path was added. All inference remained sequential
+and single-process, and `/tmp/onnx2tf_trailing_output_superpoint*` was removed
+after metrics inspection.

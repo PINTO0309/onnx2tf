@@ -545,8 +545,21 @@ same family. It handles direct terminal output Transposes and strictly linear
 unary/singleton-binary tails while preserving protected layout boundaries,
 Softmax output contracts, symmetric binary bridge candidates, public names,
 and inverse-permuted metadata. The full 271-line implementation moved with an
-identical AST; the lowerer keeps a compatibility wrapper and its four
-production positions remain unchanged for the indexed-runner checkpoint.
+identical AST before indexed migration; the lowerer keeps a compatibility
+wrapper.
+
+All four production positions now invoke
+`run_trailing_output_transpose_cleanup`, registered as
+`layout.trailing_output_transpose_passthrough` in `LAYOUT_PLAN`. Model-only
+Transpose preflight avoids state construction on irrelevant graphs. The
+indexed guard follows the exact direct-terminal or unary/singleton-binary chain
+topology, shares the symmetric binary bridge predicate with the rewrite, and
+checks layout permutations, protected boundaries, public outputs, internal
+fan-out, and Softmax before snapshotting. Producer retargeting, chain-head
+rewiring, structural removal, metadata reconciliation, and pruning use one
+differential index and `LayoutState` transactionally. With this migration the
+family module again has no full producer/consumer map builders or direct
+operator-list deletion.
 
 General consecutive Reshape passthrough cleanup is also owned by
 `passes/graph_cleanup.py`. It covers metadata-identical no-op Reshapes,
