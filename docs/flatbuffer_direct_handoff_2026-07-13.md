@@ -204,3 +204,40 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_se_conv_superpoint` artifacts were removed after metrics
 inspection. SE-FC remains the next separate indexed migration unit.
+
+### Indexed SE-FC checkpoint
+
+The 977-line SE-FC implementation now accepts the shared
+`ModelIRGraphIndex` and `LayoutState`. All normal and alternate-path
+consumer/producer reads, cloned Mean-axis input replacement, pool/Mul/Conv/gate
+rewrites, canonical output and aliases, structural removals, pruning, metadata,
+and layout reconciliation use differential state. With SE-Conv already
+indexed, `passes/se_layout.py` now contains no whole-graph map builder or
+direct operator-list deletion.
+
+`run_se_fc_layout_cleanup` registers stable `LAYOUT_PLAN` ID
+`layout.se_fc_gate_nhwc`. Eight main-model positions receive the session layout
+state and diagnostics. The ninth fallback-IR position receives diagnostics but
+creates its own layout state because it operates on a distinct ModelIR.
+Model-only Transpose/Mul/dense-or-Conv capability preflight skips irrelevant
+graphs. The indexed guard proves public boundaries, a normal gate Reshape and
+inverse output bridge, or the common ADD/MUL/inverse-bridge prefix of the
+alternate float path; the existing matcher retains all deep topology checks.
+
+Focused runner, ownership, architecture, and irrelevant-graph efficiency
+validation passed 42 tests. A normal SE-FC rewrite uses one initial index
+refresh and one snapshot; a public gate rejects before snapshotting. The
+shared-pre runner fixture retains its leading Transpose for the side branch.
+Tier 1 `superpoint.onnx` passed sequential `-tb flatbuffer_direct -cotof` with
+`evaluation_pass=true`, `max_abs=1.6666017472743988e-06`,
+`rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+
+The complete sequential direct selection passed:
+
+```text
+1178 passed, 5 deselected, 2 warnings in 158.98s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_se_fc_superpoint` artifacts were removed after metrics
+inspection.

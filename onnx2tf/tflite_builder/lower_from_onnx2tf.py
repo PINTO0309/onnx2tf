@@ -121,6 +121,7 @@ from onnx2tf.tflite_builder.passes.se_layout import (
     _optimize_transpose_se_conv_mul_prepost_nhwc_chains as _optimize_transpose_se_conv_mul_prepost_nhwc_chains_pass,
     _optimize_transpose_se_fc_mul_prepost_nhwc_chains as _optimize_transpose_se_fc_mul_prepost_nhwc_chains_pass,
     run_se_conv_layout_cleanup,
+    run_se_fc_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -55367,7 +55368,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
+        run_se_fc_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_conv_attention_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -55546,7 +55551,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
+        run_se_fc_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_conv_attention_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -55734,7 +55743,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
+        run_se_fc_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_conv_attention_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -55947,7 +55960,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
+        run_se_fc_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_conv_attention_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -56082,7 +56099,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
+        run_se_fc_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_conv_attention_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -56283,7 +56304,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
+        run_se_fc_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
         _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
         _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
@@ -56973,7 +56998,10 @@ def lower_onnx_to_ir(
             _topologically_sort_operators(fallback_ir)
             infer_model_ir_logical_layouts(fallback_ir)
         _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(fallback_ir)
-        _optimize_transpose_se_fc_mul_prepost_nhwc_chains(fallback_ir)
+        run_se_fc_layout_cleanup(
+            fallback_ir,
+            diagnostics=session.diagnostics,
+        )
         run_transpose_gather_channel_fanout_cleanup(
             fallback_ir,
             diagnostics=session.diagnostics,
@@ -57091,7 +57119,11 @@ def lower_onnx_to_ir(
     if apply_safe_transpose_reduction_lite_on_no_layout_opt:
         # In no-layout fallback path, some strict MUL/ADD affine bridges become
         # reducible only after final topological normalization.
-        _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
+        run_se_fc_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _topologically_sort_operators(model_ir)
     # Final boundary-signature restore:
@@ -57159,7 +57191,11 @@ def lower_onnx_to_ir(
     # late broadcast/layout repairs can recreate SE gate and channel-shuffle
     # NHWC<->NCHW wrappers after the earlier dedicated passes have run.
     _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(model_ir)
-    _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
+    run_se_fc_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_transpose_gather_channel_fanout_cleanup(
         model_ir,
         layout_state=session.layout_state,

@@ -212,8 +212,18 @@ exclusivity, and complete inverse-Transpose output fan-out before snapshotting;
 the existing deep matcher retains validation of Logistic, affine, and
 Squeeze/Reshape gate variants. All graph mutations and removals use one
 differential index and active layout state. The SE-Conv implementation has no
-whole-graph map construction or direct operator-list deletion. SE-FC remains
-at its nine original call positions pending its separate indexed checkpoint.
+whole-graph map construction or direct operator-list deletion.
+
+SE-FC is now also indexed through `run_se_fc_layout_cleanup`, registered as
+`layout.se_fc_gate_nhwc` in `LAYOUT_PLAN`. Eight main-model positions share the
+active session layout state; the fallback-IR position intentionally builds a
+separate state because it owns a different ModelIR. Model-only capability
+preflight and an indexed guard cover the normal gate Reshape/output bridge and
+the common alternate affine/Conv prefix before the existing deep matcher.
+Constants cloned for Mean-axis isolation, every input/output rewrite, alias
+replacement, structural removal, pruning, and layout synchronization update
+the differential index/state. The complete SE module now has no whole-graph
+map builders or direct operator-list deletion.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and

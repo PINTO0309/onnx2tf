@@ -803,6 +803,17 @@ def test_se_layout_rewrites_have_single_owner() -> None:
     assert not any(
         isinstance(node, ast.Delete) for node in ast.walk(conv_function)
     )
+    fc_function = pass_functions[
+        "_optimize_transpose_se_fc_mul_prepost_nhwc_chains"
+    ]
+    fc_names = {
+        node.id for node in ast.walk(fc_function) if isinstance(node, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" not in fc_names
+    assert "_build_tensor_producer_map" not in fc_names
+    assert not any(
+        isinstance(node, ast.Delete) for node in ast.walk(fc_function)
+    )
 
     lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
     lowering_functions = {
@@ -827,6 +838,7 @@ def test_se_layout_rewrites_have_single_owner() -> None:
     assert len(imports) == 1
     assert {alias.name for alias in imports[0].names} == function_names | {
         "run_se_conv_layout_cleanup",
+        "run_se_fc_layout_cleanup",
     }
 
 
@@ -865,6 +877,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_hard_activation_passthrough_cleanup",
         "run_redundant_cast_cleanup",
         "run_se_conv_layout_cleanup",
+        "run_se_fc_layout_cleanup",
         "run_squeeze_reshape_identity_cleanup",
         "run_stale_nchw_channel_shuffle_repair",
         "run_singleton_maxpool_layout_cleanup",
@@ -891,7 +904,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 195
+    assert len(calls) == 204
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -1165,6 +1178,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_se_conv_layout_cleanup"
     ]
     assert len(se_conv_calls) == 6
+
+    se_fc_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_se_fc_layout_cleanup"
+    ]
+    assert len(se_fc_calls) == 9
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:

@@ -5,8 +5,6 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _is_singleton_constant_tensor,
     _permute_tensor_metadata_if_rank_matches,
@@ -749,7 +747,12 @@ def run_se_conv_layout_cleanup(
     )
     return {str(key): int(value) for key, value in details.items()}
 
-def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate NCHW round-trips in SE-like gating blocks.
 
@@ -784,6 +787,7 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
         "TANH",
         "HARD_SWISH",
     }
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _clone_const_tensor_for_operator_input(
         *,
@@ -822,13 +826,14 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
             op=op,
             input_index=int(input_index),
             new_input_name=cloned_name,
+            graph_index=graph_index,
         )
         return str(cloned_name)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_mul_idx, pre_mul_op in enumerate(model_ir.operators):
@@ -1195,6 +1200,7 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                         op=flat_op,
                         input_index=0,
                         new_input_name=pool_out_name,
+                        graph_index=graph_index,
                     )
                 if rewrite_pool_mean_to_nhwc:
                     pool_inputs = [str(v) for v in list(pool_op.inputs)]
@@ -1203,6 +1209,7 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                         model_ir=model_ir,
                         op=pool_op,
                         new_inputs=pool_inputs,
+                        graph_index=graph_index,
                     )
                     if mapped_mean_axes is not None:
                         mean_axes_name = _clone_const_tensor_for_operator_input(
@@ -1228,6 +1235,7 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                     model_ir=model_ir,
                     op=mul_op,
                     new_inputs=mul_inputs,
+                    graph_index=graph_index,
                 )
 
                 # Gate/MUL metadata: convert from NCHW to NHWC.
@@ -1257,9 +1265,19 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
 
                 # Remove post transpose by letting bridge producer emit NHWC directly.
                 representative_output_name = str(post_output_names[0])
-                _set_operator_outputs(model_ir=model_ir, op=post_bridge_op, new_outputs=[representative_output_name])
+                _set_operator_outputs(
+                    model_ir=model_ir,
+                    op=post_bridge_op,
+                    new_outputs=[representative_output_name],
+                    graph_index=graph_index,
+                )
                 for alias_name in post_output_names[1:]:
-                    _replace_tensor_inputs(model_ir, alias_name, representative_output_name)
+                    _replace_tensor_inputs(
+                        model_ir,
+                        alias_name,
+                        representative_output_name,
+                        graph_index=graph_index,
+                    )
 
                 old_mul_tensor = model_ir.tensors.get(
                     str(post_bridge_output_name),
@@ -1299,7 +1317,7 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                         remove_indices.add(int(removable_pre_gate_idx))
 
                 for remove_idx in sorted(list(remove_indices), reverse=True):
-                    del model_ir.operators[int(remove_idx)]
+                    graph_index.remove_operator(int(remove_idx))
 
                 rewritten += 1
                 changed = True
@@ -1623,6 +1641,7 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                                                                                                                                             model_ir=model_ir,
                                                                                                                                             op=add0_op,
                                                                                                                                             new_inputs=add0_inputs,
+                                                                                                                                            graph_index=graph_index,
                                                                                                                                         )
 
                                                                                                                                         main_mul_inputs = [str(v) for v in list(main_mul_op.inputs)]
@@ -1634,6 +1653,7 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                                                                                                                                             model_ir=model_ir,
                                                                                                                                             op=main_mul_op,
                                                                                                                                             new_inputs=main_mul_inputs,
+                                                                                                                                            graph_index=graph_index,
                                                                                                                                         )
 
                                                                                                                                         conv1_inputs = [str(v) for v in list(conv1_op.inputs)]
@@ -1645,6 +1665,7 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                                                                                                                                             model_ir=model_ir,
                                                                                                                                             op=conv1_op,
                                                                                                                                             new_inputs=conv1_inputs,
+                                                                                                                                            graph_index=graph_index,
                                                                                                                                         )
 
                                                                                                                                         hs_mul_inputs_updated = [str(v) for v in list(hs_mul_op.inputs)]
@@ -1656,6 +1677,7 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                                                                                                                                             model_ir=model_ir,
                                                                                                                                             op=hs_mul_op,
                                                                                                                                             new_inputs=hs_mul_inputs_updated,
+                                                                                                                                            graph_index=graph_index,
                                                                                                                                         )
 
                                                                                                                                         for tensor_name in [
@@ -1678,12 +1700,14 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                                                                                                                                             model_ir=model_ir,
                                                                                                                                             op=out_mul_op,
                                                                                                                                             new_outputs=[canonical_post_output_name],
+                                                                                                                                            graph_index=graph_index,
                                                                                                                                         )
                                                                                                                                         for alias_name in post_output_names[1:]:
                                                                                                                                             _replace_tensor_inputs(
                                                                                                                                                 model_ir,
                                                                                                                                                 str(alias_name),
                                                                                                                                                 canonical_post_output_name,
+                                                                                                                                                graph_index=graph_index,
                                                                                                                                             )
 
                                                                                                                                         old_out_mul_tensor = model_ir.tensors.get(out_mul_out_name, None)
@@ -1713,7 +1737,7 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
                                                                                                                                         if len(pre_mul_remaining_users) == 0:
                                                                                                                                             remove_indices.add(int(pre_mul_idx))
                                                                                                                                         for remove_idx in sorted(list(remove_indices), reverse=True):
-                                                                                                                                            del model_ir.operators[int(remove_idx)]
+                                                                                                                                            graph_index.remove_operator(int(remove_idx))
 
                                                                                                                                         rewritten += 1
                                                                                                                                         changed = True
@@ -1724,5 +1748,220 @@ def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_se_fc_mul_prepost_nhwc_chains": int(rewritten)}
+
+
+def run_se_fc_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Propagate NHWC through guarded dense or 1x1-convolution SE gates."""
+    gate_head_unary = {
+        "RELU",
+        "RELU6",
+        "RELU_0_TO_1",
+        "LOGISTIC",
+        "TANH",
+        "HARD_SWISH",
+    }
+    output_bridge_unary = gate_head_unary | {"GELU"}
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        found_transpose = False
+        found_mul = False
+        found_gate_head = False
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            operator_type = str(operator.op_type)
+            found_transpose = found_transpose or operator_type == "TRANSPOSE"
+            found_mul = found_mul or operator_type == "MUL"
+            found_gate_head = found_gate_head or operator_type in {
+                "FULLY_CONNECTED",
+                "CONV_2D",
+                "DEPTHWISE_CONV_2D",
+            }
+            if found_transpose and found_mul and found_gate_head:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_inverse_output_bridge(
+        pass_state: ModelIRPassState,
+        tensor_name: str,
+    ) -> bool:
+        candidate_model = pass_state.model_ir
+        model_outputs = {str(name) for name in candidate_model.outputs}
+        users = sorted(set(pass_state.graph_index.consumer_indices(tensor_name)))
+        if not users:
+            return False
+        if all(
+            str(candidate_model.operators[user_idx].op_type) == "TRANSPOSE"
+            and len(candidate_model.operators[user_idx].inputs) >= 2
+            and len(candidate_model.operators[user_idx].outputs) == 1
+            and str(candidate_model.operators[user_idx].inputs[0]) == tensor_name
+            and _read_transpose_perm(
+                candidate_model,
+                candidate_model.operators[user_idx],
+            ) == [0, 2, 3, 1]
+            and str(candidate_model.operators[user_idx].outputs[0])
+            not in model_outputs
+            for user_idx in users
+        ):
+            return True
+        if len(users) != 1:
+            return False
+        unary_op = candidate_model.operators[users[0]]
+        if (
+            str(unary_op.op_type) not in output_bridge_unary
+            or len(unary_op.inputs) != 1
+            or len(unary_op.outputs) != 1
+            or str(unary_op.inputs[0]) != tensor_name
+            or str(unary_op.outputs[0]) in model_outputs
+        ):
+            return False
+        unary_output_name = str(unary_op.outputs[0])
+        unary_users = sorted(
+            set(pass_state.graph_index.consumer_indices(unary_output_name))
+        )
+        return bool(unary_users) and all(
+            str(candidate_model.operators[user_idx].op_type) == "TRANSPOSE"
+            and len(candidate_model.operators[user_idx].inputs) >= 2
+            and len(candidate_model.operators[user_idx].outputs) == 1
+            and str(candidate_model.operators[user_idx].inputs[0])
+            == unary_output_name
+            and _read_transpose_perm(
+                candidate_model,
+                candidate_model.operators[user_idx],
+            ) == [0, 2, 3, 1]
+            and str(candidate_model.operators[user_idx].outputs[0])
+            not in model_outputs
+            for user_idx in unary_users
+        )
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        graph_index = pass_state.graph_index
+        model_outputs = {str(name) for name in candidate_model.outputs}
+        for pre_op in candidate_model.operators:
+            if (
+                str(pre_op.op_type) != "TRANSPOSE"
+                or len(pre_op.inputs) < 2
+                or len(pre_op.outputs) != 1
+                or _read_transpose_perm(candidate_model, pre_op)
+                != [0, 3, 1, 2]
+            ):
+                continue
+            x_nchw_name = str(pre_op.outputs[0])
+            if x_nchw_name in model_outputs:
+                continue
+            x_users = sorted(set(graph_index.consumer_indices(x_nchw_name)))
+
+            # Normal pooled/dense gate: MUL(x_nchw, gate) -> inverse adapter(s).
+            for user_idx in x_users:
+                mul_op = candidate_model.operators[user_idx]
+                if (
+                    str(mul_op.op_type) != "MUL"
+                    or len(mul_op.inputs) != 2
+                    or len(mul_op.outputs) != 1
+                    or x_nchw_name not in {str(name) for name in mul_op.inputs}
+                ):
+                    continue
+                gate_names = [
+                    str(name)
+                    for name in mul_op.inputs
+                    if str(name) != x_nchw_name
+                ]
+                if len(gate_names) != 1 or gate_names[0] in model_outputs:
+                    continue
+                gate_op = graph_index.producer(gate_names[0])
+                if gate_op is None:
+                    continue
+                gate_reshape_op = gate_op
+                if str(gate_op.op_type) in gate_head_unary:
+                    if len(gate_op.inputs) != 1 or len(gate_op.outputs) != 1:
+                        continue
+                    gate_reshape_op = graph_index.producer(str(gate_op.inputs[0]))
+                    if gate_reshape_op is None:
+                        continue
+                if (
+                    str(gate_reshape_op.op_type) != "RESHAPE"
+                    or len(gate_reshape_op.inputs) < 1
+                    or len(gate_reshape_op.outputs) != 1
+                ):
+                    continue
+                if _has_inverse_output_bridge(
+                    pass_state,
+                    str(mul_op.outputs[0]),
+                ):
+                    return True
+
+            # Alternate affine/conv gate: the leading NCHW value feeds both an
+            # ADD path and a main MUL, while a later MUL restores NHWC through
+            # inverse output adapters. Deep topology remains in the matcher.
+            has_add = any(
+                str(candidate_model.operators[user_idx].op_type) == "ADD"
+                and len(candidate_model.operators[user_idx].inputs) == 2
+                and x_nchw_name
+                in {str(name) for name in candidate_model.operators[user_idx].inputs}
+                for user_idx in x_users
+            )
+            has_main_mul = any(
+                str(candidate_model.operators[user_idx].op_type) == "MUL"
+                and len(candidate_model.operators[user_idx].inputs) == 2
+                and x_nchw_name
+                in {str(name) for name in candidate_model.operators[user_idx].inputs}
+                for user_idx in x_users
+            )
+            if has_add and has_main_mul:
+                for operator in candidate_model.operators:
+                    if (
+                        str(operator.op_type) == "MUL"
+                        and len(operator.outputs) == 1
+                        and str(operator.outputs[0]) not in model_outputs
+                        and _has_inverse_output_bridge(
+                            pass_state,
+                            str(operator.outputs[0]),
+                        )
+                    ):
+                        return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_se_fc_mul_prepost_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_transpose_se_fc_mul_prepost_nhwc_chains",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.se_fc_gate_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=20,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={
+            "optimized_transpose_se_fc_mul_prepost_nhwc_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
