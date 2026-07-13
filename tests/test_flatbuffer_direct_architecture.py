@@ -379,6 +379,26 @@ def test_expand_squeeze_pre_ops_use_differential_graph_index_insertion() -> None
     assert "graph_index.insert_operator(" in function_source
 
 
+def test_dynamic_range_quantization_uses_differential_graph_index() -> None:
+    quantization_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "quantization.py"
+    )
+    source = quantization_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function_node = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "build_dynamic_range_quantized_model_ir"
+    )
+    function_source = ast.get_source_segment(source, function_node)
+    assert function_source is not None
+    assert "clone.operators =" not in function_source
+    assert "ModelIRGraphIndex(clone)" in function_source
+    assert "graph_index.insert_operator(" in function_source
+    assert "graph_index.replace_operator_inputs(" in function_source
+
+
 def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, TypedDict
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
 
 
@@ -1094,9 +1095,14 @@ def build_dynamic_range_quantized_model_ir(
     quantized_tensor_names: Set[str] = set()
     dequantized_tensor_map: Dict[str, str] = {}
 
-    rewritten_ops: List[OperatorIR] = []
+    graph_index = ModelIRGraphIndex(clone)
+    candidate_ops = list(clone.operators)
 
-    def ensure_dequantized_tensor(quant_tensor_name: str) -> Optional[str]:
+    def ensure_dequantized_tensor(
+        quant_tensor_name: str,
+        *,
+        before_op: OperatorIR,
+    ) -> Optional[str]:
         if quant_tensor_name in dequantized_tensor_map:
             return dequantized_tensor_map[quant_tensor_name]
 
@@ -1118,35 +1124,31 @@ def build_dynamic_range_quantized_model_ir(
             is_variable=False,
             quantization=None,
         )
-        rewritten_ops.append(
+        before_index = graph_index.operator_index(before_op)
+        if before_index is None:
+            return None
+        graph_index.insert_operator(
+            int(before_index),
             OperatorIR(
                 op_type="DEQUANTIZE",
                 inputs=[quant_tensor_name],
                 outputs=[deq_name],
                 options={},
-            )
+            ),
         )
         dequantized_tensor_map[quant_tensor_name] = deq_name
         return deq_name
 
-    for op in clone.operators:
-        new_op = OperatorIR(
-            op_type=op.op_type,
-            inputs=list(op.inputs),
-            outputs=list(op.outputs),
-            options=dict(op.options),
-            version=op.version,
-        )
-
-        if new_op.op_type in _DYNAMIC_RANGE_KERNEL_OPS and len(new_op.inputs) >= 2:
-            weight_name = new_op.inputs[1]
+    for op in candidate_ops:
+        if op.op_type in _DYNAMIC_RANGE_KERNEL_OPS and len(op.inputs) >= 2:
+            weight_name = op.inputs[1]
             tensor = clone.tensors.get(weight_name)
             if tensor is not None and _is_float_constant_tensor(
                 tensor=tensor,
                 graph_input_names=graph_input_names,
             ):
                 quant_mode = "per-channel" if quant_type == "per-channel" else "per-tensor"
-                quant_axis = _kernel_weight_quant_axis(new_op.op_type, tensor)
+                quant_axis = _kernel_weight_quant_axis(op.op_type, tensor)
                 if _quantize_tensor_inplace(
                     tensor=tensor,
                     quant_mode=quant_mode,
@@ -1159,8 +1161,9 @@ def build_dynamic_range_quantized_model_ir(
                 ):
                     quantized_tensor_names.add(weight_name)
 
-        if new_op.op_type in _DYNAMIC_RANGE_CONST_DEQUANT_OPS:
-            for idx, input_name in enumerate(list(new_op.inputs)):
+        if op.op_type in _DYNAMIC_RANGE_CONST_DEQUANT_OPS:
+            new_inputs = list(op.inputs)
+            for idx, input_name in enumerate(list(op.inputs)):
                 tensor = clone.tensors.get(input_name)
                 if tensor is None:
                     continue
@@ -1183,13 +1186,15 @@ def build_dynamic_range_quantized_model_ir(
                 tensor = clone.tensors.get(input_name)
                 if tensor is None or tensor.dtype != "INT8":
                     continue
-                deq_name = ensure_dequantized_tensor(input_name)
+                deq_name = ensure_dequantized_tensor(
+                    input_name,
+                    before_op=op,
+                )
                 if deq_name is not None:
-                    new_op.inputs[idx] = deq_name
-
-        rewritten_ops.append(new_op)
-
-    clone.operators = rewritten_ops
+                    new_inputs[idx] = deq_name
+            op_index = graph_index.operator_index(op)
+            if op_index is not None and new_inputs != list(op.inputs):
+                graph_index.replace_operator_inputs(int(op_index), new_inputs)
 
     if len(quantized_tensor_names) == 0:
         raise NotImplementedError(

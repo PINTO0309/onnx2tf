@@ -518,6 +518,17 @@ and focused validation proves one initial refresh, exact
 consistency. Central lowerer `model_ir.operators` assignments are now limited
 to explicit snapshot rollback. No model conversion or inference was run.
 
+Dynamic-range quantization now mutates the already isolated ModelIR clone
+through one graph index instead of cloning every operator a second time and
+assigning a rebuilt list. Kernel/constant quantization decisions remain
+unchanged. The first elementwise consumer of a quantized constant receives one
+`DEQUANTIZE` at its live position, subsequent consumers share that tensor, and
+all input rewires update the index differentially. This also retains cloned
+axis semantics and ONNX operator provenance that the former second copy did
+not carry forward. A focused shared-constant fixture proves one initial
+refresh, exact Dequantize placement, both consumer rewires, INT8 qparams, and
+immutability of the source ModelIR. No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

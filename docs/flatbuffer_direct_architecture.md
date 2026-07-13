@@ -1581,6 +1581,15 @@ positions. Tensor pruning and newly generated shape tensors are reconciled with
 the session `LayoutState`. Consequently, the only complete `model_ir.operators`
 assignments left in the central lowerer are explicit snapshot rollback paths.
 
+Dynamic-range quantization builds one `ModelIRGraphIndex` over the already
+deep-cloned graph and reuses those cloned operators. Constant quantization is
+unchanged; the first elementwise use of each quantized constant receives one
+indexed `DEQUANTIZE` insertion, and all later uses are rewired to the shared
+dequantized tensor through indexed input replacement. The former second
+operator-cloning pass and complete list assignment are removed, reducing copy
+volume while preserving operator axis semantics and ONNX provenance already
+carried by the initial ModelIR clone.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
