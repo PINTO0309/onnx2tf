@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `332612f` (`extract 3d gate layout pass`)
+- Latest implementation checkpoint: `2871ade` (`index 3d gate layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `332612f`
+  `2871ade`
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -77,8 +77,9 @@ then characterized and mechanically extracted the seventh family.
    - Replaced the 177-line central inline fixture with a dedicated compact
      success graph and five unsafe-boundary cases in `ee3d2fd`.
    - Mechanically moved the complete matcher to
-     `passes/ndhwc_gate_layout.py` with AST equivalence in `332612f`. Indexed
-     mutation and the six production calls remain the next checkpoint.
+     `passes/ndhwc_gate_layout.py` with AST equivalence in `332612f`.
+   - Migrated all mutation and six production calls to a stable indexed runner
+     in `2871ade`.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -94,10 +95,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the already extracted
-  `_optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains` family: migrate
-  it to shared graph/layout state, add a stable ordered runner, and replace all
-  six raw production calls.
+  The immediate next unit is the adjacent 226-line, six-call
+  `_optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains` family: move
+  its existing central fixture to compact dedicated coverage and characterize
+  unsafe boundaries before extraction.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -119,7 +120,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `332612f`; after the documentation
+implementation working tree is clean at `2871ade`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -210,6 +211,14 @@ sequential with only one model/process active at a time.
 - 3D extraction and ownership focus: `41 passed in 17.69s`.
 - Full direct selection after 3D mechanical extraction:
   `1211 passed, 5 deselected, 2 warnings in 157.23s`.
+- Indexed 3D runner, architecture, and efficiency focus:
+  `51 passed in 18.61s`.
+- Tier 1 `superpoint.onnx`, sequential `-tb flatbuffer_direct -cotof` after
+  indexed 3D migration: `evaluation_pass=true`,
+  `max_abs=1.6666017472743988e-06`,
+  `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+- Full direct selection after indexed 3D migration:
+  `1217 passed, 5 deselected, 2 warnings in 156.83s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -241,15 +250,14 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Audit every producer/consumer read, constant-shape mutation, metadata copy,
-   and structural removal in `passes/ndhwc_gate_layout.py`.
-3. Add optional graph/layout state parameters and an indexed guard covering
-   both Add outputs, the shared base/skip branches, gate exclusivity,
-   permutations, public boundaries, and the rank-five Reshape constant.
-4. Register a stable ordered `LAYOUT_PLAN` runner, replace all six raw calls,
-   and extend success/rejection instrumentation and efficiency expectations.
-5. Run focused tests, sequential Tier 1 `superpoint.onnx -cotof`, and the full
-   direct selection before committing and pushing.
+2. Audit the 226-line
+   `_optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains` matcher, all
+   six call sites, and its large central positive fixture.
+3. Move the success contract to a dedicated compact module and add no-op cases
+   for shared Conv output, Leaky fan-out, public intermediates, permutation,
+   and Unsqueeze/Reshape shape boundaries.
+4. Commit characterization separately, then mechanically extract with
+   AST-equivalence proof before indexed mutation.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -628,3 +636,41 @@ complete sequential direct selection passed:
 
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently.
+
+### Indexed rank-five 3D gate checkpoint
+
+Checkpoint `2871ade` migrated the extracted rank-five matcher to shared
+`ModelIRGraphIndex` and `LayoutState`. Producer/consumer traversal, base
+Reshape, skip LeakyRelu, and gate Logistic input rewrites, both Add output
+canonicalizations, constant-shape remapping, structural removals, pruning,
+metadata, and layout reconciliation now use differential state. Two duplicate
+legacy permutation assignments were also removed. The implementation contains
+no whole-graph map builder and no direct operator-list deletion.
+
+`run_ndhwc_gate_layout_cleanup` registers stable `LAYOUT_PLAN` ID
+`layout.ndhwc_leaky_logistic_gate`. Its model-only required-op preflight skips
+irrelevant graphs without state construction. Its indexed guard proves both
+inverse Add outputs, the shared base and skip branches, exclusive gate and
+Mul, exact rank-four/rank-five permutations, public boundaries, and the
+rank-five Reshape constant before the complete matcher performs the rewrite.
+All six production positions now supply session layout state and diagnostics;
+the lowerer compatibility wrapper remains available.
+
+Focused runner, ownership, architecture, and irrelevant-graph efficiency
+validation passed 51 tests. The success fixture uses one initial index refresh
+and one snapshot. Shared-base fan-out, gate fan-out, public intermediate,
+invalid permutation, and invalid reshape-rank variants all reject before
+snapshotting. Tier 1 `superpoint.onnx` passed sequential
+`-tb flatbuffer_direct -cotof` with `evaluation_pass=true`,
+`max_abs=1.6666017472743988e-06`, `rmse=1.6207873294228388e-07`, and cosine
+similarity `1.0`.
+
+The complete sequential direct selection passed:
+
+```text
+1217 passed, 5 deselected, 2 warnings in 156.83s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_ndhwc_gate_superpoint` artifacts were removed after metrics
+inspection.
