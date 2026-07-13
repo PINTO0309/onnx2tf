@@ -589,6 +589,70 @@ def _add_model(
                     )
                 )
     if boundary in {
+        "softmax_operand",
+        "softmax_operand_fanout",
+        "softmax_companion",
+    }:
+        companion = boundary == "softmax_companion"
+        source_name = "x_nhwc" if companion else "a_nhwc"
+        adapter_name = "x_nchw" if companion else "a_nchw"
+        output_name = "x_softmax" if companion else "a_softmax"
+        channels = 2 if companion else 3
+        model_ir.tensors[source_name].quantization = QuantParamIR(
+            scale=[0.3] * channels,
+            zero_point=[0] * channels,
+            quantized_dimension=3,
+        )
+        model_ir.tensors[adapter_name].quantization = QuantParamIR(
+            scale=[0.3] * channels,
+            zero_point=[0] * channels,
+            quantized_dimension=1,
+        )
+        model_ir.tensors[output_name] = _tensor(
+            output_name,
+            [1, channels, 5, 7],
+        )
+        model_ir.tensors[output_name].quantization = {
+            "scale": [0.6] * channels,
+            "zero_point": [0] * channels,
+            "quantized_dimension": 1,
+        }
+        softmax_op = OperatorIR(
+            "SOFTMAX",
+            [adapter_name],
+            [output_name],
+            options={"beta": 0.75},
+        )
+        if companion:
+            concat_op = next(
+                op
+                for op in model_ir.operators
+                if op.op_type == "CONCATENATION"
+            )
+            concat_index = model_ir.operators.index(concat_op)
+            model_ir.operators.insert(concat_index, softmax_op)
+            concat_op.inputs[0] = output_name
+        else:
+            add_op = next(
+                op for op in model_ir.operators if op.op_type == "ADD"
+            )
+            add_index = model_ir.operators.index(add_op)
+            model_ir.operators.insert(add_index, softmax_op)
+            add_op.inputs[0] = output_name
+            if boundary == "softmax_operand_fanout":
+                model_ir.tensors["softmax_side"] = _tensor(
+                    "softmax_side",
+                    [1, channels, 5, 7],
+                )
+                model_ir.outputs.append("softmax_side")
+                model_ir.operators.append(
+                    OperatorIR(
+                        "IDENTITY",
+                        [output_name],
+                        ["softmax_side"],
+                    )
+                )
+    if boundary in {
         "shared_split_add_tree",
         "shared_split_external_consumer",
     }:
@@ -970,6 +1034,7 @@ def test_nhwc_direct_only_add_is_indexed(all_add: bool) -> None:
         "slice_operand_fanout",
         "dequantize_operand_fanout",
         "prelu_operand_fanout",
+        "softmax_operand_fanout",
     ],
 )
 def test_nhwc_add_rejects_unsafe_or_partial_match(boundary: str) -> None:
@@ -1328,6 +1393,57 @@ def test_nhwc_add_reuses_one_shared_prelu_alpha_clone() -> None:
     add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
     assert add_op.inputs == ["a_prelu", "b_prelu"]
     assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+
+
+@pytest.mark.parametrize("softmax_location", ["operand", "companion"])
+def test_nhwc_add_reuses_semantics_preserving_softmax_plan(
+    softmax_location: str,
+) -> None:
+    model_ir = _add_model(boundary=f"softmax_{softmax_location}")
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    companion = softmax_location == "companion"
+    adapter_name = "x_nchw" if companion else "a_nchw"
+    output_name = "x_softmax" if companion else "a_softmax"
+    channels = 2 if companion else 3
+    softmax_op = next(
+        op for op in model_ir.operators if op.op_type == "SOFTMAX"
+    )
+    assert softmax_op.inputs == [f"{adapter_name}_axis_last"]
+    assert softmax_op.outputs == [f"{output_name}_axis_last"]
+    assert softmax_op.options == {"beta": 0.75}
+    assert model_ir.tensors[f"{adapter_name}_axis_last"].shape == [
+        1,
+        5,
+        channels,
+        7,
+    ]
+    assert model_ir.tensors[output_name].shape == [1, 5, 7, channels]
+    output_quantization = model_ir.tensors[output_name].quantization
+    assert isinstance(output_quantization, dict)
+    assert output_quantization["quantized_dimension"] == 3
+    local_transposes = [
+        op for op in model_ir.operators if op.op_type == "TRANSPOSE"
+    ]
+    assert len(local_transposes) == 2
+    for transpose_op in local_transposes:
+        np.testing.assert_array_equal(
+            model_ir.tensors[transpose_op.inputs[1]].data,
+            np.asarray([0, 1, 3, 2], dtype=np.int32),
+        )
+    add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+    assert add_op.inputs == (
+        ["a_nhwc", "b_nhwc"]
+        if companion
+        else ["a_softmax", "b_nhwc"]
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    if companion:
+        assert concat_op.inputs == ["x_softmax", "sum_nchw"]
 
 
 def test_nhwc_recursive_add_operand_is_indexed_once() -> None:

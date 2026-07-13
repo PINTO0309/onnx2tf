@@ -100,9 +100,10 @@ through the legacy fallback.
 The bounded Add family accepts an acyclic graph of two-input Add operators
 whose leaves come through rank-four
 NHWC→NCHW adapters, optionally followed by a supported unary operation or
-complete expanded-Swish diamond, Dequantize, PReLU, exact Pad, bounded
-direct-source Slice, or bounded Split. Dequantize, PReLU, exact Pad, and Slice
-plans may also accompany the Add graph at the root Concat. Every Add
+complete expanded-Swish diamond, Dequantize, PReLU, semantics-preserving
+Softmax, exact Pad, bounded direct-source Slice, or bounded Split. Dequantize,
+PReLU, Softmax, Pad, and Slice plans may also accompany the Add graph at the
+root Concat. Every Add
 output consumer must belong to the selected Add graph/root Concat or be an
 exact inverse adapter. Operands and bounded branches are rewired in their
 original order, each Split is applied
@@ -140,7 +141,10 @@ and Slice output fan-out reject before mutation. Dequantize output fan-out is
 rejected by the same ownership rule. PReLU output fan-out rejects as well. A
 candidate-wide alpha cache keyed by source tensor, permutation, and selected
 shape lets multiple PReLUs reuse one provenance-preserving transformed alpha
-clone. Softmax and other mixed operand families deliberately remain in legacy.
+clone. Softmax reuses the existing pair of local NHWC↔NHCW transposes so the
+original NCHW last-axis semantics and beta option remain unchanged. Softmax
+output fan-out rejects before mutation. Pseudo-LeakyRelu and other mixed
+operand families deliberately remain in legacy.
 The pseudo-LeakyRelu family proves the exact
 `ReLU(x) - alpha * ReLU(-x)` topology. It accepts either Mul operand order,
 requires scalar alpha, preserves Sub order, and supports direct or unary
@@ -193,9 +197,9 @@ Focused verification, all in the existing `uv` environment:
 - Direct, unary, Pad, Dequantize, PReLU, Softmax, expanded-Swish,
   pseudo-LeakyRelu, and bounded Slice/Split/Add ModelIR characterization:
   the preceding combined float-path run passed 176 tests across eight compact
-  modules; authoritative collection now contains 206. Including the bounded
+  modules; authoritative collection now contains 209. Including the bounded
   direct and unary/Pad quantized-post suites, the compact inventory contains
-  254 tests across nine modules. The preceding combined run passed 208 tests;
+  257 tests across nine modules. The preceding combined run passed 208 tests;
   the expanded quantized module passes 48 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
@@ -210,7 +214,7 @@ Focused verification, all in the existing `uv` environment:
   bypass, and fifteen no-op boundaries. The
   Add suite covers mixed/all-Add success, shared/public source-adapter
   retention in both operand positions, root-Concat adapter sharing,
-  output-post-adapter bypass, twenty-one complete no-op boundaries, and one
+  output-post-adapter bypass, twenty-two complete no-op boundaries, and one
   indexed supported-unary operand case plus one indexed exact expanded-Swish
   operand case plus one indexed bounded-Split operand case. It also covers a
   bounded recursive Add operand, correct ownership of an inner Add's inverse
@@ -223,7 +227,9 @@ Focused verification, all in the existing `uv` environment:
   fan-out rejection. Dequantize is covered in both positions with source
   quantization provenance and output-fan-out rejection. PReLU is covered in
   both positions, including shared-alpha clone reuse and output-fan-out
-  rejection. The
+  rejection. Softmax is covered in both positions with exact local-axis
+  adapters, beta retention, metadata remapping, and output-fan-out rejection.
+  The
   pseudo-LeakyRelu suite
   covers both alpha operand orders, direct/unary/all-Leaky success, twenty
   complete no-op boundaries, and one Pad-mixed legacy fallback. The quantized
@@ -240,8 +246,8 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize a bounded Softmax Add operand, or the next
-bounded quantized-post family. Keep uncharacterized interactions in
+Next work should characterize a bounded pseudo-LeakyRelu Add operand, or the
+next bounded quantized-post family. Keep uncharacterized interactions in
 legacy until independently fixed. Do
 not begin with a Tier 0–4 corpus run, and do not create a pull request.
 

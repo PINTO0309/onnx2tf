@@ -348,9 +348,10 @@ broader Split/Add interactions remain in the legacy matcher. The bounded Add
 family accepts a bounded acyclic two-input Add graph whose leaves come from
 rank-four
 NHWC→NCHW adapters, optionally through a supported unary operation, exact
-expanded-Swish diamond, Dequantize, PReLU, exact Pad, bounded direct-source
-Slice, or bounded Split. Dequantize, PReLU, exact Pad, and Slice plans may also
-be companion inputs of the same root Concat. Add inputs and bounded operand
+expanded-Swish diamond, Dequantize, PReLU, semantics-preserving Softmax,
+exact Pad, bounded direct-source Slice, or bounded Split. Dequantize, PReLU,
+Softmax, Pad, and Slice plans may also be companion inputs of the same root
+Concat. Add inputs and bounded operand
 branches are rewired together, exclusive adapters are removed, shared/public
 adapters remain for external consumers, exact inverse output adapters are
 bypassed, and every Add output shape and per-axis quantization moves into
@@ -378,7 +379,9 @@ adapter shared with the root Concat to be removed only after every selected
 consumer is rewired.
 When selected PReLU plans share one transformed alpha, a candidate-wide key of
 source, permutation, and shape reuses one provenance-preserving clone.
-Softmax and other uncharacterized Add operands, plus broader
+Softmax operands reuse the existing local NHWC↔NHCW adapters, retaining the
+original NCHW last-axis meaning. Pseudo-LeakyRelu and other uncharacterized Add
+operands, plus broader
 mixed-input quantized-post families, remain in legacy until independently
 characterized.
 The indexed
