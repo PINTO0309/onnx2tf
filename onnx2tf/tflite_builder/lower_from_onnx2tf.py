@@ -177,6 +177,9 @@ from onnx2tf.tflite_builder.passes.ndhwc_concat_layout import (
     _optimize_transpose_pre_concat_ndhwc_chains as _optimize_transpose_pre_concat_ndhwc_chains_pass,
     run_ndhwc_concat_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.nhwc_concat_direct_layout import (
+    run_nhwc_concat_direct_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
     _is_inverse_perm,
@@ -11817,7 +11820,9 @@ def _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir: ModelIR) -
     return {"optimized_transpose_elementwise_concat_conv_nhwc_groups": int(optimized_groups)}
 
 
-def _optimize_transpose_pre_concat_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_pre_concat_nhwc_chains_legacy(
+    model_ir: ModelIR,
+) -> Dict[str, int]:
     """
     Convert NCHW concat blocks back to NHWC when they are wrapped by transpose adapters.
 
@@ -13728,6 +13733,11 @@ def _optimize_transpose_pre_concat_nhwc_chains(model_ir: ModelIR) -> Dict[str, i
                 str(action.get("kind", "")) == "direct"
                 for action in concat_input_actions
             )
+            # The strict float-path direct-adapter family is owned by the
+            # indexed transactional pass. Keep the legacy matcher responsible
+            # for mixed input families and the separate quantized-post family.
+            if all_direct_input_actions and post_quantize_idx is None:
+                continue
             nhwc_inputs_ok = True
             nhwc_ref_shape: Optional[List[int]] = None
             for action in concat_input_actions:
@@ -13934,6 +13944,36 @@ def _optimize_transpose_pre_concat_nhwc_chains(model_ir: ModelIR) -> Dict[str, i
 
     _prune_unused_tensors(model_ir)
     return {"optimized_transpose_pre_concat_nhwc_chains": int(optimized)}
+
+
+def _optimize_transpose_pre_concat_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    layout_state: Any = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Run the indexed direct family before the remaining legacy families."""
+
+    direct_stats = run_nhwc_concat_direct_layout_cleanup(
+        model_ir,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
+    legacy_stats = _optimize_transpose_pre_concat_nhwc_chains_legacy(model_ir)
+    return {
+        "optimized_transpose_pre_concat_nhwc_chains": int(
+            direct_stats.get(
+                "optimized_transpose_pre_concat_nhwc_direct_chains",
+                0,
+            )
+        )
+        + int(
+            legacy_stats.get(
+                "optimized_transpose_pre_concat_nhwc_chains",
+                0,
+            )
+        )
+    }
 
 
 def _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains(
@@ -49953,7 +49993,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+        _optimize_transpose_pre_concat_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_ndhwc_concat_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -50168,7 +50212,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+        _optimize_transpose_pre_concat_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_ndhwc_concat_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -50381,7 +50429,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+        _optimize_transpose_pre_concat_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_ndhwc_concat_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -50649,7 +50701,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+        _optimize_transpose_pre_concat_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_ndhwc_concat_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -50800,7 +50856,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+        _optimize_transpose_pre_concat_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_ndhwc_concat_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -51416,7 +51476,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_slice_prepost_nhwc_passthrough_chains(model_ir)
     # Keep pre-concat NHWC relayout at terminal stage as late strict rewrites
     # can recreate CONCAT(axis=1)+post-transpose wrappers.
-    _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+    _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(model_ir)
     _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(model_ir)
     _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
@@ -51679,7 +51743,11 @@ def lower_onnx_to_ir(
         )
     # Absolute-end cleanup: late bridge rewrites can recreate strict
     # pre/post CONCAT transpose wrappers and SHAPE-extract transposes.
-    _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+    _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     if optimize_layout_transpose_chains:
         run_layout_transpose_cleanup(

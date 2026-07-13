@@ -286,10 +286,24 @@ The adjacent rank-five NDHWC pre-Concat rule has a compact corpus in
 `tests/test_flatbuffer_direct_ndhwc_concat_layout.py`. It fixes mixed direct
 and unary inputs, two inverse post branches, axis-4 canonicalization, and
 complete no-op behavior for fan-out, public, permutation, axis, unary, rank,
-and spatial-shape boundaries. Its 258-line implementation and five production
-calls remain central at the characterization checkpoint; exact-AST mechanical
-extraction is next. The larger generic NHWC pre-Concat matcher is intentionally
-a separate future unit.
+and spatial-shape boundaries. The implementation is owned by
+`passes/ndhwc_concat_layout.py`; indexed candidate planning, differential
+mutation, `LayoutState` reconciliation, and transactional runner
+`layout.ndhwc_pre_concat` replace all five raw production calls. Per-axis
+quantization dimensions move from NCDHW dimension 1 to NDHWC dimension 4.
+
+The much larger rank-four generic NHWC pre-Concat matcher is being migrated by
+semantic family rather than as one monolithic rule. Its strict float-path
+direct-adapter family is owned by
+`passes/nhwc_concat_direct_layout.py`: every Concat input must come directly
+from NHWC→NCHW Transpose, and every Concat consumer must be an inverse
+NCHW→NHWC Transpose. Candidate planning uses one `ModelIRGraphIndex`, retains
+shared or public leading adapters, rejects public Concat/post boundaries and
+non-Transpose fan-out, and applies the rewrite transactionally under stable ID
+`layout.nhwc_pre_concat_direct`. Canonical Concat quantization metadata remaps
+NCHW dimension 1 to NHWC dimension 3. Mixed unary, swish, split, slice, Add,
+Pad, PReLU, Dequantize, Softmax, and quantized-post families remain in the
+legacy matcher until each receives its own bounded characterization.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
