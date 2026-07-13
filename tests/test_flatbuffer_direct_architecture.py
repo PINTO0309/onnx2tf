@@ -450,6 +450,11 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
         not in exporter_source
     )
     assert "_synchronize_reshape_targets_with_output_tensors," in exporter_source
+    assert "def _align_public_boundary_shapes_to_onnx_contract(" not in exporter_source
+    assert "_align_public_boundary_shapes_to_onnx_contract," in exporter_source
+    assert "def _align_public_boundary_shapes_to_onnx_contract(" in pass_source
+    assert "def _has_recurrent_sequence_context(" not in exporter_source
+    assert "def _has_recurrent_sequence_context(" in pass_source
     for function_name in {
         "_preferred_reshape_target_values",
         "_tensor_name_suggests_channel_last_layout_for_codegen",
@@ -564,6 +569,12 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert reshape_sync_source is not None
     assert 'operator_indices("RESHAPE")' in reshape_sync_source
     assert "for op in model_ir.operators" not in reshape_sync_source
+    recurrent_context_source = ast.get_source_segment(
+        pass_source,
+        pass_functions["_has_recurrent_sequence_context"],
+    )
+    assert recurrent_context_source is not None
+    assert "operator_indices_for_types(" in recurrent_context_source
 
 
 def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:

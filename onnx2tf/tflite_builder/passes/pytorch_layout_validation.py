@@ -717,6 +717,118 @@ def _synchronize_reshape_targets_with_output_tensors(
         shape_tensor.shape_signature = [int(len(preferred_shape))]
 
 
+def _has_recurrent_sequence_context(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> bool:
+    recurrent_op_types = {
+        "BIDIRECTIONAL_SEQUENCE_LSTM",
+        "GRU",
+        "LSTM",
+        "RNN",
+        "UNIDIRECTIONAL_SEQUENCE_LSTM",
+        "UNIDIRECTIONAL_SEQUENCE_RNN",
+    }
+    if graph_index is not None:
+        if graph_index.operator_indices_for_types(recurrent_op_types):
+            return True
+    elif any(
+        str(op.op_type) in recurrent_op_types for op in model_ir.operators
+    ):
+        return True
+    recurrent_name_tokens = ("_gru_", "_lstm_", "_rnn_")
+    for tensor_name in (
+        list(model_ir.inputs)
+        + list(model_ir.outputs)
+        + list(model_ir.tensors.keys())
+    ):
+        lowered = str(tensor_name).lower()
+        if any(token in lowered for token in recurrent_name_tokens):
+            return True
+    return False
+
+
+def _align_public_boundary_shapes_to_onnx_contract(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
+    boundary_map = model_ir.metadata.get(
+        "onnx_boundary_shape_signature_map",
+        {},
+    )
+    public_layout_map = model_ir.metadata.get("onnx_public_layout_map", {})
+    if not isinstance(boundary_map, dict):
+        boundary_map = {}
+    if not isinstance(public_layout_map, dict):
+        public_layout_map = {}
+    recurrent_sequence_context = _has_recurrent_sequence_context(
+        model_ir,
+        graph_index=graph_index,
+    )
+    for tensor_name in list(model_ir.inputs) + list(model_ir.outputs):
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        boundary_shape = boundary_map.get(str(tensor_name), None)
+        if tensor is None:
+            continue
+        rank = len(list(tensor.shape))
+        desired_layout = (
+            normalize_logical_layout(
+                public_layout_map.get(
+                    str(tensor_name),
+                    (
+                        channel_last_logical_layout(rank)
+                        if recurrent_sequence_context and rank == 3
+                        else channel_first_logical_layout(rank)
+                    ),
+                )
+            )
+            if rank in {3, 4, 5}
+            else LOGICAL_LAYOUT_UNKNOWN
+        )
+        current_layout = normalize_logical_layout(tensor.logical_layout)
+        if isinstance(boundary_shape, list) and len(boundary_shape) == rank:
+            tensor.shape_signature = [
+                int(value) for value in list(boundary_shape)
+            ]
+            tensor.shape = [
+                int(value) if int(value) > 0 else 1
+                for value in list(boundary_shape)
+            ]
+        elif (
+            rank in {3, 4, 5}
+            and desired_layout != LOGICAL_LAYOUT_UNKNOWN
+            and current_layout != LOGICAL_LAYOUT_UNKNOWN
+            and desired_layout != current_layout
+        ):
+            perm_to_public = logical_layout_permutation(
+                source_layout=current_layout,
+                target_layout=desired_layout,
+            )
+            current_shape_signature = list(
+                tensor.shape_signature or tensor.shape
+            )
+            permuted_shape = (
+                None
+                if perm_to_public is None
+                else _permute_shape(
+                    current_shape_signature,
+                    perm_to_public,
+                )
+            )
+            if permuted_shape is not None:
+                tensor.shape_signature = [
+                    int(value) for value in list(permuted_shape)
+                ]
+                tensor.shape = [
+                    int(value) if int(value) > 0 else 1
+                    for value in list(permuted_shape)
+                ]
+        if rank in {3, 4, 5}:
+            tensor.logical_layout = desired_layout
+
+
 def _propagate_channel_last_layouts(
     model_ir: ModelIR,
     *,

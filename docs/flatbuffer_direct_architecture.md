@@ -1774,6 +1774,13 @@ exceptions, and retains the existing recurrent, ScatterND, degenerate sequence,
 public-bridge, preserved-region, and safe rank-four island guards. The exporter
 contains only the ordered validation call and shared error type.
 
+Public boundary shape/layout reconciliation and recurrent-sequence context
+detection are co-located in the layout owner. The channel-first normalizer uses
+its existing graph index to identify recurrent op families, while the
+layout-agnostic fallback path retains direct detection. Explicit boundary
+signatures, public layout metadata, dynamic-dimension concretization, and the
+rank-three recurrent NWC default remain unchanged.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

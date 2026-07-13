@@ -176,6 +176,13 @@ Focused unknown-layout rejection and attention-Softmax exception fixtures pass;
 the layout/architecture selection passes 78 tests. No model conversion or
 inference was run.
 
+Public boundary shape/layout reconciliation and recurrent-context detection
+have moved to the same layout owner. The normalizer reuses its graph index for
+recurrent op-family detection; the fallback preparation path preserves direct
+detection. A dynamic recurrent rank-three fixture verifies the NWC default and
+boundary signature concretization. The layout/architecture selection passes 79
+tests; no model conversion or inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

@@ -6,6 +6,7 @@ import pytest
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
+    _align_public_boundary_shapes_to_onnx_contract,
     _apply_feature_last_sequence_layouts,
     _collect_feature_last_sequence_tensor_names,
     _ensure_public_boundary_layout_bridges,
@@ -718,3 +719,48 @@ def test_reshape_target_synchronization_uses_shared_family_index(
         model_ir.tensors["shape"].data,
         np.asarray([-1, 1, 1, 64], dtype=np.int64),
     )
+
+
+def test_public_boundary_alignment_reuses_index_for_recurrent_context(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(name="recurrent_public_boundary")
+    model_ir.inputs = ["encoder_lstm_input"]
+    model_ir.outputs = ["predictions"]
+    model_ir.tensors = {
+        "encoder_lstm_input": _tensor(
+            "encoder_lstm_input",
+            [1, 3, 4],
+            layout="NCW",
+        ),
+        "predictions": _tensor(
+            "predictions",
+            [1, 3, 4],
+            layout="NCW",
+        ),
+    }
+    model_ir.metadata["onnx_boundary_shape_signature_map"] = {
+        "encoder_lstm_input": [-1, 3, 4],
+        "predictions": [-1, 3, 4],
+    }
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    _align_public_boundary_shapes_to_onnx_contract(
+        model_ir,
+        graph_index=graph_index,
+    )
+
+    assert refresh_count == 1
+    assert model_ir.tensors["encoder_lstm_input"].logical_layout == "NWC"
+    assert model_ir.tensors["predictions"].logical_layout == "NWC"
+    assert model_ir.tensors["encoder_lstm_input"].shape == [1, 3, 4]
+    assert model_ir.tensors["encoder_lstm_input"].shape_signature == [-1, 3, 4]
