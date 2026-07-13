@@ -59,18 +59,12 @@ from onnx2tf.tflite_builder.pytorch_export_errors import (
 )
 from onnx2tf.tflite_builder.pytorch_emitters import (
     _DIRECT_CODEGEN_BINARY_FUNCTIONS,
+    _DIRECT_CODEGEN_MODULE_OP_TYPES,
     _DIRECT_CODEGEN_UNARY_EXPRESSIONS,
     _emit_native_binary_op_for_codegen_impl,
     _emit_native_concat_op_for_codegen,
-    _emit_native_conv2d_module_op_for_codegen,
-    _emit_native_conv3d_module_op_for_codegen,
-    _emit_native_fully_connected_module_op_for_codegen,
-    _emit_native_fused_module_op_for_codegen,
-    _emit_native_prelu_module_op_for_codegen,
-    _emit_native_recurrent_module_op_for_codegen,
+    _emit_native_direct_module_op_for_codegen,
     _emit_native_shape_transform_misc_op_for_codegen,
-    _emit_native_transpose_conv2d_module_op_for_codegen,
-    _emit_native_transpose_conv3d_module_op_for_codegen,
     _emit_native_transpose_op_for_codegen,
     _emit_native_unary_op_for_codegen,
 )
@@ -4598,175 +4592,6 @@ def _binary_operand_expr_for_codegen(
     return f"{expr}.reshape({repr(reshape_dims)})"
 
 
-def _emit_native_direct_module_op_for_codegen(
-    *,
-    model_ir: ModelIR,
-    op: OperatorIR,
-    op_index: int,
-    outputs: Sequence[str],
-    output_vars: Sequence[str],
-    output_target_shape: str,
-    op_module_attr_names: Dict[int, str],
-    fused_module_specs: Dict[int, Dict[str, Any]],
-    conv_module_pad_specs: Dict[int, Optional[List[int]]],
-    tensor_var_names: Dict[str, str],
-    channel_first_tensor_expr_aliases: Dict[str, str],
-    runtime_imports: Set[str],
-    forward_lines: List[str],
-    tensor_expr_fn: Callable[[str], str],
-    tensor_expr_for_channel_first_bridge_fn: Callable[[str, Sequence[int]], Optional[str]],
-    all_consumers_are_channel_first_binary_ops_fn: Callable[[str], bool],
-    can_omit_materialized_channel_last_alias_fn: Callable[[str], bool],
-    derived_local_var_name_fn: Callable[[str, str], str],
-    emit_module_output_expr_fn: Callable[..., str],
-    target_shape_literal_fn: Callable[[str], str],
-    conv2d_input_pre_permute_fn: Callable[..., Optional[List[int]]],
-    can_emit_direct_module_call_fn: Callable[[OperatorIR], bool],
-    activation_lines_fn: Callable[[str, str], List[str]],
-    emit_maybe_aligned_expr_fn: Callable[..., str],
-    tensor_shape_list_fn: Callable[[str], Optional[List[int]]],
-    should_skip_align_for_shape_preserving_unary_fn: Callable[[str, str], bool],
-) -> bool:
-    op_type = str(op.op_type)
-    if op_type not in _DIRECT_CODEGEN_MODULE_OP_TYPES:
-        return False
-    attr_name = op_module_attr_names[int(op_index)]
-    fused_module_spec = fused_module_specs.get(int(op_index), None)
-    if _emit_native_recurrent_module_op_for_codegen(
-        op=op,
-        op_type=op_type,
-        attr_name=attr_name,
-        output_vars=output_vars,
-        output_target_shape=output_target_shape,
-        runtime_imports=runtime_imports,
-        forward_lines=forward_lines,
-        tensor_expr_fn=tensor_expr_fn,
-    ):
-        return True
-    if _emit_native_fused_module_op_for_codegen(
-        model_ir=model_ir,
-        op=op,
-        op_type=op_type,
-        attr_name=attr_name,
-        fused_module_spec=fused_module_spec,
-        tensor_var_names=tensor_var_names,
-        channel_first_tensor_expr_aliases=channel_first_tensor_expr_aliases,
-        runtime_imports=runtime_imports,
-        forward_lines=forward_lines,
-        tensor_expr_fn=tensor_expr_fn,
-        tensor_expr_for_channel_first_bridge_fn=(
-            tensor_expr_for_channel_first_bridge_fn
-        ),
-        all_consumers_are_channel_first_binary_ops_fn=(
-            all_consumers_are_channel_first_binary_ops_fn
-        ),
-        can_omit_materialized_channel_last_alias_fn=(
-            can_omit_materialized_channel_last_alias_fn
-        ),
-        derived_local_var_name_fn=derived_local_var_name_fn,
-        emit_module_output_expr_fn=emit_module_output_expr_fn,
-        target_shape_literal_fn=target_shape_literal_fn,
-    ):
-        return True
-    if _emit_native_conv2d_module_op_for_codegen(
-        model_ir=model_ir,
-        op=op,
-        op_type=op_type,
-        op_index=op_index,
-        attr_name=attr_name,
-        outputs=outputs,
-        output_vars=output_vars,
-        output_target_shape=output_target_shape,
-        conv_module_pad_specs=conv_module_pad_specs,
-        channel_first_tensor_expr_aliases=channel_first_tensor_expr_aliases,
-        runtime_imports=runtime_imports,
-        forward_lines=forward_lines,
-        tensor_expr_fn=tensor_expr_fn,
-        tensor_expr_for_channel_first_bridge_fn=(
-            tensor_expr_for_channel_first_bridge_fn
-        ),
-        derived_local_var_name_fn=derived_local_var_name_fn,
-        emit_module_output_expr_fn=emit_module_output_expr_fn,
-        target_shape_literal_fn=target_shape_literal_fn,
-        conv2d_input_pre_permute_fn=conv2d_input_pre_permute_fn,
-        can_emit_direct_module_call_fn=can_emit_direct_module_call_fn,
-        activation_lines_fn=activation_lines_fn,
-        tensor_shape_list_fn=tensor_shape_list_fn,
-    ):
-        return True
-    if _emit_native_transpose_conv2d_module_op_for_codegen(
-        model_ir=model_ir,
-        op=op,
-        op_type=op_type,
-        attr_name=attr_name,
-        outputs=outputs,
-        output_vars=output_vars,
-        output_target_shape=output_target_shape,
-        runtime_imports=runtime_imports,
-        forward_lines=forward_lines,
-        tensor_expr_fn=tensor_expr_fn,
-        activation_lines_fn=activation_lines_fn,
-    ):
-        return True
-    if _emit_native_conv3d_module_op_for_codegen(
-        model_ir=model_ir,
-        op=op,
-        op_type=op_type,
-        attr_name=attr_name,
-        outputs=outputs,
-        output_vars=output_vars,
-        output_target_shape=output_target_shape,
-        channel_first_tensor_expr_aliases=channel_first_tensor_expr_aliases,
-        runtime_imports=runtime_imports,
-        forward_lines=forward_lines,
-        tensor_expr_fn=tensor_expr_fn,
-        derived_local_var_name_fn=derived_local_var_name_fn,
-        emit_module_output_expr_fn=emit_module_output_expr_fn,
-        can_emit_direct_module_call_fn=can_emit_direct_module_call_fn,
-        activation_lines_fn=activation_lines_fn,
-    ):
-        return True
-    if _emit_native_transpose_conv3d_module_op_for_codegen(
-        model_ir=model_ir,
-        op=op,
-        op_type=op_type,
-        attr_name=attr_name,
-        outputs=outputs,
-        output_vars=output_vars,
-        output_target_shape=output_target_shape,
-        runtime_imports=runtime_imports,
-        forward_lines=forward_lines,
-        tensor_expr_fn=tensor_expr_fn,
-        activation_lines_fn=activation_lines_fn,
-    ):
-        return True
-    if _emit_native_fully_connected_module_op_for_codegen(
-        op=op,
-        op_type=op_type,
-        attr_name=attr_name,
-        output_vars=output_vars,
-        forward_lines=forward_lines,
-        tensor_expr_fn=tensor_expr_fn,
-        activation_lines_fn=activation_lines_fn,
-    ):
-        return True
-    if _emit_native_prelu_module_op_for_codegen(
-        model_ir=model_ir,
-        op=op,
-        op_type=op_type,
-        attr_name=attr_name,
-        outputs=outputs,
-        output_vars=output_vars,
-        forward_lines=forward_lines,
-        tensor_expr_fn=tensor_expr_fn,
-        emit_maybe_aligned_expr_fn=emit_maybe_aligned_expr_fn,
-        tensor_shape_list_fn=tensor_shape_list_fn,
-        should_skip_align_for_shape_preserving_unary_fn=(
-            should_skip_align_for_shape_preserving_unary_fn
-        ),
-    ):
-        return True
-    return False
 
 
 def _binary_output_target_shape_literal_for_codegen(
@@ -36312,19 +36137,6 @@ def _make_tensor_storage_name_map(model_ir: ModelIR) -> Dict[str, str]:
         storage_name_map[str(tensor_name)] = candidate
     return storage_name_map
 
-
-_DIRECT_CODEGEN_MODULE_OP_TYPES: Set[str] = {
-    "CONV_2D",
-    "DEPTHWISE_CONV_2D",
-    "TRANSPOSE_CONV",
-    "CONV_3D",
-    "CONV_3D_TRANSPOSE",
-    "FULLY_CONNECTED",
-    "PRELU",
-    "UNIDIRECTIONAL_SEQUENCE_RNN",
-    "UNIDIRECTIONAL_SEQUENCE_LSTM",
-    "BIDIRECTIONAL_SEQUENCE_LSTM",
-}
 
 _DIRECT_CODEGEN_SUPPORTED_OP_TYPES: Set[str] = (
     set(_DIRECT_CODEGEN_MODULE_OP_TYPES)

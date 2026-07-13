@@ -6,6 +6,7 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
     _emit_native_concat_op_for_codegen,
     _emit_native_conv2d_module_op_for_codegen,
     _emit_native_conv3d_module_op_for_codegen,
+    _emit_native_direct_module_op_for_codegen,
     _emit_native_fully_connected_module_op_for_codegen,
     _emit_native_fused_module_op_for_codegen,
     _emit_native_prelu_module_op_for_codegen,
@@ -1404,4 +1405,81 @@ def test_fused_module_emitter_preserves_channel_last_fallback_bridge() -> None:
         ".permute(0, 2, 3, 1).contiguous(), NHWC)"
     ]
     assert aliases == {}
+    assert runtime_imports == set()
+
+
+def _emit_direct_module_dispatch(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    attr_names: dict[int, str],
+    runtime_imports: set[str],
+    forward_lines: list[str],
+) -> bool:
+    return _emit_native_direct_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_index=0,
+        outputs=[str(name) for name in op.outputs],
+        output_vars=["y_var"],
+        output_target_shape="[1, 4]",
+        op_module_attr_names=attr_names,
+        fused_module_specs={},
+        conv_module_pad_specs={},
+        tensor_var_names={"y": "y_var"},
+        channel_first_tensor_expr_aliases={},
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"expr_{name}",
+        tensor_expr_for_channel_first_bridge_fn=lambda _name, _perm: None,
+        all_consumers_are_channel_first_binary_ops_fn=lambda _name: False,
+        can_omit_materialized_channel_last_alias_fn=lambda _name: False,
+        derived_local_var_name_fn=lambda _name, _prefix: "derived_var",
+        emit_module_output_expr_fn=lambda **_kwargs: "module_output",
+        target_shape_literal_fn=lambda _name: "[1, 4]",
+        conv2d_input_pre_permute_fn=lambda *_args, **_kwargs: None,
+        can_emit_direct_module_call_fn=lambda _op: True,
+        activation_lines_fn=(
+            lambda name, fused: []
+            if fused == "NONE"
+            else [f"activate({name}, {fused})"]
+        ),
+        emit_maybe_aligned_expr_fn=lambda **_kwargs: "aligned_output",
+        tensor_shape_list_fn=lambda name: list(model_ir.tensors[name].shape),
+        should_skip_align_for_shape_preserving_unary_fn=(
+            lambda _input, _output: True
+        ),
+    )
+
+
+def test_direct_module_dispatcher_routes_supported_family_and_rejects_other() -> None:
+    model_ir = ModelIR(name="direct_module_dispatch")
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1, 4]),
+        "y": TensorIR("y", "FLOAT32", [1, 4]),
+    }
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_direct_module_dispatch(
+        model_ir=model_ir,
+        op=OperatorIR("FULLY_CONNECTED", ["x", "weight"], ["y"]),
+        attr_names={0: "linear_0"},
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+    )
+    assert emitted is True
+    assert forward_lines == ["y_var = self.linear_0(expr_x)"]
+    assert runtime_imports == set()
+
+    forward_lines.clear()
+    emitted = _emit_direct_module_dispatch(
+        model_ir=model_ir,
+        op=OperatorIR("RELU", ["x"], ["y"]),
+        attr_names={},
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+    )
+    assert emitted is False
+    assert forward_lines == []
     assert runtime_imports == set()

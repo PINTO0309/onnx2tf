@@ -3385,11 +3385,12 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
         for node in exporter_tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    emitter_functions = {
-        node.name
+    emitter_function_nodes = {
+        node.name: node
         for node in emitter_tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+    emitter_functions = set(emitter_function_nodes)
 
     assert "_emit_native_unary_op_for_codegen" in emitter_functions
     assert "_emit_native_shape_transform_misc_op_for_codegen" in emitter_functions
@@ -3412,6 +3413,7 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
     assert "_emit_native_conv3d_module_op_for_codegen" in emitter_functions
     assert "_emit_native_conv2d_module_op_for_codegen" in emitter_functions
     assert "_emit_native_fused_module_op_for_codegen" in emitter_functions
+    assert "_emit_native_direct_module_op_for_codegen" in emitter_functions
     assert (
         "_concat_channel_first_codegen_breaks_channel_last_consumers_for_codegen"
         in emitter_functions
@@ -3441,9 +3443,14 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
         "def _concat_channel_first_codegen_breaks_channel_last_consumers_for_codegen("
         not in exporter_source
     )
+    assert "def _emit_native_direct_module_op_for_codegen(" not in exporter_source
+    assert "_emit_native_direct_module_op_for_codegen," in exporter_source
+    assert "_DIRECT_CODEGEN_MODULE_OP_TYPES:" in emitter_source
+    assert "_DIRECT_CODEGEN_MODULE_OP_TYPES:" not in exporter_source
+    assert "_DIRECT_CODEGEN_MODULE_OP_TYPES," in exporter_source
     direct_module_source = ast.get_source_segment(
-        exporter_source,
-        exporter_functions["_emit_native_direct_module_op_for_codegen"],
+        emitter_source,
+        emitter_function_nodes["_emit_native_direct_module_op_for_codegen"],
     )
     assert direct_module_source is not None
     assert "_emit_native_recurrent_module_op_for_codegen(" in direct_module_source

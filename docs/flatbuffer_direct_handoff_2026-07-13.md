@@ -144,6 +144,15 @@ only one Conv3D mention for fused-module raw-layout classification. Emitter and
 architecture validation passes 80 tests; syntax, Ruff, and diff checks pass. No
 model conversion or inference was run.
 
+The direct-module dispatch table and ordered orchestration have now moved out
+of the exporter too. The Torch-free emitter module owns all direct-module
+family logic and routing, while the exporter only imports the table/function
+names used by capability selection and the stored generated pipeline. A direct
+dispatcher fixture proves FullyConnected routing and unsupported-op early
+rejection before attribute lookup. Emitter and architecture validation passes
+85 tests; syntax, Ruff, and diff checks pass. No model conversion or inference
+was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

@@ -1891,6 +1891,13 @@ module implementation is now an approximately 171-line ordered dispatcher: it
 contains no generated statement append and no permutation expression, only the
 capability guard, attribute/spec lookup, and family emitter delegation.
 
+That final direct-module dispatcher and its supported-op table now live beside
+the family emitters. The exporter no longer defines any direct-module emission
+function or module-family table; it imports the unchanged names required by the
+stored generated pipeline. The dispatcher itself remains statement-free and
+preserves recurrent, fused, Conv2D, TransposeConv2D, Conv3D,
+TransposeConv3D, FullyConnected, and PReLU priority exactly.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
