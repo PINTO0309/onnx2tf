@@ -350,6 +350,12 @@ whether spatial shapes must be reconciled. One validator replaces the repeated
 per-family count branches; an import-time invariant requires the contract and
 pass-family sets to match. Slice retains only its plan-aware unique-operator
 guard, while recursive Add retains its consumer-ownership planning.
+Unary, Swish, Softmax, and Dequantize application share one common-signature
+applier map. Its keys plus the contextual direct/Pad/PReLU/Slice/Split/Add/
+Leaky paths must equal the union of contract kinds at import time. Split, Add,
+and Leaky retain their applied-operator sets so shared plans are mutated once.
+Adapter liveness and recursive plan walking are top-level helpers rather than
+closures rebuilt for every candidate.
 Exclusive pads constants are remapped in place; shared or public pads
 constants use copy-on-write so unrelated Pad consumers preserve NCHW
 semantics. Dequantize inputs retain source scale and zero-point provenance

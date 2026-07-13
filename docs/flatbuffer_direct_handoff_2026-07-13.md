@@ -313,6 +313,13 @@ original precedence and public-name signatures. Split remains the final
 explicit resolver because it alone consumes the candidate-wide allowed
 consumer set.
 
+Float apply dispatch now maps the four common-signature Unary, Swish, Softmax,
+and Dequantize operations. An import-time invariant matches simple and
+contextual applier kinds against the union of input-contract kinds. Leaky,
+Split, and Add keep their one-time application sets. Adapter-liveness and
+recursive input-plan walking moved out of the candidate loop into top-level
+helpers, avoiding per-candidate closure creation.
+
 The adjacent legacy ownership gate now builds action-kind counts once. Seven
 simple quantized family contracts declare only allowed and required kinds;
 all-Pad keeps its minimum-arity guard, and Slice/Split/Add keep their
@@ -430,6 +437,9 @@ Focused verification, all in the existing `uv` environment:
 - After consolidating the ordered Add root-companion fallback resolvers, the
   same selection remained `284 passed in 0.77s`; targeted compilation, Ruff,
   and diff checks passed.
+- After consolidating simple float appliers and lifting cleanup helpers, the
+  same selection passed `284 tests in 0.76s`; targeted compilation, Ruff, and
+  diff checks passed.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.

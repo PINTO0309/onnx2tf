@@ -2548,6 +2548,45 @@ def _apply_leaky_input_plan(
             )
 
 
+_SIMPLE_INPUT_APPLIERS = {
+    "unary": _apply_unary_input_plan,
+    "swish": _apply_swish_input_plan,
+    "softmax": _apply_softmax_input_plan,
+    "dequantize": _apply_dequantize_input_plan,
+}
+_CONTEXTUAL_APPLIER_KINDS = frozenset(
+    {"direct", "pad", "prelu", "slice", "split", "add", "leaky"}
+)
+if set(_SIMPLE_INPUT_APPLIERS) | _CONTEXTUAL_APPLIER_KINDS != set().union(
+    *(contract.allowed_kinds for contract in _NHWC_INPUT_CONTRACTS.values())
+):
+    raise RuntimeError("NHWC Concat input contracts and appliers diverged")
+
+
+def _adapter_is_now_removable(
+    adapter_op: OperatorIR,
+    *,
+    graph_index: ModelIRGraphIndex,
+    public_names: set[str],
+) -> bool:
+    output_names = [str(name) for name in adapter_op.outputs]
+    return bool(output_names) and all(
+        output_name not in public_names
+        and not graph_index.consumer_indices(output_name)
+        for output_name in output_names
+    )
+
+
+def _walk_input_plans(
+    input_plans: Tuple[_NhwcConcatInputPlan, ...],
+) -> List[_NhwcConcatInputPlan]:
+    plans: List[_NhwcConcatInputPlan] = []
+    for input_plan in input_plans:
+        plans.append(input_plan)
+        plans.extend(_walk_input_plans(input_plan.add_operand_plans))
+    return plans
+
+
 def _optimize_transpose_pre_concat_nhwc_family(
     model_ir: ModelIR,
     *,
@@ -2587,21 +2626,15 @@ def _optimize_transpose_pre_concat_nhwc_family(
         applied_add_operators: set[int] = set()
         applied_leaky_operators: set[int] = set()
         for input_plan in candidate.input_plans:
-            if input_plan.unary_op is not None:
-                _apply_unary_input_plan(
+            simple_applier = _SIMPLE_INPUT_APPLIERS.get(input_plan.kind)
+            if simple_applier is not None:
+                simple_applier(
                     model_ir,
                     graph_index,
                     input_plan,
                 )
                 new_concat_inputs.append(input_plan.output_name)
-            elif input_plan.logistic_op is not None:
-                _apply_swish_input_plan(
-                    model_ir,
-                    graph_index,
-                    input_plan,
-                )
-                new_concat_inputs.append(input_plan.output_name)
-            elif input_plan.slice_op is not None:
+            elif input_plan.kind == "slice":
                 _apply_slice_input_plan(
                     model_ir,
                     graph_index,
@@ -2609,7 +2642,8 @@ def _optimize_transpose_pre_concat_nhwc_family(
                     materialized=materialized_int_parameters,
                 )
                 new_concat_inputs.append(input_plan.output_name)
-            elif input_plan.split_op is not None:
+            elif input_plan.kind == "split":
+                assert input_plan.split_op is not None
                 split_operator_id = id(input_plan.split_op)
                 if split_operator_id not in applied_split_operators:
                     _apply_split_input_plan(
@@ -2620,7 +2654,8 @@ def _optimize_transpose_pre_concat_nhwc_family(
                     )
                     applied_split_operators.add(split_operator_id)
                 new_concat_inputs.append(input_plan.output_name)
-            elif input_plan.add_op is not None:
+            elif input_plan.kind == "add":
+                assert input_plan.add_op is not None
                 add_operator_id = id(input_plan.add_op)
                 if add_operator_id not in applied_add_operators:
                     _apply_add_input_plan(
@@ -2638,7 +2673,8 @@ def _optimize_transpose_pre_concat_nhwc_family(
                         applied_add_operators=applied_add_operators,
                     )
                 new_concat_inputs.append(input_plan.output_name)
-            elif input_plan.leaky_neg_op is not None:
+            elif input_plan.kind == "leaky":
+                assert input_plan.leaky_neg_op is not None
                 leaky_operator_id = id(input_plan.leaky_neg_op)
                 if leaky_operator_id not in applied_leaky_operators:
                     _apply_leaky_input_plan(
@@ -2648,14 +2684,7 @@ def _optimize_transpose_pre_concat_nhwc_family(
                     )
                     applied_leaky_operators.add(leaky_operator_id)
                 new_concat_inputs.append(input_plan.output_name)
-            elif input_plan.softmax_op is not None:
-                _apply_softmax_input_plan(
-                    model_ir,
-                    graph_index,
-                    input_plan,
-                )
-                new_concat_inputs.append(input_plan.output_name)
-            elif input_plan.prelu_op is not None:
+            elif input_plan.kind == "prelu":
                 _apply_prelu_input_plan(
                     model_ir,
                     graph_index,
@@ -2663,14 +2692,8 @@ def _optimize_transpose_pre_concat_nhwc_family(
                     materialized_alphas=materialized_prelu_alphas,
                 )
                 new_concat_inputs.append(input_plan.output_name)
-            elif input_plan.dequantize_op is not None:
-                _apply_dequantize_input_plan(
-                    model_ir,
-                    graph_index,
-                    input_plan,
-                )
-                new_concat_inputs.append(input_plan.output_name)
-            elif input_plan.pad_plan is not None:
+            elif input_plan.kind == "pad":
+                assert input_plan.pad_plan is not None
                 apply_nhwc_concat_pad_plan(
                     model_ir,
                     graph_index,
@@ -2678,8 +2701,13 @@ def _optimize_transpose_pre_concat_nhwc_family(
                     materialized_pads=materialized_pads,
                 )
                 new_concat_inputs.append(input_plan.output_name)
-            else:
+            elif input_plan.kind == "direct":
                 new_concat_inputs.append(input_plan.source_name)
+            else:
+                raise RuntimeError(
+                    "unsupported NHWC Concat input plan: "
+                    f"{input_plan.kind}"
+                )
         _set_operator_inputs(
             model_ir=model_ir,
             op=candidate.concat_op,
@@ -2728,23 +2756,6 @@ def _optimize_transpose_pre_concat_nhwc_family(
             *[str(name) for name in model_ir.outputs],
         }
 
-        def _adapter_is_now_removable(adapter_op: OperatorIR) -> bool:
-            output_names = [str(name) for name in adapter_op.outputs]
-            return bool(output_names) and all(
-                output_name not in public_names
-                and not graph_index.consumer_indices(output_name)
-                for output_name in output_names
-            )
-
-        def _walk_input_plans(
-            input_plans: Tuple[_NhwcConcatInputPlan, ...],
-        ) -> List[_NhwcConcatInputPlan]:
-            plans: List[_NhwcConcatInputPlan] = []
-            for input_plan in input_plans:
-                plans.append(input_plan)
-                plans.extend(_walk_input_plans(input_plan.add_operand_plans))
-            return plans
-
         all_input_plans = _walk_input_plans(candidate.input_plans)
 
         remove_ops = [
@@ -2752,13 +2763,21 @@ def _optimize_transpose_pre_concat_nhwc_family(
                 plan.adapter_op
                 for plan in all_input_plans
                 if plan.remove_adapter
-                or _adapter_is_now_removable(plan.adapter_op)
+                or _adapter_is_now_removable(
+                    plan.adapter_op,
+                    graph_index=graph_index,
+                    public_names=public_names,
+                )
             ],
             *[
                 adapter_op
                 for plan in all_input_plans
                 for adapter_op in plan.extra_source_adapter_ops
-                if _adapter_is_now_removable(adapter_op)
+                if _adapter_is_now_removable(
+                    adapter_op,
+                    graph_index=graph_index,
+                    public_names=public_names,
+                )
             ],
             *[
                 adapter_op
