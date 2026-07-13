@@ -360,6 +360,15 @@ No model conversion or inference was run. This removes the ownership blocker
 for moving channel-last GAP/Conv input repair without introducing an exporter
 import cycle.
 
+Channel-last GAP/Conv input repair now uses the shared rank-4 shape policy and
+lives in `pytorch_source_rewrites.py`. Its 236-line AST matches the prior
+exporter definition exactly. Direct tests cover bridge insertion and scalar-axis
+mean rejection, while the common no-op matrix covers unrelated source. Shape
+policy, rewrite, and architecture validation passes 105 tests; syntax, Ruff,
+pycompile, diff, and AST-equivalence checks pass. No model conversion or
+inference was run. Graph-aware GatherND repair remains exporter-owned; do not
+move it without an explicit ModelIR/query boundary.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

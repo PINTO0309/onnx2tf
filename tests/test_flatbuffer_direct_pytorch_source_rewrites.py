@@ -11,6 +11,7 @@ from onnx2tf.tflite_builder.pytorch_source_rewrites import (
     _fold_channel_last_prelu_bridges,
     _fold_rank4_reshape_permute_conv_bridges,
     _inline_trivial_public_layout_bridge_aliases,
+    _repair_channel_last_gap_conv_inputs,
     _rewrite_channel_first_gap_outputs_to_explicit_channel_last,
     _rewrite_channel_first_se_scale_binary_bridges,
     _rewrite_channel_last_binary_bridge_chains,
@@ -189,6 +190,27 @@ def test_channel_last_binary_bridge_rewrite_folds_conv_input_chain() -> None:
     ]
 
 
+def test_channel_last_gap_conv_repair_inserts_channel_first_input_bridge() -> None:
+    assert _repair_channel_last_gap_conv_inputs(
+        [
+            "        gap = torch.mean(features, dim=[1, 2], keepdim=True)",
+            "        y = self.conv_block_66(gap)",
+        ]
+    ) == [
+        "        gap = torch.mean(features, dim=[1, 2], keepdim=True)",
+        "        y = self.conv_block_66(gap.permute(0, 3, 1, 2).contiguous())",
+    ]
+
+
+def test_channel_last_gap_conv_repair_ignores_scalar_dim_mean() -> None:
+    lines = [
+        "        gap = torch.mean(features, dim=1, keepdim=True)",
+        "        y = self.conv_block_66(gap)",
+    ]
+
+    assert _repair_channel_last_gap_conv_inputs(lines) == lines
+
+
 @pytest.mark.parametrize(
     "rewrite",
     [
@@ -199,6 +221,7 @@ def test_channel_last_binary_bridge_rewrite_folds_conv_input_chain() -> None:
         _fold_channel_last_prelu_bridges,
         _fold_rank4_reshape_permute_conv_bridges,
         _inline_trivial_public_layout_bridge_aliases,
+        _repair_channel_last_gap_conv_inputs,
         _rewrite_channel_last_gap_means_to_reduce_mean,
         _rewrite_channel_first_gap_outputs_to_explicit_channel_last,
         _rewrite_channel_first_se_scale_binary_bridges,

@@ -2033,11 +2033,13 @@ rank-4 reshape/permute/Conv folding use the same owner. The channel-first
 hard-sigmoid gate/Conv rewrite is co-located with these pure transforms as
 well. Channel-last binary bridge-chain folding uses the same callback-based
 boundary for local-name and constant-layout decisions. All twelve ASTs are
-identical to their former exporter definitions.
+identical to their former exporter definitions. Channel-last GAP/Conv input
+repair now uses the shared rank-4 shape policy and is the thirteenth pure
+rewrite owned here; its AST is likewise unchanged.
 Direct fixtures fix each
 rewrite's representative success form and unmatched-source no-op behavior.
-Graph-aware GatherND boundary repair remains in the exporter and is deliberately
-not mixed into this pure source-rewrite boundary.
+Graph-aware GatherND boundary repair remains in the exporter and is
+deliberately not mixed into this pure source-rewrite boundary.
 
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
