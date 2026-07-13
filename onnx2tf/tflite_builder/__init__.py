@@ -5,6 +5,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from onnx2tf.tflite_builder.core.contracts import ConversionRequest, ConversionResult
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.progress import (
     ProgressSpinner as _ProgressSpinner,
     create_progress_bar as _create_progress_bar,
@@ -798,8 +799,15 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         saved_model_path = None
         float32_write_timing: Dict[str, Any] = {}
         model_ir_fp32_tflite = clone_model_ir_with_float32(model_ir_fp32)
-        _optimize_constant_input_scatter_nd_chains(model_ir_fp32_tflite)
-        _optimize_constant_binary_elementwise_chains(model_ir_fp32_tflite)
+        fp32_write_graph_index = ModelIRGraphIndex(model_ir_fp32_tflite)
+        _optimize_constant_input_scatter_nd_chains(
+            model_ir_fp32_tflite,
+            graph_index=fp32_write_graph_index,
+        )
+        _optimize_constant_binary_elementwise_chains(
+            model_ir_fp32_tflite,
+            graph_index=fp32_write_graph_index,
+        )
         run_model_ir_validation_pipeline(model_ir_fp32_tflite)
         write_model_file(
             schema_tflite=schema_tflite,
@@ -1030,8 +1038,15 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         float16_path = os.path.join(output_folder_path, f"{output_file_name}_float16.tflite")
         float16_write_timing: Dict[str, Any] = {}
         model_ir_fp16_tflite = clone_model_ir_with_float16(model_ir_fp16)
-        _optimize_constant_input_scatter_nd_chains(model_ir_fp16_tflite)
-        _optimize_constant_binary_elementwise_chains(model_ir_fp16_tflite)
+        fp16_write_graph_index = ModelIRGraphIndex(model_ir_fp16_tflite)
+        _optimize_constant_input_scatter_nd_chains(
+            model_ir_fp16_tflite,
+            graph_index=fp16_write_graph_index,
+        )
+        _optimize_constant_binary_elementwise_chains(
+            model_ir_fp16_tflite,
+            graph_index=fp16_write_graph_index,
+        )
         run_model_ir_validation_pipeline(model_ir_fp16_tflite)
         write_model_file(
             schema_tflite=schema_tflite,

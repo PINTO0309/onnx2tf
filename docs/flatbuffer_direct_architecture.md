@@ -42,8 +42,9 @@ Lineage-aware graph mutation helpers accept an optional ModelIR index and
 update it atomically.
 `operator_indices_for_types()` returns a sorted, deduplicated union for
 multi-type roots without scanning the operator list. Cast cleanup and
-constant-input Cast/Pool/Pad folding use these single- or multi-type indices;
-each successful mutation restarts against the updated index.
+constant-input Cast/Pool/Pad/ScatterND/binary folding use these single- or
+multi-type indices; each successful mutation restarts against the updated
+index.
 
 Indexed root enumeration is used by the rank-four float and quantized Concat
 families and by the bounded axis-3 constant-Concat, Add/Concat suffix, rank-five
@@ -1436,7 +1437,11 @@ Pool folding, whose output can feed Cast folding, all through one differential
 index and LayoutState. Each operator is removed structurally and unused source
 constants are pruned transactionally. The two former lowerer triplets are
 one-to-one group calls; ScatterND and binary constant folding remain independent
-compatibility helpers because they are not part of those production sequences.
+compatibility helpers outside that pass group. They now accept an optional
+shared GraphIndex, use differential operator removal and LayoutState-aware
+pruning, and contain no direct operator-list deletion. Float32 and float16
+artifact preparation builds one index per cloned artifact and shares it across
+the consecutive ScatterND and binary folds.
 
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
