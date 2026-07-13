@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
@@ -365,7 +363,12 @@ def _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(
     return {"optimized_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains": int(rewritten)}
 
 
-def _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate NCHW round-trips around logistic/sub-gated dual-MUL branches whose MUL
     outputs are immediately transposed back to NHWC before layout-agnostic consumers.
@@ -386,6 +389,7 @@ def _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir: ModelIR) 
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _collect_inverse_posts(tensor_name: str) -> Optional[Tuple[List[int], List[str]]]:
         out_users = [int(v) for v in consumers.get(str(tensor_name), [])]
@@ -410,8 +414,8 @@ def _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir: ModelIR) 
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for gate_pre_idx, gate_pre_op in enumerate(model_ir.operators):
@@ -558,6 +562,7 @@ def _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir: ModelIR) 
                 model_ir=model_ir,
                 op=logistic_op,
                 new_inputs=[str(gate_pre_in_name)],
+                graph_index=graph_index,
             )
 
             for mul_op, pre_out_name, pre_in_name in [
@@ -576,6 +581,7 @@ def _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir: ModelIR) 
                     model_ir=model_ir,
                     op=mul_op,
                     new_inputs=mul_inputs,
+                    graph_index=graph_index,
                 )
             else:
                 for tensor_name in [
@@ -598,9 +604,15 @@ def _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir: ModelIR) 
                         model_ir=model_ir,
                         op=mul_op,
                         new_outputs=[canonical_post_output_name],
+                        graph_index=graph_index,
                     )
                     for alias_name in post_output_names[1:]:
-                        _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name)
+                        _replace_tensor_inputs(
+                            model_ir,
+                            str(alias_name),
+                            canonical_post_output_name,
+                            graph_index=graph_index,
+                        )
 
                     old_mul_out_tensor = model_ir.tensors.get(str(old_mul_out_name), None)
                     canonical_tensor = model_ir.tensors.get(str(canonical_post_output_name), None)
@@ -626,7 +638,7 @@ def _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir: ModelIR) 
                     *[int(v) for v in sub_post_indices],
                 }
                 for remove_idx in sorted(remove_indices, reverse=True):
-                    del model_ir.operators[int(remove_idx)]
+                    graph_index.remove_operator(int(remove_idx))
 
                 rewritten += 1
                 changed = True
@@ -635,23 +647,32 @@ def _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir: ModelIR) 
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_logistic_sub_mul_postadd_nhwc_chains": int(rewritten)}
 
 
-def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:
+def _is_indexed_transpose(
+    model_ir: ModelIR,
+    op: OperatorIR | None,
+    perm: List[int],
+) -> bool:
+    return bool(
+        op is not None
+        and str(op.op_type) == "TRANSPOSE"
+        and len(op.inputs) >= 2
+        and len(op.outputs) == 1
+        and _read_transpose_perm(model_ir, op) == perm
+    )
+
+
+def _complementary_gate_prefixes(
+    pass_state: ModelIRPassState,
+) -> List[Dict[str, Any]]:
     model_ir = pass_state.model_ir
     graph_index = pass_state.graph_index
     model_outputs = {str(name) for name in model_ir.outputs}
-
-    def _is_transpose(op: OperatorIR | None, perm: List[int]) -> bool:
-        return bool(
-            op is not None
-            and str(op.op_type) == "TRANSPOSE"
-            and len(op.inputs) >= 2
-            and len(op.outputs) == 1
-            and _read_transpose_perm(model_ir, op) == perm
-        )
 
     def _data_pre_for_mul(
         mul_op: OperatorIR,
@@ -671,7 +692,11 @@ def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:
             return None
         pre_op = graph_index.producer(data_names[0])
         if (
-            not _is_transpose(pre_op, [0, 3, 1, 2])
+            not _is_indexed_transpose(
+                model_ir,
+                pre_op,
+                [0, 3, 1, 2],
+            )
             or pre_op is None
             or str(pre_op.inputs[0]) in model_outputs
             or data_names[0] in model_outputs
@@ -682,16 +707,13 @@ def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:
             return None
         return pre_op, pre_index, data_names[0]
 
-    def _inverse_posts_only(tensor_name: str) -> bool:
-        users = graph_index.consumers_of(tensor_name)
-        return bool(users) and all(
-            _is_transpose(user, [0, 2, 3, 1])
-            and str(user.outputs[0]) not in model_outputs
-            for user in users
-        )
-
+    prefixes: List[Dict[str, Any]] = []
     for gate_pre_op in model_ir.operators:
-        if not _is_transpose(gate_pre_op, [0, 3, 1, 2]):
+        if not _is_indexed_transpose(
+            model_ir,
+            gate_pre_op,
+            [0, 3, 1, 2],
+        ):
             continue
         gate_pre_in = str(gate_pre_op.inputs[0])
         gate_pre_out = str(gate_pre_op.outputs[0])
@@ -701,12 +723,11 @@ def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:
         if len(gate_users) != 1:
             continue
         logistic_op = gate_users[0]
-        logistic_index = graph_index.operator_index(logistic_op)
         if (
-            logistic_index is None
-            or str(logistic_op.op_type) != "LOGISTIC"
+            str(logistic_op.op_type) != "LOGISTIC"
             or len(logistic_op.inputs) != 1
             or len(logistic_op.outputs) != 1
+            or str(logistic_op.inputs[0]) != gate_pre_out
         ):
             continue
         logistic_out = str(logistic_op.outputs[0])
@@ -715,7 +736,11 @@ def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:
         logistic_users = graph_index.consumers_of(logistic_out)
         sub_ops = [op for op in logistic_users if str(op.op_type) == "SUB"]
         mul_sig_ops = [op for op in logistic_users if str(op.op_type) == "MUL"]
-        if len(logistic_users) != 2 or len(sub_ops) != 1 or len(mul_sig_ops) != 1:
+        if (
+            len(logistic_users) != 2
+            or len(sub_ops) != 1
+            or len(mul_sig_ops) != 1
+        ):
             continue
         sub_op = sub_ops[0]
         mul_sig_op = mul_sig_ops[0]
@@ -736,7 +761,6 @@ def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:
         sub_pre = _data_pre_for_mul(mul_sub_op, sub_out)
         if sig_pre is None or sub_pre is None or sig_pre[1] == sub_pre[1]:
             continue
-
         mul_sig_index = graph_index.operator_index(mul_sig_op)
         mul_sub_index = graph_index.operator_index(mul_sub_op)
         if mul_sig_index is None or mul_sub_index is None:
@@ -745,6 +769,40 @@ def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:
         mul_sub_out = str(mul_sub_op.outputs[0])
         if mul_sig_out in model_outputs or mul_sub_out in model_outputs:
             continue
+        prefixes.append(
+            {
+                "sig_pre": sig_pre,
+                "sub_pre": sub_pre,
+                "mul_sig_index": mul_sig_index,
+                "mul_sub_index": mul_sub_index,
+                "mul_sig_out": mul_sig_out,
+                "mul_sub_out": mul_sub_out,
+            }
+        )
+    return prefixes
+
+
+def _inverse_posts_only(
+    pass_state: ModelIRPassState,
+    tensor_name: str,
+) -> bool:
+    model_ir = pass_state.model_ir
+    model_outputs = {str(name) for name in model_ir.outputs}
+    users = pass_state.graph_index.consumers_of(tensor_name)
+    return bool(users) and all(
+        _is_indexed_transpose(model_ir, user, [0, 2, 3, 1])
+        and str(user.outputs[0]) not in model_outputs
+        for user in users
+    )
+
+
+def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:
+    model_ir = pass_state.model_ir
+    graph_index = pass_state.graph_index
+    model_outputs = {str(name) for name in model_ir.outputs}
+    for prefix in _complementary_gate_prefixes(pass_state):
+        mul_sig_out = str(prefix["mul_sig_out"])
+        mul_sub_out = str(prefix["mul_sub_out"])
         add_sig_users = graph_index.consumers_of(mul_sig_out)
         add_sub_users = graph_index.consumers_of(mul_sub_out)
         if len(add_sig_users) != 1 or len(add_sub_users) != 1:
@@ -766,15 +824,22 @@ def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:
         ):
             continue
         add_sig_other = [
-            str(name) for name in add_sig_op.inputs if str(name) != mul_sig_out
+            str(name)
+            for name in add_sig_op.inputs
+            if str(name) != mul_sig_out
         ]
         add_sub_other = [
-            str(name) for name in add_sub_op.inputs if str(name) != mul_sub_out
+            str(name)
+            for name in add_sub_op.inputs
+            if str(name) != mul_sub_out
         ]
+        sig_pre = prefix["sig_pre"]
+        sub_pre = prefix["sub_pre"]
         if (
             len(add_sig_other) != 1
             or len(add_sub_other) != 1
-            or {add_sig_other[0], add_sub_other[0]} != {sig_pre[2], sub_pre[2]}
+            or {add_sig_other[0], add_sub_other[0]}
+            != {sig_pre[2], sub_pre[2]}
         ):
             continue
         add_sig_out = str(add_sig_op.outputs[0])
@@ -782,13 +847,13 @@ def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:
         if (
             add_sig_out in model_outputs
             or add_sub_out in model_outputs
-            or not _inverse_posts_only(add_sig_out)
-            or not _inverse_posts_only(add_sub_out)
+            or not _inverse_posts_only(pass_state, add_sig_out)
+            or not _inverse_posts_only(pass_state, add_sub_out)
         ):
             continue
         allowed_users = {
-            mul_sig_index,
-            mul_sub_index,
+            int(prefix["mul_sig_index"]),
+            int(prefix["mul_sub_index"]),
             add_sig_index,
             add_sub_index,
         }
@@ -803,6 +868,26 @@ def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:
         return True
     return False
 
+
+def _has_postadd_gate_candidate(pass_state: ModelIRPassState) -> bool:
+    graph_index = pass_state.graph_index
+    for prefix in _complementary_gate_prefixes(pass_state):
+        sig_pre = prefix["sig_pre"]
+        sub_pre = prefix["sub_pre"]
+        if set(graph_index.consumer_indices(sig_pre[2])) != {
+            int(prefix["mul_sig_index"])
+        }:
+            continue
+        if set(graph_index.consumer_indices(sub_pre[2])) != {
+            int(prefix["mul_sub_index"])
+        }:
+            continue
+        if not _inverse_posts_only(pass_state, str(prefix["mul_sig_out"])):
+            continue
+        if not _inverse_posts_only(pass_state, str(prefix["mul_sub_out"])):
+            continue
+        return True
+    return False
 
 def run_dual_postconv_gate_layout_cleanup(
     model_ir: ModelIR,
@@ -820,32 +905,56 @@ def run_dual_postconv_gate_layout_cleanup(
                 return ModelIRPreflightResult(True, visited)
         return ModelIRPreflightResult(False, len(candidate_model.operators))
 
-    stats_key = (
-        "optimized_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains"
-    )
+    callbacks = [
+        (
+            "layout.dual_postconv_complementary_gate_nhwc",
+            10,
+            _has_dual_postconv_gate_candidate,
+            _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains,
+            "optimized_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains",
+        ),
+        (
+            "layout.postadd_complementary_gate_nhwc",
+            20,
+            _has_postadd_gate_candidate,
+            _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains,
+            "optimized_transpose_logistic_sub_mul_postadd_nhwc_chains",
+        ),
+    ]
+    specs: List[PassSpec] = []
+    defaults: Dict[str, int] = {}
+    for pass_id, priority, precondition, optimizer, stats_key in callbacks:
+        defaults[stats_key] = 0
 
-    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(
-            pass_state.model_ir,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
+        def _run(
+            pass_state: ModelIRPassState,
+            *,
+            optimizer: Any = optimizer,
+            stats_key: str = stats_key,
+        ) -> Dict[str, int | bool]:
+            stats = optimizer(
+                pass_state.model_ir,
+                graph_index=pass_state.graph_index,
+                layout_state=pass_state.layout_state,
+            )
+            return {**stats, "changed": bool(stats.get(stats_key, 0))}
+
+        specs.append(
+            PassSpec(
+                pass_id=pass_id,
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=precondition,
+                priority=priority,
+                transactional=True,
+            )
         )
-        return {**stats, "changed": bool(stats.get(stats_key, 0))}
 
     details, _ = run_model_ir_pass_group(
         model_ir,
-        specs=[
-            PassSpec(
-                pass_id="layout.dual_postconv_complementary_gate_nhwc",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run,
-                precondition=_has_dual_postconv_gate_candidate,
-                priority=10,
-                transactional=True,
-            )
-        ],
+        specs=specs,
         layout_state=layout_state,
-        default_details={stats_key: 0},
+        default_details=defaults,
         diagnostics=diagnostics,
         preflight=_preflight,
     )

@@ -52990,7 +52990,6 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir)
         _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
         _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
@@ -53178,7 +53177,6 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir)
         _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
         _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
@@ -53375,7 +53373,6 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir)
         _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
         _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
@@ -53597,7 +53594,6 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir)
         _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
         _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
@@ -53735,7 +53731,6 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_logistic_sub_mul_postadd_nhwc_chains(model_ir)
         _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
         _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)

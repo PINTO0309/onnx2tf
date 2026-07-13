@@ -1004,17 +1004,18 @@ def test_complementary_gate_layout_rewrites_have_single_owner() -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     assert function_names <= set(pass_functions)
-    referenced_names = {
-        node.id
-        for node in ast.walk(pass_functions[indexed_function_name])
-        if isinstance(node, ast.Name)
-    }
-    assert "_build_tensor_consumer_map" not in referenced_names
-    assert "_build_tensor_producer_map" not in referenced_names
-    assert not any(
-        isinstance(node, ast.Delete)
-        for node in ast.walk(pass_functions[indexed_function_name])
-    )
+    for function_name in function_names:
+        referenced_names = {
+            node.id
+            for node in ast.walk(pass_functions[function_name])
+            if isinstance(node, ast.Name)
+        }
+        assert "_build_tensor_consumer_map" not in referenced_names
+        assert "_build_tensor_producer_map" not in referenced_names
+        assert not any(
+            isinstance(node, ast.Delete)
+            for node in ast.walk(pass_functions[function_name])
+        )
 
     lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
     lowering_functions = {

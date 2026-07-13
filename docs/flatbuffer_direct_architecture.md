@@ -144,10 +144,15 @@ state and diagnostics to the runner.
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization
-and gate fan-out, data-adapter fan-out, and public-intermediate rejection. Its
-complete implementation is AST-identical to checkpoint `ea78747`; the lowerer
-keeps a compatibility wrapper and all five production calls remain raw until
-the separate indexed migration checkpoint.
+and gate fan-out, data-adapter fan-out, and public-intermediate rejection. The
+family runner now owns a second ordered `LAYOUT_PLAN` spec with stable ID
+`layout.postadd_complementary_gate_nhwc`, after the dual-postconv spec. Both
+guards share one indexed resolver for the three-adapter Logistic/Sub/two-Mul
+prefix, then validate only their distinct output topology. Postadd input/output
+and alias rewrites, structural removals, pruning, metadata, and layout
+reconciliation use the same differential state. Each of the five production
+groups invokes the runner once, preserving dual-postconv-before-postadd order;
+the lowerer compatibility wrapper remains available.
 
 The larger generic two-way shuffle/branch/Concat propagation rule is now
 mechanically owned by the same family. It accepts rank-five Gather selectors or
