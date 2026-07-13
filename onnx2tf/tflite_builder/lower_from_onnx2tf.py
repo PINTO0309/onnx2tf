@@ -49941,8 +49941,15 @@ def write_tensor_correspondence_report(
 
 def _compress_static_high_rank_batch_matmul(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    return _compress_static_high_rank_batch_matmul_pass(model_ir)
+    return _compress_static_high_rank_batch_matmul_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def lower_onnx_to_ir(
@@ -52559,7 +52566,8 @@ def lower_onnx_to_ir(
     _optimize_sinet_concat_resize_affine_transpose_chains(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     final_high_rank_bmm_stats = _compress_static_high_rank_batch_matmul(
-        model_ir
+        model_ir,
+        layout_state=session.layout_state,
     )
     if int(
         final_high_rank_bmm_stats.get(

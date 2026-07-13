@@ -1514,6 +1514,15 @@ remove/insert operations update one `ModelIRGraphIndex` differentially; the
 main lowerer path synchronizes the session `LayoutState` for the generated
 shape and intermediate tensors.
 
+Static high-rank BatchMatMul compression in `passes/high_rank_matmul.py` uses
+the same contract. Initial `BATCH_MATMUL` objects are indexed once; each proven
+rank-above-five operator has its inputs and output changed through differential
+edge updates, then receives two input Reshapes and one output-restoring Reshape
+at the same graph position. The original BatchMatMul object and options remain
+intact. Complete operator-list replacement and direct input/output assignment
+are forbidden by the ownership gate, and the production lowerer call supplies
+the session `LayoutState`.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

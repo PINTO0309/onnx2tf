@@ -192,6 +192,11 @@ def test_high_rank_matmul_pass_and_prune_utility_have_single_owners() -> None:
         node.id for node in ast.walk(wrapper) if isinstance(node, ast.Name)
     }
     assert "_compress_static_high_rank_batch_matmul_pass" in wrapper_names
+    pass_source = pass_path.read_text(encoding="utf-8")
+    assert "model_ir.operators =" not in pass_source
+    assert "op.inputs =" not in pass_source
+    assert "op.outputs =" not in pass_source
+    assert "ModelIRGraphIndex" in pass_source
 
     assert "_prune_unused_tensors" in common_functions
     assert "_is_fully_known_positive_shape" in common_functions

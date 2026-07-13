@@ -429,6 +429,18 @@ session layout state. Static-success and dynamic-signature no-op tests pass;
 the success case proves one initial index refresh and exact final operator-type
 indices. No model conversion or inference was run.
 
+Static high-rank BatchMatMul compression now follows the differential contract
+too. It captures initial indexed `BATCH_MATMUL` objects, preserves the original
+operator/options, rewrites its two inputs and one output through the index, and
+inserts the two rank-five input Reshapes plus restoring output Reshape around
+its current graph position. The pass no longer reconstructs the complete
+operator list or assigns operator inputs/outputs directly. The lowerer wrapper
+keeps its one-argument compatibility while accepting optional index/layout
+state, and the final production call supplies session layout state. The focused
+rank-six parity fixture passes with one initial refresh, exact operator-type
+indices, and consistent final layout state. No model conversion or inference
+was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

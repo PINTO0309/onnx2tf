@@ -9287,7 +9287,9 @@ def test_singleton_transpose_does_not_reapply_remapped_mean_layout() -> None:
     assert model_ir.tensors["mean_adapter"].shape == [1, 1, 1, 64]
 
 
-def test_static_rank6_batch_matmul_is_wrapped_with_rank5_reshapes() -> None:
+def test_static_rank6_batch_matmul_is_wrapped_with_rank5_reshapes(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("rank6_batch_matmul")
     model_ir.inputs = ["lhs", "rhs"]
     model_ir.outputs = ["output"]
@@ -9313,10 +9315,26 @@ def test_static_rank6_batch_matmul_is_wrapped_with_rank5_reshapes() -> None:
             {"adjX": False, "adjY": False},
         )
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _compress_static_high_rank_batch_matmul(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _compress_static_high_rank_batch_matmul(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
     assert stats["compressed_static_high_rank_batch_matmul"] == 1
+    assert refresh_count == 1
     assert [str(op.op_type) for op in model_ir.operators] == [
         "RESHAPE",
         "RESHAPE",
@@ -9328,6 +9346,9 @@ def test_static_rank6_batch_matmul_is_wrapped_with_rank5_reshapes() -> None:
     assert model_ir.tensors[batch_matmul.inputs[1]].shape == [2, 2, 3, 5, 6]
     assert model_ir.tensors[batch_matmul.outputs[0]].shape == [2, 2, 3, 4, 6]
     assert model_ir.operators[-1].outputs == ["output"]
+    assert graph_index.operator_indices("RESHAPE") == [0, 1, 3]
+    assert graph_index.operator_indices("BATCH_MATMUL") == [2]
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
     rng = np.random.default_rng(0)
     lhs = rng.standard_normal(lhs_shape).astype(np.float32)
