@@ -1750,6 +1750,12 @@ graph order, and tracks shared weight names so each buffer is permuted exactly
 once. The normalizer supplies its existing index; no extra operator scan or
 index build is required.
 
+Residual channel-layout Transpose validation and its Reshape-only exception are
+owned by `passes/pytorch_compat.py`. The normalizer queries only indexed
+Transpose operators and reuses the current consumer table. Public bridge,
+preserved feature-last, recurrent rank-three, unknown-layout, shape-only, and
+Reshape-only exceptions retain their established guards and error signature.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

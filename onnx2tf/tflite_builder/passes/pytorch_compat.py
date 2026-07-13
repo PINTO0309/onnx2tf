@@ -28,6 +28,9 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _permute_shape,
     _read_transpose_perm,
 )
+from onnx2tf.tflite_builder.pytorch_export_errors import (
+    ModelIRPyTorchExportError,
+)
 
 
 def _rewrite_atan2_ones_like_to_atan(
@@ -85,6 +88,151 @@ def _rewrite_atan2_ones_like_to_atan(
             int(op_index),
             [str(op.inputs[0])],
         )
+
+
+def _is_reshape_only_residual_layout_bridge_transpose(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    consumers: Optional[Dict[str, List[int]]] = None,
+) -> bool:
+    if str(op.op_type) != "TRANSPOSE":
+        return False
+    output_name = str(op.outputs[0]) if len(op.outputs) > 0 else ""
+    output_tensor = model_ir.tensors.get(output_name, None)
+    rank = len(list(output_tensor.shape)) if output_tensor is not None else -1
+    if rank not in {3, 4, 5}:
+        return False
+    input_name = str(op.inputs[0]) if len(op.inputs) > 0 else ""
+    input_tensor = model_ir.tensors.get(input_name, None)
+    if input_tensor is None or output_tensor is None:
+        return False
+    perm = _read_transpose_perm(model_ir, op)
+    if perm != _perm_cl_to_cf(rank) and perm != _perm_cf_to_cl(rank):
+        return False
+    if [int(value) for value in list(input_tensor.shape)] != [
+        int(value) for value in list(output_tensor.shape)
+    ]:
+        return False
+    if normalize_logical_layout(
+        input_tensor.logical_layout
+    ) != normalize_logical_layout(output_tensor.logical_layout):
+        return False
+    if consumers is None:
+        consumers = ModelIRGraphIndex(model_ir).consumers
+    user_indices = [int(value) for value in consumers.get(output_name, [])]
+    return len(user_indices) > 0 and all(
+        str(model_ir.operators[int(user_index)].op_type) == "RESHAPE"
+        for user_index in user_indices
+    )
+
+
+def _reject_residual_layout_transposes(
+    model_ir: ModelIR,
+    preserve_channel_last_tensor_names: set[str],
+    consumers: Optional[Dict[str, List[int]]] = None,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
+    public_layout_bridge_tensor_names = model_ir.metadata.get(
+        "public_layout_bridge_tensor_names",
+        [],
+    )
+    if not isinstance(public_layout_bridge_tensor_names, list):
+        public_layout_bridge_tensor_names = []
+    public_layout_bridge_tensor_name_set = {
+        str(name) for name in public_layout_bridge_tensor_names
+    }
+    if consumers is None:
+        graph_index = graph_index or ModelIRGraphIndex(model_ir)
+        consumers = graph_index.consumers
+    candidate_ops = (
+        [
+            model_ir.operators[int(index)]
+            for index in graph_index.operator_indices("TRANSPOSE")
+        ]
+        if graph_index is not None
+        else [
+            op
+            for op in model_ir.operators
+            if str(op.op_type) == "TRANSPOSE"
+        ]
+    )
+
+    for op in candidate_ops:
+        related_tensor_names = [
+            str(value) for value in list(op.inputs) + list(op.outputs)
+        ]
+        if any(
+            name in public_layout_bridge_tensor_name_set
+            for name in related_tensor_names
+        ):
+            continue
+        if any(
+            name in preserve_channel_last_tensor_names
+            for name in related_tensor_names
+        ):
+            continue
+        recurrent_sequence_context = any(
+            token in name.lower()
+            for name in related_tensor_names
+            for token in ("_gru_", "_lstm_", "_rnn_")
+        )
+        output_name = str(op.outputs[0]) if len(op.outputs) > 0 else ""
+        output_tensor = model_ir.tensors.get(output_name, None)
+        rank = len(list(output_tensor.shape)) if output_tensor is not None else -1
+        if rank not in {3, 4, 5}:
+            continue
+        transpose_consumer_indices = [
+            int(value) for value in consumers.get(output_name, [])
+        ]
+        if (
+            len(transpose_consumer_indices) > 0
+            and all(
+                str(model_ir.operators[int(consumer_index)].op_type)
+                == "RESHAPE"
+                for consumer_index in transpose_consumer_indices
+            )
+        ):
+            continue
+        if recurrent_sequence_context and rank == 3:
+            continue
+        input_name = str(op.inputs[0]) if len(op.inputs) > 0 else ""
+        input_tensor = model_ir.tensors.get(input_name, None)
+        input_layout = (
+            normalize_logical_layout(input_tensor.logical_layout)
+            if input_tensor is not None
+            else LOGICAL_LAYOUT_UNKNOWN
+        )
+        output_layout = (
+            normalize_logical_layout(output_tensor.logical_layout)
+            if output_tensor is not None
+            else LOGICAL_LAYOUT_UNKNOWN
+        )
+        if (
+            input_layout == LOGICAL_LAYOUT_UNKNOWN
+            and output_layout == LOGICAL_LAYOUT_UNKNOWN
+        ):
+            continue
+        perm = _read_transpose_perm(model_ir, op)
+        if _is_layout_only_transpose_by_shape(
+            input_tensor=input_tensor,
+            output_tensor=output_tensor,
+            perm=perm,
+        ):
+            continue
+        if _is_reshape_only_residual_layout_bridge_transpose(
+            model_ir=model_ir,
+            op=op,
+            consumers=consumers,
+        ):
+            continue
+        if perm == _perm_cl_to_cf(rank) or perm == _perm_cf_to_cl(rank):
+            raise ModelIRPyTorchExportError(
+                "Channel-first normalization failed: residual layout "
+                "transpose remains. "
+                f"op_type={op.op_type} outputs={op.outputs} perm={perm}"
+            )
 
 
 def _remove_redundant_layout_transposes(

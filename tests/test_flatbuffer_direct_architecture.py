@@ -303,6 +303,12 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
     assert "def _rewrite_atan2_ones_like_to_atan(" in source
     assert "replace_operator_type(" in source
     assert "replace_operator_inputs(" in source
+    assert "def _reject_residual_layout_transposes(" not in exporter_source
+    assert "_reject_residual_layout_transposes," in exporter_source
+    assert "def _is_reshape_only_residual_layout_bridge_transpose(" not in exporter_source
+    assert "_is_reshape_only_residual_layout_bridge_transpose," in exporter_source
+    assert "def _reject_residual_layout_transposes(" in source
+    assert 'operator_indices("TRANSPOSE")' in source
     operator_stream_assignments = [
         node
         for tree in (exporter_tree, control_flow_tree)

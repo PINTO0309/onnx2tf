@@ -146,6 +146,13 @@ rewrite contract, and shape/signature updates remain unchanged. A focused
 shared-filter fixture brings the Torch-free suite to 90 tests; no model
 conversion or inference was run.
 
+Residual layout-Transpose validation and the Reshape-only helper now live in
+`passes/pytorch_compat.py`. The normalizer enumerates only the shared index's
+Transpose family and reuses its consumer table; no final whole-graph scan is
+required. Focused failure and Reshape-only exception fixtures bring the
+Torch-free suite to 92 tests, with the established error text unchanged. No
+model conversion or inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

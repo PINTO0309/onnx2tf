@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_compat import (
+    _is_reshape_only_residual_layout_bridge_transpose,
+    _reject_residual_layout_transposes,
     _remove_redundant_layout_transposes,
     _restore_same_average_pool_exclude_pad_correction_for_native_runtime,
     _rewrite_atan2_ones_like_to_atan,
+)
+from onnx2tf.tflite_builder.pytorch_export_errors import (
+    ModelIRPyTorchExportError,
 )
 from onnx2tf.tflite_builder.passes.pytorch_control_flow import (
     _clone_model_ir_without_root_operators,
@@ -278,3 +284,84 @@ def test_atan2_rewrite_no_op_avoids_graph_index(monkeypatch) -> None:
     _rewrite_atan2_ones_like_to_atan(model_ir)
 
     assert refresh_count == 0
+
+
+def _residual_transpose_model(*, reshape_consumer: bool) -> ModelIR:
+    model_ir = ModelIR(name="residual_transpose")
+    model_ir.tensors = {
+        "x": TensorIR(
+            "x",
+            "FLOAT32",
+            [1, 2, 3, 4],
+            [1, 2, 3, 4],
+            logical_layout="NCHW" if reshape_consumer else "NHWC",
+        ),
+        "perm": TensorIR(
+            "perm",
+            "INT32",
+            [4],
+            [4],
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        ),
+        "y": TensorIR(
+            "y",
+            "FLOAT32",
+            [1, 2, 3, 4],
+            [1, 2, 3, 4],
+            logical_layout="NCHW",
+        ),
+    }
+    model_ir.operators = [OperatorIR("TRANSPOSE", ["x", "perm"], ["y"])]
+    if reshape_consumer:
+        model_ir.tensors["z"] = TensorIR(
+            "z",
+            "FLOAT32",
+            [1, 24],
+            [1, 24],
+        )
+        model_ir.operators.append(OperatorIR("RESHAPE", ["y"], ["z"]))
+    return model_ir
+
+
+def test_residual_transpose_validation_uses_shared_family_index(
+    monkeypatch,
+) -> None:
+    model_ir = _residual_transpose_model(reshape_consumer=False)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    with pytest.raises(
+        ModelIRPyTorchExportError,
+        match="residual layout transpose remains",
+    ):
+        _reject_residual_layout_transposes(
+            model_ir,
+            preserve_channel_last_tensor_names=set(),
+            graph_index=graph_index,
+        )
+
+    assert refresh_count == 1
+
+
+def test_residual_transpose_validation_keeps_reshape_only_exception() -> None:
+    model_ir = _residual_transpose_model(reshape_consumer=True)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    assert _is_reshape_only_residual_layout_bridge_transpose(
+        model_ir=model_ir,
+        op=model_ir.operators[0],
+        consumers=graph_index.consumers,
+    ) is True
+    _reject_residual_layout_transposes(
+        model_ir,
+        preserve_channel_last_tensor_names=set(),
+        graph_index=graph_index,
+    )
