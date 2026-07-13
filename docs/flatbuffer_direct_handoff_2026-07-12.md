@@ -3348,6 +3348,41 @@ The complete sequential direct regression selection passed:
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently.
 
+### Indexed terminal Mean checkpoint
+
+The extracted matcher now accepts the shared `ModelIRGraphIndex` and
+`LayoutState`. Consumer traversal, first-unary or Mean input rewrite,
+conditional leading-Transpose removal, pruning, metadata permutation, and
+layout synchronization update differential state. The module contains no
+whole-graph map builder or direct operator-list mutation.
+
+`run_terminal_mean_layout_cleanup` registers stable ID
+`layout.terminal_unary_mean_reshape` in `LAYOUT_PLAN`. Model-only
+Transpose/Mean/Reshape preflight skips irrelevant graphs without constructing
+state. Its indexed guard validates the exact permutation, rank, linear unary
+chain, constant axes, explicit or shape-proven keep-dims contract, exclusive
+Mean output, and constant terminal Reshape before snapshot creation. All six
+production positions now provide the active layout state and session
+diagnostics.
+
+Focused runner, characterization, ownership, architecture, and irrelevant
+graph efficiency validation passed 40 tests. A successful rewrite uses one
+initial index refresh and one snapshot; unary fan-out rejects before
+snapshotting, and an inverse-Transpose tail skips state construction entirely.
+Tier 1 `superpoint.onnx` passed sequential `-tb flatbuffer_direct -cotof` with
+`evaluation_pass=true`, `max_abs=1.6666017472743988e-06`,
+`rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+
+The complete sequential direct regression selection passed:
+
+```text
+1170 passed, 5 deselected, 2 warnings in 162.39s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_terminal_mean_superpoint` artifacts were removed after metrics
+inspection.
+
 ### Indexed LayerNorm statistics checkpoint
 
 The two extracted statistics rewrites now reuse one `ModelIRGraphIndex` and

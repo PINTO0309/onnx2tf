@@ -182,8 +182,18 @@ constant-shape terminal Reshape. It preserves shared leading adapters, rejects
 unary fan-out, accepts shape-proven rank preservation when keepDims metadata is
 missing, and defers inverse-Transpose tails to the dedicated paired-adapter
 rewrite. The complete 259-line matcher is AST-identical to checkpoint
-`8bce913`; the lowerer retains a compatibility wrapper and all six production
-positions pending indexed runner migration.
+`8bce913`; the lowerer retains a compatibility wrapper.
+
+All six production positions now call `run_terminal_mean_layout_cleanup`,
+registered as `layout.terminal_unary_mean_reshape` in `LAYOUT_PLAN`. A
+model-only Transpose/Mean/Reshape capability scan avoids pass-state creation on
+irrelevant graphs. Its indexed guard proves the complete permutation, rank,
+linear-unary, axes, keep-dims/shape fallback, exclusive Mean consumer, and
+constant Reshape suffix before snapshotting. Consumer reads, unary/Mean input
+rewrites, conditional adapter removal, pruning, metadata permutation, and
+layout synchronization reuse one differential index and active layout state.
+The module has no whole-graph map construction or direct operator-list
+mutation.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and

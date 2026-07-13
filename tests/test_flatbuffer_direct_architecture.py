@@ -765,7 +765,10 @@ def test_terminal_mean_layout_rewrite_has_single_owner() -> None:
         and node.module == "onnx2tf.tflite_builder.passes.terminal_mean_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {function_name}
+    assert {alias.name for alias in imports[0].names} == {
+        function_name,
+        "run_terminal_mean_layout_cleanup",
+    }
 
 
 def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
@@ -809,6 +812,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_singleton_reshape_layout_cleanup",
         "run_singleton_spatial_reshape_cleanup",
         "run_terminal_quantize_dequantize_cleanup",
+        "run_terminal_mean_layout_cleanup",
         "run_two_way_channel_shuffle_cleanup",
         "run_transpose_gather_axis_cleanup",
         "run_transpose_gather_channel_fanout_cleanup",
@@ -827,7 +831,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 183
+    assert len(calls) == 189
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -1085,6 +1089,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_layernorm_statistics_layout_cleanup"
     ]
     assert len(layernorm_statistics_calls) == 2
+
+    terminal_mean_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_terminal_mean_layout_cleanup"
+    ]
+    assert len(terminal_mean_calls) == 6
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:
