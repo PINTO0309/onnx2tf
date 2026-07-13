@@ -113,6 +113,36 @@ class OrderedPassManager(Generic[StateT]):
             return None
         return hashlib.sha256(self._fingerprint(state)).hexdigest()
 
+    @staticmethod
+    def _new_problems(
+        *,
+        before: Iterable[str],
+        after: Iterable[str],
+    ) -> List[str]:
+        """Return invariant problems introduced by one transaction.
+
+        Some lowering phases temporarily carry invariant problems that are
+        repaired by a later reconciliation pass. A transactional rewrite must
+        not be blamed for those pre-existing problems, but it must still roll
+        back every problem that it adds. Preserve validator order and duplicate
+        counts so diagnostics remain deterministic.
+        """
+
+        accepted_counts: Dict[str, int] = {}
+        for problem in before:
+            key = str(problem)
+            accepted_counts[key] = int(accepted_counts.get(key, 0)) + 1
+
+        introduced: List[str] = []
+        for problem in after:
+            key = str(problem)
+            remaining = int(accepted_counts.get(key, 0))
+            if remaining > 0:
+                accepted_counts[key] = remaining - 1
+            else:
+                introduced.append(key)
+        return introduced
+
     def run(self, state: StateT) -> List[PassResult]:
         results: List[PassResult] = []
         for spec in self.ordered_specs():
@@ -139,11 +169,26 @@ class OrderedPassManager(Generic[StateT]):
                 snapshot = self._clone(state) if spec.transactional and self._clone else None
                 if snapshot is not None:
                     snapshot_count += 1
+                accepted_problems = (
+                    list(self._validator(state))
+                    if spec.transactional and self._validator
+                    else []
+                )
                 raw = spec.callback(state)
                 current = dict(raw or {})
                 details.update(current)
                 iterations += 1
-                problems = list(self._validator(state)) if self._validator else []
+                validated_problems = (
+                    list(self._validator(state)) if self._validator else []
+                )
+                problems = (
+                    self._new_problems(
+                        before=accepted_problems,
+                        after=validated_problems,
+                    )
+                    if spec.transactional
+                    else validated_problems
+                )
                 if problems:
                     if snapshot is not None and self._restore is not None:
                         self._restore(state, snapshot)

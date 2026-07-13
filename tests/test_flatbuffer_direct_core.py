@@ -363,6 +363,109 @@ def test_transactional_pass_rolls_back_on_invariant_failure() -> None:
     assert state == {"values": [1]}
 
 
+def test_transactional_pass_allows_unrelated_preexisting_invariant_problem() -> None:
+    state = {"problems": ["preexisting"], "value": 0}
+    manager = OrderedPassManager[dict](
+        validator=lambda value: list(value["problems"]),
+        clone=copy.deepcopy,
+        restore=lambda value, snapshot: value.update(snapshot),
+    )
+    manager.register(
+        PassSpec(
+            pass_id="unrelated",
+            phase=PassPhase.POST_LOWERING_CLEANUP,
+            callback=lambda value: value.update(value=1) or {"changed": True},
+            transactional=True,
+        )
+    )
+
+    results = manager.run(state)
+
+    assert state == {"problems": ["preexisting"], "value": 1}
+    assert results[0].changed is True
+
+
+def test_transactional_pass_rolls_back_only_new_invariant_problems() -> None:
+    state = {"problems": ["preexisting"], "value": 0}
+    manager = OrderedPassManager[dict](
+        validator=lambda value: list(value["problems"]),
+        clone=copy.deepcopy,
+        restore=lambda value, snapshot: value.clear() or value.update(snapshot),
+    )
+
+    def introduce_problem(value: dict) -> dict:
+        value["problems"].append("introduced")
+        value["value"] = 1
+        return {"changed": True}
+
+    manager.register(
+        PassSpec(
+            pass_id="introduce",
+            phase=PassPhase.POST_LOWERING_CLEANUP,
+            callback=introduce_problem,
+            transactional=True,
+        )
+    )
+
+    with pytest.raises(PassInvariantError) as caught:
+        manager.run(state)
+
+    assert caught.value.problems == ("introduced",)
+    assert state == {"problems": ["preexisting"], "value": 0}
+
+
+def test_transactional_pass_detects_problem_reintroduced_after_repair() -> None:
+    state = {"problems": ["rank_mismatch"]}
+    manager = OrderedPassManager[dict](
+        validator=lambda value: list(value["problems"]),
+        clone=copy.deepcopy,
+        restore=lambda value, snapshot: value.clear() or value.update(snapshot),
+    )
+    manager.register(
+        PassSpec(
+            pass_id="repair",
+            phase=PassPhase.CANONICALIZE,
+            callback=lambda value: value["problems"].clear() or {"changed": True},
+            transactional=True,
+        )
+    )
+    manager.register(
+        PassSpec(
+            pass_id="reintroduce",
+            phase=PassPhase.POST_LOWERING_CLEANUP,
+            callback=lambda value: value["problems"].append("rank_mismatch")
+            or {"changed": True},
+            transactional=True,
+        )
+    )
+
+    with pytest.raises(PassInvariantError) as caught:
+        manager.run(state)
+
+    assert caught.value.pass_id == "reintroduce"
+    assert caught.value.problems == ("rank_mismatch",)
+    assert state == {"problems": []}
+
+
+def test_nontransactional_validation_rejects_preexisting_problem() -> None:
+    state = {"problems": ["preexisting"]}
+    manager = OrderedPassManager[dict](
+        validator=lambda value: list(value["problems"]),
+    )
+    manager.register(
+        PassSpec(
+            pass_id="final_validation",
+            phase=PassPhase.VALIDATE,
+            callback=lambda value: {"changed": False},
+        )
+    )
+
+    with pytest.raises(PassInvariantError) as caught:
+        manager.run(state)
+
+    assert caught.value.problems == ("preexisting",)
+
+
 def test_model_ir_pass_state_restores_graph_index_and_layout_state() -> None:
     model_ir = _add_model_ir()
     state = ModelIRPassState(model_ir)
