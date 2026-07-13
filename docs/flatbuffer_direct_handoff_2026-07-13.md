@@ -224,15 +224,25 @@ model conversion or inference was run.
 
 The exposed ExportedProgram host now lives in
 `pytorch_artifact_exporters.py`. Its public-signature wrapper supplies explicit
-temporary source-rewrite, final-repair, stack-trace-strip, and inverse-permute-
-archive-fold callbacks; the artifact owner retains metadata, skip, input,
-single-child, timeout, cleanup, and error ordering. After normalizing those four
+temporary source-rewrite, final-repair, and inverse-permute-archive-fold
+callbacks; the artifact owner retains metadata, skip, input,
+single-child, timeout, cleanup, and error ordering. After normalizing those three
 callback names, the host AST exactly matches the previous implementation. A
 non-native-package fixture proves skip metadata and that no callback or child is
 invoked. Artifact and architecture validation passes 68 tests; syntax, Ruff,
 and diff checks pass. No model conversion or inference was run. Resume by
-characterizing the 46-line stack-trace stripper separately, then the 2,015-line
-inverse-permute archive optimizer before changing either archive algorithm.
+characterizing the 2,015-line inverse-permute archive optimizer before changing
+its algorithm.
+
+The 46-line stack-trace archive cleanup now has a Torch-free owner in
+`pytorch_exported_program_archive.py`, and the artifact host calls it directly.
+Its AST exactly matches the former exporter implementation. A real zip fixture
+proves recursive removal from `models/model.json` while retaining unrelated JSON
+fields and a binary archive entry. The host remains AST-equivalent after
+normalizing the removed callback to the direct helper. Artifact and architecture
+validation passes 69 tests; syntax, Ruff, and diff checks pass. No model
+conversion or inference was run. Resume by characterizing the inverse-permute
+archive optimizer's major pattern families before mechanical ownership changes.
 
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/

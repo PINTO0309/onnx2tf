@@ -10,6 +10,9 @@ from onnx2tf.tflite_builder.pytorch_export_errors import (
 from onnx2tf.tflite_builder.pytorch_exported_program_child import (
     _EXPORTED_PROGRAM_CHILD_SCRIPT,
 )
+from onnx2tf.tflite_builder.pytorch_exported_program_archive import (
+    _strip_stack_traces_from_exported_program_archive,
+)
 from onnx2tf.tflite_builder.pytorch_export_support import (
     _build_pytorch_export_example_inputs,
     _generated_package_non_native_skip_reason,
@@ -463,7 +466,6 @@ def _export_exported_program_from_generated_package(
         ..., Any
     ],
     reapply_post_export_final_model_repairs_fn: Callable[[Path], None],
-    strip_stack_traces_from_exported_program_archive_fn: Callable[[Path], None],
     fold_inverse_permute_round_trips_in_exported_program_archive_fn: Callable[
         [Path], None
     ],
@@ -579,7 +581,7 @@ def _export_exported_program_from_generated_package(
         reapply_post_export_final_model_repairs_fn(package_path)
         return None
     try:
-        strip_stack_traces_from_exported_program_archive_fn(exported_program_path)
+        _strip_stack_traces_from_exported_program_archive(exported_program_path)
     except Exception as ex:
         if raise_on_failure:
             raise ModelIRPyTorchExportError(

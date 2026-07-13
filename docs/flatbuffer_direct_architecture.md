@@ -1964,14 +1964,22 @@ parses as Python. Importing the payload module does not import or execute Torch.
 
 That exposed ExportedProgram host orchestration now lives beside TorchScript and
 Dynamo ONNX in `pytorch_artifact_exporters.py`. The public exporter wrapper
-supplies four established hooks: temporary generated-source rewriting, final
-model repair, stack-trace stripping, and inverse-permute archive folding. All
+supplies three established hooks: temporary generated-source rewriting, final
+model repair, and inverse-permute archive folding. All
 metadata, native/torch.export skip policy, example-input construction,
 sequential child execution, timeout behavior, cleanup ordering, and return/error
 contracts remain in the focused artifact implementation. After normalizing the
-four callback names, the moved host function is AST-identical to its former
+three callback names, the moved host function is AST-identical to its former
 exporter implementation. The large inverse-permute archive optimizer remains a
 separate exporter-owned responsibility pending focused characterization.
+
+ExportedProgram stack-trace removal is directly owned by the Torch-free
+`pytorch_exported_program_archive.py`. It rewrites only `models/model.json`
+entries in a temporary archive, removes every nested `stack_trace`, preserves
+other JSON fields and archive entries, leaves the original untouched when no
+field is found, and atomically replaces it after a change. The moved 46-line
+implementation is AST-identical; the artifact host calls it directly instead
+of receiving it through the exporter wrapper.
 
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor

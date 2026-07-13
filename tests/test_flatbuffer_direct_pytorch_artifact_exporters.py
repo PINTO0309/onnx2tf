@@ -5,6 +5,7 @@ import hashlib
 import json
 import sys
 import types
+import zipfile
 
 from onnx2tf.tflite_builder.pytorch_artifact_exporters import (
     _export_dynamo_onnx_from_generated_package,
@@ -18,6 +19,9 @@ from onnx2tf.tflite_builder.pytorch_export_support import (
 from onnx2tf.tflite_builder.pytorch_exported_program_child import (
     _EXPORTED_PROGRAM_CHILD_SCRIPT,
 )
+from onnx2tf.tflite_builder.pytorch_exported_program_archive import (
+    _strip_stack_traces_from_exported_program_archive,
+)
 
 
 def test_exported_program_child_payload_is_fixed_and_parseable() -> None:
@@ -28,6 +32,35 @@ def test_exported_program_child_payload_is_fixed_and_parseable() -> None:
         "548c123d658c61780a134e34dbc02939f07d1db7e6bccc81db08fddf6cf77d5e"
     )
     ast.parse(_EXPORTED_PROGRAM_CHILD_SCRIPT)
+
+
+def test_exported_program_archive_cleanup_strips_only_stack_traces(
+    tmp_path,
+) -> None:
+    archive_path = tmp_path / "model_ep.pt2"
+    model_payload = {
+        "graph": {
+            "stack_trace": "root trace",
+            "nodes": [
+                {
+                    "name": "node_0",
+                    "metadata": {"stack_trace": "node trace", "keep": 7},
+                }
+            ],
+        }
+    }
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("data/models/model.json", json.dumps(model_payload))
+        archive.writestr("data/weights.bin", b"unchanged")
+
+    _strip_stack_traces_from_exported_program_archive(archive_path)
+
+    with zipfile.ZipFile(archive_path, "r") as archive:
+        cleaned = json.loads(archive.read("data/models/model.json"))
+        assert archive.read("data/weights.bin") == b"unchanged"
+    assert cleaned == {
+        "graph": {"nodes": [{"name": "node_0", "metadata": {"keep": 7}}]}
+    }
 
 
 def test_torchscript_export_records_non_native_skip_without_child(
@@ -124,7 +157,6 @@ def test_exported_program_records_non_native_skip_without_hooks(
             unexpected_hook
         ),
         reapply_post_export_final_model_repairs_fn=unexpected_hook,
-        strip_stack_traces_from_exported_program_archive_fn=unexpected_hook,
         fold_inverse_permute_round_trips_in_exported_program_archive_fn=(
             unexpected_hook
         ),

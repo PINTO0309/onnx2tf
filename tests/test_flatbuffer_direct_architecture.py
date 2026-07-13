@@ -80,6 +80,10 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT
     / "onnx2tf"
     / "tflite_builder"
+    / "pytorch_exported_program_archive.py",
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
     / "pytorch_exported_program_child.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_emitters.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_errors.py",
@@ -3665,6 +3669,12 @@ def test_exported_program_artifact_host_has_focused_owner() -> None:
         / "tflite_builder"
         / "pytorch_artifact_exporters.py"
     ).read_text(encoding="utf-8")
+    archive_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_exported_program_archive.py"
+    ).read_text(encoding="utf-8")
 
     assert (
         "def _export_exported_program_from_generated_package("
@@ -3683,7 +3693,15 @@ def test_exported_program_artifact_host_has_focused_owner() -> None:
     for callback_name in (
         "_temporarily_rewrite_generated_model_source_for_exported_program",
         "_reapply_post_export_final_model_repairs",
-        "_strip_stack_traces_from_exported_program_archive",
         "_fold_inverse_permute_round_trips_in_exported_program_archive",
     ):
         assert callback_name in wrapper_source
+    assert "def _strip_stack_traces_from_exported_program_archive(" in (
+        archive_source
+    )
+    assert "def _strip_stack_traces_from_exported_program_archive(" not in (
+        exporter_source
+    )
+    assert "_strip_stack_traces_from_exported_program_archive(" in (
+        artifact_source
+    )
