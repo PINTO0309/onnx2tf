@@ -80,7 +80,8 @@ class _NhwcConcatInputPlan:
     slice_op: Optional[OperatorIR] = None
     split_op: Optional[OperatorIR] = None
     add_op: Optional[OperatorIR] = None
-    add_source_names: Tuple[str, ...] = ()
+    add_input_names: Tuple[str, ...] = ()
+    add_operand_plans: Tuple["_NhwcConcatInputPlan", ...] = ()
     extra_source_adapter_ops: Tuple[OperatorIR, ...] = ()
     output_post_adapter_ops: Tuple[OperatorIR, ...] = ()
     leaky_neg_op: Optional[OperatorIR] = None
@@ -997,68 +998,55 @@ def _resolve_add_input_plan(
     if output_tensor is None or len(list(output_tensor.shape)) != 4:
         return None
 
-    adapter_ops: List[OperatorIR] = []
-    remove_adapter_flags: List[bool] = []
-    source_names: List[str] = []
+    operand_plans: List[_NhwcConcatInputPlan] = []
     for add_input_name in [str(name) for name in add_op.inputs]:
-        adapter_op = graph_index.producer(add_input_name)
-        adapter_index = (
-            None
-            if adapter_op is None
-            else graph_index.operator_index(adapter_op)
+        operand_plan = _resolve_direct_input_plan(
+            model_ir,
+            graph_index,
+            input_name=add_input_name,
+            concat_index=int(add_index),
+            model_outputs=model_outputs,
         )
-        adapter_consumers = set(
-            graph_index.consumer_indices(add_input_name)
-        )
-        if (
-            adapter_op is None
-            or adapter_index is None
-            or str(adapter_op.op_type) != "TRANSPOSE"
-            or len(adapter_op.inputs) < 2
-            or len(adapter_op.outputs) != 1
-            or str(adapter_op.outputs[0]) != add_input_name
-            or _read_transpose_perm(model_ir, adapter_op)
-            != _PERM_NHWC_TO_NCHW
-            or int(add_index) not in adapter_consumers
-        ):
+        if operand_plan is None:
+            operand_plan = _resolve_unary_input_plan(
+                model_ir,
+                graph_index,
+                input_name=add_input_name,
+                concat_index=int(add_index),
+                model_outputs=model_outputs,
+            )
+        if operand_plan is None:
             return None
-        source_name = str(adapter_op.inputs[0])
-        source_tensor = model_ir.tensors.get(source_name)
         adapter_output_tensor = model_ir.tensors.get(add_input_name)
-        if (
-            source_tensor is None
-            or len(list(source_tensor.shape)) != 4
-            or adapter_output_tensor is None
-            or len(list(adapter_output_tensor.shape)) != 4
-        ):
+        if adapter_output_tensor is None or len(list(adapter_output_tensor.shape)) != 4:
             return None
-        adapter_ops.append(adapter_op)
-        remove_adapter_flags.append(
-            adapter_consumers == {int(add_index)}
-            and add_input_name not in model_outputs
-        )
-        source_names.append(source_name)
+        operand_plans.append(operand_plan)
 
     unique_adapter_ops: List[OperatorIR] = []
     unique_remove_flags: List[bool] = []
     seen_adapter_ids: set[int] = set()
-    for adapter_op, remove_adapter in zip(
-        adapter_ops,
-        remove_adapter_flags,
-    ):
+    for operand_plan in operand_plans:
+        adapter_op = operand_plan.adapter_op
         if id(adapter_op) in seen_adapter_ids:
             continue
         seen_adapter_ids.add(id(adapter_op))
         unique_adapter_ops.append(adapter_op)
-        unique_remove_flags.append(bool(remove_adapter))
+        unique_remove_flags.append(bool(operand_plan.remove_adapter))
+    add_input_names = tuple(
+        operand_plan.output_name
+        if operand_plan.unary_op is not None
+        else operand_plan.source_name
+        for operand_plan in operand_plans
+    )
     return _NhwcConcatInputPlan(
         kind="add",
         adapter_op=unique_adapter_ops[0],
         add_op=add_op,
         output_post_adapter_ops=tuple(output_post_adapter_ops),
-        add_source_names=tuple(source_names),
+        add_input_names=add_input_names,
+        add_operand_plans=tuple(operand_plans),
         extra_source_adapter_ops=tuple(unique_adapter_ops[1:]),
-        source_name=source_names[0],
+        source_name=operand_plans[0].source_name,
         output_name=input_name,
         remove_adapter=unique_remove_flags[0],
     )
@@ -2000,6 +1988,29 @@ def _apply_softmax_input_plan(
     )
 
 
+def _apply_unary_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    input_plan: _NhwcConcatInputPlan,
+) -> None:
+    assert input_plan.unary_op is not None
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=input_plan.unary_op,
+        new_inputs=[input_plan.source_name],
+        graph_index=graph_index,
+    )
+    output_tensor = model_ir.tensors.get(input_plan.output_name)
+    _permute_tensor_metadata_if_rank_matches(
+        output_tensor,
+        _PERM_NCHW_TO_NHWC,
+    )
+    if output_tensor is not None:
+        output_tensor.quantization = _clone_nhwc_quantization(
+            output_tensor.quantization
+        )
+
+
 def _apply_swish_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -2188,11 +2199,18 @@ def _apply_add_input_plan(
     input_plan: _NhwcConcatInputPlan,
 ) -> None:
     assert input_plan.add_op is not None
-    assert len(input_plan.add_source_names) == 2
+    assert len(input_plan.add_input_names) == 2
+    for operand_plan in input_plan.add_operand_plans:
+        if operand_plan.unary_op is not None:
+            _apply_unary_input_plan(
+                model_ir,
+                graph_index,
+                operand_plan,
+            )
     _set_operator_inputs(
         model_ir=model_ir,
         op=input_plan.add_op,
-        new_inputs=[str(name) for name in input_plan.add_source_names],
+        new_inputs=[str(name) for name in input_plan.add_input_names],
         graph_index=graph_index,
     )
     output_tensor = model_ir.tensors.get(input_plan.output_name)
@@ -2276,21 +2294,11 @@ def _optimize_transpose_pre_concat_nhwc_family(
         applied_leaky_operators: set[int] = set()
         for input_plan in candidate.input_plans:
             if input_plan.unary_op is not None:
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=input_plan.unary_op,
-                    new_inputs=[input_plan.source_name],
-                    graph_index=graph_index,
+                _apply_unary_input_plan(
+                    model_ir,
+                    graph_index,
+                    input_plan,
                 )
-                unary_output_tensor = model_ir.tensors.get(input_plan.output_name)
-                _permute_tensor_metadata_if_rank_matches(
-                    unary_output_tensor,
-                    _PERM_NCHW_TO_NHWC,
-                )
-                if unary_output_tensor is not None:
-                    unary_output_tensor.quantization = _clone_nhwc_quantization(
-                        unary_output_tensor.quantization
-                    )
                 new_concat_inputs.append(input_plan.output_name)
             elif input_plan.logistic_op is not None:
                 _apply_swish_input_plan(

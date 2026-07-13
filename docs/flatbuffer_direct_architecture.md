@@ -295,8 +295,8 @@ quantization dimensions move from NCDHW dimension 1 to NDHWC dimension 4.
 The much larger rank-four generic NHWC pre-Concat matcher is being migrated by
 semantic family rather than as one monolithic rule. Its strict float-path
 direct-adapter, unary, Pad-plus-direct, Dequantize, PReLU, Softmax, and
-expanded-Swish families, plus the bounded exclusive direct-source Slice
-and Split families and the bounded non-recursive direct-only Add family, are
+expanded-Swish families, plus the bounded direct-source Slice and Split
+families and the bounded non-recursive direct/supported-unary Add family, are
 owned by `passes/nhwc_concat_layout.py`. The exact pseudo-LeakyRelu
 decomposition is owned there as a bounded family as well.
 Every Concat consumer must be an inverse
@@ -344,16 +344,16 @@ axis tensor, retains shared/public source adapters for external consumers, and
 moves every Split output's shape and per-axis quantization into NHWC while
 bypassing exact inverse output adapters. Swish-source Slice and
 Swish/Add-connected Split remain in the legacy matcher. The bounded Add family
-accepts a direct
-Concat input produced by a non-recursive two-input Add whose operands each
-come from a rank-four NHWC→NCHW adapter. Both Add inputs are rewired together,
-exclusive adapters are removed, shared/public adapters remain for external
-consumers, exact inverse output adapters are bypassed, and Add output shape
-and per-axis quantization move into NHWC. Source-adapter removal is decided
-from the post-rewrite GraphIndex, allowing an adapter shared with the root
-Concat to be removed only after every selected consumer is rewired. Unary,
-Swish, or Split operands, recursive Add, and broader mixed-input quantized-post
-families remain in legacy until independently characterized.
+accepts a non-recursive two-input Add whose operands come from rank-four
+NHWC→NCHW adapters, optionally through a supported unary operation. Both Add
+inputs and unary branches are rewired together, exclusive adapters are
+removed, shared/public adapters remain for external consumers, exact inverse
+output adapters are bypassed, and Add output shape and per-axis quantization
+move into NHWC. Source-adapter removal is decided from the post-rewrite
+GraphIndex, allowing an adapter shared with the root Concat to be removed only
+after every selected consumer is rewired. Swish or Split operands, recursive
+Add, and broader mixed-input quantized-post families remain in legacy until
+independently characterized.
 The indexed
 pseudo-LeakyRelu family recognizes the complete
 `ReLU(x) - alpha * ReLU(-x)` diamond with either Mul operand order and direct

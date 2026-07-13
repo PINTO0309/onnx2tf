@@ -255,9 +255,13 @@ def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
             np.testing.assert_array_equal(tensor.data, expected_tensor.data)
 
 
-def _assert_add_rewritten(model_ir: ModelIR) -> None:
+def _assert_add_rewritten(
+    model_ir: ModelIR,
+    *,
+    expected_inputs: list[str] | None = None,
+) -> None:
     add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
-    assert add_op.inputs == ["a_nhwc", "b_nhwc"]
+    assert add_op.inputs == (expected_inputs or ["a_nhwc", "b_nhwc"])
     assert add_op.options == {"fusedActivationFunction": "NONE"}
     assert model_ir.tensors["sum_nchw"].shape == [1, 5, 7, 3]
     quantization = model_ir.tensors["sum_nchw"].quantization
@@ -384,7 +388,7 @@ def test_nhwc_add_adapter_shared_with_root_concat_is_indexed() -> None:
     assert event["status"] == "changed"
 
 
-def test_nhwc_add_unary_operand_remains_in_legacy() -> None:
+def test_nhwc_add_unary_operand_is_indexed() -> None:
     model_ir = _add_model(boundary="unary_operand")
     diagnostics: list[dict] = []
 
@@ -394,11 +398,22 @@ def test_nhwc_add_unary_operand_remains_in_legacy() -> None:
     )
 
     assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
-    assert not any(
-        event["code"] == "layout.nhwc_pre_concat_add"
-        and event["status"] == "changed"
-        for event in diagnostics
+    _assert_add_rewritten(
+        model_ir,
+        expected_inputs=["a_relu", "b_nhwc"],
     )
+    add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+    assert add_op.inputs == ["a_relu", "b_nhwc"]
+    unary_op = next(op for op in model_ir.operators if op.op_type == "RELU")
+    assert unary_op.inputs == ["a_nhwc"]
+    assert model_ir.tensors["a_relu"].shape == [1, 5, 7, 3]
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_add"
+    )
+    assert event["status"] == "changed"
 
 
 def test_nhwc_add_output_post_adapter_is_indexed() -> None:
