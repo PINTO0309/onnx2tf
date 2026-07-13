@@ -1094,6 +1094,14 @@ def _resolve_add_input_plan(
                 model_outputs=model_outputs,
             )
         if operand_plan is None:
+            operand_plan = _resolve_dequantize_input_plan(
+                model_ir,
+                graph_index,
+                input_name=add_input_name,
+                concat_index=int(add_index),
+                model_outputs=model_outputs,
+            )
+        if operand_plan is None:
             operand_plan = _resolve_pad_input_plan(
                 model_ir,
                 graph_index,
@@ -1459,6 +1467,15 @@ def _resolve_family_input_plan(
         )
         if add_plan is not None:
             return add_plan
+        dequantize_plan = _resolve_dequantize_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+        )
+        if dequantize_plan is not None:
+            return dequantize_plan
         pad_plan = _resolve_pad_input_plan(
             model_ir,
             graph_index,
@@ -2008,6 +2025,29 @@ def _optimize_transpose_pre_concat_nhwc_leaky_chains(
     )
 
 
+def _apply_dequantize_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    input_plan: _NhwcConcatInputPlan,
+) -> None:
+    assert input_plan.dequantize_op is not None
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=input_plan.dequantize_op,
+        new_inputs=[input_plan.source_name],
+        graph_index=graph_index,
+    )
+    output_tensor = model_ir.tensors.get(input_plan.output_name)
+    _permute_tensor_metadata_if_rank_matches(
+        output_tensor,
+        _PERM_NCHW_TO_NHWC,
+    )
+    if output_tensor is not None:
+        output_tensor.quantization = _clone_nhwc_quantization(
+            output_tensor.quantization
+        )
+
+
 def _apply_prelu_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -2428,6 +2468,12 @@ def _apply_add_input_plan(
                 graph_index,
                 operand_plan,
             )
+        elif operand_plan.dequantize_op is not None:
+            _apply_dequantize_input_plan(
+                model_ir,
+                graph_index,
+                operand_plan,
+            )
         elif operand_plan.pad_plan is not None:
             apply_nhwc_concat_pad_plan(
                 model_ir,
@@ -2622,25 +2668,11 @@ def _optimize_transpose_pre_concat_nhwc_family(
                 )
                 new_concat_inputs.append(input_plan.output_name)
             elif input_plan.dequantize_op is not None:
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=input_plan.dequantize_op,
-                    new_inputs=[input_plan.source_name],
-                    graph_index=graph_index,
+                _apply_dequantize_input_plan(
+                    model_ir,
+                    graph_index,
+                    input_plan,
                 )
-                dequantize_output_tensor = model_ir.tensors.get(
-                    input_plan.output_name
-                )
-                _permute_tensor_metadata_if_rank_matches(
-                    dequantize_output_tensor,
-                    _PERM_NCHW_TO_NHWC,
-                )
-                if dequantize_output_tensor is not None:
-                    dequantize_output_tensor.quantization = (
-                        _clone_nhwc_quantization(
-                            dequantize_output_tensor.quantization
-                        )
-                    )
                 new_concat_inputs.append(input_plan.output_name)
             elif input_plan.pad_plan is not None:
                 apply_nhwc_concat_pad_plan(

@@ -424,6 +424,72 @@ def _add_model(
                     )
                 )
     if boundary in {
+        "dequantize_operand",
+        "dequantize_operand_fanout",
+        "dequantize_companion",
+    }:
+        companion = boundary == "dequantize_companion"
+        source_name = "x_nhwc" if companion else "a_nhwc"
+        adapter_name = "x_nchw" if companion else "a_nchw"
+        output_name = "x_dequantized" if companion else "a_dequantized"
+        channels = 2 if companion else 3
+        model_ir.tensors[source_name].dtype = "INT8"
+        model_ir.tensors[source_name].quantization = QuantParamIR(
+            scale=[0.2] * channels,
+            zero_point=[0] * channels,
+            quantized_dimension=3,
+        )
+        model_ir.tensors[adapter_name].dtype = "INT8"
+        model_ir.tensors[adapter_name].quantization = QuantParamIR(
+            scale=[0.2] * channels,
+            zero_point=[0] * channels,
+            quantized_dimension=1,
+        )
+        model_ir.tensors[output_name] = _tensor(
+            output_name,
+            [1, channels, 5, 7],
+        )
+        model_ir.tensors[output_name].quantization = {
+            "scale": [0.4] * channels,
+            "zero_point": [0] * channels,
+            "quantized_dimension": 1,
+        }
+        if companion:
+            concat_op = next(
+                op
+                for op in model_ir.operators
+                if op.op_type == "CONCATENATION"
+            )
+            concat_index = model_ir.operators.index(concat_op)
+            model_ir.operators.insert(
+                concat_index,
+                OperatorIR("DEQUANTIZE", [adapter_name], [output_name]),
+            )
+            concat_op.inputs[0] = output_name
+        else:
+            add_op = next(
+                op for op in model_ir.operators if op.op_type == "ADD"
+            )
+            add_index = model_ir.operators.index(add_op)
+            model_ir.operators.insert(
+                add_index,
+                OperatorIR("DEQUANTIZE", [adapter_name], [output_name]),
+            )
+            add_op.inputs[0] = output_name
+            if boundary == "dequantize_operand_fanout":
+                model_ir.tensors["dequantize_side"] = _tensor(
+                    "dequantize_side",
+                    [1, channels, 5, 7],
+                )
+                model_ir.outputs.append("dequantize_side")
+                model_ir.operators.append(
+                    OperatorIR(
+                        "IDENTITY",
+                        [output_name],
+                        ["dequantize_side"],
+                    )
+                )
+    if boundary in {
         "shared_split_add_tree",
         "shared_split_external_consumer",
     }:
@@ -803,6 +869,7 @@ def test_nhwc_direct_only_add_is_indexed(all_add: bool) -> None:
         "shared_add_fanout_external_consumer",
         "pad_operand_fanout",
         "slice_operand_fanout",
+        "dequantize_operand_fanout",
     ],
 )
 def test_nhwc_add_rejects_unsafe_or_partial_match(boundary: str) -> None:
@@ -1062,6 +1129,46 @@ def test_nhwc_add_reuses_bounded_slice_plan(slice_location: str) -> None:
         quantization = model_ir.tensors[slice_output].quantization
         assert isinstance(quantization, QuantParamIR)
         assert quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+
+
+@pytest.mark.parametrize("dequantize_location", ["operand", "companion"])
+def test_nhwc_add_reuses_dequantize_plan(
+    dequantize_location: str,
+) -> None:
+    model_ir = _add_model(
+        boundary=f"dequantize_{dequantize_location}"
+    )
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    companion = dequantize_location == "companion"
+    source_name = "x_nhwc" if companion else "a_nhwc"
+    output_name = "x_dequantized" if companion else "a_dequantized"
+    channels = 2 if companion else 3
+    dequantize_op = next(
+        op for op in model_ir.operators if op.outputs == [output_name]
+    )
+    assert dequantize_op.inputs == [source_name]
+    assert model_ir.tensors[output_name].shape == [1, 5, 7, channels]
+    output_quantization = model_ir.tensors[output_name].quantization
+    assert isinstance(output_quantization, dict)
+    assert output_quantization["quantized_dimension"] == 3
+    source_quantization = model_ir.tensors[source_name].quantization
+    assert isinstance(source_quantization, QuantParamIR)
+    assert source_quantization.quantized_dimension == 3
+    add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+    assert add_op.inputs == (
+        ["a_nhwc", "b_nhwc"]
+        if companion
+        else ["a_dequantized", "b_nhwc"]
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    if companion:
+        assert concat_op.inputs == ["x_dequantized", "sum_nchw"]
     assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
 
 
