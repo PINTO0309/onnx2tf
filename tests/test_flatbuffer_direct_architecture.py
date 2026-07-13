@@ -283,10 +283,19 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
         / "passes"
         / "pytorch_control_flow.py"
     )
+    recurrent_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pytorch_recurrent.py"
+    )
     exporter_source = exporter_path.read_text(encoding="utf-8")
     exporter_tree = ast.parse(exporter_source)
     control_flow_source = control_flow_path.read_text(encoding="utf-8")
     control_flow_tree = ast.parse(control_flow_source)
+    recurrent_source = recurrent_path.read_text(encoding="utf-8")
+    recurrent_tree = ast.parse(recurrent_source)
     assert "def _remove_redundant_layout_transposes(" not in exporter_source
     assert "_remove_redundant_layout_transposes," in exporter_source
     operator_stream_assignments = [
@@ -306,6 +315,8 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
     assert "def _rewrite_counter_bounded_while_ops_for_native_export(" not in exporter_source
     assert "_rewrite_static_while_ops_for_native_export," in exporter_source
     assert "_rewrite_counter_bounded_while_ops_for_native_export," in exporter_source
+    assert "def _rewrite_recurrent_ops_for_native_export(" not in exporter_source
+    assert "_rewrite_recurrent_ops_for_native_export," in exporter_source
     assert "def _clone_model_ir_without_root_operators(" in control_flow_source
     assert "for op_index, source_op in enumerate(model_ir.operators):" in control_flow_source
     assert "ModelIRGraphIndex" in control_flow_source
@@ -347,13 +358,29 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
         assert function_source is not None
         assert "return copy.deepcopy(model_ir)" not in function_source
         assert "return model_ir" in function_source
-    recurrent_source = ast.get_source_segment(
-        exporter_source,
-        exporter_functions["_rewrite_recurrent_ops_for_native_export"],
+    recurrent_functions = {
+        node.name: node
+        for node in recurrent_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    focused_recurrent_functions = {
+        "_sequence_lstm_input_name",
+        "_tensor_has_constant_data",
+        "_sequence_lstm_bias_inputs_supported",
+        "_sequence_lstm_index_spec",
+        "_can_direct_codegen_sequence_lstm_op",
+        "_can_direct_codegen_sequence_rnn_op",
+        "_rewrite_recurrent_ops_for_native_export",
+    }
+    assert focused_recurrent_functions <= set(recurrent_functions)
+    assert focused_recurrent_functions.isdisjoint(exporter_functions)
+    recurrent_rewrite_source = ast.get_source_segment(
+        recurrent_source,
+        recurrent_functions["_rewrite_recurrent_ops_for_native_export"],
     )
-    assert recurrent_source is not None
-    assert "return copy.deepcopy(model_ir)" not in recurrent_source
-    assert "return model_ir" in recurrent_source
+    assert recurrent_rewrite_source is not None
+    assert "return copy.deepcopy(model_ir)" not in recurrent_rewrite_source
+    assert "return model_ir" in recurrent_rewrite_source
 
 
 def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:

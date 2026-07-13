@@ -36,6 +36,20 @@ counter-bounded expansion fixtures and a duplicate-producer rejection, passed
 63 tests. No ONNX conversion, inference,
 dependency change, TensorFlow import, or parallel process was involved.
 
+The recurrent-sequence companion is now isolated in the Torch-free
+`passes/pytorch_recurrent.py` module. It is the single owner of legacy
+unidirectional/bidirectional LSTM input-index contracts, constant/optional
+input validation, direct native RNN/LSTM capability selection, and delegation
+to the shared split-planner unroller. The exporter imports the capability
+functions required by its generated-code environment plus the one preparation
+entry point; their function ASTs are unchanged from checkpoint `249f2d5`.
+
+Focused tests cover all supported LSTM arities, complete constant-backed RNN
+and LSTM direct paths, dynamic-weight and non-time-major rejection, borrowed
+no-op results, and normalized unroll failures. Together with control-flow,
+compatibility, and architecture tests, 67 tests pass. This extraction did not
+run a model conversion or inference process.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

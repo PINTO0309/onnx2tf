@@ -1661,6 +1661,18 @@ The exporter architecture gate detects attribute assignments through the AST,
 so alternate local names cannot silently reintroduce complete operator-list
 replacement.
 
+Recurrent-sequence canonicalization and capability selection are separately
+owned by Torch-free `passes/pytorch_recurrent.py`. The module defines the
+supported 15/24-input unidirectional and 29/48-input bidirectional LSTM index
+contracts, constant and optional-input validation, direct native RNN/LSTM
+selection, and copy-on-write delegation to
+`rewrite_model_ir_unroll_recurrent_ops()`. The exporter imports these functions
+for both preparation and its generated-code execution environment instead of
+implementing a parallel capability policy. Unsupported recurrent forms still
+use the shared append-only split-planner rewrite, while directly supported or
+absent recurrent ops return the borrowed graph for the subsequent owning
+normalizer copy.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
