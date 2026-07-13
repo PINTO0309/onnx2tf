@@ -44,6 +44,7 @@ def prune_dead_operators(
     *,
     graph_index: Optional[ModelIRGraphIndex] = None,
     layout_state: Optional[LayoutState] = None,
+    prune_tensors: bool = True,
 ) -> Dict[str, int]:
     """Remove operators that do not contribute to graph outputs."""
 
@@ -82,7 +83,8 @@ def prune_dead_operators(
 
     graph_index = graph_index or ModelIRGraphIndex(model_ir)
     graph_index.remove_operators(remove_indices)
-    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if prune_tensors:
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"removed_dead_operators": int(len(remove_indices))}
 
 

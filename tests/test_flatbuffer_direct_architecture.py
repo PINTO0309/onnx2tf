@@ -442,6 +442,25 @@ def test_strict_integer_boundary_ops_use_differential_graph_index() -> None:
     assert "graph_index.append_operator(" in function_source
 
 
+def test_model_writer_reuses_shared_dead_operator_pruning() -> None:
+    writer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "model_writer.py"
+    )
+    source = writer_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function_node = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_prune_dead_operators_in_place"
+    )
+    function_source = ast.get_source_segment(source, function_node)
+    assert function_source is not None
+    assert "prune_dead_operators(model_ir, prune_tensors=False)" in function_source
+    assert "keep_flags" not in function_source
+    assert "model_ir.operators =" not in source
+
+
 def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

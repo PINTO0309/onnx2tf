@@ -550,6 +550,17 @@ IO strict-integer fixture proves one initial refresh, exact boundary/core
 operator order, connected boundary names, preserved public output, and source
 ModelIR immutability. No model conversion or inference was run.
 
+Model serialization now reuses shared indexed dead-code pruning. The serializer
+still creates only a shallow graph-container clone, preserving weight-buffer
+sharing and source ModelIR reuse. It requests operator-only pruning from
+`passes/graph_cleanup.py`, then performs embedded-constant input stripping and
+unused-tensor removal in the original order. The duplicate reverse-liveness
+implementation and full operator-list filter were removed from
+`model_writer.py`. A focused sanitizer fixture proves one initial refresh,
+live graph order, dead tensor removal, constant-input stripping, and complete
+source-container immutability. No FlatBuffer serialization, model conversion,
+or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

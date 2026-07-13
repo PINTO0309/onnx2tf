@@ -1607,6 +1607,14 @@ operators are appended in output order after quantization analysis, preserving
 report indices. The former `pre_ops + clone.operators + post_ops` assignment is
 removed.
 
+Serialization sanitization reuses the same `prune_dead_operators()` liveness
+implementation. Its shallow container clone requests operator-only pruning,
+then preserves the established constant-input stripping and tensor-pruning
+order. Thus reusable source ModelIR objects and weight buffers remain untouched
+while the serializer no longer owns a duplicate liveness walk or complete
+operator-list filter. The shared pass keeps tensor pruning enabled by default
+for lowerer cleanup and exposes the opt-out only for this serialization order.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
