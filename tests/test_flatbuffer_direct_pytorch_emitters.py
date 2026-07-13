@@ -4,6 +4,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_emitters import (
     _emit_native_binary_op_for_codegen_impl,
     _emit_native_concat_op_for_codegen,
+    _emit_native_conv2d_module_op_for_codegen,
     _emit_native_conv3d_module_op_for_codegen,
     _emit_native_fully_connected_module_op_for_codegen,
     _emit_native_prelu_module_op_for_codegen,
@@ -1155,3 +1156,139 @@ def test_conv3d_module_emitter_preserves_runtime_helper_fallback() -> None:
     ]
     assert aliases == {}
     assert runtime_imports == {"_apply_module_conv3d"}
+
+
+def _emit_conv2d(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    aliases: dict[str, str],
+    runtime_imports: set[str],
+    forward_lines: list[str],
+    direct: bool,
+    folded_input_expr: str | None = None,
+    pad_spec: list[int] | None = None,
+) -> bool:
+    return _emit_native_conv2d_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=str(op.op_type),
+        op_index=3,
+        attr_name="conv2d_0",
+        outputs=["y"],
+        output_vars=["y_var"],
+        output_target_shape=repr(model_ir.tensors["y"].shape),
+        conv_module_pad_specs=({3: pad_spec} if pad_spec is not None else {}),
+        channel_first_tensor_expr_aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"expr_{name}",
+        tensor_expr_for_channel_first_bridge_fn=(
+            lambda _name, _perm: folded_input_expr
+        ),
+        derived_local_var_name_fn=lambda _name, _prefix: "y_var_cf_0",
+        emit_module_output_expr_fn=(
+            lambda *, output_name, expr, raw_output_layout: (
+                f"bridge({output_name}, {expr}, {raw_output_layout})"
+            )
+        ),
+        target_shape_literal_fn=lambda _name: repr(model_ir.tensors["y"].shape),
+        conv2d_input_pre_permute_fn=lambda *_args, **_kwargs: [0, 3, 1, 2],
+        can_emit_direct_module_call_fn=lambda _op: direct,
+        activation_lines_fn=(
+            lambda name, fused: []
+            if fused == "NONE"
+            else [f"activate({name}, {fused})"]
+        ),
+        tensor_shape_list_fn=lambda name: list(model_ir.tensors[name].shape),
+    )
+
+
+def test_conv2d_module_emitter_reuses_folded_channel_first_input() -> None:
+    model_ir = ModelIR(name="conv2d_emitter")
+    model_ir.tensors = {
+        "x": TensorIR(
+            "x",
+            "FLOAT32",
+            [1, 4, 4, 3],
+            logical_layout="NHWC",
+        ),
+        "weight": TensorIR("weight", "FLOAT32", [5, 3, 3, 3]),
+        "y": TensorIR(
+            "y",
+            "FLOAT32",
+            [1, 4, 4, 5],
+            logical_layout="NHWC",
+        ),
+    }
+    op = OperatorIR("CONV_2D", ["x", "weight"], ["y"])
+    aliases: dict[str, str] = {}
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_conv2d(
+        model_ir=model_ir,
+        op=op,
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        direct=True,
+        folded_input_expr="folded_x_cf",
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var_cf_0 = self.conv2d_0(folded_x_cf)",
+        "y_var = bridge(y, y_var_cf_0, NCHW)",
+    ]
+    assert aliases == {"y": "y_var_cf_0"}
+    assert runtime_imports == set()
+
+
+def test_conv2d_module_emitter_preserves_padded_runtime_fallback() -> None:
+    model_ir = ModelIR(name="conv2d_runtime_emitter")
+    model_ir.tensors = {
+        "x": TensorIR(
+            "x",
+            "FLOAT32",
+            [1, 3, 4, 4],
+            logical_layout="NCHW",
+        ),
+        "weight": TensorIR("weight", "FLOAT32", [5, 3, 3, 3]),
+        "y": TensorIR(
+            "y",
+            "FLOAT32",
+            [1, 5, 4, 4],
+            logical_layout="NCHW",
+        ),
+    }
+    op = OperatorIR(
+        "CONV_2D",
+        ["x", "weight"],
+        ["y"],
+        {"fusedActivationFunction": "RELU"},
+    )
+    aliases = {"y": "stale_alias"}
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_conv2d(
+        model_ir=model_ir,
+        op=op,
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        direct=False,
+        pad_spec=[1, 1, 2, 2],
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var = _apply_module_conv2d(self.conv2d_0, "
+        "F.pad(expr_x, [1, 1, 2, 2], mode='constant', value=0.0), "
+        "target_shape=[1, 5, 4, 4], target_logical_layout='NCHW', "
+        "fused='NONE')",
+        "activate(y_var, RELU)",
+    ]
+    assert aliases == {}
+    assert runtime_imports == {"_apply_module_conv2d"}

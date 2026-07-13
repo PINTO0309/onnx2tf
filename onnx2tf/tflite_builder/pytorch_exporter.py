@@ -62,6 +62,7 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
     _DIRECT_CODEGEN_UNARY_EXPRESSIONS,
     _emit_native_binary_op_for_codegen_impl,
     _emit_native_concat_op_for_codegen,
+    _emit_native_conv2d_module_op_for_codegen,
     _emit_native_conv3d_module_op_for_codegen,
     _emit_native_fully_connected_module_op_for_codegen,
     _emit_native_prelu_module_op_for_codegen,
@@ -4750,150 +4751,31 @@ def _emit_native_direct_module_op_for_codegen(
             f"{output_var} = {emit_module_output_expr_fn(output_name=output_name, expr=fused_module_expr, raw_output_layout=raw_output_layout)}"
         )
         return True
-    fused = str(op.options.get("fusedActivationFunction", "NONE"))
-    if op_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}:
-        conv_input_name = str(op.inputs[0])
-        conv_input_expr = tensor_expr_fn(conv_input_name)
-        output_name = str(outputs[0])
-        output_tensor = model_ir.tensors.get(output_name, None)
-        raw_output_layout = (
-            channel_first_logical_layout(len(list(output_tensor.shape)))
-            if output_tensor is not None
-            else LOGICAL_LAYOUT_UNKNOWN
-        )
-        output_layout = normalize_logical_layout(
-            output_tensor.logical_layout if output_tensor is not None else LOGICAL_LAYOUT_UNKNOWN
-        )
-        needs_materialized_output_bridge = (
-            output_tensor is not None
-            and len(list(output_tensor.shape)) in {3, 4, 5}
-            and output_layout != LOGICAL_LAYOUT_UNKNOWN
-            and output_layout != raw_output_layout
-        )
-        use_channel_first_alias = (
-            output_tensor is not None
-            and len(list(output_tensor.shape)) in {3, 4, 5}
-            and is_channel_first_logical_layout(output_layout)
-        )
-        raw_output_var = (
-            derived_local_var_name_fn(f"{output_vars[0]}_cf", "t")
-            if use_channel_first_alias or needs_materialized_output_bridge
-            else output_vars[0]
-        )
-        conv_input_tensor = model_ir.tensors.get(conv_input_name, None)
-        conv_weight_tensor = model_ir.tensors.get(str(op.inputs[1]), None) if len(op.inputs) >= 2 else None
-        conv_input_layout = normalize_logical_layout(
-            conv_input_tensor.logical_layout
-            if conv_input_tensor is not None
-            else LOGICAL_LAYOUT_UNKNOWN
-        )
-        existing_channel_first_input_alias = channel_first_tensor_expr_aliases.get(conv_input_name, None)
-        if (
-            conv_input_tensor is not None
-            and conv_weight_tensor is not None
-            and len(list(conv_input_tensor.shape)) == 4
-            and len(list(conv_weight_tensor.shape)) == 4
-            and int(conv_input_tensor.shape[1]) == int(conv_weight_tensor.shape[1])
-        ):
-            input_pre_permute = None
-        elif (
-            conv_input_tensor is not None
-            and len(list(conv_input_tensor.shape)) == 4
-            and is_channel_first_logical_layout(conv_input_layout)
-        ):
-            input_pre_permute = None
-        elif (
-            existing_channel_first_input_alias is not None
-            and conv_input_tensor is not None
-            and conv_weight_tensor is not None
-            and len(list(conv_input_tensor.shape)) == 4
-            and len(list(conv_weight_tensor.shape)) == 4
-            and int(conv_input_tensor.shape[1]) == 1
-            and int(conv_input_tensor.shape[2]) == 1
-            and int(conv_input_tensor.shape[3]) == int(conv_weight_tensor.shape[3])
-        ):
-            conv_input_expr = str(existing_channel_first_input_alias)
-            input_pre_permute = None
-        elif (
-            conv_input_tensor is not None
-            and conv_weight_tensor is not None
-            and len(list(conv_input_tensor.shape)) == 4
-            and len(list(conv_weight_tensor.shape)) == 4
-            and int(conv_input_tensor.shape[1]) == 1
-            and int(conv_input_tensor.shape[2]) == 1
-            and int(conv_input_tensor.shape[3]) == int(conv_weight_tensor.shape[3])
-        ):
-            input_pre_permute = None
-        else:
-            input_pre_permute = conv2d_input_pre_permute_fn(
-                tensor_shape_list_fn(str(op.inputs[0])),
-                tensor_shape_list_fn(str(outputs[0])),
-                tensor_shape_list_fn(str(op.inputs[1])),
-                op.options,
-                input_logical_layout=conv_input_layout,
-                output_logical_layout=normalize_logical_layout(
-                    model_ir.tensors[outputs[0]].logical_layout
-                ),
-                depthwise=(op_type == "DEPTHWISE_CONV_2D"),
-            )
-        if input_pre_permute is not None:
-            folded_channel_first_expr = tensor_expr_for_channel_first_bridge_fn(
-                str(op.inputs[0]),
-                input_pre_permute,
-            )
-            if folded_channel_first_expr is not None:
-                conv_input_expr = str(folded_channel_first_expr)
-            else:
-                conv_input_expr = (
-                    f"{conv_input_expr}.permute({', '.join(str(int(v)) for v in input_pre_permute)}).contiguous()"
-                )
-        conv_pad_arg = conv_module_pad_specs.get(int(op_index), None)
-        if conv_pad_arg is not None:
-            conv_input_expr = f"F.pad({conv_input_expr}, {repr(conv_pad_arg)}, mode='constant', value=0.0)"
-        used_direct_module_call = can_emit_direct_module_call_fn(op)
-        if used_direct_module_call:
-            if use_channel_first_alias or needs_materialized_output_bridge:
-                channel_first_tensor_expr_aliases[output_name] = raw_output_var
-            else:
-                channel_first_tensor_expr_aliases.pop(output_name, None)
-            forward_lines.append(f"{raw_output_var} = self.{attr_name}({conv_input_expr})")
-        else:
-            runtime_imports.add("_apply_module_conv2d")
-            forward_lines.append(
-                f"{output_vars[0]} = _apply_module_conv2d(self.{attr_name}, {conv_input_expr}, target_shape={output_target_shape}, target_logical_layout={repr(normalize_logical_layout(model_ir.tensors[outputs[0]].logical_layout))}, fused='NONE')"
-            )
-            channel_first_tensor_expr_aliases.pop(output_name, None)
-        forward_lines.extend(activation_lines_fn(output_vars[0], fused))
-        if use_channel_first_alias:
-            if fused != "NONE":
-                forward_lines[-1] = forward_lines[-1].replace(f"{output_vars[0]} =", f"{raw_output_var} =", 1)
-            if output_name in model_ir.outputs:
-                public_output_expr = emit_module_output_expr_fn(
-                    output_name=output_name,
-                    expr=raw_output_var,
-                    raw_output_layout=raw_output_layout,
-                )
-                weight_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
-                if (
-                    output_tensor is not None
-                    and weight_tensor is not None
-                    and len(list(output_tensor.shape)) == 4
-                    and len(list(weight_tensor.shape)) >= 1
-                    and int(output_tensor.shape[-1]) == int(weight_tensor.shape[0])
-                    and int(output_tensor.shape[1]) != int(weight_tensor.shape[0])
-                ):
-                    runtime_imports.add("_align_tensor_to_target_shape")
-                    public_output_expr = (
-                        f"_align_tensor_to_target_shape({raw_output_var}.permute(0, 2, 3, 1).contiguous(), "
-                        f"{target_shape_literal_fn(output_name)})"
-                    )
-                forward_lines.append(f"{output_vars[0]} = {public_output_expr}")
-        elif used_direct_module_call and raw_output_var != output_vars[0]:
-            if fused != "NONE":
-                forward_lines[-1] = forward_lines[-1].replace(f"{output_vars[0]} =", f"{raw_output_var} =", 1)
-            forward_lines.append(
-                f"{output_vars[0]} = {emit_module_output_expr_fn(output_name=output_name, expr=raw_output_var, raw_output_layout=raw_output_layout)}"
-            )
+    if _emit_native_conv2d_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=op_type,
+        op_index=op_index,
+        attr_name=attr_name,
+        outputs=outputs,
+        output_vars=output_vars,
+        output_target_shape=output_target_shape,
+        conv_module_pad_specs=conv_module_pad_specs,
+        channel_first_tensor_expr_aliases=channel_first_tensor_expr_aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=tensor_expr_fn,
+        tensor_expr_for_channel_first_bridge_fn=(
+            tensor_expr_for_channel_first_bridge_fn
+        ),
+        derived_local_var_name_fn=derived_local_var_name_fn,
+        emit_module_output_expr_fn=emit_module_output_expr_fn,
+        target_shape_literal_fn=target_shape_literal_fn,
+        conv2d_input_pre_permute_fn=conv2d_input_pre_permute_fn,
+        can_emit_direct_module_call_fn=can_emit_direct_module_call_fn,
+        activation_lines_fn=activation_lines_fn,
+        tensor_shape_list_fn=tensor_shape_list_fn,
+    ):
         return True
     if _emit_native_transpose_conv2d_module_op_for_codegen(
         model_ir=model_ir,

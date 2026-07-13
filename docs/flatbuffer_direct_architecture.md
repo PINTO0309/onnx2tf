@@ -1875,6 +1875,14 @@ The only remaining `CONV_3D` check in the dispatcher belongs to the still-
 central fused-module raw-layout classification; the ordinary Conv3D branch is
 gone.
 
+Regular Conv2D and DepthwiseConv2D emission is now focused in the same emitter
+module. Input layout/shape shortcuts, existing channel-first aliases, planned or
+folded pre-permutations, explicit module padding, direct/runtime capability,
+NCHW aliases, public-output correction, and fused activation remain ordered as
+before. The direct-module dispatcher has consequently fallen from 374 lines at
+the preceding checkpoint to roughly 255 lines, with the fused-module branch as
+its only remaining large implementation block.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

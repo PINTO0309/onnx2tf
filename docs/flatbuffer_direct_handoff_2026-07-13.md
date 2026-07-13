@@ -144,6 +144,15 @@ only one Conv3D mention for fused-module raw-layout classification. Emitter and
 architecture validation passes 80 tests; syntax, Ruff, and diff checks pass. No
 model conversion or inference was run.
 
+Conv2D and DepthwiseConv2D direct-module emission now live in the focused
+emitter. The move preserves folded channel-first inputs, shape-based no-permute
+guards, degenerate 1x1 alias reuse, planned pre-permutations, explicit F.pad,
+direct/runtime helper selection, NCHW aliases, public-output correction, and
+activation order. Direct tests cover a folded NHWC bridge and padded runtime
+fallback. Emitter and architecture validation passes 82 tests; syntax, Ruff,
+and diff checks pass. The dispatcher shrank from 374 to about 255 lines. No
+model conversion or inference was run.
+
 Channel-first normalization now owns one graph index for its complete mutable
 layout phase. Feature-last collection, both friendly-layout worklists,
 Transpose cleanup, ATAN2-to-ATAN canonicalization, recurrent orphan repair,
