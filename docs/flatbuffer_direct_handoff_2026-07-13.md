@@ -3,8 +3,8 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `a872774` (`index terminal mean layout pass`)
-- Remote: `origin/fb-refactor3` contains `a872774`
+- Latest implementation checkpoint: `42bb3e8` (`extract multi branch gate layout pass`)
+- Remote: `origin/fb-refactor3` contains `42bb3e8`
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -12,8 +12,9 @@
 
 ## Completed work
 
-This resumed interval completed three adjacent semantic layout families using
-the staged characterization → mechanical extraction → indexed runner process.
+This resumed interval completed five adjacent semantic layout families using
+the staged characterization → mechanical extraction → indexed runner process,
+and stopped after mechanically extracting the next family at a clean boundary.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -35,11 +36,33 @@ the staged characterization → mechanical extraction → indexed runner process
    - Added stable runner `layout.terminal_unary_mean_reshape`, differential
      indexing, indexed preconditions, layout synchronization, and all six
      production runner calls in `a872774`.
+4. EfficientNet-style SE layout
+   - Characterized shared-input, gate-fan-out, and public-boundary behavior in
+     `5f5de07`, then moved both complete matchers to `passes/se_layout.py` in
+     `ce519b6`.
+   - Indexed SE-Conv and SE-FC independently in `a9c6971` and `817bfa0`, using
+     shared graph/layout state and stable ordered runners at all production
+     call sites.
+5. Elementwise gate layout
+   - Added missing SUM/Logistic/Sub/Mul/Add boundary characterization in
+     `1623762` and mechanically extracted four rules to
+     `passes/elementwise_gate_layout.py` in `2095a01`.
+   - Indexed the four-rule group under stable ordered pass IDs, replacing five
+     repeated raw call groups in `9832355`.
+6. Generic multi-branch gate layout
+   - Replaced model-specific coverage with a compact generic two-branch
+     success/rejection corpus in `13ec048`.
+   - Mechanically extracted the complete matcher to
+     `passes/multi_branch_gate_layout.py` with AST equivalence in `42bb3e8`.
+     Indexed mutation and an ordered runner are intentionally deferred to the
+     next checkpoint; the code is not left partially migrated.
 
-For all three families, compatibility wrappers remain in
-`lower_from_onnx2tf.py`. The extracted indexed implementations contain no
-whole-graph producer/consumer map construction and no direct operator-list
-insertion/deletion. No dependency or TensorFlow import path was added.
+Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
+families. Every implementation migrated through the indexed-runner stage
+contains no whole-graph producer/consumer map construction and no direct
+operator-list insertion/deletion. The newly extracted multi-branch matcher
+still preserves its legacy internals until the next indexed checkpoint. No
+dependency or TensorFlow import path was added.
 
 The 2,000 threshold is only the Tier 5 ONNX node-count boundary. It is not a
 source-file line limit and no source-line gate should be introduced.
@@ -49,10 +72,11 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The next adjacent family is EfficientNet-style SE propagation:
-  `_optimize_transpose_se_conv_mul_prepost_nhwc_chains` (482 lines, six call
-  positions) and `_optimize_transpose_se_fc_mul_prepost_nhwc_chains` (977
-  lines, nine call positions).
+  The immediate next unit is the already extracted generic multi-branch gate
+  matcher in `passes/multi_branch_gate_layout.py`: migrate it to shared
+  `ModelIRGraphIndex`/`LayoutState`, add a stable ordered runner, and replace
+  its single raw production call. After that, audit the adjacent
+  `_optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains` family.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -73,19 +97,28 @@ The overall Goal is not complete. In particular:
 
 ## Branch and changed files
 
-Current branch is `fb-refactor3`. Implementation checkpoint `a872774` changed:
+Current branch is `fb-refactor3`. Before this handoff-document update, the
+working tree is clean and `HEAD` equals `origin/fb-refactor3` at `42bb3e8`
+(local/remote divergence `0 0`). The implementation checkpoints since the
+previous pause changed:
 
 - `docs/flatbuffer_direct_architecture.md`
 - `docs/flatbuffer_direct_handoff_2026-07-12.md`
+- `docs/flatbuffer_direct_handoff_2026-07-13.md`
+- `onnx2tf/tflite_builder/core/model_ir_utils.py`
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`
-- `onnx2tf/tflite_builder/passes/terminal_mean_layout.py`
+- `onnx2tf/tflite_builder/passes/elementwise_gate_layout.py`
+- `onnx2tf/tflite_builder/passes/multi_branch_gate_layout.py`
+- `onnx2tf/tflite_builder/passes/se_layout.py`
 - `tests/test_flatbuffer_direct_architecture.py`
+- `tests/test_flatbuffer_direct_elementwise_gate_layout.py`
+- `tests/test_flatbuffer_direct_osnet_gate_layout.py`
 - `tests/test_flatbuffer_direct_pass_efficiency.py`
-- `tests/test_flatbuffer_direct_terminal_mean_layout.py`
+- `tests/test_flatbuffer_direct_se_layout.py`
+- `tests/test_tflite_builder_direct.py`
 
-The final handoff checkpoint additionally corrects the chronological placement
-of the indexed terminal Mean section in the 2026-07-12 handoff and adds this
-file. No implementation file remains uncommitted after that checkpoint.
+The final handoff checkpoint updates documentation only. No implementation
+file remains uncommitted after it.
 
 ## Tests executed
 
@@ -104,6 +137,21 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, cosine similarity `1.0`.
 - Full direct selection after indexed migration:
   `1170 passed, 5 deselected, 2 warnings in 162.39s`.
+- SE characterization/extraction/indexed focused gates passed; the final SE
+  full direct selection was
+  `1178 passed, 5 deselected, 2 warnings in 158.98s`.
+- Elementwise-gate characterization/extraction/indexed focused gates passed;
+  the final elementwise full direct selection was
+  `1183 passed, 5 deselected, 2 warnings in 152.05s`.
+- Multi-branch gate characterization and extraction focused gate passed
+  `3 tests`; its full direct selection was
+  `1186 passed, 5 deselected, 2 warnings in 151.88s`.
+- Pause verification of multi-branch characterization plus architecture:
+  `35 passed in 17.23s`.
+- Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
+  indexed elementwise gates. Every run retained `evaluation_pass=true`,
+  `max_abs=1.6666017472743988e-06`,
+  `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 
 The full direct command intentionally deselected the same five
 optional/environment-sensitive cases used by the established gate:
@@ -126,18 +174,26 @@ optional/environment-sensitive cases used by the established gate:
 - Performance/RSS targets are not yet proven for the current architecture.
 - Baseline-invalid `vit_h_encoder.onnx` remains classified as `invalid_onnx`.
 - Per user direction, DEIM is considered a successful conversion family.
+- The generic multi-branch gate matcher is mechanically extracted but not yet
+  indexed. This is planned work, not a failing or partially applied change;
+  its legacy production call remains intact and the full direct gate passes.
 
 ## First work on resume
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Audit the 482-line SE-Conv and 977-line SE-FC rules together, including all
-   six/nine production positions and existing positive fixtures.
-3. Add compact no-op characterization for the most important shared-input,
-   gate fan-out, public-boundary, and optional Mean variants before moving any
-   implementation.
-4. Commit and push characterization separately, then perform mechanical
-   extraction with AST equivalence before introducing indexed mutation.
+2. Audit every read and mutation in
+   `passes/multi_branch_gate_layout.py`, then add optional `graph_index` and
+   `layout_state` parameters without changing matching semantics.
+3. Add `run_multi_branch_gate_layout_cleanup` with a stable `LAYOUT_PLAN` pass
+   ID and an indexed cheap guard. Replace the single production raw call while
+   retaining the lowerer compatibility wrapper.
+4. Extend the compact success/rejection tests to prove one initial index
+   refresh, one success snapshot, and zero rejection snapshots; update ordered
+   runner and efficiency expectations.
+5. Run focused tests, sequential Tier 1 `superpoint.onnx -cotof`, and the full
+   direct selection. Commit and push this indexed migration as one coherent
+   checkpoint.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
