@@ -3142,3 +3142,25 @@ The complete direct regression selection passed:
 No dependency or TensorFlow path was added. Inference remained sequential and
 single-process; `/tmp/onnx2tf_stale_shuffle_superpoint*` was removed after
 metrics inspection.
+
+### ShuffleNet NHWC channel-shuffle extraction
+
+The next selected rule is the 268-line, five-position ShuffleNet NHWC adapter
+form. Checkpoint `83e25f0` first added compact fixtures proving that a shared
+leading NHWC→NCHW Transpose is retained for its side consumer while the target
+branch becomes axis-3 Gather, and that an intermediate Reshape fan-out rejects
+the rewrite.
+
+The complete `_optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains`
+implementation then moved mechanically to `passes/channel_shuffle.py`, with an
+AST identical to `83e25f0`. The existing optional-unary path, permutation,
+rank/static-shape, group/channel, public-output, fan-out, metadata, deterministic
+indices, and conditional leading-Transpose removal behavior are unchanged.
+The lowerer keeps only a compatibility wrapper; all five raw production calls
+remain in their original positions pending indexed migration. Focused family,
+legacy, and ownership validation passed 12 tests, followed by the complete
+direct selection:
+
+```text
+1146 passed, 5 deselected, 2 warnings in 148.20s
+```

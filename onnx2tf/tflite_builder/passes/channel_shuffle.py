@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _build_tensor_consumer_map,
     _is_fully_known_positive_shape,
+    _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
     _read_transpose_perm,
     _set_operator_inputs,
@@ -18,7 +20,278 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
-from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+
+
+def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+    """
+    Collapse ShuffleNet channel-shuffle chains expressed as:
+
+      x_nhwc
+        -> TRANSPOSE(0,3,1,2)
+        -> RESHAPE([N,g,cpg,H,W])
+        -> TRANSPOSE(0,2,1,3,4)
+        -> RESHAPE([N,C,H,W])
+        -> TRANSPOSE(0,2,3,1)
+        -> y_nhwc
+
+    into:
+
+      x_nhwc -> GATHER(axis=3, shuffle_indices) -> y_nhwc
+
+    where C=g*cpg and shuffle_indices[k] = (k % g) * cpg + (k // g).
+    """
+    optimized = 0
+    perm_nhwc_to_nchw = [0, 3, 1, 2]
+    perm_nchw_to_nhwc = [0, 2, 3, 1]
+    perm_shuffle_swap = [0, 2, 1, 3, 4]
+    unary_passthrough_ops = {
+        "RELU",
+        "RELU6",
+        "LOGISTIC",
+        "TANH",
+        "LEAKY_RELU",
+        "HARD_SWISH",
+        "ABS",
+        "EXP",
+        "NEG",
+        "SQRT",
+    }
+
+    def _unique_tensor_name(base: str) -> str:
+        name = str(base)
+        suffix = 1
+        while name in model_ir.tensors:
+            name = f"{base}_{suffix}"
+            suffix += 1
+        return name
+
+    while True:
+        changed = False
+        consumers = _build_tensor_consumer_map(model_ir)
+        model_outputs = set(str(v) for v in model_ir.outputs)
+
+        for t0_idx, t0_op in enumerate(model_ir.operators):
+            if str(t0_op.op_type) != "TRANSPOSE" or len(t0_op.inputs) < 2 or len(t0_op.outputs) != 1:
+                continue
+            if _read_transpose_perm(model_ir, t0_op) != perm_nhwc_to_nchw:
+                continue
+
+            x_nhwc_name = str(t0_op.inputs[0])
+            x_nchw_name = str(t0_op.outputs[0])
+            if x_nchw_name in model_outputs:
+                continue
+
+            t0_users = [int(v) for v in consumers.get(x_nchw_name, [])]
+            if len(t0_users) == 0:
+                continue
+
+            for t0_user_idx in t0_users:
+                gather_src_name = str(x_nhwc_name)
+                unary_bridge_op: Optional[OperatorIR] = None
+                r1_idx: Optional[int] = None
+                r1_op: Optional[OperatorIR] = None
+
+                t0_user_op = model_ir.operators[int(t0_user_idx)]
+                if (
+                    str(t0_user_op.op_type) == "RESHAPE"
+                    and len(t0_user_op.inputs) >= 1
+                    and len(t0_user_op.outputs) == 1
+                    and str(t0_user_op.inputs[0]) == x_nchw_name
+                ):
+                    r1_idx = int(t0_user_idx)
+                    r1_op = t0_user_op
+                elif (
+                    str(t0_user_op.op_type) in unary_passthrough_ops
+                    and len(t0_user_op.inputs) == 1
+                    and len(t0_user_op.outputs) == 1
+                    and str(t0_user_op.inputs[0]) == x_nchw_name
+                    and str(t0_user_op.outputs[0]) not in model_outputs
+                ):
+                    unary_out_name = str(t0_user_op.outputs[0])
+                    unary_users = [int(v) for v in consumers.get(unary_out_name, [])]
+                    if len(unary_users) != 1:
+                        continue
+                    unary_r1_idx = int(unary_users[0])
+                    unary_r1_op = model_ir.operators[int(unary_r1_idx)]
+                    if (
+                        str(unary_r1_op.op_type) != "RESHAPE"
+                        or len(unary_r1_op.inputs) < 1
+                        or len(unary_r1_op.outputs) != 1
+                        or str(unary_r1_op.inputs[0]) != unary_out_name
+                    ):
+                        continue
+                    r1_idx = int(unary_r1_idx)
+                    r1_op = unary_r1_op
+                    unary_bridge_op = t0_user_op
+                    gather_src_name = str(unary_out_name)
+                else:
+                    continue
+
+                if r1_idx is None or r1_op is None:
+                    continue
+                r1_out_name = str(r1_op.outputs[0])
+                if r1_out_name in model_outputs:
+                    continue
+
+                r1_users = [int(v) for v in consumers.get(r1_out_name, [])]
+                if len(r1_users) != 1:
+                    continue
+                t1_idx = int(r1_users[0])
+                t1_op = model_ir.operators[int(t1_idx)]
+                if (
+                    str(t1_op.op_type) != "TRANSPOSE"
+                    or len(t1_op.inputs) < 2
+                    or len(t1_op.outputs) != 1
+                    or str(t1_op.inputs[0]) != r1_out_name
+                    or _read_transpose_perm(model_ir, t1_op) != perm_shuffle_swap
+                ):
+                    continue
+                t1_out_name = str(t1_op.outputs[0])
+                if t1_out_name in model_outputs:
+                    continue
+
+                t1_users = [int(v) for v in consumers.get(t1_out_name, [])]
+                if len(t1_users) != 1:
+                    continue
+                r2_idx = int(t1_users[0])
+                r2_op = model_ir.operators[int(r2_idx)]
+                if (
+                    str(r2_op.op_type) != "RESHAPE"
+                    or len(r2_op.inputs) < 1
+                    or len(r2_op.outputs) != 1
+                    or str(r2_op.inputs[0]) != t1_out_name
+                ):
+                    continue
+                r2_out_name = str(r2_op.outputs[0])
+                if r2_out_name in model_outputs:
+                    continue
+
+                r2_users = [int(v) for v in consumers.get(r2_out_name, [])]
+                if len(r2_users) != 1:
+                    continue
+                t2_idx = int(r2_users[0])
+                t2_op = model_ir.operators[int(t2_idx)]
+                if (
+                    str(t2_op.op_type) != "TRANSPOSE"
+                    or len(t2_op.inputs) < 2
+                    or len(t2_op.outputs) != 1
+                    or str(t2_op.inputs[0]) != r2_out_name
+                    or _read_transpose_perm(model_ir, t2_op) != perm_nchw_to_nhwc
+                ):
+                    continue
+
+                x_tensor = model_ir.tensors.get(x_nhwc_name, None)
+                r1_tensor = model_ir.tensors.get(r1_out_name, None)
+                t1_tensor = model_ir.tensors.get(t1_out_name, None)
+                y_tensor = model_ir.tensors.get(str(t2_op.outputs[0]), None)
+                if x_tensor is None or r1_tensor is None or t1_tensor is None:
+                    continue
+
+                x_shape = [int(v) for v in list(x_tensor.shape)]
+                r1_shape = [int(v) for v in list(r1_tensor.shape)]
+                t1_shape = [int(v) for v in list(t1_tensor.shape)]
+                if (
+                    not _is_fully_known_positive_shape(x_shape)
+                    or not _is_fully_known_positive_shape(r1_shape)
+                    or not _is_fully_known_positive_shape(t1_shape)
+                ):
+                    continue
+                if len(x_shape) != 4 or len(r1_shape) != 5 or len(t1_shape) != 5:
+                    continue
+
+                n, h, w, c = [int(v) for v in x_shape]
+                if int(c) <= 1:
+                    continue
+
+                # r1:[N,g,cpg,H,W], t1:[N,cpg,g,H,W]
+                if (
+                    int(r1_shape[0]) != int(n)
+                    or int(r1_shape[3]) != int(h)
+                    or int(r1_shape[4]) != int(w)
+                    or int(t1_shape[0]) != int(n)
+                    or int(t1_shape[3]) != int(h)
+                    or int(t1_shape[4]) != int(w)
+                    or int(t1_shape[1]) != int(r1_shape[2])
+                    or int(t1_shape[2]) != int(r1_shape[1])
+                ):
+                    continue
+                groups = int(r1_shape[1])
+                cpg = int(r1_shape[2])
+                if int(groups) <= 1 or int(cpg) <= 0 or int(groups * cpg) != int(c):
+                    continue
+
+                shuffle_indices = np.asarray(
+                    [int((k % groups) * cpg + (k // groups)) for k in range(int(c))],
+                    dtype=np.int32,
+                )
+                if np.array_equal(shuffle_indices, np.arange(int(c), dtype=np.int32)):
+                    continue
+
+                gather_idx_name = _unique_tensor_name(f"{x_nhwc_name}_shuffle_indices")
+                model_ir.tensors[gather_idx_name] = TensorIR(
+                    name=gather_idx_name,
+                    dtype="INT32",
+                    shape=[int(c)],
+                    shape_signature=[int(c)],
+                    data=shuffle_indices,
+                    is_variable=False,
+                )
+
+                t2_op.op_type = "GATHER"
+                t2_op.version = 1
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=t2_op,
+                    new_inputs=[gather_src_name, gather_idx_name],
+                )
+                t2_op.options = {"axis": 3, "batchDims": 0}
+
+                if unary_bridge_op is not None:
+                    _set_operator_inputs(
+                        model_ir=model_ir,
+                        op=unary_bridge_op,
+                        new_inputs=[x_nhwc_name],
+                    )
+                    _permute_tensor_metadata_if_rank_matches(
+                        model_ir.tensors.get(str(unary_bridge_op.outputs[0]), None),
+                        perm_nchw_to_nhwc,
+                    )
+
+                if y_tensor is not None:
+                    y_tensor.shape = [int(v) for v in list(x_shape)]
+                    y_signature = (
+                        [int(v) for v in list(x_tensor.shape_signature)]
+                        if x_tensor.shape_signature is not None
+                        else [int(v) for v in list(x_shape)]
+                    )
+                    y_tensor.shape_signature = [int(v) for v in list(y_signature)]
+
+                remove_indices = {int(r1_idx), int(t1_idx), int(r2_idx)}
+                t0_remaining_users = [
+                    int(v)
+                    for v in t0_users
+                    if int(v) != int(t0_user_idx)
+                ]
+                if len(t0_remaining_users) == 0:
+                    remove_indices.add(int(t0_idx))
+
+                for remove_idx in sorted(list(remove_indices), reverse=True):
+                    del model_ir.operators[int(remove_idx)]
+
+                optimized += 1
+                changed = True
+                break
+
+            if changed:
+                break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {"optimized_shufflenet_reshape_transpose_shuffle_nhwc_chains": int(optimized)}
+
 
 
 def _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(

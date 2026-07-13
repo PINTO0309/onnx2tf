@@ -590,6 +590,7 @@ def test_nchw_channel_shuffle_cleanup_has_single_owner() -> None:
     )
     function_names = {
         "_optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather",
+        "_optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains",
         "_repair_nchw_channel_shuffle_concat_gathers",
     }
     pass_tree = ast.parse(pass_path.read_text(encoding="utf-8"))

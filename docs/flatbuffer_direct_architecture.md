@@ -88,8 +88,17 @@ Model-only Concat+Gather preflight and an exact indexed guard check producer
 identity, axis/batch dimensions, four-dimensional compatible input shapes, and
 exact index/channel cardinality before snapshotting. Axis and tensor-metadata
 repair reuse one differential index and synchronize `LayoutState`
-transactionally. The complete channel-shuffle family now performs no
+transactionally. These indexed channel-shuffle implementations perform no
 whole-graph index rebuilds or direct operator-list mutation.
+
+The strict ShuffleNet NHWC adapter form is mechanically owned by the same
+family. It recognizes NHWC→NCHW Transpose, optional unary passthrough,
+five-dimensional group/channel Reshape+swap, NCHW collapse, and final NHWC
+Transpose, replacing the branch with `GATHER(axis=3)`. Shared leading
+Transpose users are preserved, while intermediate fan-out and public
+intermediates remain guarded. Its full 268-line implementation moved with an
+identical AST; the lowerer keeps a compatibility wrapper and all five
+production positions remain unchanged pending indexed runner migration.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and
