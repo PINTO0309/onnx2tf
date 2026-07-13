@@ -24,8 +24,10 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR
 from onnx2tf.tflite_builder.passes.nhwc_concat_layout import (
     _NhwcConcatInputPlan,
     _apply_dequantize_input_plan,
+    _apply_prelu_input_plan,
     _apply_swish_input_plan,
     _resolve_dequantize_input_plan,
+    _resolve_prelu_input_plan,
     _resolve_swish_input_plan,
 )
 from onnx2tf.tflite_builder.passes.nhwc_concat_pad import (
@@ -56,6 +58,9 @@ _SWISH_STATS_KEY = (
 _DEQUANTIZE_STATS_KEY = (
     "optimized_transpose_pre_concat_nhwc_quantized_dequantize_chains"
 )
+_PRELU_STATS_KEY = (
+    "optimized_transpose_pre_concat_nhwc_quantized_prelu_chains"
+)
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
 
@@ -68,8 +73,7 @@ class _QuantizedInputPlan:
     remove_adapter: bool
     unary_op: Optional[OperatorIR] = None
     pad_plan: Optional[NhwcConcatPadPlan] = None
-    swish_plan: Optional[_NhwcConcatInputPlan] = None
-    dequantize_plan: Optional[_NhwcConcatInputPlan] = None
+    nhwc_plan: Optional[_NhwcConcatInputPlan] = None
 
 
 @dataclass(frozen=True)
@@ -253,7 +257,7 @@ def _resolve_swish_quantized_input_plan(
     return _QuantizedInputPlan(
         kind="swish",
         adapter_op=swish_plan.adapter_op,
-        swish_plan=swish_plan,
+        nhwc_plan=swish_plan,
         concat_input=concat_input,
         source_name=swish_plan.source_name,
         remove_adapter=swish_plan.remove_adapter,
@@ -283,10 +287,39 @@ def _resolve_dequantize_quantized_input_plan(
     return _QuantizedInputPlan(
         kind="dequantize",
         adapter_op=dequantize_plan.adapter_op,
-        dequantize_plan=dequantize_plan,
+        nhwc_plan=dequantize_plan,
         concat_input=concat_input,
         source_name=dequantize_plan.source_name,
         remove_adapter=dequantize_plan.remove_adapter,
+    )
+
+
+def _resolve_prelu_quantized_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    concat_input: str,
+    concat_index: int,
+    model_outputs: set[str],
+    public_names: set[str],
+) -> Optional[_QuantizedInputPlan]:
+    prelu_plan = _resolve_prelu_input_plan(
+        model_ir,
+        graph_index,
+        input_name=concat_input,
+        concat_index=concat_index,
+        model_outputs=model_outputs,
+        public_names=public_names,
+    )
+    if prelu_plan is None:
+        return None
+    return _QuantizedInputPlan(
+        kind="prelu",
+        adapter_op=prelu_plan.adapter_op,
+        nhwc_plan=prelu_plan,
+        concat_input=concat_input,
+        source_name=prelu_plan.source_name,
+        remove_adapter=prelu_plan.remove_adapter,
     )
 
 
@@ -408,6 +441,15 @@ def _resolve_quantized_concat_candidate(
                     concat_index=int(concat_index),
                     model_outputs=model_outputs,
                 )
+            if input_plan is None and family == "prelu":
+                input_plan = _resolve_prelu_quantized_input_plan(
+                    model_ir,
+                    graph_index,
+                    concat_input=concat_input,
+                    concat_index=int(concat_index),
+                    model_outputs=model_outputs,
+                    public_names=public_names,
+                )
             if input_plan is None and family in {
                 "pad",
                 "unary_pad",
@@ -451,6 +493,9 @@ def _resolve_quantized_concat_candidate(
         )
         if family == "dequantize" and dequantize_count < 1:
             continue
+        prelu_count = sum(plan.kind == "prelu" for plan in input_plans)
+        if family == "prelu" and prelu_count < 1:
+            continue
         if family in {
             "unary",
             "pad",
@@ -458,6 +503,7 @@ def _resolve_quantized_concat_candidate(
             "all_pad",
             "swish",
             "dequantize",
+            "prelu",
         }:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
@@ -476,6 +522,7 @@ def _resolve_quantized_concat_candidate(
                     "pad",
                     "swish",
                     "dequantize",
+                    "prelu",
                 }:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
@@ -591,6 +638,19 @@ def _has_quantized_dequantize_concat_candidate(
     )
 
 
+def _has_quantized_prelu_concat_candidate(
+    pass_state: ModelIRPassState,
+) -> bool:
+    return (
+        _resolve_quantized_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="prelu",
+        )
+        is not None
+    )
+
+
 def _optimize_quantized_concat_chains(
     model_ir: ModelIR,
     *,
@@ -612,20 +672,36 @@ def _optimize_quantized_concat_chains(
 
         new_concat_inputs: List[str] = []
         materialized_pads: Dict[str, str] = {}
+        materialized_alphas: Dict[
+            Tuple[str, Optional[Tuple[int, ...]], Tuple[int, ...]],
+            str,
+        ] = {}
         for input_plan in candidate.input_plans:
-            if input_plan.dequantize_plan is not None:
-                _apply_dequantize_input_plan(
-                    model_ir,
-                    graph_index,
-                    input_plan.dequantize_plan,
-                )
-                new_concat_inputs.append(input_plan.concat_input)
-            elif input_plan.swish_plan is not None:
-                _apply_swish_input_plan(
-                    model_ir,
-                    graph_index,
-                    input_plan.swish_plan,
-                )
+            if input_plan.nhwc_plan is not None:
+                if input_plan.kind == "dequantize":
+                    _apply_dequantize_input_plan(
+                        model_ir,
+                        graph_index,
+                        input_plan.nhwc_plan,
+                    )
+                elif input_plan.kind == "swish":
+                    _apply_swish_input_plan(
+                        model_ir,
+                        graph_index,
+                        input_plan.nhwc_plan,
+                    )
+                elif input_plan.kind == "prelu":
+                    _apply_prelu_input_plan(
+                        model_ir,
+                        graph_index,
+                        input_plan.nhwc_plan,
+                        materialized_alphas=materialized_alphas,
+                    )
+                else:
+                    raise RuntimeError(
+                        "unsupported shared quantized Concat input plan: "
+                        f"{input_plan.kind}"
+                    )
                 new_concat_inputs.append(input_plan.concat_input)
             elif input_plan.unary_op is not None:
                 _set_operator_inputs(
@@ -836,6 +912,19 @@ def run_nhwc_concat_quantized_layout_cleanup(
             "changed": bool(stats.get(_DEQUANTIZE_STATS_KEY, 0)),
         }
 
+    def _run_prelu(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_quantized_concat_chains(
+            pass_state.model_ir,
+            family="prelu",
+            stats_key=_PRELU_STATS_KEY,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get(_PRELU_STATS_KEY, 0)),
+        }
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -895,6 +984,14 @@ def run_nhwc_concat_quantized_layout_cleanup(
                 priority=70,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_quantized_prelu",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_prelu,
+                precondition=_has_quantized_prelu_concat_candidate,
+                priority=80,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -905,6 +1002,7 @@ def run_nhwc_concat_quantized_layout_cleanup(
             _ALL_PAD_STATS_KEY: 0,
             _SWISH_STATS_KEY: 0,
             _DEQUANTIZE_STATS_KEY: 0,
+            _PRELU_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(

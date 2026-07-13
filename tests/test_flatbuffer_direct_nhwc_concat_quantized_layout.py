@@ -512,6 +512,51 @@ def _quantized_dequantize_model(
     return model_ir
 
 
+def _quantized_prelu_model(
+    *,
+    public_prelu_output: bool = False,
+) -> ModelIR:
+    model_ir = _quantized_model()
+    alpha_data = np.asarray(
+        [[[0.125]], [[0.25]]],
+        dtype=np.float32,
+    )
+    model_ir.tensors["alpha"] = TensorIR(
+        name="alpha",
+        dtype="FLOAT32",
+        shape=list(alpha_data.shape),
+        shape_signature=list(alpha_data.shape),
+        data=alpha_data,
+        quantization=QuantParamIR(
+            scale=[0.01] * 2,
+            zero_point=[0] * 2,
+            quantized_dimension=0,
+        ),
+        onnx_tensor_name="onnx_alpha",
+    )
+    model_ir.tensors["a_prelu"] = _tensor(
+        "a_prelu",
+        [1, 2, 5, 7],
+    )
+    model_ir.tensors["a_prelu"].quantization = QuantParamIR(
+        scale=[0.4] * 2,
+        zero_point=[0] * 2,
+        quantized_dimension=1,
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    concat_index = model_ir.operators.index(concat_op)
+    model_ir.operators.insert(
+        concat_index,
+        OperatorIR("PRELU", ["a_nchw", "alpha"], ["a_prelu"]),
+    )
+    concat_op.inputs[0] = "a_prelu"
+    if public_prelu_output:
+        model_ir.outputs.append("a_prelu")
+    return model_ir
+
+
 def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
     assert actual.inputs == expected.inputs
     assert actual.outputs == expected.outputs
@@ -811,6 +856,50 @@ def test_nhwc_quantized_dequantize_rejects_unsafe_boundary(
     boundary: str,
 ) -> None:
     model_ir = _quantized_dequantize_model(boundary=boundary)
+    original = deepcopy(model_ir)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
+    _assert_model_equal(model_ir, original)
+
+
+def test_nhwc_quantized_prelu_input_is_indexed() -> None:
+    model_ir = _quantized_prelu_model()
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_quantized_rewritten(
+        model_ir,
+        expected_concat_inputs=["a_prelu", "b_nhwc"],
+    )
+    prelu_op = next(op for op in model_ir.operators if op.op_type == "PRELU")
+    assert prelu_op.inputs == ["a_nhwc", "alpha"]
+    prelu_tensor = model_ir.tensors["a_prelu"]
+    assert prelu_tensor.shape == [1, 5, 7, 2]
+    assert isinstance(prelu_tensor.quantization, QuantParamIR)
+    assert prelu_tensor.quantization.quantized_dimension == 3
+    alpha_tensor = model_ir.tensors["alpha"]
+    assert alpha_tensor.shape == [1, 1, 2]
+    assert alpha_tensor.onnx_tensor_name == "onnx_alpha"
+    assert isinstance(alpha_tensor.quantization, QuantParamIR)
+    assert alpha_tensor.quantization.quantized_dimension == 2
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_quantized_prelu"
+    )
+    assert event["status"] == "changed"
+
+
+def test_nhwc_quantized_prelu_rejects_public_output() -> None:
+    model_ir = _quantized_prelu_model(public_prelu_output=True)
     original = deepcopy(model_ir)
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
