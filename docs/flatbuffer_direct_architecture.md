@@ -1810,6 +1810,15 @@ exporter from regaining a duplicate unary implementation through an architecture
 ownership gate. Subsequent binary and shape-transform families can move through
 the same boundary independently.
 
+The shape-transform family now follows that boundary as well. ReverseV2,
+ExpandDims, Squeeze, Pack, Unpack, and Split source emission is owned by
+`pytorch_emitters.py`, including runtime axis normalization and multi-output
+statement construction. Constant integer-vector decoding moved to the shared
+Torch-free `pytorch_codegen_utils.py` owner so the emitter and the generated
+pipeline's remaining families use one policy. The generated pipeline keeps the
+same imported global function names, avoiding a compatibility wrapper or source
+template change.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

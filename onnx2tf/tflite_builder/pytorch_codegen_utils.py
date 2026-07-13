@@ -8,6 +8,17 @@ import numpy as np
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 
 
+def _constant_int_list(tensor: Optional[TensorIR]) -> Optional[List[int]]:
+    if tensor is None or tensor.data is None:
+        return None
+    arr = np.asarray(tensor.data)
+    if arr.size == 0:
+        return []
+    if not np.issubdtype(arr.dtype, np.integer):
+        return None
+    return [int(value) for value in arr.reshape(-1).tolist()]
+
+
 def _extract_statement_assignments(statement: ast.stmt) -> List[str]:
     names: List[str] = []
 

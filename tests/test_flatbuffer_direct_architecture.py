@@ -3365,7 +3365,7 @@ def test_qlinear_pool_builders_stay_in_family_module() -> None:
     assert expected.isdisjoint(legacy_functions)
 
 
-def test_native_pytorch_unary_emitter_has_single_owner() -> None:
+def test_native_pytorch_emitters_have_single_owners() -> None:
     exporter_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
     )
@@ -3381,8 +3381,23 @@ def test_native_pytorch_unary_emitter_has_single_owner() -> None:
     }
 
     assert "_emit_native_unary_op_for_codegen" in emitter_functions
+    assert "_emit_native_shape_transform_misc_op_for_codegen" in emitter_functions
     assert "_DIRECT_CODEGEN_UNARY_EXPRESSIONS:" in emitter_source
     assert "def _emit_native_unary_op_for_codegen(" not in exporter_source
     assert "_emit_native_unary_op_for_codegen," in exporter_source
     assert "_DIRECT_CODEGEN_UNARY_EXPRESSIONS:" not in exporter_source
     assert "_DIRECT_CODEGEN_UNARY_EXPRESSIONS," in exporter_source
+    assert (
+        "def _emit_native_shape_transform_misc_op_for_codegen("
+        not in exporter_source
+    )
+    assert "_emit_native_shape_transform_misc_op_for_codegen," in exporter_source
+    assert "def _constant_int_list(" not in exporter_source
+    codegen_utils_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_codegen_utils.py"
+    ).read_text(encoding="utf-8")
+    assert "def _constant_int_list(" in codegen_utils_source
+    assert "_constant_int_list," in exporter_source

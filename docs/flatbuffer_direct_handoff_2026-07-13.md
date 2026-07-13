@@ -216,6 +216,17 @@ the new module in the TensorFlow-import boundary. Emitter and architecture
 validation passes 61 tests. Syntax, Ruff, and diff checks pass; no model
 conversion, inference, dependency change, or parallel process was involved.
 
+ReverseV2, ExpandDims, Squeeze, Pack, Unpack, and Split code emission has now
+moved to the same Torch-free emitter owner. The function signature and imported
+global name remain unchanged, so the stored native-codegen pipeline requires no
+template rewrite. Constant integer-vector decoding moved from the exporter to
+`pytorch_codegen_utils.py` and remains available to all existing generated-code
+helpers through the exporter's imported alias. Direct tests cover constant
+negative-axis normalization, runtime axes, ordered multi-axis Squeeze, Pack,
+Unpack, and Split output construction. Emitter and architecture validation
+passes 63 tests; syntax, Ruff, and diff checks pass. No model conversion or
+inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

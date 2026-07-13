@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_emitters import (
+    _emit_native_shape_transform_misc_op_for_codegen,
     _emit_native_unary_op_for_codegen,
 )
 
@@ -159,3 +160,134 @@ def test_unary_emitter_rejects_unsupported_op_without_mutation() -> None:
     assert aliases == {"existing": "alias"}
     assert runtime_imports == {"existing_runtime_helper"}
     assert forward_lines == ["existing_line"]
+
+
+def _emit_shape_transform(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    output_vars: list[str],
+    runtime_imports: set[str],
+    forward_lines: list[str],
+) -> bool:
+    return _emit_native_shape_transform_misc_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=str(op.op_type),
+        outputs=[str(name) for name in op.outputs],
+        output_vars=output_vars,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"tensor_{name}",
+        axis_expr_from_input_fn=(
+            lambda name, *, device_expr: f"axis({name}, {device_expr})"
+        ),
+    )
+
+
+def test_shape_transform_emitter_normalizes_constant_reverse_axes() -> None:
+    import numpy as np
+
+    model_ir = ModelIR(name="reverse_emitter")
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1, 2, 3, 4]),
+        "axes": TensorIR(
+            "axes",
+            "INT64",
+            [2],
+            data=np.asarray([-1, 1], dtype=np.int64),
+        ),
+    }
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_shape_transform(
+        model_ir=model_ir,
+        op=OperatorIR("REVERSE_V2", ["x", "axes"], ["y"]),
+        output_vars=["y_var"],
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+    )
+
+    assert emitted is True
+    assert forward_lines == ["y_var = torch.flip(tensor_x, dims=[3, 1])"]
+    assert runtime_imports == set()
+
+
+def test_shape_transform_emitter_preserves_axis_and_output_contracts() -> None:
+    model_ir = ModelIR(name="shape_transform_emitter")
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1, 2, 3]),
+        "axis": TensorIR("axis", "INT32", [1]),
+    }
+    cases = [
+        (
+            OperatorIR("EXPAND_DIMS", ["x", "axis"], ["expanded"]),
+            ["expanded_var"],
+            [
+                "expanded_var = torch.unsqueeze("
+                "tensor_x, dim=axis(axis, tensor_x))"
+            ],
+            set(),
+        ),
+        (
+            OperatorIR(
+                "SQUEEZE",
+                ["x"],
+                ["squeezed"],
+                {"squeezeDims": [0, -1]},
+            ),
+            ["squeezed_var"],
+            [
+                "squeezed_var = tensor_x",
+                "squeezed_var = torch.squeeze(squeezed_var, "
+                "dim=_normalize_dim(0, squeezed_var.ndim))",
+                "squeezed_var = torch.squeeze(squeezed_var, "
+                "dim=_normalize_dim(-1, squeezed_var.ndim))",
+            ],
+            {"_normalize_dim"},
+        ),
+        (
+            OperatorIR("PACK", ["x", "x"], ["packed"], {"axis": 1}),
+            ["packed_var"],
+            ["packed_var = torch.stack([tensor_x, tensor_x], dim=1)"],
+            set(),
+        ),
+        (
+            OperatorIR("UNPACK", ["x"], ["a", "b"], {"axis": -1}),
+            ["a_var", "b_var"],
+            [
+                "a_var, b_var = list(torch.unbind(tensor_x, "
+                "dim=_normalize_dim(-1, tensor_x.ndim)))"
+            ],
+            {"_normalize_dim"},
+        ),
+        (
+            OperatorIR(
+                "SPLIT",
+                ["axis", "x"],
+                ["a", "b"],
+                {"numSplits": 2},
+            ),
+            ["a_var", "b_var"],
+            [
+                "a_var, b_var = list(torch.tensor_split(tensor_x, 2, "
+                "dim=_normalize_dim(axis(axis, tensor_x), tensor_x.ndim)))"
+            ],
+            {"_normalize_dim"},
+        ),
+    ]
+
+    for op, output_vars, expected_lines, expected_imports in cases:
+        runtime_imports: set[str] = set()
+        forward_lines: list[str] = []
+        emitted = _emit_shape_transform(
+            model_ir=model_ir,
+            op=op,
+            output_vars=output_vars,
+            runtime_imports=runtime_imports,
+            forward_lines=forward_lines,
+        )
+        assert emitted is True
+        assert forward_lines == expected_lines
+        assert runtime_imports == expected_imports

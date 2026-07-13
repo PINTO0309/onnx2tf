@@ -14,6 +14,7 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.pytorch_export_errors import (
     ModelIRPyTorchExportError,
 )
+from onnx2tf.tflite_builder.pytorch_codegen_utils import _constant_int_list
 
 
 _DIRECT_CODEGEN_UNARY_EXPRESSIONS: Dict[str, str] = {
@@ -48,6 +49,113 @@ _DIRECT_CODEGEN_UNARY_EXPRESSIONS: Dict[str, str] = {
     "TAN": "torch.tan({x})",
     "TANH": "torch.tanh({x})",
 }
+
+
+def _emit_native_shape_transform_misc_op_for_codegen(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    op_type: str,
+    outputs: Sequence[str],
+    output_vars: Sequence[str],
+    runtime_imports: Set[str],
+    forward_lines: List[str],
+    tensor_expr_fn: Callable[[str], str],
+    axis_expr_from_input_fn: Callable[..., str],
+) -> bool:
+    if op_type == "REVERSE_V2":
+        data_expr = tensor_expr_fn(str(op.inputs[0]))
+        axes_expr = tensor_expr_fn(str(op.inputs[1]))
+        axes_values = _constant_int_list(
+            model_ir.tensors.get(str(op.inputs[1]), None)
+        )
+        data_rank = len(list(model_ir.tensors[str(op.inputs[0])].shape))
+        if axes_values is not None:
+            normalized_dims = [
+                int(axis) if int(axis) >= 0 else int(axis) + int(data_rank)
+                for axis in list(axes_values)
+            ]
+            dims_expr = repr(normalized_dims)
+        else:
+            dims_expr = (
+                f"[int(v) if int(v) >= 0 else int(v) + {data_expr}.ndim "
+                f"for v in {axes_expr}.to(dtype=torch.int64).reshape(-1)]"
+            )
+        forward_lines.append(
+            f"{output_vars[0]} = torch.flip("
+            f"{data_expr}, "
+            f"dims={dims_expr}"
+            f")"
+        )
+        return True
+    if op_type == "EXPAND_DIMS":
+        axis_expr = (
+            axis_expr_from_input_fn(
+                str(op.inputs[1]),
+                device_expr=tensor_expr_fn(str(op.inputs[0])),
+            )
+            if len(op.inputs) >= 2
+            else repr(int(op.options.get("axis", 0)))
+        )
+        forward_lines.append(
+            f"{output_vars[0]} = torch.unsqueeze("
+            f"{tensor_expr_fn(str(op.inputs[0]))}, dim={axis_expr})"
+        )
+        return True
+    if op_type == "SQUEEZE":
+        squeeze_dims = [
+            int(value) for value in list(op.options.get("squeezeDims", []))
+        ]
+        if len(squeeze_dims) == 0:
+            forward_lines.append(
+                f"{output_vars[0]} = torch.squeeze("
+                f"{tensor_expr_fn(str(op.inputs[0]))})"
+            )
+        else:
+            runtime_imports.add("_normalize_dim")
+            forward_lines.append(
+                f"{output_vars[0]} = {tensor_expr_fn(str(op.inputs[0]))}"
+            )
+            for axis in sorted(squeeze_dims, reverse=True):
+                forward_lines.append(
+                    f"{output_vars[0]} = torch.squeeze({output_vars[0]}, "
+                    f"dim=_normalize_dim({int(axis)}, {output_vars[0]}.ndim))"
+                )
+        return True
+    if op_type == "PACK":
+        axis = int(op.options.get("axis", 0))
+        inputs_expr = ", ".join(
+            tensor_expr_fn(str(name)) for name in op.inputs
+        )
+        forward_lines.append(
+            f"{output_vars[0]} = torch.stack([{inputs_expr}], dim={axis})"
+        )
+        return True
+    if op_type == "UNPACK":
+        runtime_imports.add("_normalize_dim")
+        axis = int(op.options.get("axis", 0))
+        input_expr = tensor_expr_fn(str(op.inputs[0]))
+        forward_lines.append(
+            f"{', '.join(output_vars)} = list(torch.unbind({input_expr}, "
+            f"dim=_normalize_dim({axis}, {input_expr}.ndim)))"
+        )
+        return True
+    if op_type == "SPLIT":
+        runtime_imports.add("_normalize_dim")
+        data_expr = tensor_expr_fn(str(op.inputs[-1]))
+        if len(op.inputs) >= 2:
+            axis_expr = axis_expr_from_input_fn(
+                str(op.inputs[0]), device_expr=data_expr
+            )
+        else:
+            axis_expr = repr(int(op.options.get("axis", 0)))
+        sections = int(op.options.get("numSplits", len(outputs)))
+        forward_lines.append(
+            f"{', '.join(output_vars)} = list(torch.tensor_split({data_expr}, "
+            f"{sections}, dim=_normalize_dim({axis_expr}, {data_expr}.ndim)))"
+        )
+        return True
+    return False
 
 
 def _emit_native_unary_op_for_codegen(
