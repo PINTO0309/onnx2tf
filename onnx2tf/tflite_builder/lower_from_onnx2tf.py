@@ -12621,6 +12621,24 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
 
         return [int(v) for v in list(remove_indices)]
 
+    def _is_indexed_direct_slice_plan(plan: Dict[str, Any]) -> bool:
+        source_plan = dict(plan.get("source_plan", {}))
+        source_name = str(source_plan.get("pre_input_name", ""))
+        source_tensor = model_ir.tensors.get(source_name, None)
+        slice_idx = int(plan.get("slice_idx", -1))
+        slice_group_indices = [
+            int(value)
+            for value in list(plan.get("slice_group_indices", []))
+        ]
+        return (
+            str(source_plan.get("kind", "")) == "direct"
+            and bool(source_plan.get("remove_pre", False))
+            and list(plan.get("post_transpose_indices", [])) == []
+            and slice_group_indices == [slice_idx]
+            and source_tensor is not None
+            and len(list(source_tensor.shape)) == 4
+        )
+
     def _try_rewrite_add_input_to_nhwc(
         *,
         input_name: str,
@@ -13829,6 +13847,34 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             )
             if indexed_swish_family:
                 continue
+            slice_actions = [
+                action
+                for action in concat_input_actions
+                if str(action.get("kind", "")) == "slice"
+            ]
+            indexed_slice_family = (
+                post_quantize_idx is None
+                and len(slice_actions) >= 1
+                and all(
+                    str(action.get("kind", "")) in {"direct", "slice"}
+                    for action in concat_input_actions
+                )
+                and len(
+                    {
+                        str(action.get("input_name", ""))
+                        for action in slice_actions
+                    }
+                )
+                == len(slice_actions)
+                and all(
+                    _is_indexed_direct_slice_plan(
+                        dict(action.get("plan", {}))
+                    )
+                    for action in slice_actions
+                )
+            )
+            if indexed_slice_family:
+                continue
             nhwc_inputs_ok = True
             nhwc_ref_shape: Optional[List[int]] = None
             for action in concat_input_actions:
@@ -14091,6 +14137,12 @@ def _optimize_transpose_pre_concat_nhwc_chains(
         + int(
             indexed_stats.get(
                 "optimized_transpose_pre_concat_nhwc_swish_chains",
+                0,
+            )
+        )
+        + int(
+            indexed_stats.get(
+                "optimized_transpose_pre_concat_nhwc_slice_chains",
                 0,
             )
         )

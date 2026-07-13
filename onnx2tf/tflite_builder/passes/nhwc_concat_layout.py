@@ -19,11 +19,13 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _permute_shape,
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
+    _read_const_ints_from_tensor,
     _read_transpose_perm,
     _replace_operator_input_at,
     _replace_tensor_inputs,
     _set_operator_inputs,
     _set_operator_outputs,
+    _write_const_ints_to_tensor,
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import (
@@ -48,6 +50,7 @@ _DEQUANTIZE_STATS_KEY = (
 _PRELU_STATS_KEY = "optimized_transpose_pre_concat_nhwc_prelu_chains"
 _SOFTMAX_STATS_KEY = "optimized_transpose_pre_concat_nhwc_softmax_chains"
 _SWISH_STATS_KEY = "optimized_transpose_pre_concat_nhwc_swish_chains"
+_SLICE_STATS_KEY = "optimized_transpose_pre_concat_nhwc_slice_chains"
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
 
@@ -65,6 +68,7 @@ class _NhwcConcatInputPlan:
     softmax_op: Optional[OperatorIR] = None
     logistic_op: Optional[OperatorIR] = None
     mul_op: Optional[OperatorIR] = None
+    slice_op: Optional[OperatorIR] = None
     pads_tensor_name: Optional[str] = None
     pads_nhwc: Optional[np.ndarray] = None
     clone_pads: bool = False
@@ -76,6 +80,12 @@ class _NhwcConcatInputPlan:
     adapter_output_name: Optional[str] = None
     logistic_output_name: Optional[str] = None
     mul_data_input_index: Optional[int] = None
+    begin_tensor_name: Optional[str] = None
+    size_tensor_name: Optional[str] = None
+    begin_nhwc: Optional[Tuple[int, ...]] = None
+    size_nhwc: Optional[Tuple[int, ...]] = None
+    clone_begin: bool = False
+    clone_size: bool = False
 
 
 @dataclass(frozen=True)
@@ -725,6 +735,120 @@ def _resolve_swish_input_plan(
     )
 
 
+def _resolve_slice_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    input_name: str,
+    concat_index: int,
+    model_outputs: set[str],
+    public_names: set[str],
+) -> Optional[_NhwcConcatInputPlan]:
+    slice_op = graph_index.producer(input_name)
+    slice_index = (
+        None if slice_op is None else graph_index.operator_index(slice_op)
+    )
+    if (
+        slice_op is None
+        or slice_index is None
+        or str(slice_op.op_type) != "SLICE"
+        or len(slice_op.inputs) < 3
+        or len(slice_op.outputs) != 1
+        or str(slice_op.outputs[0]) != input_name
+        or input_name in model_outputs
+        or set(graph_index.consumer_indices(input_name))
+        != {int(concat_index)}
+    ):
+        return None
+
+    adapter_output_name = str(slice_op.inputs[0])
+    adapter_op = graph_index.producer(adapter_output_name)
+    adapter_index = (
+        None if adapter_op is None else graph_index.operator_index(adapter_op)
+    )
+    if (
+        adapter_op is None
+        or adapter_index is None
+        or str(adapter_op.op_type) != "TRANSPOSE"
+        or len(adapter_op.inputs) < 2
+        or len(adapter_op.outputs) != 1
+        or str(adapter_op.outputs[0]) != adapter_output_name
+        or _read_transpose_perm(model_ir, adapter_op)
+        != _PERM_NHWC_TO_NCHW
+        or adapter_output_name in model_outputs
+        or set(graph_index.consumer_indices(adapter_output_name))
+        != {int(slice_index)}
+    ):
+        return None
+
+    begin_tensor_name = str(slice_op.inputs[1])
+    size_tensor_name = str(slice_op.inputs[2])
+    begin_values = _read_const_ints_from_tensor(
+        model_ir.tensors.get(begin_tensor_name)
+    )
+    size_values = _read_const_ints_from_tensor(
+        model_ir.tensors.get(size_tensor_name)
+    )
+    if (
+        begin_values is None
+        or len(begin_values) != 4
+        or size_values is None
+        or len(size_values) != 4
+        or int(size_values[1]) <= 0
+        or int(begin_values[2]) != 0
+        or int(begin_values[3]) != 0
+    ):
+        return None
+
+    source_name = str(adapter_op.inputs[0])
+    source_tensor = model_ir.tensors.get(source_name)
+    adapter_output_tensor = model_ir.tensors.get(adapter_output_name)
+    output_tensor = model_ir.tensors.get(input_name)
+    if (
+        source_tensor is None
+        or len(list(source_tensor.shape)) != 4
+        or adapter_output_tensor is None
+        or len(list(adapter_output_tensor.shape)) != 4
+        or output_tensor is None
+        or len(list(output_tensor.shape)) != 4
+    ):
+        return None
+
+    return _NhwcConcatInputPlan(
+        kind="slice",
+        adapter_op=adapter_op,
+        slice_op=slice_op,
+        source_name=source_name,
+        output_name=input_name,
+        remove_adapter=True,
+        adapter_output_name=adapter_output_name,
+        begin_tensor_name=begin_tensor_name,
+        size_tensor_name=size_tensor_name,
+        begin_nhwc=(
+            int(begin_values[0]),
+            int(begin_values[2]),
+            int(begin_values[3]),
+            int(begin_values[1]),
+        ),
+        size_nhwc=(
+            int(size_values[0]),
+            int(size_values[2]),
+            int(size_values[3]),
+            int(size_values[1]),
+        ),
+        clone_begin=(
+            begin_tensor_name in public_names
+            or set(graph_index.consumer_indices(begin_tensor_name))
+            != {int(slice_index)}
+        ),
+        clone_size=(
+            size_tensor_name in public_names
+            or set(graph_index.consumer_indices(size_tensor_name))
+            != {int(slice_index)}
+        ),
+    )
+
+
 def _resolve_family_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -802,6 +926,15 @@ def _resolve_family_input_plan(
             input_name=input_name,
             concat_index=concat_index,
             model_outputs=model_outputs,
+        )
+    if family == "slice":
+        return _resolve_slice_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+            public_names=public_names,
         )
     return None
 
@@ -887,6 +1020,21 @@ def _resolve_nhwc_concat_candidate(
         swish_count = sum(plan.kind == "swish" for plan in input_plans)
         if family == "swish" and swish_count < 1:
             continue
+        slice_plans = [
+            plan for plan in input_plans if plan.kind == "slice"
+        ]
+        if family == "slice" and (
+            len(slice_plans) < 1
+            or len(
+                {
+                    id(plan.slice_op)
+                    for plan in slice_plans
+                    if plan.slice_op is not None
+                }
+            )
+            != len(slice_plans)
+        ):
+            continue
 
         if family in {
             "unary",
@@ -895,6 +1043,7 @@ def _resolve_nhwc_concat_candidate(
             "prelu",
             "softmax",
             "swish",
+            "slice",
         }:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
@@ -915,6 +1064,7 @@ def _resolve_nhwc_concat_candidate(
                     "prelu",
                     "softmax",
                     "swish",
+                    "slice",
                 }:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
@@ -1041,6 +1191,17 @@ def _has_nhwc_swish_concat_candidate(pass_state: ModelIRPassState) -> bool:
     )
 
 
+def _has_nhwc_slice_concat_candidate(pass_state: ModelIRPassState) -> bool:
+    return (
+        _resolve_nhwc_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="slice",
+        )
+        is not None
+    )
+
+
 def _optimize_transpose_pre_concat_nhwc_direct_chains(
     model_ir: ModelIR,
     *,
@@ -1141,6 +1302,21 @@ def _optimize_transpose_pre_concat_nhwc_swish_chains(
         model_ir,
         family="swish",
         stats_key=_SWISH_STATS_KEY,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+
+def _optimize_transpose_pre_concat_nhwc_slice_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
+    return _optimize_transpose_pre_concat_nhwc_family(
+        model_ir,
+        family="slice",
+        stats_key=_SLICE_STATS_KEY,
         graph_index=graph_index,
         layout_state=layout_state,
     )
@@ -1360,6 +1536,100 @@ def _apply_swish_input_plan(
             )
 
 
+def _materialize_slice_parameter(
+    model_ir: ModelIR,
+    *,
+    tensor_name: str,
+    values: Tuple[int, ...],
+    clone: bool,
+    materialized: Dict[Tuple[str, Tuple[int, ...]], str],
+) -> str:
+    key = (str(tensor_name), tuple(int(value) for value in values))
+    existing_name = materialized.get(key)
+    if existing_name is not None:
+        return existing_name
+
+    tensor = model_ir.tensors[str(tensor_name)]
+    rewritten_name = str(tensor_name)
+    if clone:
+        rewritten_name = _unique_tensor_name(
+            model_ir,
+            f"{tensor_name}_nhwc",
+        )
+        np_dtype = np.int32
+        if tensor.data is not None:
+            try:
+                np_dtype = np.asarray(tensor.data).dtype
+            except Exception:
+                np_dtype = np.int32
+        model_ir.tensors[rewritten_name] = TensorIR(
+            name=rewritten_name,
+            dtype=str(tensor.dtype),
+            shape=[len(values)],
+            shape_signature=[len(values)],
+            data=np.asarray(values, dtype=np_dtype),
+            is_variable=bool(tensor.is_variable),
+            quantization=_clone_quantization(tensor.quantization),
+            logical_layout=str(tensor.logical_layout),
+            physical_layout=str(tensor.physical_layout),
+            onnx_tensor_name=tensor.onnx_tensor_name,
+        )
+    else:
+        _write_const_ints_to_tensor(
+            tensor,
+            [int(value) for value in values],
+        )
+    materialized[key] = rewritten_name
+    return rewritten_name
+
+
+def _apply_slice_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    input_plan: _NhwcConcatInputPlan,
+    *,
+    materialized: Dict[Tuple[str, Tuple[int, ...]], str],
+) -> None:
+    assert input_plan.slice_op is not None
+    assert input_plan.begin_tensor_name is not None
+    assert input_plan.size_tensor_name is not None
+    assert input_plan.begin_nhwc is not None
+    assert input_plan.size_nhwc is not None
+    begin_name = _materialize_slice_parameter(
+        model_ir,
+        tensor_name=input_plan.begin_tensor_name,
+        values=input_plan.begin_nhwc,
+        clone=input_plan.clone_begin,
+        materialized=materialized,
+    )
+    size_name = _materialize_slice_parameter(
+        model_ir,
+        tensor_name=input_plan.size_tensor_name,
+        values=input_plan.size_nhwc,
+        clone=input_plan.clone_size,
+        materialized=materialized,
+    )
+    new_inputs = [str(name) for name in input_plan.slice_op.inputs]
+    new_inputs[0] = input_plan.source_name
+    new_inputs[1] = begin_name
+    new_inputs[2] = size_name
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=input_plan.slice_op,
+        new_inputs=new_inputs,
+        graph_index=graph_index,
+    )
+    output_tensor = model_ir.tensors.get(input_plan.output_name)
+    _permute_tensor_metadata_if_rank_matches(
+        output_tensor,
+        _PERM_NCHW_TO_NHWC,
+    )
+    if output_tensor is not None:
+        output_tensor.quantization = _clone_nhwc_quantization(
+            output_tensor.quantization
+        )
+
+
 def _optimize_transpose_pre_concat_nhwc_family(
     model_ir: ModelIR,
     *,
@@ -1383,6 +1653,10 @@ def _optimize_transpose_pre_concat_nhwc_family(
 
         new_concat_inputs: List[str] = []
         materialized_pads: Dict[str, str] = {}
+        materialized_slice_parameters: Dict[
+            Tuple[str, Tuple[int, ...]],
+            str,
+        ] = {}
         for input_plan in candidate.input_plans:
             if input_plan.unary_op is not None:
                 _set_operator_inputs(
@@ -1406,6 +1680,14 @@ def _optimize_transpose_pre_concat_nhwc_family(
                     model_ir,
                     graph_index,
                     input_plan,
+                )
+                new_concat_inputs.append(input_plan.output_name)
+            elif input_plan.slice_op is not None:
+                _apply_slice_input_plan(
+                    model_ir,
+                    graph_index,
+                    input_plan,
+                    materialized=materialized_slice_parameters,
                 )
                 new_concat_inputs.append(input_plan.output_name)
             elif input_plan.softmax_op is not None:
@@ -1642,6 +1924,14 @@ def run_nhwc_concat_layout_cleanup(
         )
         return {**stats, "changed": bool(stats.get(_SWISH_STATS_KEY, 0))}
 
+    def _run_slice(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_pre_concat_nhwc_slice_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {**stats, "changed": bool(stats.get(_SLICE_STATS_KEY, 0))}
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -1701,6 +1991,14 @@ def run_nhwc_concat_layout_cleanup(
                 priority=70,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_slice",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_slice,
+                precondition=_has_nhwc_slice_concat_candidate,
+                priority=80,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -1711,6 +2009,7 @@ def run_nhwc_concat_layout_cleanup(
             _PRELU_STATS_KEY: 0,
             _SOFTMAX_STATS_KEY: 0,
             _SWISH_STATS_KEY: 0,
+            _SLICE_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(

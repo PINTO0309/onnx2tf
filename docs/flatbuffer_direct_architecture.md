@@ -295,7 +295,8 @@ quantization dimensions move from NCDHW dimension 1 to NDHWC dimension 4.
 The much larger rank-four generic NHWC pre-Concat matcher is being migrated by
 semantic family rather than as one monolithic rule. Its strict float-path
 direct-adapter, unary, Pad-plus-direct, Dequantize, PReLU, Softmax, and
-expanded-Swish families are owned by
+expanded-Swish families, plus the bounded exclusive direct-source Slice
+family, are owned by
 `passes/nhwc_concat_layout.py`. Every Concat consumer must be an inverse
 NCHW→NHWC Transpose. Direct inputs come from NHWC→NCHW Transpose; the unary
 family permits one or more RELU, RELU6, LOGISTIC, TANH, or GELU operations
@@ -308,7 +309,7 @@ stable IDs `layout.nhwc_pre_concat_direct`,
 `layout.nhwc_pre_concat_unary`, `layout.nhwc_pre_concat_pad`, and
 `layout.nhwc_pre_concat_dequantize`, plus
 `layout.nhwc_pre_concat_prelu`, `layout.nhwc_pre_concat_softmax`, and
-`layout.nhwc_pre_concat_swish`.
+`layout.nhwc_pre_concat_swish`, and `layout.nhwc_pre_concat_slice`.
 Exclusive pads constants are remapped in place; shared or public pads
 constants use copy-on-write so unrelated Pad consumers preserve NCHW
 semantics. Dequantize inputs retain source scale and zero-point provenance
@@ -325,8 +326,14 @@ only direct or supported unary companion inputs. It rewires both diamond edges
 to the NHWC source and remaps Logistic and Mul output metadata. Adapter,
 Logistic, or Mul fan-out and public boundaries are rejected before mutation;
 public Logistic output rejection deliberately closes an unsafe legacy case.
-Split, slice, Add, and quantized-post families remain in the legacy matcher
-until each receives bounded characterization.
+The bounded Slice family accepts one or more rank-four Slice inputs whose
+NHWC→NCHW adapter and Slice output are exclusive, optionally together with
+direct inputs. Begin and size vectors are remapped from NCHW to NHWC;
+shared/public parameter tensors use copy-on-write with tensor provenance
+retained, and Slice-output per-axis quantization follows the layout change.
+Shared adapters, Slice-output post adapters, Swish-source Slice, Split, Add,
+and quantized-post families remain in the legacy matcher until their own
+bounded ownership is characterized.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

@@ -2,21 +2,22 @@
 
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
-The first seven bounded families of the 2,117-line rank-four generic NHWC
+The first eight bounded families of the rank-four generic NHWC
 pre-Concat matcher are now separated. `passes/nhwc_concat_layout.py` owns the
 strict all-direct float path and the one-or-more-unary float path, with or
 without direct inputs. The unary allowlist is RELU, RELU6, LOGISTIC, TANH, and
 GELU. It also owns the one-or-more-Pad-plus-direct path and the one-or-more
 Dequantize path and the one-or-more PReLU path, each with or without direct
 inputs. It also owns exactly one Softmax plus at least one direct input, and
-one or more expanded-Swish diamonds with direct or unary companion inputs. All
-seven share one
+one or more expanded-Swish diamonds with direct or unary companion inputs.
+The bounded Slice family additionally owns one or more exclusive direct-source
+Slice inputs, optionally with direct inputs. All eight share one
 `ModelIRGraphIndex`/`LayoutState` pass group and run transactionally under
 stable IDs `layout.nhwc_pre_concat_direct` and
 `layout.nhwc_pre_concat_unary`, `layout.nhwc_pre_concat_pad`, and
 `layout.nhwc_pre_concat_dequantize`, `layout.nhwc_pre_concat_prelu`, and
-`layout.nhwc_pre_concat_softmax` and `layout.nhwc_pre_concat_swish` at all
-seven production positions.
+`layout.nhwc_pre_concat_softmax`, `layout.nhwc_pre_concat_swish`, and
+`layout.nhwc_pre_concat_slice` at all seven production positions.
 
 The direct pass removes only exclusive, non-public leading adapters. Shared or
 public direct adapters remain for their other consumers while the Concat is
@@ -55,11 +56,21 @@ residual inputs, public adapter/Logistic/Mul outputs, and fan-out from any
 internal edge before mutation. Rejecting a public Logistic output is an
 intentional correctness improvement over the legacy matcher because rewriting
 that public tensor would otherwise silently change its layout contract.
+The bounded Slice family requires an exclusive rank-four NHWC→NCHW source
+adapter and an exclusive rank-four Slice output. It remaps begin/size vectors,
+Slice output shape, and per-axis quantization into NHWC. Exclusive parameter
+tensors are updated once in place; shared or public parameters are cloned with
+dtype, variable state, quantization, layout, and ONNX provenance preserved.
+This closes two legacy correctness gaps: shared/public Slice parameters are no
+longer silently mutated, and Slice-output quantization dimension 1 is remapped
+to dimension 3. Shared source adapters and Slice outputs with valid inverse
+post adapters deliberately remain in the legacy matcher so this bounded
+ownership transfer cannot remove existing behavior.
 
 The lowerer compatibility helper still returns the original aggregate statistic
 and runs the legacy matcher after the direct pass. The legacy matcher now
-skips the seven indexed families, but continues to own split, slice, and Add
-inputs plus the separate
+skips the eight indexed families, but continues to own Split, broader Slice,
+and Add inputs plus the separate
 quantized-post path.
 
 Changed files for this checkpoint:
@@ -68,16 +79,21 @@ Changed files for this checkpoint:
 - `onnx2tf/tflite_builder/passes/nhwc_concat_layout.py`
 - `tests/test_flatbuffer_direct_nhwc_concat_layout.py`
 - `tests/test_flatbuffer_direct_nhwc_concat_swish_layout.py`
+- `tests/test_flatbuffer_direct_nhwc_concat_slice_layout.py`
 - `docs/flatbuffer_direct_architecture.md`
 - `docs/flatbuffer_direct_handoff_2026-07-13.md`
 
 Focused verification, all in the existing `uv` environment:
 
-- Direct, unary, Pad, Dequantize, PReLU, Softmax, and expanded-Swish ModelIR
-  characterization: `88 passed` across four compact modules. The Softmax suite
-  includes an exact NumPy equivalence check for the original and rewritten
-  layouts. The Swish suite covers both Mul operand orders, all-Swish inputs,
-  and fourteen whole-ModelIR unsafe/partial-match no-op boundaries.
+- Direct, unary, Pad, Dequantize, PReLU, Softmax, expanded-Swish, and bounded
+  Slice ModelIR characterization: `109 passed` across five compact modules.
+  The Softmax suite includes an exact NumPy equivalence check for the original
+  and rewritten layouts. The Swish suite covers both Mul operand orders,
+  all-Swish inputs,
+  and fourteen whole-ModelIR unsafe/partial-match no-op boundaries. The Slice
+  suite covers mixed and all-Slice success, shared/public parameter
+  copy-on-write, fifteen complete no-op boundaries, and two broader cases that
+  must continue through the legacy fallback.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.
@@ -87,9 +103,10 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should audit one bounded split or slice input family and reuse the
-existing partial-match no-mutation characterization. Do not begin with a Tier
-0–4 corpus run, and do not create a pull request.
+Next work should audit a bounded direct-source Split input family, leaving its
+Swish/Add and multi-consumer interactions in legacy until separately
+characterized. Do not begin with a Tier 0–4 corpus run, and do not create a
+pull request.
 
 The section below records the preceding rank-five checkpoint and remains as
 historical context.
