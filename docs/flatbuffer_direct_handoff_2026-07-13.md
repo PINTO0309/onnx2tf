@@ -139,6 +139,13 @@ Torch-dependent exporter test remains uncollectable in this environment
 because Python 3.12 resolves the incompatible Python 3.10 libtorch; no model
 conversion or inference was run.
 
+Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
+in the Torch-free layout owner and enumerates only those op families through
+the normalizer's shared graph index. Shared weight buffers retain the one-
+rewrite contract, and shape/signature updates remain unchanged. A focused
+shared-filter fixture brings the Torch-free suite to 90 tests; no model
+conversion or inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

@@ -293,6 +293,69 @@ def _propagate_pytorch_friendly_layouts(
             _enqueue_adjacent_ops(changed_tensor_names)
 
 
+def _rewrite_filter_tensors_for_pytorch(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
+    rewritten_weights: Set[str] = set()
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    candidate_ops = [
+        model_ir.operators[int(index)]
+        for index in graph_index.operator_indices_for_types(
+            {
+                "CONV_2D",
+                "CONV_3D",
+                "CONV_3D_TRANSPOSE",
+                "DEPTHWISE_CONV_2D",
+                "TRANSPOSE_CONV",
+            }
+        )
+    ]
+    for op in candidate_ops:
+        op_type = str(op.op_type)
+        if len(op.inputs) < 2:
+            continue
+        weight_name = str(op.inputs[1])
+        if weight_name in rewritten_weights:
+            continue
+        tensor = model_ir.tensors.get(weight_name, None)
+        if tensor is None or not isinstance(tensor.data, np.ndarray):
+            continue
+        arr = np.asarray(tensor.data)
+        if op_type == "CONV_2D" and arr.ndim == 4:
+            tensor.data = np.transpose(arr, (0, 3, 1, 2)).copy()
+        elif op_type == "DEPTHWISE_CONV_2D" and arr.ndim == 4:
+            permuted = np.transpose(arr, (3, 0, 1, 2)).copy()
+            tensor.data = permuted.reshape(
+                int(permuted.shape[0] * permuted.shape[1]),
+                1,
+                int(permuted.shape[2]),
+                int(permuted.shape[3]),
+            )
+        elif op_type == "TRANSPOSE_CONV" and arr.ndim == 4:
+            tensor.data = np.transpose(arr, (3, 0, 1, 2)).copy()
+        elif (
+            op_type in {"CONV_3D", "CONV_3D_TRANSPOSE"}
+            and arr.ndim == 5
+        ):
+            if is_channel_last_logical_layout(
+                normalize_logical_layout(tensor.logical_layout)
+            ):
+                tensor.data = np.transpose(arr, (4, 3, 0, 1, 2)).copy()
+            else:
+                continue
+        else:
+            continue
+        tensor.shape = [int(value) for value in list(tensor.data.shape)]
+        if (
+            tensor.shape_signature is not None
+            and len(list(tensor.shape_signature)) == int(arr.ndim)
+        ):
+            tensor.shape_signature = [int(value) for value in list(tensor.shape)]
+        rewritten_weights.add(weight_name)
+
+
 def _propagate_channel_last_layouts(
     model_ir: ModelIR,
     *,

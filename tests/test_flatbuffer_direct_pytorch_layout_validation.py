@@ -15,6 +15,7 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _propagate_feature_last_tensor_names,
     _propagate_pytorch_friendly_layouts,
     _restore_non_preserved_channel_first_layouts,
+    _rewrite_filter_tensors_for_pytorch,
     _shrink_preserved_channel_last_regions_for_pytorch,
 )
 
@@ -499,3 +500,50 @@ def test_pytorch_friendly_layout_worklist_infers_concat_peer() -> None:
 
     assert model_ir.tensors["unknown"].logical_layout == "NCHW"
     assert model_ir.tensors["y"].logical_layout == "NCHW"
+
+
+def test_pytorch_filter_rewrite_indexes_op_family_and_rewrites_shared_weight_once(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(name="shared_conv_filter")
+    weight_values = np.arange(2 * 3 * 4 * 5, dtype=np.float32).reshape(
+        2,
+        3,
+        4,
+        5,
+    )
+    model_ir.tensors["weight"] = TensorIR(
+        name="weight",
+        dtype="FLOAT32",
+        shape=[2, 3, 4, 5],
+        shape_signature=[2, 3, 4, 5],
+        data=weight_values.copy(),
+    )
+    model_ir.operators = [
+        OperatorIR("CONV_2D", ["x0", "weight"], ["y0"]),
+        OperatorIR("CONV_2D", ["x1", "weight"], ["y1"]),
+        OperatorIR("RELU", ["y1"], ["z"]),
+    ]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    _rewrite_filter_tensors_for_pytorch(
+        model_ir,
+        graph_index=graph_index,
+    )
+
+    assert refresh_count == 1
+    np.testing.assert_array_equal(
+        model_ir.tensors["weight"].data,
+        np.transpose(weight_values, (0, 3, 1, 2)),
+    )
+    assert model_ir.tensors["weight"].shape == [2, 5, 3, 4]
+    assert model_ir.tensors["weight"].shape_signature == [2, 5, 3, 4]

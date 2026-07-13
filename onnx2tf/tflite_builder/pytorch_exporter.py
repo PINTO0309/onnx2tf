@@ -162,6 +162,7 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _is_transpose_sandwiched_last_axis_softmax_op,
     _propagate_pytorch_friendly_layouts,
     _restore_non_preserved_channel_first_layouts,
+    _rewrite_filter_tensors_for_pytorch,
     _shrink_preserved_channel_last_regions_for_pytorch,
 )
 from onnx2tf.tflite_builder.passes.pytorch_recurrent import (
@@ -10298,41 +10299,6 @@ def _rewrite_layout_sensitive_ops(
                 op.options["newShape"] = list(resolved_preferred_shape)
 
 
-def _rewrite_filter_tensors_for_pytorch(model_ir: ModelIR) -> None:
-    rewritten_weights: Set[str] = set()
-    for op in model_ir.operators:
-        op_type = str(op.op_type)
-        if op_type not in {"CONV_2D", "DEPTHWISE_CONV_2D", "TRANSPOSE_CONV", "CONV_3D", "CONV_3D_TRANSPOSE"}:
-            continue
-        if len(op.inputs) < 2:
-            continue
-        weight_name = str(op.inputs[1])
-        if weight_name in rewritten_weights:
-            continue
-        tensor = model_ir.tensors.get(weight_name, None)
-        if tensor is None or not isinstance(tensor.data, np.ndarray):
-            continue
-        arr = np.asarray(tensor.data)
-        if op_type == "CONV_2D" and arr.ndim == 4:
-            tensor.data = np.transpose(arr, (0, 3, 1, 2)).copy()
-        elif op_type == "DEPTHWISE_CONV_2D" and arr.ndim == 4:
-            permuted = np.transpose(arr, (3, 0, 1, 2)).copy()
-            tensor.data = permuted.reshape(int(permuted.shape[0] * permuted.shape[1]), 1, int(permuted.shape[2]), int(permuted.shape[3]))
-        elif op_type == "TRANSPOSE_CONV" and arr.ndim == 4:
-            tensor.data = np.transpose(arr, (3, 0, 1, 2)).copy()
-        elif op_type in {"CONV_3D", "CONV_3D_TRANSPOSE"} and arr.ndim == 5:
-            if is_channel_last_logical_layout(normalize_logical_layout(tensor.logical_layout)):
-                tensor.data = np.transpose(arr, (4, 3, 0, 1, 2)).copy()
-            else:
-                continue
-        else:
-            continue
-        tensor.shape = [int(v) for v in list(tensor.data.shape)]
-        if tensor.shape_signature is not None and len(list(tensor.shape_signature)) == int(arr.ndim):
-            tensor.shape_signature = [int(v) for v in list(tensor.shape)]
-        rewritten_weights.add(weight_name)
-
-
 def _synchronize_reshape_targets_with_output_tensors(
     model_ir: ModelIR,
     preserve_channel_last_tensor_names: Set[str],
@@ -10734,7 +10700,10 @@ def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
             continue
         _permute_tensor_to_channel_first_inplace(tensor)
     _synchronize_reshape_targets_with_output_tensors(normalized, preserve_channel_last_tensor_names)
-    _rewrite_filter_tensors_for_pytorch(normalized)
+    _rewrite_filter_tensors_for_pytorch(
+        normalized,
+        graph_index=layout_graph_index,
+    )
     _remove_redundant_layout_transposes(
         normalized,
         original_layouts,

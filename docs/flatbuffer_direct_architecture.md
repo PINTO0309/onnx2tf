@@ -1743,6 +1743,13 @@ still-current consumer table instead of rebuilding an ad hoc map. The ATAN2
 ones-like rewrite is owned by `passes/pytorch_compat.py`; irrelevant graphs
 return before index construction when it is called independently.
 
+PyTorch convolution-filter physicalization is also owned by the Torch-free
+layout module. It queries only Conv2D, depthwise Conv2D, transpose-Conv2D,
+Conv3D, and transpose-Conv3D indices from the shared graph index, preserves
+graph order, and tracks shared weight names so each buffer is permuted exactly
+once. The normalizer supplies its existing index; no extra operator scan or
+index build is required.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
