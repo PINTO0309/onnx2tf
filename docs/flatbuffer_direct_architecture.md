@@ -274,9 +274,12 @@ channel Concat/Mul and NHWC affine/Conv island, the base/Conv second Concat/Mul,
 and the final affine/Conv island. Whole-ModelIR no-op cases cover fan-out at
 both branch and island boundaries, public base/first-Concat tensors, invalid
 leading permutation or either Concat axis, a non-Resize branch producer, and
-missing Mul constants. The 371-line production matcher and all seven raw calls
-remain central and unchanged at this checkpoint; mechanical extraction is
-next.
+missing Mul constants. The complete matcher is mechanically owned by
+`passes/spp_layout.py`, with an exact AST match to characterization checkpoint
+`0804e37`; the lowerer keeps a compatibility wrapper and all seven raw calls.
+The next checkpoint is pure indexed planning, differential graph/layout
+mutation, shared-constant protection, and one stable ordered runner at those
+seven production positions.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

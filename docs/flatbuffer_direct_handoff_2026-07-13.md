@@ -3,8 +3,8 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `0804e37`
-  (`characterize generic spp layout`)
+- Latest implementation checkpoint: `c531b54`
+  (`extract generic spp layout pass`)
 - Previous pause checkpoint: `3df2903`
   (`document flatbuffer direct pause checkpoint`)
 - Remote: after this resumed documentation checkpoint is pushed, local and
@@ -19,14 +19,16 @@
 - The Concat/optional-unary/post-adapter/Conv matcher uses pure indexed
   planning, differential graph/layout mutation, and one transactional runner
   at both production positions.
-- The seven-call SPP family has a generic 17-case characterization corpus;
-  production remains unchanged.
+- The seven-call SPP family has a generic 17-case characterization corpus and
+  its complete legacy matcher is mechanically owned by
+  `passes/spp_layout.py`; the seven raw production calls remain unchanged.
 
 ## Completed work
 
 This resumed interval completed sixteen adjacent semantic layout families
 using the staged characterization → mechanical extraction → indexed runner
-process and established characterization for the seventeenth family.
+process and established characterization plus mechanical extraction for the
+seventeenth family.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -204,8 +206,12 @@ process and established characterization for the seventeenth family.
       two-Concat, two-affine, two-Conv semantic graph.
     - Added sixteen complete no-op boundaries for fan-out, public tensors,
       permutation/axis, Resize producer, and missing Mul constants.
-    - Preserved production code and all seven raw calls exactly; extraction is
-      the next checkpoint.
+    - Preserved production code and all seven raw calls exactly at the
+      characterization checkpoint.
+    - Moved the complete matcher mechanically to `passes/spp_layout.py` in
+      `c531b54`. Its function AST exactly matches characterization checkpoint
+      `0804e37`; the lowerer retains a compatibility wrapper and all seven raw
+      production calls.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -221,9 +227,11 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is mechanical extraction of
-  `_optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains` with
-  exact AST equivalence and a single-owner architecture gate.
+  The immediate next unit is indexed candidate planning for
+  `_optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains`, with
+  both SPP islands fully validated before mutation, shared-constant
+  copy-on-write, differential graph/layout updates, and replacement of all
+  seven raw calls by one stable ordered runner.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -245,9 +253,9 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this resumed documentation update, the
-working tree is clean at characterization checkpoint `0804e37`. The generic
-SPP corpus is committed; production remains unchanged and extraction has not
-begun.
+working tree is clean at mechanical-extraction checkpoint `c531b54`. The
+generic SPP corpus and focused pass ownership are committed; indexed migration
+has not begun.
 After the documentation commit is pushed, local/remote divergence must be
 `0 0`. The implementation checkpoints since the previous pause changed:
 
@@ -260,6 +268,7 @@ After the documentation commit is pushed, local/remote divergence must be
 - `onnx2tf/tflite_builder/passes/axis3_const_concat_layout.py`
 - `onnx2tf/tflite_builder/passes/dequant_concat_quantize_layout.py`
 - `onnx2tf/tflite_builder/passes/concat_unary_conv_layout.py`
+- `onnx2tf/tflite_builder/passes/spp_layout.py`
 - `onnx2tf/tflite_builder/passes/dual_postconv_gate_layout.py`
 - `onnx2tf/tflite_builder/passes/multi_branch_gate_layout.py`
 - `onnx2tf/tflite_builder/passes/ndhwc_gate_layout.py`
@@ -472,6 +481,11 @@ sequential with only one model/process active at a time.
 - Dedicated generic SPP characterization: `17 passed in 0.33s`.
 - Full direct selection after characterization:
   `1407 passed, 5 deselected, 2 warnings in 176.30s`.
+- SPP characterization plus architecture ownership after mechanical
+  extraction: `59 passed in 24.76s`; the extracted function AST exactly
+  matched `0804e37`.
+- Full direct selection after SPP mechanical extraction:
+  `1408 passed, 5 deselected, 2 warnings in 174.80s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -503,14 +517,15 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Move the complete 371-line
-   `_optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains` source
-   mechanically to a focused pass module while retaining the wrapper and all
-   seven raw calls.
-3. Confirm exact AST equivalence against `0804e37` and add a single-owner
-   architecture gate.
-4. Run focused and full direct gates, then commit and push extraction before
-   indexed candidate planning.
+2. Design a pure indexed SPP candidate that validates both Concat/affine/Conv
+   islands and all constants before any mutation; add shared-constant
+   copy-on-write characterization before changing production behavior.
+3. Apply graph and layout changes through shared `ModelIRGraphIndex` and
+   `LayoutState`, register one stable ordered runner, and replace all seven raw
+   production calls while retaining the compatibility wrapper.
+4. Run focused architecture/efficiency gates, sequential Tier 1
+   `superpoint.onnx -tb flatbuffer_direct -cotof`, and the full direct gate;
+   then commit and push the indexed checkpoint.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1361,10 +1376,16 @@ selection passed:
 1407 passed, 5 deselected, 2 warnings in 176.30s
 ```
 
-Production code and all seven raw calls remain unchanged. No dependency or
-TensorFlow path was added, and no inference process was run concurrently.
-Mechanical extraction with exact AST-equivalence and single-owner gates is the
-next separate checkpoint.
+Checkpoint `c531b54` then moved the complete matcher mechanically to
+`passes/spp_layout.py`. The function AST, including its docstring and legacy
+selection/mutation order, exactly matches `0804e37`. The lowerer retains a
+signature-compatible wrapper and all seven raw production calls. The
+single-owner architecture gate fixes this boundary; focused SPP and
+architecture validation passed 59 tests, and the complete sequential direct
+selection passed 1,408 tests with the same five deselections and two known
+warnings. No dependency or TensorFlow path was added, and no inference process
+was run concurrently. Indexed planning and runner integration are the next
+separate checkpoint.
 
 ### Dequantize/Concat/Quantize mechanical extraction checkpoint
 
