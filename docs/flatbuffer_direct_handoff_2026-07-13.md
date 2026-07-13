@@ -260,6 +260,11 @@ simple quantized family contracts declare only allowed and required kinds;
 all-Pad keeps its minimum-arity guard, and Slice/Split/Add keep their
 plan-aware predicates. This removed a further net 79 lines from the central
 lowerer without broadening which unsafe candidates bypass legacy fallback.
+Seven simple float families now use a parallel allowed/required-kind contract
+over the same action multiset, removing another net 74 lowerer lines. Their
+compact regression exposed one stale Softmax expectation from before the
+quantized-post Softmax pass existed; `quantized_post` is now characterized as
+success under `layout.nhwc_pre_concat_quantized_softmax` instead of a no-op.
 
 Changed files for this checkpoint:
 

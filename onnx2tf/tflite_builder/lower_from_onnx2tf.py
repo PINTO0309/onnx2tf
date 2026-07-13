@@ -13541,6 +13541,27 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             frozenset({"leaky"}),
         ),
     )
+    indexed_float_simple_family_contracts = (
+        (frozenset({"direct", "unary"}), frozenset({"unary"})),
+        (frozenset({"direct", "pad"}), frozenset({"direct", "pad"})),
+        (
+            frozenset({"direct", "dequantize"}),
+            frozenset({"dequantize"}),
+        ),
+        (frozenset({"direct", "prelu"}), frozenset({"prelu"})),
+        (
+            frozenset({"direct", "softmax"}),
+            frozenset({"direct", "softmax"}),
+        ),
+        (
+            frozenset({"direct", "unary", "swish"}),
+            frozenset({"swish"}),
+        ),
+        (
+            frozenset({"direct", "unary", "leaky"}),
+            frozenset({"leaky"}),
+        ),
+    )
 
     while True:
         changed = False
@@ -13962,96 +13983,16 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             )
             if indexed_quantized_add_family:
                 continue
-            indexed_unary_family = (
+            indexed_float_simple_family = (
                 post_quantize_idx is None
-                and sum(
-                    str(action.get("kind", "")) == "unary"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", "")) in {"direct", "unary"}
-                    for action in concat_input_actions
+                and any(
+                    required_kinds.issubset(action_kinds)
+                    and action_kinds.issubset(allowed_kinds)
+                    for allowed_kinds, required_kinds
+                    in indexed_float_simple_family_contracts
                 )
             )
-            if indexed_unary_family:
-                continue
-            indexed_pad_family = (
-                post_quantize_idx is None
-                and sum(
-                    str(action.get("kind", "")) == "pad"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and sum(
-                    str(action.get("kind", "")) == "direct"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", "")) in {"direct", "pad"}
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_pad_family:
-                continue
-            indexed_dequantize_family = (
-                post_quantize_idx is None
-                and sum(
-                    str(action.get("kind", "")) == "dequantize"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", ""))
-                    in {"direct", "dequantize"}
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_dequantize_family:
-                continue
-            indexed_prelu_family = (
-                post_quantize_idx is None
-                and sum(
-                    str(action.get("kind", "")) == "prelu"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", "")) in {"direct", "prelu"}
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_prelu_family:
-                continue
-            indexed_softmax_family = (
-                softmax_action_count == 1
-                and sum(
-                    str(action.get("kind", "")) == "direct"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", "")) in {"direct", "softmax"}
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_softmax_family:
-                continue
-            indexed_swish_family = (
-                post_quantize_idx is None
-                and sum(
-                    str(action.get("kind", "")) == "swish"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", ""))
-                    in {"direct", "unary", "swish"}
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_swish_family:
+            if indexed_float_simple_family:
                 continue
             slice_actions = [
                 action
@@ -14127,21 +14068,6 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
                 )
             )
             if indexed_add_family:
-                continue
-            indexed_leaky_family = (
-                post_quantize_idx is None
-                and sum(
-                    str(action.get("kind", "")) == "leaky"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", ""))
-                    in {"direct", "unary", "leaky"}
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_leaky_family:
                 continue
             nhwc_inputs_ok = True
             nhwc_ref_shape: Optional[List[int]] = None

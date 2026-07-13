@@ -474,6 +474,11 @@ families are described by allowed and required action-kind sets after one
 action multiset is built. Only Slice, Split, and Add retain plan-aware
 predicates. This replaces the repeated per-family count/subset blocks while
 preserving the exact fallback boundary for broader legacy combinations.
+The seven analogous float families now use a second allowed/required-kind
+contract table over the same action multiset. Softmax's single-branch benefit
+gate and Pad's required direct companion remain explicit invariants;
+Slice/Split/Add remain plan-aware. This removes another net 74 lines from the
+central lowerer.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

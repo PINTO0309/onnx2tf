@@ -301,7 +301,6 @@ def test_nhwc_softmax_plus_direct_inserts_indexed_local_adapters() -> None:
         "invalid_source_rank",
         "invalid_softmax_output_rank",
         "spatial_shape_mismatch",
-        "quantized_post",
     ],
 )
 def test_nhwc_softmax_rejects_unsafe_boundary(boundary: str) -> None:
@@ -312,6 +311,40 @@ def test_nhwc_softmax_rejects_unsafe_boundary(boundary: str) -> None:
 
     assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
     _assert_model_equal(model_ir, original)
+
+
+def test_nhwc_softmax_quantized_post_uses_indexed_family() -> None:
+    model_ir = _softmax_model(boundary="quantized_post")
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    quantize_op = next(
+        op for op in model_ir.operators if op.op_type == "QUANTIZE"
+    )
+    assert concat_op.inputs == ["x0_nhwc", "x1_softmax"]
+    assert concat_op.options["axis"] == 3
+    assert quantize_op.inputs == ["concat_nchw"]
+    assert quantize_op.outputs == ["concat_nhwc"]
+    assert model_ir.tensors["concat_nhwc"].dtype == "INT8"
+    assert model_ir.tensors["concat_nhwc"].shape == [1, 5, 7, 5]
+    local_transposes = [
+        op for op in model_ir.operators if op.op_type == "TRANSPOSE"
+    ]
+    assert len(local_transposes) == 2
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_quantized_softmax"
+    )
+    assert event["status"] == "changed"
 
 
 def test_nhwc_softmax_rejects_multiple_softmax_inputs() -> None:
