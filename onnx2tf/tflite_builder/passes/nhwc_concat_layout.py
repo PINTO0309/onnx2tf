@@ -901,22 +901,39 @@ def _resolve_split_input_plan(
     source_tensor = model_ir.tensors.get(source_name)
     if source_tensor is None or len(list(source_tensor.shape)) != 4:
         return None
+    output_post_adapter_ops: List[OperatorIR] = []
     for split_output_name in [str(name) for name in split_op.outputs]:
         split_output_tensor = model_ir.tensors.get(split_output_name)
         if (
             split_output_name in model_outputs
             or split_output_tensor is None
             or len(list(split_output_tensor.shape)) != 4
-            or not set(graph_index.consumer_indices(split_output_name)).issubset(
-                {int(concat_index)}
-            )
         ):
             return None
+        for consumer_index in graph_index.consumer_indices(split_output_name):
+            if int(consumer_index) == int(concat_index):
+                continue
+            post_op = model_ir.operators[int(consumer_index)]
+            if (
+                str(post_op.op_type) != "TRANSPOSE"
+                or len(post_op.inputs) < 2
+                or len(post_op.outputs) != 1
+                or str(post_op.inputs[0]) != split_output_name
+                or _read_transpose_perm(model_ir, post_op)
+                != _PERM_NCHW_TO_NHWC
+                or str(post_op.outputs[0]) in model_outputs
+            ):
+                return None
+            post_tensor = model_ir.tensors.get(str(post_op.outputs[0]))
+            if post_tensor is None or len(list(post_tensor.shape)) != 4:
+                return None
+            output_post_adapter_ops.append(post_op)
 
     return _NhwcConcatInputPlan(
         kind="split",
         adapter_op=adapter_op,
         split_op=split_op,
+        output_post_adapter_ops=tuple(output_post_adapter_ops),
         source_name=source_name,
         output_name=input_name,
         remove_adapter=(
@@ -2143,6 +2160,13 @@ def _apply_split_input_plan(
             output_tensor.quantization = _clone_nhwc_quantization(
                 output_tensor.quantization
             )
+    for post_op in input_plan.output_post_adapter_ops:
+        _replace_tensor_inputs(
+            model_ir=model_ir,
+            src_name=str(post_op.outputs[0]),
+            dst_name=str(post_op.inputs[0]),
+            graph_index=graph_index,
+        )
 
 
 def _apply_add_input_plan(

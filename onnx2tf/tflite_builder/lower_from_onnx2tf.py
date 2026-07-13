@@ -12651,9 +12651,12 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
         source_name = str(source_plan.get("pre_input_name", ""))
         source_tensor = model_ir.tensors.get(source_name, None)
         split_idx = int(plan.get("split_idx", -1))
+        post_transpose_indices = {
+            int(value)
+            for value in list(plan.get("post_transpose_indices", []))
+        }
         if (
             str(source_plan.get("kind", "")) != "direct"
-            or list(plan.get("post_transpose_indices", [])) != []
             or source_tensor is None
             or len(list(source_tensor.shape)) != 4
             or split_idx < 0
@@ -12675,7 +12678,9 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
                 or len(list(output_tensor.shape)) != 4
                 or not set(
                     int(value) for value in consumers.get(output_name, [])
-                ).issubset({int(concat_idx)})
+                ).issubset(
+                    {int(concat_idx), *post_transpose_indices}
+                )
             ):
                 return False
         return True

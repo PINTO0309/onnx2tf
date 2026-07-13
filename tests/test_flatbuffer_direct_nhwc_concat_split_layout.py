@@ -174,6 +174,19 @@ def _split_model(
                 OperatorIR("IDENTITY", ["split_nhwc"], ["split_side"]),
             ]
         )
+    if boundary == "public_split_post":
+        model_ir.tensors["split_nhwc"] = _tensor(
+            "split_nhwc",
+            [1, 5, 7, 2],
+        )
+        model_ir.outputs.append("split_nhwc")
+        model_ir.operators.append(
+            OperatorIR(
+                "TRANSPOSE",
+                ["x1_split1", "post_perm"],
+                ["split_nhwc"],
+            )
+        )
     if boundary == "public_split_output":
         model_ir.outputs.append("x1_split1")
     if boundary == "split_adapter_fanout":
@@ -319,6 +332,7 @@ def test_nhwc_split_copy_on_write_preserves_shared_or_public_axis(
         "single_output",
         "split_output_fanout",
         "public_split_output",
+        "public_split_post",
         "invalid_adapter_rank",
         "invalid_split_output_rank",
         "invalid_axis_length",
@@ -370,7 +384,7 @@ def test_nhwc_split_retains_shared_or_public_source_adapter(
     assert event["status"] == "changed"
 
 
-def test_nhwc_split_output_post_adapter_remains_in_legacy() -> None:
+def test_nhwc_split_output_post_adapter_is_indexed() -> None:
     model_ir = _split_model(boundary="split_output_post_transpose")
     diagnostics: list[dict] = []
 
@@ -380,8 +394,15 @@ def test_nhwc_split_output_post_adapter_remains_in_legacy() -> None:
     )
 
     assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
-    assert not any(
-        event["code"] == "layout.nhwc_pre_concat_split"
-        and event["status"] == "changed"
-        for event in diagnostics
+    _assert_split_rewritten(model_ir)
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    side_identity = next(
+        op for op in model_ir.operators if op.outputs == ["split_side"]
     )
+    assert side_identity.inputs == ["x1_split1"]
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_split"
+    )
+    assert event["status"] == "changed"

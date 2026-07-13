@@ -89,8 +89,10 @@ positive axis `1` both canonicalize to NHWC axis `3`. Shared/public axis
 tensors use the same provenance-preserving copy-on-write policy. Shared/public
 source adapters remain intact for their existing consumers while Split alone
 is rewired to NHWC. This also fixes the legacy omission of per-axis
-quantization remapping. Output post adapters and Add interactions remain
-available through the legacy fallback.
+quantization remapping. Valid non-public inverse output adapters are bypassed
+and their consumers are rewired to the corresponding NHWC Split output;
+public post aliases reject before mutation. Add interactions remain available
+through the legacy fallback.
 The bounded Add family requires both operands to come through rank-four
 NHWC→NCHW adapters and the Add output to feed only the selected Concat. Both
 operands are rewired in their original order, exclusive leading adapters are
@@ -148,9 +150,9 @@ Focused verification, all in the existing `uv` environment:
 - Direct, unary, Pad, Dequantize, PReLU, Softmax, expanded-Swish,
   pseudo-LeakyRelu, and bounded Slice/Split/Add ModelIR characterization:
   the preceding combined float-path run passed 176 tests across eight compact
-  modules; the expanded inventory now contains 177. Including the bounded
+  modules; the expanded inventory now contains 178. Including the bounded
   direct and unary/Pad quantized-post suites, the compact inventory contains
-  219 tests across nine modules. The preceding combined run passed 208 tests;
+  220 tests across nine modules. The preceding combined run passed 208 tests;
   the expanded quantized module passes 42 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
@@ -161,8 +163,8 @@ Focused verification, all in the existing `uv` environment:
   copy-on-write, shared/public source-adapter retention, output-post-adapter
   bypass, and fifteen complete no-op boundaries. The Split suite covers both axis
   signs, multi-output single-application behavior, shared/public axis
-  copy-on-write, shared/public source-adapter retention, fourteen no-op
-  boundaries, and one preserved post-adapter legacy case. The
+  copy-on-write, shared/public source-adapter retention, output-post-adapter
+  bypass, and fifteen no-op boundaries. The
   Add suite covers mixed/all-Add success, shared/public source-adapter
   retention, twelve complete no-op boundaries, and three broader cases
   retained in legacy. The pseudo-LeakyRelu suite
@@ -180,8 +182,8 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize the Split post-adapter family or the root-shared
-or post-adapter Add subfamily. Keep recursive
+Next work should characterize the root-shared or post-adapter Add subfamily.
+Keep recursive
 Add and mixed Swish/Add interactions in legacy until independently fixed. Do
 not begin with a Tier 0–4 corpus run, and do not create a pull request.
 
