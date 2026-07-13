@@ -2222,6 +2222,12 @@ def test_attention_layout_rewrites_have_single_owner() -> None:
     assert "run_mixed_attention_layout_cleanup" in lowerer_names
     assert "run_qkv_attention_bridge_cleanup" in lowerer_names
     assert "run_qkv_attention_prefix_cleanup" in lowerer_names
+    pass_source = pass_path.read_text(encoding="utf-8")
+    assert "_build_tensor_consumer_map" not in pass_source
+    assert "_build_tensor_producer_map" not in pass_source
+    assert "model_ir.operators.insert(" not in pass_source
+    assert "del model_ir.operators" not in pass_source
+    assert "graph_index.refresh()" not in pass_source
 
 
 def test_pad_layout_rewrites_have_single_owner() -> None:

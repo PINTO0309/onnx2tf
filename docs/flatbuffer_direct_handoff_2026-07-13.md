@@ -390,6 +390,19 @@ and no-main-Add focused success variants pass; the instrumented residual case
 uses one initial index refresh and finishes with no Transpose indices or layout
 state mismatch. No model conversion or inference was run.
 
+Conv-attention propagation no longer batches raw graph mutation followed by a
+full `GraphIndex.refresh()`. Both the standard reduction/gate path and the
+self-HardSwish Mean fallback enumerate indexed Transpose roots, pass the shared
+index to every edge mutation helper, and remove bridge operators
+differentially. Legacy NCHW consumer slots retain their `OperatorIR` objects
+across removals; current indices are recovered from the live index before one
+local adapter is inserted. The four existing gate/activation variants pass.
+The instrumented standard case additionally covers a public legacy NCHW
+consumer, proves one initial index build with no refresh, inserts exactly one
+local adapter, and finishes with a consistent layout state. An architecture
+gate now prevents map builders, direct insert/delete, and routine refresh from
+returning to `attention_layout.py`. No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

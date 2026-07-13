@@ -1555,6 +1555,14 @@ Conv-based attention NHWC propagation is also owned by
 attention, expanded HardSigmoid gates, HardSwish activation, and self-HardSwish
 Mean chains. Each nested matcher proves the full region and legacy consumers
 before any transpose removal or coefficient/axis rewrite.
+All variants now mutate through their runner-owned `ModelIRGraphIndex` without
+an end-of-iteration refresh. Index-aware input/output rewrites and differential
+removals retain live topology throughout the transaction. Optional legacy NCHW
+consumers are tracked by operator object across removals, rewired to one local
+adapter, and preceded by an indexed Transpose insertion. Both candidate scans
+enumerate only indexed Transpose roots. The attention module consequently has
+no whole-graph map builder, direct operator-list insertion/deletion, or routine
+index refresh; an architecture gate preserves those constraints.
 
 CSP attention propagation is the final currently characterized large member
 of `passes/attention_layout.py`. It validates both residual forms, expanded

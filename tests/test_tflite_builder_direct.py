@@ -25228,10 +25228,12 @@ def test_flatbuffer_direct_transpose_leakyrelu_concat_conv_nhwc_groups_optimized
     assert [str(v) for v in list(leaky_ops[1].inputs)] == ["b_nhwc"]
 
 
-def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized() -> None:
+def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("transpose_conv_attention_nhwc_propagation_opt_test")
     model_ir.inputs = ["x_nhwc"]
-    model_ir.outputs = ["z"]
+    model_ir.outputs = ["z", "legacy_nchw"]
     model_ir.tensors["x_nhwc"] = TensorIR(
         name="x_nhwc",
         dtype="FLOAT32",
@@ -25360,6 +25362,12 @@ def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized()
         shape=[1, 8, 8, 16],
         shape_signature=[1, 8, 8, 16],
     )
+    model_ir.tensors["legacy_nchw"] = TensorIR(
+        name="legacy_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
     conv_options = {
         "padding": "SAME",
         "strideH": 1,
@@ -25385,20 +25393,34 @@ def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized()
         ),
         OperatorIR(op_type="TRANSPOSE", inputs=["mul_nchw", "post_perm"], outputs=["y_nhwc"]),
         OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
+        OperatorIR(op_type="RELU", inputs=["mul_nchw"], outputs=["legacy_nchw"]),
     ]
 
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
     diagnostics: list[dict[str, Any]] = []
     stats = run_conv_attention_layout_cleanup(
         model_ir,
+        layout_state=layout_state,
         diagnostics=diagnostics,
     )
     assert stats["optimized_transpose_conv_attention_nhwc_propagation_chains"] == 1
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
     assert diagnostics[0]["code"] == "layout.conv_attention_nhwc"
     assert diagnostics[0]["status"] == "changed"
     assert diagnostics[0]["changed"] is True
 
     op_types = [str(op.op_type) for op in model_ir.operators]
-    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("TRANSPOSE") == 1
     assert np.array_equal(np.asarray(model_ir.tensors["mean_axes"].data), np.asarray([1, 2], dtype=np.int32))
 
     conv_ops = [op for op in model_ir.operators if str(op.op_type) == "CONV_2D"]
@@ -25408,6 +25430,20 @@ def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized()
     mul_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL")
     assert list(mul_op.outputs) == ["y_nhwc"]
     assert list(model_ir.tensors["a_nchw"].shape) == [1, 8, 8, 16]
+    legacy_op = next(
+        op for op in model_ir.operators if list(op.outputs) == ["legacy_nchw"]
+    )
+    legacy_adapter_name = str(legacy_op.inputs[0])
+    legacy_adapter_op = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "TRANSPOSE"
+        and list(op.outputs) == [legacy_adapter_name]
+    )
+    assert list(legacy_adapter_op.inputs) == [
+        "y_nhwc",
+        "__nhwc_to_nchw_perm_rank4__",
+    ]
 
 
 def test_flatbuffer_direct_transpose_conv_attention_hardsigmoid_nhwc_propagation_optimized() -> None:
