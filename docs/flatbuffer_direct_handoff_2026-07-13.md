@@ -297,6 +297,11 @@ Concat, Add/Concat suffix, rank-five NDHWC Concat, Concat/unary/Conv, SPP, and
 Dequantize/Concat/Quantize. Their semantic guards and transactional behavior
 are unchanged; unrelated operators are no longer visited by root discovery.
 
+Quantized Reshape fusion and the four quantized PReLU bridge/fusion matchers now
+use indexed `DEQUANTIZE` or `TRANSPOSE` roots as well. Each matcher still breaks
+after mutation and restarts from the differentially updated index, preserving
+its original rewrite order.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its
@@ -449,6 +454,9 @@ Focused verification, all in the existing `uv` environment:
 - After converting six additional bounded Concat-root scans to the shared
   operator-type index, their focused suites passed `169 tests in 0.60s`;
   targeted compilation, Ruff, and diff checks passed.
+- After indexing the five quantized Reshape/PReLU root scans, their focused
+  suites passed `7 tests in 0.32s`; targeted compilation, Ruff, and diff checks
+  passed.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.

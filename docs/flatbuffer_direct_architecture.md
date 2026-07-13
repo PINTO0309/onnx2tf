@@ -46,6 +46,9 @@ families and by the bounded axis-3 constant-Concat, Add/Concat suffix, rank-five
 NDHWC Concat, Concat/unary/Conv, SPP, and Dequantize/Concat/Quantize passes.
 Each visits only graph-order `CONCATENATION` positions; its semantic and
 boundary guards remain unchanged.
+Quantized Reshape and the four quantized PReLU bridge/fusion matchers likewise
+enumerate only indexed `DEQUANTIZE` or `TRANSPOSE` roots. Each successful
+rewrite restarts its outer loop against the differentially updated index.
 
 Operator additions keep capability validation and lowering in the same
 op-family module. Do not add model-name checks. A model-specific failure should
