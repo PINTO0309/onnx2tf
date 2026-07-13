@@ -5,6 +5,7 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
+import onnx2tf.tflite_builder.passes.nhwc_concat_quantized_layout as quantized_layout
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_pre_concat_nhwc_chains,
@@ -924,6 +925,30 @@ def test_nhwc_quantized_all_direct_family_is_indexed() -> None:
     assert event["status"] == "changed"
     assert event["metrics"]["snapshot_count"] == 1
     assert event["metrics"]["fingerprint_count"] == 0
+
+
+def test_nhwc_quantized_precondition_reuses_prepared_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _quantized_model()
+    calls: dict[str, int] = {}
+    original_resolver = quantized_layout._resolve_quantized_concat_candidate
+
+    def counted_resolver(*args, family: str, **kwargs):
+        calls[family] = int(calls.get(family, 0)) + 1
+        return original_resolver(*args, family=family, **kwargs)
+
+    monkeypatch.setattr(
+        quantized_layout,
+        "_resolve_quantized_concat_candidate",
+        counted_resolver,
+    )
+
+    stats = quantized_layout.run_nhwc_concat_quantized_layout_cleanup(model_ir)
+
+    assert stats[quantized_layout._DIRECT_STATS_KEY] == 1
+    assert calls["direct"] == 2
+    assert sum(calls.values()) == len(quantized_layout._QUANTIZED_FAMILY_SPECS) + 1
 
 
 def test_nhwc_quantized_multiple_posts_share_canonical_output() -> None:

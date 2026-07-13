@@ -238,6 +238,21 @@ def test_model_ir_index_incremental_insert_remove_shifts_references() -> None:
     assert index.consumers == refreshed.consumers
 
 
+def test_model_ir_pass_state_prepared_data_is_session_local_and_rollback_safe() -> None:
+    first = ModelIRPassState(_add_model_ir())
+    second = ModelIRPassState(_add_model_ir())
+
+    first.set_prepared_pass_data("candidate", {"index": 0})
+    assert second.take_prepared_pass_data("candidate") is None
+    assert first.take_prepared_pass_data("candidate") == {"index": 0}
+    assert first.take_prepared_pass_data("candidate") is None
+
+    snapshot = first.snapshot()
+    first.set_prepared_pass_data("candidate", {"index": 1})
+    first.restore(snapshot)
+    assert first.take_prepared_pass_data("candidate") is None
+
+
 def test_model_ir_invariants_allow_empty_optional_operator_slots() -> None:
     model_ir = _add_model_ir()
     model_ir.operators[0].inputs.extend(["", "  "])

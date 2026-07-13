@@ -23,6 +23,12 @@ A pass has a stable ID, phase, priority, maximum iteration count, and explicit
 terminates deterministically. Risky rewrites use the transactional mode and
 must leave the graph unchanged when invariant validation fails.
 
+`ModelIRPassState` also provides one-shot prepared pass data for expensive
+preconditions that produce the exact object consumed by their callback. The
+data belongs to one session, is removed on first consumption, and is cleared
+on rollback, so it cannot leak across conversions or survive restored graph
+objects.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while
@@ -497,7 +503,10 @@ candidate. Each invocation therefore allocates only its pass manager/session
 state while retaining the same transactional snapshots and diagnostics.
 Quantized-post candidate planning enumerates only indexed `CONCATENATION`
 positions; the thirteen family preconditions no longer scan unrelated
-operators in large graphs.
+operators in large graphs. A successful precondition stores its fully validated
+candidate in the session-local prepared data and the callback consumes it,
+avoiding immediate duplicate resolution. Only the post-rewrite search for an
+additional candidate runs again.
 
 The legacy ownership boundary uses the same compact style. Simple quantized
 families are described by allowed and required action-kind sets after one

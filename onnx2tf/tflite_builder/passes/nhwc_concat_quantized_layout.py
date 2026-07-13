@@ -677,21 +677,6 @@ def _resolve_quantized_concat_candidate(
     return None
 
 
-def _has_quantized_concat_candidate(
-    pass_state: ModelIRPassState,
-    *,
-    family: str,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family=family,
-        )
-        is not None
-    )
-
-
 def _adapter_is_now_removable(
     adapter_op: OperatorIR,
     *,
@@ -722,15 +707,19 @@ def _optimize_quantized_concat_chains(
     stats_key: str,
     graph_index: ModelIRGraphIndex | None = None,
     layout_state: LayoutState | None = None,
+    initial_candidate: _QuantizedConcatCandidate | None = None,
 ) -> Dict[str, int]:
     graph_index = graph_index or ModelIRGraphIndex(model_ir)
     optimized = 0
     while True:
-        candidate = _resolve_quantized_concat_candidate(
-            model_ir,
-            graph_index,
-            family=family,
-        )
+        candidate = initial_candidate
+        initial_candidate = None
+        if candidate is None:
+            candidate = _resolve_quantized_concat_candidate(
+                model_ir,
+                graph_index,
+                family=family,
+            )
         if candidate is None:
             break
 
@@ -944,7 +933,13 @@ def _optimize_quantized_concat_chains(
     return {stats_key: int(optimized)}
 
 
+def _prepared_candidate_key(family: str) -> str:
+    return f"nhwc_concat_quantized:{family}"
+
+
 def _make_quantized_concat_callback(family: str, stats_key: str):
+    prepared_key = _prepared_candidate_key(family)
+
     def _run(
         pass_state: ModelIRPassState,
     ) -> Dict[str, int | bool]:
@@ -954,6 +949,9 @@ def _make_quantized_concat_callback(family: str, stats_key: str):
             stats_key=stats_key,
             graph_index=pass_state.graph_index,
             layout_state=pass_state.layout_state,
+            initial_candidate=pass_state.take_prepared_pass_data(
+                prepared_key
+            ),
         )
         return {
             **stats,
@@ -964,13 +962,23 @@ def _make_quantized_concat_callback(family: str, stats_key: str):
 
 
 def _make_quantized_concat_precondition(family: str):
-    def _has_candidate(pass_state: ModelIRPassState) -> bool:
-        return _has_quantized_concat_candidate(
-            pass_state,
+    prepared_key = _prepared_candidate_key(family)
+
+    def _prepare_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate = _resolve_quantized_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
             family=family,
         )
+        if candidate is None:
+            return False
+        pass_state.set_prepared_pass_data(
+            prepared_key,
+            candidate,
+        )
+        return True
 
-    return _has_candidate
+    return _prepare_candidate
 
 
 _QUANTIZED_PASS_SPECS = tuple(
