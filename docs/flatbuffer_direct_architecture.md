@@ -134,6 +134,16 @@ uses one differential index and `LayoutState` transactionally. The family has
 no whole-graph map builders, full operator searches for removal, or direct
 operator-list insert/delete operations.
 
+The adjacent Mean layout family has begun its staged migration in
+`passes/mean_layout.py`. The generic Transpose→Mean→inverse-Transpose
+passthrough rewrite and the Transpose→Mean→Mul(const)→Reshape→Add(const)→Conv
+NHWC propagation rewrite are mechanically owned there. Their implementations
+are AST-equivalent to checkpoint `c99418a` after excluding docstrings; rank,
+constant-axis, fan-out, public-boundary, metadata, and conditional leading
+Transpose behavior are unchanged. The lowerer retains compatibility wrappers
+and the original production call positions until the next, separate indexed
+runner checkpoint.
+
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and
 internal tensor metadata agree and no axis-sensitive gather/slice consumer

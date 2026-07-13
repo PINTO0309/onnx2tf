@@ -3259,3 +3259,31 @@ The complete direct regression selection passed:
 No dependency or TensorFlow path was added. Inference remained sequential and
 single-process; `/tmp/onnx2tf_two_way_shuffle_superpoint*` was removed after
 metrics inspection.
+
+### Mean layout characterization and mechanical extraction
+
+The next bounded family is the pair of generic Mean layout rewrites adjacent
+to the indexed channel-shuffle work. Checkpoint `c99418a` added compact
+characterization for the longer
+Transpose→Mean→Mul(const)→Reshape→Add(const)→Conv form: the successful graph
+proves NHWC axis remapping, rank-four constant permutation, and removal of the
+leading Transpose and intermediate Reshape; a Mean-output fan-out proves the
+rewrite remains a no-op. The existing pre/post Mean tests continue to cover a
+successful inverse-Transpose collapse and shared-pre retention.
+
+Both complete implementations then moved mechanically to
+`passes/mean_layout.py`. Their ASTs, excluding docstrings, match `c99418a`.
+The lowerer now retains only signature-compatible wrappers, while all six
+pre/post and seven longer-chain production positions remain unchanged pending
+the separate GraphIndex/ordered-runner migration. An architecture test fixes
+the single-owner boundary.
+
+Focused characterization, legacy, and ownership validation passed 4 tests.
+The complete sequential direct regression selection passed:
+
+```text
+1151 passed, 5 deselected, 2 warnings in 147.64s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently.
