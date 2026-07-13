@@ -12680,6 +12680,35 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
                 return False
         return True
 
+    def _is_indexed_direct_add_plan(
+        plan: Dict[str, Any],
+        *,
+        concat_idx: int,
+        consumers: Dict[str, List[int]],
+    ) -> bool:
+        add_idx = int(plan.get("add_idx", -1))
+        actions = [dict(action) for action in plan.get("actions", [])]
+        input_name = str(plan.get("input_name", ""))
+        return (
+            add_idx >= 0
+            and add_idx < len(model_ir.operators)
+            and str(model_ir.operators[add_idx].op_type) == "ADD"
+            and len(model_ir.operators[add_idx].inputs) == 2
+            and len(model_ir.operators[add_idx].outputs) == 1
+            and len(actions) == 2
+            and all(
+                str(action.get("kind", "")) == "direct"
+                and len(list(action.get("remove_indices", []))) >= 1
+                for action in actions
+            )
+            and len(list(plan.get("new_add_inputs", []))) == 2
+            and list(plan.get("removable_post_transpose_indices", [])) == []
+            and set(
+                int(value) for value in consumers.get(input_name, [])
+            )
+            == {int(concat_idx)}
+        )
+
     def _try_rewrite_add_input_to_nhwc(
         *,
         input_name: str,
@@ -13940,6 +13969,29 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             )
             if indexed_split_family:
                 continue
+            add_actions = [
+                action
+                for action in concat_input_actions
+                if str(action.get("kind", "")) == "add"
+            ]
+            indexed_add_family = (
+                post_quantize_idx is None
+                and len(add_actions) >= 1
+                and all(
+                    str(action.get("kind", "")) in {"direct", "add"}
+                    for action in concat_input_actions
+                )
+                and all(
+                    _is_indexed_direct_add_plan(
+                        dict(action.get("plan", {})),
+                        concat_idx=int(concat_idx),
+                        consumers=consumers,
+                    )
+                    for action in add_actions
+                )
+            )
+            if indexed_add_family:
+                continue
             nhwc_inputs_ok = True
             nhwc_ref_shape: Optional[List[int]] = None
             for action in concat_input_actions:
@@ -14214,6 +14266,12 @@ def _optimize_transpose_pre_concat_nhwc_chains(
         + int(
             indexed_stats.get(
                 "optimized_transpose_pre_concat_nhwc_split_chains",
+                0,
+            )
+        )
+        + int(
+            indexed_stats.get(
+                "optimized_transpose_pre_concat_nhwc_add_chains",
                 0,
             )
         )

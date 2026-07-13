@@ -2,7 +2,7 @@
 
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
-The first nine bounded families of the rank-four generic NHWC
+The first ten bounded families of the rank-four generic NHWC
 pre-Concat matcher are now separated. `passes/nhwc_concat_layout.py` owns the
 strict all-direct float path and the one-or-more-unary float path, with or
 without direct inputs. The unary allowlist is RELU, RELU6, LOGISTIC, TANH, and
@@ -13,14 +13,15 @@ one or more expanded-Swish diamonds with direct or unary companion inputs.
 The bounded Slice family additionally owns one or more exclusive direct-source
 Slice inputs, optionally with direct inputs. The bounded Split family owns one
 or more outputs from an exclusive direct-source Split, again optionally with
-direct inputs. All nine share one
+direct inputs. The bounded Add family owns the non-recursive direct-only Add
+input form. All ten share one
 `ModelIRGraphIndex`/`LayoutState` pass group and run transactionally under
 stable IDs `layout.nhwc_pre_concat_direct` and
 `layout.nhwc_pre_concat_unary`, `layout.nhwc_pre_concat_pad`, and
 `layout.nhwc_pre_concat_dequantize`, `layout.nhwc_pre_concat_prelu`, and
 `layout.nhwc_pre_concat_softmax`, `layout.nhwc_pre_concat_swish`, and
 `layout.nhwc_pre_concat_slice`, plus `layout.nhwc_pre_concat_split` at all
-seven production positions.
+seven production positions, followed by `layout.nhwc_pre_concat_add`.
 
 The direct pass removes only exclusive, non-public leading adapters. Shared or
 public direct adapters remain for their other consumers while the Concat is
@@ -78,11 +79,19 @@ tensors use the same provenance-preserving copy-on-write policy. This also
 fixes the legacy omission of per-axis quantization remapping. Source-adapter
 fan-out, output post adapters, and Add interactions remain available through
 the legacy fallback.
+The bounded Add family requires both operands to come through exclusive
+rank-four NHWC→NCHW adapters and the Add output to feed only the selected
+Concat. Both operands are rewired in their original order, all leading
+adapters are removed, operator options are retained, and Add-output shape and
+per-axis quantization are remapped once. Public/internal adapter boundaries
+and invalid ranks now reject before mutation. Adapter sharing with the root
+Concat, Add-output post adapters, unary operands, recursive Add, and other
+mixed operand families deliberately remain in legacy.
 
 The lowerer compatibility helper still returns the original aggregate statistic
 and runs the legacy matcher after the direct pass. The legacy matcher now
-skips the nine indexed families, but continues to own broader Split/Slice and
-Add inputs plus the separate
+skips the ten indexed families, but continues to own broader Split/Slice/Add,
+pseudo-LeakyRelu, and the separate
 quantized-post path.
 
 Changed files for this checkpoint:
@@ -93,13 +102,14 @@ Changed files for this checkpoint:
 - `tests/test_flatbuffer_direct_nhwc_concat_swish_layout.py`
 - `tests/test_flatbuffer_direct_nhwc_concat_slice_layout.py`
 - `tests/test_flatbuffer_direct_nhwc_concat_split_layout.py`
+- `tests/test_flatbuffer_direct_nhwc_concat_add_layout.py`
 - `docs/flatbuffer_direct_architecture.md`
 - `docs/flatbuffer_direct_handoff_2026-07-13.md`
 
 Focused verification, all in the existing `uv` environment:
 
 - Direct, unary, Pad, Dequantize, PReLU, Softmax, expanded-Swish, and bounded
-  Slice/Split ModelIR characterization: `131 passed` across six compact
+  Slice/Split/Add ModelIR characterization: `150 passed` across seven compact
   modules.
   The Softmax suite includes an exact NumPy equivalence check for the original
   and rewritten layouts. The Swish suite covers both Mul operand orders,
@@ -109,7 +119,9 @@ Focused verification, all in the existing `uv` environment:
   copy-on-write, fifteen complete no-op boundaries, and two broader cases that
   must continue through the legacy fallback. The Split suite covers both axis
   signs, multi-output single-application behavior, shared/public axis
-  copy-on-write, fifteen no-op boundaries, and two preserved legacy cases.
+  copy-on-write, fifteen no-op boundaries, and two preserved legacy cases. The
+  Add suite covers mixed/all-Add success, fourteen complete no-op boundaries,
+  and three broader cases retained in legacy.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.
@@ -119,8 +131,8 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize a bounded non-recursive Add input family or one
-of the remaining shared-adapter/post-adapter Slice/Split subfamilies. Keep
+Next work should characterize the bounded pseudo-LeakyRelu input family or one
+of the remaining shared-adapter/post-adapter Slice/Split/Add subfamilies. Keep
 recursive Add and mixed Swish/Add interactions in legacy until independently
 fixed. Do not begin with a Tier 0–4 corpus run, and do not create a pull
 request.

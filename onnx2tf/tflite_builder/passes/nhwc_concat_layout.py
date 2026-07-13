@@ -52,6 +52,7 @@ _SOFTMAX_STATS_KEY = "optimized_transpose_pre_concat_nhwc_softmax_chains"
 _SWISH_STATS_KEY = "optimized_transpose_pre_concat_nhwc_swish_chains"
 _SLICE_STATS_KEY = "optimized_transpose_pre_concat_nhwc_slice_chains"
 _SPLIT_STATS_KEY = "optimized_transpose_pre_concat_nhwc_split_chains"
+_ADD_STATS_KEY = "optimized_transpose_pre_concat_nhwc_add_chains"
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
 
@@ -71,6 +72,9 @@ class _NhwcConcatInputPlan:
     mul_op: Optional[OperatorIR] = None
     slice_op: Optional[OperatorIR] = None
     split_op: Optional[OperatorIR] = None
+    add_op: Optional[OperatorIR] = None
+    add_source_names: Tuple[str, ...] = ()
+    extra_adapter_ops: Tuple[OperatorIR, ...] = ()
     pads_tensor_name: Optional[str] = None
     pads_nhwc: Optional[np.ndarray] = None
     clone_pads: bool = False
@@ -950,6 +954,88 @@ def _resolve_split_input_plan(
     )
 
 
+def _resolve_add_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    input_name: str,
+    concat_index: int,
+    model_outputs: set[str],
+) -> Optional[_NhwcConcatInputPlan]:
+    add_op = graph_index.producer(input_name)
+    add_index = None if add_op is None else graph_index.operator_index(add_op)
+    if (
+        add_op is None
+        or add_index is None
+        or str(add_op.op_type) != "ADD"
+        or len(add_op.inputs) != 2
+        or len(add_op.outputs) != 1
+        or str(add_op.outputs[0]) != input_name
+        or input_name in model_outputs
+        or set(graph_index.consumer_indices(input_name))
+        != {int(concat_index)}
+    ):
+        return None
+
+    output_tensor = model_ir.tensors.get(input_name)
+    if output_tensor is None or len(list(output_tensor.shape)) != 4:
+        return None
+
+    adapter_ops: List[OperatorIR] = []
+    source_names: List[str] = []
+    for add_input_name in [str(name) for name in add_op.inputs]:
+        adapter_op = graph_index.producer(add_input_name)
+        adapter_index = (
+            None
+            if adapter_op is None
+            else graph_index.operator_index(adapter_op)
+        )
+        if (
+            adapter_op is None
+            or adapter_index is None
+            or str(adapter_op.op_type) != "TRANSPOSE"
+            or len(adapter_op.inputs) < 2
+            or len(adapter_op.outputs) != 1
+            or str(adapter_op.outputs[0]) != add_input_name
+            or _read_transpose_perm(model_ir, adapter_op)
+            != _PERM_NHWC_TO_NCHW
+            or add_input_name in model_outputs
+            or set(graph_index.consumer_indices(add_input_name))
+            != {int(add_index)}
+        ):
+            return None
+        source_name = str(adapter_op.inputs[0])
+        source_tensor = model_ir.tensors.get(source_name)
+        adapter_output_tensor = model_ir.tensors.get(add_input_name)
+        if (
+            source_tensor is None
+            or len(list(source_tensor.shape)) != 4
+            or adapter_output_tensor is None
+            or len(list(adapter_output_tensor.shape)) != 4
+        ):
+            return None
+        adapter_ops.append(adapter_op)
+        source_names.append(source_name)
+
+    unique_adapter_ops: List[OperatorIR] = []
+    seen_adapter_ids: set[int] = set()
+    for adapter_op in adapter_ops:
+        if id(adapter_op) in seen_adapter_ids:
+            continue
+        seen_adapter_ids.add(id(adapter_op))
+        unique_adapter_ops.append(adapter_op)
+    return _NhwcConcatInputPlan(
+        kind="add",
+        adapter_op=unique_adapter_ops[0],
+        add_op=add_op,
+        add_source_names=tuple(source_names),
+        extra_adapter_ops=tuple(unique_adapter_ops[1:]),
+        source_name=source_names[0],
+        output_name=input_name,
+        remove_adapter=True,
+    )
+
+
 def _resolve_family_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -1045,6 +1131,14 @@ def _resolve_family_input_plan(
             concat_index=concat_index,
             model_outputs=model_outputs,
             public_names=public_names,
+        )
+    if family == "add":
+        return _resolve_add_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
         )
     return None
 
@@ -1148,6 +1242,9 @@ def _resolve_nhwc_concat_candidate(
         split_count = sum(plan.kind == "split" for plan in input_plans)
         if family == "split" and split_count < 1:
             continue
+        add_count = sum(plan.kind == "add" for plan in input_plans)
+        if family == "add" and add_count < 1:
+            continue
 
         if family in {
             "unary",
@@ -1158,6 +1255,7 @@ def _resolve_nhwc_concat_candidate(
             "swish",
             "slice",
             "split",
+            "add",
         }:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
@@ -1180,6 +1278,7 @@ def _resolve_nhwc_concat_candidate(
                     "swish",
                     "slice",
                     "split",
+                    "add",
                 }:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
@@ -1328,6 +1427,17 @@ def _has_nhwc_split_concat_candidate(pass_state: ModelIRPassState) -> bool:
     )
 
 
+def _has_nhwc_add_concat_candidate(pass_state: ModelIRPassState) -> bool:
+    return (
+        _resolve_nhwc_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="add",
+        )
+        is not None
+    )
+
+
 def _optimize_transpose_pre_concat_nhwc_direct_chains(
     model_ir: ModelIR,
     *,
@@ -1458,6 +1568,21 @@ def _optimize_transpose_pre_concat_nhwc_split_chains(
         model_ir,
         family="split",
         stats_key=_SPLIT_STATS_KEY,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+
+def _optimize_transpose_pre_concat_nhwc_add_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
+    return _optimize_transpose_pre_concat_nhwc_family(
+        model_ir,
+        family="add",
+        stats_key=_ADD_STATS_KEY,
         graph_index=graph_index,
         layout_state=layout_state,
     )
@@ -1808,6 +1933,30 @@ def _apply_split_input_plan(
             )
 
 
+def _apply_add_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    input_plan: _NhwcConcatInputPlan,
+) -> None:
+    assert input_plan.add_op is not None
+    assert len(input_plan.add_source_names) == 2
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=input_plan.add_op,
+        new_inputs=[str(name) for name in input_plan.add_source_names],
+        graph_index=graph_index,
+    )
+    output_tensor = model_ir.tensors.get(input_plan.output_name)
+    _permute_tensor_metadata_if_rank_matches(
+        output_tensor,
+        _PERM_NCHW_TO_NHWC,
+    )
+    if output_tensor is not None:
+        output_tensor.quantization = _clone_nhwc_quantization(
+            output_tensor.quantization
+        )
+
+
 def _optimize_transpose_pre_concat_nhwc_family(
     model_ir: ModelIR,
     *,
@@ -1836,6 +1985,7 @@ def _optimize_transpose_pre_concat_nhwc_family(
             str,
         ] = {}
         applied_split_operators: set[int] = set()
+        applied_add_operators: set[int] = set()
         for input_plan in candidate.input_plans:
             if input_plan.unary_op is not None:
                 _set_operator_inputs(
@@ -1879,6 +2029,16 @@ def _optimize_transpose_pre_concat_nhwc_family(
                         materialized=materialized_int_parameters,
                     )
                     applied_split_operators.add(split_operator_id)
+                new_concat_inputs.append(input_plan.output_name)
+            elif input_plan.add_op is not None:
+                add_operator_id = id(input_plan.add_op)
+                if add_operator_id not in applied_add_operators:
+                    _apply_add_input_plan(
+                        model_ir,
+                        graph_index,
+                        input_plan,
+                    )
+                    applied_add_operators.add(add_operator_id)
                 new_concat_inputs.append(input_plan.output_name)
             elif input_plan.softmax_op is not None:
                 _apply_softmax_input_plan(
@@ -2021,6 +2181,12 @@ def _optimize_transpose_pre_concat_nhwc_family(
                 for plan in candidate.input_plans
                 if plan.remove_adapter
             ],
+            *[
+                adapter_op
+                for plan in candidate.input_plans
+                for adapter_op in plan.extra_adapter_ops
+                if plan.remove_adapter
+            ],
             *candidate.post_ops,
         ]
         remove_indices = sorted(
@@ -2130,6 +2296,14 @@ def run_nhwc_concat_layout_cleanup(
         )
         return {**stats, "changed": bool(stats.get(_SPLIT_STATS_KEY, 0))}
 
+    def _run_add(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_pre_concat_nhwc_add_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {**stats, "changed": bool(stats.get(_ADD_STATS_KEY, 0))}
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -2205,6 +2379,14 @@ def run_nhwc_concat_layout_cleanup(
                 priority=90,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_add",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_add,
+                precondition=_has_nhwc_add_concat_candidate,
+                priority=100,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -2217,6 +2399,7 @@ def run_nhwc_concat_layout_cleanup(
             _SWISH_STATS_KEY: 0,
             _SLICE_STATS_KEY: 0,
             _SPLIT_STATS_KEY: 0,
+            _ADD_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(

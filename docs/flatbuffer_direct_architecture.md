@@ -296,7 +296,8 @@ The much larger rank-four generic NHWC pre-Concat matcher is being migrated by
 semantic family rather than as one monolithic rule. Its strict float-path
 direct-adapter, unary, Pad-plus-direct, Dequantize, PReLU, Softmax, and
 expanded-Swish families, plus the bounded exclusive direct-source Slice
-and Split families, are owned by
+and Split families and the bounded non-recursive direct-only Add family, are
+owned by
 `passes/nhwc_concat_layout.py`. Every Concat consumer must be an inverse
 NCHW→NHWC Transpose. Direct inputs come from NHWC→NCHW Transpose; the unary
 family permits one or more RELU, RELU6, LOGISTIC, TANH, or GELU operations
@@ -310,7 +311,7 @@ stable IDs `layout.nhwc_pre_concat_direct`,
 `layout.nhwc_pre_concat_dequantize`, plus
 `layout.nhwc_pre_concat_prelu`, `layout.nhwc_pre_concat_softmax`, and
 `layout.nhwc_pre_concat_swish`, `layout.nhwc_pre_concat_slice`, and
-`layout.nhwc_pre_concat_split`.
+`layout.nhwc_pre_concat_split`, plus `layout.nhwc_pre_concat_add`.
 Exclusive pads constants are remapped in place; shared or public pads
 constants use copy-on-write so unrelated Pad consumers preserve NCHW
 semantics. Dequantize inputs retain source scale and zero-point provenance
@@ -337,9 +338,14 @@ whose source adapter is exclusive and whose outputs are unused or consumed
 only by the selected Concat. It remaps the Split axis to 3 once per operator,
 uses copy-on-write for a shared/public axis tensor, and moves every Split
 output's shape and per-axis quantization into NHWC. Shared adapters,
-Slice/Split-output post adapters, Swish-source Slice, Swish/Add-connected
-Split, Add, and quantized-post families remain in the legacy matcher until
-their own bounded ownership is characterized.
+Slice/Split-output post adapters, Swish-source Slice, and Swish/Add-connected
+Split remain in the legacy matcher. The bounded Add family accepts a direct
+Concat input produced by a non-recursive two-input Add whose operands each
+come from an exclusive rank-four NHWC→NCHW adapter. Both Add inputs are
+rewired together, all operand adapters are removed, and Add output shape and
+per-axis quantization move into NHWC. Adapter-sharing, output-post-adapter,
+unary/Swish/Split operand, recursive Add, pseudo-LeakyRelu, and quantized-post
+families remain in legacy until independently characterized.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
