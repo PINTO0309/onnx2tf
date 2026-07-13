@@ -177,10 +177,15 @@ complete two-input NHWC-to-NCHW descriptor path, Slice/Mean/Reshape and
 ScatterND constant remapping, NDHWC output canonicalization, and downstream
 Conv3D contract. Whole-ModelIR no-op checks cover leading-adapter fan-out, both
 sides of the trailing adapter, a public intermediate, an invalid leading
-permutation, and a non-Conv3D downstream consumer. The extracted implementation
-is AST-identical to checkpoint `4b6f297`; the lowerer retains a compatibility
-wrapper and all six raw production calls until the separate transactional
-indexed migration.
+permutation, a non-Conv3D downstream consumer, invalid ScatterND shape or
+coordinate rank, and out-of-bounds coordinates. Pure indexed candidate
+planning validates every constant before mutation, including conditions that
+the legacy matcher checked only after earlier constants had changed.
+`run_cost_volume_scatter_layout_cleanup` registers stable `LAYOUT_PLAN` ID
+`layout.cost_volume_scatter_ndhwc`. All traversal, rewrites, structural
+removals, pruning, metadata, and layout reconciliation use one differential
+graph index and `LayoutState`. The six production positions now call the
+transactional runner; the lowerer compatibility wrapper remains available.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

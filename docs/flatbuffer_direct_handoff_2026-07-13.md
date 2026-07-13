@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `d62e77d` (`extract cost volume scatter layout pass`)
+- Latest implementation checkpoint: `56516ef` (`index cost volume scatter layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `d62e77d` and the documentation checkpoint
+  `56516ef` and the documentation checkpoint
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -13,9 +13,8 @@
 
 ## Completed work
 
-This resumed interval completed ten adjacent semantic layout families using
-the staged characterization → mechanical extraction → indexed runner process,
-then characterized the next cost-volume/ScatterND family.
+This resumed interval completed eleven adjacent semantic layout families using
+the staged characterization → mechanical extraction → indexed runner process.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -101,6 +100,12 @@ then characterized the next cost-volume/ScatterND family.
     - Moved the complete matcher to
       `passes/cost_volume_scatter_layout.py` with AST equivalence in `d62e77d`;
       the compatibility wrapper and all six raw call positions remain.
+    - Added pure indexed topology and constant planning, transactional runner
+      `layout.cost_volume_scatter_ndhwc`, shared graph/layout mutation, and six
+      production runner calls in `56516ef`.
+    - Fixed late-validation partial mutation for invalid ScatterND shape,
+      coordinate rank, and out-of-bounds coordinates; all now reject before a
+      snapshot and preserve the complete ModelIR.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -116,10 +121,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the extracted
-  `_optimize_transpose_cost_volume_scatter_ndhwc_chains`: separate candidate
-  planning from mutation, migrate traversal and rewrites to shared graph/layout
-  state, and replace the six raw calls with a stable ordered runner.
+  The immediate next unit is
+  `_optimize_transpose_add_concat_const_suffix_nhwc_chains`: add a dedicated
+  compact success/rejection corpus before its mechanical extraction from the
+  central lowerer.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -141,7 +146,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `d62e77d`; after the documentation
+implementation working tree is clean at `56516ef`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -263,6 +268,14 @@ sequential with only one model/process active at a time.
   `4b6f297`.
 - Full direct selection after mechanical extraction:
   `1239 passed, 5 deselected, 2 warnings in 156.55s`.
+- Indexed cost-volume/ScatterND runner, late-validation, architecture, and
+  efficiency focus: `60 passed in 18.58s`.
+- Tier 1 `superpoint.onnx`, sequential `-tb flatbuffer_direct -cotof` after
+  indexed migration: `evaluation_pass=true`,
+  `max_abs=1.6666017472743988e-06`,
+  `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+- Full direct selection after indexed cost-volume/ScatterND migration:
+  `1252 passed, 5 deselected, 2 warnings in 164.88s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -294,14 +307,13 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Audit the extracted cost-volume/ScatterND matcher for every validation that
-   currently happens after constants begin mutating; define an indexed
-   candidate plan that validates these late conditions before snapshot/rewrite.
-3. Add runner success/rejection instrumentation, especially invalid ScatterND
-   shape/index cases, then migrate traversal and mutations to one shared
-   `ModelIRGraphIndex` and `LayoutState`.
-4. Replace all six raw calls with a stable `LAYOUT_PLAN` runner, then run
-   focused, sequential Tier 1, and full direct gates before committing.
+2. Inspect `_optimize_transpose_add_concat_const_suffix_nhwc_chains`, its five
+   production positions, and any existing success coverage; record the exact
+   current output/constant/layout contract.
+3. Create a dedicated compact characterization module with fan-out,
+   public-boundary, permutation, axis, and constant-shape rejection cases.
+4. Run focused and full direct gates, then commit and push characterization
+   before mechanical extraction.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -834,3 +846,40 @@ complete sequential direct selection passed:
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently. Indexed planning, transactional late-validation safety, shared
 graph/layout state, and runner integration remain a separate next checkpoint.
+
+### Indexed cost-volume/ScatterND checkpoint
+
+Checkpoint `56516ef` replaced repeated producer/consumer map construction with
+one shared `ModelIRGraphIndex` and introduced a pure candidate plan that proves
+the complete upstream island and every mutable constant before rewriting.
+Slice ranges, reduction axes, Concat axes, ScatterND output shape, casted index
+coordinates, coordinate rank, and bounds are validated without modifying the
+model. This closes a legacy failure mode where an invalid late ScatterND
+constant could leave earlier Slice or Mean constants partially remapped even
+though the matcher reported no rewrite.
+
+Input and alias rewrites now update the differential index, structural removal
+uses indexed operators, and pruning/metadata reconciliation synchronize the
+shared `LayoutState`. `run_cost_volume_scatter_layout_cleanup` registers stable
+`LAYOUT_PLAN` ID `layout.cost_volume_scatter_ndhwc`; all six production
+positions call it with session state and diagnostics. The lowerer compatibility
+wrapper remains available.
+
+Focused success, nine complete no-op boundaries, runner instrumentation,
+ownership, architecture, and irrelevant-graph efficiency validation passed 60
+tests. The success graph uses one initial index refresh and one transactional
+snapshot. All nine rejection cases, including invalid ScatterND shape,
+coordinate rank, and out-of-bounds coordinates, reject before snapshotting.
+Tier 1 `superpoint.onnx` passed sequential `-tb flatbuffer_direct -cotof` with
+`evaluation_pass=true`, `max_abs=1.6666017472743988e-06`,
+`rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+
+The complete sequential direct selection passed:
+
+```text
+1252 passed, 5 deselected, 2 warnings in 164.88s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_cost_volume_superpoint` artifacts were removed after metrics
+inspection.
