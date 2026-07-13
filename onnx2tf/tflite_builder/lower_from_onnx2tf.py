@@ -98,6 +98,7 @@ from onnx2tf.tflite_builder.passes.layout_transpose import (
     _optimize_layout_transpose_chains as _optimize_layout_transpose_chains_pass,
     _optimize_trailing_output_transpose_passthrough_chains as _optimize_trailing_output_transpose_passthrough_chains_pass,
     _optimize_transpose_gather_transpose_axis_remap_nhwc_chains as _optimize_transpose_gather_transpose_axis_remap_nhwc_chains_pass,
+    _optimize_transpose_gather_transpose_nhwc_channel_chains as _optimize_transpose_gather_transpose_nhwc_channel_chains_pass,
     _optimize_transpose_unary_binary_full_post_fanout_bridges as _optimize_transpose_unary_binary_full_post_fanout_bridges_pass,
     _optimize_transpose_unary_fanout_inverse_post_bridges as _optimize_transpose_unary_fanout_inverse_post_bridges_pass,
     _optimize_transpose_unary_passthrough_chains as _optimize_transpose_unary_passthrough_chains_pass,
@@ -56026,138 +56027,7 @@ def _optimize_transpose_pre_argmax_nhwc_terminal_chains(
 def _optimize_transpose_gather_transpose_nhwc_channel_chains(
     model_ir: ModelIR,
 ) -> Dict[str, int]:
-    """
-    Fold NHWC<->NCHW adapters around channel-axis Gather into a single NHWC Gather.
-
-    Target:
-      x_nhwc --TRANSPOSE(0,3,1,2)--> x_nchw
-             --GATHER(axis=1,batchDims=0)--> y_nchw
-             --TRANSPOSE(0,2,3,1)--> y_nhwc
-
-    Rewrite:
-      x_nhwc --GATHER(axis=3,batchDims=0)--> y_nhwc
-
-    Notes:
-    - Supports one or more inverse post-transpose consumers.
-    - Keeps the pre-transpose when legacy NCHW consumers remain.
-    """
-    rewritten = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
-                continue
-
-            pre_input_name = str(pre_op.inputs[0])
-            pre_output_name = str(pre_op.outputs[0])
-            if pre_output_name in model_outputs:
-                continue
-
-            pre_users = [int(v) for v in consumers.get(pre_output_name, [])]
-            if len(pre_users) != 1:
-                continue
-            gather_idx = int(pre_users[0])
-            gather_op = model_ir.operators[int(gather_idx)]
-            if str(gather_op.op_type) != "GATHER" or len(gather_op.inputs) < 2 or len(gather_op.outputs) != 1:
-                continue
-            if str(gather_op.inputs[0]) != pre_output_name:
-                continue
-
-            gather_output_name = str(gather_op.outputs[0])
-            if gather_output_name in model_outputs:
-                continue
-
-            gather_users = [int(v) for v in consumers.get(gather_output_name, [])]
-            if len(gather_users) == 0:
-                continue
-
-            post_indices: List[int] = []
-            post_output_names: List[str] = []
-            valid_posts = True
-            for post_idx in gather_users:
-                post_op = model_ir.operators[int(post_idx)]
-                if (
-                    str(post_op.op_type) != "TRANSPOSE"
-                    or len(post_op.inputs) < 2
-                    or len(post_op.outputs) != 1
-                    or str(post_op.inputs[0]) != gather_output_name
-                    or _read_transpose_perm(model_ir, post_op) != perm_nchw_to_nhwc
-                ):
-                    valid_posts = False
-                    break
-                post_output_name = str(post_op.outputs[0])
-                if post_output_name in model_outputs:
-                    valid_posts = False
-                    break
-                post_indices.append(int(post_idx))
-                post_output_names.append(post_output_name)
-            if not valid_posts or len(post_indices) == 0:
-                continue
-
-            gather_in_tensor = model_ir.tensors.get(pre_output_name, None)
-            if gather_in_tensor is None:
-                continue
-            gather_in_rank = len(list(gather_in_tensor.shape))
-            if gather_in_rank != 4:
-                continue
-
-            gather_options = dict(gather_op.options) if isinstance(gather_op.options, dict) else {}
-            gather_axis = int(gather_options.get("axis", 0))
-            if gather_axis < 0:
-                gather_axis += int(gather_in_rank)
-            if int(gather_axis) != 1:
-                continue
-            gather_batch_dims = int(
-                gather_options.get(
-                    "batchDims",
-                    gather_options.get("batch_dims", 0),
-                )
-            )
-            if int(gather_batch_dims) != 0:
-                continue
-
-            gather_options["axis"] = 3
-            gather_options["batchDims"] = int(gather_batch_dims)
-            gather_op.options = gather_options
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=gather_op,
-                new_inputs=[str(pre_input_name), str(gather_op.inputs[1])],
-            )
-            representative_output_name = str(post_output_names[0])
-            _set_operator_outputs(model_ir=model_ir, op=gather_op, new_outputs=[representative_output_name])
-            for alias_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, alias_name, representative_output_name)
-
-            remove_indices = list(int(v) for v in post_indices)
-            remaining_pre_users = [
-                int(v)
-                for v in consumers.get(pre_output_name, [])
-                if int(v) != int(gather_idx)
-            ]
-            if len(remaining_pre_users) == 0 and pre_output_name not in model_outputs:
-                remove_indices.append(int(pre_idx))
-            for remove_idx in sorted(remove_indices, reverse=True):
-                del model_ir.operators[int(remove_idx)]
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"optimized_transpose_gather_transpose_nhwc_channel_chains": int(rewritten)}
-
+    return _optimize_transpose_gather_transpose_nhwc_channel_chains_pass(model_ir)
 
 def _optimize_layout_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
     return _optimize_layout_transpose_chains_pass(model_ir)

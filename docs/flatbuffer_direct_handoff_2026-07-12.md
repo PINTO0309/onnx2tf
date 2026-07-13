@@ -2982,3 +2982,25 @@ The complete direct regression selection passed:
 No dependency or TensorFlow path was added. All inference remained sequential
 and single-process, and `/tmp/onnx2tf_trailing_output_superpoint*` was removed
 after metrics inspection.
+
+### Transpose/Gather channel fan-out extraction
+
+The general Gather axis-remap pass and the remaining channel fan-out rule were
+compared before editing. The former supports arbitrary rank-four axes, one
+post-Transpose, and a shared pre-Transpose; the latter requires axis 1 and an
+exclusive pre edge but supports multiple inverse post branches and rejects
+public post outputs. To avoid silently moving this behavior earlier in the
+pipeline, they remain separate ordered passes for now.
+
+Checkpoint `b31c548` added compact characterization for multi-post alias
+coalescing and public-post rejection. The complete 134-line
+`_optimize_transpose_gather_transpose_nhwc_channel_chains` implementation then
+moved mechanically into `passes/layout_transpose.py`, adjacent to the general
+axis-remap implementation. Its AST is identical to `b31c548`; the lowerer now
+keeps only a compatibility wrapper, and the three raw production positions are
+unchanged pending indexed migration. Focused Gather family/ownership validation
+passed 6 tests, followed by the complete direct selection:
+
+```text
+1134 passed, 5 deselected, 2 warnings in 149.26s
+```
