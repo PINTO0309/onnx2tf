@@ -297,8 +297,9 @@ semantic family rather than as one monolithic rule. Its strict float-path
 direct-adapter, unary, Pad-plus-direct, Dequantize, PReLU, Softmax, and
 expanded-Swish families, plus the bounded exclusive direct-source Slice
 and Split families and the bounded non-recursive direct-only Add family, are
-owned by
-`passes/nhwc_concat_layout.py`. Every Concat consumer must be an inverse
+owned by `passes/nhwc_concat_layout.py`. The exact pseudo-LeakyRelu
+decomposition is owned there as a bounded family as well.
+Every Concat consumer must be an inverse
 NCHW→NHWC Transpose. Direct inputs come from NHWC→NCHW Transpose; the unary
 family permits one or more RELU, RELU6, LOGISTIC, TANH, or GELU operations
 between exclusive leading adapters and Concat. The Pad family accepts one or
@@ -344,8 +345,17 @@ Concat input produced by a non-recursive two-input Add whose operands each
 come from an exclusive rank-four NHWC→NCHW adapter. Both Add inputs are
 rewired together, all operand adapters are removed, and Add output shape and
 per-axis quantization move into NHWC. Adapter-sharing, output-post-adapter,
-unary/Swish/Split operand, recursive Add, pseudo-LeakyRelu, and quantized-post
-families remain in legacy until independently characterized.
+unary/Swish/Split operand, recursive Add, and quantized-post families remain
+in legacy until independently characterized. The indexed
+pseudo-LeakyRelu family recognizes the complete
+`ReLU(x) - alpha * ReLU(-x)` diamond with either Mul operand order and direct
+or supported unary Concat companions. It preserves the non-commutative Sub
+order, rewires Neg and positive Relu to the NHWC source, and remaps all five
+internal/output tensor shapes and per-axis quantization metadata. Public or
+fan-out internal edges, invalid ranks, non-singleton alpha, and incomplete
+diamonds reject before mutation under stable ID
+`layout.nhwc_pre_concat_leaky`. Pad/Add/Split mixed companions and the
+quantized-post family remain in legacy.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

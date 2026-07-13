@@ -13992,6 +13992,21 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             )
             if indexed_add_family:
                 continue
+            indexed_leaky_family = (
+                post_quantize_idx is None
+                and sum(
+                    str(action.get("kind", "")) == "leaky"
+                    for action in concat_input_actions
+                )
+                >= 1
+                and all(
+                    str(action.get("kind", ""))
+                    in {"direct", "unary", "leaky"}
+                    for action in concat_input_actions
+                )
+            )
+            if indexed_leaky_family:
+                continue
             nhwc_inputs_ok = True
             nhwc_ref_shape: Optional[List[int]] = None
             for action in concat_input_actions:
@@ -14272,6 +14287,12 @@ def _optimize_transpose_pre_concat_nhwc_chains(
         + int(
             indexed_stats.get(
                 "optimized_transpose_pre_concat_nhwc_add_chains",
+                0,
+            )
+        )
+        + int(
+            indexed_stats.get(
+                "optimized_transpose_pre_concat_nhwc_leaky_chains",
                 0,
             )
         )

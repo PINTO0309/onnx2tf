@@ -16,6 +16,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _broadcast_static_shapes,
     _clone_quantization,
     _is_fully_known_positive_shape,
+    _is_singleton_constant_tensor,
     _permute_shape,
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
@@ -53,6 +54,7 @@ _SWISH_STATS_KEY = "optimized_transpose_pre_concat_nhwc_swish_chains"
 _SLICE_STATS_KEY = "optimized_transpose_pre_concat_nhwc_slice_chains"
 _SPLIT_STATS_KEY = "optimized_transpose_pre_concat_nhwc_split_chains"
 _ADD_STATS_KEY = "optimized_transpose_pre_concat_nhwc_add_chains"
+_LEAKY_STATS_KEY = "optimized_transpose_pre_concat_nhwc_leaky_chains"
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
 
@@ -75,6 +77,9 @@ class _NhwcConcatInputPlan:
     add_op: Optional[OperatorIR] = None
     add_source_names: Tuple[str, ...] = ()
     extra_adapter_ops: Tuple[OperatorIR, ...] = ()
+    leaky_neg_op: Optional[OperatorIR] = None
+    leaky_pos_relu_op: Optional[OperatorIR] = None
+    leaky_tensor_names: Tuple[str, ...] = ()
     pads_tensor_name: Optional[str] = None
     pads_nhwc: Optional[np.ndarray] = None
     clone_pads: bool = False
@@ -1036,6 +1041,165 @@ def _resolve_add_input_plan(
     )
 
 
+def _resolve_leaky_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    input_name: str,
+    concat_index: int,
+    model_outputs: set[str],
+) -> Optional[_NhwcConcatInputPlan]:
+    sub_op = graph_index.producer(input_name)
+    sub_index = None if sub_op is None else graph_index.operator_index(sub_op)
+    if (
+        sub_op is None
+        or sub_index is None
+        or str(sub_op.op_type) != "SUB"
+        or len(sub_op.inputs) != 2
+        or len(sub_op.outputs) != 1
+        or str(sub_op.outputs[0]) != input_name
+        or input_name in model_outputs
+        or set(graph_index.consumer_indices(input_name))
+        != {int(concat_index)}
+    ):
+        return None
+
+    pos_relu_output_name = str(sub_op.inputs[0])
+    mul_output_name = str(sub_op.inputs[1])
+    pos_relu_op = graph_index.producer(pos_relu_output_name)
+    mul_op = graph_index.producer(mul_output_name)
+    pos_relu_index = (
+        None
+        if pos_relu_op is None
+        else graph_index.operator_index(pos_relu_op)
+    )
+    mul_index = None if mul_op is None else graph_index.operator_index(mul_op)
+    if (
+        pos_relu_op is None
+        or pos_relu_index is None
+        or str(pos_relu_op.op_type) != "RELU"
+        or len(pos_relu_op.inputs) != 1
+        or len(pos_relu_op.outputs) != 1
+        or str(pos_relu_op.outputs[0]) != pos_relu_output_name
+        or mul_op is None
+        or mul_index is None
+        or str(mul_op.op_type) != "MUL"
+        or len(mul_op.inputs) != 2
+        or len(mul_op.outputs) != 1
+        or str(mul_op.outputs[0]) != mul_output_name
+    ):
+        return None
+
+    neg_relu_op: Optional[OperatorIR] = None
+    neg_relu_index: Optional[int] = None
+    neg_relu_output_name: Optional[str] = None
+    for alpha_index in (0, 1):
+        alpha_name = str(mul_op.inputs[alpha_index])
+        candidate_name = str(mul_op.inputs[1 - alpha_index])
+        if not _is_singleton_constant_tensor(model_ir, alpha_name):
+            continue
+        candidate_op = graph_index.producer(candidate_name)
+        candidate_index = (
+            None
+            if candidate_op is None
+            else graph_index.operator_index(candidate_op)
+        )
+        if (
+            candidate_op is not None
+            and candidate_index is not None
+            and str(candidate_op.op_type) == "RELU"
+            and len(candidate_op.inputs) == 1
+            and len(candidate_op.outputs) == 1
+            and str(candidate_op.outputs[0]) == candidate_name
+        ):
+            neg_relu_op = candidate_op
+            neg_relu_index = int(candidate_index)
+            neg_relu_output_name = candidate_name
+            break
+    if (
+        neg_relu_op is None
+        or neg_relu_index is None
+        or neg_relu_output_name is None
+    ):
+        return None
+
+    neg_output_name = str(neg_relu_op.inputs[0])
+    neg_op = graph_index.producer(neg_output_name)
+    neg_index = None if neg_op is None else graph_index.operator_index(neg_op)
+    if (
+        neg_op is None
+        or neg_index is None
+        or str(neg_op.op_type) != "NEG"
+        or len(neg_op.inputs) != 1
+        or len(neg_op.outputs) != 1
+        or str(neg_op.outputs[0]) != neg_output_name
+    ):
+        return None
+
+    adapter_output_name = str(neg_op.inputs[0])
+    if str(pos_relu_op.inputs[0]) != adapter_output_name:
+        return None
+    adapter_op = graph_index.producer(adapter_output_name)
+    adapter_index = (
+        None if adapter_op is None else graph_index.operator_index(adapter_op)
+    )
+    if (
+        adapter_op is None
+        or adapter_index is None
+        or str(adapter_op.op_type) != "TRANSPOSE"
+        or len(adapter_op.inputs) < 2
+        or len(adapter_op.outputs) != 1
+        or str(adapter_op.outputs[0]) != adapter_output_name
+        or _read_transpose_perm(model_ir, adapter_op)
+        != _PERM_NHWC_TO_NCHW
+        or adapter_output_name in model_outputs
+        or set(graph_index.consumer_indices(adapter_output_name))
+        != {int(neg_index), int(pos_relu_index)}
+        or set(graph_index.consumer_indices(neg_output_name))
+        != {int(neg_relu_index)}
+        or set(graph_index.consumer_indices(neg_relu_output_name))
+        != {int(mul_index)}
+        or set(graph_index.consumer_indices(pos_relu_output_name))
+        != {int(sub_index)}
+        or set(graph_index.consumer_indices(mul_output_name))
+        != {int(sub_index)}
+    ):
+        return None
+
+    leaky_tensor_names = (
+        neg_output_name,
+        neg_relu_output_name,
+        pos_relu_output_name,
+        mul_output_name,
+        input_name,
+    )
+    if any(name in model_outputs for name in leaky_tensor_names):
+        return None
+    source_name = str(adapter_op.inputs[0])
+    rank_four_names = (
+        source_name,
+        adapter_output_name,
+        *leaky_tensor_names,
+    )
+    if any(
+        model_ir.tensors.get(name) is None
+        or len(list(model_ir.tensors[name].shape)) != 4
+        for name in rank_four_names
+    ):
+        return None
+    return _NhwcConcatInputPlan(
+        kind="leaky",
+        adapter_op=adapter_op,
+        source_name=source_name,
+        output_name=input_name,
+        remove_adapter=True,
+        leaky_neg_op=neg_op,
+        leaky_pos_relu_op=pos_relu_op,
+        leaky_tensor_names=leaky_tensor_names,
+        adapter_output_name=adapter_output_name,
+    )
+
+
 def _resolve_family_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -1134,6 +1298,23 @@ def _resolve_family_input_plan(
         )
     if family == "add":
         return _resolve_add_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+        )
+    if family == "leaky":
+        unary_plan = _resolve_unary_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+        )
+        if unary_plan is not None:
+            return unary_plan
+        return _resolve_leaky_input_plan(
             model_ir,
             graph_index,
             input_name=input_name,
@@ -1245,6 +1426,9 @@ def _resolve_nhwc_concat_candidate(
         add_count = sum(plan.kind == "add" for plan in input_plans)
         if family == "add" and add_count < 1:
             continue
+        leaky_count = sum(plan.kind == "leaky" for plan in input_plans)
+        if family == "leaky" and leaky_count < 1:
+            continue
 
         if family in {
             "unary",
@@ -1256,6 +1440,7 @@ def _resolve_nhwc_concat_candidate(
             "slice",
             "split",
             "add",
+            "leaky",
         }:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
@@ -1279,6 +1464,7 @@ def _resolve_nhwc_concat_candidate(
                     "slice",
                     "split",
                     "add",
+                    "leaky",
                 }:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
@@ -1438,6 +1624,17 @@ def _has_nhwc_add_concat_candidate(pass_state: ModelIRPassState) -> bool:
     )
 
 
+def _has_nhwc_leaky_concat_candidate(pass_state: ModelIRPassState) -> bool:
+    return (
+        _resolve_nhwc_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="leaky",
+        )
+        is not None
+    )
+
+
 def _optimize_transpose_pre_concat_nhwc_direct_chains(
     model_ir: ModelIR,
     *,
@@ -1583,6 +1780,21 @@ def _optimize_transpose_pre_concat_nhwc_add_chains(
         model_ir,
         family="add",
         stats_key=_ADD_STATS_KEY,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+
+def _optimize_transpose_pre_concat_nhwc_leaky_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
+    return _optimize_transpose_pre_concat_nhwc_family(
+        model_ir,
+        family="leaky",
+        stats_key=_LEAKY_STATS_KEY,
         graph_index=graph_index,
         layout_state=layout_state,
     )
@@ -1957,6 +2169,37 @@ def _apply_add_input_plan(
         )
 
 
+def _apply_leaky_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    input_plan: _NhwcConcatInputPlan,
+) -> None:
+    assert input_plan.leaky_neg_op is not None
+    assert input_plan.leaky_pos_relu_op is not None
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=input_plan.leaky_neg_op,
+        new_inputs=[input_plan.source_name],
+        graph_index=graph_index,
+    )
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=input_plan.leaky_pos_relu_op,
+        new_inputs=[input_plan.source_name],
+        graph_index=graph_index,
+    )
+    for tensor_name in input_plan.leaky_tensor_names:
+        tensor = model_ir.tensors.get(tensor_name)
+        _permute_tensor_metadata_if_rank_matches(
+            tensor,
+            _PERM_NCHW_TO_NHWC,
+        )
+        if tensor is not None:
+            tensor.quantization = _clone_nhwc_quantization(
+                tensor.quantization
+            )
+
+
 def _optimize_transpose_pre_concat_nhwc_family(
     model_ir: ModelIR,
     *,
@@ -1986,6 +2229,7 @@ def _optimize_transpose_pre_concat_nhwc_family(
         ] = {}
         applied_split_operators: set[int] = set()
         applied_add_operators: set[int] = set()
+        applied_leaky_operators: set[int] = set()
         for input_plan in candidate.input_plans:
             if input_plan.unary_op is not None:
                 _set_operator_inputs(
@@ -2039,6 +2283,16 @@ def _optimize_transpose_pre_concat_nhwc_family(
                         input_plan,
                     )
                     applied_add_operators.add(add_operator_id)
+                new_concat_inputs.append(input_plan.output_name)
+            elif input_plan.leaky_neg_op is not None:
+                leaky_operator_id = id(input_plan.leaky_neg_op)
+                if leaky_operator_id not in applied_leaky_operators:
+                    _apply_leaky_input_plan(
+                        model_ir,
+                        graph_index,
+                        input_plan,
+                    )
+                    applied_leaky_operators.add(leaky_operator_id)
                 new_concat_inputs.append(input_plan.output_name)
             elif input_plan.softmax_op is not None:
                 _apply_softmax_input_plan(
@@ -2304,6 +2558,14 @@ def run_nhwc_concat_layout_cleanup(
         )
         return {**stats, "changed": bool(stats.get(_ADD_STATS_KEY, 0))}
 
+    def _run_leaky(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_pre_concat_nhwc_leaky_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {**stats, "changed": bool(stats.get(_LEAKY_STATS_KEY, 0))}
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -2387,6 +2649,14 @@ def run_nhwc_concat_layout_cleanup(
                 priority=100,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_leaky",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_leaky,
+                precondition=_has_nhwc_leaky_concat_candidate,
+                priority=110,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -2400,6 +2670,7 @@ def run_nhwc_concat_layout_cleanup(
             _SLICE_STATS_KEY: 0,
             _SPLIT_STATS_KEY: 0,
             _ADD_STATS_KEY: 0,
+            _LEAKY_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(
