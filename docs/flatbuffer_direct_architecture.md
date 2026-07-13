@@ -398,7 +398,7 @@ mixed-input quantized-post families remain in legacy.
 
 The strict direct, unary, Pad-plus-direct, mixed unary-plus-Pad, all-Pad,
 expanded-Swish, Dequantize, PReLU, Softmax, and exact pseudo-LeakyRelu
-plus bounded Slice/Split quantized-post paths are independently owned by
+plus bounded Slice/Split/Add quantized-post paths are independently owned by
 `passes/nhwc_concat_quantized_layout.py`. They recognize rank-four direct
 NHWC→NCHW inputs, optionally followed by RELU, RELU6, LOGISTIC, TANH, GELU, or
 an exact constant PAD, the exact `Logistic(x) * x` expanded-Swish diamond,
@@ -425,6 +425,10 @@ and uses the float path's provenance-preserving copy-on-write materializer.
 The bounded Split pass accepts a constant channel axis and no secondary output
 adapter. Multiple outputs from one Split may feed the root Concat; shared
 application state rewrites the axis and all output metadata exactly once.
+The first bounded Add pass accepts exactly two direct rank-four adapter
+operands and direct Concat companions. Shared-plan cleanup walks Add operand
+plans and removes every now-dead adapter while retaining public or still-used
+boundaries.
 The transactional passes
 rewire Concat and bounded branches to NHWC, retain shared/public input
 adapters, redirect Quantize to one canonical post output, and coalesce
@@ -448,7 +452,8 @@ under stable IDs
 `layout.nhwc_pre_concat_quantized_softmax`, followed by
 `layout.nhwc_pre_concat_quantized_leaky` and
 `layout.nhwc_pre_concat_quantized_slice`, followed by
-`layout.nhwc_pre_concat_quantized_split`. Shared pads constants are
+`layout.nhwc_pre_concat_quantized_split` and
+`layout.nhwc_pre_concat_quantized_add`. Shared pads constants are
 materialized once and reused by every selected Pad. Other broader mixed
 quantized inputs remain in legacy.
 

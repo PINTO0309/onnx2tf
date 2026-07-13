@@ -722,6 +722,47 @@ def _quantized_split_model(
     return model_ir
 
 
+def _quantized_add_model(
+    *,
+    public_add_output: bool = False,
+) -> ModelIR:
+    model_ir = _quantized_model()
+    model_ir.inputs.append("a2_nhwc")
+    model_ir.tensors["a2_nhwc"] = _tensor(
+        "a2_nhwc",
+        [1, 5, 7, 2],
+    )
+    model_ir.tensors["a2_nchw"] = _tensor(
+        "a2_nchw",
+        [1, 2, 5, 7],
+    )
+    model_ir.tensors["a_add"] = _tensor(
+        "a_add",
+        [1, 2, 5, 7],
+    )
+    model_ir.tensors["a_add"].quantization = QuantParamIR(
+        scale=[0.4] * 2,
+        zero_point=[0] * 2,
+        quantized_dimension=1,
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    concat_index = model_ir.operators.index(concat_op)
+    model_ir.operators[concat_index:concat_index] = [
+        OperatorIR(
+            "TRANSPOSE",
+            ["a2_nhwc", "pre_perm"],
+            ["a2_nchw"],
+        ),
+        OperatorIR("ADD", ["a_nchw", "a2_nchw"], ["a_add"]),
+    ]
+    concat_op.inputs[0] = "a_add"
+    if public_add_output:
+        model_ir.outputs.append("a_add")
+    return model_ir
+
+
 def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
     assert actual.inputs == expected.inputs
     assert actual.outputs == expected.outputs
@@ -1263,6 +1304,45 @@ def test_nhwc_quantized_split_outputs_are_applied_once() -> None:
 
 def test_nhwc_quantized_split_rejects_public_output() -> None:
     model_ir = _quantized_split_model(public_split_output=True)
+    original = deepcopy(model_ir)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
+    _assert_model_equal(model_ir, original)
+
+
+def test_nhwc_quantized_flat_add_input_is_indexed() -> None:
+    model_ir = _quantized_add_model()
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_quantized_rewritten(
+        model_ir,
+        expected_concat_inputs=["a_add", "b_nhwc"],
+    )
+    add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+    assert add_op.inputs == ["a_nhwc", "a2_nhwc"]
+    add_tensor = model_ir.tensors["a_add"]
+    assert add_tensor.shape == [1, 5, 7, 2]
+    assert isinstance(add_tensor.quantization, QuantParamIR)
+    assert add_tensor.quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_quantized_add"
+    )
+    assert event["status"] == "changed"
+
+
+def test_nhwc_quantized_add_rejects_public_output() -> None:
+    model_ir = _quantized_add_model(public_add_output=True)
     original = deepcopy(model_ir)
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)

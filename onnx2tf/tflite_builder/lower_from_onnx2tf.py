@@ -14015,6 +14015,29 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             )
             if indexed_quantized_split_family:
                 continue
+            quantized_add_actions = [
+                action
+                for action in concat_input_actions
+                if str(action.get("kind", "")) == "add"
+            ]
+            indexed_quantized_add_family = (
+                post_quantize_idx is not None
+                and len(quantized_add_actions) >= 1
+                and all(
+                    str(action.get("kind", "")) in {"direct", "add"}
+                    for action in concat_input_actions
+                )
+                and all(
+                    _is_indexed_direct_add_plan(
+                        dict(action.get("plan", {})),
+                        concat_idx=int(concat_idx),
+                        consumers=consumers,
+                    )
+                    for action in quantized_add_actions
+                )
+            )
+            if indexed_quantized_add_family:
+                continue
             indexed_unary_family = (
                 post_quantize_idx is None
                 and sum(
@@ -14559,6 +14582,12 @@ def _optimize_transpose_pre_concat_nhwc_chains(
         + int(
             quantized_indexed_stats.get(
                 "optimized_transpose_pre_concat_nhwc_quantized_split_chains",
+                0,
+            )
+        )
+        + int(
+            quantized_indexed_stats.get(
+                "optimized_transpose_pre_concat_nhwc_quantized_add_chains",
                 0,
             )
         )
