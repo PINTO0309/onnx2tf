@@ -1572,6 +1572,15 @@ rewrite. The lowerer retains a private compatibility wrapper and passes the
 session `LayoutState`; complete operator-list construction is forbidden by the
 ownership gate.
 
+Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
+operator list. The established matcher still converts each eligible Squeeze to
+the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct
+operator metadata changes are complete, one `ModelIRGraphIndex` is constructed
+and the prefixes are inserted in reverse candidate order at their original
+positions. Tensor pruning and newly generated shape tensors are reconciled with
+the session `LayoutState`. Consequently, the only complete `model_ir.operators`
+assignments left in the central lowerer are explicit snapshot rollback paths.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

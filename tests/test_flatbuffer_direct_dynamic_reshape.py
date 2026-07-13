@@ -8,6 +8,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _infer_batch_matmul_output_shape_and_signature,
     _reconcile_static_tensor_shapes,
+    _replace_expand_dims_and_squeeze_with_reshape,
     _restore_placeholder_matmul_flattened_inputs,
     _resolve_dynamic_reshape_shapes,
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs,
@@ -209,6 +210,63 @@ def test_dynamic_rank1_unsqueeze_inserts_indexed_runtime_shape_pipeline(
     assert reshape_op.inputs[0] == "x"
     assert reshape_op.inputs[1].endswith("_unsqueeze_runtime_shape")
     assert reshape_op.options["newShape"] == []
+    assert layout_state.validate_against_model_ir(model_ir) == []
+
+
+def test_dynamic_squeeze_inserts_pre_ops_without_rebuilding_operator_list(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("dynamic_squeeze")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 288, 1, 144],
+        shape_signature=[-1, 288, 1, -1],
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 288, 144],
+        shape_signature=[-1, 288, -1],
+    )
+    squeeze_op = OperatorIR(
+        op_type="SQUEEZE",
+        inputs=["x"],
+        outputs=["y"],
+        options={"squeezeDims": [2]},
+    )
+    model_ir.operators = [squeeze_op]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = _replace_expand_dims_and_squeeze_with_reshape(
+        model_ir,
+        layout_state=layout_state,
+    )
+
+    assert stats == {
+        "replaced_expand_dims_and_squeeze_with_reshape": 1,
+        "expand_dims_squeeze_rewrite_shape_tensors": 1,
+    }
+    assert refresh_count == 1
+    assert [op.op_type for op in model_ir.operators] == [
+        "SHAPE",
+        "GATHER",
+        "RESHAPE",
+    ]
+    assert model_ir.operators[-1] is squeeze_op
+    assert squeeze_op.inputs[0] == "x"
+    assert squeeze_op.outputs == ["y"]
     assert layout_state.validate_against_model_ir(model_ir) == []
 
 

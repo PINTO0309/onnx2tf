@@ -507,6 +507,17 @@ one initial refresh, final type indices, and layout consistency. The lowerer
 keeps its compatibility wrapper and production order. No model conversion or
 inference was run.
 
+Dynamic Squeeze runtime-shape prefixes now use differential insertion. The
+existing rewrite still produces the same `SHAPE` and `GATHER` pair and converts
+the original Squeeze object to Reshape. Instead of rebuilding the complete
+operator list, it builds one index after all direct metadata changes and
+inserts recorded prefixes in reverse original-index order, preserving graph
+order for multiple candidates. The main call supplies session layout state,
+and focused validation proves one initial refresh, exact
+`SHAPE/GATHER/RESHAPE` order, original operator identity, and layout
+consistency. Central lowerer `model_ir.operators` assignments are now limited
+to explicit snapshot rollback. No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

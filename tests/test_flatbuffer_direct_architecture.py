@@ -360,6 +360,25 @@ def test_unsupported_split_fallback_has_indexed_pass_owner() -> None:
     assert "graph_index.insert_operator(" in pass_source
 
 
+def test_expand_squeeze_pre_ops_use_differential_graph_index_insertion() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    source = lowering_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function_node = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_replace_expand_dims_and_squeeze_with_reshape"
+    )
+    function_source = ast.get_source_segment(source, function_node)
+    assert function_source is not None
+    assert "model_ir.operators =" not in function_source
+    assert "ModelIRGraphIndex(model_ir)" in function_source
+    assert "graph_index.insert_operator(" in function_source
+
+
 def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

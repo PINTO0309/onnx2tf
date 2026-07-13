@@ -1545,7 +1545,11 @@ def _sanitize_squeeze_axes_with_static_input_shapes(model_ir: ModelIR) -> Dict[s
     }
 
 
-def _replace_expand_dims_and_squeeze_with_reshape(model_ir: ModelIR) -> Dict[str, int]:
+def _replace_expand_dims_and_squeeze_with_reshape(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Replace EXPAND_DIMS/SQUEEZE with RESHAPE for LiteRT.js WebGPU compatibility.
 
@@ -1872,15 +1876,15 @@ def _replace_expand_dims_and_squeeze_with_reshape(model_ir: ModelIR) -> Dict[str
         shape_tensors_created += 1
 
     if len(pre_ops_by_index) > 0:
-        rebuilt_ops: List[OperatorIR] = []
-        for idx, op in enumerate(model_ir.operators):
-            if idx in pre_ops_by_index:
-                rebuilt_ops.extend(pre_ops_by_index[idx])
-            rebuilt_ops.append(op)
-        model_ir.operators = rebuilt_ops
+        graph_index = ModelIRGraphIndex(model_ir)
+        for op_index in sorted(pre_ops_by_index, reverse=True):
+            for pre_op in reversed(pre_ops_by_index[op_index]):
+                graph_index.insert_operator(int(op_index), pre_op)
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {
         "replaced_expand_dims_and_squeeze_with_reshape": int(rewritten),
         "expand_dims_squeeze_rewrite_shape_tensors": int(shape_tensors_created),
@@ -51822,7 +51826,10 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _replace_expand_dims_and_squeeze_with_reshape(model_ir)
+    _replace_expand_dims_and_squeeze_with_reshape(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _reconcile_static_tensor_shapes(model_ir)
     _advance_post_progress()
 
