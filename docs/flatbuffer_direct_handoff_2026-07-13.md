@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `82d8777` (`characterize dual mul concat layout`)
+- Latest implementation checkpoint: `af26412` (`extract dual mul concat layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `82d8777` and the documentation checkpoint
+  `af26412` and the documentation checkpoint
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -129,6 +129,9 @@ then characterized the next dual-Mul/Concat family.
       branches.
     - Preserved production behavior and all six raw call positions;
       mechanical extraction remains the next checkpoint.
+    - Moved the complete matcher to `passes/dual_mul_concat_layout.py` with AST
+      equivalence in `af26412`; the compatibility wrapper and all six raw
+      positions remain.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -144,10 +147,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the characterized
+  The immediate next unit is the extracted
   `_optimize_transpose_dual_mul_concat_prepost_nhwc_chains`: move it
-  mechanically to a focused pass-family module, prove AST identity, and retain
-  all six raw production positions until indexed migration.
+  to shared graph/layout state and replace all six raw production positions
+  with a stable transactional runner.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -169,7 +172,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `82d8777`; after the documentation
+implementation working tree is clean at `af26412`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -321,6 +324,10 @@ sequential with only one model/process active at a time.
   `12 passed, 756 deselected in 2.71s`.
 - Full direct selection after moving the fixture and adding ten boundaries:
   `1285 passed, 5 deselected, 2 warnings in 165.06s`.
+- Dual-Mul/Concat extraction, characterization, and ownership focus:
+  `49 passed in 20.24s`; the extracted function AST exactly matched `82d8777`.
+- Full direct selection after mechanical extraction:
+  `1286 passed, 5 deselected, 2 warnings in 163.50s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -352,13 +359,12 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Move `_optimize_transpose_dual_mul_concat_prepost_nhwc_chains` mechanically
-   from the central lowerer to a focused pass-family module while retaining a
-   signature-compatible wrapper.
-3. Add AST-equivalence and single-owner architecture coverage, preserving all
-   six raw production call positions and ordering.
-4. Run focused and full direct gates, then commit and push extraction before
-   indexed mutation changes.
+2. Separate the complete dual-Mul candidate plan from mutation and reuse it as
+   the indexed precondition, including broadcast/constant feasibility.
+3. Migrate copy-on-write, inputs/outputs, structural removal, pruning, and
+   layout metadata to one graph index/state and stable runner.
+4. Replace all six raw calls, then run focused, sequential Tier 1, and full
+   direct gates before committing and pushing indexed migration.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1043,3 +1049,25 @@ selection passed:
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently. Mechanical extraction with AST-equivalence and ownership gates
 is the next separate checkpoint.
+
+### Dual-Mul/Concat mechanical extraction checkpoint
+
+Checkpoint `af26412` moved the complete 297-line matcher mechanically to
+`passes/dual_mul_concat_layout.py`. Its function AST, including docstring and
+nested copy-on-write helper, exactly matches checkpoint `82d8777`. The lowerer
+keeps a signature-compatible wrapper, and all six raw production positions
+remain unchanged to preserve ordering and retry behavior.
+
+The architecture gate fixes the focused module as the single implementation
+owner, its lowerer alias and wrapper, and exactly six production calls. Focused
+characterization and ownership validation passed 49 tests. The complete
+sequential direct selection passed:
+
+```text
+1286 passed, 5 deselected, 2 warnings in 163.50s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently. Indexed candidate planning, differential copy-on-write, layout
+state reconciliation, runner integration, and raw-call replacement remain the
+next checkpoint.
