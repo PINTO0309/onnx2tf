@@ -350,6 +350,16 @@ pycompile, diff, and AST-equivalence checks pass. No model conversion or
 inference was run. The remaining nearby rewrites are graph-aware or depend on
 shared shape-normalization policy and should not be moved mechanically.
 
+Rank-4 layout hinting and CF/NHWC shape normalization now have a Torch-free
+shared owner in `pytorch_shape_policy.py`. All three ASTs match the prior
+exporter checkpoint exactly. Fourteen direct cases characterize rank rejection,
+preferred-channel and singleton-channel inference, ambiguous layouts, CF/NHWC
+conversion, and `out_hw` preservation. Shape-policy and architecture validation
+passes 79 tests; syntax, Ruff, pycompile, diff, and AST-equivalence checks pass.
+No model conversion or inference was run. This removes the ownership blocker
+for moving channel-last GAP/Conv input repair without introducing an exporter
+import cycle.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

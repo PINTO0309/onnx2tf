@@ -2039,6 +2039,14 @@ rewrite's representative success form and unmatched-source no-op behavior.
 Graph-aware GatherND boundary repair remains in the exporter and is deliberately
 not mixed into this pure source-rewrite boundary.
 
+Rank-4 generated-source shape policy has a Torch-free shared owner in
+`pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
+used by both exporter policy and source rewrites without importing the exporter
+or duplicating heuristics. The three function ASTs are identical to their former
+exporter definitions, and direct tests cover non-rank-4 passthrough, preferred
+channel selection, singleton-channel hints, ambiguous layouts, and spatial
+dimension preservation.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
