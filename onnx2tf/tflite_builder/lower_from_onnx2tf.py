@@ -13800,6 +13800,20 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             )
             if indexed_prelu_family:
                 continue
+            indexed_softmax_family = (
+                softmax_action_count == 1
+                and sum(
+                    str(action.get("kind", "")) == "direct"
+                    for action in concat_input_actions
+                )
+                >= 1
+                and all(
+                    str(action.get("kind", "")) in {"direct", "softmax"}
+                    for action in concat_input_actions
+                )
+            )
+            if indexed_softmax_family:
+                continue
             nhwc_inputs_ok = True
             nhwc_ref_shape: Optional[List[int]] = None
             for action in concat_input_actions:
@@ -14050,6 +14064,12 @@ def _optimize_transpose_pre_concat_nhwc_chains(
         + int(
             indexed_stats.get(
                 "optimized_transpose_pre_concat_nhwc_prelu_chains",
+                0,
+            )
+        )
+        + int(
+            indexed_stats.get(
+                "optimized_transpose_pre_concat_nhwc_softmax_chains",
                 0,
             )
         )

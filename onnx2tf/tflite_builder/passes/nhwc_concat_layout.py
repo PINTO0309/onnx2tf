@@ -16,6 +16,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _broadcast_static_shapes,
     _clone_quantization,
     _is_fully_known_positive_shape,
+    _permute_shape,
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
     _read_transpose_perm,
@@ -35,6 +36,8 @@ from onnx2tf.tflite_builder.ir import (
 
 _PERM_NHWC_TO_NCHW = [0, 3, 1, 2]
 _PERM_NCHW_TO_NHWC = [0, 2, 3, 1]
+_PERM_NHWC_TO_NHCW = [0, 1, 3, 2]
+_PERM_NCHW_TO_NHCW = [0, 2, 1, 3]
 _DIRECT_STATS_KEY = "optimized_transpose_pre_concat_nhwc_direct_chains"
 _UNARY_STATS_KEY = "optimized_transpose_pre_concat_nhwc_unary_chains"
 _PAD_STATS_KEY = "optimized_transpose_pre_concat_nhwc_pad_chains"
@@ -42,6 +45,7 @@ _DEQUANTIZE_STATS_KEY = (
     "optimized_transpose_pre_concat_nhwc_dequantize_chains"
 )
 _PRELU_STATS_KEY = "optimized_transpose_pre_concat_nhwc_prelu_chains"
+_SOFTMAX_STATS_KEY = "optimized_transpose_pre_concat_nhwc_softmax_chains"
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
 
@@ -56,6 +60,7 @@ class _NhwcConcatInputPlan:
     pad_op: Optional[OperatorIR] = None
     dequantize_op: Optional[OperatorIR] = None
     prelu_op: Optional[OperatorIR] = None
+    softmax_op: Optional[OperatorIR] = None
     pads_tensor_name: Optional[str] = None
     pads_nhwc: Optional[np.ndarray] = None
     clone_pads: bool = False
@@ -64,6 +69,7 @@ class _NhwcConcatInputPlan:
     alpha_permutation: Optional[Tuple[int, ...]] = None
     rewrite_alpha: bool = False
     clone_alpha: bool = False
+    adapter_output_name: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +115,38 @@ def _unique_tensor_name(model_ir: ModelIR, base: str) -> str:
         name = f"{base}_{suffix}"
         suffix += 1
     return name
+
+
+def _find_or_create_perm_tensor(
+    model_ir: ModelIR,
+    *,
+    base_name: str,
+    permutation: List[int],
+) -> str:
+    expected = np.asarray(permutation, dtype=np.int32)
+    for tensor_name, tensor in model_ir.tensors.items():
+        if tensor.data is None:
+            continue
+        try:
+            data = np.asarray(tensor.data)
+        except Exception:
+            continue
+        if (
+            data.dtype == np.int32
+            and int(data.size) == len(permutation)
+            and np.array_equal(data.reshape(-1), expected)
+        ):
+            return str(tensor_name)
+    tensor_name = _unique_tensor_name(model_ir, base_name)
+    model_ir.tensors[tensor_name] = TensorIR(
+        name=tensor_name,
+        dtype="INT32",
+        shape=[len(permutation)],
+        shape_signature=[len(permutation)],
+        data=np.array(expected, copy=True),
+        is_variable=False,
+    )
+    return tensor_name
 
 
 def _resolve_direct_input_plan(
@@ -506,6 +544,75 @@ def _resolve_prelu_input_plan(
     )
 
 
+def _resolve_softmax_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    input_name: str,
+    concat_index: int,
+    model_outputs: set[str],
+) -> Optional[_NhwcConcatInputPlan]:
+    softmax_op = graph_index.producer(input_name)
+    softmax_index = (
+        None if softmax_op is None else graph_index.operator_index(softmax_op)
+    )
+    if (
+        softmax_op is None
+        or softmax_index is None
+        or str(softmax_op.op_type) != "SOFTMAX"
+        or len(softmax_op.inputs) != 1
+        or len(softmax_op.outputs) != 1
+        or str(softmax_op.outputs[0]) != input_name
+        or input_name in model_outputs
+        or set(graph_index.consumer_indices(input_name))
+        != {int(concat_index)}
+    ):
+        return None
+
+    adapter_output_name = str(softmax_op.inputs[0])
+    adapter_op = graph_index.producer(adapter_output_name)
+    adapter_index = (
+        None if adapter_op is None else graph_index.operator_index(adapter_op)
+    )
+    if (
+        adapter_op is None
+        or adapter_index is None
+        or str(adapter_op.op_type) != "TRANSPOSE"
+        or len(adapter_op.inputs) < 2
+        or len(adapter_op.outputs) != 1
+        or str(adapter_op.outputs[0]) != adapter_output_name
+        or _read_transpose_perm(model_ir, adapter_op)
+        != _PERM_NHWC_TO_NCHW
+        or adapter_output_name in model_outputs
+        or set(graph_index.consumer_indices(adapter_output_name))
+        != {int(softmax_index)}
+    ):
+        return None
+
+    source_name = str(adapter_op.inputs[0])
+    source_tensor = model_ir.tensors.get(source_name)
+    adapter_output_tensor = model_ir.tensors.get(adapter_output_name)
+    output_tensor = model_ir.tensors.get(input_name)
+    if (
+        source_tensor is None
+        or len(list(source_tensor.shape)) != 4
+        or adapter_output_tensor is None
+        or len(list(adapter_output_tensor.shape)) != 4
+        or output_tensor is None
+        or len(list(output_tensor.shape)) != 4
+    ):
+        return None
+    return _NhwcConcatInputPlan(
+        kind="softmax",
+        adapter_op=adapter_op,
+        softmax_op=softmax_op,
+        source_name=source_name,
+        output_name=input_name,
+        remove_adapter=True,
+        adapter_output_name=adapter_output_name,
+    )
+
+
 def _resolve_family_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -558,6 +665,14 @@ def _resolve_family_input_plan(
             concat_index=concat_index,
             model_outputs=model_outputs,
             public_names=public_names,
+        )
+    if family == "softmax":
+        return _resolve_softmax_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
         )
     return None
 
@@ -634,8 +749,20 @@ def _resolve_nhwc_concat_candidate(
         prelu_count = sum(plan.kind == "prelu" for plan in input_plans)
         if family == "prelu" and prelu_count < 1:
             continue
+        softmax_count = sum(plan.kind == "softmax" for plan in input_plans)
+        if family == "softmax" and (
+            softmax_count != 1
+            or len(input_plans) - softmax_count < 1
+        ):
+            continue
 
-        if family in {"unary", "pad", "dequantize", "prelu"}:
+        if family in {
+            "unary",
+            "pad",
+            "dequantize",
+            "prelu",
+            "softmax",
+        }:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
             for input_plan in input_plans:
@@ -653,6 +780,7 @@ def _resolve_nhwc_concat_candidate(
                     "pad",
                     "dequantize",
                     "prelu",
+                    "softmax",
                 }:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
@@ -757,6 +885,17 @@ def _has_nhwc_prelu_concat_candidate(pass_state: ModelIRPassState) -> bool:
     )
 
 
+def _has_nhwc_softmax_concat_candidate(pass_state: ModelIRPassState) -> bool:
+    return (
+        _resolve_nhwc_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="softmax",
+        )
+        is not None
+    )
+
+
 def _optimize_transpose_pre_concat_nhwc_direct_chains(
     model_ir: ModelIR,
     *,
@@ -832,6 +971,21 @@ def _optimize_transpose_pre_concat_nhwc_prelu_chains(
     )
 
 
+def _optimize_transpose_pre_concat_nhwc_softmax_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
+    return _optimize_transpose_pre_concat_nhwc_family(
+        model_ir,
+        family="softmax",
+        stats_key=_SOFTMAX_STATS_KEY,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+
 def _apply_prelu_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -894,6 +1048,121 @@ def _apply_prelu_input_plan(
         )
 
 
+def _apply_softmax_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    input_plan: _NhwcConcatInputPlan,
+) -> None:
+    assert input_plan.softmax_op is not None
+    assert input_plan.adapter_output_name is not None
+    source_tensor = model_ir.tensors[input_plan.source_name]
+    softmax_output_tensor = model_ir.tensors[input_plan.output_name]
+    softmax_index = graph_index.operator_index(input_plan.softmax_op)
+    if softmax_index is None:
+        raise RuntimeError("indexed Softmax candidate disappeared before apply")
+
+    source_shape = [int(value) for value in source_tensor.shape]
+    source_signature = (
+        [int(value) for value in source_tensor.shape_signature]
+        if source_tensor.shape_signature is not None
+        else list(source_shape)
+    )
+    axis_last_shape = _permute_shape(
+        source_shape,
+        _PERM_NHWC_TO_NHCW,
+    )
+    axis_last_signature = _permute_shape(
+        source_signature,
+        _PERM_NHWC_TO_NHCW,
+    )
+    if axis_last_shape is None or axis_last_signature is None:
+        raise RuntimeError("invalid rank-four Softmax layout projection")
+
+    axis_last_input_name = _unique_tensor_name(
+        model_ir,
+        f"{input_plan.adapter_output_name}_axis_last",
+    )
+    axis_last_output_name = _unique_tensor_name(
+        model_ir,
+        f"{input_plan.output_name}_axis_last",
+    )
+    perm_tensor_name = _find_or_create_perm_tensor(
+        model_ir,
+        base_name=f"{input_plan.output_name}_nhwc_to_nhcw_perm",
+        permutation=_PERM_NHWC_TO_NHCW,
+    )
+    original_output_quantization = _clone_quantization(
+        softmax_output_tensor.quantization
+    )
+    model_ir.tensors[axis_last_input_name] = TensorIR(
+        name=axis_last_input_name,
+        dtype=str(source_tensor.dtype),
+        shape=[int(value) for value in axis_last_shape],
+        shape_signature=[int(value) for value in axis_last_signature],
+        data=None,
+        is_variable=False,
+        quantization=_clone_permuted_quantization(
+            source_tensor.quantization,
+            _PERM_NHWC_TO_NHCW,
+        ),
+        onnx_tensor_name=source_tensor.onnx_tensor_name,
+    )
+    model_ir.tensors[axis_last_output_name] = TensorIR(
+        name=axis_last_output_name,
+        dtype=str(softmax_output_tensor.dtype),
+        shape=[int(value) for value in axis_last_shape],
+        shape_signature=[int(value) for value in axis_last_signature],
+        data=None,
+        is_variable=False,
+        quantization=_clone_permuted_quantization(
+            original_output_quantization,
+            _PERM_NCHW_TO_NHCW,
+        ),
+        onnx_tensor_name=softmax_output_tensor.onnx_tensor_name,
+    )
+
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=input_plan.softmax_op,
+        new_inputs=[axis_last_input_name],
+        graph_index=graph_index,
+    )
+    _set_operator_outputs(
+        model_ir=model_ir,
+        op=input_plan.softmax_op,
+        new_outputs=[axis_last_output_name],
+        graph_index=graph_index,
+    )
+    graph_index.insert_operator(
+        int(softmax_index),
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=[input_plan.source_name, perm_tensor_name],
+            outputs=[axis_last_input_name],
+        ),
+    )
+    updated_softmax_index = graph_index.operator_index(input_plan.softmax_op)
+    if updated_softmax_index is None:
+        raise RuntimeError("indexed Softmax disappeared after adapter insert")
+    graph_index.insert_operator(
+        int(updated_softmax_index) + 1,
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=[axis_last_output_name, perm_tensor_name],
+            outputs=[input_plan.output_name],
+        ),
+    )
+
+    _permute_tensor_metadata_if_rank_matches(
+        softmax_output_tensor,
+        _PERM_NCHW_TO_NHWC,
+    )
+    softmax_output_tensor.quantization = _clone_permuted_quantization(
+        original_output_quantization,
+        _PERM_NCHW_TO_NHWC,
+    )
+
+
 def _optimize_transpose_pre_concat_nhwc_family(
     model_ir: ModelIR,
     *,
@@ -934,6 +1203,13 @@ def _optimize_transpose_pre_concat_nhwc_family(
                     unary_output_tensor.quantization = _clone_nhwc_quantization(
                         unary_output_tensor.quantization
                     )
+                new_concat_inputs.append(input_plan.output_name)
+            elif input_plan.softmax_op is not None:
+                _apply_softmax_input_plan(
+                    model_ir,
+                    graph_index,
+                    input_plan,
+                )
                 new_concat_inputs.append(input_plan.output_name)
             elif input_plan.prelu_op is not None:
                 _apply_prelu_input_plan(
@@ -1146,6 +1422,14 @@ def run_nhwc_concat_layout_cleanup(
         )
         return {**stats, "changed": bool(stats.get(_PRELU_STATS_KEY, 0))}
 
+    def _run_softmax(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_pre_concat_nhwc_softmax_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {**stats, "changed": bool(stats.get(_SOFTMAX_STATS_KEY, 0))}
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -1189,6 +1473,14 @@ def run_nhwc_concat_layout_cleanup(
                 priority=50,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_softmax",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_softmax,
+                precondition=_has_nhwc_softmax_concat_candidate,
+                priority=60,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -1197,6 +1489,7 @@ def run_nhwc_concat_layout_cleanup(
             _PAD_STATS_KEY: 0,
             _DEQUANTIZE_STATS_KEY: 0,
             _PRELU_STATS_KEY: 0,
+            _SOFTMAX_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(
