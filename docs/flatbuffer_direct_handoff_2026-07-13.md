@@ -144,6 +144,15 @@ only one Conv3D mention for fused-module raw-layout classification. Emitter and
 architecture validation passes 80 tests; syntax, Ruff, and diff checks pass. No
 model conversion or inference was run.
 
+The last large direct-module block, fused-module emission, has moved to the
+Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
+output fallback, raw NCHW/NCDHW aliases, public output correction, omitted
+channel-last aliases, materialized layout bridges, and generic output handling.
+Direct fixtures cover both planned folded input and implicit NHWC fallback.
+Emitter and architecture validation passes 84 tests; syntax, Ruff, and diff
+checks pass. The remaining direct-module function is about 171 lines and is a
+statement-free ordered dispatcher. No model conversion or inference was run.
+
 Conv2D and DepthwiseConv2D direct-module emission now live in the focused
 emitter. The move preserves folded channel-first inputs, shape-based no-permute
 guards, degenerate 1x1 alias reuse, planned pre-permutations, explicit F.pad,

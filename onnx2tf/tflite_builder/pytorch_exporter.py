@@ -65,6 +65,7 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
     _emit_native_conv2d_module_op_for_codegen,
     _emit_native_conv3d_module_op_for_codegen,
     _emit_native_fully_connected_module_op_for_codegen,
+    _emit_native_fused_module_op_for_codegen,
     _emit_native_prelu_module_op_for_codegen,
     _emit_native_recurrent_module_op_for_codegen,
     _emit_native_shape_transform_misc_op_for_codegen,
@@ -4642,114 +4643,30 @@ def _emit_native_direct_module_op_for_codegen(
         tensor_expr_fn=tensor_expr_fn,
     ):
         return True
-    if fused_module_spec is not None:
-        output_name = str(fused_module_spec["output_name"])
-        output_var = tensor_var_names[output_name]
-        fused_input_expr = tensor_expr_fn(str(fused_module_spec["input_name"]))
-        input_pre_permute = fused_module_spec.get("input_pre_permute", None)
-        fused_input_tensor = model_ir.tensors.get(str(fused_module_spec["input_name"]), None)
-        output_tensor = model_ir.tensors.get(output_name, None)
-        fallback_channel_last_conv_bridge = False
-        if isinstance(input_pre_permute, list) and len(input_pre_permute) == 4:
-            folded_channel_first_expr = tensor_expr_for_channel_first_bridge_fn(
-                str(fused_module_spec["input_name"]),
-                input_pre_permute,
-            )
-            if folded_channel_first_expr is not None:
-                fused_input_expr = str(folded_channel_first_expr)
-            else:
-                fused_input_expr = (
-                    f"{fused_input_expr}.permute({', '.join(str(int(v)) for v in input_pre_permute)}).contiguous()"
-                )
-        elif (
-            op_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}
-            and fused_input_tensor is not None
-            and output_tensor is not None
-            and is_channel_last_logical_layout(
-                normalize_logical_layout(fused_input_tensor.logical_layout)
-            )
-            and is_channel_last_logical_layout(
-                normalize_logical_layout(output_tensor.logical_layout)
-            )
-        ):
-            fused_input_expr = f"{fused_input_expr}.permute(0, 3, 1, 2).contiguous()"
-            fallback_channel_last_conv_bridge = True
-        raw_output_layout = LOGICAL_LAYOUT_UNKNOWN
-        if output_tensor is not None:
-            output_rank = len(list(output_tensor.shape))
-            if op_type in {"CONV_2D", "DEPTHWISE_CONV_2D", "TRANSPOSE_CONV"}:
-                raw_output_layout = channel_first_logical_layout(output_rank)
-            elif op_type == "CONV_3D":
-                raw_output_layout = channel_first_logical_layout(output_rank)
-        fused_module_expr = f"self.{attr_name}({fused_input_expr})"
-        if fallback_channel_last_conv_bridge:
-            fused_module_expr = f"{fused_module_expr}.permute(0, 2, 3, 1).contiguous()"
-            raw_output_layout = normalize_logical_layout(
-                output_tensor.logical_layout if output_tensor is not None else LOGICAL_LAYOUT_UNKNOWN
-            )
-        output_layout = normalize_logical_layout(
-            output_tensor.logical_layout if output_tensor is not None else LOGICAL_LAYOUT_UNKNOWN
-        )
-        normalized_raw_output_layout = normalize_logical_layout(raw_output_layout)
-        if (
-            output_tensor is not None
-            and is_channel_first_logical_layout(normalized_raw_output_layout)
-        ):
-            output_rank = len(list(output_tensor.shape))
-            if output_rank in {3, 4, 5}:
-                raw_output_var = derived_local_var_name_fn(f"{output_var}_cf", "t")
-                channel_first_tensor_expr_aliases[str(output_name)] = raw_output_var
-                forward_lines.append(f"{raw_output_var} = {fused_module_expr}")
-                if output_layout == normalized_raw_output_layout:
-                    if output_name in model_ir.outputs:
-                        weight_tensor = model_ir.tensors.get(str(op.inputs[1]), None) if len(op.inputs) >= 2 else None
-                        if (
-                            output_rank == 4
-                            and weight_tensor is not None
-                            and len(list(weight_tensor.shape)) >= 1
-                            and int(output_tensor.shape[-1]) == int(weight_tensor.shape[0])
-                            and int(output_tensor.shape[1]) != int(weight_tensor.shape[0])
-                        ):
-                            runtime_imports.add("_align_tensor_to_target_shape")
-                            forward_lines.append(
-                                f"{output_var} = _align_tensor_to_target_shape("
-                                f"{raw_output_var}.permute(0, 2, 3, 1).contiguous(), "
-                                f"{target_shape_literal_fn(output_name)})"
-                            )
-                        else:
-                            forward_lines.append(f"{output_var} = {raw_output_var}")
-                    return True
-                if is_channel_last_logical_layout(output_layout):
-                    if (
-                        all_consumers_are_channel_first_binary_ops_fn(output_name)
-                        or can_omit_materialized_channel_last_alias_fn(output_name)
-                    ):
-                        return True
-                    perm_to_output = logical_layout_permutation(
-                        source_layout=normalized_raw_output_layout,
-                        target_layout=output_layout,
-                    )
-                    if perm_to_output is None:
-                        raise ModelIRPyTorchExportError(
-                            "Native PyTorch-like model.py codegen could not derive a layout bridge "
-                            f"for fused module output. output={output_name} raw_layout={normalized_raw_output_layout} "
-                            f"target_layout={output_layout}"
-                        )
-                    runtime_imports.add("_align_tensor_to_target_shape")
-                    forward_lines.append(
-                        f"{output_var} = _align_tensor_to_target_shape("
-                        f"{raw_output_var}.permute({', '.join(str(int(v)) for v in perm_to_output)}).contiguous(), "
-                        f"{target_shape_literal_fn(output_name)})"
-                    )
-                    return True
-                forward_lines.append(
-                    f"{output_var} = {emit_module_output_expr_fn(output_name=output_name, expr=raw_output_var, raw_output_layout=raw_output_layout)}"
-                )
-                return True
-        channel_first_tensor_expr_aliases.pop(str(output_name), None)
-        forward_lines.append(
-            f"{output_var} = {emit_module_output_expr_fn(output_name=output_name, expr=fused_module_expr, raw_output_layout=raw_output_layout)}"
-        )
+    if _emit_native_fused_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=op_type,
+        attr_name=attr_name,
+        fused_module_spec=fused_module_spec,
+        tensor_var_names=tensor_var_names,
+        channel_first_tensor_expr_aliases=channel_first_tensor_expr_aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=tensor_expr_fn,
+        tensor_expr_for_channel_first_bridge_fn=(
+            tensor_expr_for_channel_first_bridge_fn
+        ),
+        all_consumers_are_channel_first_binary_ops_fn=(
+            all_consumers_are_channel_first_binary_ops_fn
+        ),
+        can_omit_materialized_channel_last_alias_fn=(
+            can_omit_materialized_channel_last_alias_fn
+        ),
+        derived_local_var_name_fn=derived_local_var_name_fn,
+        emit_module_output_expr_fn=emit_module_output_expr_fn,
+        target_shape_literal_fn=target_shape_literal_fn,
+    ):
         return True
     if _emit_native_conv2d_module_op_for_codegen(
         model_ir=model_ir,

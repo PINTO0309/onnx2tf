@@ -1883,6 +1883,14 @@ before. The direct-module dispatcher has consequently fallen from 374 lines at
 the preceding checkpoint to roughly 255 lines, with the fused-module branch as
 its only remaining large implementation block.
 
+Fused-module emission is now separated too. Planned input permutation folding,
+legacy NHWC Conv fallback, raw-output layout classification, channel-first alias
+retention, public-output correction, channel-last materialization, and generic
+module-output fallback are owned by one focused emitter. The former direct-
+module implementation is now an approximately 171-line ordered dispatcher: it
+contains no generated statement append and no permutation expression, only the
+capability guard, attribute/spec lookup, and family emitter delegation.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

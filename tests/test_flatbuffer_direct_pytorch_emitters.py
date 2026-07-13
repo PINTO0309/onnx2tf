@@ -7,6 +7,7 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
     _emit_native_conv2d_module_op_for_codegen,
     _emit_native_conv3d_module_op_for_codegen,
     _emit_native_fully_connected_module_op_for_codegen,
+    _emit_native_fused_module_op_for_codegen,
     _emit_native_prelu_module_op_for_codegen,
     _emit_native_recurrent_module_op_for_codegen,
     _emit_native_shape_transform_misc_op_for_codegen,
@@ -1292,3 +1293,115 @@ def test_conv2d_module_emitter_preserves_padded_runtime_fallback() -> None:
     ]
     assert aliases == {}
     assert runtime_imports == {"_apply_module_conv2d"}
+
+
+def _fused_conv_model_ir() -> tuple[ModelIR, OperatorIR]:
+    model_ir = ModelIR(name="fused_conv_emitter")
+    model_ir.tensors = {
+        "x": TensorIR(
+            "x",
+            "FLOAT32",
+            [1, 4, 4, 3],
+            logical_layout="NHWC",
+        ),
+        "weight": TensorIR("weight", "FLOAT32", [5, 3, 3, 3]),
+        "y": TensorIR(
+            "y",
+            "FLOAT32",
+            [1, 4, 4, 5],
+            logical_layout="NHWC",
+        ),
+    }
+    return model_ir, OperatorIR("CONV_2D", ["x", "weight"], ["y"])
+
+
+def _emit_fused_conv(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    spec: dict[str, object] | None,
+    aliases: dict[str, str],
+    runtime_imports: set[str],
+    forward_lines: list[str],
+    folded_input_expr: str | None,
+) -> bool:
+    return _emit_native_fused_module_op_for_codegen(
+        model_ir=model_ir,
+        op=op,
+        op_type=str(op.op_type),
+        attr_name="fused_conv_0",
+        fused_module_spec=spec,
+        tensor_var_names={"y": "y_var"},
+        channel_first_tensor_expr_aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"expr_{name}",
+        tensor_expr_for_channel_first_bridge_fn=(
+            lambda _name, _perm: folded_input_expr
+        ),
+        all_consumers_are_channel_first_binary_ops_fn=lambda _name: False,
+        can_omit_materialized_channel_last_alias_fn=lambda _name: False,
+        derived_local_var_name_fn=lambda _name, _prefix: "y_var_cf_0",
+        emit_module_output_expr_fn=(
+            lambda *, output_name, expr, raw_output_layout: (
+                f"bridge({output_name}, {expr}, {raw_output_layout})"
+            )
+        ),
+        target_shape_literal_fn=lambda _name: "[1, 4, 4, 5]",
+    )
+
+
+def test_fused_module_emitter_materializes_folded_channel_first_output() -> None:
+    model_ir, op = _fused_conv_model_ir()
+    aliases: dict[str, str] = {}
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_fused_conv(
+        model_ir=model_ir,
+        op=op,
+        spec={
+            "input_name": "x",
+            "output_name": "y",
+            "input_pre_permute": [0, 3, 1, 2],
+        },
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        folded_input_expr="folded_x_cf",
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var_cf_0 = self.fused_conv_0(folded_x_cf)",
+        "y_var = _align_tensor_to_target_shape("
+        "y_var_cf_0.permute(0, 2, 3, 1).contiguous(), [1, 4, 4, 5])",
+    ]
+    assert aliases == {"y": "y_var_cf_0"}
+    assert runtime_imports == {"_align_tensor_to_target_shape"}
+
+
+def test_fused_module_emitter_preserves_channel_last_fallback_bridge() -> None:
+    model_ir, op = _fused_conv_model_ir()
+    aliases = {"y": "stale_alias"}
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_fused_conv(
+        model_ir=model_ir,
+        op=op,
+        spec={"input_name": "x", "output_name": "y"},
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        folded_input_expr=None,
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var = bridge(y, self.fused_conv_0("
+        "expr_x.permute(0, 3, 1, 2).contiguous())"
+        ".permute(0, 2, 3, 1).contiguous(), NHWC)"
+    ]
+    assert aliases == {}
+    assert runtime_imports == set()
