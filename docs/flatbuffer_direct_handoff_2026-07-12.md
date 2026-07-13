@@ -3383,3 +3383,31 @@ The complete sequential direct regression selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_layernorm_layout_superpoint` artifacts were removed after metrics
 inspection.
+
+### Terminal Mean characterization and mechanical extraction
+
+The next bounded rule is the generic terminal unary/Mean layout propagation
+matcher. Checkpoint `8bce913` fixed three previously implicit boundaries: a
+shared leading NHWC→NCHW adapter is retained while only the target branch is
+rewritten, unary-output fan-out rejects the rewrite, and an inverse-Transpose
+tail is left to the dedicated paired-adapter pass. Existing tests continue to
+cover a unary success path and shape-proven rank preservation when keepDims is
+omitted.
+
+The complete 259-line implementation moved mechanically to
+`passes/terminal_mean_layout.py`, with an AST identical to `8bce913`. Unary
+allowlist and linearity, rank/axis normalization, public boundaries,
+keep-dims-by-shape fallback, constant terminal Reshape, metadata permutation,
+and conditional leading-Transpose removal are unchanged. The lowerer retains
+only a signature-compatible wrapper, and all six production positions remain
+unchanged pending indexed migration.
+
+Focused characterization, legacy, and ownership validation passed 6 tests.
+The complete sequential direct regression selection passed:
+
+```text
+1167 passed, 5 deselected, 2 warnings in 151.84s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently.

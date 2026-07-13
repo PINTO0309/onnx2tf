@@ -175,6 +175,16 @@ state; duplicate consumer entries from a self-Mul are normalized by operator
 identity in the guard. The module has no whole-graph map construction or
 direct operator-list mutation.
 
+Terminal unary/Mean layout propagation is mechanically owned by
+`passes/terminal_mean_layout.py`. It recognizes a canonical NHWC→NCHW adapter,
+a linear layout-agnostic unary chain, a rank-four constant-axis Mean, and a
+constant-shape terminal Reshape. It preserves shared leading adapters, rejects
+unary fan-out, accepts shape-proven rank preservation when keepDims metadata is
+missing, and defers inverse-Transpose tails to the dedicated paired-adapter
+rewrite. The complete 259-line matcher is AST-identical to checkpoint
+`8bce913`; the lowerer retains a compatibility wrapper and all six production
+positions pending indexed runner migration.
+
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and
 internal tensor metadata agree and no axis-sensitive gather/slice consumer
