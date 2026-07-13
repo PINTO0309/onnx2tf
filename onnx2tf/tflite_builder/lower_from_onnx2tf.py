@@ -13831,6 +13831,20 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
                 continue
             if all_direct_input_actions and post_quantize_idx is not None:
                 continue
+            indexed_quantized_unary_family = (
+                post_quantize_idx is not None
+                and sum(
+                    str(action.get("kind", "")) == "unary"
+                    for action in concat_input_actions
+                )
+                >= 1
+                and all(
+                    str(action.get("kind", "")) in {"direct", "unary"}
+                    for action in concat_input_actions
+                )
+            )
+            if indexed_quantized_unary_family:
+                continue
             indexed_unary_family = (
                 post_quantize_idx is None
                 and sum(
@@ -14309,6 +14323,12 @@ def _optimize_transpose_pre_concat_nhwc_chains(
         + int(
             quantized_indexed_stats.get(
                 "optimized_transpose_pre_concat_nhwc_quantized_direct_chains",
+                0,
+            )
+        )
+        + int(
+            quantized_indexed_stats.get(
+                "optimized_transpose_pre_concat_nhwc_quantized_unary_chains",
                 0,
             )
         )

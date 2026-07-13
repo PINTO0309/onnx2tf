@@ -36,6 +36,7 @@ def _quantized_model(
     shared_adapter: bool = False,
     public_adapter: bool = False,
     unary_input: bool = False,
+    unary_op_type: str = "RELU",
     boundary: str | None = None,
 ) -> ModelIR:
     model_ir = ModelIR("nhwc_quantized_direct_pre_concat")
@@ -139,16 +140,76 @@ def _quantized_model(
     ]
 
     if unary_input:
-        model_ir.tensors["a_relu"] = _tensor("a_relu", [1, 2, 5, 7])
+        unary_shape = (
+            [1, 2, 9, 7]
+            if boundary == "unary_spatial_mismatch"
+            else [1, 2, 5, 7]
+        )
+        if boundary == "invalid_unary_output_rank":
+            unary_shape = [1, 2, 5]
+        model_ir.tensors["a_relu"] = _tensor("a_relu", unary_shape)
+        model_ir.tensors["a_relu"].quantization = QuantParamIR(
+            scale=[0.3] * 2,
+            zero_point=[0] * 2,
+            quantized_dimension=1,
+        )
         concat_op = next(
             op for op in model_ir.operators if op.op_type == "CONCATENATION"
         )
         concat_index = model_ir.operators.index(concat_op)
         model_ir.operators.insert(
             concat_index,
-            OperatorIR("RELU", ["a_nchw"], ["a_relu"]),
+            OperatorIR(
+                "ABS" if boundary == "unsupported_unary" else unary_op_type,
+                ["a_nchw"],
+                ["a_relu"],
+            ),
         )
         concat_op.inputs[0] = "a_relu"
+        if boundary == "unary_output_fanout":
+            model_ir.tensors["unary_side"] = _tensor(
+                "unary_side",
+                list(unary_shape),
+            )
+            model_ir.outputs.append("unary_side")
+            model_ir.operators.append(
+                OperatorIR("IDENTITY", ["a_relu"], ["unary_side"])
+            )
+        if boundary == "public_unary_output":
+            model_ir.outputs.append("a_relu")
+        if boundary == "unary_adapter_fanout":
+            model_ir.tensors["unary_adapter_side"] = _tensor(
+                "unary_adapter_side",
+                [1, 2, 5, 7],
+            )
+            model_ir.outputs.append("unary_adapter_side")
+            model_ir.operators.append(
+                OperatorIR(
+                    "IDENTITY",
+                    ["a_nchw"],
+                    ["unary_adapter_side"],
+                )
+            )
+        if boundary == "public_unary_adapter":
+            model_ir.outputs.append("a_nchw")
+    if boundary == "pad_input":
+        model_ir.tensors["pads"] = TensorIR(
+            name="pads",
+            dtype="INT32",
+            shape=[4, 2],
+            shape_signature=[4, 2],
+            data=np.zeros((4, 2), dtype=np.int32),
+        )
+        model_ir.tensors["a_pad"] = _tensor("a_pad", [1, 2, 5, 7])
+        concat_op = next(
+            op for op in model_ir.operators if op.op_type == "CONCATENATION"
+        )
+        concat_index = model_ir.operators.index(concat_op)
+        model_ir.operators.insert(
+            concat_index,
+            OperatorIR("PAD", ["a_nchw", "pads"], ["a_pad"]),
+        )
+        concat_op.inputs[0] = "a_pad"
     if multiple_posts:
         model_ir.tensors["quant_nhwc_2"] = _tensor(
             "quant_nhwc_2",
@@ -247,12 +308,18 @@ def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
             np.testing.assert_array_equal(tensor.data, expected_tensor.data)
 
 
-def _assert_quantized_rewritten(model_ir: ModelIR) -> None:
+def _assert_quantized_rewritten(
+    model_ir: ModelIR,
+    *,
+    expected_concat_inputs: list[str] | None = None,
+) -> None:
     concat_op = next(
         op for op in model_ir.operators if op.op_type == "CONCATENATION"
     )
     quantize_op = next(op for op in model_ir.operators if op.op_type == "QUANTIZE")
-    assert concat_op.inputs == ["a_nhwc", "b_nhwc"]
+    assert concat_op.inputs == (
+        expected_concat_inputs or ["a_nhwc", "b_nhwc"]
+    )
     assert concat_op.options["axis"] == 3
     assert model_ir.tensors["concat_nchw"].shape == [1, 5, 7, 5]
     concat_quantization = model_ir.tensors["concat_nchw"].quantization
@@ -359,8 +426,72 @@ def test_nhwc_quantized_direct_rejects_unsafe_or_partial_match(
     _assert_model_equal(model_ir, original)
 
 
-def test_nhwc_quantized_unary_input_remains_in_legacy() -> None:
-    model_ir = _quantized_model(unary_input=True)
+@pytest.mark.parametrize(
+    "unary_op_type",
+    ["RELU", "RELU6", "LOGISTIC", "TANH", "GELU"],
+)
+def test_nhwc_quantized_unary_input_is_indexed(unary_op_type: str) -> None:
+    model_ir = _quantized_model(
+        unary_input=True,
+        unary_op_type=unary_op_type,
+    )
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_quantized_rewritten(
+        model_ir,
+        expected_concat_inputs=["a_relu", "b_nhwc"],
+    )
+    unary_op = next(op for op in model_ir.operators if op.outputs == ["a_relu"])
+    assert unary_op.op_type == unary_op_type
+    assert unary_op.inputs == ["a_nhwc"]
+    unary_tensor = model_ir.tensors["a_relu"]
+    assert unary_tensor.shape == [1, 5, 7, 2]
+    unary_quantization = unary_tensor.quantization
+    assert isinstance(unary_quantization, QuantParamIR)
+    assert unary_quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_quantized_unary"
+    )
+    assert event["status"] == "changed"
+    assert event["metrics"]["snapshot_count"] == 1
+    assert event["metrics"]["fingerprint_count"] == 0
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "unsupported_unary",
+        "unary_output_fanout",
+        "public_unary_output",
+        "unary_adapter_fanout",
+        "public_unary_adapter",
+        "invalid_unary_output_rank",
+        "unary_spatial_mismatch",
+    ],
+)
+def test_nhwc_quantized_unary_rejects_unsafe_or_partial_match(
+    boundary: str,
+) -> None:
+    model_ir = _quantized_model(unary_input=True, boundary=boundary)
+    original = deepcopy(model_ir)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
+    _assert_model_equal(model_ir, original)
+
+
+def test_nhwc_quantized_pad_input_remains_in_legacy() -> None:
+    model_ir = _quantized_model(boundary="pad_input")
     diagnostics: list[dict] = []
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(
@@ -370,7 +501,7 @@ def test_nhwc_quantized_unary_input_remains_in_legacy() -> None:
 
     assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
     assert not any(
-        event["code"] == "layout.nhwc_pre_concat_quantized_direct"
+        event["code"] == "layout.nhwc_pre_concat_quantized_unary"
         and event["status"] == "changed"
         for event in diagnostics
     )
