@@ -5,7 +5,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from onnx2tf.tflite_builder.ir import ModelIR, QuantParamIR, TensorIR
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.shape_resolution import (
+    preserve_rewritten_output_dynamic_axes,
+)
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
 
 
 def _append_tensor_lineage_event(
@@ -30,6 +35,314 @@ def _build_tensor_producer_map(model_ir: ModelIR) -> Dict[str, int]:
         for output_name in op.outputs:
             producers[output_name] = op_idx
     return producers
+
+
+def _build_tensor_consumer_map(model_ir: ModelIR) -> Dict[str, List[int]]:
+    consumers: Dict[str, List[int]] = {}
+    for op_idx, op in enumerate(model_ir.operators):
+        for input_name in op.inputs:
+            consumers.setdefault(str(input_name), []).append(int(op_idx))
+    return consumers
+
+
+def _read_transpose_perm(
+    model_ir: ModelIR,
+    op: OperatorIR,
+) -> Optional[List[int]]:
+    if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 2:
+        return None
+    perm_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+    if perm_tensor is None or perm_tensor.data is None:
+        return None
+    perm = np.asarray(perm_tensor.data).reshape(-1)
+    if perm.size == 0:
+        return None
+    return [int(value) for value in perm.tolist()]
+
+
+def _replace_tensor_inputs(
+    model_ir: ModelIR,
+    src_name: str,
+    dst_name: str,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
+    if str(src_name) != str(dst_name):
+        _append_tensor_lineage_event(
+            model_ir=model_ir,
+            event={
+                "kind": "replace_input",
+                "src_name": str(src_name),
+                "dst_name": str(dst_name),
+            },
+        )
+    if graph_index is not None and graph_index.model_ir is model_ir:
+        affected_indices = sorted(set(graph_index.consumer_indices(src_name)))
+        for operator_index in affected_indices:
+            op = model_ir.operators[int(operator_index)]
+            graph_index.replace_operator_inputs(
+                operator_index,
+                [
+                    dst_name if input_name == src_name else input_name
+                    for input_name in op.inputs
+                ],
+            )
+        return
+    for op in model_ir.operators:
+        if op.inputs:
+            op.inputs = [
+                dst_name if input_name == src_name else input_name
+                for input_name in op.inputs
+            ]
+
+
+def _set_operator_inputs(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    new_inputs: List[str],
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
+    old_inputs = [str(value) for value in op.inputs]
+    normalized_new_inputs = [str(value) for value in new_inputs]
+    for old_name, new_name in zip(old_inputs, normalized_new_inputs):
+        if old_name == new_name:
+            continue
+        _append_tensor_lineage_event(
+            model_ir=model_ir,
+            event={
+                "kind": "replace_input",
+                "src_name": old_name,
+                "dst_name": new_name,
+                "source": "set_operator_inputs",
+            },
+        )
+    operator_index = (
+        graph_index.operator_index(op)
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if operator_index is None:
+        op.inputs = normalized_new_inputs
+    else:
+        graph_index.replace_operator_inputs(operator_index, normalized_new_inputs)
+
+
+def _set_operator_outputs(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    new_outputs: List[str],
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
+    old_outputs = [str(value) for value in op.outputs]
+    normalized_new_outputs = [str(value) for value in new_outputs]
+    for old_name, new_name in zip(old_outputs, normalized_new_outputs):
+        if old_name == new_name:
+            continue
+        preserve_rewritten_output_dynamic_axes(
+            source_tensor=model_ir.tensors.get(old_name, None),
+            target_tensor=model_ir.tensors.get(new_name, None),
+        )
+        _append_tensor_lineage_event(
+            model_ir=model_ir,
+            event={
+                "kind": "rename_tensor",
+                "old_name": old_name,
+                "new_name": new_name,
+                "source": "set_operator_outputs",
+            },
+        )
+    operator_index = (
+        graph_index.operator_index(op)
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if operator_index is None:
+        op.outputs = normalized_new_outputs
+    else:
+        graph_index.replace_operator_outputs(operator_index, normalized_new_outputs)
+
+
+def _replace_operator_input_at(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+    input_index: int,
+    new_input_name: str,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
+    if int(input_index) < 0 or int(input_index) >= len(op.inputs):
+        return
+    old_name = str(op.inputs[int(input_index)])
+    new_name = str(new_input_name)
+    if old_name != new_name:
+        _append_tensor_lineage_event(
+            model_ir=model_ir,
+            event={
+                "kind": "replace_input",
+                "src_name": old_name,
+                "dst_name": new_name,
+                "source": "replace_operator_input_at",
+            },
+        )
+    operator_index = (
+        graph_index.operator_index(op)
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if operator_index is None:
+        op.inputs[int(input_index)] = new_name
+    else:
+        new_inputs = [str(value) for value in op.inputs]
+        new_inputs[int(input_index)] = new_name
+        graph_index.replace_operator_inputs(operator_index, new_inputs)
+
+
+def _read_const_ints_from_tensor(
+    tensor: Optional[TensorIR],
+) -> Optional[List[int]]:
+    if tensor is None or tensor.data is None:
+        return None
+    try:
+        return [int(value) for value in np.asarray(tensor.data).reshape(-1).tolist()]
+    except Exception:
+        return None
+
+
+def _write_const_ints_to_tensor(
+    tensor: Optional[TensorIR],
+    values: List[int],
+) -> bool:
+    if tensor is None:
+        return False
+    current = _read_const_ints_from_tensor(tensor)
+    normalized = [int(value) for value in values]
+    if current == normalized:
+        return False
+    np_dtype = np.int32
+    if tensor.data is not None:
+        try:
+            np_dtype = np.asarray(tensor.data).dtype
+        except Exception:
+            np_dtype = np.int32
+    tensor.data = np.asarray(normalized, dtype=np_dtype)
+    tensor.shape = [int(len(normalized))]
+    tensor.shape_signature = [int(len(normalized))]
+    return True
+
+
+def _broadcast_static_shapes(
+    shape_a: Optional[List[int]],
+    shape_b: Optional[List[int]],
+) -> Optional[List[int]]:
+    if not _is_fully_known_positive_shape(
+        shape_a
+    ) or not _is_fully_known_positive_shape(shape_b):
+        return None
+    a = [int(value) for value in shape_a or []]
+    b = [int(value) for value in shape_b or []]
+    rank = max(len(a), len(b))
+    a = [1] * (rank - len(a)) + a
+    b = [1] * (rank - len(b)) + b
+    output: List[int] = []
+    for dim_a, dim_b in zip(a, b):
+        if dim_a == dim_b:
+            output.append(dim_a)
+        elif dim_a == 1:
+            output.append(dim_b)
+        elif dim_b == 1:
+            output.append(dim_a)
+        else:
+            return None
+    return output
+
+
+def _broadcast_shape_signatures(
+    signature_a: Optional[List[int]],
+    signature_b: Optional[List[int]],
+) -> Optional[List[int]]:
+    if signature_a is None or signature_b is None:
+        return None
+    a = [int(v) for v in list(signature_a)]
+    b = [int(v) for v in list(signature_b)]
+    rank = max(len(a), len(b))
+    a = [1] * (rank - len(a)) + a
+    b = [1] * (rank - len(b)) + b
+    out: List[int] = []
+    for dim_a, dim_b in zip(a, b):
+        if int(dim_a) == int(dim_b):
+            out.append(int(dim_a))
+            continue
+        if int(dim_a) == 1:
+            out.append(-1 if int(dim_b) < 0 else int(dim_b))
+            continue
+        if int(dim_b) == 1:
+            out.append(-1 if int(dim_a) < 0 else int(dim_a))
+            continue
+        if int(dim_a) < 0 and int(dim_b) < 0:
+            out.append(-1)
+            continue
+        if int(dim_a) < 0 and int(dim_b) > 1:
+            out.append(int(dim_b))
+            continue
+        if int(dim_b) < 0 and int(dim_a) > 1:
+            out.append(int(dim_a))
+            continue
+        return None
+    return out
+
+
+def _permute_tensor_metadata_if_rank_matches(
+    tensor: Optional[TensorIR],
+    perm: List[int],
+) -> None:
+    if tensor is None:
+        return
+    shape_src = list(tensor.shape) if tensor.shape is not None else None
+    if shape_src is not None and len(shape_src) == len(perm):
+        new_shape = _permute_shape(shape_src, perm)
+        if new_shape is not None:
+            tensor.shape = [int(value) for value in new_shape]
+    signature_src = (
+        list(tensor.shape_signature)
+        if tensor.shape_signature is not None
+        else (list(tensor.shape) if tensor.shape is not None else None)
+    )
+    if signature_src is not None and len(signature_src) == len(perm):
+        new_signature = _permute_shape(signature_src, perm)
+        if new_signature is not None:
+            tensor.shape_signature = [int(value) for value in new_signature]
+
+
+def _is_fully_known_positive_shape(shape: Optional[List[int]]) -> bool:
+    if shape is None or len(shape) == 0:
+        return False
+    return all(int(dim) > 0 for dim in shape)
+
+
+def _prune_unused_tensors(
+    model_ir: ModelIR,
+    layout_state: Optional[LayoutState] = None,
+) -> None:
+    used_tensor_names = set(model_ir.inputs + model_ir.outputs)
+    for op in model_ir.operators:
+        used_tensor_names.update(op.inputs)
+        used_tensor_names.update(op.outputs)
+    unused_tensor_names = [
+        name for name in model_ir.tensors if name not in used_tensor_names
+    ]
+    if unused_tensor_names:
+        _append_tensor_lineage_event(
+            model_ir=model_ir,
+            event={
+                "kind": "prune_unused_tensors",
+                "removed_names": [str(name) for name in unused_tensor_names],
+            },
+        )
+    for name in unused_tensor_names:
+        del model_ir.tensors[name]
+    if layout_state is not None:
+        layout_state.remove(unused_tensor_names)
 
 
 def _topologically_sort_operators(model_ir: ModelIR) -> Dict[str, int]:
@@ -91,15 +404,47 @@ def _rename_tensor_globally(
     model_ir: ModelIR,
     old_name: str,
     new_name: str,
+    layout_state: Optional[LayoutState] = None,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> None:
     if old_name == new_name:
         return
 
-    for op in model_ir.operators:
-        if len(op.inputs) > 0:
-            op.inputs = [new_name if input_name == old_name else input_name for input_name in op.inputs]
-        if len(op.outputs) > 0:
-            op.outputs = [new_name if output_name == old_name else output_name for output_name in op.outputs]
+    if graph_index is None:
+        for op in model_ir.operators:
+            if len(op.inputs) > 0:
+                op.inputs = [
+                    new_name if input_name == old_name else input_name
+                    for input_name in op.inputs
+                ]
+            if len(op.outputs) > 0:
+                op.outputs = [
+                    new_name if output_name == old_name else output_name
+                    for output_name in op.outputs
+                ]
+    else:
+        affected_indices = set(graph_index.consumer_indices(old_name))
+        producer_idx = graph_index.producers.get(str(old_name), None)
+        if producer_idx is not None:
+            affected_indices.add(int(producer_idx))
+        affected_indices.update(
+            int(index)
+            for index in graph_index.duplicate_producers.get(str(old_name), [])
+        )
+        for operator_idx in sorted(affected_indices):
+            op = model_ir.operators[int(operator_idx)]
+            new_inputs = [
+                new_name if input_name == old_name else input_name
+                for input_name in op.inputs
+            ]
+            if new_inputs != list(op.inputs):
+                graph_index.replace_operator_inputs(operator_idx, new_inputs)
+            new_outputs = [
+                new_name if output_name == old_name else output_name
+                for output_name in op.outputs
+            ]
+            if new_outputs != list(op.outputs):
+                graph_index.replace_operator_outputs(operator_idx, new_outputs)
 
     if len(model_ir.inputs) > 0:
         model_ir.inputs = [new_name if input_name == old_name else input_name for input_name in model_ir.inputs]
@@ -110,12 +455,16 @@ def _rename_tensor_globally(
     if old_tensor is None:
         if new_name in model_ir.tensors:
             del model_ir.tensors[new_name]
+        if layout_state is not None:
+            layout_state.remove([old_name, new_name])
         return
     old_tensor.name = new_name
     if new_name in model_ir.tensors and new_name != old_name:
         del model_ir.tensors[new_name]
     del model_ir.tensors[old_name]
     model_ir.tensors[new_name] = old_tensor
+    if layout_state is not None:
+        layout_state.rename(old_name, new_name)
     _append_tensor_lineage_event(
         model_ir=model_ir,
         event={
@@ -258,6 +607,85 @@ def _quant_scale_count(quantization: Any) -> int:
 def _is_per_tensor_quantization(quantization: Any) -> bool:
     count = _quant_scale_count(quantization)
     return count <= 1
+
+
+def _is_singleton_constant_tensor(
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> bool:
+    tensor = model_ir.tensors.get(str(tensor_name), None)
+    if tensor is None or tensor.data is None:
+        return False
+    try:
+        array = np.asarray(tensor.data)
+    except Exception:
+        return False
+    return int(array.size) == 1
+
+
+def _is_scalar_like_tensor(
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> bool:
+    tensor = model_ir.tensors.get(str(tensor_name), None)
+    if tensor is None:
+        return False
+    if tensor.data is not None:
+        try:
+            return int(np.asarray(tensor.data).size) == 1
+        except Exception:
+            return False
+    shape = list(tensor.shape) if tensor.shape is not None else []
+    if len(shape) == 0:
+        return False
+    if any(int(dim) <= 0 for dim in shape):
+        return False
+    return all(int(dim) == 1 for dim in shape)
+
+
+def _read_singleton_constant_float(
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> Optional[float]:
+    tensor = model_ir.tensors.get(str(tensor_name), None)
+    if tensor is None or tensor.data is None:
+        return None
+    try:
+        array = np.asarray(tensor.data)
+    except Exception:
+        return None
+    if int(array.size) != 1:
+        return None
+    value = float(array.reshape(-1)[0])
+    if not np.isfinite(value):
+        return None
+    return float(value)
+
+
+def _invert_perm(perm: List[int]) -> Optional[List[int]]:
+    rank = len(perm)
+    if sorted(perm) != [int(i) for i in range(rank)]:
+        return None
+    inverse = [0 for _ in range(rank)]
+    for index, value in enumerate(perm):
+        inverse[int(value)] = int(index)
+    return inverse
+
+
+def _normalize_squeeze_axes_for_rank(
+    axes: List[int],
+    rank: int,
+) -> Optional[List[int]]:
+    normalized: List[int] = []
+    for axis in axes:
+        value = int(axis)
+        if value < 0:
+            value += int(rank)
+        if value < 0 or value >= int(rank):
+            return None
+        if value not in normalized:
+            normalized.append(value)
+    return normalized
 
 
 def _permute_shape(shape: Optional[List[int]], perm: List[int]) -> Optional[List[int]]:

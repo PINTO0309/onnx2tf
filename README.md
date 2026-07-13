@@ -928,7 +928,7 @@ Optional:
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  ghcr.io/pinto0309/onnx2tf:2.6.1
+  ghcr.io/pinto0309/onnx2tf:2.6.2
 
   or
 
@@ -937,7 +937,7 @@ Optional:
   docker run --rm -it \
   -v `pwd`:/workdir \
   -w /workdir \
-  docker.io/pinto0309/onnx2tf:2.6.1
+  docker.io/pinto0309/onnx2tf:2.6.2
   or
 
   # Direct execution in Docker
@@ -946,7 +946,7 @@ Optional:
   docker run --rm \
   --user $(id -u):$(id -g) \
   -v $(pwd):/work \
-  docker.io/pinto0309/onnx2tf:2.6.1 \
+  docker.io/pinto0309/onnx2tf:2.6.2 \
   onnx2tf -i /work/densenet-12.onnx -o /work/saved_model
 
   or

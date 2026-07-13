@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "onnx2tf"
-version = "2.6.1"
+version = "2.6.2"
 description = "A tool for converting ONNX files to LiteRT/TFLite/TensorFlow, PyTorch native code (nn.Module), TorchScript (.pt), state_dict (.pt), Exported Program (.pt2), and Dynamo ONNX. It also supports direct conversion from LiteRT to PyTorch."
 readme = "README.md"
 requires-python = ">=3.12"

@@ -72,6 +72,67 @@ def test_flatbuffer_direct_bulk_runner_preserves_sorted_discovery_order(
     assert all(Path(path).parent.parent.name == "runs" for path in calls)
 
 
+def test_flatbuffer_direct_bulk_runner_collects_internal_pass_metrics(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    model = tmp_path / "model.onnx"
+    _write_dummy(model)
+    metrics_env = "ONNX2TF_INTERNAL_PASS_METRICS_PATH"
+    monkeypatch.delenv(metrics_env, raising=False)
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        stem = Path(cmd[cmd.index("-i") + 1]).stem
+        _write_accuracy_report(
+            path=artifact_dir / f"{stem}_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        _write_accuracy_report(
+            path=artifact_dir / f"{stem}_pytorch_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        metrics_path = Path(bulk_runner.os.environ[metrics_env])
+        metrics_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "event_count": 3,
+                    "status_counts": {"changed": 1, "skipped": 2},
+                    "totals": {
+                        "preflight_operators_visited": 9,
+                        "state_build_count": 1,
+                        "snapshot_count": 1,
+                        "fingerprint_count": 0,
+                    },
+                    "by_pass": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+    )
+
+    assert metrics_env not in bulk_runner.os.environ
+    assert state["entries"][0]["pass_metrics"]["event_count"] == 3
+    assert state["summary"]["pass_metrics"] == {
+        "models_with_metrics": 1,
+        "event_count": 3,
+        "totals": {
+            "preflight_operators_visited": 9,
+            "state_build_count": 1,
+            "snapshot_count": 1,
+            "fingerprint_count": 0,
+        },
+    }
+
+
 def test_flatbuffer_direct_bulk_runner_skips_missing_models_cleanly(
     tmp_path,
     monkeypatch,

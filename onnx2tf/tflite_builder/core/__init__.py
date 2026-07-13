@@ -13,6 +13,12 @@ from onnx2tf.tflite_builder.core.contracts import (
 )
 from onnx2tf.tflite_builder.core.graph import GraphIndex, ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+    summarize_model_ir_pass_diagnostics,
+)
 from onnx2tf.tflite_builder.core.lowering_registry import (
     LoweringRegistry,
     LoweringResolution,
@@ -27,6 +33,7 @@ from onnx2tf.tflite_builder.core.op_contracts import (
 )
 from onnx2tf.tflite_builder.core.passes import (
     OrderedPassManager,
+    PassInvariantError,
     PassPhase,
     PassResult,
     PassSpec,
@@ -46,6 +53,10 @@ __all__ = [
     "GraphIndex",
     "LayoutState",
     "ModelIRGraphIndex",
+    "ModelIRPreflightResult",
+    "ModelIRPassState",
+    "run_model_ir_pass_group",
+    "summarize_model_ir_pass_diagnostics",
     "ModelIRInvariantError",
     "LoweringRegistry",
     "LoweringResolution",
@@ -56,6 +67,7 @@ __all__ = [
     "NodeValidationError",
     "ValidationSpec",
     "OrderedPassManager",
+    "PassInvariantError",
     "PassPhase",
     "PassResult",
     "PassSpec",

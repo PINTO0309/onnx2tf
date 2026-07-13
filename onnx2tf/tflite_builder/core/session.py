@@ -36,6 +36,7 @@ class ConversionSession:
 
     def refresh_indexes(self) -> None:
         self.graph_index.refresh()
+        self.layout_state.sync_from_model_ir(self.model_ir)
 
     def record_diagnostic(self, *, stage: str, code: str, message: str) -> None:
         self.diagnostics.append(

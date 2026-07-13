@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Generic, Iterable, List, Optional, TypeV
 
 StateT = TypeVar("StateT")
 PassCallback = Callable[[StateT], Optional[Dict[str, Any]]]
+PreconditionCallback = Callable[[StateT], bool]
 FingerprintCallback = Callable[[StateT], bytes]
 ValidatorCallback = Callable[[StateT], Iterable[str]]
 CloneCallback = Callable[[StateT], Any]
@@ -29,6 +30,7 @@ class PassSpec(Generic[StateT]):
     pass_id: str
     phase: PassPhase
     callback: PassCallback[StateT]
+    precondition: Optional[PreconditionCallback[StateT]] = None
     priority: int = 100
     max_iterations: int = 1
     transactional: bool = False
@@ -42,6 +44,33 @@ class PassResult:
     changed: bool
     stopped_by_cycle: bool
     details: Dict[str, Any] = field(default_factory=dict)
+    snapshot_count: int = 0
+    fingerprint_count: int = 0
+
+
+class PassInvariantError(RuntimeError):
+    """Invariant failure raised after a transactional pass is rolled back."""
+
+    def __init__(
+        self,
+        *,
+        pass_id: str,
+        phase: PassPhase,
+        iterations: int,
+        problems: Iterable[str],
+        snapshot_count: int = 0,
+        fingerprint_count: int = 0,
+    ) -> None:
+        self.pass_id = str(pass_id)
+        self.phase = phase.name.lower()
+        self.iterations = int(iterations)
+        self.problems = tuple(str(problem) for problem in problems)
+        self.snapshot_count = int(snapshot_count)
+        self.fingerprint_count = int(fingerprint_count)
+        super().__init__(
+            "pass invariant violation: "
+            f"pass_id={self.pass_id} problems={list(self.problems[:8])}"
+        )
 
 
 class OrderedPassManager(Generic[StateT]):
@@ -84,35 +113,102 @@ class OrderedPassManager(Generic[StateT]):
             return None
         return hashlib.sha256(self._fingerprint(state)).hexdigest()
 
+    @staticmethod
+    def _new_problems(
+        *,
+        before: Iterable[str],
+        after: Iterable[str],
+    ) -> List[str]:
+        """Return invariant problems introduced by one transaction.
+
+        Some lowering phases temporarily carry invariant problems that are
+        repaired by a later reconciliation pass. A transactional rewrite must
+        not be blamed for those pre-existing problems, but it must still roll
+        back every problem that it adds. Preserve validator order and duplicate
+        counts so diagnostics remain deterministic.
+        """
+
+        accepted_counts: Dict[str, int] = {}
+        for problem in before:
+            key = str(problem)
+            accepted_counts[key] = int(accepted_counts.get(key, 0)) + 1
+
+        introduced: List[str] = []
+        for problem in after:
+            key = str(problem)
+            remaining = int(accepted_counts.get(key, 0))
+            if remaining > 0:
+                accepted_counts[key] = remaining - 1
+            else:
+                introduced.append(key)
+        return introduced
+
     def run(self, state: StateT) -> List[PassResult]:
         results: List[PassResult] = []
         for spec in self.ordered_specs():
+            detect_cycles = self._fingerprint is not None and spec.max_iterations > 1
             seen: set[str] = set()
             changed = False
             stopped_by_cycle = False
             details: Dict[str, Any] = {}
             iterations = 0
+            snapshot_count = 0
+            fingerprint_count = 0
             for _ in range(int(spec.max_iterations)):
-                before = self._digest(state)
+                if spec.precondition is not None and not spec.precondition(state):
+                    details["skipped_by_precondition"] = True
+                    break
+                before = self._digest(state) if detect_cycles else None
+                if detect_cycles:
+                    fingerprint_count += 1
                 if before is not None:
                     if before in seen:
                         stopped_by_cycle = True
                         break
                     seen.add(before)
                 snapshot = self._clone(state) if spec.transactional and self._clone else None
+                if snapshot is not None:
+                    snapshot_count += 1
+                accepted_problems = (
+                    list(self._validator(state))
+                    if spec.transactional and self._validator
+                    else []
+                )
                 raw = spec.callback(state)
                 current = dict(raw or {})
                 details.update(current)
                 iterations += 1
-                problems = list(self._validator(state)) if self._validator else []
+                validated_problems = (
+                    list(self._validator(state)) if self._validator else []
+                )
+                problems = (
+                    self._new_problems(
+                        before=accepted_problems,
+                        after=validated_problems,
+                    )
+                    if spec.transactional
+                    else validated_problems
+                )
                 if problems:
                     if snapshot is not None and self._restore is not None:
                         self._restore(state, snapshot)
-                    raise RuntimeError(
-                        f"pass invariant violation: pass_id={spec.pass_id} problems={problems[:8]}"
+                    raise PassInvariantError(
+                        pass_id=spec.pass_id,
+                        phase=spec.phase,
+                        iterations=iterations,
+                        problems=problems,
+                        snapshot_count=snapshot_count,
+                        fingerprint_count=fingerprint_count,
                     )
-                after = self._digest(state)
-                iteration_changed = bool(current.get("changed", before != after))
+                after = self._digest(state) if detect_cycles else None
+                if detect_cycles:
+                    fingerprint_count += 1
+                iteration_changed = bool(
+                    current.get(
+                        "changed",
+                        before != after if detect_cycles else False,
+                    )
+                )
                 changed = changed or iteration_changed
                 if not iteration_changed:
                     break
@@ -124,6 +220,8 @@ class OrderedPassManager(Generic[StateT]):
                     changed=changed,
                     stopped_by_cycle=stopped_by_cycle,
                     details=details,
+                    snapshot_count=snapshot_count,
+                    fingerprint_count=fingerprint_count,
                 )
             )
         return results
