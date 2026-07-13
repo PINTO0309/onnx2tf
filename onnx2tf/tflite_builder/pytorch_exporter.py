@@ -76,7 +76,6 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _perm_cf_to_cl,
     _permute_shape,
     _preferred_reshape_target_values,
-    _preferred_reshape_target_values_for_op,
     _is_layout_only_transpose_by_shape,
     _is_standard_channel_layout_permutation,
     _is_inconsistent_standard_layout_transpose,
@@ -166,6 +165,7 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _rewrite_filter_tensors_for_pytorch,
     _rewrite_layout_sensitive_ops,
     _shrink_preserved_channel_last_regions_for_pytorch,
+    _synchronize_reshape_targets_with_output_tensors,
 )
 from onnx2tf.tflite_builder.passes.pytorch_recurrent import (
     _can_direct_codegen_sequence_lstm_op,
@@ -10114,36 +10114,6 @@ def get_supported_pytorch_kernel_op_types() -> Set[str]:
 
 
 
-def _synchronize_reshape_targets_with_output_tensors(
-    model_ir: ModelIR,
-    preserve_channel_last_tensor_names: Set[str],
-) -> None:
-    for op in model_ir.operators:
-        if str(op.op_type) != "RESHAPE" or len(op.outputs) != 1:
-            continue
-        if str(op.outputs[0]) in preserve_channel_last_tensor_names:
-            continue
-        out_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
-        if out_tensor is None:
-            continue
-        preferred_shape = _preferred_reshape_target_values_for_op(
-            model_ir=model_ir,
-            op=op,
-        )
-        if preferred_shape is None or len(preferred_shape) == 0:
-            continue
-        op.options["newShape"] = list(preferred_shape)
-        if len(op.inputs) < 2:
-            continue
-        shape_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
-        if shape_tensor is None or not isinstance(shape_tensor.data, np.ndarray):
-            continue
-        dtype = np.asarray(shape_tensor.data).dtype
-        shape_tensor.data = np.asarray(preferred_shape, dtype=dtype)
-        shape_tensor.shape = [int(len(preferred_shape))]
-        shape_tensor.shape_signature = [int(len(preferred_shape))]
-
-
 def _has_recurrent_sequence_context(model_ir: ModelIR) -> bool:
     recurrent_op_types = {
         "GRU",
@@ -10416,7 +10386,11 @@ def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
         if str(tensor_name) in preserve_channel_last_tensor_names:
             continue
         _permute_tensor_to_channel_first_inplace(tensor)
-    _synchronize_reshape_targets_with_output_tensors(normalized, preserve_channel_last_tensor_names)
+    _synchronize_reshape_targets_with_output_tensors(
+        normalized,
+        preserve_channel_last_tensor_names,
+        graph_index=layout_graph_index,
+    )
     _rewrite_filter_tensors_for_pytorch(
         normalized,
         graph_index=layout_graph_index,

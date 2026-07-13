@@ -18,6 +18,7 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _rewrite_filter_tensors_for_pytorch,
     _rewrite_layout_sensitive_ops,
     _shrink_preserved_channel_last_regions_for_pytorch,
+    _synchronize_reshape_targets_with_output_tensors,
 )
 
 
@@ -599,4 +600,57 @@ def test_layout_sensitive_rewrite_uses_shared_family_index(monkeypatch) -> None:
     np.testing.assert_array_equal(
         model_ir.tensors["axes"].data,
         np.asarray([1], dtype=np.int32),
+    )
+
+
+def test_reshape_target_synchronization_uses_shared_family_index(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(name="reshape_target_sync")
+    model_ir.tensors = {
+        "shape": TensorIR(
+            "shape",
+            "INT64",
+            [4],
+            [4],
+            data=np.asarray([1, 1, 64, 1], dtype=np.int64),
+        ),
+        "feature_nhwc": TensorIR(
+            "feature_nhwc",
+            "FLOAT32",
+            [1, 1, 64, 1],
+            [-1, 1, 64, 1],
+            logical_layout="NCHW",
+        ),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            "RESHAPE",
+            ["x", "shape"],
+            ["feature_nhwc"],
+            {"newShape": [1, 1, 64, 1]},
+        )
+    ]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    _synchronize_reshape_targets_with_output_tensors(
+        model_ir,
+        preserve_channel_last_tensor_names=set(),
+        graph_index=graph_index,
+    )
+
+    assert refresh_count == 1
+    assert model_ir.operators[0].options["newShape"] == [-1, 1, 1, 64]
+    np.testing.assert_array_equal(
+        model_ir.tensors["shape"].data,
+        np.asarray([-1, 1, 1, 64], dtype=np.int64),
     )

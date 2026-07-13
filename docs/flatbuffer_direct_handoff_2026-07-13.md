@@ -163,6 +163,12 @@ reuse by codegen. The 79-test focused selection passes, and nine synthetic
 op-family graphs match the implementation at checkpoint `09ed6b6` exactly. No
 model conversion or inference was run.
 
+Reshape target synchronization now follows the shared target policy in the
+Torch-free layout owner and queries only the normalizer's indexed Reshape
+family. A dynamic-signature INT64 fixture verifies target permutation, option
+updates, constant dtype preservation, and single-index reuse. The same focused
+selection now passes 80 tests; no model conversion or inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

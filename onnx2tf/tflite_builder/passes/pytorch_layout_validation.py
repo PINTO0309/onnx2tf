@@ -676,6 +676,43 @@ def _rewrite_layout_sensitive_ops(
                 op.options["newShape"] = list(resolved_preferred_shape)
 
 
+def _synchronize_reshape_targets_with_output_tensors(
+    model_ir: ModelIR,
+    preserve_channel_last_tensor_names: Set[str],
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    candidate_ops = [
+        model_ir.operators[int(index)]
+        for index in graph_index.operator_indices("RESHAPE")
+    ]
+    for op in candidate_ops:
+        if len(op.outputs) != 1:
+            continue
+        if str(op.outputs[0]) in preserve_channel_last_tensor_names:
+            continue
+        out_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+        if out_tensor is None:
+            continue
+        preferred_shape = _preferred_reshape_target_values_for_op(
+            model_ir=model_ir,
+            op=op,
+        )
+        if preferred_shape is None or len(preferred_shape) == 0:
+            continue
+        op.options["newShape"] = list(preferred_shape)
+        if len(op.inputs) < 2:
+            continue
+        shape_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+        if shape_tensor is None or not isinstance(shape_tensor.data, np.ndarray):
+            continue
+        dtype = np.asarray(shape_tensor.data).dtype
+        shape_tensor.data = np.asarray(preferred_shape, dtype=dtype)
+        shape_tensor.shape = [int(len(preferred_shape))]
+        shape_tensor.shape_signature = [int(len(preferred_shape))]
+
+
 def _propagate_channel_last_layouts(
     model_ir: ModelIR,
     *,

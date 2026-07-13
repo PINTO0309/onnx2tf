@@ -1763,6 +1763,9 @@ indices from the normalizer's shared graph index and retains the one-rewrite
 rule for shared constant tensors. Reshape target selection and channel-last
 name recognition live in `pytorch_layout_utils.py`, so canonicalization and
 native code generation share one policy without an exporter callback.
+The subsequent Reshape target synchronization step is co-located with that
+rewrite and enumerates only indexed Reshape operators, while preserving its
+feature-last exclusion and constant dtype behavior.
 
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
