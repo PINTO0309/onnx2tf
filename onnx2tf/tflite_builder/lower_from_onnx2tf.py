@@ -12639,6 +12639,47 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             and len(list(source_tensor.shape)) == 4
         )
 
+    def _is_indexed_direct_split_plan(
+        plan: Dict[str, Any],
+        *,
+        concat_idx: int,
+        consumers: Dict[str, List[int]],
+        model_outputs: set[str],
+    ) -> bool:
+        source_plan = dict(plan.get("source_plan", {}))
+        source_name = str(source_plan.get("pre_input_name", ""))
+        source_tensor = model_ir.tensors.get(source_name, None)
+        split_idx = int(plan.get("split_idx", -1))
+        if (
+            str(source_plan.get("kind", "")) != "direct"
+            or not bool(source_plan.get("remove_pre", False))
+            or list(plan.get("post_transpose_indices", [])) != []
+            or source_tensor is None
+            or len(list(source_tensor.shape)) != 4
+            or split_idx < 0
+            or split_idx >= len(model_ir.operators)
+        ):
+            return False
+        split_op = model_ir.operators[split_idx]
+        if (
+            str(split_op.op_type) != "SPLIT"
+            or len(split_op.inputs) < 2
+            or len(split_op.outputs) < 2
+        ):
+            return False
+        for output_name in [str(name) for name in split_op.outputs]:
+            output_tensor = model_ir.tensors.get(output_name, None)
+            if (
+                output_name in model_outputs
+                or output_tensor is None
+                or len(list(output_tensor.shape)) != 4
+                or not set(
+                    int(value) for value in consumers.get(output_name, [])
+                ).issubset({int(concat_idx)})
+            ):
+                return False
+        return True
+
     def _try_rewrite_add_input_to_nhwc(
         *,
         input_name: str,
@@ -13875,6 +13916,30 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             )
             if indexed_slice_family:
                 continue
+            split_actions = [
+                action
+                for action in concat_input_actions
+                if str(action.get("kind", "")) == "split"
+            ]
+            indexed_split_family = (
+                post_quantize_idx is None
+                and len(split_actions) >= 1
+                and all(
+                    str(action.get("kind", "")) in {"direct", "split"}
+                    for action in concat_input_actions
+                )
+                and all(
+                    _is_indexed_direct_split_plan(
+                        dict(action.get("plan", {})),
+                        concat_idx=int(concat_idx),
+                        consumers=consumers,
+                        model_outputs=model_outputs,
+                    )
+                    for action in split_actions
+                )
+            )
+            if indexed_split_family:
+                continue
             nhwc_inputs_ok = True
             nhwc_ref_shape: Optional[List[int]] = None
             for action in concat_input_actions:
@@ -14143,6 +14208,12 @@ def _optimize_transpose_pre_concat_nhwc_chains(
         + int(
             indexed_stats.get(
                 "optimized_transpose_pre_concat_nhwc_slice_chains",
+                0,
+            )
+        )
+        + int(
+            indexed_stats.get(
+                "optimized_transpose_pre_concat_nhwc_split_chains",
                 0,
             )
         )
