@@ -13,7 +13,9 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _broadcast_static_shapes,
     _clone_quantization,
+    _is_fully_known_positive_shape,
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
     _read_transpose_perm,
@@ -27,6 +29,7 @@ from onnx2tf.tflite_builder.ir import (
     OperatorIR,
     QuantParamIR,
     TensorIR,
+    normalize_onnx_shape,
 )
 
 
@@ -38,6 +41,7 @@ _PAD_STATS_KEY = "optimized_transpose_pre_concat_nhwc_pad_chains"
 _DEQUANTIZE_STATS_KEY = (
     "optimized_transpose_pre_concat_nhwc_dequantize_chains"
 )
+_PRELU_STATS_KEY = "optimized_transpose_pre_concat_nhwc_prelu_chains"
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
 
@@ -51,9 +55,15 @@ class _NhwcConcatInputPlan:
     unary_op: Optional[OperatorIR] = None
     pad_op: Optional[OperatorIR] = None
     dequantize_op: Optional[OperatorIR] = None
+    prelu_op: Optional[OperatorIR] = None
     pads_tensor_name: Optional[str] = None
     pads_nhwc: Optional[np.ndarray] = None
     clone_pads: bool = False
+    alpha_tensor_name: Optional[str] = None
+    selected_alpha: Optional[np.ndarray] = None
+    alpha_permutation: Optional[Tuple[int, ...]] = None
+    rewrite_alpha: bool = False
+    clone_alpha: bool = False
 
 
 @dataclass(frozen=True)
@@ -65,21 +75,31 @@ class _NhwcConcatCandidate:
     post_output_names: Tuple[str, ...]
 
 
-def _clone_nhwc_quantization(quantization: Any) -> Any:
+def _clone_permuted_quantization(
+    quantization: Any,
+    permutation: List[int] | Tuple[int, ...],
+) -> Any:
     cloned = _clone_quantization(quantization)
     if isinstance(cloned, QuantParamIR):
         old_dimension = int(cloned.quantized_dimension)
-        if 0 <= old_dimension < len(_PERM_NCHW_TO_NHWC):
+        if 0 <= old_dimension < len(permutation):
             cloned.quantized_dimension = int(
-                _PERM_NCHW_TO_NHWC.index(old_dimension)
+                list(permutation).index(old_dimension)
             )
     elif isinstance(cloned, dict) and "quantized_dimension" in cloned:
         old_dimension = int(cloned["quantized_dimension"])
-        if 0 <= old_dimension < len(_PERM_NCHW_TO_NHWC):
+        if 0 <= old_dimension < len(permutation):
             cloned["quantized_dimension"] = int(
-                _PERM_NCHW_TO_NHWC.index(old_dimension)
+                list(permutation).index(old_dimension)
             )
     return cloned
+
+
+def _clone_nhwc_quantization(quantization: Any) -> Any:
+    return _clone_permuted_quantization(
+        quantization,
+        _PERM_NCHW_TO_NHWC,
+    )
 
 
 def _unique_tensor_name(model_ir: ModelIR, base: str) -> str:
@@ -350,6 +370,142 @@ def _resolve_dequantize_input_plan(
     )
 
 
+def _select_prelu_alpha_for_nhwc(
+    *,
+    alpha_data: np.ndarray,
+    target_nhwc_shape: Optional[List[int]],
+) -> Optional[Tuple[np.ndarray, Optional[Tuple[int, ...]]]]:
+    candidates: List[Tuple[np.ndarray, Optional[Tuple[int, ...]]]] = []
+    if int(alpha_data.ndim) == 4:
+        candidates.append(
+            (
+                np.transpose(alpha_data, axes=_PERM_NCHW_TO_NHWC).astype(
+                    alpha_data.dtype,
+                    copy=False,
+                ),
+                tuple(_PERM_NCHW_TO_NHWC),
+            )
+        )
+    candidates.append((np.asarray(alpha_data), None))
+    if int(alpha_data.ndim) == 3:
+        candidates.append(
+            (
+                np.transpose(alpha_data, axes=[1, 2, 0]).astype(
+                    alpha_data.dtype,
+                    copy=False,
+                ),
+                (1, 2, 0),
+            )
+        )
+
+    for candidate, permutation in candidates:
+        if (
+            target_nhwc_shape is None
+            or not _is_fully_known_positive_shape(target_nhwc_shape)
+            or _broadcast_static_shapes(
+                [int(value) for value in target_nhwc_shape],
+                [int(value) for value in candidate.shape],
+            )
+            is not None
+        ):
+            return np.asarray(candidate), permutation
+    return None
+
+
+def _resolve_prelu_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    input_name: str,
+    concat_index: int,
+    model_outputs: set[str],
+    public_names: set[str],
+) -> Optional[_NhwcConcatInputPlan]:
+    prelu_op = graph_index.producer(input_name)
+    prelu_index = (
+        None if prelu_op is None else graph_index.operator_index(prelu_op)
+    )
+    if (
+        prelu_op is None
+        or prelu_index is None
+        or str(prelu_op.op_type) != "PRELU"
+        or len(prelu_op.inputs) != 2
+        or len(prelu_op.outputs) != 1
+        or str(prelu_op.outputs[0]) != input_name
+        or input_name in model_outputs
+        or set(graph_index.consumer_indices(input_name))
+        != {int(concat_index)}
+    ):
+        return None
+
+    adapter_output_name = str(prelu_op.inputs[0])
+    adapter_op = graph_index.producer(adapter_output_name)
+    adapter_index = (
+        None if adapter_op is None else graph_index.operator_index(adapter_op)
+    )
+    if (
+        adapter_op is None
+        or adapter_index is None
+        or str(adapter_op.op_type) != "TRANSPOSE"
+        or len(adapter_op.inputs) < 2
+        or len(adapter_op.outputs) != 1
+        or str(adapter_op.outputs[0]) != adapter_output_name
+        or _read_transpose_perm(model_ir, adapter_op)
+        != _PERM_NHWC_TO_NCHW
+        or adapter_output_name in model_outputs
+        or set(graph_index.consumer_indices(adapter_output_name))
+        != {int(prelu_index)}
+    ):
+        return None
+
+    source_name = str(adapter_op.inputs[0])
+    source_tensor = model_ir.tensors.get(source_name)
+    output_tensor = model_ir.tensors.get(input_name)
+    alpha_tensor_name = str(prelu_op.inputs[1])
+    alpha_tensor = model_ir.tensors.get(alpha_tensor_name)
+    if (
+        source_tensor is None
+        or len(list(source_tensor.shape)) != 4
+        or output_tensor is None
+        or len(list(output_tensor.shape)) != 4
+        or alpha_tensor is None
+        or alpha_tensor.data is None
+    ):
+        return None
+    selected = _select_prelu_alpha_for_nhwc(
+        alpha_data=np.asarray(alpha_tensor.data),
+        target_nhwc_shape=[int(value) for value in source_tensor.shape],
+    )
+    if selected is None:
+        return None
+    selected_alpha, alpha_permutation = selected
+    alpha_data = np.asarray(alpha_tensor.data)
+    rewrite_alpha = (
+        selected_alpha.shape != alpha_data.shape
+        or not np.array_equal(selected_alpha, alpha_data)
+    )
+    return _NhwcConcatInputPlan(
+        kind="prelu",
+        adapter_op=adapter_op,
+        prelu_op=prelu_op,
+        source_name=source_name,
+        output_name=input_name,
+        remove_adapter=True,
+        alpha_tensor_name=alpha_tensor_name,
+        selected_alpha=np.asarray(selected_alpha),
+        alpha_permutation=alpha_permutation,
+        rewrite_alpha=bool(rewrite_alpha),
+        clone_alpha=(
+            bool(rewrite_alpha)
+            and (
+                alpha_tensor_name in public_names
+                or set(graph_index.consumer_indices(alpha_tensor_name))
+                != {int(prelu_index)}
+            )
+        ),
+    )
+
+
 def _resolve_family_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -393,6 +549,15 @@ def _resolve_family_input_plan(
             input_name=input_name,
             concat_index=concat_index,
             model_outputs=model_outputs,
+        )
+    if family == "prelu":
+        return _resolve_prelu_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+            public_names=public_names,
         )
     return None
 
@@ -466,8 +631,11 @@ def _resolve_nhwc_concat_candidate(
         )
         if family == "dequantize" and dequantize_count < 1:
             continue
+        prelu_count = sum(plan.kind == "prelu" for plan in input_plans)
+        if family == "prelu" and prelu_count < 1:
+            continue
 
-        if family in {"unary", "pad", "dequantize"}:
+        if family in {"unary", "pad", "dequantize", "prelu"}:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
             for input_plan in input_plans:
@@ -480,7 +648,12 @@ def _resolve_nhwc_concat_candidate(
                     shapes_compatible = False
                     break
                 shape = [int(value) for value in tensor.shape]
-                if input_plan.kind in {"unary", "pad", "dequantize"}:
+                if input_plan.kind in {
+                    "unary",
+                    "pad",
+                    "dequantize",
+                    "prelu",
+                }:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
                     reference_shape = shape
@@ -573,6 +746,17 @@ def _has_nhwc_dequantize_concat_candidate(
     )
 
 
+def _has_nhwc_prelu_concat_candidate(pass_state: ModelIRPassState) -> bool:
+    return (
+        _resolve_nhwc_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="prelu",
+        )
+        is not None
+    )
+
+
 def _optimize_transpose_pre_concat_nhwc_direct_chains(
     model_ir: ModelIR,
     *,
@@ -633,6 +817,83 @@ def _optimize_transpose_pre_concat_nhwc_dequantize_chains(
     )
 
 
+def _optimize_transpose_pre_concat_nhwc_prelu_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
+    return _optimize_transpose_pre_concat_nhwc_family(
+        model_ir,
+        family="prelu",
+        stats_key=_PRELU_STATS_KEY,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+
+def _apply_prelu_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    input_plan: _NhwcConcatInputPlan,
+) -> None:
+    assert input_plan.prelu_op is not None
+    assert input_plan.alpha_tensor_name is not None
+    assert input_plan.selected_alpha is not None
+    alpha_tensor = model_ir.tensors[input_plan.alpha_tensor_name]
+    selected_alpha_name = input_plan.alpha_tensor_name
+
+    if input_plan.rewrite_alpha:
+        selected_alpha = np.asarray(input_plan.selected_alpha)
+        shape, signature = normalize_onnx_shape(list(selected_alpha.shape))
+        selected_quantization = (
+            _clone_permuted_quantization(
+                alpha_tensor.quantization,
+                input_plan.alpha_permutation,
+            )
+            if input_plan.alpha_permutation is not None
+            else _clone_quantization(alpha_tensor.quantization)
+        )
+        if input_plan.clone_alpha:
+            selected_alpha_name = _unique_tensor_name(
+                model_ir,
+                f"{input_plan.alpha_tensor_name}_nhwc",
+            )
+            model_ir.tensors[selected_alpha_name] = TensorIR(
+                name=selected_alpha_name,
+                dtype=str(alpha_tensor.dtype),
+                shape=[int(value) for value in shape],
+                shape_signature=[int(value) for value in signature],
+                data=np.array(selected_alpha, copy=True),
+                is_variable=bool(alpha_tensor.is_variable),
+                quantization=selected_quantization,
+                logical_layout=str(alpha_tensor.logical_layout),
+                physical_layout=str(alpha_tensor.physical_layout),
+                onnx_tensor_name=alpha_tensor.onnx_tensor_name,
+            )
+        else:
+            alpha_tensor.data = np.array(selected_alpha, copy=True)
+            alpha_tensor.shape = [int(value) for value in shape]
+            alpha_tensor.shape_signature = [int(value) for value in signature]
+            alpha_tensor.quantization = selected_quantization
+
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=input_plan.prelu_op,
+        new_inputs=[input_plan.source_name, selected_alpha_name],
+        graph_index=graph_index,
+    )
+    prelu_output_tensor = model_ir.tensors.get(input_plan.output_name)
+    _permute_tensor_metadata_if_rank_matches(
+        prelu_output_tensor,
+        _PERM_NCHW_TO_NHWC,
+    )
+    if prelu_output_tensor is not None:
+        prelu_output_tensor.quantization = _clone_nhwc_quantization(
+            prelu_output_tensor.quantization
+        )
+
+
 def _optimize_transpose_pre_concat_nhwc_family(
     model_ir: ModelIR,
     *,
@@ -673,6 +934,13 @@ def _optimize_transpose_pre_concat_nhwc_family(
                     unary_output_tensor.quantization = _clone_nhwc_quantization(
                         unary_output_tensor.quantization
                     )
+                new_concat_inputs.append(input_plan.output_name)
+            elif input_plan.prelu_op is not None:
+                _apply_prelu_input_plan(
+                    model_ir,
+                    graph_index,
+                    input_plan,
+                )
                 new_concat_inputs.append(input_plan.output_name)
             elif input_plan.dequantize_op is not None:
                 _set_operator_inputs(
@@ -870,6 +1138,14 @@ def run_nhwc_concat_layout_cleanup(
             "changed": bool(stats.get(_DEQUANTIZE_STATS_KEY, 0)),
         }
 
+    def _run_prelu(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_pre_concat_nhwc_prelu_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {**stats, "changed": bool(stats.get(_PRELU_STATS_KEY, 0))}
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -905,6 +1181,14 @@ def run_nhwc_concat_layout_cleanup(
                 priority=40,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_prelu",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_prelu,
+                precondition=_has_nhwc_prelu_concat_candidate,
+                priority=50,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -912,6 +1196,7 @@ def run_nhwc_concat_layout_cleanup(
             _UNARY_STATS_KEY: 0,
             _PAD_STATS_KEY: 0,
             _DEQUANTIZE_STATS_KEY: 0,
+            _PRELU_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(

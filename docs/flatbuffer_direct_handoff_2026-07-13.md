@@ -1,17 +1,19 @@
 # flatbuffer_direct refactor handoff — 2026-07-13
 
-## `fb-refactor4` rank-four direct/unary/Pad/Dequantize checkpoint
+## `fb-refactor4` rank-four direct/unary/Pad/Dequantize/PReLU checkpoint
 
-The first four bounded families of the 2,117-line rank-four generic NHWC
+The first five bounded families of the 2,117-line rank-four generic NHWC
 pre-Concat matcher are now separated. `passes/nhwc_concat_layout.py` owns the
 strict all-direct float path and the one-or-more-unary float path, with or
 without direct inputs. The unary allowlist is RELU, RELU6, LOGISTIC, TANH, and
 GELU. It also owns the one-or-more-Pad-plus-direct path and the one-or-more
-Dequantize path, with or without direct inputs. All four share one
+Dequantize path and the one-or-more PReLU path, each with or without direct
+inputs. All five share one
 `ModelIRGraphIndex`/`LayoutState` pass group and run transactionally under
 stable IDs `layout.nhwc_pre_concat_direct` and
 `layout.nhwc_pre_concat_unary`, `layout.nhwc_pre_concat_pad`, and
-`layout.nhwc_pre_concat_dequantize` at all seven production positions.
+`layout.nhwc_pre_concat_dequantize`, plus `layout.nhwc_pre_concat_prelu` at all
+seven production positions.
 
 The direct pass removes only exclusive, non-public leading adapters. Shared or
 public direct adapters remain for their other consumers while the Concat is
@@ -30,11 +32,16 @@ cloned and only the selected Pad input is rewired, preserving other consumers.
 The Dequantize family does not rewrite scale or zero-point data: it bypasses
 only the layout adapter, preserves source quantization provenance, and remaps
 rank-four Dequantize output metadata and any per-axis dimension to NHWC.
+PReLU preserves the legacy alpha candidate order for rank-4, unchanged, and
+rank-3 constants. An exclusive transformed alpha is updated in place; a
+shared or public alpha is cloned with dtype, variable flag, quantization,
+layout, and ONNX provenance retained. Alpha and PReLU-output per-axis
+dimensions move with their actual permutations.
 
 The lowerer compatibility helper still returns the original aggregate statistic
 and runs the legacy matcher after the direct pass. The legacy matcher now
-skips the four indexed families, but continues to own swish, split, slice,
-Add, PReLU, and Softmax inputs plus the separate
+skips the five indexed families, but continues to own swish, split, slice,
+Add, and Softmax inputs plus the separate
 quantized-post path.
 
 Changed files for this checkpoint:
@@ -47,7 +54,8 @@ Changed files for this checkpoint:
 
 Focused verification, all in the existing `uv` environment:
 
-- Direct, unary, Pad, and Dequantize ModelIR characterization: `43 passed`.
+- Direct, unary, Pad, Dequantize, and PReLU ModelIR characterization:
+  `58 passed` across two compact modules.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.
@@ -57,9 +65,9 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should audit the bounded PReLU family, especially alpha constant
-ownership and channel-axis remapping. Do not begin with a Tier 0–4 corpus run,
-and do not create a pull request.
+Next work should audit the bounded Softmax family, especially its local
+NHWC↔NHCW adapters and last-axis semantics. Do not begin with a Tier 0–4 corpus
+run, and do not create a pull request.
 
 The section below records the preceding rank-five checkpoint and remains as
 historical context.
