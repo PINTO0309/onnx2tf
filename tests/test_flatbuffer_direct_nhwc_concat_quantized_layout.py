@@ -438,6 +438,7 @@ def _quantized_swish_model(
     *,
     mul_data_first: bool = True,
     public_logistic_output: bool = False,
+    unary_companion: bool = False,
 ) -> ModelIR:
     model_ir = _quantized_model()
     for tensor_name in ("a_logistic", "a_swish"):
@@ -464,6 +465,22 @@ def _quantized_swish_model(
         OperatorIR("MUL", mul_inputs, ["a_swish"]),
     ]
     concat_op.inputs[0] = "a_swish"
+    if unary_companion:
+        model_ir.tensors["b_relu"] = _tensor(
+            "b_relu",
+            [1, 3, 5, 7],
+        )
+        model_ir.tensors["b_relu"].quantization = QuantParamIR(
+            scale=[0.45] * 3,
+            zero_point=[0] * 3,
+            quantized_dimension=1,
+        )
+        concat_index = model_ir.operators.index(concat_op)
+        model_ir.operators.insert(
+            concat_index,
+            OperatorIR("RELU", ["b_nchw"], ["b_relu"]),
+        )
+        concat_op.inputs[1] = "b_relu"
     if public_logistic_output:
         model_ir.outputs.append("a_logistic")
     return model_ir
@@ -1091,6 +1108,25 @@ def test_nhwc_quantized_swish_rejects_public_internal_boundary() -> None:
 
     assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
     _assert_model_equal(model_ir, original)
+
+
+def test_nhwc_quantized_swish_with_unary_companion_is_indexed() -> None:
+    model_ir = _quantized_swish_model(unary_companion=True)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_quantized_rewritten(
+        model_ir,
+        expected_concat_inputs=["a_swish", "b_relu"],
+    )
+    unary_op = next(op for op in model_ir.operators if op.outputs == ["b_relu"])
+    assert unary_op.inputs == ["b_nhwc"]
+    unary_tensor = model_ir.tensors["b_relu"]
+    assert unary_tensor.shape == [1, 5, 7, 3]
+    assert isinstance(unary_tensor.quantization, QuantParamIR)
+    assert unary_tensor.quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
 
 
 def test_nhwc_quantized_dequantize_input_is_indexed() -> None:

@@ -610,7 +610,13 @@ def _resolve_quantized_concat_candidate(
                 concat_index=int(concat_index),
                 model_outputs=model_outputs,
             )
-            if input_plan is None and family in {"unary", "unary_pad"}:
+            if input_plan is None and family in {
+                "unary",
+                "unary_pad",
+                "swish",
+                "leaky",
+                "add",
+            }:
                 input_plan = _resolve_unary_input_plan(
                     model_ir,
                     graph_index,

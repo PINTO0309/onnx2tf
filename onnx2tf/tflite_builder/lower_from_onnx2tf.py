@@ -13909,7 +13909,8 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
                 )
                 >= 1
                 and all(
-                    str(action.get("kind", "")) in {"direct", "swish"}
+                    str(action.get("kind", ""))
+                    in {"direct", "unary", "swish"}
                     for action in concat_input_actions
                 )
             )
@@ -13952,7 +13953,8 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
                 )
                 >= 1
                 and all(
-                    str(action.get("kind", "")) in {"direct", "leaky"}
+                    str(action.get("kind", ""))
+                    in {"direct", "unary", "leaky"}
                     for action in concat_input_actions
                 )
             )
@@ -14024,7 +14026,8 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
                 post_quantize_idx is not None
                 and len(quantized_add_actions) >= 1
                 and all(
-                    str(action.get("kind", "")) in {"direct", "add"}
+                    str(action.get("kind", ""))
+                    in {"direct", "unary", "add"}
                     for action in concat_input_actions
                 )
                 and all(

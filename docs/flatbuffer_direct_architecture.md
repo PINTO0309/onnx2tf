@@ -419,6 +419,8 @@ Quantize path remains NHWC.
 The pseudo-LeakyRelu pass shares the exact float matcher/apply pair, preserving
 the non-commutative Sub order, scalar alpha guard, and all internal fan-out and
 public-boundary invariants.
+Expanded-Swish, pseudo-LeakyRelu, and bounded Add may also combine with
+supported unary root-Concat companions through the same unary resolver/apply.
 The bounded Slice pass accepts a rank-four channel Slice with constant
 begin/size and no secondary output adapter, reorders the parameters to NHWC,
 and uses the float path's provenance-preserving copy-on-write materializer.
