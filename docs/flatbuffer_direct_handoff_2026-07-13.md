@@ -183,6 +183,16 @@ detection. A dynamic recurrent rank-three fixture verifies the NWC default and
 boundary signature concretization. The layout/architecture selection passes 79
 tests; no model conversion or inference was run.
 
+The complete 185-line channel-first orchestration has moved from the exporter
+to the new Torch-free `passes/pytorch_normalization.py`. It remains the owner of
+the single deep copy and single `ModelIRGraphIndex`, and calls the extracted
+layout/compatibility/recurrent steps in the unchanged order. Public-output
+Transpose inspection now uses the same family index. A direct normalization
+fixture proves source/result independence, operator and ONNX provenance,
+channel-first metadata, and exactly one index refresh without importing Torch.
+The six-file focused selection passes 98 tests; no model conversion or
+inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

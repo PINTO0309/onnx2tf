@@ -1781,6 +1781,15 @@ layout-agnostic fallback path retains direct detection. Explicit boundary
 signatures, public layout metadata, dynamic-dimension concretization, and the
 rank-three recurrent NWC default remain unchanged.
 
+The complete channel-first normalization orchestration is owned by the new
+Torch-free `passes/pytorch_normalization.py` module. It creates the owning deep
+copy, constructs exactly one graph index, invokes the ordered layout,
+constant/filter, compatibility, recurrent-repair, boundary, and validation
+steps, and returns the validated copy. The remaining public-output Transpose
+inspection uses the same index rather than a raw operator scan. The exporter
+imports this single orchestration entry point, making the full normalizer
+directly testable without importing Torch.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

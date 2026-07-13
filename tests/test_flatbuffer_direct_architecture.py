@@ -290,21 +290,32 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
         / "passes"
         / "pytorch_recurrent.py"
     )
+    normalization_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pytorch_normalization.py"
+    )
     exporter_source = exporter_path.read_text(encoding="utf-8")
     exporter_tree = ast.parse(exporter_source)
     control_flow_source = control_flow_path.read_text(encoding="utf-8")
     control_flow_tree = ast.parse(control_flow_source)
     recurrent_source = recurrent_path.read_text(encoding="utf-8")
     recurrent_tree = ast.parse(recurrent_source)
+    normalization_source = normalization_path.read_text(encoding="utf-8")
     assert "def _remove_redundant_layout_transposes(" not in exporter_source
-    assert "_remove_redundant_layout_transposes," in exporter_source
+    assert "_remove_redundant_layout_transposes," not in exporter_source
+    assert "_remove_redundant_layout_transposes," in normalization_source
     assert "def _rewrite_atan2_ones_like_to_atan(" not in exporter_source
-    assert "_rewrite_atan2_ones_like_to_atan," in exporter_source
+    assert "_rewrite_atan2_ones_like_to_atan," not in exporter_source
+    assert "_rewrite_atan2_ones_like_to_atan," in normalization_source
     assert "def _rewrite_atan2_ones_like_to_atan(" in source
     assert "replace_operator_type(" in source
     assert "replace_operator_inputs(" in source
     assert "def _reject_residual_layout_transposes(" not in exporter_source
-    assert "_reject_residual_layout_transposes," in exporter_source
+    assert "_reject_residual_layout_transposes," not in exporter_source
+    assert "_reject_residual_layout_transposes," in normalization_source
     assert "def _is_reshape_only_residual_layout_bridge_transpose(" not in exporter_source
     assert "_is_reshape_only_residual_layout_bridge_transpose," in exporter_source
     assert "def _reject_residual_layout_transposes(" in source
@@ -420,9 +431,18 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
         / "tflite_builder"
         / "pytorch_layout_utils.py"
     )
+    normalization_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pytorch_normalization.py"
+    )
     exporter_source = exporter_path.read_text(encoding="utf-8")
     pass_source = pass_path.read_text(encoding="utf-8")
     layout_utils_source = layout_utils_path.read_text(encoding="utf-8")
+    normalization_source = normalization_path.read_text(encoding="utf-8")
+    normalization_tree = ast.parse(normalization_source)
     pass_tree = ast.parse(pass_source)
     assert "def _is_attention_like_softmax_op(" not in exporter_source
     assert (
@@ -433,23 +453,26 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "def _is_attention_like_softmax_op(" in pass_source
     assert "def _is_transpose_sandwiched_last_axis_softmax_op(" in pass_source
     assert "def validate_channel_first_exportability(" not in exporter_source
-    assert "validate_channel_first_exportability," in exporter_source
+    assert "validate_channel_first_exportability," not in exporter_source
     assert "def validate_channel_first_exportability(" in pass_source
     assert "def _apply_feature_last_sequence_layouts(" not in exporter_source
-    assert "_apply_feature_last_sequence_layouts," in exporter_source
+    assert "_apply_feature_last_sequence_layouts," not in exporter_source
     assert "def _ensure_public_boundary_layout_bridges(" not in exporter_source
     assert "_ensure_public_boundary_layout_bridges," in exporter_source
     assert "def _propagate_pytorch_friendly_layouts(" not in exporter_source
-    assert "_propagate_pytorch_friendly_layouts," in exporter_source
+    assert "_propagate_pytorch_friendly_layouts," not in exporter_source
     assert "def _rewrite_filter_tensors_for_pytorch(" not in exporter_source
-    assert "_rewrite_filter_tensors_for_pytorch," in exporter_source
+    assert "_rewrite_filter_tensors_for_pytorch," not in exporter_source
     assert "def _rewrite_layout_sensitive_ops(" not in exporter_source
-    assert "_rewrite_layout_sensitive_ops," in exporter_source
+    assert "_rewrite_layout_sensitive_ops," not in exporter_source
     assert (
         "def _synchronize_reshape_targets_with_output_tensors("
         not in exporter_source
     )
-    assert "_synchronize_reshape_targets_with_output_tensors," in exporter_source
+    assert (
+        "_synchronize_reshape_targets_with_output_tensors,"
+        not in exporter_source
+    )
     assert "def _align_public_boundary_shapes_to_onnx_contract(" not in exporter_source
     assert "_align_public_boundary_shapes_to_onnx_contract," in exporter_source
     assert "def _align_public_boundary_shapes_to_onnx_contract(" in pass_source
@@ -474,7 +497,10 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     }
     for function_name in focused_layout_owner_functions:
         assert f"def {function_name}(" not in exporter_source
-        assert f"{function_name}," in exporter_source
+        if function_name == "_collect_feature_last_sequence_tensor_names":
+            assert f"{function_name}," in exporter_source
+        else:
+            assert f"{function_name}," not in exporter_source
     assert "def _is_rank4_channel_last_dynamic_tensor(" not in exporter_source
     assert "ModelIRGraphIndex" in pass_source
     assert "for candidate in model_ir.operators" not in pass_source
@@ -482,15 +508,14 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "def _propagate_channel_last_layouts(" in pass_source
     assert "while changed:" not in pass_source
 
-    exporter_tree = ast.parse(exporter_source)
-    exporter_functions = {
-        node.name: node
-        for node in exporter_tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
     pass_functions = {
         node.name: node
         for node in pass_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    normalization_functions = {
+        node.name: node
+        for node in normalization_tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     assert focused_layout_owner_functions | {
@@ -507,10 +532,12 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "graph_index=graph_index" in validator_source
     assert "for op in model_ir.operators" not in validator_source
     normalizer_source = ast.get_source_segment(
-        exporter_source,
-        exporter_functions["normalize_model_ir_for_pytorch_channel_first"],
+        normalization_source,
+        normalization_functions["normalize_model_ir_for_pytorch_channel_first"],
     )
     assert normalizer_source is not None
+    assert "def normalize_model_ir_for_pytorch_channel_first(" not in exporter_source
+    assert "normalize_model_ir_for_pytorch_channel_first," in exporter_source
     assert normalizer_source.count("ModelIRGraphIndex(normalized)") == 1
     assert "_build_model_ir_producer_consumer_index(normalized)" not in normalizer_source
     assert normalizer_source.count("graph_index=layout_graph_index") >= 7
