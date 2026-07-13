@@ -345,8 +345,8 @@ Concat input produced by a non-recursive two-input Add whose operands each
 come from an exclusive rank-four NHWC→NCHW adapter. Both Add inputs are
 rewired together, all operand adapters are removed, and Add output shape and
 per-axis quantization move into NHWC. Adapter-sharing, output-post-adapter,
-unary/Swish/Split operand, recursive Add, and quantized-post families remain
-in legacy until independently characterized. The indexed
+unary/Swish/Split operand, recursive Add, and mixed-input quantized-post
+families remain in legacy until independently characterized. The indexed
 pseudo-LeakyRelu family recognizes the complete
 `ReLU(x) - alpha * ReLU(-x)` diamond with either Mul operand order and direct
 or supported unary Concat companions. It preserves the non-commutative Sub
@@ -355,7 +355,19 @@ internal/output tensor shapes and per-axis quantization metadata. Public or
 fan-out internal edges, invalid ranks, non-singleton alpha, and incomplete
 diamonds reject before mutation under stable ID
 `layout.nhwc_pre_concat_leaky`. Pad/Add/Split mixed companions and the
-quantized-post family remain in legacy.
+mixed-input quantized-post family remain in legacy.
+
+The strict all-direct quantized-post path is independently owned by
+`passes/nhwc_concat_quantized_layout.py`. It recognizes rank-four direct
+NHWC→NCHW inputs followed by channel Concat, one Quantize, and one or more
+inverse post Transposes. The transactional pass rewires Concat to NHWC,
+retains shared/public input adapters, redirects Quantize to one canonical
+post output, and coalesces additional post aliases. Both the float Concat
+metadata and quantized output per-axis dimensions follow NCHW→NHWC. Public
+Concat/Quantize/post boundaries, non-Transpose fan-out, invalid ranks, and
+partial chains reject before mutation under stable ID
+`layout.nhwc_pre_concat_quantized_direct`. Unary and other mixed quantized
+inputs remain in legacy.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

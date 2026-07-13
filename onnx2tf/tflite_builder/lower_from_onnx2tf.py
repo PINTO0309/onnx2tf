@@ -180,6 +180,9 @@ from onnx2tf.tflite_builder.passes.ndhwc_concat_layout import (
 from onnx2tf.tflite_builder.passes.nhwc_concat_layout import (
     run_nhwc_concat_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.nhwc_concat_quantized_layout import (
+    run_nhwc_concat_quantized_layout_cleanup,
+)
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
     _is_inverse_perm,
@@ -13826,6 +13829,8 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             # for mixed input families and the separate quantized-post family.
             if all_direct_input_actions and post_quantize_idx is None:
                 continue
+            if all_direct_input_actions and post_quantize_idx is not None:
+                continue
             indexed_unary_family = (
                 post_quantize_idx is None
                 and sum(
@@ -14228,6 +14233,11 @@ def _optimize_transpose_pre_concat_nhwc_chains(
         layout_state=layout_state,
         diagnostics=diagnostics,
     )
+    quantized_indexed_stats = run_nhwc_concat_quantized_layout_cleanup(
+        model_ir,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
     legacy_stats = _optimize_transpose_pre_concat_nhwc_chains_legacy(model_ir)
     return {
         "optimized_transpose_pre_concat_nhwc_chains": int(
@@ -14293,6 +14303,12 @@ def _optimize_transpose_pre_concat_nhwc_chains(
         + int(
             indexed_stats.get(
                 "optimized_transpose_pre_concat_nhwc_leaky_chains",
+                0,
+            )
+        )
+        + int(
+            quantized_indexed_stats.get(
+                "optimized_transpose_pre_concat_nhwc_quantized_direct_chains",
                 0,
             )
         )
