@@ -275,11 +275,12 @@ and the final affine/Conv island. Whole-ModelIR no-op cases cover fan-out at
 both branch and island boundaries, public base/first-Concat tensors, invalid
 leading permutation or either Concat axis, a non-Resize branch producer, and
 missing Mul constants. The complete matcher is mechanically owned by
-`passes/spp_layout.py`, with an exact AST match to characterization checkpoint
-`0804e37`; the lowerer keeps a compatibility wrapper and all seven raw calls.
-The next checkpoint is pure indexed planning, differential graph/layout
-mutation, shared-constant protection, and one stable ordered runner at those
-seven production positions.
+`passes/spp_layout.py`. Pure indexed planning validates both islands and every
+constant before mutation; shared constants use copy-on-write and per-axis
+quantization dimensions move with their NCHW→NHWC transpose. Differential
+mutation uses one `ModelIRGraphIndex` and `LayoutState`, and stable runner
+`layout.generic_spp_nhwc` occupies all seven production positions while the
+lowerer keeps its compatibility wrapper.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

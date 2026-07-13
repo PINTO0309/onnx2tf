@@ -3,8 +3,8 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `c531b54`
-  (`extract generic spp layout pass`)
+- Latest implementation checkpoint: `8edf5c2`
+  (`index generic spp layout pass`)
 - Previous pause checkpoint: `3df2903`
   (`document flatbuffer direct pause checkpoint`)
 - Remote: after this resumed documentation checkpoint is pushed, local and
@@ -19,16 +19,17 @@
 - The Concat/optional-unary/post-adapter/Conv matcher uses pure indexed
   planning, differential graph/layout mutation, and one transactional runner
   at both production positions.
-- The seven-call SPP family has a generic 17-case characterization corpus and
-  its complete legacy matcher is mechanically owned by
-  `passes/spp_layout.py`; the seven raw production calls remain unchanged.
+- The seven-call SPP family has a generic characterization corpus and its
+  complete matcher is owned by `passes/spp_layout.py`. Pure indexed planning,
+  shared-constant copy-on-write, differential graph/layout mutation, and
+  stable runner `layout.generic_spp_nhwc` replace all seven raw calls.
 
 ## Completed work
 
 This resumed interval completed sixteen adjacent semantic layout families
 using the staged characterization → mechanical extraction → indexed runner
-process and established characterization plus mechanical extraction for the
-seventeenth family.
+process and completed the same three-stage migration for the seventeenth
+family.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -212,6 +213,10 @@ seventeenth family.
       `c531b54`. Its function AST exactly matches characterization checkpoint
       `0804e37`; the lowerer retains a compatibility wrapper and all seven raw
       production calls.
+    - Added full indexed topology/rank/constant planning, shared-constant
+      copy-on-write, quantized-dimension remapping, differential graph/layout
+      mutation, stable runner `layout.generic_spp_nhwc`, and all seven runner
+      calls in `8edf5c2`.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -227,11 +232,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is indexed candidate planning for
-  `_optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains`, with
-  both SPP islands fully validated before mutation, shared-constant
-  copy-on-write, differential graph/layout updates, and replacement of all
-  seven raw calls by one stable ordered runner.
+  The immediate next unit is characterization of the adjacent 258-line,
+  six-call `_optimize_transpose_pre_concat_ndhwc_chains` matcher. Keep the
+  much larger generic NHWC pre-Concat matcher as a separately planned family;
+  source length is not a Goal gate.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -253,9 +257,9 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this resumed documentation update, the
-working tree is clean at mechanical-extraction checkpoint `c531b54`. The
-generic SPP corpus and focused pass ownership are committed; indexed migration
-has not begun.
+working tree is clean at indexed SPP checkpoint `8edf5c2`. The generic SPP
+corpus, focused pass ownership, and all seven runner integrations are
+committed.
 After the documentation commit is pushed, local/remote divergence must be
 `0 0`. The implementation checkpoints since the previous pause changed:
 
@@ -486,6 +490,15 @@ sequential with only one model/process active at a time.
   matched `0804e37`.
 - Full direct selection after SPP mechanical extraction:
   `1408 passed, 5 deselected, 2 warnings in 174.80s`.
+- Indexed SPP success, shared-constant copy-on-write, quantized-dimension,
+  no-op, runner, architecture, and irrelevant-graph efficiency focus:
+  `85 passed in 23.15s`.
+- Tier 1 `superpoint.onnx`, sequential `-tb flatbuffer_direct -cotof` after
+  indexed SPP migration: `evaluation_pass=true`,
+  `max_abs=1.6666017472743988e-06`,
+  `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+- Full direct selection after indexed SPP migration:
+  `1430 passed, 5 deselected, 2 warnings in 161.91s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -517,15 +530,13 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Design a pure indexed SPP candidate that validates both Concat/affine/Conv
-   islands and all constants before any mutation; add shared-constant
-   copy-on-write characterization before changing production behavior.
-3. Apply graph and layout changes through shared `ModelIRGraphIndex` and
-   `LayoutState`, register one stable ordered runner, and replace all seven raw
-   production calls while retaining the compatibility wrapper.
-4. Run focused architecture/efficiency gates, sequential Tier 1
-   `superpoint.onnx -tb flatbuffer_direct -cotof`, and the full direct gate;
-   then commit and push the indexed checkpoint.
+2. Add a compact success fixture and complete fan-out/public/permutation/axis/
+   rank no-op boundaries for
+   `_optimize_transpose_pre_concat_ndhwc_chains`, preserving production code.
+3. Run the focused characterization and full direct gate, then commit and push
+   before mechanically extracting the complete matcher.
+4. Continue with exact-AST mechanical extraction and only then design its
+   indexed candidate and stable runner as separate checkpoints.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1386,6 +1397,42 @@ selection passed 1,408 tests with the same five deselections and two known
 warnings. No dependency or TensorFlow path was added, and no inference process
 was run concurrently. Indexed planning and runner integration are the next
 separate checkpoint.
+
+### Indexed generic two-island SPP checkpoint
+
+Checkpoint `8edf5c2` replaced the legacy map-rebuilding implementation with a
+pure `_SppLayoutCandidate` that validates all four Resize/Add branches, both
+Concat/Mul/adapter islands, the intervening and terminal Conv paths, every
+fan-out/public boundary, rank-four metadata, and both constant payloads before
+mutation. Shared constants are cloned only for the rewritten Mul inputs so
+outside consumers retain the original NCHW payload. Per-axis quantization
+metadata moves from NCHW dimension 1 to NHWC dimension 3 together with the
+constant data.
+
+All input rewrites, operator removals, pruning, and layout synchronization use
+one shared `ModelIRGraphIndex` and `LayoutState`; the implementation contains
+no whole-graph producer/consumer-map construction and no direct operator-list
+deletion. `run_spp_layout_cleanup` registers stable `LAYOUT_PLAN` ID
+`layout.generic_spp_nhwc`; all seven former raw production positions now call
+it and the lowerer compatibility wrapper remains.
+
+Focused validation passed 85 tests. A candidate uses one index refresh and one
+transaction snapshot; every unsafe boundary rejects before snapshotting, and
+an irrelevant 256-op graph builds no index, snapshot, or fingerprint. Tier 1
+`superpoint.onnx` passed sequential `-tb flatbuffer_direct -cotof` with the
+unchanged metrics `evaluation_pass=true`,
+`max_abs=1.6666017472743988e-06`, `rmse=1.6207873294228388e-07`, and cosine
+similarity `1.0`. The complete sequential direct selection passed:
+
+```text
+1430 passed, 5 deselected, 2 warnings in 161.91s
+```
+
+No dependency or TensorFlow import path was added. Temporary
+`/tmp/onnx2tf_spp_superpoint` artifacts were removed after metrics inspection.
+The next staged family is the adjacent 258-line, six-call NDHWC pre-Concat
+matcher; the larger generic NHWC pre-Concat matcher remains a separate future
+unit.
 
 ### Dequantize/Concat/Quantize mechanical extraction checkpoint
 
