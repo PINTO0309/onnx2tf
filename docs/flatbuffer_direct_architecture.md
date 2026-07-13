@@ -461,6 +461,14 @@ under stable IDs
 materialized once and reused by every selected Pad. Other broader mixed
 quantized inputs remain in legacy.
 
+The quantized-post runner is declarative: one ordered table owns each family
+name, stable statistics key, and priority. Pass IDs, callbacks, preconditions,
+and default diagnostics are generated from that table. Shared float plans use
+one wrapper into `_QuantizedInputPlan`; only family-specific safety guards
+remain explicit. This removed 423 lines of repeated dispatch code from
+`nhwc_concat_quantized_layout.py` (1,549 to 1,126 lines) without changing the
+ordered pass contract.
+
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization

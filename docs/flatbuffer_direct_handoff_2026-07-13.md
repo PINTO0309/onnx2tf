@@ -248,6 +248,13 @@ and runs the legacy matcher after the direct pass. The legacy matcher now
 skips the twenty-four indexed families, but continues to own broader
 Split/Slice/Add/Leaky interactions and remaining mixed quantized-post paths.
 
+The quantized-post module no longer repeats one precondition, callback, and
+`PassSpec` block per family. A single ordered table now owns family name,
+statistics key, and priority; stable pass IDs, callbacks, preconditions, and
+default metrics are derived from it. A common wrapper also maps shared float
+plans into `_QuantizedInputPlan`. The refactor reduced the module from 1,549 to
+1,126 lines while preserving all thirteen quantized family IDs and their order.
+
 Changed files for this checkpoint:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`

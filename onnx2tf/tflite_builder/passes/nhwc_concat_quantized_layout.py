@@ -86,6 +86,21 @@ _SPLIT_STATS_KEY = (
 _ADD_STATS_KEY = (
     "optimized_transpose_pre_concat_nhwc_quantized_add_chains"
 )
+_QUANTIZED_FAMILY_SPECS: Tuple[Tuple[str, str, int], ...] = (
+    ("direct", _DIRECT_STATS_KEY, 10),
+    ("unary", _UNARY_STATS_KEY, 20),
+    ("pad", _PAD_STATS_KEY, 30),
+    ("unary_pad", _UNARY_PAD_STATS_KEY, 40),
+    ("all_pad", _ALL_PAD_STATS_KEY, 50),
+    ("swish", _SWISH_STATS_KEY, 60),
+    ("dequantize", _DEQUANTIZE_STATS_KEY, 70),
+    ("prelu", _PRELU_STATS_KEY, 80),
+    ("softmax", _SOFTMAX_STATS_KEY, 90),
+    ("leaky", _LEAKY_STATS_KEY, 100),
+    ("slice", _SLICE_STATS_KEY, 110),
+    ("split", _SPLIT_STATS_KEY, 120),
+    ("add", _ADD_STATS_KEY, 130),
+)
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
 
@@ -262,6 +277,23 @@ def _resolve_pad_input_plan(
     )
 
 
+def _wrap_shared_input_plan(
+    *,
+    concat_input: str,
+    input_plan: Optional[_NhwcConcatInputPlan],
+) -> Optional[_QuantizedInputPlan]:
+    if input_plan is None:
+        return None
+    return _QuantizedInputPlan(
+        kind=input_plan.kind,
+        adapter_op=input_plan.adapter_op,
+        nhwc_plan=input_plan,
+        concat_input=concat_input,
+        source_name=input_plan.source_name,
+        remove_adapter=input_plan.remove_adapter,
+    )
+
+
 def _resolve_swish_quantized_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -270,22 +302,15 @@ def _resolve_swish_quantized_input_plan(
     concat_index: int,
     model_outputs: set[str],
 ) -> Optional[_QuantizedInputPlan]:
-    swish_plan = _resolve_swish_input_plan(
-        model_ir,
-        graph_index,
-        input_name=concat_input,
-        concat_index=concat_index,
-        model_outputs=model_outputs,
-    )
-    if swish_plan is None:
-        return None
-    return _QuantizedInputPlan(
-        kind="swish",
-        adapter_op=swish_plan.adapter_op,
-        nhwc_plan=swish_plan,
+    return _wrap_shared_input_plan(
         concat_input=concat_input,
-        source_name=swish_plan.source_name,
-        remove_adapter=swish_plan.remove_adapter,
+        input_plan=_resolve_swish_input_plan(
+            model_ir,
+            graph_index,
+            input_name=concat_input,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+        ),
     )
 
 
@@ -309,13 +334,9 @@ def _resolve_dequantize_quantized_input_plan(
     source_tensor = model_ir.tensors.get(dequantize_plan.source_name)
     if source_tensor is None or len(list(source_tensor.shape)) != 4:
         return None
-    return _QuantizedInputPlan(
-        kind="dequantize",
-        adapter_op=dequantize_plan.adapter_op,
-        nhwc_plan=dequantize_plan,
+    return _wrap_shared_input_plan(
         concat_input=concat_input,
-        source_name=dequantize_plan.source_name,
-        remove_adapter=dequantize_plan.remove_adapter,
+        input_plan=dequantize_plan,
     )
 
 
@@ -328,23 +349,16 @@ def _resolve_prelu_quantized_input_plan(
     model_outputs: set[str],
     public_names: set[str],
 ) -> Optional[_QuantizedInputPlan]:
-    prelu_plan = _resolve_prelu_input_plan(
-        model_ir,
-        graph_index,
-        input_name=concat_input,
-        concat_index=concat_index,
-        model_outputs=model_outputs,
-        public_names=public_names,
-    )
-    if prelu_plan is None:
-        return None
-    return _QuantizedInputPlan(
-        kind="prelu",
-        adapter_op=prelu_plan.adapter_op,
-        nhwc_plan=prelu_plan,
+    return _wrap_shared_input_plan(
         concat_input=concat_input,
-        source_name=prelu_plan.source_name,
-        remove_adapter=prelu_plan.remove_adapter,
+        input_plan=_resolve_prelu_input_plan(
+            model_ir,
+            graph_index,
+            input_name=concat_input,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+            public_names=public_names,
+        ),
     )
 
 
@@ -356,22 +370,15 @@ def _resolve_softmax_quantized_input_plan(
     concat_index: int,
     model_outputs: set[str],
 ) -> Optional[_QuantizedInputPlan]:
-    softmax_plan = _resolve_softmax_input_plan(
-        model_ir,
-        graph_index,
-        input_name=concat_input,
-        concat_index=concat_index,
-        model_outputs=model_outputs,
-    )
-    if softmax_plan is None:
-        return None
-    return _QuantizedInputPlan(
-        kind="softmax",
-        adapter_op=softmax_plan.adapter_op,
-        nhwc_plan=softmax_plan,
+    return _wrap_shared_input_plan(
         concat_input=concat_input,
-        source_name=softmax_plan.source_name,
-        remove_adapter=softmax_plan.remove_adapter,
+        input_plan=_resolve_softmax_input_plan(
+            model_ir,
+            graph_index,
+            input_name=concat_input,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+        ),
     )
 
 
@@ -383,22 +390,15 @@ def _resolve_leaky_quantized_input_plan(
     concat_index: int,
     model_outputs: set[str],
 ) -> Optional[_QuantizedInputPlan]:
-    leaky_plan = _resolve_leaky_input_plan(
-        model_ir,
-        graph_index,
-        input_name=concat_input,
-        concat_index=concat_index,
-        model_outputs=model_outputs,
-    )
-    if leaky_plan is None:
-        return None
-    return _QuantizedInputPlan(
-        kind="leaky",
-        adapter_op=leaky_plan.adapter_op,
-        nhwc_plan=leaky_plan,
+    return _wrap_shared_input_plan(
         concat_input=concat_input,
-        source_name=leaky_plan.source_name,
-        remove_adapter=leaky_plan.remove_adapter,
+        input_plan=_resolve_leaky_input_plan(
+            model_ir,
+            graph_index,
+            input_name=concat_input,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+        ),
     )
 
 
@@ -421,13 +421,9 @@ def _resolve_slice_quantized_input_plan(
     )
     if slice_plan is None or slice_plan.output_post_adapter_ops:
         return None
-    return _QuantizedInputPlan(
-        kind="slice",
-        adapter_op=slice_plan.adapter_op,
-        nhwc_plan=slice_plan,
+    return _wrap_shared_input_plan(
         concat_input=concat_input,
-        source_name=slice_plan.source_name,
-        remove_adapter=slice_plan.remove_adapter,
+        input_plan=slice_plan,
     )
 
 
@@ -450,13 +446,9 @@ def _resolve_split_quantized_input_plan(
     )
     if split_plan is None or split_plan.output_post_adapter_ops:
         return None
-    return _QuantizedInputPlan(
-        kind="split",
-        adapter_op=split_plan.adapter_op,
-        nhwc_plan=split_plan,
+    return _wrap_shared_input_plan(
         concat_input=concat_input,
-        source_name=split_plan.source_name,
-        remove_adapter=split_plan.remove_adapter,
+        input_plan=split_plan,
     )
 
 
@@ -506,13 +498,9 @@ def _resolve_add_quantized_input_plan(
         or not _has_only_supported_add_leaves(add_plan)
     ):
         return None
-    return _QuantizedInputPlan(
-        kind="add",
-        adapter_op=add_plan.adapter_op,
-        nhwc_plan=add_plan,
+    return _wrap_shared_input_plan(
         concat_input=concat_input,
-        source_name=add_plan.source_name,
-        remove_adapter=add_plan.remove_adapter,
+        input_plan=add_plan,
     )
 
 
@@ -816,175 +804,19 @@ def _resolve_quantized_concat_candidate(
     return None
 
 
-def _has_quantized_direct_concat_candidate(
+def _has_quantized_concat_candidate(
     pass_state: ModelIRPassState,
+    *,
+    family: str,
 ) -> bool:
     return (
         _resolve_quantized_concat_candidate(
             pass_state.model_ir,
             pass_state.graph_index,
-            family="direct",
+            family=family,
         )
         is not None
     )
-
-
-def _has_quantized_unary_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="unary",
-        )
-        is not None
-    )
-
-
-def _has_quantized_pad_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="pad",
-        )
-        is not None
-    )
-
-
-def _has_quantized_unary_pad_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="unary_pad",
-        )
-        is not None
-    )
-
-
-def _has_quantized_all_pad_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="all_pad",
-        )
-        is not None
-    )
-
-
-def _has_quantized_swish_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="swish",
-        )
-        is not None
-    )
-
-
-def _has_quantized_dequantize_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="dequantize",
-        )
-        is not None
-    )
-
-
-def _has_quantized_prelu_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="prelu",
-        )
-        is not None
-    )
-
-
-def _has_quantized_softmax_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="softmax",
-        )
-        is not None
-    )
-
-
-def _has_quantized_leaky_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="leaky",
-        )
-        is not None
-    )
-
-
-def _has_quantized_slice_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="slice",
-        )
-        is not None
-    )
-
-
-def _has_quantized_split_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="split",
-        )
-        is not None
-    )
-
-
-def _has_quantized_add_concat_candidate(
-    pass_state: ModelIRPassState,
-) -> bool:
-    return (
-        _resolve_quantized_concat_candidate(
-            pass_state.model_ir,
-            pass_state.graph_index,
-            family="add",
-        )
-        is not None
-    )
-
-
 def _optimize_quantized_concat_chains(
     model_ir: ModelIR,
     *,
@@ -1241,304 +1073,49 @@ def run_nhwc_concat_quantized_layout_cleanup(
 ) -> Dict[str, int]:
     """Lift bounded Concat→Quantize post-adapter families into NHWC."""
 
-    def _run_direct(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="direct",
-            stats_key=_DIRECT_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_DIRECT_STATS_KEY, 0)),
-        }
+    def _make_callback(family: str, stats_key: str):
+        def _run(
+            pass_state: ModelIRPassState,
+        ) -> Dict[str, int | bool]:
+            stats = _optimize_quantized_concat_chains(
+                pass_state.model_ir,
+                family=family,
+                stats_key=stats_key,
+                graph_index=pass_state.graph_index,
+                layout_state=pass_state.layout_state,
+            )
+            return {
+                **stats,
+                "changed": bool(stats.get(stats_key, 0)),
+            }
 
-    def _run_unary(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="unary",
-            stats_key=_UNARY_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_UNARY_STATS_KEY, 0)),
-        }
+        return _run
 
-    def _run_pad(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="pad",
-            stats_key=_PAD_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
+    specs = [
+        PassSpec(
+            pass_id=f"layout.nhwc_pre_concat_quantized_{family}",
+            phase=PassPhase.LAYOUT_PLAN,
+            callback=_make_callback(family, stats_key),
+            precondition=(
+                lambda pass_state, family=family: (
+                    _has_quantized_concat_candidate(
+                        pass_state,
+                        family=family,
+                    )
+                )
+            ),
+            priority=priority,
+            transactional=True,
         )
-        return {
-            **stats,
-            "changed": bool(stats.get(_PAD_STATS_KEY, 0)),
-        }
-
-    def _run_unary_pad(
-        pass_state: ModelIRPassState,
-    ) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="unary_pad",
-            stats_key=_UNARY_PAD_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_UNARY_PAD_STATS_KEY, 0)),
-        }
-
-    def _run_all_pad(
-        pass_state: ModelIRPassState,
-    ) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="all_pad",
-            stats_key=_ALL_PAD_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_ALL_PAD_STATS_KEY, 0)),
-        }
-
-    def _run_swish(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="swish",
-            stats_key=_SWISH_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_SWISH_STATS_KEY, 0)),
-        }
-
-    def _run_dequantize(
-        pass_state: ModelIRPassState,
-    ) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="dequantize",
-            stats_key=_DEQUANTIZE_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_DEQUANTIZE_STATS_KEY, 0)),
-        }
-
-    def _run_prelu(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="prelu",
-            stats_key=_PRELU_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_PRELU_STATS_KEY, 0)),
-        }
-
-    def _run_softmax(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="softmax",
-            stats_key=_SOFTMAX_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_SOFTMAX_STATS_KEY, 0)),
-        }
-
-    def _run_leaky(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="leaky",
-            stats_key=_LEAKY_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_LEAKY_STATS_KEY, 0)),
-        }
-
-    def _run_slice(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="slice",
-            stats_key=_SLICE_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_SLICE_STATS_KEY, 0)),
-        }
-
-    def _run_split(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="split",
-            stats_key=_SPLIT_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_SPLIT_STATS_KEY, 0)),
-        }
-
-    def _run_add(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
-        stats = _optimize_quantized_concat_chains(
-            pass_state.model_ir,
-            family="add",
-            stats_key=_ADD_STATS_KEY,
-            graph_index=pass_state.graph_index,
-            layout_state=pass_state.layout_state,
-        )
-        return {
-            **stats,
-            "changed": bool(stats.get(_ADD_STATS_KEY, 0)),
-        }
-
+        for family, stats_key, priority in _QUANTIZED_FAMILY_SPECS
+    ]
     details, _ = run_model_ir_pass_group(
         model_ir,
-        specs=[
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_direct",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_direct,
-                precondition=_has_quantized_direct_concat_candidate,
-                priority=10,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_unary",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_unary,
-                precondition=_has_quantized_unary_concat_candidate,
-                priority=20,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_pad",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_pad,
-                precondition=_has_quantized_pad_concat_candidate,
-                priority=30,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_unary_pad",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_unary_pad,
-                precondition=_has_quantized_unary_pad_concat_candidate,
-                priority=40,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_all_pad",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_all_pad,
-                precondition=_has_quantized_all_pad_concat_candidate,
-                priority=50,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_swish",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_swish,
-                precondition=_has_quantized_swish_concat_candidate,
-                priority=60,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_dequantize",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_dequantize,
-                precondition=_has_quantized_dequantize_concat_candidate,
-                priority=70,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_prelu",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_prelu,
-                precondition=_has_quantized_prelu_concat_candidate,
-                priority=80,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_softmax",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_softmax,
-                precondition=_has_quantized_softmax_concat_candidate,
-                priority=90,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_leaky",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_leaky,
-                precondition=_has_quantized_leaky_concat_candidate,
-                priority=100,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_slice",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_slice,
-                precondition=_has_quantized_slice_concat_candidate,
-                priority=110,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_split",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_split,
-                precondition=_has_quantized_split_concat_candidate,
-                priority=120,
-                transactional=True,
-            ),
-            PassSpec(
-                pass_id="layout.nhwc_pre_concat_quantized_add",
-                phase=PassPhase.LAYOUT_PLAN,
-                callback=_run_add,
-                precondition=_has_quantized_add_concat_candidate,
-                priority=130,
-                transactional=True,
-            ),
-        ],
+        specs=specs,
         layout_state=layout_state,
         default_details={
-            _DIRECT_STATS_KEY: 0,
-            _UNARY_STATS_KEY: 0,
-            _PAD_STATS_KEY: 0,
-            _UNARY_PAD_STATS_KEY: 0,
-            _ALL_PAD_STATS_KEY: 0,
-            _SWISH_STATS_KEY: 0,
-            _DEQUANTIZE_STATS_KEY: 0,
-            _PRELU_STATS_KEY: 0,
-            _SOFTMAX_STATS_KEY: 0,
-            _LEAKY_STATS_KEY: 0,
-            _SLICE_STATS_KEY: 0,
-            _SPLIT_STATS_KEY: 0,
-            _ADD_STATS_KEY: 0,
+            stats_key: 0
+            for _, stats_key, _ in _QUANTIZED_FAMILY_SPECS
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(
