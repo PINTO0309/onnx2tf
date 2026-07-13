@@ -20,6 +20,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
     _read_transpose_perm,
+    _replace_operator_input_at,
     _replace_tensor_inputs,
     _set_operator_inputs,
     _set_operator_outputs,
@@ -46,6 +47,7 @@ _DEQUANTIZE_STATS_KEY = (
 )
 _PRELU_STATS_KEY = "optimized_transpose_pre_concat_nhwc_prelu_chains"
 _SOFTMAX_STATS_KEY = "optimized_transpose_pre_concat_nhwc_softmax_chains"
+_SWISH_STATS_KEY = "optimized_transpose_pre_concat_nhwc_swish_chains"
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
 
@@ -61,6 +63,8 @@ class _NhwcConcatInputPlan:
     dequantize_op: Optional[OperatorIR] = None
     prelu_op: Optional[OperatorIR] = None
     softmax_op: Optional[OperatorIR] = None
+    logistic_op: Optional[OperatorIR] = None
+    mul_op: Optional[OperatorIR] = None
     pads_tensor_name: Optional[str] = None
     pads_nhwc: Optional[np.ndarray] = None
     clone_pads: bool = False
@@ -70,6 +74,8 @@ class _NhwcConcatInputPlan:
     rewrite_alpha: bool = False
     clone_alpha: bool = False
     adapter_output_name: Optional[str] = None
+    logistic_output_name: Optional[str] = None
+    mul_data_input_index: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -613,6 +619,112 @@ def _resolve_softmax_input_plan(
     )
 
 
+def _resolve_swish_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    input_name: str,
+    concat_index: int,
+    model_outputs: set[str],
+) -> Optional[_NhwcConcatInputPlan]:
+    mul_op = graph_index.producer(input_name)
+    mul_index = None if mul_op is None else graph_index.operator_index(mul_op)
+    if (
+        mul_op is None
+        or mul_index is None
+        or str(mul_op.op_type) != "MUL"
+        or len(mul_op.inputs) != 2
+        or len(mul_op.outputs) != 1
+        or str(mul_op.outputs[0]) != input_name
+        or input_name in model_outputs
+        or set(graph_index.consumer_indices(input_name))
+        != {int(concat_index)}
+    ):
+        return None
+
+    logistic_op: Optional[OperatorIR] = None
+    logistic_index: Optional[int] = None
+    logistic_output_name: Optional[str] = None
+    adapter_output_name: Optional[str] = None
+    mul_data_input_index: Optional[int] = None
+    for logistic_input_index, logistic_candidate_name in enumerate(mul_op.inputs):
+        candidate = graph_index.producer(str(logistic_candidate_name))
+        candidate_index = (
+            None if candidate is None else graph_index.operator_index(candidate)
+        )
+        if (
+            candidate is not None
+            and candidate_index is not None
+            and str(candidate.op_type) == "LOGISTIC"
+            and len(candidate.inputs) == 1
+            and len(candidate.outputs) == 1
+            and str(candidate.outputs[0]) == str(logistic_candidate_name)
+        ):
+            logistic_op = candidate
+            logistic_index = int(candidate_index)
+            logistic_output_name = str(logistic_candidate_name)
+            adapter_output_name = str(candidate.inputs[0])
+            mul_data_input_index = 1 - int(logistic_input_index)
+            break
+    if (
+        logistic_op is None
+        or logistic_index is None
+        or logistic_output_name is None
+        or adapter_output_name is None
+        or mul_data_input_index is None
+        or str(mul_op.inputs[mul_data_input_index]) != adapter_output_name
+    ):
+        return None
+
+    adapter_op = graph_index.producer(adapter_output_name)
+    adapter_index = (
+        None if adapter_op is None else graph_index.operator_index(adapter_op)
+    )
+    if (
+        adapter_op is None
+        or adapter_index is None
+        or str(adapter_op.op_type) != "TRANSPOSE"
+        or len(adapter_op.inputs) < 2
+        or len(adapter_op.outputs) != 1
+        or str(adapter_op.outputs[0]) != adapter_output_name
+        or _read_transpose_perm(model_ir, adapter_op)
+        != _PERM_NHWC_TO_NCHW
+        or adapter_output_name in model_outputs
+        or logistic_output_name in model_outputs
+        or set(graph_index.consumer_indices(adapter_output_name))
+        != {int(logistic_index), int(mul_index)}
+        or set(graph_index.consumer_indices(logistic_output_name))
+        != {int(mul_index)}
+    ):
+        return None
+
+    source_name = str(adapter_op.inputs[0])
+    source_tensor = model_ir.tensors.get(source_name)
+    logistic_output_tensor = model_ir.tensors.get(logistic_output_name)
+    mul_output_tensor = model_ir.tensors.get(input_name)
+    if (
+        source_tensor is None
+        or len(list(source_tensor.shape)) != 4
+        or logistic_output_tensor is None
+        or len(list(logistic_output_tensor.shape)) != 4
+        or mul_output_tensor is None
+        or len(list(mul_output_tensor.shape)) != 4
+    ):
+        return None
+    return _NhwcConcatInputPlan(
+        kind="swish",
+        adapter_op=adapter_op,
+        logistic_op=logistic_op,
+        mul_op=mul_op,
+        source_name=source_name,
+        output_name=input_name,
+        remove_adapter=True,
+        adapter_output_name=adapter_output_name,
+        logistic_output_name=logistic_output_name,
+        mul_data_input_index=int(mul_data_input_index),
+    )
+
+
 def _resolve_family_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -668,6 +780,23 @@ def _resolve_family_input_plan(
         )
     if family == "softmax":
         return _resolve_softmax_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+        )
+    if family == "swish":
+        unary_plan = _resolve_unary_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+        )
+        if unary_plan is not None:
+            return unary_plan
+        return _resolve_swish_input_plan(
             model_ir,
             graph_index,
             input_name=input_name,
@@ -755,6 +884,9 @@ def _resolve_nhwc_concat_candidate(
             or len(input_plans) - softmax_count < 1
         ):
             continue
+        swish_count = sum(plan.kind == "swish" for plan in input_plans)
+        if family == "swish" and swish_count < 1:
+            continue
 
         if family in {
             "unary",
@@ -762,6 +894,7 @@ def _resolve_nhwc_concat_candidate(
             "dequantize",
             "prelu",
             "softmax",
+            "swish",
         }:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
@@ -781,6 +914,7 @@ def _resolve_nhwc_concat_candidate(
                     "dequantize",
                     "prelu",
                     "softmax",
+                    "swish",
                 }:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
@@ -896,6 +1030,17 @@ def _has_nhwc_softmax_concat_candidate(pass_state: ModelIRPassState) -> bool:
     )
 
 
+def _has_nhwc_swish_concat_candidate(pass_state: ModelIRPassState) -> bool:
+    return (
+        _resolve_nhwc_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="swish",
+        )
+        is not None
+    )
+
+
 def _optimize_transpose_pre_concat_nhwc_direct_chains(
     model_ir: ModelIR,
     *,
@@ -981,6 +1126,21 @@ def _optimize_transpose_pre_concat_nhwc_softmax_chains(
         model_ir,
         family="softmax",
         stats_key=_SOFTMAX_STATS_KEY,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+
+def _optimize_transpose_pre_concat_nhwc_swish_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
+    return _optimize_transpose_pre_concat_nhwc_family(
+        model_ir,
+        family="swish",
+        stats_key=_SWISH_STATS_KEY,
         graph_index=graph_index,
         layout_state=layout_state,
     )
@@ -1163,6 +1323,43 @@ def _apply_softmax_input_plan(
     )
 
 
+def _apply_swish_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    input_plan: _NhwcConcatInputPlan,
+) -> None:
+    assert input_plan.logistic_op is not None
+    assert input_plan.mul_op is not None
+    assert input_plan.logistic_output_name is not None
+    assert input_plan.mul_data_input_index is not None
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=input_plan.logistic_op,
+        new_inputs=[input_plan.source_name],
+        graph_index=graph_index,
+    )
+    _replace_operator_input_at(
+        model_ir=model_ir,
+        op=input_plan.mul_op,
+        input_index=input_plan.mul_data_input_index,
+        new_input_name=input_plan.source_name,
+        graph_index=graph_index,
+    )
+    for tensor_name in (
+        input_plan.logistic_output_name,
+        input_plan.output_name,
+    ):
+        tensor = model_ir.tensors.get(tensor_name)
+        _permute_tensor_metadata_if_rank_matches(
+            tensor,
+            _PERM_NCHW_TO_NHWC,
+        )
+        if tensor is not None:
+            tensor.quantization = _clone_nhwc_quantization(
+                tensor.quantization
+            )
+
+
 def _optimize_transpose_pre_concat_nhwc_family(
     model_ir: ModelIR,
     *,
@@ -1203,6 +1400,13 @@ def _optimize_transpose_pre_concat_nhwc_family(
                     unary_output_tensor.quantization = _clone_nhwc_quantization(
                         unary_output_tensor.quantization
                     )
+                new_concat_inputs.append(input_plan.output_name)
+            elif input_plan.logistic_op is not None:
+                _apply_swish_input_plan(
+                    model_ir,
+                    graph_index,
+                    input_plan,
+                )
                 new_concat_inputs.append(input_plan.output_name)
             elif input_plan.softmax_op is not None:
                 _apply_softmax_input_plan(
@@ -1430,6 +1634,14 @@ def run_nhwc_concat_layout_cleanup(
         )
         return {**stats, "changed": bool(stats.get(_SOFTMAX_STATS_KEY, 0))}
 
+    def _run_swish(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_pre_concat_nhwc_swish_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {**stats, "changed": bool(stats.get(_SWISH_STATS_KEY, 0))}
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -1481,6 +1693,14 @@ def run_nhwc_concat_layout_cleanup(
                 priority=60,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_swish",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_swish,
+                precondition=_has_nhwc_swish_concat_candidate,
+                priority=70,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -1490,6 +1710,7 @@ def run_nhwc_concat_layout_cleanup(
             _DEQUANTIZE_STATS_KEY: 0,
             _PRELU_STATS_KEY: 0,
             _SOFTMAX_STATS_KEY: 0,
+            _SWISH_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(

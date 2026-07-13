@@ -294,8 +294,8 @@ quantization dimensions move from NCDHW dimension 1 to NDHWC dimension 4.
 
 The much larger rank-four generic NHWC pre-Concat matcher is being migrated by
 semantic family rather than as one monolithic rule. Its strict float-path
-direct-adapter, unary, Pad-plus-direct, Dequantize, PReLU, and Softmax
-families are owned by
+direct-adapter, unary, Pad-plus-direct, Dequantize, PReLU, Softmax, and
+expanded-Swish families are owned by
 `passes/nhwc_concat_layout.py`. Every Concat consumer must be an inverse
 NCHW→NHWC Transpose. Direct inputs come from NHWC→NCHW Transpose; the unary
 family permits one or more RELU, RELU6, LOGISTIC, TANH, or GELU operations
@@ -307,7 +307,8 @@ compatible spatial shapes, and applies the rewrites transactionally under
 stable IDs `layout.nhwc_pre_concat_direct`,
 `layout.nhwc_pre_concat_unary`, `layout.nhwc_pre_concat_pad`, and
 `layout.nhwc_pre_concat_dequantize`, plus
-`layout.nhwc_pre_concat_prelu` and `layout.nhwc_pre_concat_softmax`.
+`layout.nhwc_pre_concat_prelu`, `layout.nhwc_pre_concat_softmax`, and
+`layout.nhwc_pre_concat_swish`.
 Exclusive pads constants are remapped in place; shared or public pads
 constants use copy-on-write so unrelated Pad consumers preserve NCHW
 semantics. Dequantize inputs retain source scale and zero-point provenance
@@ -318,9 +319,14 @@ dimension follows the applied permutation. Exactly one Softmax plus at least
 one direct input is lifted through local NHWC→NHCW→Softmax→NHWC adapters,
 preserving the original NCHW last-axis semantics while reducing total
 Transpose count. Canonical Concat and branch/intermediate per-axis
-quantization metadata follow their actual permutations. Swish, split, slice,
-Add, and quantized-post families remain in the legacy matcher until each
-receives bounded characterization.
+quantization metadata follow their actual permutations. Expanded Swish accepts
+one or more exact `Logistic(x) * x` diamonds in either Mul input order, with
+only direct or supported unary companion inputs. It rewires both diamond edges
+to the NHWC source and remaps Logistic and Mul output metadata. Adapter,
+Logistic, or Mul fan-out and public boundaries are rejected before mutation;
+public Logistic output rejection deliberately closes an unsafe legacy case.
+Split, slice, Add, and quantized-post families remain in the legacy matcher
+until each receives bounded characterization.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
