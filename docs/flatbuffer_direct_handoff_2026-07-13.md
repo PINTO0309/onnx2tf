@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `b0d1248` (`index multi branch gate layout pass`)
+- Latest implementation checkpoint: `8d149cb` (`extract dual postconv gate layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `b0d1248`
+  `8d149cb`
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -14,7 +14,8 @@
 ## Completed work
 
 This resumed interval completed six adjacent semantic layout families using
-the staged characterization → mechanical extraction → indexed runner process.
+the staged characterization → mechanical extraction → indexed runner process,
+then characterized and mechanically extracted the seventh family.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -56,6 +57,14 @@ the staged characterization → mechanical extraction → indexed runner process
      `passes/multi_branch_gate_layout.py` with AST equivalence in `42bb3e8`.
    - Migrated all reads and mutations to shared graph/layout state, added the
      ordered runner, and replaced the single production call in `b0d1248`.
+7. Complementary dual-postconv gate layout
+   - Added a generic two-output success fixture and gate-fan-out,
+     data-adapter-fan-out, and public-intermediate no-op boundaries in
+     `ed6d8c1`.
+   - Mechanically moved the complete implementation to
+     `passes/dual_postconv_gate_layout.py` with AST equivalence in `8d149cb`.
+     The five legacy production positions remain unchanged until the separate
+     indexed migration.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -71,10 +80,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the adjacent
+  The immediate next unit is the already extracted
   `_optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains` family:
-  characterize its generic topology and rejection boundaries before
-  mechanical extraction.
+  migrate it to shared graph/layout state, add an ordered runner, and replace
+  all five raw production calls.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -96,7 +105,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `b0d1248`; after the documentation
+implementation working tree is clean at `8d149cb`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -106,10 +115,12 @@ checkpoints since the previous pause changed:
 - `onnx2tf/tflite_builder/core/model_ir_utils.py`
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`
 - `onnx2tf/tflite_builder/passes/elementwise_gate_layout.py`
+- `onnx2tf/tflite_builder/passes/dual_postconv_gate_layout.py`
 - `onnx2tf/tflite_builder/passes/multi_branch_gate_layout.py`
 - `onnx2tf/tflite_builder/passes/se_layout.py`
 - `tests/test_flatbuffer_direct_architecture.py`
 - `tests/test_flatbuffer_direct_elementwise_gate_layout.py`
+- `tests/test_flatbuffer_direct_dual_postconv_gate_layout.py`
 - `tests/test_flatbuffer_direct_osnet_gate_layout.py`
 - `tests/test_flatbuffer_direct_pass_efficiency.py`
 - `tests/test_flatbuffer_direct_se_layout.py`
@@ -154,6 +165,10 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 - Full direct selection after indexed multi-branch migration:
   `1188 passed, 5 deselected, 2 warnings in 161.24s`.
+- Dual-postconv gate compact characterization: `4 passed`.
+- Dual-postconv extraction and ownership focus: `38 passed in 18.99s`.
+- Full direct selection after mechanical extraction:
+  `1193 passed, 5 deselected, 2 warnings in 169.93s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -185,12 +200,16 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Audit all five production calls and existing fixtures for
-   `_optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains`.
-3. Add compact generic success and no-op characterization for shared inputs,
-   gate fan-out, public boundaries, and both post-Conv branches as applicable.
-4. Commit characterization separately, then mechanically extract the complete
-   implementation with AST-equivalence proof before indexed mutation.
+2. Audit every producer/consumer read and mutation in
+   `passes/dual_postconv_gate_layout.py`, then add optional `graph_index` and
+   `layout_state` parameters without changing deep matching semantics.
+3. Add a stable ordered `LAYOUT_PLAN` runner with model-only preflight and an
+   indexed complementary-gate/two-branch guard. Replace all five raw production
+   calls while retaining the compatibility wrapper.
+4. Extend the compact fixtures to prove one initial index refresh and one
+   success snapshot, while every unsafe boundary rejects before snapshotting.
+5. Run focused tests, sequential Tier 1 `superpoint.onnx -cotof`, and the full
+   direct selection before committing and pushing the indexed checkpoint.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -419,3 +438,29 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_multi_branch_gate_superpoint` artifacts were removed after
 metrics inspection.
+
+### Dual-postconv gate characterization and mechanical extraction
+
+Checkpoint `ed6d8c1` added the missing compact generic corpus for the
+complementary Logistic/Sub gate feeding two Mul/Add outputs and two downstream
+Conv branches. The positive fixture proves removal of all three leading and
+both trailing layout adapters, direct NHWC inputs to the elementwise graph,
+canonical Add outputs, and unchanged Conv inputs. Parameterized no-op coverage
+fixes Logistic gate fan-out, a data-adapter side consumer, and a public Add
+intermediate. Focused characterization passed 4 tests.
+
+The complete 323-line matcher moved mechanically to
+`passes/dual_postconv_gate_layout.py`. Its AST, including docstrings, matches
+`ed6d8c1`; the lowerer retains a signature-compatible wrapper and all five raw
+production positions until the separate indexed migration. An architecture
+test fixes single ownership.
+
+Focused characterization and ownership validation passed 38 tests. The
+complete sequential direct selection passed:
+
+```text
+1193 passed, 5 deselected, 2 warnings in 169.93s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently.
