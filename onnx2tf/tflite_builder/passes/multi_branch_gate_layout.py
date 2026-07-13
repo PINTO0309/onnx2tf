@@ -5,8 +5,6 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
@@ -18,9 +16,22 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_outputs,
     _write_const_ints_to_tensor,
 )
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
-def _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate NCHW round-trips in OSNet-like multi-branch gate blocks.
 
@@ -45,6 +56,7 @@ def _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(model_ir: Mo
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _is_singleton_spatial_nhwc_to_nchw_reshape(
         *,
@@ -107,13 +119,14 @@ def _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(model_ir: Mo
             op=op,
             input_index=int(input_index),
             new_input_name=cloned_name,
+            graph_index=graph_index,
         )
         return str(cloned_name)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for post_idx, post_op in enumerate(model_ir.operators):
@@ -421,6 +434,7 @@ def _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(model_ir: Mo
                     model_ir=model_ir,
                     op=relu_op,
                     new_inputs=[str(leaf["pre_input_name"])],
+                    graph_index=graph_index,
                 )
 
                 mean_op = leaf["mean_op"]
@@ -452,6 +466,7 @@ def _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(model_ir: Mo
                         model_ir=model_ir,
                         op=gate_op,
                         new_inputs=[str(gate_pre_input_name)],
+                        graph_index=graph_index,
                     )
                     gate_pre_remove_indices.add(int(leaf["gate_pre_idx"]))
                 else:
@@ -502,10 +517,21 @@ def _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(model_ir: Mo
                 model_ir=model_ir,
                 op=add_root_op,
                 new_outputs=[canonical_post_output_name],
+                graph_index=graph_index,
             )
-            _replace_tensor_inputs(model_ir, add_root_out_name, canonical_post_output_name)
+            _replace_tensor_inputs(
+                model_ir,
+                add_root_out_name,
+                canonical_post_output_name,
+                graph_index=graph_index,
+            )
             for alias_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name)
+                _replace_tensor_inputs(
+                    model_ir,
+                    str(alias_name),
+                    canonical_post_output_name,
+                    graph_index=graph_index,
+                )
 
             old_root_tensor = model_ir.tensors.get(add_root_out_name, None)
             canonical_tensor = model_ir.tensors.get(canonical_post_output_name, None)
@@ -527,7 +553,7 @@ def _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(model_ir: Mo
             remove_indices.update(int(v) for v in gate_pre_remove_indices)
             remove_indices.update(int(v) for v in post_indices)
             for remove_idx in sorted(remove_indices, reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -536,5 +562,196 @@ def _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(model_ir: Mo
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains": int(rewritten)}
+
+
+def _has_multi_branch_gate_candidate(pass_state: ModelIRPassState) -> bool:
+    model_ir = pass_state.model_ir
+    graph_index = pass_state.graph_index
+    model_outputs = {str(name) for name in model_ir.outputs}
+
+    def _is_transpose(
+        op: OperatorIR | None,
+        perm: List[int],
+    ) -> bool:
+        return bool(
+            op is not None
+            and str(op.op_type) == "TRANSPOSE"
+            and len(op.inputs) >= 2
+            and len(op.outputs) == 1
+            and _read_transpose_perm(model_ir, op) == perm
+        )
+
+    def _is_gate_leaf(mul_op: OperatorIR) -> bool:
+        if (
+            str(mul_op.op_type) != "MUL"
+            or len(mul_op.inputs) != 2
+            or len(mul_op.outputs) != 1
+        ):
+            return False
+        mul_index = graph_index.operator_index(mul_op)
+        if mul_index is None:
+            return False
+        for relu_input_index in (0, 1):
+            relu_name = str(mul_op.inputs[relu_input_index])
+            gate_name = str(mul_op.inputs[1 - relu_input_index])
+            relu_op = graph_index.producer(relu_name)
+            gate_op = graph_index.producer(gate_name)
+            relu_index = (
+                graph_index.operator_index(relu_op)
+                if relu_op is not None
+                else None
+            )
+            gate_index = (
+                graph_index.operator_index(gate_op)
+                if gate_op is not None
+                else None
+            )
+            if (
+                relu_op is None
+                or relu_index is None
+                or str(relu_op.op_type) != "RELU"
+                or len(relu_op.inputs) != 1
+                or len(relu_op.outputs) != 1
+                or relu_name in model_outputs
+                or gate_op is None
+                or gate_index is None
+                or str(gate_op.op_type) != "LOGISTIC"
+                or len(gate_op.inputs) != 1
+                or len(gate_op.outputs) != 1
+                or gate_name in model_outputs
+                or set(graph_index.consumer_indices(gate_name)) != {mul_index}
+            ):
+                continue
+            pre_name = str(relu_op.inputs[0])
+            pre_op = graph_index.producer(pre_name)
+            if (
+                not _is_transpose(pre_op, [0, 3, 1, 2])
+                or pre_name in model_outputs
+                or set(graph_index.consumer_indices(pre_name)) != {relu_index}
+            ):
+                continue
+            relu_users = graph_index.consumers_of(relu_name)
+            mean_ops = [
+                user
+                for user in relu_users
+                if str(user.op_type) == "MEAN"
+                and len(user.inputs) >= 2
+                and len(user.outputs) == 1
+                and bool(user.options.get("keepDims", False))
+            ]
+            if (
+                len(mean_ops) != 1
+                or mul_index not in graph_index.consumer_indices(relu_name)
+            ):
+                continue
+            gate_pre_name = str(gate_op.inputs[0])
+            gate_pre_op = graph_index.producer(gate_pre_name)
+            if gate_pre_op is None or str(gate_pre_op.op_type) not in {
+                "TRANSPOSE",
+                "RESHAPE",
+            }:
+                continue
+            if (
+                str(gate_pre_op.op_type) == "TRANSPOSE"
+                and not _is_transpose(gate_pre_op, [0, 3, 1, 2])
+            ):
+                continue
+            if set(graph_index.consumer_indices(gate_pre_name)) != {gate_index}:
+                continue
+            return True
+        return False
+
+    for post_op in model_ir.operators:
+        if not _is_transpose(post_op, [0, 2, 3, 1]):
+            continue
+        root_name = str(post_op.inputs[0])
+        if root_name in model_outputs or str(post_op.outputs[0]) in model_outputs:
+            continue
+        root_op = graph_index.producer(root_name)
+        if root_op is None or str(root_op.op_type) != "ADD":
+            continue
+        root_users = graph_index.consumers_of(root_name)
+        if not root_users or any(
+            not _is_transpose(user, [0, 2, 3, 1])
+            or str(user.outputs[0]) in model_outputs
+            for user in root_users
+        ):
+            continue
+
+        leaf_count = 0
+        tree_valid = True
+        visited: set[str] = set()
+        stack = [root_name]
+        while stack:
+            tensor_name = str(stack.pop())
+            if tensor_name in visited:
+                tree_valid = False
+                break
+            visited.add(tensor_name)
+            producer = graph_index.producer(tensor_name)
+            if producer is None or len(producer.outputs) != 1:
+                tree_valid = False
+                break
+            if str(producer.op_type) == "ADD" and len(producer.inputs) == 2:
+                stack.extend(str(name) for name in producer.inputs)
+                continue
+            if str(producer.op_type) == "MUL" and _is_gate_leaf(producer):
+                leaf_count += 1
+                continue
+            tree_valid = False
+            break
+        if tree_valid and leaf_count >= 2:
+            return True
+    return False
+
+
+def run_multi_branch_gate_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Propagate NHWC through guarded multi-branch gate/Add trees."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"TRANSPOSE", "RELU", "MEAN", "LOGISTIC", "MUL", "ADD"}
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            required.discard(str(operator.op_type))
+            if not required:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    stats_key = (
+        "optimized_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains"
+    )
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {**stats, "changed": bool(stats.get(stats_key, 0))}
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.multi_branch_gate_add_tree_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_multi_branch_gate_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={stats_key: 0},
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}

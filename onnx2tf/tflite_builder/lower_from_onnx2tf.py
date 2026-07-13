@@ -133,6 +133,7 @@ from onnx2tf.tflite_builder.passes.elementwise_gate_layout import (
 )
 from onnx2tf.tflite_builder.passes.multi_branch_gate_layout import (
     _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains as _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains_pass,
+    run_multi_branch_gate_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -54543,9 +54544,13 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        # Run OSNet-specific multi-branch gate rewrite at terminal stage so
+        # Run the multi-branch gate rewrite at terminal stage so
         # earlier generic passes do not re-wrap rewritten NHWC tensors.
-        _optimize_transpose_osnet_multi_gate_muladd_prepost_nhwc_chains(model_ir)
+        run_multi_branch_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
     run_clamp_cleanup(
         model_ir,
         layout_state=session.layout_state,
