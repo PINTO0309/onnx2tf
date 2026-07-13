@@ -1122,6 +1122,14 @@ def _resolve_add_input_plan(
                 model_outputs=model_outputs,
             )
         if operand_plan is None:
+            operand_plan = _resolve_leaky_input_plan(
+                model_ir,
+                graph_index,
+                input_name=add_input_name,
+                concat_index=int(add_index),
+                model_outputs=model_outputs,
+            )
+        if operand_plan is None:
             operand_plan = _resolve_pad_input_plan(
                 model_ir,
                 graph_index,
@@ -1515,6 +1523,15 @@ def _resolve_family_input_plan(
         )
         if softmax_plan is not None:
             return softmax_plan
+        leaky_plan = _resolve_leaky_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+        )
+        if leaky_plan is not None:
+            return leaky_plan
         pad_plan = _resolve_pad_input_plan(
             model_ir,
             graph_index,
@@ -2549,6 +2566,12 @@ def _apply_add_input_plan(
             )
         elif operand_plan.softmax_op is not None:
             _apply_softmax_input_plan(
+                model_ir,
+                graph_index,
+                operand_plan,
+            )
+        elif operand_plan.leaky_neg_op is not None:
+            _apply_leaky_input_plan(
                 model_ir,
                 graph_index,
                 operand_plan,

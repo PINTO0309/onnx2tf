@@ -653,6 +653,93 @@ def _add_model(
                     )
                 )
     if boundary in {
+        "leaky_operand",
+        "leaky_operand_fanout",
+        "leaky_companion",
+    }:
+        companion = boundary == "leaky_companion"
+        prefix = "x" if companion else "a"
+        adapter_name = f"{prefix}_nchw"
+        source_name = f"{prefix}_nhwc"
+        channels = 2 if companion else 3
+        internal_names = [
+            f"{prefix}_neg_out",
+            f"{prefix}_neg_relu",
+            f"{prefix}_pos_relu",
+            f"{prefix}_neg_scaled",
+            f"{prefix}_leaky",
+        ]
+        for tensor_name in internal_names:
+            model_ir.tensors[tensor_name] = _tensor(
+                tensor_name,
+                [1, channels, 5, 7],
+            )
+            model_ir.tensors[tensor_name].quantization = QuantParamIR(
+                scale=[0.4] * channels,
+                zero_point=[0] * channels,
+                quantized_dimension=1,
+            )
+        alpha_name = f"{prefix}_leaky_alpha"
+        model_ir.tensors[alpha_name] = TensorIR(
+            name=alpha_name,
+            dtype="FLOAT32",
+            shape=[1],
+            shape_signature=[1],
+            data=np.asarray([0.1], dtype=np.float32),
+        )
+        leaky_ops = [
+            OperatorIR("NEG", [adapter_name], [f"{prefix}_neg_out"]),
+            OperatorIR(
+                "RELU",
+                [f"{prefix}_neg_out"],
+                [f"{prefix}_neg_relu"],
+            ),
+            OperatorIR(
+                "RELU",
+                [adapter_name],
+                [f"{prefix}_pos_relu"],
+            ),
+            OperatorIR(
+                "MUL",
+                [f"{prefix}_neg_relu", alpha_name],
+                [f"{prefix}_neg_scaled"],
+            ),
+            OperatorIR(
+                "SUB",
+                [f"{prefix}_pos_relu", f"{prefix}_neg_scaled"],
+                [f"{prefix}_leaky"],
+            ),
+        ]
+        if companion:
+            concat_op = next(
+                op
+                for op in model_ir.operators
+                if op.op_type == "CONCATENATION"
+            )
+            concat_index = model_ir.operators.index(concat_op)
+            model_ir.operators[concat_index:concat_index] = leaky_ops
+            concat_op.inputs[0] = f"{prefix}_leaky"
+        else:
+            add_op = next(
+                op for op in model_ir.operators if op.op_type == "ADD"
+            )
+            add_index = model_ir.operators.index(add_op)
+            model_ir.operators[add_index:add_index] = leaky_ops
+            add_op.inputs[0] = f"{prefix}_leaky"
+            if boundary == "leaky_operand_fanout":
+                model_ir.tensors["leaky_side"] = _tensor(
+                    "leaky_side",
+                    [1, channels, 5, 7],
+                )
+                model_ir.outputs.append("leaky_side")
+                model_ir.operators.append(
+                    OperatorIR(
+                        "IDENTITY",
+                        [f"{prefix}_leaky"],
+                        ["leaky_side"],
+                    )
+                )
+    if boundary in {
         "shared_split_add_tree",
         "shared_split_external_consumer",
     }:
@@ -1035,6 +1122,7 @@ def test_nhwc_direct_only_add_is_indexed(all_add: bool) -> None:
         "dequantize_operand_fanout",
         "prelu_operand_fanout",
         "softmax_operand_fanout",
+        "leaky_operand_fanout",
     ],
 )
 def test_nhwc_add_rejects_unsafe_or_partial_match(boundary: str) -> None:
@@ -1444,6 +1532,55 @@ def test_nhwc_add_reuses_semantics_preserving_softmax_plan(
     )
     if companion:
         assert concat_op.inputs == ["x_softmax", "sum_nchw"]
+
+
+@pytest.mark.parametrize("leaky_location", ["operand", "companion"])
+def test_nhwc_add_reuses_exact_pseudo_leaky_plan(
+    leaky_location: str,
+) -> None:
+    model_ir = _add_model(boundary=f"leaky_{leaky_location}")
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    companion = leaky_location == "companion"
+    prefix = "x" if companion else "a"
+    channels = 2 if companion else 3
+    neg_op = next(
+        op
+        for op in model_ir.operators
+        if op.outputs == [f"{prefix}_neg_out"]
+    )
+    pos_relu_op = next(
+        op
+        for op in model_ir.operators
+        if op.outputs == [f"{prefix}_pos_relu"]
+    )
+    assert neg_op.inputs == [f"{prefix}_nhwc"]
+    assert pos_relu_op.inputs == [f"{prefix}_nhwc"]
+    for suffix in [
+        "neg_out",
+        "neg_relu",
+        "pos_relu",
+        "neg_scaled",
+        "leaky",
+    ]:
+        tensor = model_ir.tensors[f"{prefix}_{suffix}"]
+        assert tensor.shape == [1, 5, 7, channels]
+        assert isinstance(tensor.quantization, QuantParamIR)
+        assert tensor.quantization.quantized_dimension == 3
+    add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+    assert add_op.inputs == (
+        ["a_nhwc", "b_nhwc"]
+        if companion
+        else ["a_leaky", "b_nhwc"]
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    if companion:
+        assert concat_op.inputs == ["x_leaky", "sum_nchw"]
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
 
 
 def test_nhwc_recursive_add_operand_is_indexed_once() -> None:
