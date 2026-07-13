@@ -479,6 +479,10 @@ contract table over the same action multiset. Softmax's single-branch benefit
 gate and Pad's required direct companion remain explicit invariants;
 Slice/Split/Add remain plan-aware. This removes another net 74 lines from the
 central lowerer.
+The public compatibility wrapper also aggregates its eleven float and thirteen
+quantized family counters through explicit key tuples and two sums, then adds
+the legacy counter. This preserves the single historical return key while
+removing another net 110 repeated lowerer lines.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

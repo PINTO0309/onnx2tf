@@ -14296,157 +14296,47 @@ def _optimize_transpose_pre_concat_nhwc_chains(
         diagnostics=diagnostics,
     )
     legacy_stats = _optimize_transpose_pre_concat_nhwc_chains_legacy(model_ir)
+    indexed_stats_keys = (
+        "optimized_transpose_pre_concat_nhwc_direct_chains",
+        "optimized_transpose_pre_concat_nhwc_unary_chains",
+        "optimized_transpose_pre_concat_nhwc_pad_chains",
+        "optimized_transpose_pre_concat_nhwc_dequantize_chains",
+        "optimized_transpose_pre_concat_nhwc_prelu_chains",
+        "optimized_transpose_pre_concat_nhwc_softmax_chains",
+        "optimized_transpose_pre_concat_nhwc_swish_chains",
+        "optimized_transpose_pre_concat_nhwc_slice_chains",
+        "optimized_transpose_pre_concat_nhwc_split_chains",
+        "optimized_transpose_pre_concat_nhwc_add_chains",
+        "optimized_transpose_pre_concat_nhwc_leaky_chains",
+    )
+    quantized_indexed_stats_keys = (
+        "optimized_transpose_pre_concat_nhwc_quantized_direct_chains",
+        "optimized_transpose_pre_concat_nhwc_quantized_unary_chains",
+        "optimized_transpose_pre_concat_nhwc_quantized_pad_chains",
+        "optimized_transpose_pre_concat_nhwc_quantized_unary_pad_chains",
+        "optimized_transpose_pre_concat_nhwc_quantized_all_pad_chains",
+        "optimized_transpose_pre_concat_nhwc_quantized_swish_chains",
+        "optimized_transpose_pre_concat_nhwc_quantized_dequantize_chains",
+        "optimized_transpose_pre_concat_nhwc_quantized_prelu_chains",
+        "optimized_transpose_pre_concat_nhwc_quantized_softmax_chains",
+        "optimized_transpose_pre_concat_nhwc_quantized_leaky_chains",
+        "optimized_transpose_pre_concat_nhwc_quantized_slice_chains",
+        "optimized_transpose_pre_concat_nhwc_quantized_split_chains",
+        "optimized_transpose_pre_concat_nhwc_quantized_add_chains",
+    )
+    optimized = sum(
+        int(indexed_stats.get(stats_key, 0))
+        for stats_key in indexed_stats_keys
+    )
+    optimized += sum(
+        int(quantized_indexed_stats.get(stats_key, 0))
+        for stats_key in quantized_indexed_stats_keys
+    )
+    optimized += int(
+        legacy_stats.get("optimized_transpose_pre_concat_nhwc_chains", 0)
+    )
     return {
-        "optimized_transpose_pre_concat_nhwc_chains": int(
-            indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_direct_chains",
-                0,
-            )
-        )
-        + int(
-            indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_unary_chains",
-                0,
-            )
-        )
-        + int(
-            indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_pad_chains",
-                0,
-            )
-        )
-        + int(
-            indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_dequantize_chains",
-                0,
-            )
-        )
-        + int(
-            indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_prelu_chains",
-                0,
-            )
-        )
-        + int(
-            indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_softmax_chains",
-                0,
-            )
-        )
-        + int(
-            indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_swish_chains",
-                0,
-            )
-        )
-        + int(
-            indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_slice_chains",
-                0,
-            )
-        )
-        + int(
-            indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_split_chains",
-                0,
-            )
-        )
-        + int(
-            indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_add_chains",
-                0,
-            )
-        )
-        + int(
-            indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_leaky_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_direct_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_unary_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_pad_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_unary_pad_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_all_pad_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_swish_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_dequantize_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_prelu_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_softmax_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_leaky_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_slice_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_split_chains",
-                0,
-            )
-        )
-        + int(
-            quantized_indexed_stats.get(
-                "optimized_transpose_pre_concat_nhwc_quantized_add_chains",
-                0,
-            )
-        )
-        + int(
-            legacy_stats.get(
-                "optimized_transpose_pre_concat_nhwc_chains",
-                0,
-            )
-        )
+        "optimized_transpose_pre_concat_nhwc_chains": int(optimized)
     }
 
 

@@ -266,6 +266,11 @@ compact regression exposed one stale Softmax expectation from before the
 quantized-post Softmax pass existed; `quantized_post` is now characterized as
 success under `layout.nhwc_pre_concat_quantized_softmax` instead of a no-op.
 
+The compatibility wrapper's aggregate statistic no longer contains twenty-four
+hand-written `int(stats.get(...))` additions. Explicit float and quantized key
+tuples feed two sums before the legacy count is added, preserving the original
+single return key and removing a further net 110 lowerer lines.
+
 Changed files for this checkpoint:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`
