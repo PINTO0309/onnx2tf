@@ -469,6 +469,12 @@ remain explicit. This removed 423 lines of repeated dispatch code from
 `nhwc_concat_quantized_layout.py` (1,549 to 1,126 lines) without changing the
 ordered pass contract.
 
+The legacy ownership boundary uses the same compact style. Simple quantized
+families are described by allowed and required action-kind sets after one
+action multiset is built. Only Slice, Split, and Add retain plan-aware
+predicates. This replaces the repeated per-family count/subset blocks while
+preserving the exact fallback boundary for broader legacy combinations.
+
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization

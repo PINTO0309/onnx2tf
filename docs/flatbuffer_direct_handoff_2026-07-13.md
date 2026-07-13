@@ -255,6 +255,12 @@ default metrics are derived from it. A common wrapper also maps shared float
 plans into `_QuantizedInputPlan`. The refactor reduced the module from 1,549 to
 1,126 lines while preserving all thirteen quantized family IDs and their order.
 
+The adjacent legacy ownership gate now builds action-kind counts once. Seven
+simple quantized family contracts declare only allowed and required kinds;
+all-Pad keeps its minimum-arity guard, and Slice/Split/Add keep their
+plan-aware predicates. This removed a further net 79 lines from the central
+lowerer without broadening which unsafe candidates bypass legacy fallback.
+
 Changed files for this checkpoint:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`

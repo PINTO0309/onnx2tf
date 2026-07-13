@@ -13520,6 +13520,28 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             return None
         return [int(shape[0]), int(shape[2]), int(shape[3]), int(shape[1])]
 
+    indexed_quantized_simple_family_contracts = (
+        (frozenset({"direct", "unary"}), frozenset({"unary"})),
+        (frozenset({"direct", "pad"}), frozenset({"direct", "pad"})),
+        (
+            frozenset({"direct", "unary", "pad"}),
+            frozenset({"unary", "pad"}),
+        ),
+        (
+            frozenset({"direct", "unary", "swish"}),
+            frozenset({"swish"}),
+        ),
+        (
+            frozenset({"direct", "dequantize"}),
+            frozenset({"dequantize"}),
+        ),
+        (frozenset({"direct", "prelu"}), frozenset({"prelu"})),
+        (
+            frozenset({"direct", "unary", "leaky"}),
+            frozenset({"leaky"}),
+        ),
+    )
+
     while True:
         changed = False
         consumers = _build_tensor_consumer_map(model_ir)
@@ -13813,8 +13835,15 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             if not rewritable:
                 continue
 
+            action_kind_counts: Dict[str, int] = {}
+            for action in concat_input_actions:
+                action_kind = str(action.get("kind", ""))
+                action_kind_counts[action_kind] = (
+                    action_kind_counts.get(action_kind, 0) + 1
+                )
+            action_kinds = set(action_kind_counts)
             softmax_action_count = int(
-                sum(1 for action in concat_input_actions if str(action.get("kind", "")) == "softmax")
+                action_kind_counts.get("softmax", 0)
             )
             if softmax_action_count > 0:
                 # Safety + benefit gate:
@@ -13827,138 +13856,30 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
                 if int(len(concat_input_actions) - softmax_action_count) <= 0:
                     continue
 
-            all_direct_input_actions = all(
-                str(action.get("kind", "")) == "direct"
-                for action in concat_input_actions
+            all_direct_input_actions = (
+                not action_kinds or action_kinds == {"direct"}
             )
-            # The strict float-path direct-adapter family is owned by the
-            # indexed transactional pass. Keep the legacy matcher responsible
-            # for mixed input families and the separate quantized-post family.
-            if all_direct_input_actions and post_quantize_idx is None:
+            # Both strict direct-adapter families are owned by indexed
+            # transactional passes, with or without post Quantize.
+            if all_direct_input_actions:
                 continue
-            if all_direct_input_actions and post_quantize_idx is not None:
-                continue
-            indexed_quantized_unary_family = (
+
+            indexed_quantized_simple_family = (
                 post_quantize_idx is not None
-                and sum(
-                    str(action.get("kind", "")) == "unary"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", "")) in {"direct", "unary"}
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_quantized_unary_family:
-                continue
-            indexed_quantized_pad_family = (
-                post_quantize_idx is not None
-                and sum(
-                    str(action.get("kind", "")) == "pad"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and sum(
-                    str(action.get("kind", "")) == "direct"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", "")) in {"direct", "pad"}
-                    for action in concat_input_actions
+                and (
+                    any(
+                        required_kinds.issubset(action_kinds)
+                        and action_kinds.issubset(allowed_kinds)
+                        for allowed_kinds, required_kinds
+                        in indexed_quantized_simple_family_contracts
+                    )
+                    or (
+                        len(concat_input_actions) >= 2
+                        and action_kinds == {"pad"}
+                    )
                 )
             )
-            if indexed_quantized_pad_family:
-                continue
-            indexed_quantized_unary_pad_family = (
-                post_quantize_idx is not None
-                and sum(
-                    str(action.get("kind", "")) == "unary"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and sum(
-                    str(action.get("kind", "")) == "pad"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", ""))
-                    in {"direct", "unary", "pad"}
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_quantized_unary_pad_family:
-                continue
-            indexed_quantized_all_pad_family = (
-                post_quantize_idx is not None
-                and len(concat_input_actions) >= 2
-                and all(
-                    str(action.get("kind", "")) == "pad"
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_quantized_all_pad_family:
-                continue
-            indexed_quantized_swish_family = (
-                post_quantize_idx is not None
-                and sum(
-                    str(action.get("kind", "")) == "swish"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", ""))
-                    in {"direct", "unary", "swish"}
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_quantized_swish_family:
-                continue
-            indexed_quantized_dequantize_family = (
-                post_quantize_idx is not None
-                and sum(
-                    str(action.get("kind", "")) == "dequantize"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", ""))
-                    in {"direct", "dequantize"}
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_quantized_dequantize_family:
-                continue
-            indexed_quantized_prelu_family = (
-                post_quantize_idx is not None
-                and sum(
-                    str(action.get("kind", "")) == "prelu"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", "")) in {"direct", "prelu"}
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_quantized_prelu_family:
-                continue
-            indexed_quantized_leaky_family = (
-                post_quantize_idx is not None
-                and sum(
-                    str(action.get("kind", "")) == "leaky"
-                    for action in concat_input_actions
-                )
-                >= 1
-                and all(
-                    str(action.get("kind", ""))
-                    in {"direct", "unary", "leaky"}
-                    for action in concat_input_actions
-                )
-            )
-            if indexed_quantized_leaky_family:
+            if indexed_quantized_simple_family:
                 continue
             quantized_slice_actions = [
                 action
