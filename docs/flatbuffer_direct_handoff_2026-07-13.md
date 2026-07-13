@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `cc828c8` (`index dual postconv gate layout pass`)
+- Latest implementation checkpoint: `f961413` (`extract postadd gate layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `cc828c8`
+  `f961413`
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -65,6 +65,13 @@ then characterized and mechanically extracted the seventh family.
      `passes/dual_postconv_gate_layout.py` with AST equivalence in `8d149cb`.
    - Migrated the matcher and all five production positions to shared indexed
      state and a stable ordered runner in `cc828c8`.
+8. Complementary postadd gate layout
+   - Added generic Add/Conv-tail success and gate-fan-out,
+     data-adapter-fan-out, and public-intermediate no-op characterization in
+     `ea78747`.
+   - Mechanically moved the complete matcher beside its complementary-gate
+     sibling with AST equivalence in `f961413`. Indexed integration remains the
+     next separate checkpoint.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -80,10 +87,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the adjacent
-  `_optimize_transpose_logistic_sub_mul_postadd_nhwc_chains` family: audit its
-  call positions and existing coverage, then characterize generic success and
-  unsafe fan-out/public boundaries before extraction.
+  The immediate next unit is the already extracted
+  `_optimize_transpose_logistic_sub_mul_postadd_nhwc_chains` family: migrate it
+  to shared graph/layout state and integrate it into the complementary-gate
+  ordered runner at all five production positions.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -105,7 +112,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `cc828c8`; after the documentation
+implementation working tree is clean at `f961413`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -177,6 +184,11 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 - Full direct selection after indexed dual-postconv migration:
   `1197 passed, 5 deselected, 2 warnings in 161.48s`.
+- Postadd complementary-gate compact characterization: `4 passed`.
+- Postadd extraction, sibling, and ownership focus:
+  `46 passed in 18.04s`.
+- Full direct selection after mechanical extraction:
+  `1201 passed, 5 deselected, 2 warnings in 157.71s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -208,13 +220,17 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Audit every call and existing fixture for
-   `_optimize_transpose_logistic_sub_mul_postadd_nhwc_chains` and record the
-   exact topology variants it accepts.
-3. Add compact generic success and no-op characterization for gate fan-out,
-   data-adapter fan-out, and public boundaries.
-4. Commit characterization separately, then mechanically extract with
-   AST-equivalence proof before indexed mutation.
+2. Migrate all producer/consumer reads and mutations in
+   `_optimize_transpose_logistic_sub_mul_postadd_nhwc_chains` to the shared
+   `ModelIRGraphIndex` and `LayoutState` contract.
+3. Add a second stable ordered spec to the complementary-gate runner, preserve
+   dual-postconv-before-postadd ordering, and replace the five remaining raw
+   calls with the grouped runner.
+4. Extend instrumentation to prove one shared state per group, one success
+   snapshot, and zero snapshots for unsafe boundaries; update architecture and
+   irrelevant-graph efficiency expectations.
+5. Run focused tests, sequential Tier 1 `superpoint.onnx -cotof`, and the full
+   direct selection before committing and pushing.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -505,3 +521,29 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_dual_postconv_superpoint` artifacts were removed after metrics
 inspection.
+
+### Postadd complementary-gate characterization and extraction
+
+Checkpoint `ea78747` added a compact generic graph for the complementary
+Logistic/Sub gate whose two Mul outputs cross inverse adapters before an NHWC
+Add and downstream Conv. The success fixture proves removal of all five layout
+adapters, direct NHWC elementwise inputs, canonical Mul outputs, and unchanged
+downstream Add inputs. Parameterized no-op coverage fixes Logistic gate
+fan-out, a data-adapter side consumer, and a public Mul intermediate. Focused
+characterization passed 4 tests.
+
+The complete 272-line matcher moved mechanically beside the dual-postconv
+matcher in `passes/dual_postconv_gate_layout.py`. Its AST, including
+docstrings, matches `ea78747`; the lowerer retains a signature-compatible
+wrapper and all five raw production positions until the separate indexed
+migration. The family ownership test covers both matchers.
+
+Focused postadd, indexed sibling, and ownership validation passed 46 tests.
+The complete sequential direct selection passed:
+
+```text
+1201 passed, 5 deselected, 2 warnings in 157.71s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently.
