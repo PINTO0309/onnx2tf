@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `f961413` (`extract postadd gate layout pass`)
+- Latest implementation checkpoint: `78b0742` (`index postadd gate layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `f961413`
+  `78b0742`
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -70,8 +70,9 @@ then characterized and mechanically extracted the seventh family.
      data-adapter-fan-out, and public-intermediate no-op characterization in
      `ea78747`.
    - Mechanically moved the complete matcher beside its complementary-gate
-     sibling with AST equivalence in `f961413`. Indexed integration remains the
-     next separate checkpoint.
+     sibling with AST equivalence in `f961413`.
+   - Integrated it as the second ordered spec over a shared complementary-gate
+     prefix and removed all five raw calls in `78b0742`.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -87,10 +88,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the already extracted
-  `_optimize_transpose_logistic_sub_mul_postadd_nhwc_chains` family: migrate it
-  to shared graph/layout state and integrate it into the complementary-gate
-  ordered runner at all five production positions.
+  The immediate next unit is the adjacent
+  `_optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains` family: audit its
+  size, call positions, variants, and existing coverage before selecting
+  compact characterization boundaries.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -112,7 +113,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `f961413`; after the documentation
+implementation working tree is clean at `78b0742`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -189,6 +190,14 @@ sequential with only one model/process active at a time.
   `46 passed in 18.04s`.
 - Full direct selection after mechanical extraction:
   `1201 passed, 5 deselected, 2 warnings in 157.71s`.
+- Indexed postadd/complementary-gate runner, architecture, and efficiency
+  focus: `54 passed in 17.73s`.
+- Tier 1 `superpoint.onnx`, sequential `-tb flatbuffer_direct -cotof` after
+  indexed postadd migration: `evaluation_pass=true`,
+  `max_abs=1.6666017472743988e-06`,
+  `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+- Full direct selection after indexed postadd migration:
+  `1205 passed, 5 deselected, 2 warnings in 154.34s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -220,17 +229,14 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Migrate all producer/consumer reads and mutations in
-   `_optimize_transpose_logistic_sub_mul_postadd_nhwc_chains` to the shared
-   `ModelIRGraphIndex` and `LayoutState` contract.
-3. Add a second stable ordered spec to the complementary-gate runner, preserve
-   dual-postconv-before-postadd ordering, and replace the five remaining raw
-   calls with the grouped runner.
-4. Extend instrumentation to prove one shared state per group, one success
-   snapshot, and zero snapshots for unsafe boundaries; update architecture and
-   irrelevant-graph efficiency expectations.
-5. Run focused tests, sequential Tier 1 `superpoint.onnx -cotof`, and the full
-   direct selection before committing and pushing.
+2. Audit the complete
+   `_optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains` implementation,
+   every production call, and any model-dependent fixture.
+3. Identify the smallest generic rank-five success graph and the critical
+   shared-input, fan-out, public-boundary, permutation, and reshape rejection
+   cases before moving code.
+4. Commit compact characterization separately, then mechanically extract with
+   AST-equivalence proof before indexed mutation.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -547,3 +553,38 @@ The complete sequential direct selection passed:
 
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently.
+
+### Indexed postadd complementary-gate checkpoint
+
+Checkpoint `78b0742` migrated the postadd matcher to shared
+`ModelIRGraphIndex` and `LayoutState`. Producer/consumer traversal,
+Logistic/Mul input rewrites, Mul output canonicalization, post-output alias
+rewrites, structural removals, pruning, metadata, and layout reconciliation
+now use differential state. Both complementary-gate matchers contain no
+whole-graph map builder and no direct operator-list deletion.
+
+The existing family runner now registers a second stable `LAYOUT_PLAN` ID,
+`layout.postadd_complementary_gate_nhwc`, after
+`layout.dual_postconv_complementary_gate_nhwc`. Both indexed guards reuse one
+resolver for the three input adapters, Logistic/Sub gate, and two Mul branches;
+only their Add-before-post versus post-before-Add output contracts remain
+separate. Each of the five production groups invokes the runner once and shares
+one graph/layout state while preserving the legacy rule order.
+
+Focused runner, ownership, architecture, and irrelevant-graph efficiency
+validation passed 54 tests. The postadd success fixture creates one initial
+index and one snapshot across both ordered specs. Gate fan-out, data-adapter
+fan-out, and public-intermediate variants all reject with zero snapshots. Tier
+1 `superpoint.onnx` passed sequential `-tb flatbuffer_direct -cotof` with
+`evaluation_pass=true`, `max_abs=1.6666017472743988e-06`,
+`rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+
+The complete sequential direct selection passed:
+
+```text
+1205 passed, 5 deselected, 2 warnings in 154.34s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_postadd_superpoint` artifacts were removed after metrics
+inspection.
