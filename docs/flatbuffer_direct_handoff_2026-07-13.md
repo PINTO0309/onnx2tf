@@ -97,11 +97,13 @@ quantization remapping. Valid non-public inverse output adapters are bypassed
 and their consumers are rewired to the corresponding NHWC Split output;
 public post aliases reject before mutation. Add interactions remain available
 through the legacy fallback.
-The bounded Add family requires both operands to come through rank-four
+The bounded Add family accepts an acyclic graph of two-input Add operators
+whose leaves come through rank-four
 NHWC→NCHW adapters, optionally followed by a supported unary operation or
-complete expanded-Swish diamond or produced by a bounded Split, and the Add
-output to feed only the selected Concat or exact inverse adapters. Operands and
-bounded branches are rewired in their original order, each Split is applied
+complete expanded-Swish diamond or produced by a bounded Split. Every Add
+output consumer must belong to the selected Add graph/root Concat or be an
+exact inverse adapter. Operands and bounded branches are rewired in their
+original order, each Split is applied
 once across all outputs, exclusive leading adapters are removed, shared/public
 adapters remain for external consumers, operator options are retained, and
 Add/branch output shapes and per-axis quantization are remapped once. Valid
@@ -117,13 +119,14 @@ shares the materialized-integer, applied-Split, and applied-Add sets so a
 nested branch is rewritten exactly once. Each nested inverse post adapter is
 rewired to its own Add output, while cleanup recursively collects adapters
 from the whole successful plan. A bounded pre-scan now collects every Add
-operator in the selected tree and combines those indices with the root Concat.
+operator in the selected graph and combines those indices with the root Concat.
 Multiple outputs of one Split may feed different Add nodes and a separate
 input of that same root Concat. The candidate-wide set makes resolution
 independent of Concat input order, while any consumer outside the set that is
-not an exact inverse adapter rejects the complete candidate. Add-output
-fan-out across selected branches and other mixed operand families deliberately
-remain in legacy.
+not an exact inverse adapter rejects the complete candidate. Add outputs may
+therefore fan out to sibling selected Add branches or to a parent Add and the
+root Concat; shared application state rewrites each Add only once. Pad/Slice
+and other mixed operand families deliberately remain in legacy.
 The pseudo-LeakyRelu family proves the exact
 `ReLU(x) - alpha * ReLU(-x)` topology. It accepts either Mul operand order,
 requires scalar alpha, preserves Sub order, and supports direct or unary
@@ -176,9 +179,9 @@ Focused verification, all in the existing `uv` environment:
 - Direct, unary, Pad, Dequantize, PReLU, Softmax, expanded-Swish,
   pseudo-LeakyRelu, and bounded Slice/Split/Add ModelIR characterization:
   the preceding combined float-path run passed 176 tests across eight compact
-  modules; the expanded inventory now contains 190. Including the bounded
+  modules; the expanded inventory now contains 193. Including the bounded
   direct and unary/Pad quantized-post suites, the compact inventory contains
-  238 tests across nine modules. The preceding combined run passed 208 tests;
+  241 tests across nine modules. The preceding combined run passed 208 tests;
   the expanded quantized module passes 48 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
@@ -193,13 +196,15 @@ Focused verification, all in the existing `uv` environment:
   bypass, and fifteen no-op boundaries. The
   Add suite covers mixed/all-Add success, shared/public source-adapter
   retention in both operand positions, root-Concat adapter sharing,
-  output-post-adapter bypass, sixteen complete no-op boundaries, and one
+  output-post-adapter bypass, seventeen complete no-op boundaries, and one
   indexed supported-unary operand case plus one indexed exact expanded-Swish
   operand case plus one indexed bounded-Split operand case. It also covers a
   bounded recursive Add operand, correct ownership of an inner Add's inverse
   post adapter, one Split feeding two different nodes of a recursive Add tree,
   one Split feeding an Add and the root Concat in either input order, external
-  Split-consumer rejection, and a whole-ModelIR recursive-cycle no-op. The
+  Split-consumer rejection, shared Add output fan-out across sibling branches
+  and the root Concat, external Add-consumer rejection, and a whole-ModelIR
+  recursive-cycle no-op. The
   pseudo-LeakyRelu suite
   covers both alpha operand orders, direct/unary/all-Leaky success, twenty
   complete no-op boundaries, and one Pad-mixed legacy fallback. The quantized
@@ -216,9 +221,8 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize bounded Add-output fan-out across selected
-branches, or the next bounded quantized-post family. Keep uncharacterized
-interactions in
+Next work should characterize a bounded Pad or Slice Add operand, or the next
+bounded quantized-post family. Keep uncharacterized interactions in
 legacy until independently fixed. Do
 not begin with a Tier 0–4 corpus run, and do not create a pull request.
 

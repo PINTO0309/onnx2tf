@@ -345,13 +345,18 @@ axis tensor, retains shared/public source adapters for external consumers, and
 moves every Split output's shape and per-axis quantization into NHWC while
 bypassing exact inverse output adapters. Swish-source Slice and
 broader Split/Add interactions remain in the legacy matcher. The bounded Add
-family accepts a two-input Add tree whose leaves come from rank-four
+family accepts a bounded acyclic two-input Add graph whose leaves come from
+rank-four
 NHWC→NCHW adapters, optionally through a supported unary operation, exact
 expanded-Swish diamond, or bounded Split. Add inputs and bounded operand
 branches are rewired together, exclusive adapters are removed, shared/public
 adapters remain for external consumers, exact inverse output adapters are
 bypassed, and every Add output shape and per-axis quantization moves into
-NHWC. Recursive planning tracks visited Add outputs, rejects cycles, and
+NHWC. Candidate-wide planning collects every selected Add plus the root
+Concat, so an Add output may feed multiple selected Add branches or both a
+parent Add and the root Concat. Consumers outside that set must be exact
+inverse adapters or the candidate rejects. Recursive planning tracks visited
+Add outputs, rejects cycles, and
 stops at a maximum depth of 64. Shared application state ensures that nested
 Add and Split operators and cloned integer parameters are materialized only
 once. One Split may feed different Add nodes and a separate input of the same
@@ -365,8 +370,8 @@ succeed.
 Source-adapter removal is decided from the post-rewrite GraphIndex, allowing an
 adapter shared with the root Concat to be removed only after every selected
 consumer is rewired.
-Add-output fan-out across multiple selected branches and broader mixed-input
-quantized-post families remain in legacy until independently characterized.
+Pad/Slice and other uncharacterized Add operands, plus broader mixed-input
+quantized-post families, remain in legacy until independently characterized.
 The indexed
 pseudo-LeakyRelu family recognizes the complete
 `ReLU(x) - alpha * ReLU(-x)` diamond with either Mul operand order and direct

@@ -356,6 +356,108 @@ def _add_model(
                     ["split_root_side"],
                 )
             )
+    if boundary in {
+        "shared_add_fanout_branches",
+        "shared_add_fanout_root",
+        "shared_add_fanout_external_consumer",
+    }:
+        model_ir.inputs.append("c_nhwc")
+        model_ir.tensors["c_nhwc"] = _tensor(
+            "c_nhwc",
+            [1, 5, 7, 3],
+        )
+        model_ir.tensors["c_nchw"] = _tensor(
+            "c_nchw",
+            [1, 3, 5, 7],
+        )
+        model_ir.tensors["inner_sum_nchw"] = _tensor(
+            "inner_sum_nchw",
+            [1, 3, 5, 7],
+        )
+        model_ir.tensors["inner_sum_nchw"].quantization = QuantParamIR(
+            scale=[0.6] * 3,
+            zero_point=[0] * 3,
+            quantized_dimension=1,
+        )
+        outer_add = next(
+            op for op in model_ir.operators if op.op_type == "ADD"
+        )
+        outer_add_index = model_ir.operators.index(outer_add)
+        prefix_ops = [
+            OperatorIR(
+                "TRANSPOSE",
+                ["c_nhwc", "pre_perm"],
+                ["c_nchw"],
+            ),
+            OperatorIR(
+                "ADD",
+                ["a_nchw", "b_nchw"],
+                ["inner_sum_nchw"],
+                options={"fusedActivationFunction": "NONE"},
+            ),
+        ]
+        outer_add.inputs = ["inner_sum_nchw", "c_nchw"]
+        branch_fanout = boundary != "shared_add_fanout_root"
+        if branch_fanout:
+            model_ir.inputs.append("d_nhwc")
+            model_ir.tensors["d_nhwc"] = _tensor(
+                "d_nhwc",
+                [1, 5, 7, 3],
+            )
+            model_ir.tensors["d_nchw"] = _tensor(
+                "d_nchw",
+                [1, 3, 5, 7],
+            )
+            model_ir.tensors["right_sum_nchw"] = _tensor(
+                "right_sum_nchw",
+                [1, 3, 5, 7],
+            )
+            prefix_ops.insert(
+                1,
+                OperatorIR(
+                    "TRANSPOSE",
+                    ["d_nhwc", "pre_perm"],
+                    ["d_nchw"],
+                ),
+            )
+        model_ir.operators[outer_add_index:outer_add_index] = prefix_ops
+        concat_op = next(
+            op for op in model_ir.operators if op.op_type == "CONCATENATION"
+        )
+        if branch_fanout:
+            concat_index = model_ir.operators.index(concat_op)
+            model_ir.operators.insert(
+                concat_index,
+                OperatorIR(
+                    "ADD",
+                    ["inner_sum_nchw", "d_nchw"],
+                    ["right_sum_nchw"],
+                    options={"fusedActivationFunction": "NONE"},
+                ),
+            )
+            concat_op.inputs = ["x_nchw", "sum_nchw", "right_sum_nchw"]
+        else:
+            concat_op.inputs = ["x_nchw", "inner_sum_nchw", "sum_nchw"]
+        for tensor_name, shape in {
+            "concat_nchw": [1, 8, 5, 7],
+            "concat_nhwc": [1, 5, 7, 8],
+            "y": [1, 5, 7, 8],
+        }.items():
+            model_ir.tensors[tensor_name].shape = list(shape)
+            model_ir.tensors[tensor_name].shape_signature = list(shape)
+        if boundary == "shared_add_fanout_external_consumer":
+            model_ir.tensors["inner_sum_side"] = _tensor(
+                "inner_sum_side",
+                [1, 3, 5, 7],
+            )
+            model_ir.outputs.append("inner_sum_side")
+            model_ir.operators.append(
+                OperatorIR(
+                    "IDENTITY",
+                    ["inner_sum_nchw"],
+                    ["inner_sum_side"],
+                )
+            )
     if boundary in {"recursive_operand", "recursive_operand_post"}:
         model_ir.inputs.append("c_nhwc")
         model_ir.tensors["c_nhwc"] = _tensor(
@@ -534,6 +636,7 @@ def test_nhwc_direct_only_add_is_indexed(all_add: bool) -> None:
         "recursive_cycle",
         "shared_split_external_consumer",
         "split_shared_root_external_consumer",
+        "shared_add_fanout_external_consumer",
     ],
 )
 def test_nhwc_add_rejects_unsafe_or_partial_match(boundary: str) -> None:
@@ -801,6 +904,47 @@ def test_nhwc_split_outputs_feed_add_and_same_root_concat(
     assert add_op.inputs == ["a_split0", "b_nhwc"]
     for tensor_name in ["a_split0", "a_split1"]:
         assert model_ir.tensors[tensor_name].shape == [1, 5, 7, 3]
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+
+
+@pytest.mark.parametrize("fanout_target", ["branches", "root"])
+def test_nhwc_shared_add_output_stays_inside_selected_candidate(
+    fanout_target: str,
+) -> None:
+    model_ir = _add_model(boundary=f"shared_add_fanout_{fanout_target}")
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    inner_add = next(
+        op for op in model_ir.operators if op.outputs == ["inner_sum_nchw"]
+    )
+    outer_add = next(
+        op for op in model_ir.operators if op.outputs == ["sum_nchw"]
+    )
+    assert inner_add.inputs == ["a_nhwc", "b_nhwc"]
+    assert outer_add.inputs == ["inner_sum_nchw", "c_nhwc"]
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    if fanout_target == "branches":
+        right_add = next(
+            op
+            for op in model_ir.operators
+            if op.outputs == ["right_sum_nchw"]
+        )
+        assert right_add.inputs == ["inner_sum_nchw", "d_nhwc"]
+        assert concat_op.inputs == [
+            "x_nhwc",
+            "sum_nchw",
+            "right_sum_nchw",
+        ]
+    else:
+        assert concat_op.inputs == ["x_nhwc", "inner_sum_nchw", "sum_nchw"]
+    inner_tensor = model_ir.tensors["inner_sum_nchw"]
+    assert inner_tensor.shape == [1, 5, 7, 3]
+    assert isinstance(inner_tensor.quantization, QuantParamIR)
+    assert inner_tensor.quantization.quantized_dimension == 3
     assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
 
 
