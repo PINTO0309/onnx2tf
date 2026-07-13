@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Set
+from typing import Dict, List, Optional, Set
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import (
@@ -8,6 +8,8 @@ from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
     TensorIR,
+    channel_last_logical_layout,
+    is_channel_last_logical_layout,
     normalize_logical_layout,
 )
 from onnx2tf.tflite_builder.pytorch_layout_utils import (
@@ -74,6 +76,107 @@ _FEATURE_LAST_LAYOUT_PASSTHROUGH_OP_TYPES = {
     "TRANSPOSE",
     "UNPACK",
 }
+
+_CHANNEL_LAST_LAYOUT_FORWARD_OP_TYPES = {
+    "ABS",
+    "ADD",
+    "ATAN",
+    "AVERAGE_POOL_2D",
+    "BATCH_MATMUL",
+    "CAST",
+    "CONCATENATION",
+    "DEPTH_TO_SPACE",
+    "DIV",
+    "ELU",
+    "ERF",
+    "EXP",
+    "EXPAND_DIMS",
+    "GELU",
+    "IDENTITY",
+    "LOGISTIC",
+    "MAXIMUM",
+    "MAX_POOL_2D",
+    "MEAN",
+    "MINIMUM",
+    "MUL",
+    "NEG",
+    "PACK",
+    "RELU",
+    "RELU6",
+    "RESHAPE",
+    "RESIZE_BILINEAR",
+    "RESIZE_NEAREST_NEIGHBOR",
+    "SIGMOID",
+    "SIGN",
+    "SIN",
+    "SLICE",
+    "SOFTMAX",
+    "SPACE_TO_DEPTH",
+    "SPLIT",
+    "SQRT",
+    "SQUARE",
+    "SQUEEZE",
+    "STRIDED_SLICE",
+    "SUB",
+    "SUM",
+    "TANH",
+    "TILE",
+    "UNPACK",
+}
+
+
+def _propagate_channel_last_layouts(
+    model_ir: ModelIR,
+    *,
+    consumers: Dict[str, List[int]],
+) -> bool:
+    worklist = sorted(
+        str(name)
+        for name, tensor in model_ir.tensors.items()
+        if is_channel_last_logical_layout(
+            normalize_logical_layout(tensor.logical_layout)
+        )
+    )
+    queued = set(worklist)
+    changed = False
+    worklist_index = 0
+    while worklist_index < len(worklist):
+        tensor_name = str(worklist[worklist_index])
+        worklist_index += 1
+        for op_index in consumers.get(tensor_name, []):
+            op = model_ir.operators[int(op_index)]
+            if (
+                str(op.op_type) not in _CHANNEL_LAST_LAYOUT_FORWARD_OP_TYPES
+                or len(op.outputs) == 0
+            ):
+                continue
+            if not any(
+                input_tensor is not None
+                and is_channel_last_logical_layout(
+                    normalize_logical_layout(input_tensor.logical_layout)
+                )
+                for input_tensor in (
+                    model_ir.tensors.get(str(input_name), None)
+                    for input_name in op.inputs
+                )
+            ):
+                continue
+            for output_name in op.outputs:
+                normalized_output_name = str(output_name)
+                output_tensor = model_ir.tensors.get(normalized_output_name, None)
+                if output_tensor is None:
+                    continue
+                rank = len(list(output_tensor.shape))
+                if rank not in {3, 4, 5}:
+                    continue
+                target_layout = channel_last_logical_layout(rank)
+                if normalize_logical_layout(output_tensor.logical_layout) != target_layout:
+                    output_tensor.logical_layout = target_layout
+                    changed = True
+                if normalized_output_name not in queued:
+                    queued.add(normalized_output_name)
+                    worklist.append(normalized_output_name)
+    return changed
 
 
 def _propagate_feature_last_tensor_names(

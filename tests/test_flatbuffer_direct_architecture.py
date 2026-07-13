@@ -414,6 +414,7 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "ModelIRGraphIndex" in pass_source
     assert "for candidate in model_ir.operators" not in pass_source
     assert "def _propagate_feature_last_tensor_names(" in pass_source
+    assert "def _propagate_channel_last_layouts(" in pass_source
     assert "while changed:" not in pass_source
 
     exporter_tree = ast.parse(exporter_source)
@@ -437,6 +438,13 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "graph_index = ModelIRGraphIndex(model_ir)" in collector_source
     assert "_propagate_feature_last_tensor_names(" in collector_source
     assert "while changed:" not in collector_source
+    apply_layout_source = ast.get_source_segment(
+        exporter_source,
+        exporter_functions["_apply_feature_last_sequence_layouts"],
+    )
+    assert apply_layout_source is not None
+    assert "_propagate_channel_last_layouts(" in apply_layout_source
+    assert "while changed:" not in apply_layout_source
 
 
 def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:

@@ -1695,6 +1695,13 @@ bidirectional passthrough semantics and standard channel-layout Transpose and
 factorized rank-three Reshape barriers match the former monotonic fixed-point
 loop, while removing repeated complete operator scans as the region grows.
 
+Forward channel-last annotation also uses a consumer worklist. Existing
+channel-last tensors seed the queue; only indexed consumers in the unchanged
+safe-op allowlist are inspected, and newly annotated rank-three through
+rank-five outputs extend the queue. This preserves unsupported-op boundaries
+and works for non-topological operator order without the previous repeated
+complete scans.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

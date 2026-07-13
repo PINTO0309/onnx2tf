@@ -7,6 +7,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _is_attention_like_softmax_op,
     _is_transpose_sandwiched_last_axis_softmax_op,
+    _propagate_channel_last_layouts,
     _propagate_feature_last_tensor_names,
 )
 
@@ -172,3 +173,44 @@ def test_feature_last_worklist_stops_at_standard_layout_transpose() -> None:
         {"y"},
         graph_index=graph_index,
     ) == {"y"}
+
+
+def test_channel_last_layout_worklist_handles_reverse_operator_order() -> None:
+    model_ir = ModelIR(name="reverse_order_channel_last")
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 3, 4], layout="NHWC"),
+        "middle": _tensor("middle", [1, 2, 3, 4]),
+        "y": _tensor("y", [1, 2, 3, 4]),
+    }
+    model_ir.operators = [
+        OperatorIR("RELU", ["middle"], ["y"]),
+        OperatorIR("RELU", ["x"], ["middle"]),
+    ]
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    changed = _propagate_channel_last_layouts(
+        model_ir,
+        consumers=graph_index.consumers,
+    )
+
+    assert changed is True
+    assert model_ir.tensors["middle"].logical_layout == "NHWC"
+    assert model_ir.tensors["y"].logical_layout == "NHWC"
+
+
+def test_channel_last_layout_worklist_ignores_unsafe_ops() -> None:
+    model_ir = ModelIR(name="unsafe_channel_last_boundary")
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 3, 4], layout="NHWC"),
+        "y": _tensor("y", [1, 2, 3, 4]),
+    }
+    model_ir.operators = [OperatorIR("CUSTOM", ["x"], ["y"])]
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    changed = _propagate_channel_last_layouts(
+        model_ir,
+        consumers=graph_index.consumers,
+    )
+
+    assert changed is False
+    assert model_ir.tensors["y"].logical_layout == "UNKNOWN"

@@ -157,6 +157,7 @@ from onnx2tf.tflite_builder.passes.pytorch_control_flow import (
 from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _is_attention_like_softmax_op,
     _is_transpose_sandwiched_last_axis_softmax_op,
+    _propagate_channel_last_layouts,
     _propagate_feature_last_tensor_names,
 )
 from onnx2tf.tflite_builder.passes.pytorch_recurrent import (
@@ -10641,78 +10642,11 @@ def _apply_feature_last_sequence_layouts(
                     any_changed = True
             continue
 
-    safe_passthrough_ops = {
-        "ABS",
-        "ADD",
-        "ATAN",
-        "AVERAGE_POOL_2D",
-        "BATCH_MATMUL",
-        "CAST",
-        "CONCATENATION",
-        "DEPTH_TO_SPACE",
-        "DIV",
-        "ELU",
-        "ERF",
-        "EXP",
-        "EXPAND_DIMS",
-        "GELU",
-        "IDENTITY",
-        "LOGISTIC",
-        "MAXIMUM",
-        "MAX_POOL_2D",
-        "MEAN",
-        "MINIMUM",
-        "MUL",
-        "NEG",
-        "PACK",
-        "RELU",
-        "RELU6",
-        "RESHAPE",
-        "RESIZE_BILINEAR",
-        "RESIZE_NEAREST_NEIGHBOR",
-        "SIGMOID",
-        "SIGN",
-        "SIN",
-        "SLICE",
-        "SOFTMAX",
-        "SPACE_TO_DEPTH",
-        "SPLIT",
-        "SQRT",
-        "SQUARE",
-        "SQUEEZE",
-        "STRIDED_SLICE",
-        "SUB",
-        "SUM",
-        "TANH",
-        "TILE",
-        "UNPACK",
-    }
-    changed = True
-    while changed:
-        changed = False
-        for op in model_ir.operators:
-            op_type = str(op.op_type)
-            if op_type not in safe_passthrough_ops or len(op.outputs) == 0:
-                continue
-            input_tensors = [model_ir.tensors.get(str(name), None) for name in op.inputs]
-            if not any(
-                tensor is not None
-                and is_channel_last_logical_layout(normalize_logical_layout(tensor.logical_layout))
-                for tensor in input_tensors
-            ):
-                continue
-            for output_name in op.outputs:
-                output_tensor = model_ir.tensors.get(str(output_name), None)
-                if output_tensor is None:
-                    continue
-                rank = len(list(output_tensor.shape))
-                if rank not in {3, 4, 5}:
-                    continue
-                target_layout = channel_last_logical_layout(rank)
-                if normalize_logical_layout(output_tensor.logical_layout) != target_layout:
-                    output_tensor.logical_layout = target_layout
-                    changed = True
-                    any_changed = True
+    if _propagate_channel_last_layouts(
+        model_ir,
+        consumers=consumers,
+    ):
+        any_changed = True
     for op in model_ir.operators:
         if str(op.op_type) != "RESHAPE" or len(op.outputs) != 1:
             continue

@@ -83,6 +83,15 @@ the same fixed point without graph-size-times-region-depth scanning. Focused
 bidirectional closure and Transpose-barrier cases bring the suite to 75 passing
 tests; no model conversion or inference was run.
 
+The forward channel-last annotation loop in
+`_apply_feature_last_sequence_layouts()` now uses the same indexed approach.
+It seeds a worklist from tensors already carrying a channel-last layout, visits
+only their recorded consumers, and enqueues newly annotated rank-three through
+rank-five outputs. The established safe-op allowlist remains unchanged;
+unsupported operators stop propagation. This handles non-topological operator
+order without rescanning the graph. Reverse-order-chain and unsafe-boundary
+fixtures bring the focused suite to 77 passing tests.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC
