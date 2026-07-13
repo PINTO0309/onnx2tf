@@ -159,6 +159,7 @@ from onnx2tf.tflite_builder.passes.dual_mul_concat_layout import (
 )
 from onnx2tf.tflite_builder.passes.axis3_const_concat_layout import (
     _optimize_transpose_axis3_const_concat_bridge_nhwc_chains as _optimize_transpose_axis3_const_concat_bridge_nhwc_chains_pass,
+    run_axis3_const_concat_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -52224,7 +52225,11 @@ def lower_onnx_to_ir(
         model_ir,
         enable_conv_add_only_fold=True,
     )
-    _optimize_transpose_axis3_const_concat_bridge_nhwc_chains(model_ir)
+    run_axis3_const_concat_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains(model_ir)
     run_layernorm_statistics_layout_cleanup(
         model_ir,

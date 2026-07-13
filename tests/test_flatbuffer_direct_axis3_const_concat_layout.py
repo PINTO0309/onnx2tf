@@ -5,9 +5,13 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_axis3_const_concat_bridge_nhwc_chains,
+)
+from onnx2tf.tflite_builder.passes.axis3_const_concat_layout import (
+    run_axis3_const_concat_layout_cleanup,
 )
 
 
@@ -129,6 +133,10 @@ def _model(
         model_ir.outputs.append("cat_nchw")
     elif boundary == "public_post":
         model_ir.outputs.append("post0_nhwc")
+    elif boundary == "public_adapter":
+        model_ir.outputs.append("x_nchw")
+    elif boundary == "public_constant":
+        model_ir.outputs.append("const_nchw")
     return model_ir
 
 
@@ -222,6 +230,8 @@ def test_axis3_const_concat_layout_retains_shared_input_adapter() -> None:
     [
         "public_concat",
         "public_post",
+        "public_adapter",
+        "public_constant",
         "pre_permutation",
         "post_permutation",
         "concat_axis",
@@ -238,4 +248,74 @@ def test_axis3_const_concat_layout_rejects_unsafe_boundary(boundary: str) -> Non
     stats = _optimize_transpose_axis3_const_concat_bridge_nhwc_chains(model_ir)
 
     assert stats["optimized_transpose_axis3_const_concat_bridge_nhwc_chains"] == 0
+    _assert_model_equal(model_ir, original)
+
+
+def test_axis3_const_concat_layout_runner_reuses_one_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model()
+    diagnostics: list[dict[str, object]] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_axis3_const_concat_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    stats_key = (
+        "optimized_transpose_axis3_const_concat_bridge_nhwc_chains"
+    )
+    assert stats[stats_key] == 1
+    assert refresh_count == 1
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "layout.axis3_const_concat_bridge_nhwc"
+    assert diagnostics[0]["changed"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "public_concat",
+        "public_post",
+        "public_adapter",
+        "public_constant",
+        "pre_permutation",
+        "post_permutation",
+        "concat_axis",
+        "constant_rank",
+        "constant_shape",
+        "missing_constant",
+        "shared_constant",
+    ],
+)
+def test_axis3_const_concat_layout_runner_rejects_before_snapshot(
+    boundary: str,
+) -> None:
+    model_ir = _model(boundary=boundary)
+    original = deepcopy(model_ir)
+    diagnostics: list[dict[str, object]] = []
+
+    stats = run_axis3_const_concat_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    stats_key = (
+        "optimized_transpose_axis3_const_concat_bridge_nhwc_chains"
+    )
+    assert stats[stats_key] == 0
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["changed"] is False
+    assert diagnostics[0]["skipped_by_precondition"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 0
     _assert_model_equal(model_ir, original)

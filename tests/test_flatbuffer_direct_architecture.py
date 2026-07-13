@@ -1341,6 +1341,17 @@ def test_axis3_const_concat_layout_rewrite_has_single_owner() -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     assert function_name in pass_functions
+    referenced_names = {
+        node.id
+        for node in ast.walk(pass_functions[function_name])
+        if isinstance(node, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" not in referenced_names
+    assert "_build_tensor_producer_map" not in referenced_names
+    assert not any(
+        isinstance(node, ast.Delete)
+        for node in ast.walk(pass_functions[function_name])
+    )
 
     lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
     lowering_functions = {
@@ -1362,7 +1373,10 @@ def test_axis3_const_concat_layout_rewrite_has_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.axis3_const_concat_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {function_name}
+    assert {alias.name for alias in imports[0].names} == {
+        function_name,
+        "run_axis3_const_concat_layout_cleanup",
+    }
     production_calls = [
         call
         for call in ast.walk(lowering_tree)
@@ -1370,7 +1384,15 @@ def test_axis3_const_concat_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == function_name
     ]
-    assert len(production_calls) == 1
+    assert len(production_calls) == 0
+    runner_calls = [
+        call
+        for call in ast.walk(lowering_tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "run_axis3_const_concat_layout_cleanup"
+    ]
+    assert len(runner_calls) == 1
 
 
 def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
@@ -1379,6 +1401,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     )
     runner_names = {
         "run_add_concat_suffix_layout_cleanup",
+        "run_axis3_const_concat_layout_cleanup",
         "run_boundary_input_layout_cleanup",
         "run_boundary_input_batchmatmul_cleanup",
         "run_boundary_input_normalization_cleanup",
@@ -1442,7 +1465,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 238
+    assert len(calls) == 239
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
