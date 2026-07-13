@@ -260,6 +260,89 @@ def _add_model(
         )
         add_op.inputs[0] = "a_split0"
     if boundary in {
+        "pad_operand",
+        "pad_operand_fanout",
+        "pad_companion",
+    }:
+        pads_data = np.asarray(
+            [[0, 0], [0, 0], [0, 1], [0, 0]],
+            dtype=np.int32,
+        )
+        model_ir.tensors["pads_nchw"] = TensorIR(
+            name="pads_nchw",
+            dtype="INT32",
+            shape=[4, 2],
+            shape_signature=[4, 2],
+            data=pads_data,
+        )
+        model_ir.tensors["pad_value"] = TensorIR(
+            name="pad_value",
+            dtype="FLOAT32",
+            shape=[1],
+            shape_signature=[1],
+            data=np.asarray([0.0], dtype=np.float32),
+        )
+        if boundary == "pad_companion":
+            model_ir.tensors["x_nhwc"].shape = [1, 4, 7, 2]
+            model_ir.tensors["x_nhwc"].shape_signature = [1, 4, 7, 2]
+            model_ir.tensors["x_nchw"].shape = [1, 2, 4, 7]
+            model_ir.tensors["x_nchw"].shape_signature = [1, 2, 4, 7]
+            model_ir.tensors["x_pad"] = _tensor(
+                "x_pad",
+                [1, 2, 5, 7],
+            )
+            concat_op = next(
+                op
+                for op in model_ir.operators
+                if op.op_type == "CONCATENATION"
+            )
+            concat_index = model_ir.operators.index(concat_op)
+            model_ir.operators.insert(
+                concat_index,
+                OperatorIR(
+                    "PAD",
+                    ["x_nchw", "pads_nchw", "pad_value"],
+                    ["x_pad"],
+                ),
+            )
+            concat_op.inputs[0] = "x_pad"
+        else:
+            model_ir.tensors["a_nhwc"].shape = [1, 4, 7, 3]
+            model_ir.tensors["a_nhwc"].shape_signature = [1, 4, 7, 3]
+            model_ir.tensors["a_nchw"].shape = [1, 3, 4, 7]
+            model_ir.tensors["a_nchw"].shape_signature = [1, 3, 4, 7]
+            model_ir.tensors["a_pad"] = _tensor(
+                "a_pad",
+                [1, 3, 5, 7],
+            )
+            model_ir.tensors["a_pad"].quantization = QuantParamIR(
+                scale=[0.7] * 3,
+                zero_point=[0] * 3,
+                quantized_dimension=1,
+            )
+            add_op = next(
+                op for op in model_ir.operators if op.op_type == "ADD"
+            )
+            add_index = model_ir.operators.index(add_op)
+            model_ir.operators.insert(
+                add_index,
+                OperatorIR(
+                    "PAD",
+                    ["a_nchw", "pads_nchw", "pad_value"],
+                    ["a_pad"],
+                ),
+            )
+            add_op.inputs[0] = "a_pad"
+            if boundary == "pad_operand_fanout":
+                model_ir.tensors["pad_side"] = _tensor(
+                    "pad_side",
+                    [1, 3, 5, 7],
+                )
+                model_ir.outputs.append("pad_side")
+                model_ir.operators.append(
+                    OperatorIR("IDENTITY", ["a_pad"], ["pad_side"])
+                )
+    if boundary in {
         "shared_split_add_tree",
         "shared_split_external_consumer",
     }:
@@ -637,6 +720,7 @@ def test_nhwc_direct_only_add_is_indexed(all_add: bool) -> None:
         "shared_split_external_consumer",
         "split_shared_root_external_consumer",
         "shared_add_fanout_external_consumer",
+        "pad_operand_fanout",
     ],
 )
 def test_nhwc_add_rejects_unsafe_or_partial_match(boundary: str) -> None:
@@ -799,6 +883,49 @@ def test_nhwc_add_split_operand_is_indexed() -> None:
         if event["code"] == "layout.nhwc_pre_concat_add"
     )
     assert event["status"] == "changed"
+
+
+@pytest.mark.parametrize("pad_location", ["operand", "companion"])
+def test_nhwc_add_reuses_bounded_pad_plan(pad_location: str) -> None:
+    model_ir = _add_model(boundary=f"pad_{pad_location}")
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    pad_output = "a_pad" if pad_location == "operand" else "x_pad"
+    pad_op = next(op for op in model_ir.operators if op.outputs == [pad_output])
+    expected_source = "a_nhwc" if pad_location == "operand" else "x_nhwc"
+    assert pad_op.inputs == [expected_source, "pads_nchw", "pad_value"]
+    np.testing.assert_array_equal(
+        model_ir.tensors["pads_nchw"].data,
+        np.asarray(
+            [[0, 0], [0, 1], [0, 0], [0, 0]],
+            dtype=np.int32,
+        ),
+    )
+    add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+    expected_add_inputs = (
+        ["a_pad", "b_nhwc"]
+        if pad_location == "operand"
+        else ["a_nhwc", "b_nhwc"]
+    )
+    assert add_op.inputs == expected_add_inputs
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    if pad_location == "companion":
+        assert concat_op.inputs == ["x_pad", "sum_nchw"]
+    expected_pad_shape = (
+        [1, 5, 7, 3]
+        if pad_location == "operand"
+        else [1, 5, 7, 2]
+    )
+    assert model_ir.tensors[pad_output].shape == expected_pad_shape
+    if pad_location == "operand":
+        quantization = model_ir.tensors[pad_output].quantization
+        assert isinstance(quantization, QuantParamIR)
+        assert quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
 
 
 def test_nhwc_recursive_add_operand_is_indexed_once() -> None:

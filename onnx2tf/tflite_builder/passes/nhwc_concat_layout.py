@@ -1094,6 +1094,18 @@ def _resolve_add_input_plan(
                 model_outputs=model_outputs,
             )
         if operand_plan is None:
+            operand_plan = _resolve_pad_input_plan(
+                model_ir,
+                graph_index,
+                input_name=add_input_name,
+                concat_index=int(add_index),
+                model_outputs=model_outputs,
+                public_names={
+                    *[str(name) for name in model_ir.inputs],
+                    *model_outputs,
+                },
+            )
+        if operand_plan is None:
             operand_plan = _resolve_split_input_plan(
                 model_ir,
                 graph_index,
@@ -1435,6 +1447,16 @@ def _resolve_family_input_plan(
         )
         if add_plan is not None:
             return add_plan
+        pad_plan = _resolve_pad_input_plan(
+            model_ir,
+            graph_index,
+            input_name=input_name,
+            concat_index=concat_index,
+            model_outputs=model_outputs,
+            public_names=public_names,
+        )
+        if pad_plan is not None:
+            return pad_plan
         return _resolve_split_input_plan(
             model_ir,
             graph_index,
@@ -2354,6 +2376,7 @@ def _apply_add_input_plan(
     materialized_int_parameters: Optional[
         Dict[Tuple[str, Tuple[int, ...]], str]
     ] = None,
+    materialized_pads: Optional[Dict[str, str]] = None,
     applied_split_operators: Optional[set[int]] = None,
     applied_add_operators: Optional[set[int]] = None,
 ) -> None:
@@ -2366,6 +2389,8 @@ def _apply_add_input_plan(
         return
     if materialized_int_parameters is None:
         materialized_int_parameters = {}
+    if materialized_pads is None:
+        materialized_pads = {}
     if applied_split_operators is None:
         applied_split_operators = set()
     for operand_plan in input_plan.add_operand_plans:
@@ -2380,6 +2405,13 @@ def _apply_add_input_plan(
                 model_ir,
                 graph_index,
                 operand_plan,
+            )
+        elif operand_plan.pad_plan is not None:
+            apply_nhwc_concat_pad_plan(
+                model_ir,
+                graph_index,
+                operand_plan.pad_plan,
+                materialized_pads=materialized_pads,
             )
         elif operand_plan.split_op is not None:
             split_operator_id = id(operand_plan.split_op)
@@ -2397,6 +2429,7 @@ def _apply_add_input_plan(
                 graph_index,
                 operand_plan,
                 materialized_int_parameters=materialized_int_parameters,
+                materialized_pads=materialized_pads,
                 applied_split_operators=applied_split_operators,
                 applied_add_operators=applied_add_operators,
             )
@@ -2530,6 +2563,7 @@ def _optimize_transpose_pre_concat_nhwc_family(
                         materialized_int_parameters=(
                             materialized_int_parameters
                         ),
+                        materialized_pads=materialized_pads,
                         applied_split_operators=applied_split_operators,
                         applied_add_operators=applied_add_operators,
                     )
