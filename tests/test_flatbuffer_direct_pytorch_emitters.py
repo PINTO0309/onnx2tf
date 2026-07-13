@@ -4,6 +4,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_emitters import (
     _emit_native_binary_op_for_codegen_impl,
     _emit_native_concat_op_for_codegen,
+    _emit_native_recurrent_module_op_for_codegen,
     _emit_native_shape_transform_misc_op_for_codegen,
     _emit_native_transpose_op_for_codegen,
     _emit_native_unary_op_for_codegen,
@@ -754,3 +755,73 @@ def test_concat_emitter_preserves_exact_shape_fallback() -> None:
     ]
     assert aliases == {}
     assert runtime_imports == {"_apply_concat"}
+
+
+def test_recurrent_module_emitter_preserves_state_argument_contracts() -> None:
+    cases = [
+        (
+            OperatorIR(
+                "UNIDIRECTIONAL_SEQUENCE_RNN",
+                [f"rnn_i{index}" for index in range(5)],
+                ["y"],
+            ),
+            "self.recurrent_0(expr_rnn_i0, expr_rnn_i4)",
+        ),
+        (
+            OperatorIR(
+                "UNIDIRECTIONAL_SEQUENCE_LSTM",
+                [f"lstm_i{index}" for index in range(15)],
+                ["y"],
+            ),
+            "self.recurrent_0(expr_lstm_i0, expr_lstm_i13, expr_lstm_i14)",
+        ),
+        (
+            OperatorIR(
+                "BIDIRECTIONAL_SEQUENCE_LSTM",
+                [f"bilstm_i{index}" for index in range(29)],
+                ["y"],
+            ),
+            "self.recurrent_0(expr_bilstm_i0, expr_bilstm_i25, "
+            "expr_bilstm_i26, expr_bilstm_i27, expr_bilstm_i28)",
+        ),
+    ]
+
+    for op, expected_call in cases:
+        runtime_imports: set[str] = set()
+        forward_lines: list[str] = []
+        emitted = _emit_native_recurrent_module_op_for_codegen(
+            op=op,
+            op_type=str(op.op_type),
+            attr_name="recurrent_0",
+            output_vars=["y_var"],
+            output_target_shape="[1, 2, 3]",
+            runtime_imports=runtime_imports,
+            forward_lines=forward_lines,
+            tensor_expr_fn=lambda name: f"expr_{name}",
+        )
+        assert emitted is True
+        assert forward_lines == [
+            f"y_var = _align_tensor_to_target_shape({expected_call}, [1, 2, 3])"
+        ]
+        assert runtime_imports == {"_align_tensor_to_target_shape"}
+
+
+def test_recurrent_module_emitter_rejects_unrelated_op_without_mutation() -> None:
+    runtime_imports = {"existing_helper"}
+    forward_lines = ["existing_line"]
+    op = OperatorIR("FULLY_CONNECTED", ["x"], ["y"])
+
+    emitted = _emit_native_recurrent_module_op_for_codegen(
+        op=op,
+        op_type=str(op.op_type),
+        attr_name="linear_0",
+        output_vars=["y_var"],
+        output_target_shape="[1, 2]",
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        tensor_expr_fn=lambda name: f"expr_{name}",
+    )
+
+    assert emitted is False
+    assert runtime_imports == {"existing_helper"}
+    assert forward_lines == ["existing_line"]

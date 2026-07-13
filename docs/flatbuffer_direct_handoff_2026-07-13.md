@@ -247,6 +247,15 @@ fixtures. The exporter keeps only the imported emitter name expected by the
 stored generated pipeline. Emitter and architecture validation passes 68 tests;
 syntax, Ruff, and diff checks pass. No model conversion or inference was run.
 
+The approximately 496-line direct-module dispatcher is now being split by real
+operator families. Unidirectional RNN, 15/24-input unidirectional LSTM, and
+29/48-input bidirectional LSTM emission moved first. The focused emitter uses
+the shared recurrent state-index policy and preserves aligned output source and
+runtime imports. Direct fixtures cover RNN, 15-input LSTM, and 29-input
+bidirectional LSTM state arguments plus unrelated-op no-mutation behavior.
+Emitter and architecture validation passes 73 tests; syntax, Ruff, and diff
+checks pass. No model conversion or inference was run.
+
 Native Concat emission and its channel-last axis-sensitive consumer guard now
 live in the Torch-free emitter module. GatherElements coordinate construction,
 channel-first/fused emission, materialized NHWC bridges, alias omission, and

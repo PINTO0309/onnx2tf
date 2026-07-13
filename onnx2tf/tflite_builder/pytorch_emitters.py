@@ -27,6 +27,10 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
 from onnx2tf.tflite_builder.passes.pytorch_compat import (
     _is_reshape_only_residual_layout_bridge_transpose,
 )
+from onnx2tf.tflite_builder.passes.pytorch_recurrent import (
+    _sequence_lstm_index_spec,
+    _sequence_lstm_input_name,
+)
 
 
 _DIRECT_CODEGEN_UNARY_EXPRESSIONS: Dict[str, str] = {
@@ -80,6 +84,79 @@ _DIRECT_CODEGEN_BINARY_FUNCTIONS: Dict[str, str] = {
     "POW": "torch.pow",
     "SUB": "torch.sub",
 }
+
+
+def _emit_native_recurrent_module_op_for_codegen(
+    *,
+    op: OperatorIR,
+    op_type: str,
+    attr_name: str,
+    output_vars: Sequence[str],
+    output_target_shape: str,
+    runtime_imports: Set[str],
+    forward_lines: List[str],
+    tensor_expr_fn: Callable[[str], str],
+) -> bool:
+    if op_type == "UNIDIRECTIONAL_SEQUENCE_RNN":
+        x_expr = tensor_expr_fn(str(op.inputs[0]))
+        h0_name = _sequence_lstm_input_name(op, 4)
+        state_arg = tensor_expr_fn(h0_name) if h0_name != "" else "None"
+        forward_lines.append(
+            f"{output_vars[0]} = _align_tensor_to_target_shape("
+            f"self.{attr_name}({x_expr}, {state_arg}), "
+            f"{output_target_shape})"
+        )
+        runtime_imports.add("_align_tensor_to_target_shape")
+        return True
+    if op_type == "UNIDIRECTIONAL_SEQUENCE_LSTM":
+        x_expr = tensor_expr_fn(str(op.inputs[0]))
+        index_spec = _sequence_lstm_index_spec(op)
+        if index_spec is None:
+            raise ModelIRPyTorchExportError(
+                "Native PyTorch-like model.py codegen could not resolve "
+                "UNIDIRECTIONAL_SEQUENCE_LSTM state layout."
+            )
+        state_indices = list(index_spec["state_indices"])
+        h0_name = _sequence_lstm_input_name(op, state_indices[0])
+        c0_name = _sequence_lstm_input_name(op, state_indices[1])
+        state_args = [
+            tensor_expr_fn(h0_name) if h0_name != "" else "None",
+            tensor_expr_fn(c0_name) if c0_name != "" else "None",
+        ]
+        forward_lines.append(
+            f"{output_vars[0]} = _align_tensor_to_target_shape("
+            f"self.{attr_name}({x_expr}, {', '.join(state_args)}), "
+            f"{output_target_shape})"
+        )
+        runtime_imports.add("_align_tensor_to_target_shape")
+        return True
+    if op_type == "BIDIRECTIONAL_SEQUENCE_LSTM":
+        x_expr = tensor_expr_fn(str(op.inputs[0]))
+        index_spec = _sequence_lstm_index_spec(op)
+        if index_spec is None:
+            raise ModelIRPyTorchExportError(
+                "Native PyTorch-like model.py codegen could not resolve "
+                "BIDIRECTIONAL_SEQUENCE_LSTM state layout."
+            )
+        state_indices = list(index_spec["state_indices"])
+        fw_h0_name = _sequence_lstm_input_name(op, state_indices[0])
+        fw_c0_name = _sequence_lstm_input_name(op, state_indices[1])
+        bw_h0_name = _sequence_lstm_input_name(op, state_indices[2])
+        bw_c0_name = _sequence_lstm_input_name(op, state_indices[3])
+        state_args = [
+            tensor_expr_fn(fw_h0_name) if fw_h0_name != "" else "None",
+            tensor_expr_fn(fw_c0_name) if fw_c0_name != "" else "None",
+            tensor_expr_fn(bw_h0_name) if bw_h0_name != "" else "None",
+            tensor_expr_fn(bw_c0_name) if bw_c0_name != "" else "None",
+        ]
+        forward_lines.append(
+            f"{output_vars[0]} = _align_tensor_to_target_shape("
+            f"self.{attr_name}({x_expr}, {', '.join(state_args)}), "
+            f"{output_target_shape})"
+        )
+        runtime_imports.add("_align_tensor_to_target_shape")
+        return True
+    return False
 
 
 def _emit_native_shape_transform_misc_op_for_codegen(

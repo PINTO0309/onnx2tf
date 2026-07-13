@@ -1845,6 +1845,14 @@ owner. Gather, Split, and Unpack channel-axis consumers continue to block unsafe
 channel-first emission. The generated pipeline again resolves the unchanged
 imported emitter name directly.
 
+The direct-module dispatcher is being decomposed by operator family rather than
+moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and
+bidirectional LSTM source emission now delegates to the Torch-free recurrent
+emitter. State-slot selection continues to use the shared recurrent arity/index
+contract, and the generated alignment call and runtime-helper import are
+unchanged. Conv, transpose-Conv, fully connected, and PReLU branches remain in
+the dispatcher for subsequent independent extraction.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
