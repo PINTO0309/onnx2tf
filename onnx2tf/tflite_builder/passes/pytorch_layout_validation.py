@@ -713,8 +713,12 @@ def _apply_feature_last_sequence_layouts(
     return any_changed
 
 
-def _collect_feature_last_sequence_tensor_names(model_ir: ModelIR) -> Set[str]:
-    graph_index = ModelIRGraphIndex(model_ir)
+def _collect_feature_last_sequence_tensor_names(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Set[str]:
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     consumers = graph_index.consumers
     producers = graph_index.producers
 

@@ -8,6 +8,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_compat import (
     _remove_redundant_layout_transposes,
     _restore_same_average_pool_exclude_pad_correction_for_native_runtime,
+    _rewrite_atan2_ones_like_to_atan,
 )
 from onnx2tf.tflite_builder.passes.pytorch_control_flow import (
     _clone_model_ir_without_root_operators,
@@ -218,3 +219,62 @@ def test_same_average_pool_correction_updates_shared_graph_state(monkeypatch) ->
     assert graph_index.operator_indices("AVERAGE_POOL_2D") == [0]
     assert graph_index.operator_indices("MUL") == [1]
     assert layout_state.validate_against_model_ir(model_ir) == []
+
+
+def test_atan2_ones_rewrite_updates_shared_graph_index(monkeypatch) -> None:
+    model_ir = ModelIR(name="atan2_ones")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1, 3], [1, 3]),
+        "ones": TensorIR(
+            "ones",
+            "FLOAT32",
+            [1, 3],
+            [1, 3],
+            data=np.ones([1, 3], dtype=np.float32),
+        ),
+        "y": TensorIR("y", "FLOAT32", [1, 3], [1, 3]),
+    }
+    model_ir.operators = [OperatorIR("ATAN2", ["x", "ones"], ["y"])]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    _rewrite_atan2_ones_like_to_atan(
+        model_ir,
+        graph_index=graph_index,
+    )
+
+    assert refresh_count == 1
+    assert model_ir.operators[0].op_type == "ATAN"
+    assert model_ir.operators[0].inputs == ["x"]
+    assert graph_index.operator_indices("ATAN2") == []
+    assert graph_index.operator_indices("ATAN") == [0]
+    assert graph_index.consumer_indices("ones") == []
+    assert graph_index.consumer_indices("x") == [0]
+
+
+def test_atan2_rewrite_no_op_avoids_graph_index(monkeypatch) -> None:
+    model_ir = ModelIR(name="no_atan2")
+    model_ir.operators = [OperatorIR("RELU", ["x"], ["y"])]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    _rewrite_atan2_ones_like_to_atan(model_ir)
+
+    assert refresh_count == 0

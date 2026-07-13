@@ -128,6 +128,17 @@ randomized ModelIR graphs produce exactly the same tensor layouts as the former
 whole-graph fixed-point loop. The focused suite now passes 86 tests; no model
 conversion or inference was run.
 
+Channel-first normalization now owns one graph index for its complete mutable
+layout phase. Feature-last collection, both friendly-layout worklists,
+Transpose cleanup, ATAN2-to-ATAN canonicalization, recurrent orphan repair,
+Softmax validation, and the final residual-Transpose check share that index.
+ATAN2 input/type mutation and recurrent input repair update it differentially,
+so the former initial and final ad hoc producer/consumer maps and intermediate
+index rebuilds are gone. The focused Torch-free suite passes 89 tests. The full
+Torch-dependent exporter test remains uncollectable in this environment
+because Python 3.12 resolves the incompatible Python 3.10 libtorch; no model
+conversion or inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

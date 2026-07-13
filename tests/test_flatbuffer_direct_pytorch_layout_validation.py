@@ -299,6 +299,35 @@ def test_feature_last_collector_keeps_complete_channel_last_island() -> None:
     ) is True
 
 
+def test_feature_last_collector_reuses_supplied_graph_index(monkeypatch) -> None:
+    model_ir = ModelIR(name="shared_index_channel_last_island")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 3, 4], layout="NHWC"),
+        "y": _tensor("y", [1, 2, 3, 4], layout="NHWC"),
+    }
+    model_ir.operators = [OperatorIR("RELU", ["x"], ["y"])]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    preserved = _collect_feature_last_sequence_tensor_names(
+        model_ir,
+        graph_index=graph_index,
+    )
+
+    assert refresh_count == 1
+    assert preserved == {"x", "y"}
+
+
 def test_feature_last_shrink_removes_safe_internal_region_only() -> None:
     model_ir = ModelIR(name="partially_safe_channel_last_region")
     model_ir.inputs = ["x"]

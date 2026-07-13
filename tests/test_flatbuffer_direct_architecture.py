@@ -298,6 +298,11 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
     recurrent_tree = ast.parse(recurrent_source)
     assert "def _remove_redundant_layout_transposes(" not in exporter_source
     assert "_remove_redundant_layout_transposes," in exporter_source
+    assert "def _rewrite_atan2_ones_like_to_atan(" not in exporter_source
+    assert "_rewrite_atan2_ones_like_to_atan," in exporter_source
+    assert "def _rewrite_atan2_ones_like_to_atan(" in source
+    assert "replace_operator_type(" in source
+    assert "replace_operator_inputs(" in source
     operator_stream_assignments = [
         node
         for tree in (exporter_tree, control_flow_tree)
@@ -454,14 +459,23 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
         exporter_functions["validate_channel_first_exportability"],
     )
     assert validator_source is not None
-    assert "softmax_graph_index: Optional[ModelIRGraphIndex] = None" in validator_source
+    assert "softmax_graph_index = graph_index" in validator_source
     assert "graph_index=softmax_graph_index" in validator_source
+    normalizer_source = ast.get_source_segment(
+        exporter_source,
+        exporter_functions["normalize_model_ir_for_pytorch_channel_first"],
+    )
+    assert normalizer_source is not None
+    assert normalizer_source.count("ModelIRGraphIndex(normalized)") == 1
+    assert "_build_model_ir_producer_consumer_index(normalized)" not in normalizer_source
+    assert normalizer_source.count("graph_index=layout_graph_index") >= 7
+    assert "consumers=layout_graph_index.consumers" in normalizer_source
     collector_source = ast.get_source_segment(
         pass_source,
         pass_functions["_collect_feature_last_sequence_tensor_names"],
     )
     assert collector_source is not None
-    assert "graph_index = ModelIRGraphIndex(model_ir)" in collector_source
+    assert "graph_index = graph_index or ModelIRGraphIndex(model_ir)" in collector_source
     assert "_propagate_feature_last_tensor_names(" in collector_source
     assert "while changed:" not in collector_source
     apply_layout_source = ast.get_source_segment(

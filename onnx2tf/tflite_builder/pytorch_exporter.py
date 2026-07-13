@@ -146,6 +146,7 @@ from onnx2tf.tflite_builder.pytorch_onnx_optimizer import (
 from onnx2tf.tflite_builder.passes.pytorch_compat import (
     _remove_redundant_layout_transposes,
     _restore_same_average_pool_exclude_pad_correction_for_native_runtime,
+    _rewrite_atan2_ones_like_to_atan,
 )
 from onnx2tf.tflite_builder.passes.pytorch_control_flow import (
     _rewrite_counter_bounded_while_ops_for_native_export,
@@ -10362,43 +10363,6 @@ def _synchronize_reshape_targets_with_output_tensors(
         shape_tensor.shape_signature = [int(len(preferred_shape))]
 
 
-def _rewrite_atan2_ones_like_to_atan(model_ir: ModelIR) -> None:
-    for op in model_ir.operators:
-        if str(op.op_type) != "ATAN2" or len(op.inputs) != 2 or len(op.outputs) != 1:
-            continue
-        lhs_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
-        rhs_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
-        out_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
-        if (
-            lhs_tensor is None
-            or rhs_tensor is None
-            or out_tensor is None
-            or not isinstance(rhs_tensor.data, np.ndarray)
-        ):
-            continue
-        rhs_values = np.asarray(rhs_tensor.data)
-        if rhs_values.size == 0 or not np.allclose(rhs_values, 1.0):
-            continue
-        lhs_shape = [int(v) for v in list(lhs_tensor.shape)]
-        out_shape = [int(v) for v in list(out_tensor.shape)]
-        if lhs_shape != out_shape:
-            continue
-        rhs_shape = [int(v) for v in list(rhs_tensor.shape)]
-        if rhs_shape != lhs_shape:
-            perm = _perm_cl_to_cf(len(rhs_shape))
-            perm_inv = _perm_cf_to_cl(len(rhs_shape))
-            if (
-                perm is None
-                or _permute_shape(rhs_shape, perm) != lhs_shape
-            ) and (
-                perm_inv is None
-                or _permute_shape(rhs_shape, perm_inv) != lhs_shape
-            ):
-                continue
-        op.op_type = "ATAN"
-        op.inputs = [str(op.inputs[0])]
-
-
 def _has_recurrent_sequence_context(model_ir: ModelIR) -> bool:
     recurrent_op_types = {
         "GRU",
@@ -10575,6 +10539,8 @@ def _align_public_boundary_shapes_to_onnx_contract(model_ir: ModelIR) -> None:
 def validate_channel_first_exportability(
     model_ir: ModelIR,
     preserve_channel_last_tensor_names: Set[str],
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> None:
     layout_sensitive_ops = {
         "AVERAGE_POOL_2D",
@@ -10607,7 +10573,7 @@ def validate_channel_first_exportability(
         for name in list(model_ir.metadata.get("public_layout_bridge_tensor_names", []))
     )
     problems: List[str] = []
-    softmax_graph_index: Optional[ModelIRGraphIndex] = None
+    softmax_graph_index = graph_index
     for op in model_ir.operators:
         op_type = str(op.op_type)
         if op_type not in layout_sensitive_ops:
@@ -10714,8 +10680,13 @@ def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
             tensor.logical_layout
         )
     infer_model_ir_logical_layouts(normalized)
-    producer_index, consumer_index = _build_model_ir_producer_consumer_index(normalized)
-    preserve_channel_last_tensor_names = _collect_feature_last_sequence_tensor_names(normalized)
+    layout_graph_index = ModelIRGraphIndex(normalized)
+    producer_index = layout_graph_index.producers
+    consumer_index = layout_graph_index.consumers
+    preserve_channel_last_tensor_names = _collect_feature_last_sequence_tensor_names(
+        normalized,
+        graph_index=layout_graph_index,
+    )
     feature_last_changed = _apply_feature_last_sequence_layouts(
         normalized,
         preserve_channel_last_tensor_names,
@@ -10751,7 +10722,10 @@ def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
         for name, tensor in normalized.tensors.items()
     }
     _rewrite_layout_sensitive_ops(normalized, original_layouts, preserve_channel_last_tensor_names)
-    _propagate_pytorch_friendly_layouts(normalized)
+    _propagate_pytorch_friendly_layouts(
+        normalized,
+        graph_index=layout_graph_index,
+    )
     kernel_weight_tensor_names = _collect_kernel_weight_tensor_names(normalized)
     for tensor_name, tensor in normalized.tensors.items():
         if str(tensor_name) in kernel_weight_tensor_names:
@@ -10761,12 +10735,30 @@ def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
         _permute_tensor_to_channel_first_inplace(tensor)
     _synchronize_reshape_targets_with_output_tensors(normalized, preserve_channel_last_tensor_names)
     _rewrite_filter_tensors_for_pytorch(normalized)
-    _remove_redundant_layout_transposes(normalized, original_layouts, preserve_channel_last_tensor_names)
-    _propagate_pytorch_friendly_layouts(normalized)
-    _apply_feature_last_sequence_layouts(normalized, preserve_channel_last_tensor_names)
+    _remove_redundant_layout_transposes(
+        normalized,
+        original_layouts,
+        preserve_channel_last_tensor_names,
+        graph_index=layout_graph_index,
+    )
+    _propagate_pytorch_friendly_layouts(
+        normalized,
+        graph_index=layout_graph_index,
+    )
+    _apply_feature_last_sequence_layouts(
+        normalized,
+        preserve_channel_last_tensor_names,
+        consumers=layout_graph_index.consumers,
+    )
     _restore_non_preserved_channel_first_layouts(normalized, preserve_channel_last_tensor_names)
-    _rewrite_atan2_ones_like_to_atan(normalized)
-    _repair_orphan_recurrent_step_tensors(normalized)
+    _rewrite_atan2_ones_like_to_atan(
+        normalized,
+        graph_index=layout_graph_index,
+    )
+    _repair_orphan_recurrent_step_tensors(
+        normalized,
+        graph_index=layout_graph_index,
+    )
     public_layout_map = normalized.metadata.get("onnx_public_layout_map", None)
     if not isinstance(public_layout_map, dict):
         public_layout_map = {}
@@ -10826,15 +10818,18 @@ def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
                 continue
             if is_channel_last_logical_layout(normalize_logical_layout(input_tensor.logical_layout)):
                 public_layout_map[output_name] = channel_first_logical_layout(output_rank)
-    _, post_bridge_consumer_index = _build_model_ir_producer_consumer_index(normalized)
     _align_public_boundary_shapes_to_onnx_contract(normalized)
     normalized.metadata["assume_channel_last_layout_tensor_names"] = []
     _reject_residual_layout_transposes(
         normalized,
         preserve_channel_last_tensor_names,
-        consumers=post_bridge_consumer_index,
+        consumers=layout_graph_index.consumers,
     )
-    validate_channel_first_exportability(normalized, preserve_channel_last_tensor_names)
+    validate_channel_first_exportability(
+        normalized,
+        preserve_channel_last_tensor_names,
+        graph_index=layout_graph_index,
+    )
     return normalized
 
 

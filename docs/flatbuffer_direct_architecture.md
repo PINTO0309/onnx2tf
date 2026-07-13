@@ -1734,6 +1734,15 @@ indexed producer and consumers. This retains Concat peer-layout back-propagation
 and works for non-topological graph order without the former repeated complete
 operator sweep to a fixed point.
 
+The channel-first normalizer now creates one `ModelIRGraphIndex` after its
+owning deep copy and shares it across feature-last collection, both friendly-
+layout propagations, redundant-Transpose removal, ATAN2 canonicalization,
+recurrent orphan repair, and final validation. Structural and edge changes use
+the index mutation API, so the final residual-Transpose check consumes the
+still-current consumer table instead of rebuilding an ad hoc map. The ATAN2
+ones-like rewrite is owned by `passes/pytorch_compat.py`; irrelevant graphs
+return before index construction when it is called independently.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

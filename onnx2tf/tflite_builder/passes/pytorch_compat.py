@@ -23,8 +23,68 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _is_inconsistent_standard_layout_transpose,
     _is_layout_only_transpose_by_shape,
     _is_standard_channel_layout_permutation,
+    _perm_cf_to_cl,
+    _perm_cl_to_cf,
+    _permute_shape,
     _read_transpose_perm,
 )
+
+
+def _rewrite_atan2_ones_like_to_atan(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
+    if graph_index is None:
+        if not any(str(op.op_type) == "ATAN2" for op in model_ir.operators):
+            return
+        graph_index = ModelIRGraphIndex(model_ir)
+    candidate_ops = [
+        model_ir.operators[int(index)]
+        for index in graph_index.operator_indices("ATAN2")
+    ]
+    for op in candidate_ops:
+        op_index = graph_index.operator_index(op)
+        if (
+            op_index is None
+            or len(op.inputs) != 2
+            or len(op.outputs) != 1
+        ):
+            continue
+        lhs_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+        rhs_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+        out_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+        if (
+            lhs_tensor is None
+            or rhs_tensor is None
+            or out_tensor is None
+            or not isinstance(rhs_tensor.data, np.ndarray)
+        ):
+            continue
+        rhs_values = np.asarray(rhs_tensor.data)
+        if rhs_values.size == 0 or not np.allclose(rhs_values, 1.0):
+            continue
+        lhs_shape = [int(value) for value in list(lhs_tensor.shape)]
+        out_shape = [int(value) for value in list(out_tensor.shape)]
+        if lhs_shape != out_shape:
+            continue
+        rhs_shape = [int(value) for value in list(rhs_tensor.shape)]
+        if rhs_shape != lhs_shape:
+            perm = _perm_cl_to_cf(len(rhs_shape))
+            inverse_perm = _perm_cf_to_cl(len(rhs_shape))
+            if (
+                perm is None
+                or _permute_shape(rhs_shape, perm) != lhs_shape
+            ) and (
+                inverse_perm is None
+                or _permute_shape(rhs_shape, inverse_perm) != lhs_shape
+            ):
+                continue
+        graph_index.replace_operator_type(int(op_index), "ATAN")
+        graph_index.replace_operator_inputs(
+            int(op_index),
+            [str(op.inputs[0])],
+        )
 
 
 def _remove_redundant_layout_transposes(

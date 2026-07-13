@@ -15,7 +15,11 @@ from onnx2tf.tflite_builder.split_planner import (
 )
 
 
-def _repair_orphan_recurrent_step_tensors(model_ir: ModelIR) -> None:
+def _repair_orphan_recurrent_step_tensors(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
     public_inputs = {str(name) for name in model_ir.inputs}
     public_outputs = {str(name) for name in model_ir.outputs}
     candidates: list[tuple[str, str]] = []
@@ -35,7 +39,7 @@ def _repair_orphan_recurrent_step_tensors(model_ir: ModelIR) -> None:
     if len(candidates) == 0:
         return
 
-    graph_index = ModelIRGraphIndex(model_ir)
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     for tensor_name, shape_tensor_name in candidates:
         if graph_index.producer(tensor_name) is not None:
             continue
