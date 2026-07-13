@@ -441,6 +441,22 @@ rank-six parity fixture passes with one initial refresh, exact operator-type
 indices, and consistent final layout state. No model conversion or inference
 was run.
 
+PyTorch native-runtime SAME AveragePool correction is now differential as
+well. The compatibility pass captures only initial indexed
+`AVERAGE_POOL_2D` objects, updates the live pool output through the shared
+`ModelIRGraphIndex`, and inserts the correction `MUL` at the current graph
+position. It no longer accumulates and replaces a complete operator list or
+assigns operator outputs directly. Its existing single-argument exporter call
+remains compatible, while optional graph-index and layout-state parameters
+allow composition with shared state. A Torch-free focused fixture verifies the
+exact reciprocal correction, one initial index refresh, final operator-type
+indices, and layout consistency. The corresponding architecture gate prevents
+full-list and direct-output mutation from returning. The pre-existing large
+PyTorch exporter test could not be collected in the current `uv` environment
+because a Python 3.10 user-site `libtorch_python.so` is being resolved under
+Python 3.12; this is an environment mismatch rather than a test assertion
+failure. No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

@@ -5,6 +5,8 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
@@ -17,6 +19,9 @@ from onnx2tf.tflite_builder.ir import (
 
 def _restore_same_average_pool_exclude_pad_correction_for_native_runtime(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     def _unique_tensor_name(base_name: str) -> str:
         candidate = str(base_name)
@@ -37,11 +42,15 @@ def _restore_same_average_pool_exclude_pad_correction_for_native_runtime(
             return [int(shape[0]), int(shape[1]), int(shape[2]), int(shape[3])]
         return None
 
-    rewritten_ops: List[OperatorIR] = []
     restored = 0
-    for op in model_ir.operators:
-        rewritten_ops.append(op)
-        if str(op.op_type) != "AVERAGE_POOL_2D" or len(op.inputs) != 1 or len(op.outputs) != 1:
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    candidate_ops = [
+        model_ir.operators[int(index)]
+        for index in graph_index.operator_indices("AVERAGE_POOL_2D")
+    ]
+    for op in candidate_ops:
+        op_index = graph_index.operator_index(op)
+        if op_index is None or len(op.inputs) != 1 or len(op.outputs) != 1:
             continue
         if str(op.options.get("padding", "")).upper() != "SAME":
             continue
@@ -127,20 +136,20 @@ def _restore_same_average_pool_exclude_pad_correction_for_native_runtime(
             quantization=copy.deepcopy(output_tensor.quantization),
             logical_layout=normalize_logical_layout(output_tensor.logical_layout),
         )
-        op.outputs = [include_pad_name]
-        rewritten_ops.append(
-            OperatorIR(
-                op_type="MUL",
-                inputs=[include_pad_name, reciprocal_name],
-                outputs=[output_name],
-                options={"fusedActivationFunction": "NONE"},
-            )
+        correction_op = OperatorIR(
+            op_type="MUL",
+            inputs=[include_pad_name, reciprocal_name],
+            outputs=[output_name],
+            options={"fusedActivationFunction": "NONE"},
         )
+        graph_index.replace_operator_outputs(
+            int(op_index),
+            [include_pad_name],
+        )
+        graph_index.insert_operator(int(op_index) + 1, correction_op)
         restored += 1
-    if restored > 0:
-        model_ir.operators = rewritten_ops
+    if restored > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {
         "restored_same_average_pool_exclude_pad_corrections": int(restored),
     }
-
-

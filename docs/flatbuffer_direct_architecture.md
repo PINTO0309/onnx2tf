@@ -1523,6 +1523,17 @@ intact. Complete operator-list replacement and direct input/output assignment
 are forbidden by the ownership gate, and the production lowerer call supplies
 the session `LayoutState`.
 
+PyTorch native-runtime SAME AveragePool compatibility in
+`passes/pytorch_compat.py` also follows the differential ModelIR contract. It
+captures the initial indexed `AVERAGE_POOL_2D` objects, changes each proven
+pool output through `ModelIRGraphIndex.replace_operator_outputs()`, and inserts
+the correction `MUL` immediately after the live pool position. It no longer
+rebuilds the complete operator list or assigns operator outputs directly. The
+entry point accepts an optional shared graph index and layout state while
+retaining its existing single-argument exporter call. This keeps the optional
+PyTorch artifact boundary independent of TensorFlow and permits focused pass
+validation without importing Torch.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
