@@ -2,7 +2,7 @@
 
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
-The first fourteen bounded families of the rank-four generic NHWC
+The first fifteen bounded families of the rank-four generic NHWC
 pre-Concat matcher are now separated. `passes/nhwc_concat_layout.py` owns the
 strict all-direct float path and the one-or-more-unary float path, with or
 without direct inputs. The unary allowlist is RELU, RELU6, LOGISTIC, TANH, and
@@ -28,10 +28,12 @@ stable IDs `layout.nhwc_pre_concat_direct` and
 seven production positions, followed by `layout.nhwc_pre_concat_add`.
 The pseudo-LeakyRelu family runs last under
 `layout.nhwc_pre_concat_leaky`.
-The twelfth through fourteenth families are the separate direct, unary, and
-Pad quantized-post passes `layout.nhwc_pre_concat_quantized_direct`,
+The twelfth through fifteenth families are the separate direct, unary,
+Pad-plus-direct, and unary-plus-Pad quantized-post passes
+`layout.nhwc_pre_concat_quantized_direct`,
 `layout.nhwc_pre_concat_quantized_unary`, and
-`layout.nhwc_pre_concat_quantized_pad` in
+`layout.nhwc_pre_concat_quantized_pad`, followed by
+`layout.nhwc_pre_concat_quantized_unary_pad`, in
 `passes/nhwc_concat_quantized_layout.py`.
 
 The direct pass removes only exclusive, non-public leading adapters. Shared or
@@ -124,7 +126,7 @@ move to NHWC exactly once. This adds the alpha-first form that the legacy
 matcher attempted but could not select. All public/fan-out internal edges,
 rank errors, and partial diamonds reject before snapshot. Pad companions
 deliberately remain in legacy.
-The direct/unary/Pad quantized-post families validate
+The direct/unary/Pad/unary-plus-Pad quantized-post families validate
 `adapters → optional bounded branch → Concat → Quantize → inverse Transpose(s)`
 independently of the float group. They move Concat and supported branches to
 NHWC, retain shared/public direct adapters, make the first post output
@@ -134,14 +136,15 @@ shared or public. The float and quantized paths use the same resolver and
 materializer from `passes/nhwc_concat_pad.py`, preventing duplicate Pad rules
 from drifting apart. Concat, branch, and quantized-output shapes and per-axis
 metadata are remapped to NHWC; this fixes the legacy quantization-dimension
-omission. Public boundaries, invalid ranks/spatial metadata, and non-Transpose
-fan-out reject transactionally. All-Pad and other broader mixed quantized
-inputs continue through legacy.
+omission. The mixed pass requires both a unary and a Pad input and permits
+additional direct inputs. Public boundaries, invalid ranks/spatial metadata,
+and non-Transpose fan-out reject transactionally. All-Pad and other broader
+mixed quantized inputs continue through legacy.
 
 The lowerer compatibility helper still returns the original aggregate statistic
 and runs the legacy matcher after the direct pass. The legacy matcher now
-skips the fourteen indexed families, but continues to own broader
-Split/Slice/Add/Leaky interactions and mixed quantized-post paths.
+skips the fifteen indexed families, but continues to own broader
+Split/Slice/Add/Leaky interactions and remaining mixed quantized-post paths.
 
 Changed files for this checkpoint:
 
@@ -166,8 +169,8 @@ Focused verification, all in the existing `uv` environment:
   the preceding combined float-path run passed 176 tests across eight compact
   modules; the expanded inventory now contains 185. Including the bounded
   direct and unary/Pad quantized-post suites, the compact inventory contains
-  227 tests across nine modules. The preceding combined run passed 208 tests;
-  the expanded quantized module passes 42 tests, and the focused quantized/Pad
+  230 tests across nine modules. The preceding combined run passed 208 tests;
+  the expanded quantized module passes 45 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
   and rewritten layouts. The Swish suite covers both Mul operand orders,
@@ -191,7 +194,7 @@ Focused verification, all in the existing `uv` environment:
   complete no-op boundaries, and one Pad-mixed legacy fallback. The quantized
   suite covers canonical and multiple post outputs, shared/public adapter
   retention, all five supported unary operations, Pad-constant copy-on-write,
-  and thirty no-op boundaries.
+  mixed unary-plus-Pad success, and thirty-two no-op boundaries.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.
@@ -202,7 +205,7 @@ Focused verification, all in the existing `uv` environment:
   the instruction to minimize conversion testing and prioritize improvement.
 
 Next work should characterize broader shared-output Split/Add interactions or
-the next mixed quantized-post family. Keep uncharacterized interactions in
+the next bounded quantized-post family. Keep uncharacterized interactions in
 legacy until independently fixed. Do
 not begin with a Tier 0–4 corpus run, and do not create a pull request.
 

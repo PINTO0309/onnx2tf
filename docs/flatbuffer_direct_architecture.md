@@ -372,24 +372,28 @@ diamonds reject before mutation under stable ID
 `layout.nhwc_pre_concat_leaky`. Pad/Add/Split mixed companions and broader
 mixed-input quantized-post families remain in legacy.
 
-The strict direct, unary, and Pad quantized-post paths are independently owned
-by `passes/nhwc_concat_quantized_layout.py`. They recognize rank-four direct
+The strict direct, unary, Pad-plus-direct, and mixed unary-plus-Pad
+quantized-post paths are independently owned by
+`passes/nhwc_concat_quantized_layout.py`. They recognize rank-four direct
 NHWC→NCHW inputs, optionally followed by RELU, RELU6, LOGISTIC, TANH, GELU, or
 an exact constant PAD, then channel Concat, one Quantize, and one or more
-inverse post Transposes. The transactional passes rewire Concat and bounded
-branches to NHWC, retain shared/public input adapters, redirect Quantize to one
-canonical post output, and coalesce additional post aliases. Pad constants are
-reordered from NCHW to NHWC and use provenance-preserving copy-on-write when
-shared or public. Match, constant materialization, and Pad metadata updates are
-shared with the float path through `passes/nhwc_concat_pad.py`, so the two
-pipelines cannot drift independently. The float Concat, unary, and Pad output
-metadata, along with quantized output per-axis dimensions, follow NCHW→NHWC.
+inverse post Transposes. The mixed pass requires at least one unary and one Pad
+branch; additional direct branches are allowed. The transactional passes
+rewire Concat and bounded branches to NHWC, retain shared/public input
+adapters, redirect Quantize to one canonical post output, and coalesce
+additional post aliases. Pad constants are reordered from NCHW to NHWC and use
+provenance-preserving copy-on-write when shared or public. Match, constant
+materialization, and Pad metadata updates are shared with the float path
+through `passes/nhwc_concat_pad.py`, so the two pipelines cannot drift
+independently. The float Concat, unary, and Pad output metadata, along with
+quantized output per-axis dimensions, follow NCHW→NHWC.
 Public Concat/Quantize/post or branch boundaries, non-Transpose fan-out,
 invalid ranks/spatial metadata, and partial chains reject before mutation
 under stable IDs
 `layout.nhwc_pre_concat_quantized_direct` and
 `layout.nhwc_pre_concat_quantized_unary`, and
-`layout.nhwc_pre_concat_quantized_pad`. All-Pad and other broader mixed
+`layout.nhwc_pre_concat_quantized_pad`, followed by
+`layout.nhwc_pre_concat_quantized_unary_pad`. All-Pad and other broader mixed
 quantized inputs remain in legacy.
 
 The same family module mechanically owns the adjacent post-Add variant, where
