@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `a470cce` (`index conv3d gate layout pass`)
+- Latest implementation checkpoint: `4b6f297` (`characterize cost volume scatter layout`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `a470cce` and the documentation checkpoint
+  `4b6f297` and the documentation checkpoint
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -14,7 +14,8 @@
 ## Completed work
 
 This resumed interval completed ten adjacent semantic layout families using
-the staged characterization → mechanical extraction → indexed runner process.
+the staged characterization → mechanical extraction → indexed runner process,
+then characterized the next cost-volume/ScatterND family.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -90,6 +91,14 @@ the staged characterization → mechanical extraction → indexed runner process
       `layout.ndhwc_conv3d_leaky_unsqueeze_gate` after the rank-five gate,
       removed all six raw production calls, and retained the compatibility
       wrapper.
+11. Cost-volume/ScatterND layout
+    - Replaced the 177-line central success fixture with a dedicated compact
+      corpus in `4b6f297`.
+    - Added six whole-ModelIR no-op boundaries covering leading-adapter
+      fan-out, pre/post sides of the trailing adapter, a public intermediate,
+      invalid leading permutation, and an invalid downstream operator.
+    - Preserved production behavior; mechanical extraction remains the next
+      separate checkpoint.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -105,10 +114,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is
-  `_optimize_transpose_cost_volume_scatter_ndhwc_chains`: first move its large
-  central success fixture to a dedicated compact characterization module and
-  add unsafe-boundary no-op cases before any mechanical extraction.
+  The immediate next unit is the now-characterized
+  `_optimize_transpose_cost_volume_scatter_ndhwc_chains`: move the complete
+  matcher mechanically into a focused pass-family module, prove AST identity,
+  and retain all six production positions until the later indexed migration.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -130,7 +139,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `a470cce`; after the documentation
+implementation working tree is clean at `4b6f297`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -242,6 +251,11 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 - Full direct selection after indexed Conv3D migration:
   `1232 passed, 5 deselected, 2 warnings in 154.69s`.
+- Dedicated cost-volume/ScatterND characterization: `7 passed in 0.29s`.
+- Cost-volume/ScatterND focused selection with the central module present:
+  `7 passed, 758 deselected in 2.72s`.
+- Full direct selection after moving the fixture and adding six boundaries:
+  `1238 passed, 5 deselected, 2 warnings in 153.83s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -273,13 +287,13 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Inspect the existing cost-volume/scatter success fixture and matcher call
-   positions; record the exact current behavior before moving code.
-3. Move that central fixture to a dedicated compact test module and add
-   fan-out, public-boundary, permutation, and shape/rank rejection cases that
-   preserve the legacy no-op contract.
-4. Run the focused characterization and direct regression gate, then commit
-   and push the characterization checkpoint before mechanical extraction.
+2. Move the complete cost-volume/ScatterND matcher mechanically from
+   `lower_from_onnx2tf.py` to a focused pass-family module, leaving a
+   signature-compatible lowerer wrapper.
+3. Add an AST-equivalence and single-owner architecture test while preserving
+   all six raw production call positions.
+4. Run focused and full direct gates, then commit and push the extraction
+   checkpoint before changing graph traversal or mutation semantics.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -761,3 +775,32 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_conv3d_gate_superpoint` artifacts were removed after metrics
 inspection.
+
+### Cost-volume/ScatterND characterization checkpoint
+
+Checkpoint `4b6f297` moved the embedded cost-volume success fixture out of the
+central direct test module into
+`tests/test_flatbuffer_direct_cost_volume_scatter_layout.py`. The compact graph
+retains both descriptor adapters, shared Slice constants, Mean-axis mapping,
+Reshape, casted five-coordinate ScatterND indices, ScatterND shape mapping,
+the inverse rank-five adapter, and the downstream Conv3D contract. It proves
+the same constant values, tensor metadata, operator removal, and Conv3D input
+as the former fixture while reducing the central module by 177 lines.
+
+Six parameterized boundaries prove a complete ModelIR no-op for a leading
+adapter side consumer, ScatterND-result side consumer, post-adapter side
+consumer, public ScatterND intermediate, invalid leading permutation, and
+non-Conv3D downstream consumer. The snapshots compare operator topology and
+options plus every tensor dtype, shape, shape signature, and constant value.
+Production code was intentionally unchanged at this checkpoint.
+
+Focused characterization passed 7 tests. The complete sequential direct
+selection passed:
+
+```text
+1238 passed, 5 deselected, 2 warnings in 153.83s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently. The next unit is a strictly mechanical matcher extraction with
+AST-equivalence and single-owner gates.
