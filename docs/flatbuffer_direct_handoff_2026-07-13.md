@@ -340,6 +340,16 @@ checks pass. No model conversion or inference was run. Resume with the remaining
 channel-last binary bridge rewrite; defer GAP/Conv input repair until its shared
 shape-normalization dependency has a clear owner.
 
+The callback-driven channel-last binary bridge-chain rewrite now lives in
+`pytorch_source_rewrites.py` too. Its 399-line AST is identical to the exporter
+checkpoint, while the existing callbacks keep local-name allocation and
+constant-layout materialization outside the pure rewrite owner. A direct
+Conv-input-chain fixture and explicit unmatched-source no-op test fix the
+boundary. Rewrite and architecture validation passes 87 tests; syntax, Ruff,
+pycompile, diff, and AST-equivalence checks pass. No model conversion or
+inference was run. The remaining nearby rewrites are graph-aware or depend on
+shared shape-normalization policy and should not be moved mechanically.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

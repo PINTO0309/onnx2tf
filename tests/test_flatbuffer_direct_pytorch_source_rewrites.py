@@ -13,6 +13,7 @@ from onnx2tf.tflite_builder.pytorch_source_rewrites import (
     _inline_trivial_public_layout_bridge_aliases,
     _rewrite_channel_first_gap_outputs_to_explicit_channel_last,
     _rewrite_channel_first_se_scale_binary_bridges,
+    _rewrite_channel_last_binary_bridge_chains,
     _rewrite_channel_last_gap_means_to_reduce_mean,
 )
 
@@ -167,6 +168,27 @@ def test_channel_first_hardsigmoid_gate_rewrite_folds_classifier_block() -> None
     ]
 
 
+def test_channel_last_binary_bridge_rewrite_folds_conv_input_chain() -> None:
+    assert _rewrite_channel_last_binary_bridge_chains(
+        [
+            "in_public_layout_bridge = _torch_permute(in_t, [0, 2, 3, 1])",
+            "_binary_lhs_1, _binary_rhs_1 = _align_binary_inputs(in_public_layout_bridge, self.const_tensor_623_nhwc, [1, 3, 64, 64])",
+            "cv65_in = _align_tensor_to_target_shape(torch.sub(_binary_lhs_1, _binary_rhs_1), [1, 3, 64, 64])",
+            "cv65_out_nhwc_cf = self.conv_block_0(cv65_in.permute(0, 3, 1, 2).contiguous())",
+        ],
+        derive_local_var_name=lambda base_name: f"{base_name}_tmp",
+        channel_first_constant_expr_for_buffer_attr=lambda buffer_expr, target_shape: (
+            "self.const_tensor623_nhwc_ch_first1_x3_x1_x1"
+            if buffer_expr == "self.const_tensor_623_nhwc"
+            and list(target_shape) == [1, 3, 1, 1]
+            else None
+        ),
+    ) == [
+        "cv65_in_cf_tmp = torch.sub(in_t, self.const_tensor623_nhwc_ch_first1_x3_x1_x1)",
+        "cv65_out_nhwc_cf = self.conv_block_0(cv65_in_cf_tmp)",
+    ]
+
+
 @pytest.mark.parametrize(
     "rewrite",
     [
@@ -193,6 +215,19 @@ def test_affine_conv_rewrite_preserves_unmatched_source() -> None:
 
     assert (
         _fold_channel_last_affine_conv_bridges(
+            lines,
+            derive_local_var_name=lambda base_name: base_name,
+            channel_first_constant_expr_for_buffer_attr=lambda _buffer, _shape: None,
+        )
+        == lines
+    )
+
+
+def test_channel_last_binary_bridge_rewrite_preserves_unmatched_source() -> None:
+    lines = ["y = torch.relu(x)", "return y"]
+
+    assert (
+        _rewrite_channel_last_binary_bridge_chains(
             lines,
             derive_local_var_name=lambda base_name: base_name,
             channel_first_constant_expr_for_buffer_attr=lambda _buffer, _shape: None,

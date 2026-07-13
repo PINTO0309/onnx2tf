@@ -2031,7 +2031,9 @@ ordering. Boundary transpose/Conv folding, redundant permute-chain collapse,
 public layout-bridge alias inlining, channel-last PReLU bridge folding, and
 rank-4 reshape/permute/Conv folding use the same owner. The channel-first
 hard-sigmoid gate/Conv rewrite is co-located with these pure transforms as
-well. All eleven ASTs are identical to their former exporter definitions.
+well. Channel-last binary bridge-chain folding uses the same callback-based
+boundary for local-name and constant-layout decisions. All twelve ASTs are
+identical to their former exporter definitions.
 Direct fixtures fix each
 rewrite's representative success form and unmatched-source no-op behavior.
 Graph-aware GatherND boundary repair remains in the exporter and is deliberately
