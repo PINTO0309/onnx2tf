@@ -55,6 +55,17 @@ Dynamic broadcast shape-signature reconciliation is likewise canonical in
 helper instead of owning a private implementation, allowing op-family passes
 to use it without a circular dependency.
 
+NCHW channel-shuffle canonicalization begins its own op-family ownership in
+`passes/channel_shuffle.py`. The strict static
+Reshape→Transpose(group/channel swap)→Reshape block becomes one
+`GATHER(axis=1)` with deterministic shuffle indices, while exclusive
+intermediate edges and rank/shape/group invariants are preserved. The full
+146-line implementation moved with an identical AST; the lowerer exposes only
+a thin compatibility wrapper and its six production positions remain unchanged
+for the indexed-runner checkpoint. This module is the intended home for later
+NHWC shuffle and stale Concat/Gather repairs, avoiding further growth in the
+central lowerer.
+
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and
 internal tensor metadata agree and no axis-sensitive gather/slice consumer

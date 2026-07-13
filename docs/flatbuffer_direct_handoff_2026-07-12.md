@@ -3040,3 +3040,24 @@ After the fallback position was migrated, the complete direct selection passed:
 No dependency or TensorFlow path was added. Inference remained sequential and
 single-process; `/tmp/onnx2tf_gather_channel_superpoint*` was removed after
 metrics inspection.
+
+### NCHW channel-shuffle extraction
+
+The next selected canonicalization is the 146-line, six-position static NCHW
+Reshape→Transpose→Reshape channel shuffle. It is assigned to a new
+`passes/channel_shuffle.py` op-family rather than further enlarging the generic
+layout module; later NHWC shuffle and stale Concat/Gather repair rules can move
+to the same ownership boundary.
+
+Checkpoint `b8b2778` first added compact success and intermediate-fan-out
+characterization. The success fixture fixes exact axis-1 Gather inputs,
+outputs, options, and indices `[0,4,1,5,2,6,3,7]`; the fan-out fixture proves
+the strict exclusive edge guard. The complete implementation then moved
+mechanically with an AST identical to `b8b2778`; the lowerer now retains only a
+compatibility wrapper, and all six raw production positions remain unchanged
+pending indexed migration. Focused dedicated/existing/ownership validation
+passed 4 tests, followed by the complete direct selection:
+
+```text
+1139 passed, 5 deselected, 2 warnings in 147.89s
+```
