@@ -1840,6 +1840,25 @@ The Tier 4 result is part of the active improvement gate. The Tier 5 result is
 retained only as historical evidence; do not rerun Tier 5 or use its failed
 models as current improvement gates.
 
+## Managed-corpus SWAP exclusion policy
+
+Managed corpus validation remains strictly sequential. While each converter
+subprocess is active, the bulk runner samples `VmSwap` for that subprocess and
+all of its descendants from Linux `/proc`. Existing host-wide SWAP use and
+SWAP use by unrelated processes are deliberately ignored. If any process in
+the active model's process tree reports nonzero `VmSwap`, the runner terminates
+that process tree, records the model as `swap_detected`, and includes the peak
+tree total and per-process peak values in `bulk_status.json` and the generated
+summary.
+
+A model reported as `swap_detected` must be changed to
+`baseline_classification: excluded` in the managed regression profile before
+the next corpus run, with `baseline_reason` set to
+`swap_detected_during_managed_validation`. The managed-profile count and exact
+exclusion contract tests must be updated in the same checkpoint. Because that
+changes profile identity, the next authoritative run starts with a clean
+output directory rather than resuming results produced by the older profile.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and

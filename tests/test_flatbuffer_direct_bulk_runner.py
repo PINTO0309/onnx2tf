@@ -597,6 +597,105 @@ def test_flatbuffer_direct_bulk_runner_marks_timeout(
     assert entry["strict_pass"] is False
 
 
+def test_process_tree_swap_monitor_records_and_terminates_swapping_descendants(
+    monkeypatch,
+) -> None:
+    killed = []
+    swap_by_pid = {101: 32, 102: 16}
+    monkeypatch.setattr(
+        bulk_runner,
+        "_collect_descendant_pids",
+        lambda _root_pid: [101, 102],
+    )
+    monkeypatch.setattr(
+        bulk_runner,
+        "_read_process_swap_kib",
+        lambda pid: swap_by_pid[pid],
+    )
+    monkeypatch.setattr(
+        bulk_runner,
+        "_read_process_name",
+        lambda pid: {101: "onnx2tf", 102: "delegate"}[pid],
+    )
+    monkeypatch.setattr(
+        bulk_runner.os,
+        "kill",
+        lambda pid, process_signal: killed.append((pid, process_signal)),
+    )
+
+    monitor = bulk_runner._ProcessTreeSwapMonitor(root_pid=100)
+    monitor._sample_once()
+
+    assert monitor.result() == {
+        "swap_detected": True,
+        "peak_swap_kib": 48,
+        "swap_processes": [
+            {"pid": 101, "name": "onnx2tf", "peak_swap_kib": 32},
+            {"pid": 102, "name": "delegate", "peak_swap_kib": 16},
+        ],
+    }
+    assert killed == [
+        (102, bulk_runner.signal.SIGTERM),
+        (101, bulk_runner.signal.SIGTERM),
+    ]
+
+    swap_by_pid.update({101: 0, 102: 0})
+    monitor._termination_started_at -= 2.0
+    monitor._sample_once()
+    assert killed[-2:] == [
+        (102, bulk_runner.signal.SIGKILL),
+        (101, bulk_runner.signal.SIGKILL),
+    ]
+
+
+def test_flatbuffer_direct_bulk_runner_classifies_detected_swap(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    model = tmp_path / "swapping.onnx"
+    _write_dummy(model)
+
+    class _FakeSwapMonitor:
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+        def result(self):
+            return {
+                "swap_detected": True,
+                "peak_swap_kib": 4096,
+                "swap_processes": [
+                    {"pid": 123, "name": "onnx2tf", "peak_swap_kib": 4096},
+                ],
+            }
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        return type(
+            "CP",
+            (),
+            {"returncode": -15, "stdout": "", "stderr": "terminated"},
+        )()
+
+    monkeypatch.setattr(bulk_runner, "_ProcessTreeSwapMonitor", _FakeSwapMonitor)
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+    )
+
+    entry = state["entries"][0]
+    assert entry["classification"] == "swap_detected"
+    assert entry["strict_pass"] is False
+    assert entry["reason"] == "process_tree_swap_detected"
+    assert entry["peak_swap_kib"] == 4096
+    assert entry["swap_processes"] == [
+        {"pid": 123, "name": "onnx2tf", "peak_swap_kib": 4096},
+    ]
+
+
 def test_flatbuffer_direct_bulk_runner_marks_conversion_error(
     tmp_path,
     monkeypatch,

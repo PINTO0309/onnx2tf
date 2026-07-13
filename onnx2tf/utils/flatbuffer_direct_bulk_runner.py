@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -106,6 +107,145 @@ class _ProgressSpinner:
                 f"{self._label} {frames[frame_index]}",
                 refresh=True,
             )
+
+
+def _read_direct_child_pids(pid: int) -> List[int]:
+    """Return Linux process children without starting another process."""
+
+    try:
+        with open(
+            f"/proc/{int(pid)}/task/{int(pid)}/children",
+            "r",
+            encoding="utf-8",
+        ) as f:
+            return [int(value) for value in f.read().split()]
+    except (FileNotFoundError, PermissionError, ProcessLookupError, ValueError):
+        return []
+
+
+def _collect_descendant_pids(pid: int) -> List[int]:
+    pending = list(_read_direct_child_pids(int(pid)))
+    descendants: List[int] = []
+    seen = set()
+    while pending:
+        child_pid = int(pending.pop())
+        if child_pid in seen:
+            continue
+        seen.add(child_pid)
+        descendants.append(child_pid)
+        pending.extend(_read_direct_child_pids(child_pid))
+    return descendants
+
+
+def _read_process_swap_kib(pid: int) -> int:
+    try:
+        with open(f"/proc/{int(pid)}/status", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmSwap:"):
+                    values = line.split()
+                    return int(values[1]) if len(values) >= 2 else 0
+    except (FileNotFoundError, PermissionError, ProcessLookupError, ValueError):
+        return 0
+    return 0
+
+
+def _read_process_name(pid: int) -> str:
+    try:
+        with open(f"/proc/{int(pid)}/comm", "r", encoding="utf-8") as f:
+            return f.read().strip() or "unknown"
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        return "unknown"
+
+
+class _ProcessTreeSwapMonitor:
+    """Detect and stop a sequential model subprocess once it starts swapping."""
+
+    def __init__(
+        self,
+        *,
+        root_pid: Optional[int] = None,
+        poll_interval_sec: float = 0.1,
+    ) -> None:
+        self._root_pid = int(os.getpid() if root_pid is None else root_pid)
+        self._poll_interval_sec = float(poll_interval_sec)
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._termination_started_at: Optional[float] = None
+        self._peak_total_swap_kib = 0
+        self._peak_swap_by_pid: Dict[int, Dict[str, Any]] = {}
+
+    @property
+    def swap_detected(self) -> bool:
+        return bool(self._peak_total_swap_kib > 0)
+
+    def start(self) -> None:
+        self.stop()
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        thread = self._thread
+        if thread is not None:
+            self._stop_event.set()
+            thread.join(timeout=max(0.5, self._poll_interval_sec * 2.0))
+        self._thread = None
+
+    def result(self) -> Dict[str, Any]:
+        return {
+            "swap_detected": self.swap_detected,
+            "peak_swap_kib": int(self._peak_total_swap_kib),
+            "swap_processes": [
+                {
+                    "pid": int(process_pid),
+                    "name": str(process_details["name"]),
+                    "peak_swap_kib": int(process_details["peak_swap_kib"]),
+                }
+                for process_pid, process_details in sorted(
+                    self._peak_swap_by_pid.items()
+                )
+            ],
+        }
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self._poll_interval_sec):
+            self._sample_once()
+
+    def _sample_once(self) -> None:
+        descendant_pids = _collect_descendant_pids(self._root_pid)
+        total_swap_kib = 0
+        for descendant_pid in descendant_pids:
+            swap_kib = _read_process_swap_kib(descendant_pid)
+            total_swap_kib += swap_kib
+            if swap_kib <= 0:
+                continue
+            process_name = _read_process_name(descendant_pid)
+            previous_details = self._peak_swap_by_pid.get(descendant_pid, {})
+            self._peak_swap_by_pid[descendant_pid] = {
+                "name": process_name,
+                "peak_swap_kib": max(
+                    int(swap_kib),
+                    int(previous_details.get("peak_swap_kib", 0)),
+                ),
+            }
+        self._peak_total_swap_kib = max(
+            int(total_swap_kib),
+            int(self._peak_total_swap_kib),
+        )
+        if total_swap_kib > 0 and self._termination_started_at is None:
+            self._termination_started_at = time.monotonic()
+        if self._termination_started_at is None:
+            return
+        terminate_signal = (
+            signal.SIGKILL
+            if time.monotonic() - self._termination_started_at >= 1.0
+            else signal.SIGTERM
+        )
+        for descendant_pid in reversed(descendant_pids):
+            try:
+                os.kill(descendant_pid, terminate_signal)
+            except (PermissionError, ProcessLookupError):
+                pass
 
 
 def _utc_now_iso() -> str:
@@ -930,6 +1070,9 @@ def run_flatbuffer_direct_bulk_verification(
                 "pytorch_accuracy_pass": None,
                 "tflite_max_abs": None,
                 "pytorch_max_abs": None,
+                "swap_detected": False,
+                "peak_swap_kib": 0,
+                "swap_processes": [],
                 "error_signature": "",
                 "error_signature_sha256": "",
             }
@@ -1039,6 +1182,8 @@ def run_flatbuffer_direct_bulk_verification(
                 None,
             )
             os.environ[_INTERNAL_PASS_METRICS_PATH_ENV] = pass_metrics_path
+            swap_monitor = _ProcessTreeSwapMonitor()
+            swap_monitor.start()
             try:
                 completed = subprocess.run(
                     cmd,
@@ -1053,11 +1198,21 @@ def run_flatbuffer_direct_bulk_verification(
                 entry["onnx2tf_exit_code"] = int(completed.returncode)
             except subprocess.TimeoutExpired as ex:
                 spinner.stop()
+                swap_monitor.stop()
+                entry.update(swap_monitor.result())
                 stdout_text = ex.stdout if isinstance(ex.stdout, str) else ""
                 stderr_text = ex.stderr if isinstance(ex.stderr, str) else ""
-                entry["classification"] = "timeout"
+                entry["classification"] = (
+                    "swap_detected"
+                    if bool(entry["swap_detected"])
+                    else "timeout"
+                )
                 entry["strict_pass"] = False
-                entry["reason"] = f"timeout_after_{int(timeout_sec)}s"
+                entry["reason"] = (
+                    "process_tree_swap_detected"
+                    if bool(entry["swap_detected"])
+                    else f"timeout_after_{int(timeout_sec)}s"
+                )
                 with open(stdout_log_path, "w", encoding="utf-8") as f:
                     f.write(stdout_text)
                 with open(stderr_log_path, "w", encoding="utf-8") as f:
@@ -1088,7 +1243,10 @@ def run_flatbuffer_direct_bulk_verification(
                     os.environ[_INTERNAL_PASS_METRICS_PATH_ENV] = (
                         previous_metrics_path
                     )
+                swap_monitor.stop()
                 spinner.stop()
+
+            entry.update(swap_monitor.result())
 
             with open(stdout_log_path, "w", encoding="utf-8") as f:
                 f.write(stdout_text)
@@ -1098,6 +1256,30 @@ def run_flatbuffer_direct_bulk_verification(
             pass_metrics = _read_json(pass_metrics_path)
             if isinstance(pass_metrics, dict):
                 entry["pass_metrics"] = pass_metrics
+
+            if bool(entry["swap_detected"]):
+                entry["classification"] = "swap_detected"
+                entry["strict_pass"] = False
+                entry["reason"] = "process_tree_swap_detected"
+                entry["duration_sec"] = float(time.time() - started)
+                entry.update(
+                    _normalized_error_signature(
+                        classification=str(entry["classification"]),
+                        reason=str(entry["reason"]),
+                        stdout_text=stdout_text,
+                        stderr_text=stderr_text,
+                        volatile_paths=[root_dir_abs, output_dir_abs, run_dir],
+                    )
+                )
+                entries.append(entry)
+                state["entries"] = entries
+                _write_json(state_path, state)
+                _update_progress_bar(
+                    progress_bar,
+                    model_name=model_name,
+                    classification=str(entry["classification"]),
+                )
+                continue
 
             if int(entry["onnx2tf_exit_code"]) != 0:
                 entry["classification"] = "conversion_error"
