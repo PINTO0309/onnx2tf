@@ -2038,8 +2038,11 @@ repair now uses the shared rank-4 shape policy and is the thirteenth pure
 rewrite owned here; its AST is likewise unchanged.
 Direct fixtures fix each
 rewrite's representative success form and unmatched-source no-op behavior.
-Graph-aware GatherND boundary repair remains in the exporter and is
-deliberately not mixed into this pure source-rewrite boundary.
+Graph-aware GatherND boundary repair is deliberately not mixed into this pure
+source-rewrite boundary. It lives in the Torch-free
+`pytorch_source_graph_rewrites.py` beside its ModelIR-backed GatherND shape
+query. This keeps graph/layout inspection explicit while removing both
+implementations from the exporter.
 
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are

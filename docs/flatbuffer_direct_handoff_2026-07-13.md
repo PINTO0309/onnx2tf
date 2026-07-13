@@ -366,8 +366,18 @@ exporter definition exactly. Direct tests cover bridge insertion and scalar-axis
 mean rejection, while the common no-op matrix covers unrelated source. Shape
 policy, rewrite, and architecture validation passes 105 tests; syntax, Ruff,
 pycompile, diff, and AST-equivalence checks pass. No model conversion or
-inference was run. Graph-aware GatherND repair remains exporter-owned; do not
-move it without an explicit ModelIR/query boundary.
+inference was run. At this checkpoint, graph-aware GatherND repair remained
+exporter-owned pending an explicit ModelIR/query boundary.
+
+The GatherND boundary rewrite and its 19-line ModelIR-backed shape query now
+have that explicit boundary in `pytorch_source_graph_rewrites.py`. The module is
+Torch-free but intentionally graph-aware; it is separate from the pure string
+rewrite owner. Both ASTs match the prior exporter checkpoint exactly. Direct
+tests cover index-depth shape inference, required boundary permutation,
+duplicate-permute collapse, and the already-correct no-op path. Graph-rewrite
+and architecture validation passes 70 tests; syntax, Ruff, pycompile, diff, and
+AST-equivalence checks pass. No model conversion or inference was run. The
+exporter now imports the graph query and ordered rewrite instead of owning them.
 
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
