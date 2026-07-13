@@ -1560,6 +1560,12 @@ CSP attention propagation is the final currently characterized large member
 of `passes/attention_layout.py`. It validates both residual forms, expanded
 HardSigmoid or sigmoid-self-Mul gates, singleton-spatial reshape adapters,
 branch fan-out, and terminal layout before rewiring the region to NHWC.
+Its root discovery and complete producer/consumer proof now reuse one
+`ModelIRGraphIndex`. Every branch, gate, Conv, terminal-output, and alias edge
+rewrite uses index-aware helpers; all proven bridge Transposes are removed
+differentially in reverse graph order. The lowerer supplies the active
+`LayoutState`, which is synchronized after pruning. The optional state keywords
+preserve the legacy single-argument compatibility entry point.
 
 ## Dependency boundaries
 

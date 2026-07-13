@@ -37623,8 +37623,15 @@ def _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains
 
 def _optimize_transpose_csp_attention_nhwc_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    return _optimize_transpose_csp_attention_nhwc_chains_pass(model_ir)
+    return _optimize_transpose_csp_attention_nhwc_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir: ModelIR) -> Dict[str, int]:
@@ -51746,7 +51753,10 @@ def lower_onnx_to_ir(
     _optimize_sinet_concat_resize_affine_tail_concat_transpose_chains(model_ir)
     _optimize_sinet_softmax_mask_residual_nhwc_tail_chains(model_ir)
     # Late SiNet rewrites can recreate SA/PA MIRROR_PAD NCHW<->NHWC bridges.
-    _optimize_transpose_csp_attention_nhwc_chains(model_ir)
+    _optimize_transpose_csp_attention_nhwc_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
     _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
     _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)

@@ -14,8 +14,6 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _is_fully_known_positive_shape,
     _is_singleton_constant_tensor,
@@ -846,7 +844,6 @@ def _optimize_attention_split_post_reshape_collapse_chains(
     while True:
         changed = False
         consumers = graph_index.consumers
-        producers = graph_index.producers
 
         for split_idx, split_op in enumerate(model_ir.operators):
             if str(split_op.op_type) != "SPLIT" or len(split_op.inputs) < 2 or len(split_op.outputs) < 2:
@@ -3474,7 +3471,12 @@ def run_conv_attention_layout_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_csp_attention_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Eliminate RTMDet-like CSP attention NCHW/NHWC bridge chains.
 
@@ -3749,13 +3751,15 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
             "metadata_names": [str(v) for v in metadata_names],
         }
 
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
-        for candidate_post_idx, candidate_post_op in enumerate(model_ir.operators):
+        for candidate_post_idx in graph_index.operator_indices("TRANSPOSE"):
+            candidate_post_op = model_ir.operators[int(candidate_post_idx)]
             if (
                 str(candidate_post_op.op_type) != "TRANSPOSE"
                 or len(candidate_post_op.inputs) < 2
@@ -4096,6 +4100,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=short_sig_op,
                 new_inputs=[str(short_match["source_nhwc_name"])],
+                graph_index=graph_index,
             )
             short_mul_inputs = [
                 str(short_match["source_nhwc_name"])
@@ -4107,6 +4112,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=short_mul_op,
                 new_inputs=short_mul_inputs,
+                graph_index=graph_index,
             )
 
             point_sig_op = model_ir.operators[int(point_match["sigmoid_idx"])]
@@ -4115,6 +4121,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=point_sig_op,
                 new_inputs=[str(point_match["source_nhwc_name"])],
+                graph_index=graph_index,
             )
             point_mul_inputs = [
                 str(point_match["source_nhwc_name"])
@@ -4126,6 +4133,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=point_mul_op,
                 new_inputs=point_mul_inputs,
+                graph_index=graph_index,
             )
 
             if use_add_main_path and add_op is not None:
@@ -4139,6 +4147,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                     model_ir=model_ir,
                     op=add_op,
                     new_inputs=add_inputs,
+                    graph_index=graph_index,
                 )
 
             concat_op.options = dict(concat_op.options) if isinstance(concat_op.options, dict) else {}
@@ -4150,12 +4159,14 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=conv_op,
                 new_inputs=conv_inputs,
+                graph_index=graph_index,
             )
             _replace_operator_input_at(
                 model_ir=model_ir,
                 op=gate_head_op,
                 input_index=int(gate_head_input_index),
                 new_input_name=str(gate_conv_output_name),
+                graph_index=graph_index,
             )
 
             old_mul_tensor = model_ir.tensors.get(mul_output_name, None)
@@ -4197,10 +4208,21 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=mul_op,
                 new_outputs=[canonical_post_output_name],
+                graph_index=graph_index,
             )
-            _replace_tensor_inputs(model_ir, mul_output_name, canonical_post_output_name)
+            _replace_tensor_inputs(
+                model_ir,
+                mul_output_name,
+                canonical_post_output_name,
+                graph_index=graph_index,
+            )
             for alias_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name)
+                _replace_tensor_inputs(
+                    model_ir,
+                    str(alias_name),
+                    canonical_post_output_name,
+                    graph_index=graph_index,
+                )
 
             canonical_tensor = model_ir.tensors.get(canonical_post_output_name, None)
             if canonical_tensor is not None and old_mul_tensor is not None:
@@ -4225,7 +4247,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
             if use_add_main_path and main_pre_idx is not None:
                 remove_indices.add(int(main_pre_idx))
             for remove_idx in sorted(remove_indices, reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -4234,5 +4256,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_csp_attention_nhwc_chains": int(rewritten)}

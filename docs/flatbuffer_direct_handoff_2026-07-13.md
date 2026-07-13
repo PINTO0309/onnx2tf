@@ -379,6 +379,17 @@ state. `channel_slice_layout.py` now contains neither whole-graph consumer-map
 construction nor direct operator-list insertion/deletion. No model conversion
 or inference was run.
 
+CSP attention propagation now builds or accepts one `ModelIRGraphIndex` and
+the session `LayoutState`. Its already-strict full-topology guard reads
+producers, consumers, and Transpose roots from that index before mutation.
+Short/point sigmoid-self-Mul branches, the optional residual Add, reduction
+Conv input, gate head, canonical terminal output, and secondary aliases are
+all rewired through index-aware helpers. Every selected bridge Transpose is
+removed differentially, and pruning synchronizes layout state. Both residual
+and no-main-Add focused success variants pass; the instrumented residual case
+uses one initial index refresh and finishes with no Transpose indices or layout
+state mismatch. No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

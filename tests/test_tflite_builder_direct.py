@@ -26101,7 +26101,9 @@ def test_flatbuffer_direct_transpose_conv_hardswish_mean_conv_hardswish_mean_cha
     assert list(model_ir.tensors["mean1_out"].shape) == [1, 1, 1, 16]
 
 
-def test_flatbuffer_direct_transpose_csp_attention_nhwc_chain_optimized() -> None:
+def test_flatbuffer_direct_transpose_csp_attention_nhwc_chain_optimized(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("transpose_csp_attention_nhwc_chain_opt_test")
     model_ir.inputs = ["short_nhwc", "main_nhwc", "point_nhwc"]
     model_ir.outputs = ["z"]
@@ -26337,12 +26339,30 @@ def test_flatbuffer_direct_transpose_csp_attention_nhwc_chain_optimized() -> Non
         OperatorIR(op_type="TRANSPOSE", inputs=["attn_mul_nchw", "post_perm"], outputs=["y_nhwc"]),
         OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _optimize_transpose_csp_attention_nhwc_chains(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _optimize_transpose_csp_attention_nhwc_chains(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
     assert stats["optimized_transpose_csp_attention_nhwc_chains"] == 1
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("TRANSPOSE") == 0
+    assert graph_index.operator_indices("TRANSPOSE") == []
     concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
     assert int(concat_op.options.get("axis", -1)) == 3
     np.testing.assert_array_equal(
