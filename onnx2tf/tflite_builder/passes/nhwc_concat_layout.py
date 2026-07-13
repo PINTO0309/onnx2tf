@@ -128,6 +128,110 @@ class _NhwcConcatCandidate:
     post_output_names: Tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _NhwcInputContract:
+    allowed_kinds: frozenset[str]
+    required_kinds: frozenset[str]
+    minimum_inputs: int = 1
+    exact_kind_counts: Tuple[Tuple[str, int], ...] = ()
+    validate_shapes: bool = True
+
+
+def _input_contract(
+    *allowed_kinds: str,
+    required_kinds: Tuple[str, ...],
+    minimum_inputs: int = 1,
+    exact_kind_counts: Tuple[Tuple[str, int], ...] = (),
+    validate_shapes: bool = True,
+) -> _NhwcInputContract:
+    return _NhwcInputContract(
+        allowed_kinds=frozenset(allowed_kinds),
+        required_kinds=frozenset(required_kinds),
+        minimum_inputs=minimum_inputs,
+        exact_kind_counts=exact_kind_counts,
+        validate_shapes=validate_shapes,
+    )
+
+
+_NHWC_INPUT_CONTRACTS = {
+    "direct": _input_contract(
+        "direct",
+        required_kinds=("direct",),
+        validate_shapes=False,
+    ),
+    "unary": _input_contract(
+        "direct", "unary", required_kinds=("unary",)
+    ),
+    "pad": _input_contract(
+        "direct", "pad", required_kinds=("direct", "pad")
+    ),
+    "dequantize": _input_contract(
+        "direct", "dequantize", required_kinds=("dequantize",)
+    ),
+    "prelu": _input_contract(
+        "direct", "prelu", required_kinds=("prelu",)
+    ),
+    "softmax": _input_contract(
+        "direct",
+        "softmax",
+        required_kinds=("direct", "softmax"),
+        exact_kind_counts=(("softmax", 1),),
+    ),
+    "swish": _input_contract(
+        "direct", "unary", "swish", required_kinds=("swish",)
+    ),
+    "slice": _input_contract(
+        "direct", "slice", required_kinds=("slice",)
+    ),
+    "split": _input_contract(
+        "direct", "split", required_kinds=("split",)
+    ),
+    "add": _input_contract(
+        "direct",
+        "dequantize",
+        "prelu",
+        "softmax",
+        "leaky",
+        "pad",
+        "slice",
+        "split",
+        "add",
+        required_kinds=("add",),
+    ),
+    "leaky": _input_contract(
+        "direct", "unary", "leaky", required_kinds=("leaky",)
+    ),
+}
+if set(_NHWC_INPUT_CONTRACTS) != {
+    family for family, _, _ in _NHWC_FAMILY_SPECS
+}:
+    raise RuntimeError("NHWC Concat pass and input contracts diverged")
+
+
+def _input_plans_satisfy_contract(
+    input_plans: List[_NhwcConcatInputPlan],
+    contract: _NhwcInputContract,
+) -> bool:
+    if len(input_plans) < int(contract.minimum_inputs):
+        return False
+    kind_counts: Dict[str, int] = {}
+    for input_plan in input_plans:
+        kind_counts[input_plan.kind] = (
+            int(kind_counts.get(input_plan.kind, 0)) + 1
+        )
+    if not set(kind_counts).issubset(contract.allowed_kinds):
+        return False
+    if any(
+        int(kind_counts.get(kind, 0)) < 1
+        for kind in contract.required_kinds
+    ):
+        return False
+    return all(
+        int(kind_counts.get(kind, 0)) == int(expected_count)
+        for kind, expected_count in contract.exact_kind_counts
+    )
+
+
 def _clone_permuted_quantization(
     quantization: Any,
     permutation: List[int] | Tuple[int, ...],
@@ -1571,6 +1675,9 @@ def _resolve_nhwc_concat_candidate(
 ) -> _NhwcConcatCandidate | None:
     """Find one strict float-path direct or unary Concat island."""
 
+    contract = _NHWC_INPUT_CONTRACTS.get(family)
+    if contract is None:
+        return None
     model_outputs = {str(name) for name in model_ir.outputs}
     public_names = {
         *[str(name) for name in model_ir.inputs],
@@ -1637,41 +1744,16 @@ def _resolve_nhwc_concat_candidate(
                 inputs_valid = False
                 break
             input_plans.append(input_plan)
-        if not inputs_valid or not input_plans:
-            continue
-        unary_count = sum(plan.kind == "unary" for plan in input_plans)
-        if family == "direct" and unary_count != 0:
-            continue
-        if family == "unary" and unary_count < 1:
-            continue
-        pad_count = sum(plan.kind == "pad" for plan in input_plans)
-        if family == "pad" and (
-            pad_count < 1 or len(input_plans) <= pad_count
+        if (
+            not inputs_valid
+            or not _input_plans_satisfy_contract(input_plans, contract)
         ):
-            continue
-        dequantize_count = sum(
-            plan.kind == "dequantize" for plan in input_plans
-        )
-        if family == "dequantize" and dequantize_count < 1:
-            continue
-        prelu_count = sum(plan.kind == "prelu" for plan in input_plans)
-        if family == "prelu" and prelu_count < 1:
-            continue
-        softmax_count = sum(plan.kind == "softmax" for plan in input_plans)
-        if family == "softmax" and (
-            softmax_count != 1
-            or len(input_plans) - softmax_count < 1
-        ):
-            continue
-        swish_count = sum(plan.kind == "swish" for plan in input_plans)
-        if family == "swish" and swish_count < 1:
             continue
         slice_plans = [
             plan for plan in input_plans if plan.kind == "slice"
         ]
         if family == "slice" and (
-            len(slice_plans) < 1
-            or len(
+            len(
                 {
                     id(plan.slice_op)
                     for plan in slice_plans
@@ -1681,28 +1763,8 @@ def _resolve_nhwc_concat_candidate(
             != len(slice_plans)
         ):
             continue
-        split_count = sum(plan.kind == "split" for plan in input_plans)
-        if family == "split" and split_count < 1:
-            continue
-        add_count = sum(plan.kind == "add" for plan in input_plans)
-        if family == "add" and add_count < 1:
-            continue
-        leaky_count = sum(plan.kind == "leaky" for plan in input_plans)
-        if family == "leaky" and leaky_count < 1:
-            continue
 
-        if family in {
-            "unary",
-            "pad",
-            "dequantize",
-            "prelu",
-            "softmax",
-            "swish",
-            "slice",
-            "split",
-            "add",
-            "leaky",
-        }:
+        if contract.validate_shapes:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
             for input_plan in input_plans:
@@ -1715,18 +1777,7 @@ def _resolve_nhwc_concat_candidate(
                     shapes_compatible = False
                     break
                 shape = [int(value) for value in tensor.shape]
-                if input_plan.kind in {
-                    "unary",
-                    "pad",
-                    "dequantize",
-                    "prelu",
-                    "softmax",
-                    "swish",
-                    "slice",
-                    "split",
-                    "add",
-                    "leaky",
-                }:
+                if input_plan.kind != "direct":
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
                     reference_shape = shape

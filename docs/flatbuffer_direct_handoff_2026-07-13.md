@@ -300,7 +300,10 @@ optimizer through session-local prepared data. All existing family-specific
 optimizer wrappers remain available. Common-signature, public-name, and
 unary-companion resolver maps now own every non-direct/non-Add family, with an
 import-time coverage invariant. Recursive Add stays explicit because it needs
-candidate-wide consumer ownership. The module changed from 3,120 to 2,850
+candidate-wide consumer ownership. A separate immutable input-contract table
+now declares allowed/required kinds, exact counts, and shape validation for all
+eleven families. One validator replaces the repeated count branches; Slice
+retains its unique-operator guard. The module remains below its original 3,120
 lines while preserving stable pass IDs, order, statistics, transactions, and
 legacy fallback ownership.
 
@@ -414,6 +417,9 @@ Focused verification, all in the existing `uv` environment:
   passed `44 tests in 0.36s` and targeted compilation/Ruff passed.
 - After replacing non-Add float family dispatch with three resolver maps and a
   declared-family coverage invariant, the same compact selection remained
+  `284 passed in 0.77s`; targeted compilation, Ruff, and diff checks passed.
+- After replacing float family count/shape branches with immutable input
+  contracts and one validator, the same nine-module selection remained
   `284 passed in 0.77s`; targeted compilation, Ruff, and diff checks passed.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
