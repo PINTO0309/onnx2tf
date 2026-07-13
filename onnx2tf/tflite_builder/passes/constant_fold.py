@@ -299,8 +299,9 @@ def _optimize_constant_input_cast_chains(
 
     while True:
         changed = False
-        for cast_idx, cast_op in enumerate(model_ir.operators):
-            if str(cast_op.op_type) != "CAST" or len(cast_op.inputs) != 1 or len(cast_op.outputs) != 1:
+        for cast_idx in graph_index.operator_indices("CAST"):
+            cast_op = model_ir.operators[int(cast_idx)]
+            if len(cast_op.inputs) != 1 or len(cast_op.outputs) != 1:
                 continue
             if bool(
                 cast_op.options.get(
@@ -378,10 +379,11 @@ def _optimize_constant_input_pool_chains(
 
     while True:
         changed = False
-        for pool_idx, pool_op in enumerate(model_ir.operators):
+        for pool_idx in graph_index.operator_indices_for_types(
+            {"AVERAGE_POOL_2D", "MAX_POOL_2D"}
+        ):
+            pool_op = model_ir.operators[int(pool_idx)]
             op_type = str(pool_op.op_type)
-            if op_type not in {"AVERAGE_POOL_2D", "MAX_POOL_2D"}:
-                continue
             if len(pool_op.inputs) != 1 or len(pool_op.outputs) != 1:
                 continue
 
@@ -462,10 +464,11 @@ def _optimize_constant_input_pad_chains(
 
     while True:
         changed = False
-        for pad_idx, pad_op in enumerate(model_ir.operators):
+        for pad_idx in graph_index.operator_indices_for_types(
+            {"PAD", "PADV2"}
+        ):
+            pad_op = model_ir.operators[int(pad_idx)]
             op_type = str(pad_op.op_type)
-            if op_type not in {"PAD", "PADV2"}:
-                continue
             if len(pad_op.outputs) != 1:
                 continue
             if len(pad_op.inputs) not in {2, 3}:

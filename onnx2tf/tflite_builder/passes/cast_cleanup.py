@@ -36,10 +36,10 @@ def _optimize_redundant_int64_to_int32_cast_chains(
         producers = graph_index.producers
         model_outputs = set(str(name) for name in model_ir.outputs)
 
-        for cast2_idx, cast2_op in enumerate(model_ir.operators):
+        for cast2_idx in graph_index.operator_indices("CAST"):
+            cast2_op = model_ir.operators[int(cast2_idx)]
             if (
-                str(cast2_op.op_type) != "CAST"
-                or len(cast2_op.inputs) != 1
+                len(cast2_op.inputs) != 1
                 or len(cast2_op.outputs) != 1
             ):
                 continue
@@ -122,10 +122,10 @@ def _optimize_redundant_int32_to_int64_passthrough_cast_chains(
         producers = graph_index.producers
         model_outputs = set(str(name) for name in model_ir.outputs)
 
-        for widen_idx, widen_op in enumerate(model_ir.operators):
+        for widen_idx in graph_index.operator_indices("CAST"):
+            widen_op = model_ir.operators[int(widen_idx)]
             if (
-                str(widen_op.op_type) != "CAST"
-                or len(widen_op.inputs) != 1
+                len(widen_op.inputs) != 1
                 or len(widen_op.outputs) != 1
             ):
                 continue

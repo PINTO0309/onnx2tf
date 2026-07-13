@@ -302,6 +302,12 @@ use indexed `DEQUANTIZE` or `TRANSPOSE` roots as well. Each matcher still breaks
 after mutation and restarts from the differentially updated index, preserving
 its original rewrite order.
 
+`ModelIRGraphIndex.operator_indices_for_types()` now returns the sorted,
+deduplicated graph-order union for multi-type matchers. The two Cast cleanup
+families and constant-input Cast, Pool, and Pad folds use indexed roots and
+restart after mutation as before. Legacy Scatter/Binary constant folds that
+still delete the operator list directly were deliberately left unchanged.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its
@@ -457,6 +463,9 @@ Focused verification, all in the existing `uv` environment:
 - After indexing the five quantized Reshape/PReLU root scans, their focused
   suites passed `7 tests in 0.32s`; targeted compilation, Ruff, and diff checks
   passed.
+- After adding multi-type indexed enumeration and migrating Cast plus
+  constant-input Cast/Pool/Pad roots, core and focused suites passed
+  `38 tests in 0.42s`; targeted compilation, Ruff, and diff checks passed.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.

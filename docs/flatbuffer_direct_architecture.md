@@ -40,6 +40,10 @@ rescanning the full ModelIR operator list. A full `refresh()` is retained only
 for compatibility with external mutations that bypass these APIs.
 Lineage-aware graph mutation helpers accept an optional ModelIR index and
 update it atomically.
+`operator_indices_for_types()` returns a sorted, deduplicated union for
+multi-type roots without scanning the operator list. Cast cleanup and
+constant-input Cast/Pool/Pad folding use these single- or multi-type indices;
+each successful mutation restarts against the updated index.
 
 Indexed root enumeration is used by the rank-four float and quantized Concat
 families and by the bounded axis-3 constant-Concat, Add/Concat suffix, rank-five

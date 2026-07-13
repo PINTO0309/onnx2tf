@@ -238,6 +238,20 @@ class ModelIRGraphIndex:
 
         return list(self._operator_indices_by_type.get(str(op_type), []))
 
+    def operator_indices_for_types(
+        self,
+        op_types: Iterable[str],
+    ) -> List[int]:
+        """Return graph-order indices for the requested operator-type union."""
+
+        return sorted(
+            {
+                int(index)
+                for op_type in {str(value) for value in op_types}
+                for index in self._operator_indices_by_type.get(op_type, [])
+            }
+        )
+
     def _producer_indices(self, tensor_name: str) -> List[int]:
         name = str(tensor_name)
         if name in self.duplicate_producers:
