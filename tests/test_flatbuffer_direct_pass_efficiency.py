@@ -93,6 +93,9 @@ from onnx2tf.tflite_builder.passes.se_layout import (
     run_se_conv_layout_cleanup,
     run_se_fc_layout_cleanup,
 )
+from onnx2tf.tflite_builder.passes.elementwise_gate_layout import (
+    run_elementwise_gate_layout_cleanup,
+)
 
 
 def _identity_chain(operator_count: int) -> ModelIR:
@@ -234,9 +237,10 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_terminal_mean_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_se_conv_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_se_fc_layout_cleanup(model_ir, diagnostics=diagnostics)
+    run_elementwise_gate_layout_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 69
+    assert len(diagnostics) == 73
     assert all(event["status"] == "skipped" for event in diagnostics)
     assert all(
         event["metrics"]

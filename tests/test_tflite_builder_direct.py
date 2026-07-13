@@ -159,6 +159,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_unary_pad_prepost_to_single_adapter_nhwc_chains,
     _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains,
     _optimize_transpose_weighted_add_swish_prepost_nhwc_chains,
+    run_elementwise_gate_layout_cleanup,
     _optimize_transpose_pre_add_nhwc_chains,
     _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains,
     _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains,
@@ -18123,7 +18124,7 @@ def test_flatbuffer_direct_transpose_logistic_muladd_prepost_nhwc_chain_optimize
         OperatorIR(op_type="RESHAPE", inputs=["y_nhwc", "reshape_shape"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir)
+    stats = run_elementwise_gate_layout_cleanup(model_ir)
     assert stats["optimized_transpose_logistic_muladd_prepost_nhwc_chains"] == 1
 
     op_types = [str(op.op_type) for op in model_ir.operators]
@@ -18293,7 +18294,7 @@ def test_flatbuffer_direct_transpose_logistic_muladd_prepost_nhwc_chain_optimize
         OperatorIR(op_type="RESHAPE", inputs=["y_nhwc", "reshape_shape"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir)
+    stats = run_elementwise_gate_layout_cleanup(model_ir)
     assert stats["optimized_transpose_logistic_muladd_prepost_nhwc_chains"] == 1
 
     logistic_op = next(op for op in model_ir.operators if str(op.op_type) == "LOGISTIC")
@@ -18447,7 +18448,7 @@ def test_flatbuffer_direct_transpose_weighted_add_swish_prepost_nhwc_chain_optim
         OperatorIR(op_type="RESHAPE", inputs=["y_nhwc", "reshape_shape"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
+    stats = run_elementwise_gate_layout_cleanup(model_ir)
     assert stats["optimized_transpose_weighted_add_swish_prepost_nhwc_chains"] == 1
 
     op_types = [str(op.op_type) for op in model_ir.operators]
@@ -18554,7 +18555,7 @@ def test_flatbuffer_direct_transpose_nested_weighted_add_swish_prepost_nhwc_chai
         OperatorIR(op_type="RESHAPE", inputs=["y_nhwc", "reshape_shape"], outputs=["z"]),
     ]
 
-    stats = _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
+    stats = run_elementwise_gate_layout_cleanup(model_ir)
     assert stats["optimized_transpose_nested_weighted_add_swish_prepost_nhwc_chains"] == 1
     assert [str(op.op_type) for op in model_ir.operators].count("TRANSPOSE") == 0
 

@@ -129,6 +129,7 @@ from onnx2tf.tflite_builder.passes.elementwise_gate_layout import (
     _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains as _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains_pass,
     _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains as _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains_pass,
     _optimize_transpose_weighted_add_swish_prepost_nhwc_chains as _optimize_transpose_weighted_add_swish_prepost_nhwc_chains_pass,
+    run_elementwise_gate_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -54072,10 +54073,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir)
+        run_elementwise_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_pad_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -54255,10 +54257,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir)
+        run_elementwise_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_pad_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -54447,10 +54450,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir)
+        run_elementwise_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_pad_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -54664,10 +54668,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir)
+        run_elementwise_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_pad_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -54797,10 +54802,11 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
-        _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir)
+        run_elementwise_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_pad_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,

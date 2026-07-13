@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _invert_perm,
     _is_scalar_like_tensor,
@@ -20,9 +18,22 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_outputs,
     _write_const_ints_to_tensor,
 )
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR
 
-def _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate NCHW round-trips around SUM/LOGISTIC/SUB + MUL + ADD merge blocks.
 
@@ -45,11 +56,12 @@ def _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir: ModelI
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         def _extract_mul_pre_gate(
@@ -272,6 +284,7 @@ def _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir: ModelI
                 model_ir=model_ir,
                 op=sum_op,
                 new_inputs=sum_inputs,
+                graph_index=graph_index,
             )
 
             # Rewire both MULs from transpose outputs to transpose inputs.
@@ -293,6 +306,7 @@ def _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir: ModelI
                     model_ir=model_ir,
                     op=mul_op,
                     new_inputs=mul_inputs,
+                    graph_index=graph_index,
                 )
             if not valid_posts:
                 continue
@@ -326,9 +340,10 @@ def _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir: ModelI
                 model_ir=model_ir,
                 op=add_op,
                 new_outputs=[canonical_post_output_name],
+                graph_index=graph_index,
             )
             for alias_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name)
+                _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name, graph_index=graph_index)
 
             old_add_out_tensor = model_ir.tensors.get(add_output_name, None)
             canonical_tensor = model_ir.tensors.get(canonical_post_output_name, None)
@@ -353,7 +368,7 @@ def _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir: ModelI
                 *[int(v) for v in post_indices],
             }
             for remove_idx in sorted(remove_indices, reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -362,10 +377,17 @@ def _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains(model_ir: ModelI
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_sum_logistic_muladd_prepost_nhwc_chains": int(rewritten)}
 
-def _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate NCHW round-trips around weighted ADD + Swish chains.
 
@@ -384,11 +406,12 @@ def _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir: ModelIR
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         def _extract_weighted_mul(
@@ -586,6 +609,7 @@ def _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir: ModelIR
                 model_ir=model_ir,
                 op=mul0_op,
                 new_inputs=mul0_inputs,
+                graph_index=graph_index,
             )
 
             mul1_op = model_ir.operators[int(mul1_idx)]
@@ -597,6 +621,7 @@ def _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir: ModelIR
                 model_ir=model_ir,
                 op=mul1_op,
                 new_inputs=mul1_inputs,
+                graph_index=graph_index,
             )
 
             # LOGISTIC is layout-agnostic; keep its input/output names and update metadata.
@@ -626,9 +651,10 @@ def _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir: ModelIR
                 model_ir=model_ir,
                 op=swish_mul_op,
                 new_outputs=[canonical_post_output_name],
+                graph_index=graph_index,
             )
             for alias_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name)
+                _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name, graph_index=graph_index)
 
             old_swish_out_tensor = model_ir.tensors.get(str(swish_out_name), None)
             canonical_tensor = model_ir.tensors.get(canonical_post_output_name, None)
@@ -657,11 +683,13 @@ def _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir: ModelIR
                     model_ir=model_ir,
                     op=keep_post_op,
                     new_inputs=[canonical_post_output_name, keep_perm_name],
+                    graph_index=graph_index,
                 )
                 _set_operator_outputs(
                     model_ir=model_ir,
                     op=keep_post_op,
                     new_outputs=[swish_out_name],
+                    graph_index=graph_index,
                 )
                 post_remove_indices = [int(v) for v in post_indices[1:]]
             else:
@@ -675,7 +703,7 @@ def _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir: ModelIR
             if len(pre1_remaining_users) == 0:
                 remove_indices.add(int(pre1_idx))
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -684,10 +712,17 @@ def _optimize_transpose_weighted_add_swish_prepost_nhwc_chains(model_ir: ModelIR
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_weighted_add_swish_prepost_nhwc_chains": int(rewritten)}
 
-def _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate NCHW round-trips around nested weighted-ADD trees followed by Swish.
 
@@ -706,11 +741,12 @@ def _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir: 
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for post_idx, post_op in enumerate(model_ir.operators):
@@ -903,6 +939,7 @@ def _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir: 
                     model_ir=model_ir,
                     op=mul_op,
                     new_inputs=mul_inputs,
+                    graph_index=graph_index,
                 )
                 _permute_tensor_metadata_if_rank_matches(
                     model_ir.tensors.get(str(mul_op.outputs[0]), None),
@@ -930,9 +967,10 @@ def _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir: 
                 model_ir=model_ir,
                 op=swish_mul_op,
                 new_outputs=[canonical_post_output_name],
+                graph_index=graph_index,
             )
             for alias_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name)
+                _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name, graph_index=graph_index)
 
             old_swish_out_tensor = model_ir.tensors.get(str(swish_out_name), None)
             canonical_tensor = model_ir.tensors.get(canonical_post_output_name, None)
@@ -961,11 +999,13 @@ def _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir: 
                     model_ir=model_ir,
                     op=keep_post_op,
                     new_inputs=[canonical_post_output_name, keep_perm_name],
+                    graph_index=graph_index,
                 )
                 _set_operator_outputs(
                     model_ir=model_ir,
                     op=keep_post_op,
                     new_outputs=[swish_out_name],
+                    graph_index=graph_index,
                 )
                 post_remove_indices = [int(v) for v in post_indices[1:]]
             else:
@@ -974,7 +1014,7 @@ def _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir: 
             remove_indices = set(int(v) for v in post_remove_indices)
             remove_indices.update(int(v) for v in leaf_pre_indices)
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -983,10 +1023,17 @@ def _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains(model_ir: 
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_nested_weighted_add_swish_prepost_nhwc_chains": int(rewritten)}
 
-def _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_logistic_muladd_prepost_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate NCHW round-trips around LOGISTIC + MUL + ADD merge blocks.
 
@@ -1006,11 +1053,12 @@ def _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir: ModelIR) -
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for post_idx, post_op in enumerate(model_ir.operators):
@@ -1218,6 +1266,7 @@ def _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir: ModelIR) -
                 model_ir=model_ir,
                 op=logistic_op,
                 new_inputs=[str(gate_nhwc_name)],
+                graph_index=graph_index,
             )
 
             mul_inputs = [str(v) for v in list(core_mul_op.inputs)]
@@ -1232,6 +1281,7 @@ def _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir: ModelIR) -
                 model_ir=model_ir,
                 op=core_mul_op,
                 new_inputs=mul_inputs,
+                graph_index=graph_index,
             )
 
             add_inputs_rewritten = [str(v) for v in list(add_op.inputs)]
@@ -1246,6 +1296,7 @@ def _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir: ModelIR) -
                 model_ir=model_ir,
                 op=add_op,
                 new_inputs=add_inputs_rewritten,
+                graph_index=graph_index,
             )
 
             _permute_tensor_metadata_if_rank_matches(
@@ -1271,9 +1322,10 @@ def _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir: ModelIR) -
                 model_ir=model_ir,
                 op=add_op,
                 new_outputs=[canonical_post_output_name],
+                graph_index=graph_index,
             )
             for alias_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name)
+                _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name, graph_index=graph_index)
 
             old_add_out_tensor = model_ir.tensors.get(add_output_name, None)
             canonical_tensor = model_ir.tensors.get(canonical_post_output_name, None)
@@ -1302,11 +1354,13 @@ def _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir: ModelIR) -
                     model_ir=model_ir,
                     op=keep_post_op,
                     new_inputs=[canonical_post_output_name, keep_perm_name],
+                    graph_index=graph_index,
                 )
                 _set_operator_outputs(
                     model_ir=model_ir,
                     op=keep_post_op,
                     new_outputs=[add_output_name],
+                    graph_index=graph_index,
                 )
                 post_remove_indices = [int(v) for v in post_indices[1:]]
             else:
@@ -1321,7 +1375,7 @@ def _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir: ModelIR) -
             if len([int(v) for v in gate_pre_users if int(v) != int(logistic_idx)]) == 0:
                 remove_indices.add(int(gate_pre_idx))
             for remove_idx in sorted(remove_indices, reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -1330,5 +1384,309 @@ def _optimize_transpose_logistic_muladd_prepost_nhwc_chains(model_ir: ModelIR) -
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_logistic_muladd_prepost_nhwc_chains": int(rewritten)}
+
+
+def _inverse_post_source_ops(
+    pass_state: ModelIRPassState,
+    source_type: str,
+) -> List[Any]:
+    model_ir = pass_state.model_ir
+    model_outputs = {str(name) for name in model_ir.outputs}
+    sources: List[Any] = []
+    for post_op in model_ir.operators:
+        if (
+            str(post_op.op_type) != "TRANSPOSE"
+            or len(post_op.inputs) < 2
+            or len(post_op.outputs) != 1
+            or _read_transpose_perm(model_ir, post_op) != [0, 2, 3, 1]
+            or str(post_op.inputs[0]) in model_outputs
+            or str(post_op.outputs[0]) in model_outputs
+        ):
+            continue
+        source_op = pass_state.graph_index.producer(str(post_op.inputs[0]))
+        if source_op is not None and str(source_op.op_type) == source_type:
+            sources.append(source_op)
+    return sources
+
+
+def _is_nhwc_to_nchw_source(
+    pass_state: ModelIRPassState,
+    tensor_name: str,
+) -> bool:
+    producer = pass_state.graph_index.producer(tensor_name)
+    return bool(
+        producer is not None
+        and str(producer.op_type) == "TRANSPOSE"
+        and len(producer.inputs) >= 2
+        and len(producer.outputs) == 1
+        and str(producer.outputs[0]) == tensor_name
+        and _read_transpose_perm(pass_state.model_ir, producer) == [0, 3, 1, 2]
+    )
+
+
+def _has_sum_logistic_muladd_candidate(pass_state: ModelIRPassState) -> bool:
+    model_ir = pass_state.model_ir
+    model_outputs = {str(name) for name in model_ir.outputs}
+    for add_op in _inverse_post_source_ops(pass_state, "ADD"):
+        if len(add_op.inputs) != 2 or len(add_op.outputs) != 1:
+            continue
+        mul_ops = [pass_state.graph_index.producer(str(name)) for name in add_op.inputs]
+        if any(
+            op is None or str(op.op_type) != "MUL" or len(op.inputs) != 2
+            for op in mul_ops
+        ):
+            continue
+        gate_names: List[str] = []
+        data_sources = 0
+        for mul_op in mul_ops:
+            assert mul_op is not None
+            for input_name in mul_op.inputs:
+                name = str(input_name)
+                if _is_nhwc_to_nchw_source(pass_state, name):
+                    data_sources += 1
+                else:
+                    gate_names.append(name)
+        if data_sources != 2:
+            continue
+        for gate_name in gate_names:
+            gate_op = pass_state.graph_index.producer(gate_name)
+            if gate_op is not None and str(gate_op.op_type) == "SUB":
+                logistic_names = [
+                    str(name)
+                    for name in gate_op.inputs
+                    if (
+                        (producer := pass_state.graph_index.producer(str(name)))
+                        is not None
+                        and str(producer.op_type) == "LOGISTIC"
+                    )
+                ]
+            else:
+                logistic_names = [gate_name]
+            for logistic_name in logistic_names:
+                logistic_op = pass_state.graph_index.producer(logistic_name)
+                if (
+                    logistic_op is None
+                    or str(logistic_op.op_type) != "LOGISTIC"
+                    or len(logistic_op.inputs) != 1
+                ):
+                    continue
+                sum_op = pass_state.graph_index.producer(
+                    str(logistic_op.inputs[0])
+                )
+                if (
+                    sum_op is not None
+                    and str(sum_op.op_type) == "SUM"
+                    and len(sum_op.inputs) >= 2
+                    and len(sum_op.outputs) == 1
+                    and str(sum_op.outputs[0]) not in model_outputs
+                    and _is_nhwc_to_nchw_source(
+                        pass_state,
+                        str(sum_op.inputs[0]),
+                    )
+                ):
+                    sum_idx = pass_state.graph_index.operator_index(sum_op)
+                    if sum_idx is not None and set(
+                        pass_state.graph_index.consumer_indices(
+                            str(sum_op.inputs[0])
+                        )
+                    ) == {sum_idx}:
+                        return True
+    return False
+
+
+def _swish_root_add(
+    pass_state: ModelIRPassState,
+    swish_op: Any,
+) -> Any | None:
+    if len(swish_op.inputs) != 2 or len(swish_op.outputs) != 1:
+        return None
+    for input_name in swish_op.inputs:
+        logistic_op = pass_state.graph_index.producer(str(input_name))
+        if (
+            logistic_op is None
+            or str(logistic_op.op_type) != "LOGISTIC"
+            or len(logistic_op.inputs) != 1
+        ):
+            continue
+        root_name = str(logistic_op.inputs[0])
+        if root_name not in {str(name) for name in swish_op.inputs}:
+            continue
+        root_op = pass_state.graph_index.producer(root_name)
+        if root_op is not None and str(root_op.op_type) == "ADD":
+            return root_op
+    return None
+
+
+def _has_weighted_swish_candidate(
+    pass_state: ModelIRPassState,
+    *,
+    nested: bool,
+) -> bool:
+    for swish_op in _inverse_post_source_ops(pass_state, "MUL"):
+        root_add = _swish_root_add(pass_state, swish_op)
+        if root_add is None or len(root_add.inputs) != 2:
+            continue
+        child_ops = [
+            pass_state.graph_index.producer(str(name)) for name in root_add.inputs
+        ]
+        has_nested_add = any(
+            child is not None and str(child.op_type) == "ADD"
+            for child in child_ops
+        )
+        if nested != has_nested_add:
+            continue
+        if nested:
+            return True
+        valid_leaves = True
+        for child in child_ops:
+            if child is None or str(child.op_type) != "MUL" or len(child.inputs) != 2:
+                valid_leaves = False
+                break
+            if not any(
+                _is_nhwc_to_nchw_source(pass_state, str(name))
+                for name in child.inputs
+            ):
+                valid_leaves = False
+                break
+        if valid_leaves:
+            return True
+    return False
+
+
+def _has_logistic_muladd_candidate(pass_state: ModelIRPassState) -> bool:
+    for add_op in _inverse_post_source_ops(pass_state, "ADD"):
+        if len(add_op.inputs) != 2:
+            continue
+        input_ops = [
+            pass_state.graph_index.producer(str(name)) for name in add_op.inputs
+        ]
+        mul_ops = [op for op in input_ops if op is not None and str(op.op_type) == "MUL"]
+        if len(mul_ops) != 1:
+            continue
+        skip_names = [
+            str(name)
+            for name, producer in zip(add_op.inputs, input_ops)
+            if producer is not mul_ops[0]
+        ]
+        if len(skip_names) != 1 or not _is_nhwc_to_nchw_source(
+            pass_state,
+            skip_names[0],
+        ):
+            continue
+        mul_op = mul_ops[0]
+        if len(mul_op.inputs) != 2:
+            continue
+        data_sources = [
+            str(name)
+            for name in mul_op.inputs
+            if _is_nhwc_to_nchw_source(pass_state, str(name))
+        ]
+        logistic_ops = [
+            pass_state.graph_index.producer(str(name))
+            for name in mul_op.inputs
+            if not _is_nhwc_to_nchw_source(pass_state, str(name))
+        ]
+        if len(data_sources) != 1 or len(logistic_ops) != 1:
+            continue
+        logistic_op = logistic_ops[0]
+        if (
+            logistic_op is not None
+            and str(logistic_op.op_type) == "LOGISTIC"
+            and len(logistic_op.inputs) == 1
+            and _is_nhwc_to_nchw_source(
+                pass_state,
+                str(logistic_op.inputs[0]),
+            )
+        ):
+            return True
+    return False
+
+
+def run_elementwise_gate_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Run ordered rank-four elementwise gate layout propagation."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"TRANSPOSE", "MUL", "ADD", "LOGISTIC"}
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            required.discard(str(operator.op_type))
+            if not required:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    callbacks = [
+        (
+            "layout.sum_logistic_muladd_nhwc",
+            10,
+            _has_sum_logistic_muladd_candidate,
+            _optimize_transpose_sum_logistic_muladd_prepost_nhwc_chains,
+            "optimized_transpose_sum_logistic_muladd_prepost_nhwc_chains",
+        ),
+        (
+            "layout.weighted_add_swish_nhwc",
+            20,
+            lambda state: _has_weighted_swish_candidate(state, nested=False),
+            _optimize_transpose_weighted_add_swish_prepost_nhwc_chains,
+            "optimized_transpose_weighted_add_swish_prepost_nhwc_chains",
+        ),
+        (
+            "layout.nested_weighted_add_swish_nhwc",
+            30,
+            lambda state: _has_weighted_swish_candidate(state, nested=True),
+            _optimize_transpose_nested_weighted_add_swish_prepost_nhwc_chains,
+            "optimized_transpose_nested_weighted_add_swish_prepost_nhwc_chains",
+        ),
+        (
+            "layout.logistic_muladd_nhwc",
+            40,
+            _has_logistic_muladd_candidate,
+            _optimize_transpose_logistic_muladd_prepost_nhwc_chains,
+            "optimized_transpose_logistic_muladd_prepost_nhwc_chains",
+        ),
+    ]
+    specs: List[PassSpec] = []
+    defaults: Dict[str, int] = {}
+    for pass_id, priority, precondition, optimizer, stats_key in callbacks:
+        defaults[stats_key] = 0
+
+        def _run(
+            pass_state: ModelIRPassState,
+            *,
+            optimizer: Any = optimizer,
+            stats_key: str = stats_key,
+        ) -> Dict[str, int | bool]:
+            stats = optimizer(
+                pass_state.model_ir,
+                graph_index=pass_state.graph_index,
+                layout_state=pass_state.layout_state,
+            )
+            return {**stats, "changed": bool(stats.get(stats_key, 0))}
+
+        specs.append(
+            PassSpec(
+                pass_id=pass_id,
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=precondition,
+                priority=priority,
+                transactional=True,
+            )
+        )
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=specs,
+        layout_state=layout_state,
+        default_details=defaults,
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}

@@ -230,9 +230,18 @@ The adjacent rank-four elementwise gate family is mechanically owned by
 weighted-Add Swish, nested weighted-Add Swish, and Logistic/Mul/Add propagation
 rules. Their complete 342-, 321-, 298-, and 346-line implementations are
 AST-identical to checkpoint `1623762`; all five production positions per rule
-remain unchanged pending indexed migration. Scalar-like tensor recognition is
-now a shared `core/model_ir_utils.py` utility, with the lowerer preserving its
-compatibility import.
+are now replaced by five calls to `run_elementwise_gate_layout_cleanup`.
+Scalar-like tensor recognition is a shared `core/model_ir_utils.py` utility,
+with the lowerer preserving its compatibility import.
+
+The group registers four stable `LAYOUT_PLAN` IDs for SUM/Logistic/MulAdd,
+weighted Swish, nested weighted Swish, and Logistic/MulAdd, preserving their
+legacy priority while sharing one graph index and layout state per production
+position. Model-only capability preflight and indexed topology guards avoid
+snapshots for irrelevant or protected graphs. All input/output rewrites, alias
+replacement, structural removals, pruning, and layout synchronization use
+differential state. The module contains no whole-graph map builder or direct
+operator-list deletion.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and

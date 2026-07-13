@@ -269,3 +269,39 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently. Next work is the indexed migration of these four extracted
 rules.
+
+### Indexed elementwise gate checkpoint
+
+All four extracted matchers now accept one shared `ModelIRGraphIndex` and
+active `LayoutState`. Consumer/producer traversal, SUM and branch input
+rewrites, canonical output and aliases, conditional legacy-adapter rewrites,
+structural removals, pruning, metadata, and layout reconciliation use
+differential state. The module contains no whole-graph map builder or direct
+operator-list deletion.
+
+The five repeated raw call groups became five calls to
+`run_elementwise_gate_layout_cleanup`. Each invocation owns four ordered
+`LAYOUT_PLAN` specs with stable IDs `layout.sum_logistic_muladd_nhwc`,
+`layout.weighted_add_swish_nhwc`,
+`layout.nested_weighted_add_swish_nhwc`, and
+`layout.logistic_muladd_nhwc`. Model-only common capability preflight and
+indexed per-pattern guards preserve the legacy order while sharing one state.
+
+Focused runner, ownership, architecture, and irrelevant-graph efficiency
+validation passed 40 tests. The SUM success fixture produces four diagnostics,
+one initial index refresh, and exactly one snapshot/change. Reduction fan-out
+produces four skips and zero snapshots. Existing Logistic/MulAdd and both
+weighted-Swish success fixtures now execute through the grouped runner. Tier 1
+`superpoint.onnx` passed sequential `-tb flatbuffer_direct -cotof` with
+`evaluation_pass=true`, `max_abs=1.6666017472743988e-06`,
+`rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+
+The complete sequential direct selection passed:
+
+```text
+1183 passed, 5 deselected, 2 warnings in 152.05s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_elementwise_gate_superpoint` artifacts were removed after
+metrics inspection.
