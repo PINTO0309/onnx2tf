@@ -109,8 +109,18 @@ group/channel factorization, and non-identity indices before snapshotting.
 Gather mutation, optional unary rewiring/metadata permutation, conditional
 leading-Transpose retention, structural removal, and pruning share one
 differential index and `LayoutState` transactionally. The entire extracted
-channel-shuffle family now has no whole-graph map builders or direct
+indexed channel-shuffle subset has no whole-graph map builders or direct
 operator-list deletion.
+
+The larger generic two-way shuffle/branch/Concat propagation rule is now
+mechanically owned by the same family. It accepts rank-five Gather selectors or
+rank-four channel Slice selectors, traces one split through an NHWC
+Conv/elementwise branch and the other as a skip, converts both selectors to
+axis-3 Gathers, moves the final Concat to NHWC, and restores the downstream
+NCHW boundary. The complete 609-line implementation moved with an identical
+AST; its two existing positive tests cover both selector representations. The
+lowerer retains a compatibility wrapper and all five production calls remain
+in place pending a separate differential-index migration.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and

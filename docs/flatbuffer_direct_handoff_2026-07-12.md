@@ -3199,3 +3199,26 @@ The complete direct regression selection passed:
 No dependency or TensorFlow path was added. Inference remained sequential and
 single-process; `/tmp/onnx2tf_nhwc_shuffle_superpoint*` was removed after
 metrics inspection.
+
+### Two-way shuffle branch/Concat mechanical extraction
+
+The remaining 609-line `_optimize_shufflenet_transpose_shuffle_chains` was
+audited before movement. Despite the historical model name, it is one generic
+semantic rewrite with two accepted selector encodings: rank-five scalar
+Gathers and rank-four half-channel Slices. Both feed the same NHWC branch/skip
+conversion, axis-3 Gather construction, NHWC Concat propagation, and restored
+NCHW boundary. Existing focused tests already exercise both full positive
+graphs, so the large fixtures were not duplicated into another test module.
+
+The complete implementation moved mechanically to
+`passes/channel_shuffle.py`, with an AST identical to `f96cbee`. Both selector
+forms, branch op allowlist, public/fan-out guards, constant parsing, shape and
+quantization metadata, insertion order, and output contract remain unchanged.
+The lowerer keeps only a compatibility wrapper, and all five raw calls retain
+their original locations pending the separate indexed mutation checkpoint.
+Focused selector/family/ownership validation passed 15 tests, followed by the
+complete direct selection:
+
+```text
+1148 passed, 5 deselected, 2 warnings in 147.45s
+```
