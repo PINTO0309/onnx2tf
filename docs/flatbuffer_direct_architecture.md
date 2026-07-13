@@ -251,6 +251,17 @@ one `ModelIRGraphIndex` and `LayoutState`. The stable transactional runner ID is
 `layout.dequant_concat_quantize_nhwc`; both production positions call it and
 the lowerer compatibility wrapper remains available.
 
+The adjacent Concat/optional-unary/post-adapter/Conv propagation rule now has
+a dedicated compact corpus in
+`tests/test_flatbuffer_direct_concat_unary_conv_layout.py`. It fixes both the
+unary-free path and a two-unary, two-post path ending in Conv2D and
+DepthwiseConv2D consumers. Whole-ModelIR no-op cases cover leading-adapter,
+Concat, and unary fan-out; public adapter/Concat/unary/post tensors; invalid
+pre/post permutations and Concat axis; a non-Transpose input; an unsupported
+unary; and a non-Conv post consumer. The production matcher and both raw calls
+remain central and unchanged at this checkpoint; mechanical extraction is
+next.
+
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization

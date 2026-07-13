@@ -3,8 +3,8 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `3be0c3e`
-  (`index dequant concat quantize layout pass`)
+- Latest implementation checkpoint: `f624388`
+  (`characterize concat unary conv layout`)
 - Previous pause checkpoint: `3df2903`
   (`document flatbuffer direct pause checkpoint`)
 - Remote: after this resumed documentation checkpoint is pushed, local and
@@ -16,12 +16,14 @@
 - The Dequantize/Concat/Quantize matcher uses pure indexed planning,
   differential graph/layout mutation, and one transactional runner at both
   production positions.
+- The next Concat/optional-unary/post-adapter/Conv family has a dedicated
+  15-case characterization corpus; production and both calls are unchanged.
 
 ## Completed work
 
 This resumed interval completed fifteen adjacent semantic layout families
 using the staged characterization → mechanical extraction → indexed runner
-process.
+process and established characterization for the sixteenth family.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -177,6 +179,15 @@ process.
       differential graph/layout mutation, stable runner
       `layout.dequant_concat_quantize_nhwc`, and both production runner calls
       in `3be0c3e`.
+16. Concat/unary/Conv layout characterization
+    - Added the first dedicated compact corpus for the central matcher in
+      `f624388`.
+    - Fixed unary-free and two-unary/two-post success variants, including
+      Conv2D and DepthwiseConv2D consumers.
+    - Added thirteen complete no-op boundaries for fan-out, graph outputs,
+      permutations, axis, input/unary type, and non-Conv consumers.
+    - Preserved production code and both raw calls exactly; extraction remains
+      the next checkpoint.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -192,9 +203,9 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is characterization of
-  `_optimize_transpose_concat_unary_fanout_conv_nhwc_chains`, including both
-  production positions and unary/post/Conv fan-out boundaries.
+  The immediate next unit is mechanical extraction of
+  `_optimize_transpose_concat_unary_fanout_conv_nhwc_chains` with exact AST
+  equivalence and a single-owner architecture gate.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -216,9 +227,9 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this resumed documentation update, the
-working tree is clean at indexed checkpoint `3be0c3e`. The focused module owns
-the complete Dequantize/Concat/Quantize matcher and both production positions
-use the transactional runner.
+working tree is clean at characterization checkpoint `f624388`. The new
+Concat/unary/Conv tests are committed; production remains unchanged and
+mechanical extraction has not begun.
 After the documentation commit is pushed, local/remote divergence must be
 `0 0`. The implementation checkpoints since the previous pause changed:
 
@@ -242,6 +253,7 @@ After the documentation commit is pushed, local/remote divergence must be
 - `tests/test_flatbuffer_direct_pass_efficiency.py`
 - `tests/test_flatbuffer_direct_se_layout.py`
 - `tests/test_flatbuffer_direct_axis3_const_concat_layout.py`
+- `tests/test_flatbuffer_direct_concat_unary_conv_layout.py`
 - `tests/test_flatbuffer_direct_dequant_concat_quantize_layout.py`
 - `tests/test_tflite_builder_direct.py`
 
@@ -422,6 +434,9 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 - Full direct selection after indexed migration:
   `1358 passed, 5 deselected, 2 warnings in 173.55s`.
+- Dedicated Concat/unary/Conv characterization: `15 passed in 0.31s`.
+- Full direct selection after characterization:
+  `1373 passed, 5 deselected, 2 warnings in 172.58s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -453,13 +468,13 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Inspect `_optimize_transpose_concat_unary_fanout_conv_nhwc_chains`, both
-   production calls, and existing Concat/unary/Conv coverage.
-3. Add a compact dedicated success corpus and complete no-op boundaries for
-   input adapters, Concat/unary fan-out, post adapters, Conv-only consumers,
-   public tensors, permutations, and axis.
-4. Run focused and full direct gates, then commit and push characterization
-   before mechanical extraction.
+2. Move `_optimize_transpose_concat_unary_fanout_conv_nhwc_chains`
+   mechanically to a focused pass module while retaining its lowerer wrapper
+   and both raw production calls.
+3. Confirm exact AST equivalence against `f624388` and add a single-owner
+   architecture gate.
+4. Run focused and full direct gates, then commit and push extraction before
+   indexed candidate planning.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1287,6 +1302,34 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_dequant_concat_quantize_superpoint` artifacts were removed after
 metrics inspection.
+
+### Concat/unary/Conv characterization checkpoint
+
+Checkpoint `f624388` added
+`tests/test_flatbuffer_direct_concat_unary_conv_layout.py`, the first dedicated
+coverage for this central matcher. One compact success graph proves the
+unary-free Concat path; a second proves a RELU/Tanh chain with two inverse post
+adapters ending in Conv2D and DepthwiseConv2D. Both remove every adapter,
+rewrite Concat inputs and axis to NHWC, permute Concat/unary metadata once, and
+feed every Conv-family consumer directly from the NHWC tail.
+
+Thirteen parameterized boundaries prove a complete ModelIR no-op for leading
+adapter, Concat, or unary fan-out; public adapter, Concat, unary, or post
+tensors; invalid pre/post permutations; invalid Concat axis; a non-Transpose
+input; an unsupported unary; and a non-Conv post consumer. Snapshots compare
+operator options and all tensor metadata and constant values.
+
+Focused characterization passed 15 tests. The complete sequential direct
+selection passed:
+
+```text
+1373 passed, 5 deselected, 2 warnings in 172.58s
+```
+
+Production code and both raw calls remain unchanged. No dependency or
+TensorFlow path was added, and no inference process was run concurrently.
+Mechanical extraction with exact AST-equivalence and single-owner gates is the
+next separate checkpoint.
 
 ### Axis-3 constant-Concat bridge mechanical extraction checkpoint
 
