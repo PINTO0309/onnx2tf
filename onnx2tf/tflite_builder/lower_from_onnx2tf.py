@@ -105,6 +105,8 @@ from onnx2tf.tflite_builder.passes.channel_shuffle import (
 from onnx2tf.tflite_builder.passes.mean_layout import (
     _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains as _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains_pass,
     _optimize_transpose_mean_prepost_nhwc_passthrough_chains as _optimize_transpose_mean_prepost_nhwc_passthrough_chains_pass,
+    run_mean_mul_add_conv_layout_cleanup,
+    run_transpose_mean_passthrough_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -57477,8 +57479,16 @@ def lower_onnx_to_ir(
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_mean_prepost_nhwc_passthrough_chains(model_ir)
-        _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains(model_ir)
+        run_transpose_mean_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        run_mean_mul_add_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_layernorm_stats_nhwc_propagation_chains(model_ir)
         _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
@@ -57642,8 +57652,16 @@ def lower_onnx_to_ir(
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_mean_prepost_nhwc_passthrough_chains(model_ir)
-        _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains(model_ir)
+        run_transpose_mean_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        run_mean_mul_add_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
         _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
@@ -57814,8 +57832,16 @@ def lower_onnx_to_ir(
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_mean_prepost_nhwc_passthrough_chains(model_ir)
-        _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains(model_ir)
+        run_transpose_mean_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        run_mean_mul_add_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
         _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
@@ -58011,8 +58037,16 @@ def lower_onnx_to_ir(
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_mean_prepost_nhwc_passthrough_chains(model_ir)
-        _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains(model_ir)
+        run_transpose_mean_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        run_mean_mul_add_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
         _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
@@ -58130,8 +58164,16 @@ def lower_onnx_to_ir(
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_mean_prepost_nhwc_passthrough_chains(model_ir)
-        _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains(model_ir)
+        run_transpose_mean_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        run_mean_mul_add_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
         _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
@@ -58315,8 +58357,16 @@ def lower_onnx_to_ir(
     if optimize_layout_transpose_chains:
         # Boundary/layout recovery can still recreate NCHW wrappers around MEAN.
         # Run dedicated NHWC passthrough once more in the terminal stage.
-        _optimize_transpose_mean_prepost_nhwc_passthrough_chains(model_ir)
-        _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains(model_ir)
+        run_transpose_mean_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        run_mean_mul_add_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
         _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
@@ -58865,7 +58915,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-    _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains(model_ir)
+    run_mean_mul_add_conv_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
     run_transpose_gather_axis_cleanup(
         model_ir,

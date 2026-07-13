@@ -669,7 +669,10 @@ def test_mean_layout_rewrites_have_single_owner() -> None:
         and node.module == "onnx2tf.tflite_builder.passes.mean_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == function_names
+    assert {alias.name for alias in imports[0].names} == function_names | {
+        "run_mean_mul_add_conv_layout_cleanup",
+        "run_transpose_mean_passthrough_cleanup",
+    }
 
 
 def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
@@ -689,6 +692,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_duplicate_fanout_cleanup",
         "run_flatten_concat_reshape_cleanup",
         "run_mixed_attention_layout_cleanup",
+        "run_mean_mul_add_conv_layout_cleanup",
         "run_nchw_channel_shuffle_cleanup",
         "run_nhwc_channel_shuffle_cleanup",
         "run_maximum_zero_relu_cleanup",
@@ -717,6 +721,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_transpose_unary_binary_fanout_bridge_cleanup",
         "run_transpose_unary_fanout_bridge_cleanup",
         "run_transpose_unary_passthrough_cleanup",
+        "run_transpose_mean_passthrough_cleanup",
     }
     tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
     calls = [
@@ -728,7 +733,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 168
+    assert len(calls) == 181
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -962,6 +967,22 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_stale_nchw_channel_shuffle_repair"
     ]
     assert len(stale_nchw_channel_shuffle_calls) == 1
+
+    transpose_mean_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_transpose_mean_passthrough_cleanup"
+    ]
+    assert len(transpose_mean_calls) == 6
+
+    mean_mul_add_conv_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_mean_mul_add_conv_layout_cleanup"
+    ]
+    assert len(mean_mul_add_conv_calls) == 7
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:

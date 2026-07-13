@@ -140,9 +140,20 @@ passthrough rewrite and the Transpose→Mean→Mul(const)→Reshape→Add(const)
 NHWC propagation rewrite are mechanically owned there. Their implementations
 are AST-equivalent to checkpoint `c99418a` after excluding docstrings; rank,
 constant-axis, fan-out, public-boundary, metadata, and conditional leading
-Transpose behavior are unchanged. The lowerer retains compatibility wrappers
-and the original production call positions until the next, separate indexed
-runner checkpoint.
+Transpose behavior are unchanged. The lowerer retains compatibility wrappers.
+
+Both rewrites now reuse a differential `ModelIRGraphIndex` and active
+`LayoutState`; consumer reads, input/output rewrites, alias replacement,
+operator removal, tensor pruning, and layout synchronization update shared
+state. `run_transpose_mean_passthrough_cleanup` registers
+`layout.transpose_mean_prepost`, while
+`run_mean_mul_add_conv_layout_cleanup` registers
+`layout.mean_mul_add_conv_nhwc`; both execute in `LAYOUT_PLAN`. Cheap model-only
+capability scans avoid state construction on irrelevant graphs, and indexed
+guards prove the full relevant fan-out, axes, constant, shape, and Conv prefix
+before transaction creation. All six and seven respective production
+positions use the ordered runners and session diagnostics. The module performs
+no whole-graph map construction or direct operator-list insertion/deletion.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and

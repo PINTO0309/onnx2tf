@@ -3287,3 +3287,36 @@ The complete sequential direct regression selection passed:
 
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently.
+
+### Indexed Mean layout checkpoint
+
+Both extracted Mean rewrites now accept the shared `ModelIRGraphIndex` and
+`LayoutState`. All consumer lookup, Mean/Add input rewrite, Mean output and
+alias rewrite, structural removal, pruning, and layout reconciliation use the
+differential state. The module has no whole-graph producer/consumer map build
+and no direct operator-list mutation.
+
+`run_transpose_mean_passthrough_cleanup` registers stable ID
+`layout.transpose_mean_prepost`; `run_mean_mul_add_conv_layout_cleanup`
+registers `layout.mean_mul_add_conv_nhwc`. Both run in `LAYOUT_PLAN` with cheap
+model-only capability preflight and indexed topology/constant/shape guards
+before transactional snapshots. All six pre/post positions and seven longer
+chain positions now pass the active layout state and session diagnostics.
+
+Focused runner, characterization, ownership, architecture, and irrelevant
+graph efficiency validation passed 37 tests. Instrumentation proves one
+initial index refresh and one snapshot for each successful rewrite; Mean
+fan-out rejects before snapshotting. Tier 1 `superpoint.onnx` passed a
+sequential `-tb flatbuffer_direct -cotof` conversion with
+`evaluation_pass=true`, `max_abs=1.6666017472743988e-06`,
+`rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+
+The complete sequential direct regression selection passed:
+
+```text
+1154 passed, 5 deselected, 2 warnings in 148.42s
+```
+
+No dependency or TensorFlow path was added. The temporary
+`/tmp/onnx2tf_mean_layout_superpoint` artifacts were removed after metrics
+inspection.
