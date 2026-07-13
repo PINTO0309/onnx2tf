@@ -267,6 +267,17 @@ removal, pruning, and layout reconciliation use one `ModelIRGraphIndex` and
 `layout.concat_unary_conv_nhwc`; both production positions call it and the
 lowerer compatibility wrapper remains available.
 
+The larger SPP-style Resize/Add/two-Concat/two-affine/two-Conv rule now has a
+generic compact corpus in `tests/test_flatbuffer_direct_spp_layout.py`. The
+success graph fixes four Resize branches sharing one base adapter, the first
+channel Concat/Mul and NHWC affine/Conv island, the base/Conv second Concat/Mul,
+and the final affine/Conv island. Whole-ModelIR no-op cases cover fan-out at
+both branch and island boundaries, public base/first-Concat tensors, invalid
+leading permutation or either Concat axis, a non-Resize branch producer, and
+missing Mul constants. The 371-line production matcher and all seven raw calls
+remain central and unchanged at this checkpoint; mechanical extraction is
+next.
+
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization

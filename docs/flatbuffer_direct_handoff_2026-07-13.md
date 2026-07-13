@@ -3,8 +3,8 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `b86b31a`
-  (`index concat unary conv layout pass`)
+- Latest implementation checkpoint: `0804e37`
+  (`characterize generic spp layout`)
 - Previous pause checkpoint: `3df2903`
   (`document flatbuffer direct pause checkpoint`)
 - Remote: after this resumed documentation checkpoint is pushed, local and
@@ -19,12 +19,14 @@
 - The Concat/optional-unary/post-adapter/Conv matcher uses pure indexed
   planning, differential graph/layout mutation, and one transactional runner
   at both production positions.
+- The seven-call SPP family has a generic 17-case characterization corpus;
+  production remains unchanged.
 
 ## Completed work
 
 This resumed interval completed sixteen adjacent semantic layout families
 using the staged characterization → mechanical extraction → indexed runner
-process.
+process and established characterization for the seventeenth family.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -195,6 +197,15 @@ process.
       differential graph/layout mutation, stable runner
       `layout.concat_unary_conv_nhwc`, and both production runner calls in
       `b86b31a`.
+17. Generic two-island SPP layout characterization
+    - Added the first dedicated corpus for the 371-line, seven-call matcher in
+      `0804e37`.
+    - Replaced implicit model-specific coverage with a compact four-branch,
+      two-Concat, two-affine, two-Conv semantic graph.
+    - Added sixteen complete no-op boundaries for fan-out, public tensors,
+      permutation/axis, Resize producer, and missing Mul constants.
+    - Preserved production code and all seven raw calls exactly; extraction is
+      the next checkpoint.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -210,9 +221,9 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is characterization of
-  `_optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains`, including
-  all seven production positions and generic SPP topology boundaries.
+  The immediate next unit is mechanical extraction of
+  `_optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains` with
+  exact AST equivalence and a single-owner architecture gate.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -234,9 +245,9 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this resumed documentation update, the
-working tree is clean at indexed checkpoint `b86b31a`. The focused module owns
-the complete Concat/unary/Conv matcher and both production positions use the
-transactional runner.
+working tree is clean at characterization checkpoint `0804e37`. The generic
+SPP corpus is committed; production remains unchanged and extraction has not
+begun.
 After the documentation commit is pushed, local/remote divergence must be
 `0 0`. The implementation checkpoints since the previous pause changed:
 
@@ -263,6 +274,7 @@ After the documentation commit is pushed, local/remote divergence must be
 - `tests/test_flatbuffer_direct_axis3_const_concat_layout.py`
 - `tests/test_flatbuffer_direct_concat_unary_conv_layout.py`
 - `tests/test_flatbuffer_direct_dequant_concat_quantize_layout.py`
+- `tests/test_flatbuffer_direct_spp_layout.py`
 - `tests/test_tflite_builder_direct.py`
 
 The resumed handoff checkpoint updates documentation only. No implementation
@@ -457,6 +469,9 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 - Full direct selection after indexed migration:
   `1390 passed, 5 deselected, 2 warnings in 173.99s`.
+- Dedicated generic SPP characterization: `17 passed in 0.33s`.
+- Full direct selection after characterization:
+  `1407 passed, 5 deselected, 2 warnings in 176.30s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -488,12 +503,14 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Inspect `_optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains`,
-   all seven calls, and any existing SPP-model-specific fixture.
-3. Build a compact generic two-island SPP corpus with fan-out, public tensor,
-   adapter permutation, axis, constant, and Conv consumer boundaries.
-4. Run focused and full direct gates, then commit and push characterization
-   before mechanical extraction.
+2. Move the complete 371-line
+   `_optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains` source
+   mechanically to a focused pass module while retaining the wrapper and all
+   seven raw calls.
+3. Confirm exact AST equivalence against `0804e37` and add a single-owner
+   architecture gate.
+4. Run focused and full direct gates, then commit and push extraction before
+   indexed candidate planning.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1319,6 +1336,35 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_concat_unary_conv_superpoint` artifacts were removed after
 metrics inspection.
+
+### Generic two-island SPP characterization checkpoint
+
+Checkpoint `0804e37` added `tests/test_flatbuffer_direct_spp_layout.py`, the
+first dedicated coverage for the 371-line central matcher. The compact graph
+uses four ResizeBilinear branches sharing one base adapter, four Add outputs,
+the first channel Concat/Mul and inverse adapter, an NHWC affine/Conv, a return
+adapter into a second base/Conv Concat/Mul, and a final inverse adapter,
+affine, and Conv. It proves NHWC propagation through both islands, axis-3
+Concat, channelwise constant conversion, and removal of eight adapters.
+
+Sixteen parameterized boundaries prove a complete ModelIR no-op for branch,
+Concat, Mul, inverse-post, and intermediate-Conv fan-out across both islands;
+public base/first-Concat tensors; invalid leading permutation or either Concat
+axis; a non-Resize branch producer; and missing first/second Mul constants.
+Snapshots compare every operator, option, tensor shape/signature, and constant
+value.
+
+Focused characterization passed 17 tests. The complete sequential direct
+selection passed:
+
+```text
+1407 passed, 5 deselected, 2 warnings in 176.30s
+```
+
+Production code and all seven raw calls remain unchanged. No dependency or
+TensorFlow path was added, and no inference process was run concurrently.
+Mechanical extraction with exact AST-equivalence and single-owner gates is the
+next separate checkpoint.
 
 ### Dequantize/Concat/Quantize mechanical extraction checkpoint
 
