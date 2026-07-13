@@ -1122,6 +1122,17 @@ def test_cost_volume_scatter_layout_rewrite_has_single_owner() -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     assert function_name in pass_functions
+    referenced_names = {
+        node.id
+        for node in ast.walk(pass_functions[function_name])
+        if isinstance(node, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" not in referenced_names
+    assert "_build_tensor_producer_map" not in referenced_names
+    assert not any(
+        isinstance(node, ast.Delete)
+        for node in ast.walk(pass_functions[function_name])
+    )
 
     lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
     lowering_functions = {
@@ -1143,7 +1154,10 @@ def test_cost_volume_scatter_layout_rewrite_has_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.cost_volume_scatter_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {function_name}
+    assert {alias.name for alias in imports[0].names} == {
+        function_name,
+        "run_cost_volume_scatter_layout_cleanup",
+    }
     production_calls = [
         call
         for call in ast.walk(lowering_tree)
@@ -1151,7 +1165,15 @@ def test_cost_volume_scatter_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == function_name
     ]
-    assert len(production_calls) == 6
+    assert len(production_calls) == 0
+    runner_calls = [
+        call
+        for call in ast.walk(lowering_tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "run_cost_volume_scatter_layout_cleanup"
+    ]
+    assert len(runner_calls) == 6
 
 
 def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
@@ -1168,6 +1190,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_constant_input_fold_cleanup",
         "run_consecutive_mul_constants_cleanup",
         "run_conv_attention_layout_cleanup",
+        "run_cost_volume_scatter_layout_cleanup",
         "run_duplicate_fanout_cleanup",
         "run_dual_postconv_gate_layout_cleanup",
         "run_elementwise_gate_layout_cleanup",
@@ -1220,7 +1243,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 221
+    assert len(calls) == 227
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -1534,6 +1557,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_ndhwc_gate_layout_cleanup"
     ]
     assert len(ndhwc_gate_calls) == 6
+
+    cost_volume_scatter_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_cost_volume_scatter_layout_cleanup"
+    ]
+    assert len(cost_volume_scatter_calls) == 6
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:

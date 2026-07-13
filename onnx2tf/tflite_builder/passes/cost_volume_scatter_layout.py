@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPassState,
+    ModelIRPreflightResult,
+    run_model_ir_pass_group,
+)
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _permute_shape,
     _permute_tensor_metadata_if_rank_matches,
@@ -18,10 +24,269 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_inputs,
     _write_const_ints_to_tensor,
 )
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
 
-def _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+_PERM_NHWC_TO_NCHW = [0, 3, 1, 2]
+_PERM_NCHW_TO_NHWC = [0, 2, 3, 1]
+_PERM_NCDHW_TO_NDHWC = [0, 2, 3, 4, 1]
+_REDUCE_OPS = {"SUM", "MEAN", "REDUCE_MAX"}
+_SCATTER_LAYOUT_OPS = {"SCATTER_ND", "ADD", "SUB", "MUL"}
+_SCATTER_CONST_INPUT_LAYOUT_OPS = {"ADD", "SUB", "MUL"}
+_ALLOWED_OPS = {
+    "SLICE",
+    "MUL",
+    "SUM",
+    "SQRT",
+    "DIV",
+    "MEAN",
+    "RESHAPE",
+    "CAST",
+    "SCATTER_ND",
+    "SUB",
+    "ADD",
+    "CONCATENATION",
+    "REDUCE_MAX",
+}
+
+
+@dataclass(frozen=True)
+class _CostVolumeScatterCandidate:
+    post_op: OperatorIR
+    conv_op: OperatorIR
+    candidate_ops: Tuple[OperatorIR, ...]
+    boundary_plans: Tuple[Tuple[OperatorIR, str, str], ...]
+
+
+def _normalize_axis(axis: int, rank: int) -> Optional[int]:
+    value = int(axis)
+    if value < 0:
+        value += int(rank)
+    if value < 0 or value >= int(rank):
+        return None
+    return int(value)
+
+
+def _indices_in_bounds(coords: np.ndarray, shape: List[int]) -> bool:
+    if int(coords.ndim) != 2 or int(coords.shape[1]) != int(len(shape)):
+        return False
+    for axis, dimension in enumerate(shape):
+        dim = int(dimension)
+        if dim <= 0:
+            return False
+        axis_values = coords[:, int(axis)]
+        if np.any(axis_values < 0) or np.any(axis_values >= dim):
+            return False
+    return True
+
+
+def _const_ints_for_input(
+    model_ir: ModelIR,
+    op: OperatorIR,
+    input_index: int,
+) -> Optional[List[int]]:
+    if int(input_index) < 0 or int(input_index) >= len(op.inputs):
+        return None
+    return _read_const_ints_from_tensor(
+        model_ir.tensors.get(str(op.inputs[int(input_index)]), None)
+    )
+
+
+def _validate_candidate_constants(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    candidate_ops: Tuple[OperatorIR, ...],
+) -> bool:
+    for op in candidate_ops:
+        op_type = str(op.op_type)
+        if op_type == "SLICE":
+            begin_values = _const_ints_for_input(model_ir, op, 1)
+            size_values = _const_ints_for_input(model_ir, op, 2)
+            if (
+                begin_values is None
+                or size_values is None
+                or len(begin_values) != 4
+                or len(size_values) != 4
+            ):
+                return False
+        elif op_type in _REDUCE_OPS:
+            axes_values = _const_ints_for_input(model_ir, op, 1)
+            if axes_values is None or len(axes_values) == 0:
+                return False
+            if any(_normalize_axis(axis, 4) is None for axis in axes_values):
+                return False
+        elif op_type == "CONCATENATION":
+            rank_hint = 4
+            if len(op.inputs) > 0:
+                input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+                if input_tensor is not None and input_tensor.shape is not None:
+                    rank_hint = int(len(list(input_tensor.shape)))
+            if int(rank_hint) == 4:
+                if not isinstance(op.options, dict):
+                    return False
+                raw_axis = int(op.options.get("axis", 1))
+                if _normalize_axis(raw_axis, 4) is None:
+                    return False
+        elif op_type == "SCATTER_ND":
+            shape_values = _const_ints_for_input(model_ir, op, 2)
+            if shape_values is None or len(shape_values) != 5:
+                return False
+            target_shape = _permute_shape(
+                [int(value) for value in shape_values],
+                _PERM_NCDHW_TO_NDHWC,
+            )
+            if target_shape is None or len(op.inputs) < 1:
+                return False
+            indices_name = str(op.inputs[0])
+            indices_producer = graph_index.producer(indices_name)
+            const_name = indices_name
+            if (
+                indices_producer is not None
+                and str(indices_producer.op_type) == "CAST"
+                and len(indices_producer.inputs) == 1
+            ):
+                const_name = str(indices_producer.inputs[0])
+            const_tensor = model_ir.tensors.get(const_name, None)
+            if const_tensor is None or const_tensor.data is None:
+                return False
+            coordinate_array = np.asarray(const_tensor.data)
+            if (
+                int(coordinate_array.size) == 0
+                or int(coordinate_array.ndim) == 0
+                or int(coordinate_array.shape[-1]) != 5
+            ):
+                return False
+            flat = coordinate_array.reshape(-1, 5)
+            remapped = flat[:, [int(value) for value in _PERM_NCDHW_TO_NDHWC]]
+            if not (
+                _indices_in_bounds(flat, target_shape)
+                or _indices_in_bounds(remapped, target_shape)
+            ):
+                return False
+    return True
+
+
+def _resolve_cost_volume_scatter_candidate(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+) -> Optional[_CostVolumeScatterCandidate]:
+    model_outputs = {str(name) for name in model_ir.outputs}
+    for post_op in model_ir.operators:
+        post_index = graph_index.operator_index(post_op)
+        if (
+            post_index is None
+            or str(post_op.op_type) != "TRANSPOSE"
+            or len(post_op.inputs) < 2
+            or len(post_op.outputs) != 1
+            or _read_transpose_perm(model_ir, post_op) != _PERM_NCDHW_TO_NDHWC
+        ):
+            continue
+        post_input = str(post_op.inputs[0])
+        post_output = str(post_op.outputs[0])
+        if post_input in model_outputs or post_output in model_outputs:
+            continue
+        if set(graph_index.consumer_indices(post_input)) != {int(post_index)}:
+            continue
+        post_users = graph_index.consumer_indices(post_output)
+        if len(post_users) != 1:
+            continue
+        conv_op = model_ir.operators[int(post_users[0])]
+        if (
+            str(conv_op.op_type) != "CONV_3D"
+            or len(conv_op.inputs) < 1
+            or str(conv_op.inputs[0]) != post_output
+        ):
+            continue
+        root_index = graph_index.producers.get(post_input, None)
+        if root_index is None:
+            continue
+
+        candidate_indices: set[int] = set()
+        boundary_indices: set[int] = set()
+        traversal_ok = True
+        stack = [int(root_index)]
+        visited: set[int] = set()
+        while stack:
+            current_index = int(stack.pop())
+            if current_index in visited:
+                continue
+            visited.add(current_index)
+            current_op = model_ir.operators[current_index]
+            if str(current_op.op_type) == "TRANSPOSE":
+                if _read_transpose_perm(model_ir, current_op) == _PERM_NHWC_TO_NCHW:
+                    boundary_indices.add(current_index)
+                    continue
+                traversal_ok = False
+                break
+            if str(current_op.op_type) not in _ALLOWED_OPS:
+                traversal_ok = False
+                break
+            candidate_indices.add(current_index)
+            for input_name in current_op.inputs:
+                parent_index = graph_index.producers.get(str(input_name), None)
+                if parent_index is not None:
+                    stack.append(int(parent_index))
+        if (
+            not traversal_ok
+            or len(candidate_indices) == 0
+            or len(boundary_indices) != 2
+        ):
+            continue
+
+        boundary_plans: List[Tuple[OperatorIR, str, str]] = []
+        for boundary_index in sorted(boundary_indices):
+            boundary_op = model_ir.operators[int(boundary_index)]
+            boundary_input = str(boundary_op.inputs[0])
+            boundary_output = str(boundary_op.outputs[0])
+            boundary_users = set(graph_index.consumer_indices(boundary_output))
+            if (
+                boundary_input in model_outputs
+                or boundary_output in model_outputs
+                or len(boundary_users) == 0
+                or any(user not in candidate_indices for user in boundary_users)
+            ):
+                traversal_ok = False
+                break
+            boundary_plans.append(
+                (boundary_op, boundary_input, boundary_output)
+            )
+        if not traversal_ok:
+            continue
+        candidate_ops = tuple(
+            model_ir.operators[index] for index in sorted(candidate_indices)
+        )
+        if not _validate_candidate_constants(
+            model_ir,
+            graph_index,
+            candidate_ops,
+        ):
+            continue
+        return _CostVolumeScatterCandidate(
+            post_op=post_op,
+            conv_op=conv_op,
+            candidate_ops=candidate_ops,
+            boundary_plans=tuple(boundary_plans),
+        )
+    return None
+
+
+def _has_cost_volume_scatter_candidate(pass_state: ModelIRPassState) -> bool:
+    return (
+        _resolve_cost_volume_scatter_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+        )
+        is not None
+    )
+
+
+def _optimize_transpose_cost_volume_scatter_ndhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Remove NCHW/NCDHW adapter transposes in cost-volume ScatterND accumulation motifs.
 
@@ -37,28 +302,13 @@ def _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir: ModelIR) -> D
       - Remove the two leading NHWC->NCHW transposes and trailing NCDHW->NDHWC transpose.
     """
     rewritten = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-    perm_ncdhw_to_ndhwc = [0, 2, 3, 4, 1]
-    perm_ndhwc_to_ncdhw = [0, 4, 1, 2, 3]
-    reduce_ops = {"SUM", "MEAN", "REDUCE_MAX"}
-    scatter_layout_ops = {"SCATTER_ND", "ADD", "SUB", "MUL"}
-    scatter_const_input_layout_ops = {"ADD", "SUB", "MUL"}
-    allowed_ops = {
-        "SLICE",
-        "MUL",
-        "SUM",
-        "SQRT",
-        "DIV",
-        "MEAN",
-        "RESHAPE",
-        "CAST",
-        "SCATTER_ND",
-        "SUB",
-        "ADD",
-        "CONCATENATION",
-        "REDUCE_MAX",
-    }
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    perm_nhwc_to_nchw = _PERM_NHWC_TO_NCHW
+    perm_nchw_to_nhwc = _PERM_NCHW_TO_NHWC
+    perm_ncdhw_to_ndhwc = _PERM_NCDHW_TO_NDHWC
+    reduce_ops = _REDUCE_OPS
+    scatter_layout_ops = _SCATTER_LAYOUT_OPS
+    scatter_const_input_layout_ops = _SCATTER_CONST_INPUT_LAYOUT_OPS
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -107,16 +357,9 @@ def _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir: ModelIR) -> D
             op=op,
             input_index=int(input_index),
             new_input_name=str(new_name),
+            graph_index=graph_index,
         )
         return model_ir.tensors.get(str(new_name), None)
-
-    def _normalize_axis(axis: int, rank: int) -> Optional[int]:
-        value = int(axis)
-        if value < 0:
-            value += int(rank)
-        if value < 0 or value >= int(rank):
-            return None
-        return int(value)
 
     def _remap_axes_const(
         *,
@@ -309,109 +552,36 @@ def _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir: ModelIR) -> D
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
+        candidate = _resolve_cost_volume_scatter_candidate(model_ir, graph_index)
+        if candidate is None:
+            break
+        consumers = graph_index.consumers
+        producers = graph_index.producers
 
-        for post_idx, post_op in enumerate(model_ir.operators):
-            if (
-                str(post_op.op_type) != "TRANSPOSE"
-                or len(post_op.inputs) < 2
-                or len(post_op.outputs) != 1
-                or _read_transpose_perm(model_ir, post_op) != perm_ncdhw_to_ndhwc
-            ):
-                continue
-
+        for candidate in [candidate]:
+            post_op = candidate.post_op
+            conv_op = candidate.conv_op
+            post_idx = graph_index.operator_index(post_op)
+            if post_idx is None:
+                break
             post_in_name = str(post_op.inputs[0])
             post_out_name = str(post_op.outputs[0])
-            if (
-                post_in_name in model_outputs
-                or post_out_name in model_outputs
+            candidate_indices = [
+                graph_index.operator_index(op) for op in candidate.candidate_ops
+            ]
+            boundary_plans = [
+                (graph_index.operator_index(op), boundary_in, boundary_out)
+                for op, boundary_in, boundary_out in candidate.boundary_plans
+            ]
+            if any(index is None for index in candidate_indices) or any(
+                index is None for index, _, _ in boundary_plans
             ):
-                continue
-            if set(int(v) for v in consumers.get(post_in_name, [])) != {int(post_idx)}:
-                continue
-
-            post_users = [int(v) for v in consumers.get(post_out_name, [])]
-            if len(post_users) != 1:
-                continue
-            conv_idx = int(post_users[0])
-            conv_op = model_ir.operators[int(conv_idx)]
-            if (
-                str(conv_op.op_type) != "CONV_3D"
-                or len(conv_op.inputs) < 1
-                or str(conv_op.inputs[0]) != post_out_name
-            ):
-                continue
-
-            root_idx = producers.get(post_in_name, None)
-            if root_idx is None:
-                continue
-
-            candidate_indices: set[int] = set()
-            boundary_indices: set[int] = set()
-            traversal_ok = True
-            stack: List[int] = [int(root_idx)]
-            visited: set[int] = set()
-
-            while len(stack) > 0:
-                current_idx = int(stack.pop())
-                if int(current_idx) in visited:
-                    continue
-                visited.add(int(current_idx))
-                current_op = model_ir.operators[int(current_idx)]
-
-                if str(current_op.op_type) == "TRANSPOSE":
-                    current_perm = _read_transpose_perm(model_ir, current_op)
-                    if current_perm == perm_nhwc_to_nchw:
-                        boundary_indices.add(int(current_idx))
-                        continue
-                    traversal_ok = False
-                    break
-
-                if str(current_op.op_type) not in allowed_ops:
-                    traversal_ok = False
-                    break
-
-                candidate_indices.add(int(current_idx))
-                for input_name in list(current_op.inputs):
-                    parent_idx = producers.get(str(input_name), None)
-                    if parent_idx is not None:
-                        stack.append(int(parent_idx))
-
-            if not traversal_ok:
-                continue
-            if len(candidate_indices) == 0:
-                continue
-            if len(boundary_indices) != 2:
-                continue
-
-            boundary_plans: List[Tuple[int, str, str]] = []
-            for boundary_idx in sorted(list(boundary_indices)):
-                boundary_op = model_ir.operators[int(boundary_idx)]
-                if (
-                    str(boundary_op.op_type) != "TRANSPOSE"
-                    or len(boundary_op.inputs) < 2
-                    or len(boundary_op.outputs) != 1
-                    or _read_transpose_perm(model_ir, boundary_op) != perm_nhwc_to_nchw
-                ):
-                    traversal_ok = False
-                    break
-                boundary_in = str(boundary_op.inputs[0])
-                boundary_out = str(boundary_op.outputs[0])
-                if boundary_in in model_outputs or boundary_out in model_outputs:
-                    traversal_ok = False
-                    break
-                boundary_users = set(int(v) for v in consumers.get(boundary_out, []))
-                if len(boundary_users) == 0:
-                    traversal_ok = False
-                    break
-                if any(int(user_idx) not in candidate_indices for user_idx in boundary_users):
-                    traversal_ok = False
-                    break
-                boundary_plans.append((int(boundary_idx), str(boundary_in), str(boundary_out)))
-            if not traversal_ok:
-                continue
+                break
+            candidate_indices = [int(index) for index in candidate_indices]
+            boundary_plans = [
+                (int(index), boundary_in, boundary_out)
+                for index, boundary_in, boundary_out in boundary_plans
+            ]
 
             apply_ok = True
             for op_idx in sorted(list(candidate_indices)):
@@ -477,6 +647,7 @@ def _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir: ModelIR) -> D
                     model_ir=model_ir,
                     src_name=str(boundary_out),
                     dst_name=str(boundary_in),
+                    graph_index=graph_index,
                 )
 
             conv_inputs = [
@@ -487,6 +658,7 @@ def _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir: ModelIR) -> D
                 model_ir=model_ir,
                 op=conv_op,
                 new_inputs=conv_inputs,
+                graph_index=graph_index,
             )
 
             for op_idx in sorted(list(candidate_indices)):
@@ -547,7 +719,7 @@ def _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir: ModelIR) -> D
                 reverse=True,
             )
             for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -556,6 +728,53 @@ def _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir: ModelIR) -> D
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_cost_volume_scatter_ndhwc_chains": int(rewritten)}
 
+
+def run_cost_volume_scatter_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Propagate a validated cost-volume ScatterND island to NHWC/NDHWC."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"TRANSPOSE", "SCATTER_ND", "CONV_3D"}
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            required.discard(str(operator.op_type))
+            if not required:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    stats_key = "optimized_transpose_cost_volume_scatter_ndhwc_chains"
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_cost_volume_scatter_ndhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {**stats, "changed": bool(stats.get(stats_key, 0))}
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.cost_volume_scatter_ndhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_cost_volume_scatter_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={stats_key: 0},
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}

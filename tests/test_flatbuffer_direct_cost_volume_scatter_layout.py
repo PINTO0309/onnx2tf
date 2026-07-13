@@ -5,9 +5,13 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_cost_volume_scatter_ndhwc_chains,
+)
+from onnx2tf.tflite_builder.passes.cost_volume_scatter_layout import (
+    run_cost_volume_scatter_layout_cleanup,
 )
 
 
@@ -68,8 +72,13 @@ def _model(*, boundary: str | None = None) -> ModelIR:
         "scatter_shape": _tensor(
             "scatter_shape",
             "INT32",
-            [5],
-            np.asarray([1, 1, 3, 4, 6], dtype=np.int32),
+            [4] if boundary == "scatter_shape_rank" else [5],
+            np.asarray(
+                [1, 1, 3, 4]
+                if boundary == "scatter_shape_rank"
+                else [1, 1, 3, 4, 6],
+                dtype=np.int32,
+            ),
         ),
         "indices_i32": _tensor("indices_i32", "INT32", [1, 1, 1, 3, 5, 5]),
         "scatter_ncdhw": _tensor(
@@ -101,19 +110,28 @@ def _model(*, boundary: str | None = None) -> ModelIR:
             np.asarray([0, 2, 3, 4, 1], dtype=np.int32),
         ),
     }
-    index_data = np.zeros((1, 1, 1, 3, 5, 5), dtype=np.float32)
-    for height in range(3):
-        for width in range(5):
-            index_data[0, 0, 0, height, width] = np.asarray(
-                [0, 0, 0, height, width + 1],
-                dtype=np.float32,
-            )
+    coordinate_width = 4 if boundary == "indices_rank" else 5
+    index_data = np.zeros(
+        (1, 1, 1, 3, 5, coordinate_width),
+        dtype=np.float32,
+    )
+    if coordinate_width == 5:
+        for height in range(3):
+            for width in range(5):
+                index_data[0, 0, 0, height, width] = np.asarray(
+                    [0, 0, 0, height, width + 1],
+                    dtype=np.float32,
+                )
+    if boundary == "indices_bounds":
+        index_data[0, 0, 0, 0, 0, 4] = 99
     model_ir.tensors["indices_f32"] = _tensor(
         "indices_f32",
         "FLOAT32",
-        [1, 1, 1, 3, 5, 5],
+        list(index_data.shape),
         index_data,
     )
+    model_ir.tensors["indices_i32"].shape = list(index_data.shape)
+    model_ir.tensors["indices_i32"].shape_signature = list(index_data.shape)
 
     model_ir.operators = [
         OperatorIR(
@@ -268,6 +286,9 @@ def test_cost_volume_scatter_layout_characterization() -> None:
         "public_intermediate",
         "permutation",
         "downstream_contract",
+        "scatter_shape_rank",
+        "indices_rank",
+        "indices_bounds",
     ],
 )
 def test_cost_volume_scatter_layout_rejects_unsafe_boundary(
@@ -279,4 +300,68 @@ def test_cost_volume_scatter_layout_rejects_unsafe_boundary(
     stats = _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
 
     assert stats["optimized_transpose_cost_volume_scatter_ndhwc_chains"] == 0
+    _assert_model_equal(model_ir, original)
+
+
+def test_cost_volume_scatter_layout_runner_reuses_one_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model()
+    diagnostics: list[dict[str, object]] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_cost_volume_scatter_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    stats_key = "optimized_transpose_cost_volume_scatter_ndhwc_chains"
+    assert stats[stats_key] == 1
+    assert refresh_count == 1
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "layout.cost_volume_scatter_ndhwc"
+    assert diagnostics[0]["changed"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "leading_adapter_fanout",
+        "post_input_fanout",
+        "post_output_fanout",
+        "public_intermediate",
+        "permutation",
+        "downstream_contract",
+        "scatter_shape_rank",
+        "indices_rank",
+        "indices_bounds",
+    ],
+)
+def test_cost_volume_scatter_layout_runner_rejects_before_snapshot(
+    boundary: str,
+) -> None:
+    model_ir = _model(boundary=boundary)
+    original = _snapshot(model_ir)
+    diagnostics: list[dict[str, object]] = []
+
+    stats = run_cost_volume_scatter_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    stats_key = "optimized_transpose_cost_volume_scatter_ndhwc_chains"
+    assert stats[stats_key] == 0
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["changed"] is False
+    assert diagnostics[0]["skipped_by_precondition"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 0
     _assert_model_equal(model_ir, original)
