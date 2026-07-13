@@ -259,6 +259,54 @@ def _add_model(
             ),
         )
         add_op.inputs[0] = "a_split0"
+    if boundary in {
+        "shared_split_add_tree",
+        "shared_split_external_consumer",
+    }:
+        model_ir.tensors["a_nhwc"].shape = [1, 5, 7, 6]
+        model_ir.tensors["a_nhwc"].shape_signature = [1, 5, 7, 6]
+        model_ir.tensors["a_nchw"].shape = [1, 6, 5, 7]
+        model_ir.tensors["a_nchw"].shape_signature = [1, 6, 5, 7]
+        model_ir.tensors["split_axis"] = _int_tensor("split_axis", [1])
+        for split_output_name in ["a_split0", "a_split1"]:
+            model_ir.tensors[split_output_name] = _tensor(
+                split_output_name,
+                [1, 3, 5, 7],
+            )
+            model_ir.tensors[split_output_name].quantization = QuantParamIR(
+                scale=[0.5] * 3,
+                zero_point=[0] * 3,
+                quantized_dimension=1,
+            )
+        model_ir.tensors["inner_sum_nchw"] = _tensor(
+            "inner_sum_nchw",
+            [1, 3, 5, 7],
+        )
+        add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+        add_index = model_ir.operators.index(add_op)
+        model_ir.operators[add_index:add_index] = [
+            OperatorIR(
+                "SPLIT",
+                ["split_axis", "a_nchw"],
+                ["a_split0", "a_split1"],
+            ),
+            OperatorIR(
+                "ADD",
+                ["a_split0", "b_nchw"],
+                ["inner_sum_nchw"],
+                options={"fusedActivationFunction": "NONE"},
+            ),
+        ]
+        add_op.inputs = ["inner_sum_nchw", "a_split1"]
+        if boundary == "shared_split_external_consumer":
+            model_ir.tensors["split_side"] = _tensor(
+                "split_side",
+                [1, 3, 5, 7],
+            )
+            model_ir.outputs.append("split_side")
+            model_ir.operators.append(
+                OperatorIR("IDENTITY", ["a_split1"], ["split_side"])
+            )
     if boundary in {"recursive_operand", "recursive_operand_post"}:
         model_ir.inputs.append("c_nhwc")
         model_ir.tensors["c_nhwc"] = _tensor(
@@ -435,6 +483,7 @@ def test_nhwc_direct_only_add_is_indexed(all_add: bool) -> None:
         "public_concat",
         "public_post",
         "recursive_cycle",
+        "shared_split_external_consumer",
     ],
 )
 def test_nhwc_add_rejects_unsafe_or_partial_match(boundary: str) -> None:
@@ -641,6 +690,34 @@ def test_nhwc_recursive_add_keeps_nested_post_bound_to_inner_output() -> None:
         op for op in model_ir.operators if op.outputs == ["inner_observed"]
     )
     assert observer.inputs == ["inner_sum_nchw"]
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+
+
+def test_nhwc_shared_split_outputs_feed_one_recursive_add_tree() -> None:
+    model_ir = _add_model(boundary="shared_split_add_tree")
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    split_op = next(op for op in model_ir.operators if op.op_type == "SPLIT")
+    assert split_op.inputs == ["split_axis", "a_nhwc"]
+    np.testing.assert_array_equal(
+        model_ir.tensors["split_axis"].data,
+        np.asarray([3], dtype=np.int32),
+    )
+    inner_add = next(
+        op for op in model_ir.operators if op.outputs == ["inner_sum_nchw"]
+    )
+    outer_add = next(
+        op for op in model_ir.operators if op.outputs == ["sum_nchw"]
+    )
+    assert inner_add.inputs == ["a_split0", "b_nhwc"]
+    assert outer_add.inputs == ["inner_sum_nchw", "a_split1"]
+    for tensor_name in ["a_split0", "a_split1"]:
+        tensor = model_ir.tensors[tensor_name]
+        assert tensor.shape == [1, 5, 7, 3]
+        assert isinstance(tensor.quantization, QuantParamIR)
+        assert tensor.quantization.quantized_dimension == 3
     assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
 
 

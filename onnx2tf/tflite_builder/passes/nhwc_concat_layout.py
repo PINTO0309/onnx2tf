@@ -842,6 +842,7 @@ def _resolve_split_input_plan(
     concat_index: int,
     model_outputs: set[str],
     public_names: set[str],
+    allowed_consumer_indices: Optional[frozenset[int]] = None,
 ) -> Optional[_NhwcConcatInputPlan]:
     split_op = graph_index.producer(input_name)
     split_index = (
@@ -903,6 +904,11 @@ def _resolve_split_input_plan(
     source_tensor = model_ir.tensors.get(source_name)
     if source_tensor is None or len(list(source_tensor.shape)) != 4:
         return None
+    allowed_consumers = (
+        {int(concat_index)}
+        if allowed_consumer_indices is None
+        else {int(index) for index in allowed_consumer_indices}
+    )
     output_post_adapter_ops: List[OperatorIR] = []
     for split_output_name in [str(name) for name in split_op.outputs]:
         split_output_tensor = model_ir.tensors.get(split_output_name)
@@ -913,7 +919,7 @@ def _resolve_split_input_plan(
         ):
             return None
         for consumer_index in graph_index.consumer_indices(split_output_name):
-            if int(consumer_index) == int(concat_index):
+            if int(consumer_index) in allowed_consumers:
                 continue
             post_op = model_ir.operators[int(consumer_index)]
             if (
@@ -952,6 +958,45 @@ def _resolve_split_input_plan(
     )
 
 
+def _collect_upstream_add_indices(
+    graph_index: ModelIRGraphIndex,
+    *,
+    input_name: str,
+    visited_add_outputs: frozenset[str] = frozenset(),
+) -> Optional[frozenset[int]]:
+    add_op = graph_index.producer(input_name)
+    if add_op is None or str(add_op.op_type) != "ADD":
+        return frozenset()
+    if (
+        input_name in visited_add_outputs
+        or len(visited_add_outputs) >= _MAX_ADD_PLAN_DEPTH
+    ):
+        return None
+    add_index = graph_index.operator_index(add_op)
+    if (
+        add_index is None
+        or len(add_op.inputs) != 2
+        or len(add_op.outputs) != 1
+        or str(add_op.outputs[0]) != input_name
+    ):
+        return None
+
+    next_visited_outputs = frozenset(
+        {*visited_add_outputs, input_name}
+    )
+    add_indices = {int(add_index)}
+    for add_input_name in [str(name) for name in add_op.inputs]:
+        nested_indices = _collect_upstream_add_indices(
+            graph_index,
+            input_name=add_input_name,
+            visited_add_outputs=next_visited_outputs,
+        )
+        if nested_indices is None:
+            return None
+        add_indices.update(int(index) for index in nested_indices)
+    return frozenset(add_indices)
+
+
 def _resolve_add_input_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -960,6 +1005,7 @@ def _resolve_add_input_plan(
     concat_index: int,
     model_outputs: set[str],
     visited_add_outputs: Optional[frozenset[str]] = None,
+    allowed_split_consumer_indices: Optional[frozenset[int]] = None,
 ) -> Optional[_NhwcConcatInputPlan]:
     visited_add_outputs = visited_add_outputs or frozenset()
     if (
@@ -967,6 +1013,13 @@ def _resolve_add_input_plan(
         or len(visited_add_outputs) >= _MAX_ADD_PLAN_DEPTH
     ):
         return None
+    if allowed_split_consumer_indices is None:
+        allowed_split_consumer_indices = _collect_upstream_add_indices(
+            graph_index,
+            input_name=input_name,
+        )
+        if allowed_split_consumer_indices is None:
+            return None
     next_visited_add_outputs = frozenset(
         {*visited_add_outputs, input_name}
     )
@@ -1045,6 +1098,7 @@ def _resolve_add_input_plan(
                     *[str(name) for name in model_ir.inputs],
                     *model_outputs,
                 },
+                allowed_consumer_indices=allowed_split_consumer_indices,
             )
         if operand_plan is None:
             operand_plan = _resolve_add_input_plan(
@@ -1054,6 +1108,9 @@ def _resolve_add_input_plan(
                 concat_index=int(add_index),
                 model_outputs=model_outputs,
                 visited_add_outputs=next_visited_add_outputs,
+                allowed_split_consumer_indices=(
+                    allowed_split_consumer_indices
+                ),
             )
         if operand_plan is None:
             return None

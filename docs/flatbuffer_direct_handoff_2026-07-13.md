@@ -116,8 +116,12 @@ names through the tree, rejects cycles, and stops at depth 64. Application
 shares the materialized-integer, applied-Split, and applied-Add sets so a
 nested branch is rewritten exactly once. Each nested inverse post adapter is
 rewired to its own Add output, while cleanup recursively collects adapters
-from the whole successful plan. Broader shared-output Split/Add and other
-mixed operand families deliberately remain in legacy.
+from the whole successful plan. A bounded pre-scan now collects every Add
+operator in the selected tree. Multiple outputs of one Split may feed
+different nodes in that tree, while any consumer outside the tree that is not
+an exact inverse adapter rejects the complete candidate. Split outputs shared
+between the Add tree and a separate root-Concat input, and other mixed operand
+families, deliberately remain in legacy.
 The pseudo-LeakyRelu family proves the exact
 `ReLU(x) - alpha * ReLU(-x)` topology. It accepts either Mul operand order,
 requires scalar alpha, preserves Sub order, and supports direct or unary
@@ -170,9 +174,9 @@ Focused verification, all in the existing `uv` environment:
 - Direct, unary, Pad, Dequantize, PReLU, Softmax, expanded-Swish,
   pseudo-LeakyRelu, and bounded Slice/Split/Add ModelIR characterization:
   the preceding combined float-path run passed 176 tests across eight compact
-  modules; the expanded inventory now contains 185. Including the bounded
+  modules; the expanded inventory now contains 187. Including the bounded
   direct and unary/Pad quantized-post suites, the compact inventory contains
-  233 tests across nine modules. The preceding combined run passed 208 tests;
+  235 tests across nine modules. The preceding combined run passed 208 tests;
   the expanded quantized module passes 48 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
@@ -187,11 +191,13 @@ Focused verification, all in the existing `uv` environment:
   bypass, and fifteen no-op boundaries. The
   Add suite covers mixed/all-Add success, shared/public source-adapter
   retention in both operand positions, root-Concat adapter sharing,
-  output-post-adapter bypass, fourteen complete no-op boundaries, and one
+  output-post-adapter bypass, fifteen complete no-op boundaries, and one
   indexed supported-unary operand case plus one indexed exact expanded-Swish
   operand case plus one indexed bounded-Split operand case. It also covers a
   bounded recursive Add operand, correct ownership of an inner Add's inverse
-  post adapter, and a whole-ModelIR recursive-cycle no-op. The
+  post adapter, one Split feeding two different nodes of a recursive Add tree,
+  external Split-consumer rejection, and a whole-ModelIR recursive-cycle
+  no-op. The
   pseudo-LeakyRelu suite
   covers both alpha operand orders, direct/unary/all-Leaky success, twenty
   complete no-op boundaries, and one Pad-mixed legacy fallback. The quantized
@@ -208,8 +214,9 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize broader shared-output Split/Add interactions or
-the next bounded quantized-post family. Keep uncharacterized interactions in
+Next work should characterize Split outputs shared between an Add tree and a
+separate root-Concat input, or the next bounded quantized-post family. Keep
+uncharacterized interactions in
 legacy until independently fixed. Do
 not begin with a Tier 0–4 corpus run, and do not create a pull request.
 
