@@ -2164,6 +2164,13 @@ rejection and unsupported-op diagnostics, and returns a defensive copy from the
 public supported-kernel query. The registry expression and all three functions
 are AST-identical to their former exporter definitions.
 
+Generated PyTorch identifiers have a Torch-free single owner in
+`pytorch_naming.py`. Tensor variables, constant-buffer attributes, serialized
+tensor storage names, keyword/digit sanitization, long-name hashing, semantic
+suffix preservation, and deterministic collision resolution share the same
+policy. Nine function ASTs and four policy-constant ASTs are identical to their
+former exporter definitions.
+
 ## Runtime-check memory boundary
 
 The direct backend releases the legacy GraphSurgeon graph before ModelIR

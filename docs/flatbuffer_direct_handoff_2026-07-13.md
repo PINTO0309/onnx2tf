@@ -406,6 +406,16 @@ unknown-op diagnostics, and CUSTOM rejection. Capability and architecture
 validation passes 71 tests; syntax, Ruff, pycompile, diff, and AST-equivalence
 checks pass. No model conversion or inference was run.
 
+Generated PyTorch naming policy now lives in the Torch-free
+`pytorch_naming.py`. Tensor variables, buffer attributes, storage names,
+keyword/digit sanitization, semantic suffixes, bounded long-name hashing, and
+deterministic collision handling share one owner. All nine function ASTs and
+four policy-constant ASTs match the prior exporter checkpoint. Direct tests
+cover storage and variable collisions, NCHW/NHWC suffix handling, long sibling
+names, excluded buffers, keywords, digits, and empty names. Naming and
+architecture validation passes 73 tests; syntax, Ruff, pycompile, diff, and
+AST-equivalence checks pass. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

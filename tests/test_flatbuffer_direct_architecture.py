@@ -68,6 +68,7 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_capabilities.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_layout_utils.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_naming.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_layout_passes.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_bridge_passes.py",
@@ -3804,6 +3805,58 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
     assert "_SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN =" not in exporter_source
     assert "_SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN," in exporter_source
     assert "import torch" not in parser_source
+
+
+def test_generated_pytorch_naming_policy_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    naming_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_naming.py"
+    ).read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    naming_functions = {
+        node.name
+        for node in ast.parse(naming_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    moved_functions = (
+        "_build_buffer_attr_name_map",
+        "_build_tensor_var_name_map",
+        "_collapse_generated_name_tokens",
+        "_extract_generated_name_suffix_tokens",
+        "_make_tensor_storage_name_map",
+        "_make_unique_identifier",
+        "_sanitize_python_identifier",
+        "_shorten_generated_python_identifier",
+        "_split_generated_name_piece",
+    )
+    for function_name in moved_functions:
+        assert function_name in naming_functions
+        assert function_name not in exporter_functions
+    for imported_name in (
+        "_build_buffer_attr_name_map",
+        "_build_tensor_var_name_map",
+        "_make_tensor_storage_name_map",
+        "_make_unique_identifier",
+        "_sanitize_python_identifier",
+        "_shorten_generated_python_identifier",
+    ):
+        assert f"{imported_name}," in exporter_source
+    for constant_name in (
+        "_GENERATED_NAME_DROP_TOKENS",
+        "_GENERATED_NAME_SUFFIX_PATTERNS",
+        "_GENERATED_NAME_TOKEN_ALIASES",
+        "_PYTORCH_LOCAL_NAME_MAX_LENGTH",
+    ):
+        assert constant_name in naming_source
+        assert constant_name not in exporter_source
+    assert "import torch" not in naming_source
 
 
 def test_pytorch_capability_registry_has_single_owner() -> None:
