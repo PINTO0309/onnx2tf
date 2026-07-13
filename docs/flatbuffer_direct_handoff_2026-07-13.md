@@ -561,6 +561,18 @@ live graph order, dead tensor removal, constant-input stripping, and complete
 source-container immutability. No FlatBuffer serialization, model conversion,
 or inference was run.
 
+The split/export rewrite builder is now append-only. It clones tensor,
+subgraph, boundary, and metadata state into a ModelIR with an initially empty
+operator stream instead of deep-copying all source operators and discarding
+them after a second list is generated. Grouped Conv expansion, BatchMatMul
+unfolding, and recurrent unrolling emit directly into that stream; their final
+whole-list assignments are removed. The common unchanged-operator copy now
+also preserves axis semantics and ONNX node/op provenance, which the previous
+copy helper silently dropped. Focused no-op coverage exercises all three
+rewriters, and synthetic grouped-Conv and batched-MatMul fixtures verify each
+nontrivial expansion occurs exactly once without mutating the source graph. No
+SavedModel export, model conversion, or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

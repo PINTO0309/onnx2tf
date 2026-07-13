@@ -1615,6 +1615,14 @@ while the serializer no longer owns a duplicate liveness walk or complete
 operator-list filter. The shared pass keeps tensor pruning enabled by default
 for lowerer cleanup and exposes the opt-out only for this serialization order.
 
+Split/export structural rewrites use an append-only `_ModelIRRewriteBuilder`.
+It deep-clones tensors, subgraphs, and metadata but starts with an empty
+operator stream, avoiding an immediately discarded deep copy of every source
+operator. Group-convolution expansion, BatchMatMul unfolding, and recurrent
+unrolling emit directly into that stream and no longer retain a second
+`rewritten_ops` list or assign it at completion. Unchanged operators are copied
+with options, version, axis semantics, and ONNX node/op provenance intact.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

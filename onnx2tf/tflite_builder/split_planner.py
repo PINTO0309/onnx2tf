@@ -504,7 +504,16 @@ def crop_model_ir_by_boundary_tensors(
 
 class _ModelIRRewriteBuilder:
     def __init__(self, model_ir: ModelIR):
-        self.model_ir = copy.deepcopy(model_ir)
+        self.model_ir = ModelIR(
+            name=str(model_ir.name),
+            description=str(model_ir.description),
+            tensors=copy.deepcopy(dict(model_ir.tensors)),
+            operators=[],
+            inputs=list(model_ir.inputs),
+            outputs=list(model_ir.outputs),
+            subgraphs=copy.deepcopy(list(model_ir.subgraphs)),
+            metadata=copy.deepcopy(dict(model_ir.metadata)),
+        )
         self._serial = 0
         self._aliases: Dict[str, str] = {}
 
@@ -662,7 +671,10 @@ def _copy_operator_with_remapped_inputs(
         inputs=list(remapped_inputs),
         outputs=list(op.outputs),
         options=copy.deepcopy(dict(op.options)),
+        axis_semantics=copy.deepcopy(dict(op.axis_semantics)),
         version=int(op.version),
+        onnx_node_name=op.onnx_node_name,
+        onnx_op_type=op.onnx_op_type,
     )
 
 
@@ -743,7 +755,7 @@ def rewrite_model_ir_disable_group_convolution(
     model_ir: ModelIR,
 ) -> Tuple[ModelIR, int]:
     builder = _ModelIRRewriteBuilder(model_ir)
-    rewritten_ops: List[OperatorIR] = []
+    rewritten_ops = builder.model_ir.operators
     rewritten_count = 0
 
     for original_op in list(model_ir.operators):
@@ -910,7 +922,6 @@ def rewrite_model_ir_disable_group_convolution(
         )
         rewritten_count += 1
 
-    builder.model_ir.operators = rewritten_ops
     _prune_unused_tensors_local(builder.model_ir)
     return builder.model_ir, int(rewritten_count)
 
@@ -920,7 +931,7 @@ def rewrite_model_ir_unfold_batchmatmul(
     model_ir: ModelIR,
 ) -> Tuple[ModelIR, int]:
     builder = _ModelIRRewriteBuilder(model_ir)
-    rewritten_ops: List[OperatorIR] = []
+    rewritten_ops = builder.model_ir.operators
     rewritten_count = 0
 
     for original_op in list(model_ir.operators):
@@ -1158,7 +1169,6 @@ def rewrite_model_ir_unfold_batchmatmul(
         )
         rewritten_count += 1
 
-    builder.model_ir.operators = rewritten_ops
     _prune_unused_tensors_local(builder.model_ir)
     return builder.model_ir, int(rewritten_count)
 
@@ -1757,7 +1767,7 @@ def rewrite_model_ir_unroll_recurrent_ops(
     model_ir: ModelIR,
 ) -> Tuple[ModelIR, int]:
     builder = _ModelIRRewriteBuilder(model_ir)
-    rewritten_ops: List[OperatorIR] = []
+    rewritten_ops = builder.model_ir.operators
     rewritten_count = 0
 
     for original_op in list(model_ir.operators):
@@ -1953,7 +1963,6 @@ def rewrite_model_ir_unroll_recurrent_ops(
             _copy_operator_with_remapped_inputs(original_op, remapped_inputs)
         )
 
-    builder.model_ir.operators = rewritten_ops
     _prune_unused_tensors_local(builder.model_ir)
     return builder.model_ir, int(rewritten_count)
 

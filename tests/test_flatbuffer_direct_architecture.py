@@ -461,6 +461,17 @@ def test_model_writer_reuses_shared_dead_operator_pruning() -> None:
     assert "model_ir.operators =" not in source
 
 
+def test_split_rewrite_builder_owns_append_only_operator_stream() -> None:
+    split_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "split_planner.py"
+    )
+    source = split_path.read_text(encoding="utf-8")
+    assert "self.model_ir = copy.deepcopy(model_ir)" not in source
+    assert "builder.model_ir.operators = rewritten_ops" not in source
+    assert source.count("rewritten_ops = builder.model_ir.operators") == 3
+    assert "operators=[]" in source
+
+
 def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
