@@ -9677,7 +9677,9 @@ def test_flatbuffer_direct_keeps_boundary_input_layout_transpose_for_gather_nd()
     assert list(gather_nd_op.inputs) == ["x_onnx_ncx_internal", "indices"]
 
 
-def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_op0() -> None:
+def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_op0(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("boundary_input_transpose_channel_slice_block_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y", "z"]
@@ -9783,9 +9785,26 @@ def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_o
         OperatorIR(op_type="RELU", inputs=["x_onnx_ncx_internal"], outputs=["y"]),
         OperatorIR(op_type="RELU", inputs=["split1"], outputs=["z"]),
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _optimize_boundary_input_transpose_channel_slice_blocks(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _optimize_boundary_input_transpose_channel_slice_blocks(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
     assert stats["removed_boundary_input_transpose"] == 1
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
     assert model_ir.inputs == ["x"]
     assert list(model_ir.tensors["x"].shape) == [1, 2, 2, 3]
@@ -9821,6 +9840,7 @@ def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_o
         and any(str(v).startswith("x_onnx_ncx_internal_local") for v in list(op.outputs))
         for op in model_ir.operators
     )
+    assert graph_index.operator_indices("TRANSPOSE") == [5]
 
 
 def test_flatbuffer_direct_internal_transpose_channel_slice_nhwc_propagation() -> None:

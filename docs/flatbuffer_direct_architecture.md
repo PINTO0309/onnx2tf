@@ -751,6 +751,16 @@ Constant-vector reads/writes, operator input/output mutation,
 broadcast checks, metadata permutation, and lineage recording remain shared
 core utilities. Legacy function names delegate to the family module.
 
+The earlier synthetic-boundary channel-Slice rewrite also accepts one shared
+`ModelIRGraphIndex` and the session `LayoutState`. It discovers only indexed
+Transpose roots, obtains consumers from the index, and restricts iterative
+NHWC propagation to the supported operator-type union. Slice rewiring, local
+bridge rewiring, bridge insertion, and removal of the shared boundary adapter
+all update the index differentially. The original graph-order insertion rules,
+channel-axis constant conversion, and bridge-localization semantics are
+unchanged. Pruning and final layout synchronization cover every newly created
+adapter tensor without rebuilding producer/consumer maps.
+
 Boundary input normalization chains live in
 `passes/boundary_input_chains.py`. The module owns the guarded
 Transpose/Mul/Sum/Reshape NHWC rewrite and the exclusive

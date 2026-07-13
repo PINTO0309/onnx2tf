@@ -329,6 +329,19 @@ state. `py_compile`, targeted Ruff, and `git diff --check` also pass. No ONNX
 conversion or inference test was run for this checkpoint, following the active
 implementation-first validation policy.
 
+The synthetic-boundary channel-Slice rewrite now builds or accepts one
+`ModelIRGraphIndex` and accepts the session `LayoutState`. Indexed Transpose
+root discovery replaces the full root scan; all consumer queries reuse the
+index; and local NHWC propagation enumerates only its declared unary, binary,
+Concat, Slice, and Conv-family types. Slice input replacement, external bridge
+rewiring, bridge insertion, remaining-NCHW localization, and boundary-adapter
+removal are differential index operations. The original candidate guards,
+axis-vector conversion, graph-order insertion, and retry order are unchanged.
+The lowerer compatibility wrapper forwards optional state and its production
+call supplies the session layout state. The focused bridge and no-bridge
+success cases pass with one initial index refresh and a consistent final layout
+state; no model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its
