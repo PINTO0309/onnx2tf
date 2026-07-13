@@ -471,8 +471,19 @@ def _resolve_add_quantized_input_plan(
     def _has_only_supported_add_leaves(
         input_plan: _NhwcConcatInputPlan,
     ) -> bool:
-        if input_plan.kind in {"direct", "unary"}:
-            return True
+        if input_plan.kind in {
+            "direct",
+            "unary",
+            "swish",
+            "dequantize",
+            "prelu",
+            "softmax",
+            "leaky",
+            "pad",
+            "slice",
+            "split",
+        }:
+            return not input_plan.output_post_adapter_ops
         return (
             input_plan.kind == "add"
             and not input_plan.output_post_adapter_ops

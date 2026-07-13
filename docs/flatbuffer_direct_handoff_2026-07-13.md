@@ -229,12 +229,13 @@ and every output tensor exactly once. The axis materializer shares Slice's
 copy-on-write cache. Public Split outputs reject, while broader post-adapter
 and mixed-input forms remain in legacy.
 
-The bounded Add family accepts a depth-guarded Add tree whose leaves are direct
-rank-four adapters or supported unary branches, plus direct root-Concat
-companions. Every Add input/output
+The bounded Add family accepts a depth-guarded Add tree whose leaves are direct,
+supported unary, expanded-Swish, Dequantize, PReLU, Softmax, exact
+pseudo-LeakyRelu, Pad, Slice, or Split plans without secondary output adapters,
+plus direct root-Concat companions. Every Add input/output
 and per-axis metadata moves to NHWC exactly once. Shared-plan cleanup walks
 nested operand plans, uses differential consumer state to remove every dead
-leading adapter, and retains adapters that remain public or live. Non-direct
+leading adapter, and retains adapters that remain public or live. Other
 operands remain in legacy. Public Add outputs reject before mutation.
 
 The lowerer compatibility helper still returns the original aggregate statistic
@@ -265,8 +266,8 @@ Focused verification, all in the existing `uv` environment:
   the preceding combined float-path run passed 176 tests across eight compact
   modules; authoritative collection now contains 212. Including the bounded
   direct and unary/Pad/Swish/Dequantize/PReLU/Softmax/Leaky/Slice/Split/Add
-  quantized-post suites, the compact inventory contains 280 tests across nine
-  modules. The preceding combined run passed 208 tests; the expanded quantized module passes 68 tests, and the focused quantized/Pad
+  quantized-post suites, the compact inventory contains 281 tests across nine
+  modules. The preceding combined run passed 208 tests; the expanded quantized module passes 69 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
   and rewritten layouts. The Swish suite covers both Mul operand orders,
@@ -316,7 +317,9 @@ Focused verification, all in the existing `uv` environment:
   single-application behavior, axis remapping, output metadata, and a public
   output no-op boundary. Add coverage fixes both direct operand rewrites,
   complete adapter cleanup, two-level recursive application, a supported unary
-  leaf, output metadata, and a public-output no-op boundary.
+  leaf, representative expanded-Swish leaf reuse, output metadata, and a
+  public-output no-op boundary. Dequantize/PReLU/Softmax/Leaky/Pad/Slice/Split
+  leaves use the same already characterized shared apply paths.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.

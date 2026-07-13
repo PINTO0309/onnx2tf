@@ -425,8 +425,10 @@ and uses the float path's provenance-preserving copy-on-write materializer.
 The bounded Split pass accepts a constant channel axis and no secondary output
 adapter. Multiple outputs from one Split may feed the root Concat; shared
 application state rewrites the axis and all output metadata exactly once.
-The bounded Add pass accepts a depth-guarded Add tree whose leaves are direct
-rank-four adapters or supported unary branches, plus direct Concat companions. Shared application state
+The bounded Add pass accepts a depth-guarded Add tree whose leaves are direct,
+unary, expanded-Swish, Dequantize, PReLU, Softmax, exact pseudo-LeakyRelu,
+Pad, Slice, or Split plans without secondary output adapters, plus direct
+Concat companions. Shared application state
 rewrites each Add once. Shared-plan cleanup walks nested operand plans and
 removes every now-dead adapter while retaining public or still-used boundaries.
 The transactional passes
