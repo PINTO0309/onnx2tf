@@ -1939,6 +1939,10 @@ separation. That support module no longer imports Torch at module load time;
 only image resize and requested artifact execution import it locally. The five
 moved helpers are AST-identical to their previous exporter implementations, and
 the TorchScript body is identical after its lazy Torch availability guard.
+The same owner now builds the generated package metadata schema, including
+public ONNX boundary shape/layout restoration and NumPy-backed operator option
+serialization. Tensor metadata, recursive value serialization, and the payload
+builder are AST-identical to their former exporter definitions.
 
 Dynamo ONNX package export now shares the same artifact owner. The exporter
 keeps a signature-compatible wrapper whose only responsibility is to supply the

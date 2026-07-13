@@ -3576,10 +3576,13 @@ def test_torchscript_artifact_export_has_single_owner() -> None:
     )
     assert "export_torchscript_from_generated_package," in exporter_source
     for helper_name in (
+        "_build_metadata_payload",
         "_metadata_has_dynamic_public_inputs",
         "_generated_package_non_native_skip_reason",
         "_generated_package_torch_export_skip_reason",
         "_run_generated_package_export_child",
+        "_serializable_tensor_meta",
+        "_serializable_value",
     ):
         assert f"def {helper_name}(" in support_source
         assert f"def {helper_name}(" not in exporter_source

@@ -7,16 +7,20 @@ import sys
 import types
 import zipfile
 
+import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_artifact_exporters import (
     _export_dynamo_onnx_from_generated_package,
     _export_exported_program_from_generated_package,
     export_torchscript_from_generated_package,
 )
 from onnx2tf.tflite_builder.pytorch_export_support import (
+    _build_metadata_payload,
     _generated_package_non_native_skip_reason,
     _metadata_has_dynamic_public_inputs,
+    _serializable_value,
 )
 from onnx2tf.tflite_builder.pytorch_exported_program_child import (
     _EXPORTED_PROGRAM_CHILD_SCRIPT,
@@ -214,3 +218,80 @@ def test_dynamic_public_input_policy_uses_shape_signature() -> None:
             },
         }
     )
+
+
+def test_serializable_value_normalizes_nested_numpy_values() -> None:
+    assert _serializable_value(
+        {
+            "array": np.asarray([1, 2], dtype=np.int32),
+            "scalar": np.float32(0.5),
+            "tuple": (np.int64(3),),
+        }
+    ) == {
+        "array": [1, 2],
+        "scalar": 0.5,
+        "tuple": [3],
+    }
+
+
+def test_metadata_payload_restores_public_boundary_contract() -> None:
+    model_ir = ModelIR(name="metadata_boundary_contract", description="fixture")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1, 3, 8, 8],
+        shape_signature=[1, 3, 8, 8],
+        logical_layout="NCHW",
+    )
+    model_ir.tensors["const"] = TensorIR(
+        name="const",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([2.0], dtype=np.float32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 4, 8, 8],
+        shape_signature=[1, 4, 8, 8],
+        logical_layout="NCHW",
+    )
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="ADD",
+            inputs=["x", "const"],
+            outputs=["y"],
+            options={"alpha": np.float32(1.0)},
+            axis_semantics={"axis": np.int64(1)},
+            version=2,
+        )
+    )
+    model_ir.metadata["onnx_boundary_shape_signature_map"] = {
+        "x": [-1, 8, 8, 3],
+        "y": [-1, 8, 8, 4],
+    }
+    model_ir.metadata["onnx_public_layout_map"] = {"x": "NHWC", "y": "NHWC"}
+
+    payload = _build_metadata_payload(model_ir)
+
+    assert payload["schema_version"] == 1
+    assert payload["inputs"] == ["x"]
+    assert payload["outputs"] == ["y"]
+    assert payload["tensors"]["x"]["shape"] == [1, 8, 8, 3]
+    assert payload["tensors"]["x"]["shape_signature"] == [-1, 8, 8, 3]
+    assert payload["tensors"]["x"]["logical_layout"] == "NHWC"
+    assert payload["tensors"]["const"]["has_data"] is True
+    assert payload["current_public_layouts"] == {"x": "NCHW", "y": "NCHW"}
+    assert payload["operators"] == [
+        {
+            "op_type": "ADD",
+            "inputs": ["x", "const"],
+            "outputs": ["y"],
+            "options": {"alpha": 1.0},
+            "axis_semantics": {"axis": 1},
+            "version": 2,
+        }
+    ]

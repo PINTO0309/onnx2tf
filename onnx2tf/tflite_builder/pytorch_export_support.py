@@ -11,6 +11,12 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.ir import (
+    ModelIR,
+    TensorIR,
+    logical_layout_rank,
+    normalize_logical_layout,
+)
 from onnx2tf.tflite_builder.pytorch_export_errors import ModelIRPyTorchExportError
 
 
@@ -647,3 +653,84 @@ def _run_generated_package_export_child(
         f"returncode={child_result.returncode} "
         f"stdout={stdout_text} stderr={stderr_text}"
     )
+
+
+def _serializable_tensor_meta(tensor: TensorIR) -> Dict[str, Any]:
+    return {
+        "dtype": str(tensor.dtype),
+        "shape": [int(v) for v in list(tensor.shape)],
+        "shape_signature": (
+            [int(v) for v in list(tensor.shape_signature)]
+            if tensor.shape_signature is not None
+            else None
+        ),
+        "is_variable": bool(tensor.is_variable),
+        "has_data": bool(isinstance(tensor.data, np.ndarray)),
+        "logical_layout": normalize_logical_layout(tensor.logical_layout),
+    }
+
+
+def _serializable_value(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(k): _serializable_value(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return [_serializable_value(v) for v in value]
+    if isinstance(value, list):
+        return [_serializable_value(v) for v in value]
+    return value
+
+
+def _build_metadata_payload(model_ir: ModelIR) -> Dict[str, Any]:
+    boundary_shape_map = model_ir.metadata.get("onnx_boundary_shape_signature_map", {})
+    if not isinstance(boundary_shape_map, dict):
+        boundary_shape_map = {}
+    public_layout_map = model_ir.metadata.get("onnx_public_layout_map", {})
+    if not isinstance(public_layout_map, dict):
+        public_layout_map = {}
+    public_tensor_names = {
+        str(name) for name in list(model_ir.inputs) + list(model_ir.outputs)
+    }
+    current_public_layouts: Dict[str, str] = {}
+    tensors: Dict[str, Dict[str, Any]] = {}
+    for name, tensor in model_ir.tensors.items():
+        tensor_name = str(name)
+        tensor_meta = _serializable_tensor_meta(tensor)
+        if tensor_name in public_tensor_names:
+            current_public_layouts[tensor_name] = str(tensor_meta["logical_layout"])
+            boundary_shape = boundary_shape_map.get(tensor_name, None)
+            if isinstance(boundary_shape, list) and len(boundary_shape) == len(tensor_meta["shape"]):
+                tensor_meta["shape"] = [
+                    max(1, int(v)) if int(v) >= 0 else 1
+                    for v in list(boundary_shape)
+                ]
+                tensor_meta["shape_signature"] = [int(v) for v in list(boundary_shape)]
+            public_layout = normalize_logical_layout(public_layout_map.get(tensor_name, None))
+            if logical_layout_rank(public_layout) == len(tensor_meta["shape"]):
+                tensor_meta["logical_layout"] = public_layout
+        tensors[tensor_name] = tensor_meta
+    return {
+        "schema_version": 1,
+        "name": str(model_ir.name),
+        "description": str(model_ir.description),
+        "inputs": [str(v) for v in model_ir.inputs],
+        "outputs": [str(v) for v in model_ir.outputs],
+        "tensors": tensors,
+        "operators": [
+            {
+                "op_type": str(op.op_type),
+                "inputs": [str(v) for v in op.inputs],
+                "outputs": [str(v) for v in op.outputs],
+                "options": _serializable_value(dict(op.options)),
+                "axis_semantics": _serializable_value(dict(op.axis_semantics)),
+                "version": int(op.version),
+            }
+            for op in model_ir.operators
+        ],
+        "public_layouts": _serializable_value(dict(model_ir.metadata.get("onnx_public_layout_map", {}))),
+        "current_public_layouts": _serializable_value(current_public_layouts),
+        "boundary_shape_signatures": _serializable_value(boundary_shape_map),
+    }

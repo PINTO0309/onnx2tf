@@ -387,6 +387,15 @@ Rewrite and architecture validation passes 94 tests; syntax, Ruff, pycompile,
 diff, and AST-equivalence checks pass. No model conversion or inference was
 run.
 
+Generated-package metadata serialization now lives in
+`pytorch_export_support.py`. Tensor metadata, recursive NumPy value conversion,
+and the complete payload builder are AST-identical to the prior exporter
+checkpoint. Direct tests fix nested ndarray/scalar conversion, constant-buffer
+flags, operator options and axis semantics, and restoration of public ONNX
+shape signatures and layouts. Artifact-support and architecture validation
+passes 76 tests; syntax, Ruff, pycompile, diff, and AST-equivalence checks pass.
+No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted
