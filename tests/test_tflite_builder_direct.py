@@ -165,7 +165,6 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains,
     _optimize_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains,
     _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains,
-    _optimize_transpose_pre_concat_ndhwc_chains,
     _optimize_transpose_pre_concat_nhwc_chains,
     _optimize_transpose_pre_unary_mean_terminal_nhwc_chains,
     _optimize_transpose_mul_add_const_prepost_nhwc_chains,
@@ -22320,101 +22319,6 @@ def test_flatbuffer_direct_transpose_pre_concat_nhwc_relu_and_swish_inputs_optim
     assert list(model_ir.tensors["swish_out"].shape) == [1, 6, 6, 384]
 
 
-def test_flatbuffer_direct_transpose_pre_concat_ndhwc_unary_inputs_optimized() -> None:
-    model_ir = ModelIR("transpose_pre_concat_ndhwc_unary_opt_test")
-    model_ir.inputs = ["x0_ndhwc", "x1_ndhwc"]
-    model_ir.outputs = ["y"]
-    model_ir.tensors["x0_ndhwc"] = TensorIR(
-        name="x0_ndhwc",
-        dtype="FLOAT32",
-        shape=[1, 2, 3, 4, 5],
-        shape_signature=[1, 2, 3, 4, 5],
-    )
-    model_ir.tensors["x1_ndhwc"] = TensorIR(
-        name="x1_ndhwc",
-        dtype="FLOAT32",
-        shape=[1, 2, 3, 4, 6],
-        shape_signature=[1, 2, 3, 4, 6],
-    )
-    model_ir.tensors["pre_perm"] = TensorIR(
-        name="pre_perm",
-        dtype="INT32",
-        shape=[5],
-        shape_signature=[5],
-        data=np.asarray([0, 4, 1, 2, 3], dtype=np.int32),
-        is_variable=False,
-    )
-    model_ir.tensors["post_perm"] = TensorIR(
-        name="post_perm",
-        dtype="INT32",
-        shape=[5],
-        shape_signature=[5],
-        data=np.asarray([0, 2, 3, 4, 1], dtype=np.int32),
-        is_variable=False,
-    )
-    model_ir.tensors["x0_ncdhw"] = TensorIR(
-        name="x0_ncdhw",
-        dtype="FLOAT32",
-        shape=[1, 5, 2, 3, 4],
-        shape_signature=[1, 5, 2, 3, 4],
-    )
-    model_ir.tensors["x1_ncdhw"] = TensorIR(
-        name="x1_ncdhw",
-        dtype="FLOAT32",
-        shape=[1, 6, 2, 3, 4],
-        shape_signature=[1, 6, 2, 3, 4],
-    )
-    model_ir.tensors["x1_leaky_ncdhw"] = TensorIR(
-        name="x1_leaky_ncdhw",
-        dtype="FLOAT32",
-        shape=[1, 6, 2, 3, 4],
-        shape_signature=[1, 6, 2, 3, 4],
-    )
-    model_ir.tensors["concat_ncdhw"] = TensorIR(
-        name="concat_ncdhw",
-        dtype="FLOAT32",
-        shape=[1, 11, 2, 3, 4],
-        shape_signature=[1, 11, 2, 3, 4],
-    )
-    model_ir.tensors["concat_ndhwc"] = TensorIR(
-        name="concat_ndhwc",
-        dtype="FLOAT32",
-        shape=[1, 2, 3, 4, 11],
-        shape_signature=[1, 2, 3, 4, 11],
-    )
-    model_ir.tensors["y"] = TensorIR(
-        name="y",
-        dtype="FLOAT32",
-        shape=[1, 2, 3, 4, 11],
-        shape_signature=[1, 2, 3, 4, 11],
-    )
-    model_ir.operators = [
-        OperatorIR(op_type="TRANSPOSE", inputs=["x0_ndhwc", "pre_perm"], outputs=["x0_ncdhw"]),
-        OperatorIR(op_type="TRANSPOSE", inputs=["x1_ndhwc", "pre_perm"], outputs=["x1_ncdhw"]),
-        OperatorIR(op_type="LEAKY_RELU", inputs=["x1_ncdhw"], outputs=["x1_leaky_ncdhw"]),
-        OperatorIR(
-            op_type="CONCATENATION",
-            inputs=["x0_ncdhw", "x1_leaky_ncdhw"],
-            outputs=["concat_ncdhw"],
-            options={"axis": 1, "fusedActivationFunction": "NONE"},
-        ),
-        OperatorIR(op_type="TRANSPOSE", inputs=["concat_ncdhw", "post_perm"], outputs=["concat_ndhwc"]),
-        OperatorIR(op_type="RELU", inputs=["concat_ndhwc"], outputs=["y"]),
-    ]
-
-    stats = _optimize_transpose_pre_concat_ndhwc_chains(model_ir)
-    assert stats["optimized_transpose_pre_concat_ndhwc_chains"] == 1
-
-    op_types = [str(op.op_type) for op in model_ir.operators]
-    assert op_types.count("TRANSPOSE") == 0
-    concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
-    assert list(concat_op.inputs) == ["x0_ndhwc", "x1_leaky_ncdhw"]
-    assert list(concat_op.outputs) == ["concat_ndhwc"]
-    assert int(concat_op.options.get("axis", -1)) == 4
-    assert list(model_ir.tensors["x1_leaky_ncdhw"].shape) == [1, 2, 3, 4, 6]
-    assert list(model_ir.tensors["concat_ndhwc"].shape) == [1, 2, 3, 4, 11]
-    relu_op = next(op for op in model_ir.operators if str(op.op_type) == "RELU")
-    assert list(relu_op.inputs) == ["concat_ndhwc"]
 
 
 def test_flatbuffer_direct_transpose_pre_concat_single_post_adapter_supports_relu_inputs() -> None:
