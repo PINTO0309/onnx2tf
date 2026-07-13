@@ -72,6 +72,17 @@ public-output tensors. This replaces the former candidate-by-candidate complete
 operator scan and keeps the index coherent during multiple repairs. The focused
 suite now passes 73 tests, including one-index and zero-index fast-path checks.
 
+Feature-last region propagation no longer rescans the complete operator list
+until a fixed point. `_collect_feature_last_sequence_tensor_names()` constructs
+one `ModelIRGraphIndex` for its existing seed discovery and passes it to the
+Torch-free layout-validation module. A deterministic tensor worklist visits
+only indexed producer/consumer edges, applies the same bidirectional
+passthrough rules, and retains standard channel-layout Transposes and
+factorized rank-three Reshapes as propagation barriers. The monotonic result is
+the same fixed point without graph-size-times-region-depth scanning. Focused
+bidirectional closure and Transpose-barrier cases bring the suite to 75 passing
+tests; no model conversion or inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

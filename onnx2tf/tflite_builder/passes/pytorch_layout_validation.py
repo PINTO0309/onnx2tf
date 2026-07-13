@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Set
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import (
@@ -10,7 +10,148 @@ from onnx2tf.tflite_builder.ir import (
     TensorIR,
     normalize_logical_layout,
 )
-from onnx2tf.tflite_builder.pytorch_layout_utils import _read_transpose_perm
+from onnx2tf.tflite_builder.pytorch_layout_utils import (
+    _is_channel_last_factorized_rank3_sequence_reshape,
+    _perm_cf_to_cl,
+    _perm_cl_to_cf,
+    _read_transpose_perm,
+)
+
+
+_FEATURE_LAST_LAYOUT_PASSTHROUGH_OP_TYPES = {
+    "ABS",
+    "ADD",
+    "AVERAGE_POOL_2D",
+    "ATAN",
+    "BATCH_MATMUL",
+    "BROADCAST_TO",
+    "CAST",
+    "CEIL",
+    "CONCATENATION",
+    "COS",
+    "DEPTH_TO_SPACE",
+    "DIV",
+    "ELU",
+    "ERF",
+    "EXP",
+    "EXPAND_DIMS",
+    "GATHER",
+    "GATHER_ND",
+    "GELU",
+    "IDENTITY",
+    "LEAKY_RELU",
+    "LOG",
+    "LOGISTIC",
+    "MATMUL",
+    "MAXIMUM",
+    "MEAN",
+    "MINIMUM",
+    "MUL",
+    "MAX_POOL_2D",
+    "NEG",
+    "PACK",
+    "POW",
+    "RELU",
+    "RELU6",
+    "RESHAPE",
+    "RESIZE_BILINEAR",
+    "RESIZE_NEAREST_NEIGHBOR",
+    "SIGMOID",
+    "SIGN",
+    "SIN",
+    "SLICE",
+    "SOFTMAX",
+    "SPACE_TO_DEPTH",
+    "SPLIT",
+    "SQRT",
+    "SQUARE",
+    "SQUEEZE",
+    "STRIDED_SLICE",
+    "SUB",
+    "SUM",
+    "TANH",
+    "TILE",
+    "TRANSPOSE",
+    "UNPACK",
+}
+
+
+def _propagate_feature_last_tensor_names(
+    model_ir: ModelIR,
+    root_names: Set[str],
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Set[str]:
+    preserve_names = {str(name) for name in root_names}
+    if len(preserve_names) == 0:
+        return preserve_names
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    worklist = sorted(preserve_names)
+    worklist_index = 0
+
+    def _enqueue(names: list[str]) -> None:
+        for name in names:
+            normalized_name = str(name)
+            if normalized_name in preserve_names:
+                continue
+            preserve_names.add(normalized_name)
+            worklist.append(normalized_name)
+
+    while worklist_index < len(worklist):
+        tensor_name = str(worklist[worklist_index])
+        worklist_index += 1
+        related_indices = set(graph_index.consumer_indices(tensor_name))
+        producer_index = graph_index.producers.get(tensor_name, None)
+        if producer_index is not None:
+            related_indices.add(int(producer_index))
+        for op_index in sorted(related_indices):
+            op = model_ir.operators[int(op_index)]
+            op_type = str(op.op_type)
+            if op_type not in _FEATURE_LAST_LAYOUT_PASSTHROUGH_OP_TYPES:
+                continue
+            input_names = [str(value) for value in op.inputs]
+            output_names = [str(value) for value in op.outputs]
+            if len(output_names) == 0:
+                continue
+            has_preserved_input = any(name in preserve_names for name in input_names)
+            has_preserved_output = any(name in preserve_names for name in output_names)
+            if not has_preserved_input and not has_preserved_output:
+                continue
+            if has_preserved_input:
+                if op_type != "TRANSPOSE" or len(op.outputs) != 1:
+                    _enqueue(output_names)
+                else:
+                    output_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+                    rank = len(list(output_tensor.shape)) if output_tensor is not None else -1
+                    perm = _read_transpose_perm(model_ir, op)
+                    if not (
+                        rank in {3, 4, 5}
+                        and (perm == _perm_cl_to_cf(rank) or perm == _perm_cf_to_cl(rank))
+                    ):
+                        _enqueue(output_names)
+            if has_preserved_output:
+                if (
+                    op_type == "RESHAPE"
+                    and len(op.inputs) >= 1
+                    and len(op.outputs) == 1
+                    and _is_channel_last_factorized_rank3_sequence_reshape(
+                        model_ir.tensors.get(str(op.inputs[0]), None),
+                        model_ir.tensors.get(str(op.outputs[0]), None),
+                    )
+                ):
+                    continue
+                if op_type != "TRANSPOSE" or len(op.inputs) < 1:
+                    _enqueue(input_names)
+                else:
+                    input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+                    rank = len(list(input_tensor.shape)) if input_tensor is not None else -1
+                    perm = _read_transpose_perm(model_ir, op)
+                    if not (
+                        rank in {3, 4, 5}
+                        and (perm == _perm_cl_to_cf(rank) or perm == _perm_cf_to_cl(rank))
+                    ):
+                        _enqueue(input_names)
+    return preserve_names
 
 
 def _is_attention_like_softmax_op(

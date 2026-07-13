@@ -157,6 +157,7 @@ from onnx2tf.tflite_builder.passes.pytorch_control_flow import (
 from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _is_attention_like_softmax_op,
     _is_transpose_sandwiched_last_axis_softmax_op,
+    _propagate_feature_last_tensor_names,
 )
 from onnx2tf.tflite_builder.passes.pytorch_recurrent import (
     _can_direct_codegen_sequence_lstm_op,
@@ -10203,13 +10204,9 @@ def _propagate_pytorch_friendly_layouts(model_ir: ModelIR) -> None:
 
 
 def _collect_feature_last_sequence_tensor_names(model_ir: ModelIR) -> Set[str]:
-    consumers: Dict[str, List[int]] = {}
-    producers: Dict[str, int] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        for input_name in op.inputs:
-            consumers.setdefault(str(input_name), []).append(int(op_idx))
-        for output_name in op.outputs:
-            producers[str(output_name)] = int(op_idx)
+    graph_index = ModelIRGraphIndex(model_ir)
+    consumers = graph_index.consumers
+    producers = graph_index.producers
 
     def _is_time_major_recurrent_bridge(output_name: str) -> bool:
         for consumer_idx in consumers.get(str(output_name), []):
@@ -10503,134 +10500,11 @@ def _collect_feature_last_sequence_tensor_names(model_ir: ModelIR) -> Set[str]:
                 continue
         roots.add(output_name)
 
-    preserve_names: Set[str] = set(roots)
-    if len(roots) == 0:
-        return preserve_names
-
-    layout_passthrough_ops = {
-        "ABS",
-        "ADD",
-        "AVERAGE_POOL_2D",
-        "ATAN",
-        "BATCH_MATMUL",
-        "BROADCAST_TO",
-        "CAST",
-        "CEIL",
-        "CONCATENATION",
-        "COS",
-        "DEPTH_TO_SPACE",
-        "DIV",
-        "ELU",
-        "ERF",
-        "EXP",
-        "EXPAND_DIMS",
-        "GATHER",
-        "GATHER_ND",
-        "GELU",
-        "IDENTITY",
-        "LEAKY_RELU",
-        "LOG",
-        "LOGISTIC",
-        "MATMUL",
-        "MAXIMUM",
-        "MEAN",
-        "MINIMUM",
-        "MUL",
-        "MAX_POOL_2D",
-        "NEG",
-        "PACK",
-        "POW",
-        "RELU",
-        "RELU6",
-        "RESHAPE",
-        "RESIZE_BILINEAR",
-        "RESIZE_NEAREST_NEIGHBOR",
-        "SIGMOID",
-        "SIGN",
-        "SIN",
-        "SLICE",
-        "SOFTMAX",
-        "SPACE_TO_DEPTH",
-        "SPLIT",
-        "SQRT",
-        "SQUARE",
-        "SQUEEZE",
-        "STRIDED_SLICE",
-        "SUB",
-        "SUM",
-        "TANH",
-        "TILE",
-        "TRANSPOSE",
-        "UNPACK",
-    }
-    changed = True
-    while changed:
-        changed = False
-        for op in model_ir.operators:
-            op_type = str(op.op_type)
-            if op_type not in layout_passthrough_ops:
-                continue
-            input_names = [str(v) for v in op.inputs]
-            output_names = [str(v) for v in op.outputs]
-            if len(output_names) == 0:
-                continue
-            has_preserved_input = any(name in preserve_names for name in input_names)
-            has_preserved_output = any(name in preserve_names for name in output_names)
-            if not has_preserved_input and not has_preserved_output:
-                continue
-            if has_preserved_input:
-                if op_type != "TRANSPOSE" or len(op.outputs) != 1:
-                    for output_name in output_names:
-                        if output_name not in preserve_names:
-                            preserve_names.add(output_name)
-                            changed = True
-                else:
-                    output_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
-                    rank = len(list(output_tensor.shape)) if output_tensor is not None else -1
-                    perm = _read_transpose_perm(model_ir, op)
-                    if not (
-                        rank in {3, 4, 5}
-                        and (
-                            perm == _perm_cl_to_cf(rank)
-                            or perm == _perm_cf_to_cl(rank)
-                        )
-                    ):
-                        for output_name in output_names:
-                            if output_name not in preserve_names:
-                                preserve_names.add(output_name)
-                                changed = True
-            if has_preserved_output:
-                if (
-                    op_type == "RESHAPE"
-                    and len(op.inputs) >= 1
-                    and len(op.outputs) == 1
-                    and _is_channel_last_factorized_rank3_sequence_reshape(
-                        model_ir.tensors.get(str(op.inputs[0]), None),
-                        model_ir.tensors.get(str(op.outputs[0]), None),
-                    )
-                ):
-                    continue
-                if op_type != "TRANSPOSE" or len(op.inputs) < 1:
-                    for input_name in input_names:
-                        if input_name not in preserve_names:
-                            preserve_names.add(input_name)
-                            changed = True
-                else:
-                    input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
-                    rank = len(list(input_tensor.shape)) if input_tensor is not None else -1
-                    perm = _read_transpose_perm(model_ir, op)
-                    if not (
-                        rank in {3, 4, 5}
-                        and (
-                            perm == _perm_cl_to_cf(rank)
-                            or perm == _perm_cf_to_cl(rank)
-                        )
-                    ):
-                        for input_name in input_names:
-                            if input_name not in preserve_names:
-                                preserve_names.add(input_name)
-                                changed = True
-    return preserve_names
+    return _propagate_feature_last_tensor_names(
+        model_ir,
+        roots,
+        graph_index=graph_index,
+    )
 
 
 def _apply_feature_last_sequence_layouts(

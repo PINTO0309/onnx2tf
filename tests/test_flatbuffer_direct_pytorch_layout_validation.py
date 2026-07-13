@@ -7,6 +7,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _is_attention_like_softmax_op,
     _is_transpose_sandwiched_last_axis_softmax_op,
+    _propagate_feature_last_tensor_names,
 )
 
 
@@ -112,3 +113,62 @@ def test_transpose_sandwiched_softmax_rejects_duplicate_producer() -> None:
         softmax,
         graph_index=graph_index,
     ) is False
+
+
+def test_feature_last_worklist_reaches_bidirectional_fixed_point(monkeypatch) -> None:
+    model_ir = ModelIR(name="feature_last_worklist")
+    model_ir.tensors = {
+        name: _tensor(name, [1, 2, 3, 4])
+        for name in ["x", "relu", "residual", "sum"]
+    }
+    model_ir.operators = [
+        OperatorIR("RELU", ["x"], ["relu"]),
+        OperatorIR("ADD", ["relu", "residual"], ["sum"]),
+    ]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    preserved = _propagate_feature_last_tensor_names(
+        model_ir,
+        {"relu"},
+        graph_index=graph_index,
+    )
+
+    assert preserved == {"x", "relu", "residual", "sum"}
+    assert refresh_count == 1
+
+
+def test_feature_last_worklist_stops_at_standard_layout_transpose() -> None:
+    model_ir = ModelIR(name="feature_last_transpose_barrier")
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 3, 4], layout="NHWC"),
+        "perm": _tensor(
+            "perm",
+            [4],
+            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+        ),
+        "y": _tensor("y", [1, 4, 2, 3], layout="NCHW"),
+    }
+    model_ir.operators = [
+        OperatorIR("TRANSPOSE", ["x", "perm"], ["y"]),
+    ]
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    assert _propagate_feature_last_tensor_names(
+        model_ir,
+        {"x"},
+        graph_index=graph_index,
+    ) == {"x"}
+    assert _propagate_feature_last_tensor_names(
+        model_ir,
+        {"y"},
+        graph_index=graph_index,
+    ) == {"y"}

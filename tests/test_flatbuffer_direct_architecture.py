@@ -413,6 +413,8 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "_is_transpose_sandwiched_last_axis_softmax_op," in exporter_source
     assert "ModelIRGraphIndex" in pass_source
     assert "for candidate in model_ir.operators" not in pass_source
+    assert "def _propagate_feature_last_tensor_names(" in pass_source
+    assert "while changed:" not in pass_source
 
     exporter_tree = ast.parse(exporter_source)
     exporter_functions = {
@@ -427,6 +429,14 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert validator_source is not None
     assert "softmax_graph_index: Optional[ModelIRGraphIndex] = None" in validator_source
     assert "graph_index=softmax_graph_index" in validator_source
+    collector_source = ast.get_source_segment(
+        exporter_source,
+        exporter_functions["_collect_feature_last_sequence_tensor_names"],
+    )
+    assert collector_source is not None
+    assert "graph_index = ModelIRGraphIndex(model_ir)" in collector_source
+    assert "_propagate_feature_last_tensor_names(" in collector_source
+    assert "while changed:" not in collector_source
 
 
 def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:

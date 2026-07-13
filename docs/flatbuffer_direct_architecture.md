@@ -1688,6 +1688,13 @@ only when it encounters an unknown-layout Softmax and reuses it thereafter,
 removing the former per-tensor full graph scans. Duplicate sandwich producers
 reject the exception path rather than selecting one by graph order.
 
+The same module owns feature-last region closure. Seed discovery constructs one
+`ModelIRGraphIndex`; `_propagate_feature_last_tensor_names()` then runs a
+deterministic worklist over only adjacent producer/consumer edges. Its
+bidirectional passthrough semantics and standard channel-layout Transpose and
+factorized rank-three Reshape barriers match the former monotonic fixed-point
+loop, while removing repeated complete operator scans as the region grows.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
