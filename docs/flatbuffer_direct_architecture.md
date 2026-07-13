@@ -1840,6 +1840,16 @@ The Tier 4 result is part of the active improvement gate. The Tier 5 result is
 retained only as historical evidence; do not rerun Tier 5 or use its failed
 models as current improvement gates.
 
+The rank-five NDHWC pre-Concat layout matcher is mechanically isolated in
+`passes/ndhwc_concat_layout.py`. Its extracted function AST matches the
+characterized central implementation at SHA-256
+`0b0c625290f2ed31351ca204b0bbc5f2a463fa09ffe1bf1eccb8ff15de6aee17`.
+The lowerer retains a compatibility wrapper and all five existing production
+calls at this checkpoint, so pass ordering and retry behavior are unchanged.
+The next checkpoint replaces the repeated whole-graph maps and direct list
+deletion with shared `ModelIRGraphIndex`/`LayoutState` mutation and one stable
+transactional runner.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
