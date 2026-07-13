@@ -4,12 +4,17 @@
 
 - Branch: `fb-refactor3`
 - Latest implementation checkpoint: `64702b2` (`index dual mul concat layout pass`)
-- Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `64702b2` and the documentation checkpoint
+- Latest documentation checkpoint before this pause update: `0f81b7b`
+  (`document indexed dual mul concat checkpoint`)
+- Remote: before this pause update, `origin/fb-refactor3` is aligned with
+  local `HEAD` at `0f81b7b` (`0 0` divergence). After the documentation-only
+  pause commit is pushed, local and remote must again report `0 0`.
 - Pull request: none; do not create one on resume
-- The final handoff commit contains documentation only. After it is pushed,
-  the expected working-tree state is clean and local/remote divergence is
-  `0 0`.
+- The axis-3 constant-Concat bridge unit described below has not been modified;
+  no partial implementation or test fixture exists in the working tree.
+- The final pause commit contains this documentation update only. After it is
+  pushed, the expected working-tree state is clean and local/remote divergence
+  is `0 0`.
 
 ## Completed work
 
@@ -173,10 +178,12 @@ The overall Goal is not complete. In particular:
 
 ## Branch and changed files
 
-Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `64702b2`; after the documentation
-commit is pushed, local/remote divergence must be `0 0`. The implementation
-checkpoints since the previous pause changed:
+Current branch is `fb-refactor3`. Before this pause-document update, the
+working tree is clean at `0f81b7b`, which already contains the documentation
+for implementation checkpoint `64702b2`. The next axis-3 constant-Concat
+bridge unit is unstarted. After the documentation-only pause commit is pushed,
+local/remote divergence must be `0 0`. The implementation checkpoints since
+the previous pause changed:
 
 - `docs/flatbuffer_direct_architecture.md`
 - `docs/flatbuffer_direct_handoff_2026-07-12.md`
@@ -197,8 +204,9 @@ checkpoints since the previous pause changed:
 - `tests/test_flatbuffer_direct_se_layout.py`
 - `tests/test_tflite_builder_direct.py`
 
-The final handoff checkpoint updates documentation only. No implementation
-file remains uncommitted after it.
+The final handoff checkpoint updates only
+`docs/flatbuffer_direct_handoff_2026-07-13.md`. No implementation or test file
+remains uncommitted after it.
 
 ## Tests executed
 
