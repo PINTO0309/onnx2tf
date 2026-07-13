@@ -126,6 +126,16 @@ one shared differential graph index and `LayoutState`. The lowerer keeps a
 compatibility wrapper, and its single production position calls the runner
 with session layout state and diagnostics.
 
+The generic complementary-gate/two-output propagation rule is mechanically
+owned by `passes/dual_postconv_gate_layout.py`. It recognizes three independent
+NHWC-to-NCHW adapters, a Logistic/Sub complementary gate, two Mul/Add branches,
+and inverse adapters feeding both downstream convolution branches. Compact
+characterization fixes successful propagation plus gate fan-out, data-adapter
+fan-out, and public-intermediate rejection. The complete implementation is
+AST-identical to checkpoint `ed6d8c1`; the lowerer keeps a compatibility
+wrapper and all five production positions remain unchanged until the separate
+indexed migration checkpoint.
+
 The larger generic two-way shuffle/branch/Concat propagation rule is now
 mechanically owned by the same family. It accepts rank-five Gather selectors or
 rank-four channel Slice selectors, traces one split through an NHWC

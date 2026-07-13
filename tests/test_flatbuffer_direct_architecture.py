@@ -979,6 +979,50 @@ def test_multi_branch_gate_layout_rewrite_has_single_owner() -> None:
     }
 
 
+def test_dual_postconv_gate_layout_rewrite_has_single_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "dual_postconv_gate_layout.py"
+    )
+    function_name = (
+        "_optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains"
+    )
+    pass_tree = ast.parse(pass_path.read_text(encoding="utf-8"))
+    assert function_name in {
+        node.name
+        for node in pass_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowering_functions = {
+        node.name: node
+        for node in lowering_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    wrapper_names = {
+        node.id
+        for node in ast.walk(lowering_functions[function_name])
+        if isinstance(node, ast.Name)
+    }
+    assert f"{function_name}_pass" in wrapper_names
+    imports = [
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module
+        == "onnx2tf.tflite_builder.passes.dual_postconv_gate_layout"
+    ]
+    assert len(imports) == 1
+    assert {alias.name for alias in imports[0].names} == {function_name}
+
+
 def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
