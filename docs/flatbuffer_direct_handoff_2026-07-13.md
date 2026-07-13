@@ -50,6 +50,19 @@ no-op results, and normalized unroll failures. Together with control-flow,
 compatibility, and architecture tests, 67 tests pass. This extraction did not
 run a model conversion or inference process.
 
+PyTorch Softmax layout validation is now owned by Torch-free
+`passes/pytorch_layout_validation.py`. Attention-consumer detection and
+Transpose→Softmax→inverse-Transpose recognition use a caller-supplied
+`ModelIRGraphIndex` instead of scanning the complete operator list for every
+Softmax tensor. `validate_channel_first_exportability()` constructs this index
+lazily at the first unknown-layout Softmax and shares it across every remaining
+candidate. Models without such a Softmax pay no index-construction cost.
+Required sandwich inputs with duplicate producers are rejected deterministically.
+
+Focused index-reuse, attention, sandwich, duplicate-producer, recurrent,
+control-flow, compatibility, and architecture validation passes 71 tests. No
+model conversion or inference was run for this checkpoint.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

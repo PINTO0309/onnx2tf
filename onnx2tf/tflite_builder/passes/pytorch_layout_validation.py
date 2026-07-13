@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+from typing import Optional
+
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.ir import (
+    LOGICAL_LAYOUT_UNKNOWN,
+    ModelIR,
+    OperatorIR,
+    TensorIR,
+    normalize_logical_layout,
+)
+from onnx2tf.tflite_builder.pytorch_layout_utils import _read_transpose_perm
+
+
+def _is_attention_like_softmax_op(
+    model_ir: ModelIR,
+    op: OperatorIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> bool:
+    if str(op.op_type) != "SOFTMAX":
+        return False
+    reference_tensor: Optional[TensorIR] = None
+    if len(op.inputs) > 0:
+        reference_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+    if reference_tensor is None and len(op.outputs) > 0:
+        reference_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+    if reference_tensor is None:
+        return False
+    shape = [int(v) for v in list(reference_tensor.shape)]
+    rank = len(shape)
+    if rank < 3:
+        return False
+    axis = op.options.get("axis", None)
+    resolved_axis = int(axis) if axis is not None else rank - 1
+    if resolved_axis < 0:
+        resolved_axis += rank
+    if resolved_axis != rank - 1:
+        return False
+    if int(shape[-1]) <= 1:
+        return False
+    output_name = str(op.outputs[0]) if len(op.outputs) > 0 else ""
+    if output_name != "":
+        graph_index = graph_index or ModelIRGraphIndex(model_ir)
+        if any(
+            str(consumer.op_type) == "BATCH_MATMUL"
+            for consumer in graph_index.consumers_of(output_name)
+        ):
+            return True
+    if rank == 3 and int(shape[-2]) == int(shape[-1]):
+        return True
+    if rank >= 4 and int(shape[-2]) == int(shape[-1]) and 0 < int(shape[-3]) <= 64:
+        return True
+    return False
+
+
+def _is_transpose_sandwiched_last_axis_softmax_op(
+    model_ir: ModelIR,
+    op: OperatorIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> bool:
+    if str(op.op_type) != "SOFTMAX" or len(op.inputs) < 1 or len(op.outputs) != 1:
+        return False
+    input_name = str(op.inputs[0])
+    output_name = str(op.outputs[0])
+    input_tensor = model_ir.tensors.get(input_name, None)
+    output_tensor = model_ir.tensors.get(output_name, None)
+    if input_tensor is None or output_tensor is None:
+        return False
+    rank = len(list(input_tensor.shape))
+    if rank not in {3, 4, 5} or len(list(output_tensor.shape)) != rank:
+        return False
+    axis = int(op.options.get("axis", rank - 1))
+    if axis < 0:
+        axis += rank
+    if axis != rank - 1:
+        return False
+
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    if input_name in graph_index.duplicate_producers:
+        return False
+    producer_op = graph_index.producer(input_name)
+    if (
+        producer_op is None
+        or str(producer_op.op_type) != "TRANSPOSE"
+        or len(producer_op.inputs) < 1
+    ):
+        return False
+    producer_perm = _read_transpose_perm(model_ir, producer_op)
+    if (
+        producer_perm is None
+        or len(producer_perm) != rank
+        or sorted(int(v) for v in producer_perm) != list(range(rank))
+        or [int(v) for v in producer_perm] == list(range(rank))
+    ):
+        return False
+
+    consumer_ops = graph_index.consumers_of(output_name)
+    if len(consumer_ops) != 1:
+        return False
+    consumer_op = consumer_ops[0]
+    if str(consumer_op.op_type) != "TRANSPOSE" or len(consumer_op.outputs) != 1:
+        return False
+    consumer_perm = _read_transpose_perm(model_ir, consumer_op)
+    if consumer_perm is None or len(consumer_perm) != rank:
+        return False
+    inverse_perm = [0] * rank
+    for new_axis, old_axis in enumerate(producer_perm):
+        inverse_perm[int(old_axis)] = int(new_axis)
+    if [int(v) for v in consumer_perm] != inverse_perm:
+        return False
+
+    source_tensor = model_ir.tensors.get(str(producer_op.inputs[0]), None)
+    restored_tensor = model_ir.tensors.get(str(consumer_op.outputs[0]), None)
+    if source_tensor is None or restored_tensor is None:
+        return False
+    source_layout = normalize_logical_layout(source_tensor.logical_layout)
+    restored_layout = normalize_logical_layout(restored_tensor.logical_layout)
+    if (
+        source_layout == LOGICAL_LAYOUT_UNKNOWN
+        or restored_layout == LOGICAL_LAYOUT_UNKNOWN
+        or source_layout != restored_layout
+    ):
+        return False
+    return True

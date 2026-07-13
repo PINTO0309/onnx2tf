@@ -1673,6 +1673,14 @@ use the shared append-only split-planner rewrite, while directly supported or
 absent recurrent ops return the borrowed graph for the subsequent owning
 normalizer copy.
 
+Softmax-specific channel-first validation is isolated in Torch-free
+`passes/pytorch_layout_validation.py`. Attention-like Softmax consumers and
+Transpose-sandwich producers/consumers are resolved from one shared
+`ModelIRGraphIndex`. The top-level exportability validator creates that index
+only when it encounters an unknown-layout Softmax and reuses it thereafter,
+removing the former per-tensor full graph scans. Duplicate sandwich producers
+reject the exception path rather than selecting one by graph order.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

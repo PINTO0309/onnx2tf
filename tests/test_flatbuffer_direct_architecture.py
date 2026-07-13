@@ -383,6 +383,43 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
     assert "return model_ir" in recurrent_rewrite_source
 
 
+def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
+    exporter_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pytorch_layout_validation.py"
+    )
+    exporter_source = exporter_path.read_text(encoding="utf-8")
+    pass_source = pass_path.read_text(encoding="utf-8")
+    assert "def _is_attention_like_softmax_op(" not in exporter_source
+    assert (
+        "def _is_transpose_sandwiched_last_axis_softmax_op(" not in exporter_source
+    )
+    assert "_is_attention_like_softmax_op," in exporter_source
+    assert "_is_transpose_sandwiched_last_axis_softmax_op," in exporter_source
+    assert "ModelIRGraphIndex" in pass_source
+    assert "for candidate in model_ir.operators" not in pass_source
+
+    exporter_tree = ast.parse(exporter_source)
+    exporter_functions = {
+        node.name: node
+        for node in exporter_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    validator_source = ast.get_source_segment(
+        exporter_source,
+        exporter_functions["validate_channel_first_exportability"],
+    )
+    assert validator_source is not None
+    assert "softmax_graph_index: Optional[ModelIRGraphIndex] = None" in validator_source
+    assert "graph_index=softmax_graph_index" in validator_source
+
+
 def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
