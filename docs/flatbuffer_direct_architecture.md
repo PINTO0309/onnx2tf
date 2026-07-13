@@ -1622,6 +1622,9 @@ operator. Group-convolution expansion, BatchMatMul unfolding, and recurrent
 unrolling emit directly into that stream and no longer retain a second
 `rewritten_ops` list or assign it at completion. Unchanged operators are copied
 with options, version, axis semantics, and ONNX node/op provenance intact.
+Boundary-based partition cropping follows the same operator contract: its
+newly constructed cropped ModelIR copies axis semantics and ONNX node/op
+provenance in addition to inputs, outputs, options, and version.
 
 PyTorch layout-only Transpose cleanup is owned by the Torch-free
 `passes/pytorch_compat.py` boundary. It indexes initial `TRANSPOSE` objects and

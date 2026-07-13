@@ -573,6 +573,12 @@ rewriters, and synthetic grouped-Conv and batched-MatMul fixtures verify each
 nontrivial expansion occurs exactly once without mutating the source graph. No
 SavedModel export, model conversion, or inference was run.
 
+Boundary-based partition cropping now preserves the complete operator contract
+too. Cropped operators retain axis semantics and ONNX node/op provenance in
+addition to their existing inputs, outputs, options, and version. The focused
+dead-branch crop fixture verifies those fields on the surviving operator while
+retaining boundary/tensor pruning behavior. No partition artifact was written.
+
 PyTorch redundant layout-Transpose cleanup now lives beside the AveragePool
 compatibility rewrite in the Torch-free `passes/pytorch_compat.py` module. It
 enumerates indexed Transpose candidates and consumers, preserves all existing

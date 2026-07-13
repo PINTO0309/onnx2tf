@@ -477,6 +477,18 @@ def test_split_rewrite_builder_owns_append_only_operator_stream() -> None:
     assert "builder.model_ir.operators = rewritten_ops" not in source
     assert source.count("rewritten_ops = builder.model_ir.operators") == 3
     assert "operators=[]" in source
+    crop_tree = ast.parse(source)
+    crop_node = next(
+        node
+        for node in crop_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "crop_model_ir_by_boundary_tensors"
+    )
+    crop_source = ast.get_source_segment(source, crop_node)
+    assert crop_source is not None
+    assert "axis_semantics=" in crop_source
+    assert "onnx_node_name=" in crop_source
+    assert "onnx_op_type=" in crop_source
 
 
 def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:

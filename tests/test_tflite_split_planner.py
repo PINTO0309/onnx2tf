@@ -79,8 +79,11 @@ def test_build_partition_model_ir_prunes_dead_branch_ops_and_inputs() -> None:
                 op_type="DUMMY",
                 inputs=["x"],
                 outputs=["a"],
-                options={},
-                version=1,
+                options={"axis": 1},
+                axis_semantics={"axis": "channel"},
+                version=2,
+                onnx_node_name="first_node",
+                onnx_op_type="Identity",
             ),
             OperatorIR(
                 op_type="DUMMY",
@@ -111,6 +114,12 @@ def test_build_partition_model_ir_prunes_dead_branch_ops_and_inputs() -> None:
     assert part_model.outputs == ["b"]
     assert "dead" not in part_model.tensors
     assert "y" not in part_model.tensors
+    first_op = part_model.operators[0]
+    assert first_op.options == {"axis": 1}
+    assert first_op.axis_semantics == {"axis": "channel"}
+    assert first_op.version == 2
+    assert first_op.onnx_node_name == "first_node"
+    assert first_op.onnx_op_type == "Identity"
 
 
 def test_build_partition_model_ir_excludes_embedded_constants_from_partition_inputs() -> None:

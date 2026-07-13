@@ -490,7 +490,12 @@ def crop_model_ir_by_boundary_tensors(
             inputs=list(model_ir.operators[int(op_idx)].inputs),
             outputs=list(model_ir.operators[int(op_idx)].outputs),
             options=copy.deepcopy(dict(model_ir.operators[int(op_idx)].options)),
+            axis_semantics=copy.deepcopy(
+                dict(model_ir.operators[int(op_idx)].axis_semantics)
+            ),
             version=int(model_ir.operators[int(op_idx)].version),
+            onnx_node_name=model_ir.operators[int(op_idx)].onnx_node_name,
+            onnx_op_type=model_ir.operators[int(op_idx)].onnx_op_type,
         )
         for op_idx in kept_operator_indices
     ]
