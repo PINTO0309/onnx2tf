@@ -27,27 +27,6 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
 )
 
 
-def _clone_model_ir_without_root_operators(model_ir: ModelIR) -> ModelIR:
-    """Deep-clone ModelIR state while leaving the root operator stream empty.
-
-    PyTorch compatibility expansions rebuild only the root graph.  Cloning the
-    original root operators before replacing that list duplicates the largest
-    part of the graph and temporarily retains both copies.  Subgraphs remain
-    complete because WHILE expansion reads their operators while constructing
-    the new root stream.
-    """
-    return ModelIR(
-        name=str(model_ir.name),
-        description=str(model_ir.description),
-        tensors=copy.deepcopy(model_ir.tensors),
-        operators=[],
-        inputs=list(model_ir.inputs),
-        outputs=list(model_ir.outputs),
-        subgraphs=copy.deepcopy(model_ir.subgraphs),
-        metadata=copy.deepcopy(model_ir.metadata),
-    )
-
-
 def _remove_redundant_layout_transposes(
     model_ir: ModelIR,
     original_layouts: Dict[str, str],

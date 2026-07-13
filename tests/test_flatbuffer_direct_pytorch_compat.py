@@ -6,9 +6,11 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_compat import (
-    _clone_model_ir_without_root_operators,
     _remove_redundant_layout_transposes,
     _restore_same_average_pool_exclude_pad_correction_for_native_runtime,
+)
+from onnx2tf.tflite_builder.passes.pytorch_control_flow import (
+    _clone_model_ir_without_root_operators,
 )
 
 

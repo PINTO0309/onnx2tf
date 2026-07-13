@@ -4,7 +4,7 @@
 
 The two native-PyTorch WHILE expansion paths no longer deep-copy the complete
 root operator list and then replace it with a second list. A Torch-free helper
-in `passes/pytorch_compat.py` deep-clones tensors, metadata, and complete
+in `passes/pytorch_control_flow.py` deep-clones tensors, metadata, and complete
 subgraphs while starting the root graph with an empty operator stream. Static
 trip-count and counter-bounded WHILE expansion then reads the original root
 operators in stable order, deep-copies each retained operator exactly once,
@@ -18,10 +18,16 @@ WHILE, counter-bounded WHILE, or unsupported recurrent-sequence rewrite is
 required. The mandatory channel-first normalizer remains the single owner copy
 in that common path, instead of receiving the fourth consecutive deep copy. A
 matched rewrite still produces a fully independent ModelIR before mutation.
+The complete subgraph lookup, constant/alias guards, static and
+counter-bounded matchers, shape-literal creation, and both rewrite entry points
+now have this module as their single implementation owner. The 42k-line
+exporter imports only the two ordered entry points; it no longer contains this
+approximately 470-line control-flow implementation.
 An AST architecture gate now rejects assignments to any object's `operators`
 attribute in the PyTorch exporter instead of checking only the literal
 `model_ir.operators =` spelling. Focused Torch-free compatibility and
-architecture validation passed 59 tests. No ONNX conversion, inference,
+architecture validation, including direct two-iteration static and
+counter-bounded expansion fixtures, passed 62 tests. No ONNX conversion, inference,
 dependency change, TensorFlow import, or parallel process was involved.
 
 ## `fb-refactor4` rank-four bounded-family checkpoint

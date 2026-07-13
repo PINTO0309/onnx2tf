@@ -261,7 +261,7 @@ def test_high_rank_binary_rewrite_uses_differential_graph_index() -> None:
     assert "ModelIRGraphIndex" in source
 
 
-def test_pytorch_compat_rewrite_uses_differential_graph_index() -> None:
+def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
     pass_path = (
         REPO_ROOT
         / "onnx2tf"
@@ -276,13 +276,23 @@ def test_pytorch_compat_rewrite_uses_differential_graph_index() -> None:
     exporter_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
     )
+    control_flow_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pytorch_control_flow.py"
+    )
     exporter_source = exporter_path.read_text(encoding="utf-8")
     exporter_tree = ast.parse(exporter_source)
+    control_flow_source = control_flow_path.read_text(encoding="utf-8")
+    control_flow_tree = ast.parse(control_flow_source)
     assert "def _remove_redundant_layout_transposes(" not in exporter_source
     assert "_remove_redundant_layout_transposes," in exporter_source
     operator_stream_assignments = [
         node
-        for node in ast.walk(exporter_tree)
+        for tree in (exporter_tree, control_flow_tree)
+        for node in ast.walk(tree)
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
         for target in (
             list(node.targets)
@@ -292,27 +302,56 @@ def test_pytorch_compat_rewrite_uses_differential_graph_index() -> None:
         if isinstance(target, ast.Attribute) and target.attr == "operators"
     ]
     assert operator_stream_assignments == []
-    assert "_clone_model_ir_without_root_operators," in exporter_source
-    assert "for op_index, source_op in enumerate(model_ir.operators):" in exporter_source
+    assert "def _rewrite_static_while_ops_for_native_export(" not in exporter_source
+    assert "def _rewrite_counter_bounded_while_ops_for_native_export(" not in exporter_source
+    assert "_rewrite_static_while_ops_for_native_export," in exporter_source
+    assert "_rewrite_counter_bounded_while_ops_for_native_export," in exporter_source
+    assert "def _clone_model_ir_without_root_operators(" in control_flow_source
+    assert "for op_index, source_op in enumerate(model_ir.operators):" in control_flow_source
 
     exporter_functions = {
         node.name: node
         for node in exporter_tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+    control_flow_functions = {
+        node.name: node
+        for node in control_flow_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    focused_control_flow_functions = {
+        "_clone_model_ir_without_root_operators",
+        "_get_model_ir_subgraph_by_1based_index",
+        "_constant_scalar_value",
+        "_reshape_alias_source_name",
+        "_is_canonical_imported_while_cond_subgraph",
+        "_match_static_unrollable_while_op",
+        "_match_counter_bounded_unrollable_while_op",
+        "_ensure_tensor_shape_literal",
+        "_rewrite_static_while_ops_for_native_export",
+        "_rewrite_counter_bounded_while_ops_for_native_export",
+    }
+    assert focused_control_flow_functions <= set(control_flow_functions)
+    assert focused_control_flow_functions.isdisjoint(exporter_functions)
     copy_on_write_functions = {
-        "_rewrite_recurrent_ops_for_native_export",
         "_rewrite_static_while_ops_for_native_export",
         "_rewrite_counter_bounded_while_ops_for_native_export",
     }
     for function_name in copy_on_write_functions:
         function_source = ast.get_source_segment(
-            exporter_source,
-            exporter_functions[function_name],
+            control_flow_source,
+            control_flow_functions[function_name],
         )
         assert function_source is not None
         assert "return copy.deepcopy(model_ir)" not in function_source
         assert "return model_ir" in function_source
+    recurrent_source = ast.get_source_segment(
+        exporter_source,
+        exporter_functions["_rewrite_recurrent_ops_for_native_export"],
+    )
+    assert recurrent_source is not None
+    assert "return copy.deepcopy(model_ir)" not in recurrent_source
+    assert "return model_ir" in recurrent_source
 
 
 def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:

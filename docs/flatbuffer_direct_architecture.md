@@ -1635,8 +1635,11 @@ clone semantics. The PyTorch exporter no longer owns a consumer-map builder or
 complete operator-list deletion, and the pass can be tested without importing
 Torch.
 
-Native-PyTorch WHILE compatibility expansion uses the same Torch-free boundary
-for root-graph cloning. `_clone_model_ir_without_root_operators()` deep-clones
+Native-PyTorch WHILE compatibility expansion is isolated in the Torch-free
+`passes/pytorch_control_flow.py` boundary. It owns subgraph lookup,
+constant/alias guards, static and counter-bounded matching, shape-literal
+creation, root-graph cloning, and both rewrite entry points.
+`_clone_model_ir_without_root_operators()` deep-clones
 tensors, metadata, and complete subgraphs but deliberately leaves the root
 operator stream empty. Static trip-count and counter-bounded expanders consume
 the original root stream once, deep-copy retained operators once, and append
@@ -1647,6 +1650,9 @@ Static-WHILE, counter-bounded-WHILE, and recurrent-sequence entry points use
 copy-on-write preflight: a no-op returns the borrowed input, which is safe
 because the following channel-first normalizer creates its own deep copy before
 mutation. A proven expansion still clones before modifying any graph state.
+The exporter imports only the two ordered rewrite entry points, so control-flow
+canonicalization can be validated with synthetic ModelIR without importing
+Torch.
 The exporter architecture gate detects attribute assignments through the AST,
 so alternate local names cannot silently reintroduce complete operator-list
 replacement.
