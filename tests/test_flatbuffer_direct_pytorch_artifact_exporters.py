@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
 import sys
 import types
@@ -12,6 +14,19 @@ from onnx2tf.tflite_builder.pytorch_export_support import (
     _generated_package_non_native_skip_reason,
     _metadata_has_dynamic_public_inputs,
 )
+from onnx2tf.tflite_builder.pytorch_exported_program_child import (
+    _EXPORTED_PROGRAM_CHILD_SCRIPT,
+)
+
+
+def test_exported_program_child_payload_is_fixed_and_parseable() -> None:
+    assert len(_EXPORTED_PROGRAM_CHILD_SCRIPT.encode("utf-8")) == 71054
+    assert hashlib.sha256(
+        _EXPORTED_PROGRAM_CHILD_SCRIPT.encode("utf-8")
+    ).hexdigest() == (
+        "548c123d658c61780a134e34dbc02939f07d1db7e6bccc81db08fddf6cf77d5e"
+    )
+    ast.parse(_EXPORTED_PROGRAM_CHILD_SCRIPT)
 
 
 def test_torchscript_export_records_non_native_skip_without_child(

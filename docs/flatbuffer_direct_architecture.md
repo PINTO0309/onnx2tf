@@ -1953,6 +1953,15 @@ names, the artifact function is AST-identical to the previous implementation,
 and all four moved ONNX support functions are AST-identical without
 normalization.
 
+The ExportedProgram child process source has its own inert payload module,
+`pytorch_exported_program_child.py`. The 1,813-line embedded literal previously
+obscured the approximately 140-line host orchestration; the exporter now assigns
+the imported `_EXPORTED_PROGRAM_CHILD_SCRIPT` constant before invoking the same
+single child runner. The 71,054-byte string is byte-for-byte identical to the
+previous literal, has fixed SHA-256
+`548c123d658c61780a134e34dbc02939f07d1db7e6bccc81db08fddf6cf77d5e`, and
+parses as Python. Importing the payload module does not import or execute Torch.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

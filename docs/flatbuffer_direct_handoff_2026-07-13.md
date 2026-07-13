@@ -209,9 +209,21 @@ normalizing its two explicit callback names. A direct non-native-package test
 proves skip metadata and verifies that neither callback nor a child process is
 invoked. Artifact and architecture validation passes 64 tests; syntax, Ruff,
 and diff checks pass. No model conversion or inference was run. Resume by
-characterizing the ExportedProgram artifact boundary separately; do not move
-its approximately 1,950-line implementation before its rewrite, archive, and
-metadata sub-responsibilities have focused tests.
+characterizing the remaining ExportedProgram host and archive boundaries
+separately.
+
+The 1,813-line ExportedProgram subprocess source literal now lives as the inert
+`_EXPORTED_PROGRAM_CHILD_SCRIPT` constant in
+`pytorch_exported_program_child.py`. Its 71,054 bytes exactly match the previous
+embedded value; a fixed SHA-256 and `ast.parse` gate prevent accidental payload
+drift. The exporter host now contains only `child_script =` the imported
+constant, exposing its approximately 140 lines of metadata, rewrite-context,
+child-runner, archive-cleanup, and repair orchestration. Artifact and
+architecture validation passes 66 tests; syntax, Ruff, and diff checks pass. No
+model conversion or inference was run. Resume by moving that host orchestration
+behind explicit source-rewrite, final-repair, and archive-cleanup callbacks;
+keep the separate 2,015-line inverse-permute archive optimizer for a later
+characterized checkpoint.
 
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/

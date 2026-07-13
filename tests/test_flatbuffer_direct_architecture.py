@@ -77,6 +77,10 @@ DEPENDENCY_SCOPED_FILES = [
     / "tflite_builder"
     / "pytorch_onnx_artifact_support.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_stages.py",
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "pytorch_exported_program_child.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_emitters.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_errors.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_support.py",
@@ -3619,3 +3623,20 @@ def test_dynamo_onnx_artifact_export_has_focused_owners() -> None:
     ):
         assert f"def {helper_name}(" in onnx_support_source
         assert f"def {helper_name}(" not in exporter_source
+
+
+def test_exported_program_child_script_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    child_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_exported_program_child.py"
+    ).read_text(encoding="utf-8")
+
+    assert "_EXPORTED_PROGRAM_CHILD_SCRIPT =" in child_source
+    assert "child_script = _EXPORTED_PROGRAM_CHILD_SCRIPT" in exporter_source
+    assert "child_script = \"\"\"" not in exporter_source
+    assert "_EXPORTED_PROGRAM_CHILD_SCRIPT," in exporter_source
