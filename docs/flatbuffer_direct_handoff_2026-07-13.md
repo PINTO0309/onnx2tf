@@ -171,3 +171,36 @@ complete sequential direct selection passed:
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently. Next work is the GraphIndex/ordered-runner migration of this
 extracted family.
+
+### Indexed SE-Conv checkpoint
+
+The extracted SE-Conv implementation now accepts the shared
+`ModelIRGraphIndex` and `LayoutState`. Consumer/producer reads, Swish and gate
+input rewrites, Mean/post adapter alias rewrites, canonical output rewrite,
+structural removals, pruning, metadata updates, and layout reconciliation use
+differential state. Its implementation contains no whole-graph map builder or
+direct operator-list deletion.
+
+All six production positions call `run_se_conv_layout_cleanup`, with stable
+`LAYOUT_PLAN` ID `layout.se_conv_gate_nhwc`. A cheap model-only capability scan
+precedes an indexed common-region guard covering the leading
+Transpose/Logistic/Mul, Mean branch and accepted adapter class, exclusive
+second gate, and terminal inverse-Transpose fan-out. The existing deep matcher
+continues to validate Logistic, affine, and Squeeze/Reshape gate details.
+
+Focused runner, ownership, architecture, and irrelevant-graph efficiency
+validation passed 40 tests. The compact positive fixture uses one initial
+index refresh and one snapshot; gate fan-out rejects before snapshotting. Tier
+1 `superpoint.onnx` passed sequential `-tb flatbuffer_direct -cotof` with
+`evaluation_pass=true`, `max_abs=1.6666017472743988e-06`,
+`rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
+
+The complete sequential direct selection passed:
+
+```text
+1176 passed, 5 deselected, 2 warnings in 150.22s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_se_conv_superpoint` artifacts were removed after metrics
+inspection. SE-FC remains the next separate indexed migration unit.

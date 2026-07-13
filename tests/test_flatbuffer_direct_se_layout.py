@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_se_conv_mul_prepost_nhwc_chains,
     _optimize_transpose_se_fc_mul_prepost_nhwc_chains,
 )
+from onnx2tf.tflite_builder.passes.se_layout import run_se_conv_layout_cleanup
 
 
 def _tensor(
@@ -256,3 +258,37 @@ def test_se_fc_layout_keeps_shared_input_transpose() -> None:
         if operator.op_type == "IDENTITY"
     )
     assert side_op.inputs == ["x_nchw"]
+
+
+def test_se_conv_layout_runner_reuses_one_index(monkeypatch) -> None:
+    model_ir = _se_conv_model(gate_fanout=False)
+    diagnostics: list[dict[str, object]] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_se_conv_layout_cleanup(model_ir, diagnostics=diagnostics)
+
+    assert stats["optimized_transpose_se_conv_mul_prepost_nhwc_chains"] == 1
+    assert refresh_count == 1
+    assert diagnostics[0]["code"] == "layout.se_conv_gate_nhwc"
+    assert diagnostics[0]["changed"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
+
+
+def test_se_conv_layout_runner_rejects_gate_fanout_before_snapshot() -> None:
+    model_ir = _se_conv_model(gate_fanout=True)
+    diagnostics: list[dict[str, object]] = []
+
+    stats = run_se_conv_layout_cleanup(model_ir, diagnostics=diagnostics)
+
+    assert stats["optimized_transpose_se_conv_mul_prepost_nhwc_chains"] == 0
+    assert diagnostics[0]["changed"] is False
+    assert diagnostics[0]["skipped_by_precondition"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 0

@@ -202,8 +202,18 @@ leading adapters, and terminal fan-out bridges. The broader SE-FC matcher
 covers pooled or Mean statistics, stacked FC/1x1-Conv heads, optional unary
 gates/output bridges, and its existing nested specialized variants. Their
 complete 482-line and 977-line implementations are AST-identical to checkpoint
-`5f5de07`; the lowerer retains compatibility wrappers and the original six and
-nine production positions pending indexed migration.
+`5f5de07`; the lowerer retains compatibility wrappers.
+
+All six SE-Conv positions now call `run_se_conv_layout_cleanup`, registered as
+`layout.se_conv_gate_nhwc` in `LAYOUT_PLAN`. Model-only capability preflight
+avoids state construction on irrelevant graphs. Its indexed common-region
+guard proves the leading Swish-style gate, Mean branch/adapters, second gate
+exclusivity, and complete inverse-Transpose output fan-out before snapshotting;
+the existing deep matcher retains validation of Logistic, affine, and
+Squeeze/Reshape gate variants. All graph mutations and removals use one
+differential index and active layout state. The SE-Conv implementation has no
+whole-graph map construction or direct operator-list deletion. SE-FC remains
+at its nine original call positions pending its separate indexed checkpoint.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -19,9 +19,22 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_outputs,
     _write_const_ints_to_tensor,
 )
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
-def _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_se_conv_mul_prepost_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate NCHW round-trips in EfficientNet-style SE conv gating blocks.
 
@@ -43,11 +56,12 @@ def _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Di
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -397,12 +411,14 @@ def _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Di
                 model_ir=model_ir,
                 op=log1_op,
                 new_inputs=[pre_input_name],
+                graph_index=graph_index,
             )
             _replace_operator_input_at(
                 model_ir=model_ir,
                 op=mul1_op,
                 input_index=int(mul1_data_input_index),
                 new_input_name=pre_input_name,
+                graph_index=graph_index,
             )
             _permute_tensor_metadata_if_rank_matches(
                 model_ir.tensors.get(log1_out_name, None),
@@ -426,7 +442,12 @@ def _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Di
                 perm_nchw_to_nhwc,
             )
             for post_mean_out_name in post_mean_outputs:
-                _replace_tensor_inputs(model_ir, post_mean_out_name, mean_out_name)
+                _replace_tensor_inputs(
+                    model_ir,
+                    post_mean_out_name,
+                    mean_out_name,
+                    graph_index=graph_index,
+                )
             if mean_passthrough_via_squeeze and mean_squeeze_op is not None:
                 squeeze_dims = list(mean_squeeze_op.options.get("squeezeDims", []))
                 remapped_dims: List[int] = []
@@ -454,6 +475,7 @@ def _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Di
                     op=gate_rewrite_op,
                     input_index=int(gate_rewrite_input_index),
                     new_input_name=gate_pre_input_name,
+                    graph_index=graph_index,
                 )
             for gate_nchw_tensor_name in gate_nchw_tensor_names:
                 _permute_tensor_metadata_if_rank_matches(
@@ -466,9 +488,15 @@ def _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Di
                 model_ir=model_ir,
                 op=mul2_op,
                 new_outputs=[representative_output_name],
+                graph_index=graph_index,
             )
             for alias_name in post_out_outputs[1:]:
-                _replace_tensor_inputs(model_ir, alias_name, representative_output_name)
+                _replace_tensor_inputs(
+                    model_ir,
+                    alias_name,
+                    representative_output_name,
+                    graph_index=graph_index,
+                )
 
             old_mul2_tensor = model_ir.tensors.get(mul2_out_name, None)
             representative_tensor = model_ir.tensors.get(representative_output_name, None)
@@ -492,7 +520,7 @@ def _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Di
             remove_indices.update(int(v) for v in post_mean_indices)
             remove_indices.update(int(v) for v in post_out_indices)
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -501,8 +529,225 @@ def _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Di
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_se_conv_mul_prepost_nhwc_chains": int(rewritten)}
+
+
+def run_se_conv_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Propagate NHWC through guarded convolutional SE gates."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"TRANSPOSE", "LOGISTIC", "MUL", "MEAN"}
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            required.discard(str(operator.op_type))
+            if not required:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        graph_index = pass_state.graph_index
+        model_outputs = {str(name) for name in candidate_model.outputs}
+        for pre_op in candidate_model.operators:
+            if (
+                str(pre_op.op_type) != "TRANSPOSE"
+                or len(pre_op.inputs) < 2
+                or len(pre_op.outputs) != 1
+                or _read_transpose_perm(candidate_model, pre_op)
+                != [0, 3, 1, 2]
+            ):
+                continue
+            pre_input_name = str(pre_op.inputs[0])
+            pre_output_name = str(pre_op.outputs[0])
+            if pre_output_name in model_outputs:
+                continue
+            pre_users = sorted(set(graph_index.consumer_indices(pre_output_name)))
+            if len(pre_users) != 2:
+                continue
+            log1_idx: Optional[int] = None
+            mul1_idx: Optional[int] = None
+            for user_idx in pre_users:
+                user_op = candidate_model.operators[user_idx]
+                if (
+                    str(user_op.op_type) == "LOGISTIC"
+                    and len(user_op.inputs) == 1
+                    and len(user_op.outputs) == 1
+                    and str(user_op.inputs[0]) == pre_output_name
+                ):
+                    log1_idx = user_idx
+                elif (
+                    str(user_op.op_type) == "MUL"
+                    and len(user_op.inputs) == 2
+                    and len(user_op.outputs) == 1
+                    and pre_output_name in {str(name) for name in user_op.inputs}
+                ):
+                    mul1_idx = user_idx
+            if log1_idx is None or mul1_idx is None:
+                continue
+            log1_op = candidate_model.operators[log1_idx]
+            log1_output_name = str(log1_op.outputs[0])
+            if set(graph_index.consumer_indices(log1_output_name)) != {mul1_idx}:
+                continue
+            mul1_op = candidate_model.operators[mul1_idx]
+            if {str(name) for name in mul1_op.inputs} != {
+                pre_output_name,
+                log1_output_name,
+            }:
+                continue
+            mul1_output_name = str(mul1_op.outputs[0])
+            if mul1_output_name in model_outputs:
+                continue
+            mul1_users = sorted(set(graph_index.consumer_indices(mul1_output_name)))
+            mean_idx: Optional[int] = None
+            mul2_idx: Optional[int] = None
+            for user_idx in mul1_users:
+                user_op = candidate_model.operators[user_idx]
+                if (
+                    str(user_op.op_type) == "MEAN"
+                    and len(user_op.inputs) >= 2
+                    and len(user_op.outputs) == 1
+                    and str(user_op.inputs[0]) == mul1_output_name
+                    and bool(user_op.options.get("keepDims", False))
+                ):
+                    mean_idx = user_idx
+                elif (
+                    str(user_op.op_type) == "MUL"
+                    and len(user_op.inputs) == 2
+                    and len(user_op.outputs) == 1
+                    and mul1_output_name in {str(name) for name in user_op.inputs}
+                ):
+                    mul2_idx = user_idx
+            if mean_idx is None or mul2_idx is None or len(mul1_users) != 2:
+                continue
+            mean_op = candidate_model.operators[mean_idx]
+            axes = _read_const_ints_from_tensor(
+                candidate_model.tensors.get(str(mean_op.inputs[1]))
+            )
+            input_tensor = candidate_model.tensors.get(pre_input_name)
+            rank = len(input_tensor.shape) if input_tensor is not None else 4
+            if axes is None or rank != 4:
+                continue
+            normalized_axes = [
+                int(axis) + rank if int(axis) < 0 else int(axis)
+                for axis in axes
+            ]
+            if sorted(normalized_axes) != [2, 3]:
+                continue
+            mean_output_name = str(mean_op.outputs[0])
+            if mean_output_name in model_outputs:
+                continue
+            mean_users = sorted(set(graph_index.consumer_indices(mean_output_name)))
+            if not mean_users:
+                continue
+            inverse_posts = all(
+                str(candidate_model.operators[user_idx].op_type) == "TRANSPOSE"
+                and len(candidate_model.operators[user_idx].inputs) >= 2
+                and len(candidate_model.operators[user_idx].outputs) == 1
+                and str(candidate_model.operators[user_idx].inputs[0])
+                == mean_output_name
+                and _read_transpose_perm(
+                    candidate_model,
+                    candidate_model.operators[user_idx],
+                ) == [0, 2, 3, 1]
+                and str(candidate_model.operators[user_idx].outputs[0])
+                not in model_outputs
+                for user_idx in mean_users
+            )
+            squeeze_post = (
+                len(mean_users) == 1
+                and str(candidate_model.operators[mean_users[0]].op_type)
+                == "SQUEEZE"
+                and len(candidate_model.operators[mean_users[0]].inputs) == 1
+                and len(candidate_model.operators[mean_users[0]].outputs) == 1
+                and str(candidate_model.operators[mean_users[0]].inputs[0])
+                == mean_output_name
+                and str(candidate_model.operators[mean_users[0]].outputs[0])
+                not in model_outputs
+            )
+            if not inverse_posts and not squeeze_post:
+                continue
+            mul2_op = candidate_model.operators[mul2_idx]
+            gate_names = [
+                str(name)
+                for name in mul2_op.inputs
+                if str(name) != mul1_output_name
+            ]
+            if len(gate_names) != 1:
+                continue
+            gate_name = gate_names[0]
+            if set(graph_index.consumer_indices(gate_name)) != {mul2_idx}:
+                continue
+            gate_op = graph_index.producer(gate_name)
+            if gate_op is None or str(gate_op.op_type) not in {
+                "LOGISTIC",
+                "MUL",
+                "DIV",
+            }:
+                continue
+            mul2_output_name = str(mul2_op.outputs[0])
+            if mul2_output_name in model_outputs:
+                continue
+            mul2_users = sorted(set(graph_index.consumer_indices(mul2_output_name)))
+            if mul2_users and all(
+                str(candidate_model.operators[user_idx].op_type) == "TRANSPOSE"
+                and len(candidate_model.operators[user_idx].inputs) >= 2
+                and len(candidate_model.operators[user_idx].outputs) == 1
+                and str(candidate_model.operators[user_idx].inputs[0])
+                == mul2_output_name
+                and _read_transpose_perm(
+                    candidate_model,
+                    candidate_model.operators[user_idx],
+                ) == [0, 2, 3, 1]
+                and str(candidate_model.operators[user_idx].outputs[0])
+                not in model_outputs
+                for user_idx in mul2_users
+            ):
+                return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_se_conv_mul_prepost_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_transpose_se_conv_mul_prepost_nhwc_chains",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.se_conv_gate_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={
+            "optimized_transpose_se_conv_mul_prepost_nhwc_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 def _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
     """

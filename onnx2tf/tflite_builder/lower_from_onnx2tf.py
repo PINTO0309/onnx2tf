@@ -120,6 +120,7 @@ from onnx2tf.tflite_builder.passes.terminal_mean_layout import (
 from onnx2tf.tflite_builder.passes.se_layout import (
     _optimize_transpose_se_conv_mul_prepost_nhwc_chains as _optimize_transpose_se_conv_mul_prepost_nhwc_chains_pass,
     _optimize_transpose_se_fc_mul_prepost_nhwc_chains as _optimize_transpose_se_fc_mul_prepost_nhwc_chains_pass,
+    run_se_conv_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -55361,7 +55362,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
+        run_se_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
         run_conv_attention_layout_cleanup(
             model_ir,
@@ -55536,7 +55541,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
+        run_se_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
         run_conv_attention_layout_cleanup(
             model_ir,
@@ -55720,7 +55729,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
+        run_se_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
         run_conv_attention_layout_cleanup(
             model_ir,
@@ -55929,7 +55942,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
+        run_se_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
         run_conv_attention_layout_cleanup(
             model_ir,
@@ -56060,7 +56077,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
+        run_se_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
         run_conv_attention_layout_cleanup(
             model_ir,
@@ -56257,7 +56278,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
+        run_se_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
         _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
         _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
