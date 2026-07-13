@@ -21,6 +21,11 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR
+from onnx2tf.tflite_builder.passes.nhwc_concat_layout import (
+    _NhwcConcatInputPlan,
+    _apply_swish_input_plan,
+    _resolve_swish_input_plan,
+)
 from onnx2tf.tflite_builder.passes.nhwc_concat_pad import (
     NhwcConcatPadPlan,
     apply_nhwc_concat_pad_plan,
@@ -43,6 +48,9 @@ _UNARY_PAD_STATS_KEY = (
 _ALL_PAD_STATS_KEY = (
     "optimized_transpose_pre_concat_nhwc_quantized_all_pad_chains"
 )
+_SWISH_STATS_KEY = (
+    "optimized_transpose_pre_concat_nhwc_quantized_swish_chains"
+)
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
 
@@ -55,6 +63,7 @@ class _QuantizedInputPlan:
     remove_adapter: bool
     unary_op: Optional[OperatorIR] = None
     pad_plan: Optional[NhwcConcatPadPlan] = None
+    swish_plan: Optional[_NhwcConcatInputPlan] = None
 
 
 @dataclass(frozen=True)
@@ -218,6 +227,33 @@ def _resolve_pad_input_plan(
     )
 
 
+def _resolve_swish_quantized_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    concat_input: str,
+    concat_index: int,
+    model_outputs: set[str],
+) -> Optional[_QuantizedInputPlan]:
+    swish_plan = _resolve_swish_input_plan(
+        model_ir,
+        graph_index,
+        input_name=concat_input,
+        concat_index=concat_index,
+        model_outputs=model_outputs,
+    )
+    if swish_plan is None:
+        return None
+    return _QuantizedInputPlan(
+        kind="swish",
+        adapter_op=swish_plan.adapter_op,
+        swish_plan=swish_plan,
+        concat_input=concat_input,
+        source_name=swish_plan.source_name,
+        remove_adapter=swish_plan.remove_adapter,
+    )
+
+
 def _resolve_quantized_concat_candidate(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -320,6 +356,14 @@ def _resolve_quantized_concat_candidate(
                     concat_index=int(concat_index),
                     model_outputs=model_outputs,
                 )
+            if input_plan is None and family == "swish":
+                input_plan = _resolve_swish_quantized_input_plan(
+                    model_ir,
+                    graph_index,
+                    concat_input=concat_input,
+                    concat_index=int(concat_index),
+                    model_outputs=model_outputs,
+                )
             if input_plan is None and family in {
                 "pad",
                 "unary_pad",
@@ -355,7 +399,16 @@ def _resolve_quantized_concat_candidate(
             len(input_plans) < 2 or pad_count != len(input_plans)
         ):
             continue
-        if family in {"unary", "pad", "unary_pad", "all_pad"}:
+        swish_count = sum(plan.kind == "swish" for plan in input_plans)
+        if family == "swish" and swish_count < 1:
+            continue
+        if family in {
+            "unary",
+            "pad",
+            "unary_pad",
+            "all_pad",
+            "swish",
+        }:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
             for input_plan in input_plans:
@@ -368,7 +421,7 @@ def _resolve_quantized_concat_candidate(
                     shapes_compatible = False
                     break
                 shape = [int(value) for value in tensor.shape]
-                if input_plan.kind in {"unary", "pad"}:
+                if input_plan.kind in {"unary", "pad", "swish"}:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
                     reference_shape = shape
@@ -457,6 +510,19 @@ def _has_quantized_all_pad_concat_candidate(
     )
 
 
+def _has_quantized_swish_concat_candidate(
+    pass_state: ModelIRPassState,
+) -> bool:
+    return (
+        _resolve_quantized_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="swish",
+        )
+        is not None
+    )
+
+
 def _optimize_quantized_concat_chains(
     model_ir: ModelIR,
     *,
@@ -479,7 +545,14 @@ def _optimize_quantized_concat_chains(
         new_concat_inputs: List[str] = []
         materialized_pads: Dict[str, str] = {}
         for input_plan in candidate.input_plans:
-            if input_plan.unary_op is not None:
+            if input_plan.swish_plan is not None:
+                _apply_swish_input_plan(
+                    model_ir,
+                    graph_index,
+                    input_plan.swish_plan,
+                )
+                new_concat_inputs.append(input_plan.concat_input)
+            elif input_plan.unary_op is not None:
                 _set_operator_inputs(
                     model_ir=model_ir,
                     op=input_plan.unary_op,
@@ -660,6 +733,19 @@ def run_nhwc_concat_quantized_layout_cleanup(
             "changed": bool(stats.get(_ALL_PAD_STATS_KEY, 0)),
         }
 
+    def _run_swish(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_quantized_concat_chains(
+            pass_state.model_ir,
+            family="swish",
+            stats_key=_SWISH_STATS_KEY,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get(_SWISH_STATS_KEY, 0)),
+        }
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -703,6 +789,14 @@ def run_nhwc_concat_quantized_layout_cleanup(
                 priority=50,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_quantized_swish",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_swish,
+                precondition=_has_quantized_swish_concat_candidate,
+                priority=60,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -711,6 +805,7 @@ def run_nhwc_concat_quantized_layout_cleanup(
             _PAD_STATS_KEY: 0,
             _UNARY_PAD_STATS_KEY: 0,
             _ALL_PAD_STATS_KEY: 0,
+            _SWISH_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(

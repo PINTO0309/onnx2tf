@@ -434,6 +434,41 @@ def _quantized_all_pad_model(
     return model_ir
 
 
+def _quantized_swish_model(
+    *,
+    mul_data_first: bool = True,
+    public_logistic_output: bool = False,
+) -> ModelIR:
+    model_ir = _quantized_model()
+    for tensor_name in ("a_logistic", "a_swish"):
+        model_ir.tensors[tensor_name] = _tensor(
+            tensor_name,
+            [1, 2, 5, 7],
+        )
+        model_ir.tensors[tensor_name].quantization = QuantParamIR(
+            scale=[0.3] * 2,
+            zero_point=[0] * 2,
+            quantized_dimension=1,
+        )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    concat_index = model_ir.operators.index(concat_op)
+    mul_inputs = (
+        ["a_nchw", "a_logistic"]
+        if mul_data_first
+        else ["a_logistic", "a_nchw"]
+    )
+    model_ir.operators[concat_index:concat_index] = [
+        OperatorIR("LOGISTIC", ["a_nchw"], ["a_logistic"]),
+        OperatorIR("MUL", mul_inputs, ["a_swish"]),
+    ]
+    concat_op.inputs[0] = "a_swish"
+    if public_logistic_output:
+        model_ir.outputs.append("a_logistic")
+    return model_ir
+
+
 def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
     assert actual.inputs == expected.inputs
     assert actual.outputs == expected.outputs
@@ -632,6 +667,59 @@ def test_nhwc_quantized_unary_rejects_unsafe_or_partial_match(
     boundary: str,
 ) -> None:
     model_ir = _quantized_model(unary_input=True, boundary=boundary)
+    original = deepcopy(model_ir)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
+    _assert_model_equal(model_ir, original)
+
+
+@pytest.mark.parametrize("mul_data_first", [False, True])
+def test_nhwc_quantized_swish_input_is_indexed(
+    mul_data_first: bool,
+) -> None:
+    model_ir = _quantized_swish_model(mul_data_first=mul_data_first)
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_quantized_rewritten(
+        model_ir,
+        expected_concat_inputs=["a_swish", "b_nhwc"],
+    )
+    logistic_op = next(
+        op for op in model_ir.operators if op.outputs == ["a_logistic"]
+    )
+    mul_op = next(op for op in model_ir.operators if op.outputs == ["a_swish"])
+    assert logistic_op.inputs == ["a_nhwc"]
+    assert mul_op.inputs == (
+        ["a_nhwc", "a_logistic"]
+        if mul_data_first
+        else ["a_logistic", "a_nhwc"]
+    )
+    for tensor_name in ("a_logistic", "a_swish"):
+        tensor = model_ir.tensors[tensor_name]
+        assert tensor.shape == [1, 5, 7, 2]
+        assert isinstance(tensor.quantization, QuantParamIR)
+        assert tensor.quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_quantized_swish"
+    )
+    assert event["status"] == "changed"
+    assert event["metrics"]["snapshot_count"] == 1
+    assert event["metrics"]["fingerprint_count"] == 0
+
+
+def test_nhwc_quantized_swish_rejects_public_internal_boundary() -> None:
+    model_ir = _quantized_swish_model(public_logistic_output=True)
     original = deepcopy(model_ir)
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
