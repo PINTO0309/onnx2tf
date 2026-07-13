@@ -396,16 +396,18 @@ diamonds reject before mutation under stable ID
 `layout.nhwc_pre_concat_leaky`. Pad/Add/Split mixed companions and broader
 mixed-input quantized-post families remain in legacy.
 
-The strict direct, unary, Pad-plus-direct, mixed unary-plus-Pad, all-Pad, and
-expanded-Swish quantized-post paths are independently owned by
+The strict direct, unary, Pad-plus-direct, mixed unary-plus-Pad, all-Pad,
+expanded-Swish, and Dequantize quantized-post paths are independently owned by
 `passes/nhwc_concat_quantized_layout.py`. They recognize rank-four direct
 NHWC→NCHW inputs, optionally followed by RELU, RELU6, LOGISTIC, TANH, GELU, or
-an exact constant PAD, or the exact `Logistic(x) * x` expanded-Swish diamond,
-then channel Concat, one Quantize, and one or more inverse post Transposes. The
+an exact constant PAD, the exact `Logistic(x) * x` expanded-Swish diamond, or
+Dequantize, then channel Concat, one Quantize, and one or more inverse post Transposes. The
 mixed pass requires at least one unary and one Pad branch; additional direct
 branches are allowed. The all-Pad pass requires at least two Pad branches. The
 Swish pass accepts either Mul operand order and reuses the float path's strict
 resolver and apply operation, including its public/fan-out boundary checks.
+The Dequantize pass likewise shares the float resolver/apply pair and retains a
+leading adapter only when its quantized NCHW output has another consumer.
 The transactional passes
 rewire Concat and bounded branches to NHWC, retain shared/public input
 adapters, redirect Quantize to one canonical post output, and coalesce
@@ -423,7 +425,8 @@ under stable IDs
 `layout.nhwc_pre_concat_quantized_pad`, followed by
 `layout.nhwc_pre_concat_quantized_unary_pad`, and
 `layout.nhwc_pre_concat_quantized_all_pad`, followed by
-`layout.nhwc_pre_concat_quantized_swish`. Shared pads constants are
+`layout.nhwc_pre_concat_quantized_swish` and
+`layout.nhwc_pre_concat_quantized_dequantize`. Shared pads constants are
 materialized once and reused by every selected Pad. Other broader mixed
 quantized inputs remain in legacy.
 
