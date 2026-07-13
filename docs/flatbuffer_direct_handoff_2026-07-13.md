@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `2871ade` (`index 3d gate layout pass`)
+- Latest implementation checkpoint: `ae3c00b` (`extract conv3d gate layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `2871ade`
+  `ae3c00b`
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -80,6 +80,11 @@ then characterized and mechanically extracted the seventh family.
      `passes/ndhwc_gate_layout.py` with AST equivalence in `332612f`.
    - Migrated all mutation and six production calls to a stable indexed runner
      in `2871ade`.
+10. Conv3D/Leaky/Unsqueeze gate layout
+    - Replaced a 176-line central fixture with compact 4D/5D success variants
+      and six unsafe-boundary cases in `49c72b9`.
+    - Mechanically moved the complete matcher beside its NDHWC sibling with AST
+      equivalence in `ae3c00b`. Indexed integration remains the next checkpoint.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -95,10 +100,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the adjacent 226-line, six-call
-  `_optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains` family: move
-  its existing central fixture to compact dedicated coverage and characterize
-  unsafe boundaries before extraction.
+  The immediate next unit is the already extracted
+  `_optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains` family: migrate
+  it to shared graph/layout state and integrate it as the second ordered NDHWC
+  gate spec at all six production positions.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -120,7 +125,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `2871ade`; after the documentation
+implementation working tree is clean at `ae3c00b`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -219,6 +224,11 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 - Full direct selection after indexed 3D migration:
   `1217 passed, 5 deselected, 2 warnings in 156.83s`.
+- Dedicated Conv3D gate characterization: `8 passed`.
+- Conv3D extraction, sibling, and ownership focus:
+  `55 passed in 17.93s`.
+- Full direct selection after Conv3D mechanical extraction:
+  `1224 passed, 5 deselected, 2 warnings in 157.08s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -250,14 +260,13 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Audit the 226-line
-   `_optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains` matcher, all
-   six call sites, and its large central positive fixture.
-3. Move the success contract to a dedicated compact module and add no-op cases
-   for shared Conv output, Leaky fan-out, public intermediates, permutation,
-   and Unsqueeze/Reshape shape boundaries.
-4. Commit characterization separately, then mechanically extract with
-   AST-equivalence proof before indexed mutation.
+2. Migrate every producer/consumer read, constant-shape mutation, metadata
+   update, and structural removal in the extracted Conv3D matcher to shared
+   graph/layout state.
+3. Add a second ordered spec to the NDHWC family runner, preserving the
+   rank-five-gate-before-Conv3D-gate order, and remove all six raw calls.
+4. Extend success/rejection instrumentation and efficiency expectations, then
+   run focused, sequential Tier 1, and full direct gates.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -674,3 +683,30 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_ndhwc_gate_superpoint` artifacts were removed after metrics
 inspection.
+
+### Conv3D gate characterization and extraction
+
+Checkpoint `49c72b9` replaced the 176-line central inline fixture with a
+dedicated compact Conv3D/LeakyRelu/Reshape gate corpus. Separate positive cases
+fix both accepted semantic adapter ranks: rank-four NHWC-to-NCHW and rank-five
+NDHWC-to-NCDHW. They prove semantic Reshape remapping, Conv-side LeakyRelu
+adapter removal, gated Mul output canonicalization, and unchanged downstream
+Conv3D input. Six no-op boundaries cover Conv-adapter fan-out, LeakyRelu
+fan-out, gate-Reshape fan-out, a public Mul intermediate, invalid permutation,
+and invalid reshape rank. Focused characterization passed 8 tests.
+
+The complete 226-line matcher moved mechanically beside the rank-five sibling
+in `passes/ndhwc_gate_layout.py`. Its AST, including docstrings, matches
+`49c72b9`; the lowerer retains a signature-compatible wrapper and all six raw
+production positions until the separate indexed migration. Family ownership
+coverage includes both matchers.
+
+Focused Conv3D, indexed sibling, and ownership validation passed 55 tests. The
+complete sequential direct selection passed:
+
+```text
+1224 passed, 5 deselected, 2 warnings in 157.08s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently.
