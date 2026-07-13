@@ -3,9 +3,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains,
+)
+from onnx2tf.tflite_builder.passes.ndhwc_gate_layout import (
+    run_ndhwc_gate_layout_cleanup,
 )
 
 
@@ -190,3 +194,53 @@ def test_3d_gate_layout_rejects_unsafe_boundary(boundary: str) -> None:
     assert [operator.op_type for operator in model_ir.operators].count(
         "TRANSPOSE"
     ) == 5
+
+
+def test_3d_gate_layout_runner_reuses_one_index(monkeypatch) -> None:
+    model_ir = _model()
+    diagnostics: list[dict[str, object]] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_ndhwc_gate_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats["optimized_transpose_3d_leaky_logistic_muladd_ndhwc_chains"] == 1
+    assert refresh_count == 1
+    assert diagnostics[0]["code"] == "layout.ndhwc_leaky_logistic_gate"
+    assert diagnostics[0]["changed"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "base_fanout",
+        "gate_fanout",
+        "public_intermediate",
+        "permutation",
+        "reshape_rank",
+    ],
+)
+def test_3d_gate_layout_runner_rejects_before_snapshot(boundary: str) -> None:
+    model_ir = _model(boundary=boundary)
+    diagnostics: list[dict[str, object]] = []
+
+    stats = run_ndhwc_gate_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats["optimized_transpose_3d_leaky_logistic_muladd_ndhwc_chains"] == 0
+    assert diagnostics[0]["changed"] is False
+    assert diagnostics[0]["skipped_by_precondition"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 0

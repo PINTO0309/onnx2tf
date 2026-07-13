@@ -146,10 +146,15 @@ owned by `passes/ndhwc_gate_layout.py`. It maps a four-dimensional base through
 Reshape into NDHWC, removes independent skip/gate NCDHW adapters, and
 canonicalizes both inverse output bridges. Its dedicated compact corpus
 replaces a 177-line central inline fixture and fixes base fan-out, gate fan-out,
-public-intermediate, permutation, and reshape-rank rejection. The complete
-implementation is AST-identical to checkpoint `ee3d2fd`; the lowerer keeps a
-compatibility wrapper and all six production calls remain unchanged until the
-separate indexed migration checkpoint.
+public-intermediate, permutation, and reshape-rank rejection.
+`run_ndhwc_gate_layout_cleanup` registers stable `LAYOUT_PLAN` ID
+`layout.ndhwc_leaky_logistic_gate`. A model-only required-op scan and indexed
+two-Add/base/skip/gate guard reject incomplete graphs before snapshotting.
+Reshape, LeakyRelu, and Logistic input rewrites, both Add output rewrites,
+constant-shape remapping, structural removals, pruning, metadata, and layout
+reconciliation share one differential index and `LayoutState`. The lowerer
+retains a compatibility wrapper, and all six production calls supply session
+layout state and diagnostics to the runner.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

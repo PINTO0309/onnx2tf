@@ -142,6 +142,7 @@ from onnx2tf.tflite_builder.passes.dual_postconv_gate_layout import (
 )
 from onnx2tf.tflite_builder.passes.ndhwc_gate_layout import (
     _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains as _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains_pass,
+    run_ndhwc_gate_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -52617,7 +52618,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
+        run_ndhwc_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
         _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
@@ -52804,7 +52809,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
+        run_ndhwc_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
         _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
@@ -53000,7 +53009,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
+        run_ndhwc_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
         _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
@@ -53221,7 +53234,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
+        run_ndhwc_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
         _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
@@ -53358,7 +53375,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
+        run_ndhwc_gate_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
         _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
         _optimize_transpose_add_concat_const_suffix_nhwc_chains(model_ir)
@@ -53747,7 +53768,11 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
-    _optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains(model_ir)
+    run_ndhwc_gate_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _optimize_transpose_conv3d_leaky_mul_unsqueeze_ndhwc_chains(model_ir)
     _optimize_transpose_cost_volume_scatter_ndhwc_chains(model_ir)
     _optimize_fold_conv_mul_add_affine_chains(
