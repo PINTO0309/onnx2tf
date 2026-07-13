@@ -161,8 +161,19 @@ Mean statistics branches behind an NHWC→NCHW adapter, conditionally removing
 that adapter; the other reuses an existing NCHW→NHWC projection. Both preserve
 the strict centered-tensor fan-out guard, constant-axis remapping, rank-four
 contract, public boundaries, and tensor metadata. Their complete ASTs match
-checkpoint `d7866d2`; the lowerer keeps compatibility wrappers and the two
-original production positions pending indexed runner migration.
+checkpoint `d7866d2`; the lowerer keeps compatibility wrappers.
+
+`run_layernorm_statistics_layout_cleanup` registers
+`layout.layernorm_statistics_from_pre_transpose` and
+`layout.layernorm_statistics_from_existing_post` in `LAYOUT_PLAN`. Because the
+legacy rules were adjacent at both production positions, the two specs share
+one pass state, one differential graph index, one layout state, and one
+model-only capability scan per invocation. Indexed guards prove each complete
+statistics topology before snapshotting. All input rewrites, conditional
+Transpose removal, pruning, and metadata/layout reconciliation update shared
+state; duplicate consumer entries from a self-Mul are normalized by operator
+identity in the guard. The module has no whole-graph map construction or
+direct operator-list mutation.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and

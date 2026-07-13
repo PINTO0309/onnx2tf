@@ -3347,3 +3347,39 @@ The complete sequential direct regression selection passed:
 
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently.
+
+### Indexed LayerNorm statistics checkpoint
+
+The two extracted statistics rewrites now reuse one `ModelIRGraphIndex` and
+active `LayoutState`. Consumer lookup, three input rewrites, conditional
+leading-Transpose removal, pruning, metadata permutation, and layout
+reconciliation update shared state. The module contains no whole-graph map
+builder and no direct operator-list mutation.
+
+`run_layernorm_statistics_layout_cleanup` owns two ordered `LAYOUT_PLAN` specs
+with stable IDs `layout.layernorm_statistics_from_pre_transpose` and
+`layout.layernorm_statistics_from_existing_post`. Since the legacy rules were
+adjacent at both call sites, one grouped runner preserves their order while
+sharing one model-only preflight and one pass state. Indexed guards validate
+the full rank/permutation, Mean/SUB/self-Mul/Mean topology, axes, output
+protection, and centered-value fan-out before snapshots. Self-Mul duplicate
+consumer entries are compared by unique operator index, matching the legacy
+matcher semantics.
+
+Focused runner, characterization, ownership, architecture, and irrelevant
+graph efficiency validation passed 41 tests. Each successful entry form uses
+one initial index refresh and one snapshot total; centered fan-out rejects both
+specs with zero snapshots. Tier 1 `superpoint.onnx` passed sequential
+`-tb flatbuffer_direct -cotof` with `evaluation_pass=true`,
+`max_abs=1.6666017472743988e-06`, `rmse=1.6207873294228388e-07`, and cosine
+similarity `1.0`.
+
+The complete sequential direct regression selection passed:
+
+```text
+1163 passed, 5 deselected, 2 warnings in 149.49s
+```
+
+No dependency or TensorFlow path was added. Temporary
+`/tmp/onnx2tf_layernorm_layout_superpoint` artifacts were removed after metrics
+inspection.

@@ -3,10 +3,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains,
     _optimize_transpose_layernorm_stats_nhwc_propagation_chains,
+)
+from onnx2tf.tflite_builder.passes.layernorm_layout import (
+    run_layernorm_statistics_layout_cleanup,
 )
 
 
@@ -161,4 +165,62 @@ def test_layernorm_statistics_layout_rejects_centered_fanout(source: str) -> Non
     np.testing.assert_array_equal(
         model_ir.tensors["mean_axes"].data,
         np.asarray([1], dtype=np.int32),
+    )
+
+
+@pytest.mark.parametrize("source", ["pre", "post"])
+def test_layernorm_statistics_runner_reuses_one_index(
+    source: str,
+    monkeypatch,
+) -> None:
+    model_ir = _model(source=source, fanout=False)
+    diagnostics: list[dict[str, object]] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_layernorm_statistics_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    expected_key = (
+        "optimized_transpose_layernorm_stats_nhwc_propagation_chains"
+        if source == "pre"
+        else "optimized_layernorm_stats_via_existing_post_transpose_nhwc_chains"
+    )
+    assert stats[expected_key] == 1
+    assert refresh_count == 1
+    assert len(diagnostics) == 2
+    assert sum(bool(event["changed"]) for event in diagnostics) == 1
+    assert sum(
+        int(event["metrics"]["snapshot_count"])
+        for event in diagnostics
+    ) == 1
+
+
+@pytest.mark.parametrize("source", ["pre", "post"])
+def test_layernorm_statistics_runner_rejects_fanout_before_snapshot(
+    source: str,
+) -> None:
+    model_ir = _model(source=source, fanout=True)
+    diagnostics: list[dict[str, object]] = []
+
+    stats = run_layernorm_statistics_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert sum(stats.values()) == 0
+    assert len(diagnostics) == 2
+    assert all(event["changed"] is False for event in diagnostics)
+    assert all(
+        event["metrics"]["snapshot_count"] == 0
+        for event in diagnostics
     )

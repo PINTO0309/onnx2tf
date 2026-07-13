@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _invert_perm,
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
@@ -13,9 +11,22 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_inputs,
     _write_const_ints_to_tensor,
 )
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 
-def _optimize_transpose_layernorm_stats_nhwc_propagation_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_layernorm_stats_nhwc_propagation_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Re-propagate NHWC through LayerNorm-statistics branches after token-mixing residual paths.
 
@@ -38,6 +49,7 @@ def _optimize_transpose_layernorm_stats_nhwc_propagation_chains(model_ir: ModelI
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _map_mean_axes_to_nhwc(
         *,
@@ -61,8 +73,7 @@ def _optimize_transpose_layernorm_stats_nhwc_propagation_chains(model_ir: ModelI
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -198,6 +209,7 @@ def _optimize_transpose_layernorm_stats_nhwc_propagation_chains(model_ir: ModelI
                 model_ir=model_ir,
                 op=mean1_op,
                 new_inputs=[pre_input_name, mean1_axes_name],
+                graph_index=graph_index,
             )
 
             new_sub_inputs = [
@@ -208,6 +220,7 @@ def _optimize_transpose_layernorm_stats_nhwc_propagation_chains(model_ir: ModelI
                 model_ir=model_ir,
                 op=sub_op,
                 new_inputs=new_sub_inputs,
+                graph_index=graph_index,
             )
 
             _write_const_ints_to_tensor(mean2_axes_tensor, [int(v) for v in mapped_axes2])
@@ -215,6 +228,7 @@ def _optimize_transpose_layernorm_stats_nhwc_propagation_chains(model_ir: ModelI
                 model_ir=model_ir,
                 op=mean2_op,
                 new_inputs=[sq_out_name, mean2_axes_name],
+                graph_index=graph_index,
             )
 
             for tensor_name in [
@@ -232,7 +246,7 @@ def _optimize_transpose_layernorm_stats_nhwc_propagation_chains(model_ir: ModelI
                 int(v) for v in pre_users if int(v) not in {int(mean1_idx), int(sub_idx)}
             ]
             if len(pre_remaining_users) == 0:
-                del model_ir.operators[int(pre_idx)]
+                graph_index.remove_operator(int(pre_idx))
 
             rewritten += 1
             changed = True
@@ -241,10 +255,17 @@ def _optimize_transpose_layernorm_stats_nhwc_propagation_chains(model_ir: ModelI
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_layernorm_stats_nhwc_propagation_chains": int(rewritten)}
 
-def _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Re-propagate NHWC through LayerNorm statistics when an NCHW tensor already has
     an existing post-transpose (NCHW->NHWC) projection.
@@ -264,6 +285,7 @@ def _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains(model_ir: 
     rewritten = 0
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     axis_map_nchw_to_nhwc = _invert_perm(perm_nchw_to_nhwc)
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     if axis_map_nchw_to_nhwc is None:
         return {"optimized_layernorm_stats_via_existing_post_transpose_nhwc_chains": 0}
 
@@ -289,7 +311,7 @@ def _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains(model_ir: 
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for post_idx, post_op in enumerate(model_ir.operators):
@@ -421,12 +443,14 @@ def _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains(model_ir: 
                 model_ir=model_ir,
                 op=mean1_op,
                 new_inputs=[x_nhwc_name, mean1_axes_name],
+                graph_index=graph_index,
             )
             _write_const_ints_to_tensor(mean2_axes_tensor, [int(v) for v in mapped_axes2])
             _set_operator_inputs(
                 model_ir=model_ir,
                 op=mean2_op,
                 new_inputs=[sq_out_name, mean2_axes_name],
+                graph_index=graph_index,
             )
 
             new_sub_inputs = [
@@ -437,6 +461,7 @@ def _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains(model_ir: 
                 model_ir=model_ir,
                 op=sub_op,
                 new_inputs=new_sub_inputs,
+                graph_index=graph_index,
             )
 
             for tensor_name in [
@@ -457,5 +482,218 @@ def _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains(model_ir: 
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_layernorm_stats_via_existing_post_transpose_nhwc_chains": int(rewritten)}
+
+
+def _has_layernorm_statistics_candidate(
+    pass_state: ModelIRPassState,
+    *,
+    via_existing_post: bool,
+) -> bool:
+    model_ir = pass_state.model_ir
+    model_outputs = {str(name) for name in model_ir.outputs}
+    expected_perm = [0, 2, 3, 1] if via_existing_post else [0, 3, 1, 2]
+
+    for transpose_idx, transpose_op in enumerate(model_ir.operators):
+        if (
+            str(transpose_op.op_type) != "TRANSPOSE"
+            or len(transpose_op.inputs) < 2
+            or len(transpose_op.outputs) != 1
+            or _read_transpose_perm(model_ir, transpose_op) != expected_perm
+        ):
+            continue
+        x_nchw_name = str(
+            transpose_op.inputs[0]
+            if via_existing_post
+            else transpose_op.outputs[0]
+        )
+        x_nhwc_name = str(
+            transpose_op.outputs[0]
+            if via_existing_post
+            else transpose_op.inputs[0]
+        )
+        protected_name = x_nchw_name
+        if protected_name in model_outputs:
+            continue
+        rank_tensor = model_ir.tensors.get(
+            x_nchw_name if via_existing_post else x_nhwc_name
+        )
+        rank = (
+            len(rank_tensor.shape)
+            if rank_tensor is not None and rank_tensor.shape is not None
+            else 4
+        )
+        if rank != 4:
+            continue
+
+        x_users = pass_state.graph_index.consumer_indices(x_nchw_name)
+        mean1_idx: Optional[int] = None
+        sub_idx: Optional[int] = None
+        for user_idx in x_users:
+            if via_existing_post and int(user_idx) == int(transpose_idx):
+                continue
+            user_op = model_ir.operators[int(user_idx)]
+            if (
+                mean1_idx is None
+                and str(user_op.op_type) == "MEAN"
+                and len(user_op.inputs) >= 2
+                and len(user_op.outputs) == 1
+                and str(user_op.inputs[0]) == x_nchw_name
+                and bool(user_op.options.get("keepDims", False))
+            ):
+                mean1_idx = int(user_idx)
+                continue
+            if (
+                sub_idx is None
+                and str(user_op.op_type) == "SUB"
+                and len(user_op.inputs) == 2
+                and len(user_op.outputs) == 1
+                and x_nchw_name in {str(name) for name in user_op.inputs}
+            ):
+                sub_idx = int(user_idx)
+        if mean1_idx is None or sub_idx is None:
+            continue
+
+        mean1_op = model_ir.operators[mean1_idx]
+        sub_op = model_ir.operators[sub_idx]
+        mean1_output_name = str(mean1_op.outputs[0])
+        if (
+            mean1_output_name in model_outputs
+            or mean1_output_name not in {str(name) for name in sub_op.inputs}
+            or not _valid_rank_axes(model_ir, str(mean1_op.inputs[1]), rank)
+        ):
+            continue
+        sub_output_name = str(sub_op.outputs[0])
+        if sub_output_name in model_outputs:
+            continue
+        sub_users = sorted(
+            set(pass_state.graph_index.consumer_indices(sub_output_name))
+        )
+        square_users = [
+            int(user_idx)
+            for user_idx in sub_users
+            if (
+                str(model_ir.operators[int(user_idx)].op_type) == "MUL"
+                and len(model_ir.operators[int(user_idx)].inputs) == 2
+                and len(model_ir.operators[int(user_idx)].outputs) == 1
+                and [str(name) for name in model_ir.operators[int(user_idx)].inputs]
+                == [sub_output_name, sub_output_name]
+            )
+        ]
+        if len(square_users) != 1 or len(sub_users) != 1:
+            continue
+        square_op = model_ir.operators[square_users[0]]
+        square_output_name = str(square_op.outputs[0])
+        if square_output_name in model_outputs:
+            continue
+        for mean2_idx in pass_state.graph_index.consumer_indices(
+            square_output_name
+        ):
+            mean2_op = model_ir.operators[int(mean2_idx)]
+            if (
+                str(mean2_op.op_type) == "MEAN"
+                and len(mean2_op.inputs) >= 2
+                and len(mean2_op.outputs) == 1
+                and str(mean2_op.inputs[0]) == square_output_name
+                and bool(mean2_op.options.get("keepDims", False))
+                and str(mean2_op.outputs[0]) not in model_outputs
+                and _valid_rank_axes(model_ir, str(mean2_op.inputs[1]), rank)
+            ):
+                return True
+    return False
+
+
+def _valid_rank_axes(model_ir: ModelIR, tensor_name: str, rank: int) -> bool:
+    axes = _read_const_ints_from_tensor(model_ir.tensors.get(tensor_name))
+    if axes is None or not axes:
+        return False
+    normalized = [int(axis) + rank if int(axis) < 0 else int(axis) for axis in axes]
+    return all(0 <= axis < rank for axis in normalized)
+
+
+def run_layernorm_statistics_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Propagate NHWC through guarded LayerNorm statistics branches."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"TRANSPOSE", "MEAN", "SUB", "MUL"}
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            required.discard(str(operator.op_type))
+            if not required:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _run_pre(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_layernorm_stats_nhwc_propagation_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_transpose_layernorm_stats_nhwc_propagation_chains",
+                    0,
+                )
+            ),
+        }
+
+    def _run_post(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_layernorm_stats_via_existing_post_transpose_nhwc_chains",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.layernorm_statistics_from_pre_transpose",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_pre,
+                precondition=lambda state: _has_layernorm_statistics_candidate(
+                    state,
+                    via_existing_post=False,
+                ),
+                priority=10,
+                transactional=True,
+            ),
+            PassSpec(
+                pass_id="layout.layernorm_statistics_from_existing_post",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_post,
+                precondition=lambda state: _has_layernorm_statistics_candidate(
+                    state,
+                    via_existing_post=True,
+                ),
+                priority=20,
+                transactional=True,
+            ),
+        ],
+        layout_state=layout_state,
+        default_details={
+            "optimized_transpose_layernorm_stats_nhwc_propagation_chains": 0,
+            "optimized_layernorm_stats_via_existing_post_transpose_nhwc_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}

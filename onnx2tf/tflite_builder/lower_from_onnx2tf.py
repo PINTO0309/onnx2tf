@@ -111,6 +111,7 @@ from onnx2tf.tflite_builder.passes.mean_layout import (
 from onnx2tf.tflite_builder.passes.layernorm_layout import (
     _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains as _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains_pass,
     _optimize_transpose_layernorm_stats_nhwc_propagation_chains as _optimize_transpose_layernorm_stats_nhwc_propagation_chains_pass,
+    run_layernorm_statistics_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -57054,8 +57055,11 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_layernorm_stats_nhwc_propagation_chains(model_ir)
-        _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains(model_ir)
+        run_layernorm_statistics_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_unary_mean_terminal_nhwc_chains(model_ir)
         _optimize_transpose_se_conv_mul_prepost_nhwc_chains(model_ir)
         _optimize_transpose_se_fc_mul_prepost_nhwc_chains(model_ir)
@@ -58141,8 +58145,11 @@ def lower_onnx_to_ir(
     )
     _optimize_transpose_axis3_const_concat_bridge_nhwc_chains(model_ir)
     _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains(model_ir)
-    _optimize_transpose_layernorm_stats_nhwc_propagation_chains(model_ir)
-    _optimize_layernorm_stats_via_existing_post_transpose_nhwc_chains(model_ir)
+    run_layernorm_statistics_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_layout_transpose_cleanup(
         model_ir,
         layout_state=session.layout_state,
