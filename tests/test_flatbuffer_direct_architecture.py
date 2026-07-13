@@ -76,6 +76,7 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_emitters.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_errors.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_support.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_artifact_exporters.py",
 ]
 
 PYTORCH_PURE_UTILITY_FILES = DEPENDENCY_SCOPED_FILES[:-2]
@@ -3521,3 +3522,46 @@ def test_native_pytorch_stage_codegen_has_single_owner() -> None:
     assert "def _fold_single_use_static_reshape_chains(" not in exporter_source
     assert "def _build_named_encoder_methods(" not in exporter_source
     assert "import torch" not in stage_source
+
+
+def test_torchscript_artifact_export_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    artifact_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_artifact_exporters.py"
+    ).read_text(encoding="utf-8")
+    support_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_export_support.py"
+    ).read_text(encoding="utf-8")
+
+    assert "def export_torchscript_from_generated_package(" in artifact_source
+    assert (
+        "def export_torchscript_from_generated_package("
+        not in exporter_source
+    )
+    assert "export_torchscript_from_generated_package," in exporter_source
+    for helper_name in (
+        "_metadata_has_dynamic_public_inputs",
+        "_generated_package_non_native_skip_reason",
+        "_generated_package_torch_export_skip_reason",
+        "_run_generated_package_export_child",
+    ):
+        assert f"def {helper_name}(" in support_source
+        assert f"def {helper_name}(" not in exporter_source
+        assert f"{helper_name}," in exporter_source
+
+    for source in (artifact_source, support_source):
+        top_level_imports = {
+            alias.name
+            for node in ast.parse(source).body
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        assert "torch" not in top_level_imports

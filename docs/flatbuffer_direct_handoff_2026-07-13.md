@@ -182,9 +182,24 @@ Ruff after extraction was removed. Four reshape-chain cases and 250
 deterministic forward bodies match the pre-extraction implementation exactly.
 Direct stage and architecture validation passes 65 tests; syntax, Ruff, and
 diff checks pass. No model conversion or inference was run. Resume by
-separating artifact exporters only where metadata and child-process
-dependencies can be made explicit; keep the large raw-source canonicalizer as
-a later, separately characterized boundary.
+separating the remaining artifact exporters only where metadata and child-
+process dependencies can be made explicit; keep the large raw-source
+canonicalizer as a later, separately characterized boundary.
+
+TorchScript export now lives in `pytorch_artifact_exporters.py`, while shared
+artifact metadata, dynamic-input policy, native/torch.export skip policy, and
+the one-at-a-time child runner live in `pytorch_export_support.py`. The exporter
+retains imported public/internal names, so call sites and API shape are
+unchanged. The five shared helpers are AST-identical to the old implementations;
+the TorchScript body is identical after its local Torch availability guard.
+Support-module import no longer loads Torch eagerly, and its image resize path
+imports Torch only when requested. Direct tests prove legacy runtime-wrapper
+detection, dynamic shape-signature handling, and non-native TorchScript skip
+metadata without spawning a child. Artifact and architecture validation passes
+62 tests; syntax, Ruff, and diff checks pass. No model conversion or inference
+was run. Resume with Dynamo ONNX export by keeping ONNX sanitization and model-
+source rewrite hooks explicit; do not fold the large ExportedProgram path into
+the same checkpoint.
 
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/

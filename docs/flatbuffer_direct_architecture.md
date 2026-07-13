@@ -1927,6 +1927,19 @@ the nested folder is no longer exporter-owned. Differential checks cover 250
 deterministic forward bodies and representative literal, inferred, fan-out, and
 multi-step Reshape chains with exact old/new return equality.
 
+TorchScript package export now has a focused artifact owner in
+`pytorch_artifact_exporters.py`. Public arguments, artifact naming, trace-then-
+script fallback, timeout handling, metadata schema, skip behavior, error
+contract, and return path are unchanged; `pytorch_exporter.py` re-exports the
+imported function name for compatibility. Shared example-input metadata,
+dynamic-boundary detection, native-package eligibility, torch.export-specific
+skip policy, and sequential child-process execution live in
+`pytorch_export_support.py` for reuse by later Dynamo ONNX and ExportedProgram
+separation. That support module no longer imports Torch at module load time;
+only image resize and requested artifact execution import it locally. The five
+moved helpers are AST-identical to their previous exporter implementations, and
+the TorchScript body is identical after its lazy Torch availability guard.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
