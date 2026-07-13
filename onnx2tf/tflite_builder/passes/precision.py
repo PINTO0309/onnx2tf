@@ -5,8 +5,9 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
     _prune_unused_tensors,
 )
 
@@ -21,6 +22,9 @@ from onnx2tf.tflite_builder.ir import (
 
 def _rewrite_constant_divisors_to_multiplicative_reciprocals(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     integer_output_dtypes = {
         "INT8",
@@ -34,10 +38,7 @@ def _rewrite_constant_divisors_to_multiplicative_reciprocals(
     }
     changed_count = 0
     existing_tensor_names = set(str(name) for name in model_ir.tensors.keys())
-    consumer_index: Dict[str, List[OperatorIR]] = {}
-    for candidate_op in model_ir.operators:
-        for input_name in candidate_op.inputs:
-            consumer_index.setdefault(str(input_name), []).append(candidate_op)
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _unique_tensor_name(base_name: str) -> str:
         candidate = str(base_name)
@@ -48,13 +49,15 @@ def _rewrite_constant_divisors_to_multiplicative_reciprocals(
         existing_tensor_names.add(candidate)
         return candidate
 
-    rewritten_ops: List[OperatorIR] = []
-    for op in model_ir.operators:
-        if str(op.op_type) != "DIV" or len(op.inputs) != 2 or len(op.outputs) != 1:
-            rewritten_ops.append(op)
+    div_ops = [
+        model_ir.operators[int(index)]
+        for index in graph_index.operator_indices("DIV")
+    ]
+    for op in div_ops:
+        op_index = graph_index.operator_index(op)
+        if op_index is None or len(op.inputs) != 2 or len(op.outputs) != 1:
             continue
         if bool(op.options.get("preserveDivisionForOnnxRequantization", False)):
-            rewritten_ops.append(op)
             continue
 
         lhs_name = str(op.inputs[0])
@@ -68,20 +71,17 @@ def _rewrite_constant_divisors_to_multiplicative_reciprocals(
             or not isinstance(rhs_tensor.data, np.ndarray)
             or output_tensor is None
         ):
-            rewritten_ops.append(op)
             continue
 
         output_dtype = str(output_tensor.dtype).upper()
         if output_dtype in integer_output_dtypes:
-            rewritten_ops.append(op)
             continue
-        direct_consumers = consumer_index.get(output_name, [])
+        direct_consumers = graph_index.consumers_of(output_name)
         if any(
             str(consumer.op_type) == "CAST"
             and str(consumer.options.get("outDataType", "")).upper() in integer_output_dtypes
             for consumer in direct_consumers
         ):
-            rewritten_ops.append(op)
             continue
 
         calc_dtype = "FLOAT16" if output_dtype == "FLOAT16" else "FLOAT32"
@@ -100,6 +100,7 @@ def _rewrite_constant_divisors_to_multiplicative_reciprocals(
         )
 
         mul_lhs_name = lhs_name
+        replacement_ops: List[OperatorIR] = []
         lhs_dtype = str(lhs_tensor.dtype).upper() if lhs_tensor is not None else "FLOAT32"
         if lhs_dtype != calc_dtype:
             lhs_shape = (
@@ -123,7 +124,7 @@ def _rewrite_constant_divisors_to_multiplicative_reciprocals(
                     lhs_tensor.logical_layout if lhs_tensor is not None else output_tensor.logical_layout
                 ),
             )
-            rewritten_ops.append(
+            replacement_ops.append(
                 OperatorIR(
                     op_type="CAST",
                     inputs=[lhs_name],
@@ -152,7 +153,7 @@ def _rewrite_constant_divisors_to_multiplicative_reciprocals(
                 logical_layout=normalize_logical_layout(output_tensor.logical_layout),
             )
 
-        rewritten_ops.append(
+        replacement_ops.append(
             OperatorIR(
                 op_type="MUL",
                 inputs=[mul_lhs_name, reciprocal_name],
@@ -162,7 +163,7 @@ def _rewrite_constant_divisors_to_multiplicative_reciprocals(
         )
 
         if mul_out_name != output_name:
-            rewritten_ops.append(
+            replacement_ops.append(
                 OperatorIR(
                     op_type="CAST",
                     inputs=[mul_out_name],
@@ -173,10 +174,19 @@ def _rewrite_constant_divisors_to_multiplicative_reciprocals(
                     },
                 )
             )
+        current_index = graph_index.operator_index(op)
+        if current_index is None:
+            continue
+        graph_index.remove_operator(int(current_index))
+        for offset, replacement_op in enumerate(replacement_ops):
+            graph_index.insert_operator(
+                int(current_index) + int(offset),
+                replacement_op,
+            )
         changed_count += 1
 
-    if changed_count > 0:
-        model_ir.operators = rewritten_ops
+    if changed_count > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {
         "rewritten_constant_div_to_mul": int(changed_count),
     }
@@ -184,6 +194,9 @@ def _rewrite_constant_divisors_to_multiplicative_reciprocals(
 
 def _restore_precision_sensitive_reciprocal_divisions(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     integer_output_dtypes = {
         "INT8",
@@ -208,7 +221,7 @@ def _restore_precision_sensitive_reciprocal_divisions(
         "MUL",
         "DIV",
     }
-    consumer_index = _build_tensor_consumer_map(model_ir)
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _is_constant_float_tensor(tensor_name: str) -> bool:
         tensor = model_ir.tensors.get(str(tensor_name), None)
@@ -228,7 +241,9 @@ def _restore_precision_sensitive_reciprocal_divisions(
             visited.add(state)
             if int(depth) >= int(max_depth):
                 continue
-            for consumer_idx in consumer_index.get(str(current_tensor_name), []):
+            for consumer_idx in graph_index.consumer_indices(
+                str(current_tensor_name)
+            ):
                 consumer_op = model_ir.operators[int(consumer_idx)]
                 consumer_type = str(consumer_op.op_type)
                 if consumer_type == "CAST":
@@ -257,8 +272,13 @@ def _restore_precision_sensitive_reciprocal_divisions(
         return False
 
     restored = 0
-    for op in model_ir.operators:
-        if str(op.op_type) != "MUL" or len(op.inputs) != 2 or len(op.outputs) != 1:
+    mul_ops = [
+        model_ir.operators[int(index)]
+        for index in graph_index.operator_indices("MUL")
+    ]
+    for op in mul_ops:
+        op_index = graph_index.operator_index(op)
+        if op_index is None or len(op.inputs) != 2 or len(op.outputs) != 1:
             continue
         output_name = str(op.outputs[0])
         if output_name in {str(v) for v in list(model_ir.outputs)}:
@@ -312,13 +332,18 @@ def _restore_precision_sensitive_reciprocal_divisions(
             logical_layout=normalize_logical_layout(reciprocal_tensor.logical_layout),
         )
         data_input_index = 1 - int(reciprocal_input_index)
-        op.op_type = "DIV"
-        op.inputs = [str(op.inputs[int(data_input_index)]), divisor_name]
+        graph_index.replace_operator_inputs(
+            int(op_index),
+            [str(op.inputs[int(data_input_index)]), divisor_name],
+        )
+        graph_index.replace_operator_type(int(op_index), "DIV")
         op.options = {"fusedActivationFunction": "NONE"}
         restored += 1
 
     if restored > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {
         "restored_precision_sensitive_reciprocal_divisions": int(restored),
     }

@@ -202,6 +202,10 @@ def test_model_ir_index_incremental_input_output_mutation_matches_refresh() -> N
     assert index.consumer_indices("y") == []
     assert index.producer("z") is None
     assert index.producer("w") is model_ir.operators[0]
+    index.replace_operator_type(0, "DIV")
+    assert index.operator_indices("ADD") == []
+    assert index.operator_indices("DIV") == [0]
+    assert index.operator_indices_for_types({"ADD", "DIV"}) == [0]
     refreshed = ModelIRGraphIndex(model_ir)
     assert index.producers == refreshed.producers
     assert index.consumers == refreshed.consumers

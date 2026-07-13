@@ -232,6 +232,17 @@ def test_constant_input_fold_rewrites_have_single_owner() -> None:
     assert function_names.isdisjoint(_functions(lowering_path))
 
 
+def test_precision_rewrites_use_differential_graph_index() -> None:
+    precision_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "precision.py"
+    )
+    source = precision_path.read_text(encoding="utf-8")
+    assert "_build_tensor_consumer_map" not in source
+    assert "model_ir.operators =" not in source
+    assert "op.op_type =" not in source
+    assert "op.inputs =" not in source
+
+
 def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

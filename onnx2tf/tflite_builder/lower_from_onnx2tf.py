@@ -52425,13 +52425,19 @@ def lower_onnx_to_ir(
         _topologically_sort_operators(fallback_ir)
         return _finalize_model_ir(fallback_ir)
 
-    _rewrite_constant_divisors_to_multiplicative_reciprocals(model_ir)
+    _rewrite_constant_divisors_to_multiplicative_reciprocals(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     run_consecutive_mul_constants_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _restore_precision_sensitive_reciprocal_divisions(model_ir)
+    _restore_precision_sensitive_reciprocal_divisions(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _set_post_progress_desc("topological sort")
     _topologically_sort_operators(model_ir)
     if apply_safe_transpose_reduction_lite_on_no_layout_opt:

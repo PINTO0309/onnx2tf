@@ -1494,6 +1494,17 @@ pruning, and contain no direct operator-list deletion. Float32 and float16
 artifact preparation builds one index per cloned artifact and shares it across
 the consecutive ScatterND and binary folds.
 
+Late precision conversion in `passes/precision.py` is differential as well.
+Constant floating DIV roots are captured from one operator-type index and each
+eligible DIV is replaced in graph order by an optional Cast, reciprocal Mul,
+and optional output Cast using indexed remove/insert operations. Precision-
+sensitive reciprocal Mul restoration traverses indexed consumers, updates its
+inputs, and changes MUL to DIV through `ModelIRGraphIndex.replace_operator_type`.
+That primitive updates only the operator-type dispatch index while leaving
+producer/consumer edges intact. Neither precision family rebuilds consumer
+maps or replaces the complete operator list; the main lowerer path also keeps
+the session `LayoutState` synchronized with materialized and pruned constants.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

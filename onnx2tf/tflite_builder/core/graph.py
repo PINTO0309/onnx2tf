@@ -357,6 +357,37 @@ class ModelIRGraphIndex:
             producers.append(index)
             self._set_producer_indices(name, producers)
 
+    def replace_operator_type(
+        self,
+        operator_index: int,
+        new_op_type: str,
+    ) -> None:
+        """Mutate one operator type while maintaining type-index dispatch."""
+
+        index = int(operator_index)
+        op = self.model_ir.operators[index]
+        old_op_type = str(op.op_type)
+        normalized_new_op_type = str(new_op_type)
+        if old_op_type == normalized_new_op_type:
+            return
+        remaining = [
+            value
+            for value in self._operator_indices_by_type.get(old_op_type, [])
+            if int(value) != index
+        ]
+        if remaining:
+            self._operator_indices_by_type[old_op_type] = remaining
+        else:
+            self._operator_indices_by_type.pop(old_op_type, None)
+        op.op_type = normalized_new_op_type
+        new_indices = list(
+            self._operator_indices_by_type.get(normalized_new_op_type, [])
+        )
+        new_indices.append(index)
+        self._operator_indices_by_type[normalized_new_op_type] = sorted(
+            new_indices
+        )
+
     def insert_operator(self, operator_index: int, op: OperatorIR) -> None:
         """Insert an operator while shifting existing index references once."""
 

@@ -403,6 +403,21 @@ local adapter, and finishes with a consistent layout state. An architecture
 gate now prevents map builders, direct insert/delete, and routine refresh from
 returning to `attention_layout.py`. No model conversion or inference was run.
 
+Late constant-DIV precision handling now uses a differential graph index.
+Forward rewriting captures the initial indexed DIV objects, evaluates direct
+integer-Cast consumers from that index, and replaces each eligible operator in
+place with the same ordered optional-Cast/Mul/optional-Cast sequence. It no
+longer constructs an operator-object consumer map or replaces the complete
+operator list. Precision-sensitive restoration enumerates indexed MUL roots,
+traverses indexed affine/shape consumers, rewires the reciprocal input, and
+changes MUL to DIV through the new
+`ModelIRGraphIndex.replace_operator_type()` primitive. The main conversion path
+passes the session layout state; fallback clones retain the compatible
+single-argument calls. Three focused precision cases cover normal rewrite,
+integer-Cast preservation, and affine-chain restoration. Core and precision
+focused validation passes 29 tests with one initial index refresh in each
+instrumented case. No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its
