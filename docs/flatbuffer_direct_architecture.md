@@ -1898,6 +1898,14 @@ stored generated pipeline. The dispatcher itself remains statement-free and
 preserves recurrent, fused, Conv2D, TransposeConv2D, Conv3D,
 TransposeConv3D, FullyConnected, and PReLU priority exactly.
 
+The final binary compatibility adapter has also been removed. The stored native
+codegen source injects the exporter's existing broadcast target-shape resolver
+as one explicit callback argument at the binary call site, then invokes the
+Torch-free binary emitter directly. A structural gate verifies exactly one
+injected keyword and parses the transformed function source as Python. Thus the
+exporter no longer defines any of the extracted native unary, binary, transpose,
+shape-transform, Concat, or direct-module emitters.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

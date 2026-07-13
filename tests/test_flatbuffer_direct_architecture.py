@@ -3,6 +3,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from onnx2tf.tflite_builder._pytorch_exporter_native_codegen_pipeline import (
+    _NATIVE_CODEGEN_FUNCTION_SOURCE,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPENDENCY_SCOPED_ROOTS = [
@@ -3378,13 +3382,7 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
     )
     exporter_source = exporter_path.read_text(encoding="utf-8")
     emitter_source = emitter_path.read_text(encoding="utf-8")
-    exporter_tree = ast.parse(exporter_source)
     emitter_tree = ast.parse(emitter_source)
-    exporter_functions = {
-        node.name: node
-        for node in exporter_tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
     emitter_function_nodes = {
         node.name: node
         for node in emitter_tree.body
@@ -3394,7 +3392,7 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
 
     assert "_emit_native_unary_op_for_codegen" in emitter_functions
     assert "_emit_native_shape_transform_misc_op_for_codegen" in emitter_functions
-    assert "_emit_native_binary_op_for_codegen_impl" in emitter_functions
+    assert "_emit_native_binary_op_for_codegen" in emitter_functions
     assert "_emit_native_concat_op_for_codegen" in emitter_functions
     assert "_emit_native_recurrent_module_op_for_codegen" in emitter_functions
     assert (
@@ -3427,14 +3425,15 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
     assert "_DIRECT_CODEGEN_BINARY_FUNCTIONS:" in emitter_source
     assert "_DIRECT_CODEGEN_BINARY_FUNCTIONS:" not in exporter_source
     assert "_DIRECT_CODEGEN_BINARY_FUNCTIONS," in exporter_source
-    binary_wrapper_source = ast.get_source_segment(
-        exporter_source,
-        exporter_functions["_emit_native_binary_op_for_codegen"],
+    assert "def _emit_native_binary_op_for_codegen(" not in exporter_source
+    assert "_emit_native_binary_op_for_codegen," in exporter_source
+    assert (
+        _NATIVE_CODEGEN_FUNCTION_SOURCE.count(
+            "binary_output_target_shape_literal_fn="
+        )
+        == 1
     )
-    assert binary_wrapper_source is not None
-    assert "_emit_native_binary_op_for_codegen_impl(" in binary_wrapper_source
-    assert "_binary_output_target_shape_literal_for_codegen(" in binary_wrapper_source
-    assert "forward_lines.append(" not in binary_wrapper_source
+    ast.parse(_NATIVE_CODEGEN_FUNCTION_SOURCE)
     assert "def _emit_native_transpose_op_for_codegen(" not in exporter_source
     assert "_emit_native_transpose_op_for_codegen," in exporter_source
     assert "def _emit_native_concat_op_for_codegen(" not in exporter_source

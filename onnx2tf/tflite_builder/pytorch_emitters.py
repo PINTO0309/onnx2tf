@@ -1242,7 +1242,7 @@ def _emit_native_unary_op_for_codegen(
     return True
 
 
-def _emit_native_binary_op_for_codegen_impl(
+def _emit_native_binary_op_for_codegen(
     *,
     model_ir: ModelIR,
     op: OperatorIR,

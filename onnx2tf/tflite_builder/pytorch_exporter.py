@@ -61,7 +61,7 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
     _DIRECT_CODEGEN_BINARY_FUNCTIONS,
     _DIRECT_CODEGEN_MODULE_OP_TYPES,
     _DIRECT_CODEGEN_UNARY_EXPRESSIONS,
-    _emit_native_binary_op_for_codegen_impl,
+    _emit_native_binary_op_for_codegen,
     _emit_native_concat_op_for_codegen,
     _emit_native_direct_module_op_for_codegen,
     _emit_native_shape_transform_misc_op_for_codegen,
@@ -4653,76 +4653,6 @@ def _binary_output_target_shape_literal_for_codegen(
     return fallback_literal
 
 
-def _emit_native_binary_op_for_codegen(
-    *,
-    model_ir: ModelIR,
-    op: OperatorIR,
-    op_index: int,
-    outputs: Sequence[str],
-    output_vars: Sequence[str],
-    output_target_shape: str,
-    channel_first_tensor_expr_aliases: Dict[str, str],
-    runtime_imports: Set[str],
-    forward_lines: List[str],
-    runtime_shape_uncertain_tensors: Set[str],
-    tensor_dtype_name_fn: Callable[[str], Optional[str]],
-    binary_operand_expr_fn: Callable[[str, str], str],
-    scalar_literal_expr_fn: Callable[[str], Optional[str]],
-    can_emit_channel_first_binary_op_fn: Callable[[OperatorIR], bool],
-    channel_first_binary_input_expr_fn: Callable[[str, str], Optional[str]],
-    derived_local_var_name_fn: Callable[[str, str], str],
-    can_omit_materialized_channel_last_alias_fn: Callable[[str], bool],
-    target_shape_literal_fn: Callable[[str], str],
-    emit_maybe_aligned_expr_fn: Callable[..., str],
-    binary_runtime_shape_passthrough_operand_fn: Callable[[str, str], Optional[str]],
-    binary_requires_runtime_alignment_fn: Callable[[str, str, str], bool],
-    preferred_binary_alignment_anchor_fn: Callable[[str, str, str], Optional[str]],
-    activation_lines_fn: Callable[[str, str], List[str]],
-) -> bool:
-    return _emit_native_binary_op_for_codegen_impl(
-        model_ir=model_ir,
-        op=op,
-        op_index=op_index,
-        outputs=outputs,
-        output_vars=output_vars,
-        output_target_shape=output_target_shape,
-        channel_first_tensor_expr_aliases=channel_first_tensor_expr_aliases,
-        runtime_imports=runtime_imports,
-        forward_lines=forward_lines,
-        runtime_shape_uncertain_tensors=runtime_shape_uncertain_tensors,
-        tensor_dtype_name_fn=tensor_dtype_name_fn,
-        binary_operand_expr_fn=binary_operand_expr_fn,
-        scalar_literal_expr_fn=scalar_literal_expr_fn,
-        can_emit_channel_first_binary_op_fn=can_emit_channel_first_binary_op_fn,
-        channel_first_binary_input_expr_fn=channel_first_binary_input_expr_fn,
-        derived_local_var_name_fn=derived_local_var_name_fn,
-        can_omit_materialized_channel_last_alias_fn=(
-            can_omit_materialized_channel_last_alias_fn
-        ),
-        target_shape_literal_fn=target_shape_literal_fn,
-        emit_maybe_aligned_expr_fn=emit_maybe_aligned_expr_fn,
-        binary_runtime_shape_passthrough_operand_fn=(
-            binary_runtime_shape_passthrough_operand_fn
-        ),
-        binary_requires_runtime_alignment_fn=(
-            binary_requires_runtime_alignment_fn
-        ),
-        preferred_binary_alignment_anchor_fn=(
-            preferred_binary_alignment_anchor_fn
-        ),
-        activation_lines_fn=activation_lines_fn,
-        binary_output_target_shape_literal_fn=(
-            lambda *, lhs_name, rhs_name, output_name, fallback_literal: (
-                _binary_output_target_shape_literal_for_codegen(
-                    model_ir=model_ir,
-                    lhs_name=lhs_name,
-                    rhs_name=rhs_name,
-                    output_name=output_name,
-                    fallback_literal=fallback_literal,
-                )
-            )
-        ),
-    )
 
 
 def _shape_tensor_length_for_codegen(

@@ -153,6 +153,16 @@ rejection before attribute lookup. Emitter and architecture validation passes
 85 tests; syntax, Ruff, and diff checks pass. No model conversion or inference
 was run.
 
+The binary emitter compatibility wrapper is gone as well. The stored codegen
+function source now adds exactly one `binary_output_target_shape_literal_fn`
+keyword at its binary call, passing the existing exporter shape policy while
+calling the imported Torch-free emitter directly. Architecture validation
+checks the single insertion and parses the transformed source AST. Emitter and
+architecture validation remains 85 passing tests; syntax, Ruff, and diff checks
+pass. The exporter now defines none of the extracted native unary, binary,
+transpose, shape-transform, Concat, or direct-module emitters. No model
+conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

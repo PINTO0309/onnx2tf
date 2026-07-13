@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_emitters import (
-    _emit_native_binary_op_for_codegen_impl,
+    _emit_native_binary_op_for_codegen,
     _emit_native_concat_op_for_codegen,
     _emit_native_conv2d_module_op_for_codegen,
     _emit_native_conv3d_module_op_for_codegen,
@@ -320,7 +320,7 @@ def _emit_binary(
     uncertain_tensors: set[str] | None = None,
     preferred_anchor: str | None = None,
 ) -> bool:
-    return _emit_native_binary_op_for_codegen_impl(
+    return _emit_native_binary_op_for_codegen(
         model_ir=model_ir,
         op=op,
         op_index=7,
