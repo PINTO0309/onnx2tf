@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `78b0742` (`index postadd gate layout pass`)
+- Latest implementation checkpoint: `332612f` (`extract 3d gate layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `78b0742`
+  `332612f`
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -73,6 +73,12 @@ then characterized and mechanically extracted the seventh family.
      sibling with AST equivalence in `f961413`.
    - Integrated it as the second ordered spec over a shared complementary-gate
      prefix and removed all five raw calls in `78b0742`.
+9. Rank-five Leaky/Logistic gate layout
+   - Replaced the 177-line central inline fixture with a dedicated compact
+     success graph and five unsafe-boundary cases in `ee3d2fd`.
+   - Mechanically moved the complete matcher to
+     `passes/ndhwc_gate_layout.py` with AST equivalence in `332612f`. Indexed
+     mutation and the six production calls remain the next checkpoint.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -88,10 +94,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the adjacent
-  `_optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains` family: audit its
-  size, call positions, variants, and existing coverage before selecting
-  compact characterization boundaries.
+  The immediate next unit is the already extracted
+  `_optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains` family: migrate
+  it to shared graph/layout state, add a stable ordered runner, and replace all
+  six raw production calls.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -113,7 +119,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `78b0742`; after the documentation
+implementation working tree is clean at `332612f`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -125,10 +131,12 @@ checkpoints since the previous pause changed:
 - `onnx2tf/tflite_builder/passes/elementwise_gate_layout.py`
 - `onnx2tf/tflite_builder/passes/dual_postconv_gate_layout.py`
 - `onnx2tf/tflite_builder/passes/multi_branch_gate_layout.py`
+- `onnx2tf/tflite_builder/passes/ndhwc_gate_layout.py`
 - `onnx2tf/tflite_builder/passes/se_layout.py`
 - `tests/test_flatbuffer_direct_architecture.py`
 - `tests/test_flatbuffer_direct_elementwise_gate_layout.py`
 - `tests/test_flatbuffer_direct_dual_postconv_gate_layout.py`
+- `tests/test_flatbuffer_direct_3d_gate_layout.py`
 - `tests/test_flatbuffer_direct_osnet_gate_layout.py`
 - `tests/test_flatbuffer_direct_pass_efficiency.py`
 - `tests/test_flatbuffer_direct_se_layout.py`
@@ -198,6 +206,10 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 - Full direct selection after indexed postadd migration:
   `1205 passed, 5 deselected, 2 warnings in 154.34s`.
+- Dedicated rank-five 3D gate characterization: `6 passed`.
+- 3D extraction and ownership focus: `41 passed in 17.69s`.
+- Full direct selection after 3D mechanical extraction:
+  `1211 passed, 5 deselected, 2 warnings in 157.23s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -229,14 +241,15 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Audit the complete
-   `_optimize_transpose_3d_leaky_logistic_muladd_ndhwc_chains` implementation,
-   every production call, and any model-dependent fixture.
-3. Identify the smallest generic rank-five success graph and the critical
-   shared-input, fan-out, public-boundary, permutation, and reshape rejection
-   cases before moving code.
-4. Commit compact characterization separately, then mechanically extract with
-   AST-equivalence proof before indexed mutation.
+2. Audit every producer/consumer read, constant-shape mutation, metadata copy,
+   and structural removal in `passes/ndhwc_gate_layout.py`.
+3. Add optional graph/layout state parameters and an indexed guard covering
+   both Add outputs, the shared base/skip branches, gate exclusivity,
+   permutations, public boundaries, and the rank-five Reshape constant.
+4. Register a stable ordered `LAYOUT_PLAN` runner, replace all six raw calls,
+   and extend success/rejection instrumentation and efficiency expectations.
+5. Run focused tests, sequential Tier 1 `superpoint.onnx -cotof`, and the full
+   direct selection before committing and pushing.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -588,3 +601,30 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_postadd_superpoint` artifacts were removed after metrics
 inspection.
+
+### Rank-five 3D gate characterization and extraction
+
+Checkpoint `ee3d2fd` replaced the 177-line success fixture embedded in the
+central direct test module with a dedicated compact rank-five corpus. The
+positive graph proves base Reshape remapping, skip LeakyRelu and gate Logistic
+adapter removal, both Add output canonicalizations, and all five Transpose
+removals. Parameterized no-op coverage fixes shared-base fan-out, gate fan-out,
+a public Add intermediate, an invalid NDHWC-to-NCDHW permutation, and an
+invalid Reshape-constant rank. Focused characterization passed 6 tests while
+reducing the central test module by 177 lines.
+
+The complete 378-line matcher moved mechanically to
+`passes/ndhwc_gate_layout.py`. Its AST, including docstrings, matches
+`ee3d2fd`; the lowerer retains a signature-compatible wrapper and all six raw
+production positions until the separate indexed migration. An architecture
+test fixes single ownership.
+
+Focused characterization and ownership validation passed 41 tests. The
+complete sequential direct selection passed:
+
+```text
+1211 passed, 5 deselected, 2 warnings in 157.23s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently.
