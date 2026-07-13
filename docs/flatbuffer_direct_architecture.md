@@ -1544,6 +1544,14 @@ existing direct `-1` shape-constant repair. Complete operator-list rebuilding
 and direct input-slot assignment are forbidden by the ownership gate, and the
 two main production calls synchronize the session `LayoutState`.
 
+The same module owns fallback MatMul-flatten restoration. Placeholder
+`RESHAPE` candidates and their sole consumers come from one graph index; a
+proven rank-recovered `BATCH_MATMUL` is rewired differentially to the original
+source and the obsolete Reshape is removed by object identity. Tensor pruning
+is layout-aware. This removes another lowerer-wide consumer-map construction,
+complete operator-list filter, and direct MatMul input mutation while retaining
+the existing compatibility wrapper and call order.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

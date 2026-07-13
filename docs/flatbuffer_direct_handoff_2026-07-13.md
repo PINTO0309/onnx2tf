@@ -470,6 +470,17 @@ architecture validation passes 54 tests, including exact operator order,
 one initial index refresh, live type/object indices, and final layout
 consistency. No model conversion or inference was run.
 
+That focused module now also owns placeholder MatMul-flatten restoration. It
+indexes initial placeholder `RESHAPE` objects, obtains the exclusive
+`BATCH_MATMUL` consumer from the same index, rewires the recovered high-rank
+source through `replace_operator_inputs()`, and removes the obsolete Reshape
+differentially. Layout-aware tensor pruning replaces the former whole-graph
+consumer map and operator-list filter. The focused rank-recovery fixture proves
+one initial refresh, the surviving MatMul indices and inputs, removal of the
+flatten tensor, and final layout consistency. The main production call passes
+the session layout state; fallback relowering retains the self-indexing
+compatibility call. No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

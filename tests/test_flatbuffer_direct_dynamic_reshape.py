@@ -226,7 +226,7 @@ def test_batch_matmul_shape_inference_accepts_unbatched_rhs() -> None:
     assert output_signature == [-1, 56, 56, 384]
 
 
-def test_restores_placeholder_matmul_flatten_after_rank_recovery() -> None:
+def test_restores_placeholder_matmul_flatten_after_rank_recovery(monkeypatch) -> None:
     model_ir = ModelIR("placeholder_matmul_flatten")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y"]
@@ -281,12 +281,32 @@ def test_restores_placeholder_matmul_flatten_after_rank_recovery() -> None:
         ),
     ]
 
-    stats = _restore_placeholder_matmul_flattened_inputs(model_ir)
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _restore_placeholder_matmul_flattened_inputs(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
     _reconcile_static_tensor_shapes(model_ir)
 
     assert stats == {"restored_placeholder_matmul_flattened_inputs": 1}
+    assert refresh_count == 1
     assert [op.op_type for op in model_ir.operators] == ["BATCH_MATMUL"]
     assert model_ir.operators[0].inputs == ["x", "weights"]
+    assert graph_index.operator_indices("RESHAPE") == []
+    assert graph_index.operator_indices("BATCH_MATMUL") == [0]
+    assert layout_state.validate_against_model_ir(model_ir) == []
     assert model_ir.tensors["y"].shape == [1, 56, 56, 96]
     assert model_ir.tensors["y"].shape_signature == [-1, 56, 56, 96]
 

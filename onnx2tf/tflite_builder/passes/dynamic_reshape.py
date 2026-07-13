@@ -6,6 +6,10 @@ import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _is_fully_known_positive_shape,
+    _prune_unused_tensors,
+)
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
 
@@ -145,3 +149,83 @@ def rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
     return {
         "rewritten_dynamic_rank1_unsqueeze_reshape_shape_inputs": int(rewritten),
     }
+
+
+def restore_placeholder_matmul_flattened_inputs(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Remove fallback MatMul flattening after the original rank is recovered."""
+
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    candidate_ops = [
+        model_ir.operators[int(index)]
+        for index in graph_index.operator_indices("RESHAPE")
+    ]
+    restored = 0
+    for reshape_op in candidate_ops:
+        reshape_index = graph_index.operator_index(reshape_op)
+        if (
+            reshape_index is None
+            or not bool(
+                reshape_op.options.get(
+                    "onnxMatMulFlattenedPlaceholder",
+                    False,
+                )
+            )
+            or len(reshape_op.inputs) < 1
+            or len(reshape_op.outputs) != 1
+        ):
+            continue
+        source_name = str(reshape_op.inputs[0])
+        flattened_name = str(reshape_op.outputs[0])
+        source_tensor = model_ir.tensors.get(source_name)
+        if (
+            source_tensor is None
+            or len(source_tensor.shape) < 3
+            or not _is_fully_known_positive_shape(source_tensor.shape)
+        ):
+            continue
+        user_ops = graph_index.consumers_of(flattened_name)
+        if len(user_ops) != 1:
+            continue
+        matmul_op = user_ops[0]
+        matmul_index = graph_index.operator_index(matmul_op)
+        if (
+            matmul_index is None
+            or str(matmul_op.op_type) != "BATCH_MATMUL"
+            or len(matmul_op.inputs) != 2
+            or str(matmul_op.inputs[0]) != flattened_name
+            or bool(matmul_op.options.get("adjX", False))
+        ):
+            continue
+        rhs_tensor = model_ir.tensors.get(str(matmul_op.inputs[1]))
+        if (
+            rhs_tensor is None
+            or len(rhs_tensor.shape) != 2
+            or not _is_fully_known_positive_shape(rhs_tensor.shape)
+        ):
+            continue
+        rhs_k = (
+            int(rhs_tensor.shape[1])
+            if bool(matmul_op.options.get("adjY", False))
+            else int(rhs_tensor.shape[0])
+        )
+        if int(source_tensor.shape[-1]) != rhs_k:
+            continue
+
+        graph_index.replace_operator_inputs(
+            int(matmul_index),
+            [source_name, str(matmul_op.inputs[1])],
+        )
+        current_reshape_index = graph_index.operator_index(reshape_op)
+        if current_reshape_index is None:
+            continue
+        graph_index.remove_operator(int(current_reshape_index))
+        restored += 1
+
+    if restored > 0:
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+    return {"restored_placeholder_matmul_flattened_inputs": int(restored)}

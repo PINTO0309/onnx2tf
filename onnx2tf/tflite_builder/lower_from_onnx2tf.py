@@ -236,6 +236,7 @@ from onnx2tf.tflite_builder.passes.high_rank_matmul import (
     _compress_static_high_rank_batch_matmul as _compress_static_high_rank_batch_matmul_pass,
 )
 from onnx2tf.tflite_builder.passes.dynamic_reshape import (
+    restore_placeholder_matmul_flattened_inputs as _restore_placeholder_matmul_flattened_inputs_pass,
     rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs as _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs_pass,
 )
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
@@ -4286,76 +4287,15 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
 
 def _restore_placeholder_matmul_flattened_inputs(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    """Remove fallback MatMul flattening after the original rank is recovered."""
-
-    consumers: Dict[str, List[int]] = {}
-    for op_index, op in enumerate(model_ir.operators):
-        for input_name in op.inputs:
-            consumers.setdefault(str(input_name), []).append(int(op_index))
-
-    remove_indices: set[int] = set()
-    restored = 0
-    for reshape_index, reshape_op in enumerate(model_ir.operators):
-        if (
-            str(reshape_op.op_type) != "RESHAPE"
-            or not bool(
-                reshape_op.options.get(
-                    "onnxMatMulFlattenedPlaceholder",
-                    False,
-                )
-            )
-            or len(reshape_op.inputs) < 1
-            or len(reshape_op.outputs) != 1
-        ):
-            continue
-        source_name = str(reshape_op.inputs[0])
-        flattened_name = str(reshape_op.outputs[0])
-        source_tensor = model_ir.tensors.get(source_name)
-        if (
-            source_tensor is None
-            or len(source_tensor.shape) < 3
-            or not _is_fully_known_positive_shape(source_tensor.shape)
-        ):
-            continue
-        user_indices = consumers.get(flattened_name, [])
-        if len(user_indices) != 1:
-            continue
-        matmul_index = int(user_indices[0])
-        matmul_op = model_ir.operators[matmul_index]
-        if (
-            str(matmul_op.op_type) != "BATCH_MATMUL"
-            or len(matmul_op.inputs) != 2
-            or str(matmul_op.inputs[0]) != flattened_name
-            or bool(matmul_op.options.get("adjX", False))
-        ):
-            continue
-        rhs_tensor = model_ir.tensors.get(str(matmul_op.inputs[1]))
-        if (
-            rhs_tensor is None
-            or len(rhs_tensor.shape) != 2
-            or not _is_fully_known_positive_shape(rhs_tensor.shape)
-        ):
-            continue
-        rhs_k = (
-            int(rhs_tensor.shape[1])
-            if bool(matmul_op.options.get("adjY", False))
-            else int(rhs_tensor.shape[0])
-        )
-        if int(source_tensor.shape[-1]) != rhs_k:
-            continue
-        matmul_op.inputs[0] = source_name
-        remove_indices.add(int(reshape_index))
-        restored += 1
-
-    if restored > 0:
-        model_ir.operators = [
-            op
-            for op_index, op in enumerate(model_ir.operators)
-            if int(op_index) not in remove_indices
-        ]
-        _prune_unused_tensors(model_ir)
-    return {"restored_placeholder_matmul_flattened_inputs": int(restored)}
+    return _restore_placeholder_matmul_flattened_inputs_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_transpose_quant_dequant_bridges(model_ir: ModelIR) -> Dict[str, int]:
@@ -52399,7 +52339,10 @@ def lower_onnx_to_ir(
     _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(model_ir)
     _reconcile_static_tensor_shapes(model_ir)
     if int(
-        _restore_placeholder_matmul_flattened_inputs(model_ir).get(
+        _restore_placeholder_matmul_flattened_inputs(
+            model_ir,
+            layout_state=session.layout_state,
+        ).get(
             "restored_placeholder_matmul_flattened_inputs",
             0,
         )

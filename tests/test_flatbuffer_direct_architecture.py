@@ -292,11 +292,16 @@ def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:
         "rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs as "
         "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs_pass"
     ) in lowering_source
+    assert (
+        "restore_placeholder_matmul_flattened_inputs as "
+        "_restore_placeholder_matmul_flattened_inputs_pass"
+    ) in lowering_source
     assert "return _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs_pass(" in (
         lowering_source
     )
     assert "model_ir.operators =" not in pass_source
     assert "op.inputs[1] =" not in pass_source
+    assert "matmul_op.inputs[0] =" not in pass_source
     assert "ModelIRGraphIndex" in pass_source
 
 
