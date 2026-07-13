@@ -1767,6 +1767,13 @@ The subsequent Reshape target synchronization step is co-located with that
 rewrite and enumerates only indexed Reshape operators, while preserving its
 feature-last exclusion and constant dtype behavior.
 
+Channel-first exportability validation is now part of the same Torch-free
+layout owner. It enumerates only layout-sensitive op-family indices, reuses the
+normalizer's graph index for attention and Transpose-sandwich Softmax
+exceptions, and retains the existing recurrent, ScatterND, degenerate sequence,
+public-bridge, preserved-region, and safe rank-four island guards. The exporter
+contains only the ordered validation call and shared error type.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

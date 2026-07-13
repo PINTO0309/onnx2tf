@@ -93,9 +93,7 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _collect_kernel_weight_tensor_names,
     _should_emit_channel_last_space_to_depth,
     _should_emit_channel_last_depth_to_space,
-    _primary_data_input_name,
     _can_emit_direct_torch_reshape_shape,
-    _is_degenerate_sequence_like_rank4_or_rank5_tensor,
     _is_channel_last_factorized_reshape,
     _is_channel_last_factorized_rank3_sequence_reshape,
     _is_channel_last_factorized_rank3_sequence_reshape_by_shape,
@@ -156,16 +154,14 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _apply_feature_last_sequence_layouts,
     _collect_feature_last_sequence_tensor_names,
     _ensure_public_boundary_layout_bridges,
-    _is_attention_like_softmax_op,
-    _is_pytorch_channel_first_safe_rank4_island_op,
     _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island,
-    _is_transpose_sandwiched_last_axis_softmax_op,
     _propagate_pytorch_friendly_layouts,
     _restore_non_preserved_channel_first_layouts,
     _rewrite_filter_tensors_for_pytorch,
     _rewrite_layout_sensitive_ops,
     _shrink_preserved_channel_last_regions_for_pytorch,
     _synchronize_reshape_targets_with_output_tensors,
+    validate_channel_first_exportability,
 )
 from onnx2tf.tflite_builder.passes.pytorch_recurrent import (
     _can_direct_codegen_sequence_lstm_op,
@@ -10180,135 +10176,6 @@ def _align_public_boundary_shapes_to_onnx_contract(model_ir: ModelIR) -> None:
                 tensor.shape = [int(v) if int(v) > 0 else 1 for v in list(permuted_shape)]
         if rank in {3, 4, 5}:
             tensor.logical_layout = desired_layout
-
-
-
-
-def validate_channel_first_exportability(
-    model_ir: ModelIR,
-    preserve_channel_last_tensor_names: Set[str],
-    *,
-    graph_index: Optional[ModelIRGraphIndex] = None,
-) -> None:
-    layout_sensitive_ops = {
-        "AVERAGE_POOL_2D",
-        "CONCATENATION",
-        "CONV_2D",
-        "CONV_3D",
-        "CONV_3D_TRANSPOSE",
-        "DEPTHWISE_CONV_2D",
-        "DEPTH_TO_SPACE",
-        "GATHER",
-        "GATHER_ND",
-        "MAX_POOL_2D",
-        "MEAN",
-        "MIRROR_PAD",
-        "PAD",
-        "PADV2",
-        "RESIZE_BILINEAR",
-        "RESIZE_NEAREST_NEIGHBOR",
-        "SCATTER_ND",
-        "SLICE",
-        "SOFTMAX",
-        "SPACE_TO_DEPTH",
-        "SPLIT",
-        "STRIDED_SLICE",
-        "TRANSPOSE_CONV",
-        "UNPACK",
-    }
-    public_layout_bridge_tensor_names = set(
-        str(name)
-        for name in list(model_ir.metadata.get("public_layout_bridge_tensor_names", []))
-    )
-    problems: List[str] = []
-    softmax_graph_index = graph_index
-    for op in model_ir.operators:
-        op_type = str(op.op_type)
-        if op_type not in layout_sensitive_ops:
-            continue
-        related_tensor_names = [
-            str(v) for v in list(op.inputs) + list(op.outputs)
-        ]
-        related_lowered_names = [name.lower() for name in related_tensor_names]
-        recurrent_sequence_context = any(
-            token in name
-            for name in related_lowered_names
-            for token in ("_gru_", "_lstm_", "_rnn_")
-        )
-        tensor_names: List[str] = []
-        primary_name = _primary_data_input_name(op)
-        if primary_name is not None:
-            tensor_names.append(str(primary_name))
-        tensor_names.extend(str(v) for v in list(op.outputs))
-        for tensor_name in tensor_names:
-            tensor = model_ir.tensors.get(str(tensor_name), None)
-            if tensor is None:
-                continue
-            rank = len(list(tensor.shape))
-            if rank not in {3, 4, 5}:
-                continue
-            if str(tensor_name) in preserve_channel_last_tensor_names:
-                continue
-            if str(tensor_name) in public_layout_bridge_tensor_names:
-                continue
-            if recurrent_sequence_context and op_type in {"CONCATENATION", "SLICE", "STRIDED_SLICE", "SPLIT"}:
-                continue
-            layout = normalize_logical_layout(tensor.logical_layout)
-            if (
-                layout == LOGICAL_LAYOUT_UNKNOWN
-                and op_type == "SCATTER_ND"
-                and primary_name is not None
-                and str(tensor_name) == str(primary_name)
-            ):
-                continue
-            if (
-                layout == LOGICAL_LAYOUT_UNKNOWN
-                and op_type == "SCATTER_ND"
-                and str(tensor_name) in {str(v) for v in list(op.outputs)}
-                and str(tensor_name) not in {str(v) for v in list(model_ir.outputs)}
-            ):
-                continue
-            if (
-                layout == LOGICAL_LAYOUT_UNKNOWN
-                and rank in {3, 5}
-                and op_type in {"CONCATENATION", "GATHER", "GATHER_ND", "SLICE", "SPLIT", "STRIDED_SLICE"}
-            ):
-                continue
-            if (
-                layout == LOGICAL_LAYOUT_UNKNOWN
-                and rank in {4, 5}
-                and op_type in {"GATHER", "GATHER_ND", "SLICE", "SPLIT", "STRIDED_SLICE"}
-                and _is_degenerate_sequence_like_rank4_or_rank5_tensor(tensor)
-            ):
-                continue
-            if layout == LOGICAL_LAYOUT_UNKNOWN and op_type == "SOFTMAX":
-                if softmax_graph_index is None:
-                    softmax_graph_index = ModelIRGraphIndex(model_ir)
-                if _is_attention_like_softmax_op(
-                    model_ir,
-                    op,
-                    graph_index=softmax_graph_index,
-                ) or _is_transpose_sandwiched_last_axis_softmax_op(
-                    model_ir,
-                    op,
-                    graph_index=softmax_graph_index,
-                ):
-                    continue
-            if (
-                rank == 4
-                and is_channel_last_logical_layout(layout)
-                and _is_pytorch_channel_first_safe_rank4_island_op(model_ir, op)
-            ):
-                continue
-            if layout == LOGICAL_LAYOUT_UNKNOWN or is_channel_last_logical_layout(layout):
-                problems.append(
-                    f"op_type={op_type} tensor={tensor_name} logical_layout={layout}"
-                )
-    if len(problems) > 0:
-        raise ModelIRPyTorchExportError(
-            "Channel-first normalization failed: semantic layout annotations are incomplete. "
-            f"problems={sorted(set(problems))}"
-        )
 
 
 

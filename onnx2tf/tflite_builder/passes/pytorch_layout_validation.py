@@ -23,6 +23,7 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _clone_tensor,
     _has_channel_last_factorized_rank3_sequence_consumer,
     _infer_concat_peer_layout,
+    _is_degenerate_sequence_like_rank4_or_rank5_tensor,
     _is_channel_last_factorized_reshape,
     _is_channel_last_factorized_rank3_sequence_reshape,
     _perm_cf_to_cl,
@@ -35,6 +36,9 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _rewrite_matrix_constant_inplace,
     _rewrite_vector_constant_inplace,
     _shared_tensor_layout,
+)
+from onnx2tf.tflite_builder.pytorch_export_errors import (
+    ModelIRPyTorchExportError,
 )
 
 
@@ -957,6 +961,167 @@ def _is_transpose_sandwiched_last_axis_softmax_op(
     ):
         return False
     return True
+
+
+def validate_channel_first_exportability(
+    model_ir: ModelIR,
+    preserve_channel_last_tensor_names: Set[str],
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
+    layout_sensitive_ops = {
+        "AVERAGE_POOL_2D",
+        "CONCATENATION",
+        "CONV_2D",
+        "CONV_3D",
+        "CONV_3D_TRANSPOSE",
+        "DEPTHWISE_CONV_2D",
+        "DEPTH_TO_SPACE",
+        "GATHER",
+        "GATHER_ND",
+        "MAX_POOL_2D",
+        "MEAN",
+        "MIRROR_PAD",
+        "PAD",
+        "PADV2",
+        "RESIZE_BILINEAR",
+        "RESIZE_NEAREST_NEIGHBOR",
+        "SCATTER_ND",
+        "SLICE",
+        "SOFTMAX",
+        "SPACE_TO_DEPTH",
+        "SPLIT",
+        "STRIDED_SLICE",
+        "TRANSPOSE_CONV",
+        "UNPACK",
+    }
+    public_layout_bridge_tensor_names = {
+        str(name)
+        for name in list(
+            model_ir.metadata.get("public_layout_bridge_tensor_names", [])
+        )
+    }
+    problems: List[str] = []
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    candidate_ops = [
+        model_ir.operators[int(index)]
+        for index in graph_index.operator_indices_for_types(
+            layout_sensitive_ops
+        )
+    ]
+    for op in candidate_ops:
+        op_type = str(op.op_type)
+        related_tensor_names = [
+            str(value) for value in list(op.inputs) + list(op.outputs)
+        ]
+        related_lowered_names = [
+            name.lower() for name in related_tensor_names
+        ]
+        recurrent_sequence_context = any(
+            token in name
+            for name in related_lowered_names
+            for token in ("_gru_", "_lstm_", "_rnn_")
+        )
+        tensor_names: List[str] = []
+        primary_name = _primary_data_input_name(op)
+        if primary_name is not None:
+            tensor_names.append(str(primary_name))
+        tensor_names.extend(str(value) for value in list(op.outputs))
+        for tensor_name in tensor_names:
+            tensor = model_ir.tensors.get(str(tensor_name), None)
+            if tensor is None:
+                continue
+            rank = len(list(tensor.shape))
+            if rank not in {3, 4, 5}:
+                continue
+            if str(tensor_name) in preserve_channel_last_tensor_names:
+                continue
+            if str(tensor_name) in public_layout_bridge_tensor_names:
+                continue
+            if (
+                recurrent_sequence_context
+                and op_type
+                in {"CONCATENATION", "SLICE", "SPLIT", "STRIDED_SLICE"}
+            ):
+                continue
+            layout = normalize_logical_layout(tensor.logical_layout)
+            if (
+                layout == LOGICAL_LAYOUT_UNKNOWN
+                and op_type == "SCATTER_ND"
+                and primary_name is not None
+                and str(tensor_name) == str(primary_name)
+            ):
+                continue
+            if (
+                layout == LOGICAL_LAYOUT_UNKNOWN
+                and op_type == "SCATTER_ND"
+                and str(tensor_name)
+                in {str(value) for value in list(op.outputs)}
+                and str(tensor_name)
+                not in {str(value) for value in list(model_ir.outputs)}
+            ):
+                continue
+            if (
+                layout == LOGICAL_LAYOUT_UNKNOWN
+                and rank in {3, 5}
+                and op_type
+                in {
+                    "CONCATENATION",
+                    "GATHER",
+                    "GATHER_ND",
+                    "SLICE",
+                    "SPLIT",
+                    "STRIDED_SLICE",
+                }
+            ):
+                continue
+            if (
+                layout == LOGICAL_LAYOUT_UNKNOWN
+                and rank in {4, 5}
+                and op_type
+                in {
+                    "GATHER",
+                    "GATHER_ND",
+                    "SLICE",
+                    "SPLIT",
+                    "STRIDED_SLICE",
+                }
+                and _is_degenerate_sequence_like_rank4_or_rank5_tensor(tensor)
+            ):
+                continue
+            if layout == LOGICAL_LAYOUT_UNKNOWN and op_type == "SOFTMAX":
+                if _is_attention_like_softmax_op(
+                    model_ir,
+                    op,
+                    graph_index=graph_index,
+                ) or _is_transpose_sandwiched_last_axis_softmax_op(
+                    model_ir,
+                    op,
+                    graph_index=graph_index,
+                ):
+                    continue
+            if (
+                rank == 4
+                and is_channel_last_logical_layout(layout)
+                and _is_pytorch_channel_first_safe_rank4_island_op(
+                    model_ir,
+                    op,
+                )
+            ):
+                continue
+            if (
+                layout == LOGICAL_LAYOUT_UNKNOWN
+                or is_channel_last_logical_layout(layout)
+            ):
+                problems.append(
+                    f"op_type={op_type} tensor={tensor_name} "
+                    f"logical_layout={layout}"
+                )
+    if len(problems) > 0:
+        raise ModelIRPyTorchExportError(
+            "Channel-first normalization failed: semantic layout annotations "
+            f"are incomplete. problems={sorted(set(problems))}"
+        )
 
 
 def _apply_feature_last_sequence_layouts(

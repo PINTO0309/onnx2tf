@@ -169,6 +169,13 @@ family. A dynamic-signature INT64 fixture verifies target permutation, option
 updates, constant dtype preservation, and single-index reuse. The same focused
 selection now passes 80 tests; no model conversion or inference was run.
 
+The 125-line channel-first exportability validator has moved beside its
+Softmax and layout-island helpers. It enumerates only indexed layout-sensitive
+families and shares the normalizer's index for attention/sandwich edge checks.
+Focused unknown-layout rejection and attention-Softmax exception fixtures pass;
+the layout/architecture selection passes 78 tests. No model conversion or
+inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

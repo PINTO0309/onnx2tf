@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
@@ -19,6 +20,10 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _rewrite_layout_sensitive_ops,
     _shrink_preserved_channel_last_regions_for_pytorch,
     _synchronize_reshape_targets_with_output_tensors,
+    validate_channel_first_exportability,
+)
+from onnx2tf.tflite_builder.pytorch_export_errors import (
+    ModelIRPyTorchExportError,
 )
 
 
@@ -124,6 +129,65 @@ def test_transpose_sandwiched_softmax_rejects_duplicate_producer() -> None:
         softmax,
         graph_index=graph_index,
     ) is False
+
+
+def test_channel_first_validator_uses_shared_family_index(monkeypatch) -> None:
+    model_ir = ModelIR(name="invalid_channel_first_conv")
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 3, 2, 4]),
+        "y": _tensor("y", [1, 3, 2, 4]),
+    }
+    model_ir.operators = [OperatorIR("CONV_2D", ["x", "w"], ["y"])]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    with pytest.raises(
+        ModelIRPyTorchExportError,
+        match="semantic layout annotations are incomplete",
+    ):
+        validate_channel_first_exportability(
+            model_ir,
+            preserve_channel_last_tensor_names=set(),
+            graph_index=graph_index,
+        )
+
+    assert refresh_count == 1
+
+
+def test_channel_first_validator_keeps_attention_softmax_exception() -> None:
+    model_ir = ModelIR(name="attention_softmax_validation")
+    model_ir.tensors = {
+        "scores": _tensor("scores", [1, 2, 4, 5]),
+        "probabilities": _tensor("probabilities", [1, 2, 4, 5]),
+        "values": _tensor("values", [1, 2, 5, 3]),
+        "context": _tensor("context", [1, 2, 4, 3]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            "SOFTMAX",
+            ["scores"],
+            ["probabilities"],
+            {"axis": -1},
+        ),
+        OperatorIR(
+            "BATCH_MATMUL",
+            ["probabilities", "values"],
+            ["context"],
+        ),
+    ]
+
+    validate_channel_first_exportability(
+        model_ir,
+        preserve_channel_last_tensor_names=set(),
+    )
 
 
 def test_feature_last_worklist_reaches_bidirectional_fixed_point(monkeypatch) -> None:

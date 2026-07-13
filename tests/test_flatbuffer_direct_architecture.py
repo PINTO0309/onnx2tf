@@ -428,8 +428,13 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert (
         "def _is_transpose_sandwiched_last_axis_softmax_op(" not in exporter_source
     )
-    assert "_is_attention_like_softmax_op," in exporter_source
-    assert "_is_transpose_sandwiched_last_axis_softmax_op," in exporter_source
+    assert "_is_attention_like_softmax_op," not in exporter_source
+    assert "_is_transpose_sandwiched_last_axis_softmax_op," not in exporter_source
+    assert "def _is_attention_like_softmax_op(" in pass_source
+    assert "def _is_transpose_sandwiched_last_axis_softmax_op(" in pass_source
+    assert "def validate_channel_first_exportability(" not in exporter_source
+    assert "validate_channel_first_exportability," in exporter_source
+    assert "def validate_channel_first_exportability(" in pass_source
     assert "def _apply_feature_last_sequence_layouts(" not in exporter_source
     assert "_apply_feature_last_sequence_layouts," in exporter_source
     assert "def _ensure_public_boundary_layout_bridges(" not in exporter_source
@@ -458,7 +463,6 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "_preferred_reshape_target_values_for_op," in pass_source
     focused_layout_owner_functions = {
         "_collect_feature_last_sequence_tensor_names",
-        "_is_pytorch_channel_first_safe_rank4_island_op",
         "_is_pytorch_preserved_channel_last_rank4_or_rank5_model_island",
         "_shrink_preserved_channel_last_regions_for_pytorch",
         "_restore_non_preserved_channel_first_layouts",
@@ -485,15 +489,18 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     assert focused_layout_owner_functions | {
-        "_is_rank4_channel_last_dynamic_tensor"
+        "_is_pytorch_channel_first_safe_rank4_island_op",
+        "_is_rank4_channel_last_dynamic_tensor",
     } <= set(pass_functions)
     validator_source = ast.get_source_segment(
-        exporter_source,
-        exporter_functions["validate_channel_first_exportability"],
+        pass_source,
+        pass_functions["validate_channel_first_exportability"],
     )
     assert validator_source is not None
-    assert "softmax_graph_index = graph_index" in validator_source
-    assert "graph_index=softmax_graph_index" in validator_source
+    assert "graph_index = graph_index or ModelIRGraphIndex(model_ir)" in validator_source
+    assert "operator_indices_for_types(" in validator_source
+    assert "graph_index=graph_index" in validator_source
+    assert "for op in model_ir.operators" not in validator_source
     normalizer_source = ast.get_source_segment(
         exporter_source,
         exporter_functions["normalize_model_ir_for_pytorch_channel_first"],
