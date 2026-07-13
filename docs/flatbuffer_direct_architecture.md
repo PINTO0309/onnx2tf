@@ -171,14 +171,16 @@ differential graph index and `LayoutState`. Each of the six production groups
 invokes the runner once, preserving the original rule order; the lowerer
 compatibility wrapper remains available.
 
-The adjacent cost-volume/ScatterND rule still resides in the central lowerer
-pending mechanical extraction. Its dedicated compact corpus fixes the complete
-two-input NHWC-to-NCHW descriptor path, Slice/Mean/Reshape and ScatterND
-constant remapping, NDHWC output canonicalization, and downstream Conv3D
-contract. Whole-ModelIR no-op checks cover leading-adapter fan-out, both sides
-of the trailing adapter, a public intermediate, an invalid leading
-permutation, and a non-Conv3D downstream consumer. This corpus is the frozen
-contract for the subsequent extraction and transactional indexed migration.
+The adjacent cost-volume/ScatterND rule is mechanically owned by
+`passes/cost_volume_scatter_layout.py`. Its dedicated compact corpus fixes the
+complete two-input NHWC-to-NCHW descriptor path, Slice/Mean/Reshape and
+ScatterND constant remapping, NDHWC output canonicalization, and downstream
+Conv3D contract. Whole-ModelIR no-op checks cover leading-adapter fan-out, both
+sides of the trailing adapter, a public intermediate, an invalid leading
+permutation, and a non-Conv3D downstream consumer. The extracted implementation
+is AST-identical to checkpoint `4b6f297`; the lowerer retains a compatibility
+wrapper and all six raw production calls until the separate transactional
+indexed migration.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and

@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `4b6f297` (`characterize cost volume scatter layout`)
+- Latest implementation checkpoint: `d62e77d` (`extract cost volume scatter layout pass`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `4b6f297` and the documentation checkpoint
+  `d62e77d` and the documentation checkpoint
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -97,8 +97,10 @@ then characterized the next cost-volume/ScatterND family.
     - Added six whole-ModelIR no-op boundaries covering leading-adapter
       fan-out, pre/post sides of the trailing adapter, a public intermediate,
       invalid leading permutation, and an invalid downstream operator.
-    - Preserved production behavior; mechanical extraction remains the next
-      separate checkpoint.
+    - Preserved production behavior at the characterization checkpoint.
+    - Moved the complete matcher to
+      `passes/cost_volume_scatter_layout.py` with AST equivalence in `d62e77d`;
+      the compatibility wrapper and all six raw call positions remain.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -114,10 +116,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is the now-characterized
-  `_optimize_transpose_cost_volume_scatter_ndhwc_chains`: move the complete
-  matcher mechanically into a focused pass-family module, prove AST identity,
-  and retain all six production positions until the later indexed migration.
+  The immediate next unit is the extracted
+  `_optimize_transpose_cost_volume_scatter_ndhwc_chains`: separate candidate
+  planning from mutation, migrate traversal and rewrites to shared graph/layout
+  state, and replace the six raw calls with a stable ordered runner.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -139,7 +141,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `4b6f297`; after the documentation
+implementation working tree is clean at `d62e77d`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -256,6 +258,11 @@ sequential with only one model/process active at a time.
   `7 passed, 758 deselected in 2.72s`.
 - Full direct selection after moving the fixture and adding six boundaries:
   `1238 passed, 5 deselected, 2 warnings in 153.83s`.
+- Cost-volume/ScatterND extraction, characterization, and ownership focus:
+  `43 passed in 18.64s`; the extracted function AST exactly matched
+  `4b6f297`.
+- Full direct selection after mechanical extraction:
+  `1239 passed, 5 deselected, 2 warnings in 156.55s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -287,13 +294,14 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Move the complete cost-volume/ScatterND matcher mechanically from
-   `lower_from_onnx2tf.py` to a focused pass-family module, leaving a
-   signature-compatible lowerer wrapper.
-3. Add an AST-equivalence and single-owner architecture test while preserving
-   all six raw production call positions.
-4. Run focused and full direct gates, then commit and push the extraction
-   checkpoint before changing graph traversal or mutation semantics.
+2. Audit the extracted cost-volume/ScatterND matcher for every validation that
+   currently happens after constants begin mutating; define an indexed
+   candidate plan that validates these late conditions before snapshot/rewrite.
+3. Add runner success/rejection instrumentation, especially invalid ScatterND
+   shape/index cases, then migrate traversal and mutations to one shared
+   `ModelIRGraphIndex` and `LayoutState`.
+4. Replace all six raw calls with a stable `LAYOUT_PLAN` runner, then run
+   focused, sequential Tier 1, and full direct gates before committing.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -804,3 +812,25 @@ selection passed:
 No dependency or TensorFlow path was added, and no inference process was run
 concurrently. The next unit is a strictly mechanical matcher extraction with
 AST-equivalence and single-owner gates.
+
+### Cost-volume/ScatterND mechanical extraction checkpoint
+
+Checkpoint `d62e77d` moved the complete 536-line matcher mechanically to
+`passes/cost_volume_scatter_layout.py`. Its function AST, including the
+docstring and nested helpers, exactly matches checkpoint `4b6f297`. The central
+lowerer now keeps only a signature-compatible wrapper. All six raw production
+call positions remain unchanged so extraction does not alter rule ordering or
+retry behavior.
+
+The architecture gate fixes the focused module as the single implementation
+owner, the lowerer alias and compatibility wrapper, and exactly six production
+calls. Focused characterization and ownership validation passed 43 tests. The
+complete sequential direct selection passed:
+
+```text
+1239 passed, 5 deselected, 2 warnings in 156.55s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently. Indexed planning, transactional late-validation safety, shared
+graph/layout state, and runner integration remain a separate next checkpoint.
