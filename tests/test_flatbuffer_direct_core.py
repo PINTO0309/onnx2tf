@@ -195,6 +195,8 @@ def test_model_ir_index_incremental_input_output_mutation_matches_refresh() -> N
     index.replace_operator_inputs(0, ["x", "x"])
     index.replace_operator_outputs(0, ["w"])
 
+    assert index.operator_indices("ADD") == [0]
+    assert index.operator_indices("MUL") == []
     assert index.consumer_indices("x") == [0, 0]
     assert index.consumer_indices("y") == []
     assert index.producer("z") is None
@@ -212,6 +214,8 @@ def test_model_ir_index_incremental_insert_remove_shifts_references() -> None:
 
     index.insert_operator(0, identity)
 
+    assert index.operator_indices("IDENTITY") == [0]
+    assert index.operator_indices("ADD") == [1]
     assert index.duplicate_producers == {"z": [0, 1]}
     assert index.consumer_indices("x") == [0, 1]
     assert index.consumer_indices("y") == [1]
@@ -223,6 +227,8 @@ def test_model_ir_index_incremental_insert_remove_shifts_references() -> None:
     removed = index.remove_operator(0)
 
     assert removed is identity
+    assert index.operator_indices("IDENTITY") == []
+    assert index.operator_indices("ADD") == [0]
     assert index.producers == {"z": 0}
     assert index.consumer_indices("x") == [0]
     assert index.consumer_indices("y") == [0]

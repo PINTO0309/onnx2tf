@@ -509,12 +509,10 @@ def _resolve_quantized_concat_candidate(
         *[str(name) for name in model_ir.inputs],
         *model_outputs,
     }
-    for concat_op in model_ir.operators:
-        concat_index = graph_index.operator_index(concat_op)
+    for concat_index in graph_index.operator_indices("CONCATENATION"):
+        concat_op = model_ir.operators[int(concat_index)]
         if (
-            concat_index is None
-            or str(concat_op.op_type) != "CONCATENATION"
-            or len(concat_op.inputs) == 0
+            len(concat_op.inputs) == 0
             or len(concat_op.outputs) != 1
         ):
             continue

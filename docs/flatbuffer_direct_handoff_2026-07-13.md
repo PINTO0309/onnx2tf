@@ -274,8 +274,14 @@ Add application remain explicit. The thirteen frozen specs, callbacks,
 preconditions, default statistics, and preflight function are now constructed
 once at module import. Adapter-liveness and recursive shared-plan helpers are
 also top-level rather than recreated per candidate. The module is currently
-1,016 lines; this checkpoint prioritizes explicit helper contracts and lower
+1,014 lines; this checkpoint prioritizes explicit helper contracts and lower
 runtime allocation, not a source-line threshold.
+
+`ModelIRGraphIndex` now maintains graph-order operator-type indices through
+refresh, insertion, and removal. Quantized-post candidate planning asks the
+shared index only for `CONCATENATION` positions, eliminating thirteen repeated
+full operator-list scans while preserving graph order and differential
+mutation semantics.
 
 The adjacent legacy ownership gate now builds action-kind counts once. Seven
 simple quantized family contracts declare only allowed and required kinds;
@@ -374,6 +380,9 @@ Focused verification, all in the existing `uv` environment:
 - After consolidating the seven shared quantized input resolvers, the focused
   quantized-post module passed `70 tests in 0.38s`; Python compilation, targeted
   Ruff, and `git diff --check` also passed.
+- After adding the differential operator-type index and Concat-only candidate
+  enumeration, the core-index plus quantized-post selection passed
+  `95 tests in 0.47s`; targeted compilation and Ruff also passed.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.

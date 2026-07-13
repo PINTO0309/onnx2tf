@@ -26,10 +26,14 @@ must leave the graph unchanged when invariant validation fails.
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while
-producer, consumer, duplicate-producer, and operator-position indices remain
-consistent. A full `refresh()` is retained only for compatibility with
-external mutations that bypass these APIs. Lineage-aware graph mutation
-helpers accept an optional ModelIR index and update it atomically.
+producer, consumer, duplicate-producer, operator-position, and operator-type
+indices remain consistent. The operator-type index returns graph-order
+positions and is shifted together with all edge indices on insertion/removal,
+so bounded passes can enumerate only relevant operator families instead of
+rescanning the full ModelIR operator list. A full `refresh()` is retained only
+for compatibility with external mutations that bypass these APIs.
+Lineage-aware graph mutation helpers accept an optional ModelIR index and
+update it atomically.
 
 Operator additions keep capability validation and lowering in the same
 op-family module. Do not add model-name checks. A model-specific failure should
@@ -491,6 +495,9 @@ rather than on every runner call. Adapter liveness and recursive shared-plan
 walking are top-level functions rather than closures recreated for every
 candidate. Each invocation therefore allocates only its pass manager/session
 state while retaining the same transactional snapshots and diagnostics.
+Quantized-post candidate planning enumerates only indexed `CONCATENATION`
+positions; the thirteen family preconditions no longer scan unrelated
+operators in large graphs.
 
 The legacy ownership boundary uses the same compact style. Simple quantized
 families are described by allowed and required action-kind sets after one

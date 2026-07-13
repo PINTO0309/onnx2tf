@@ -184,6 +184,10 @@ class ModelIRGraphIndex:
     consumers: Dict[str, List[int]] = field(default_factory=dict, init=False)
     duplicate_producers: Dict[str, List[int]] = field(default_factory=dict, init=False)
     _operator_indices_by_id: Dict[int, int] = field(default_factory=dict, init=False)
+    _operator_indices_by_type: Dict[str, List[int]] = field(
+        default_factory=dict,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         self.refresh()
@@ -193,8 +197,13 @@ class ModelIRGraphIndex:
         self.consumers.clear()
         self.duplicate_producers.clear()
         self._operator_indices_by_id.clear()
+        self._operator_indices_by_type.clear()
         for index, op in enumerate(self.model_ir.operators):
             self._operator_indices_by_id[id(op)] = int(index)
+            self._operator_indices_by_type.setdefault(
+                str(op.op_type),
+                [],
+            ).append(int(index))
             for name in _names(op.outputs):
                 previous = self.producers.get(name)
                 if previous is not None:
@@ -223,6 +232,11 @@ class ModelIRGraphIndex:
         if self.model_ir.operators[index] is not op:
             return None
         return int(index)
+
+    def operator_indices(self, op_type: str) -> List[int]:
+        """Return graph-order indices for one current ModelIR operator type."""
+
+        return list(self._operator_indices_by_type.get(str(op_type), []))
 
     def _producer_indices(self, tensor_name: str) -> List[int]:
         name = str(tensor_name)
@@ -353,6 +367,17 @@ class ModelIRGraphIndex:
             for operator_id, value in self._operator_indices_by_id.items()
         }
         self._operator_indices_by_id[id(op)] = index
+        self._operator_indices_by_type = {
+            op_type: [
+                value + 1 if int(value) >= index else int(value)
+                for value in values
+            ]
+            for op_type, values in self._operator_indices_by_type.items()
+        }
+        self._operator_indices_by_type.setdefault(str(op.op_type), []).append(
+            index
+        )
+        self._operator_indices_by_type[str(op.op_type)].sort()
         self._attach_operator(index, op)
 
     def append_operator(self, op: OperatorIR) -> None:
@@ -387,5 +412,13 @@ class ModelIRGraphIndex:
         self._operator_indices_by_id = {
             operator_id: value - 1 if int(value) > index else int(value)
             for operator_id, value in self._operator_indices_by_id.items()
+        }
+        self._operator_indices_by_type = {
+            op_type: [
+                value - 1 if int(value) > index else int(value)
+                for value in values
+                if int(value) != index
+            ]
+            for op_type, values in self._operator_indices_by_type.items()
         }
         return op
