@@ -89,6 +89,10 @@ from onnx2tf.tflite_builder.pytorch_codegen_stages import (
 )
 from onnx2tf.tflite_builder.pytorch_source_parser import (
     _SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN,
+    _any_line_matches,
+    _count_lines_matching,
+    _extract_prefixed_call_exprs,
+    _model_source_lines,
     _normalize_permute_dims_expr,
     _parse_align_binary_inputs_to_anchor_assign_with_shape,
     _parse_align_tensor_target_shape_expr,
@@ -27397,20 +27401,6 @@ def _apply_shadowformer_fast_precanonicalize_repairs(model_path: Path) -> None:
         )
 
 
-def _model_source_lines(model_source: str) -> List[str]:
-    return [str(line) for line in str(model_source).splitlines()]
-
-
-def _any_line_matches(lines: Sequence[str], pattern: str) -> bool:
-    regex = re.compile(pattern)
-    return any(regex.search(str(line)) is not None for line in lines)
-
-
-def _count_lines_matching(lines: Sequence[str], pattern: str) -> int:
-    regex = re.compile(pattern)
-    return sum(1 for line in lines if regex.search(str(line)) is not None)
-
-
 def _extract_shadowformer_copy_permute_source_expr(src_expr: str) -> str | None:
     stripped = _strip_outer_parentheses(str(src_expr).strip())
     method_match = _SHADOWFORMER_METHOD_COPY_PERMUTE_SRC_RE.match(stripped)
@@ -27458,31 +27448,6 @@ def _has_immediate_rank4_permute_source(
             and list(permute_assign[3]) == [int(v) for v in list(expected_perm)]
         )
     return False
-
-
-def _extract_prefixed_call_exprs(text: str, prefix: str) -> List[str]:
-    expressions: List[str] = []
-    source = str(text)
-    start = 0
-    while True:
-        call_index = source.find(prefix, start)
-        if call_index < 0:
-            break
-        depth = 0
-        end_index = call_index
-        while end_index < len(source):
-            char = source[end_index]
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-                if depth == 0:
-                    expressions.append(source[call_index : end_index + 1])
-                    end_index += 1
-                    break
-            end_index += 1
-        start = max(call_index + len(prefix), end_index)
-    return expressions
 
 
 def _has_mixed_layout_decoder_merge_signature(lines: Sequence[str]) -> bool:

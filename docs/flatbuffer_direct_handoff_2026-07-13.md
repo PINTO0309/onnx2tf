@@ -290,6 +290,14 @@ checks pass. No model conversion or inference was run. Resume with graph-aware
 source canonicalization helpers only after defining explicit ModelIR/query
 callbacks; the pure parser extraction is complete.
 
+Four final source-scanning utilities moved with the parser boundary: line
+splitting, regex presence/count queries, and balanced prefixed-call extraction.
+Their ASTs exactly match the exporter checkpoint, and a nested-call fixture
+proves parenthesis-depth handling. Parser and architecture validation passes 74
+tests; syntax, Ruff, pycompile, and diff checks pass. No model conversion or
+inference was run. The common generated-source parsing/scanning boundary now has
+36 functions; resume with a separately characterized source-rewrite family.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

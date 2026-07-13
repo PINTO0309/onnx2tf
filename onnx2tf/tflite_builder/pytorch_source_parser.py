@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import functools
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 
 _SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN = r"[^,]+"
@@ -978,3 +978,42 @@ def _parse_align_binary_inputs_to_anchor_assign_with_shape(
         parts[1].strip(),
         [int(v) for v in list(target_shape)],
     )
+
+
+def _model_source_lines(model_source: str) -> List[str]:
+    return [str(line) for line in str(model_source).splitlines()]
+
+
+def _any_line_matches(lines: Sequence[str], pattern: str) -> bool:
+    regex = re.compile(pattern)
+    return any(regex.search(str(line)) is not None for line in lines)
+
+
+def _count_lines_matching(lines: Sequence[str], pattern: str) -> int:
+    regex = re.compile(pattern)
+    return sum(1 for line in lines if regex.search(str(line)) is not None)
+
+
+def _extract_prefixed_call_exprs(text: str, prefix: str) -> List[str]:
+    expressions: List[str] = []
+    source = str(text)
+    start = 0
+    while True:
+        call_index = source.find(prefix, start)
+        if call_index < 0:
+            break
+        depth = 0
+        end_index = call_index
+        while end_index < len(source):
+            char = source[end_index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    expressions.append(source[call_index : end_index + 1])
+                    end_index += 1
+                    break
+            end_index += 1
+        start = max(call_index + len(prefix), end_index)
+    return expressions

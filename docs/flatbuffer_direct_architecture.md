@@ -2017,6 +2017,11 @@ including the permute parser's 131,072-entry LRU decorator, are unchanged. The
 shared owner therefore contains 32 reusable parsers while graph-aware signature
 and rewrite decisions remain in the exporter.
 
+Source line splitting, regex presence/count scanning, and balanced extraction of
+prefixed nested calls are co-located with those parsers. The four utility ASTs
+are unchanged, bringing the directly testable generated-source boundary to 36
+functions without moving graph-aware canonicalization policy.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from onnx2tf.tflite_builder.pytorch_source_parser import (
+    _any_line_matches,
+    _count_lines_matching,
+    _extract_prefixed_call_exprs,
+    _model_source_lines,
     _normalize_permute_dims_expr,
     _parse_align_binary_inputs_to_anchor_assign_with_shape,
     _parse_align_tensor_target_shape_assign,
@@ -179,3 +183,22 @@ def test_source_parser_decodes_constant_pad_and_binary_alignment() -> None:
     assert _parse_align_binary_inputs_to_anchor_assign_with_shape(
         "a2, b2 = _align_binary_inputs_to_anchor(a, b, [1, 8, 4, 4])"
     ) == ("", "a2", "b2", "a", "b", [1, 8, 4, 4])
+
+
+def test_source_parser_scans_lines_and_balanced_calls() -> None:
+    lines = _model_source_lines("x = 1\ny = torch.add(x, 2)\nz = torch.add(y, 3)\n")
+    assert lines == [
+        "x = 1",
+        "y = torch.add(x, 2)",
+        "z = torch.add(y, 3)",
+    ]
+    assert _any_line_matches(lines, r"torch\.add")
+    assert _count_lines_matching(lines, r"torch\.add") == 2
+    assert _extract_prefixed_call_exprs(
+        "lhs + _apply_resize(x, size=(4, 5)) + "
+        "_apply_resize(torch.add(y, 1), size=(8, 9))",
+        "_apply_resize(",
+    ) == [
+        "_apply_resize(x, size=(4, 5))",
+        "_apply_resize(torch.add(y, 1), size=(8, 9))",
+    ]

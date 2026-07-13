@@ -3782,6 +3782,10 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
         "_parse_dynamic_binary_add_align_assign",
         "_parse_static_binary_add_align_assign",
         "_parse_align_binary_inputs_to_anchor_assign_with_shape",
+        "_model_source_lines",
+        "_any_line_matches",
+        "_count_lines_matching",
+        "_extract_prefixed_call_exprs",
     ):
         assert function_name in parser_functions
         assert function_name not in exporter_functions
