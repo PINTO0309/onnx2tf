@@ -282,8 +282,6 @@ def test_nhwc_direct_only_add_is_indexed(all_add: bool) -> None:
         "unsupported_add",
         "add_output_fanout",
         "public_add_output",
-        "add_adapter_fanout",
-        "public_add_adapter",
         "invalid_source_rank",
         "invalid_adapter_rank",
         "invalid_add_output_rank",
@@ -303,6 +301,35 @@ def test_nhwc_add_rejects_unsafe_or_partial_match(boundary: str) -> None:
 
     assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
     _assert_model_equal(model_ir, original)
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    ["add_adapter_fanout", "public_add_adapter"],
+)
+def test_nhwc_add_retains_shared_or_public_source_adapter(
+    boundary: str,
+) -> None:
+    model_ir = _add_model(boundary=boundary)
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_add_rewritten(model_ir)
+    remaining_transposes = [
+        op for op in model_ir.operators if op.op_type == "TRANSPOSE"
+    ]
+    assert [op.outputs for op in remaining_transposes] == [["a_nchw"]]
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_add"
+    )
+    assert event["status"] == "changed"
 
 
 @pytest.mark.parametrize(

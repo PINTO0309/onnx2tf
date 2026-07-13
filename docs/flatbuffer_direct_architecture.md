@@ -343,11 +343,12 @@ moves every Split output's shape and per-axis quantization into NHWC.
 Slice/Split-output post adapters, Swish-source Slice, and Swish/Add-connected
 Split remain in the legacy matcher. The bounded Add family accepts a direct
 Concat input produced by a non-recursive two-input Add whose operands each
-come from an exclusive rank-four NHWC→NCHW adapter. Both Add inputs are
-rewired together, all operand adapters are removed, and Add output shape and
-per-axis quantization move into NHWC. Adapter-sharing, output-post-adapter,
-unary/Swish/Split operand, recursive Add, and broader mixed-input
-quantized-post families remain in legacy until independently characterized.
+come from a rank-four NHWC→NCHW adapter. Both Add inputs are rewired together,
+exclusive adapters are removed, shared/public adapters remain for external
+consumers, and Add output shape and per-axis quantization move into NHWC.
+Adapter-sharing with the root Concat, output-post-adapter, unary/Swish/Split
+operand, recursive Add, and broader mixed-input quantized-post families remain
+in legacy until independently characterized.
 The indexed
 pseudo-LeakyRelu family recognizes the complete
 `ReLU(x) - alpha * ReLU(-x)` diamond with either Mul operand order and direct

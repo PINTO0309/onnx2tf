@@ -81,7 +81,7 @@ class _NhwcConcatInputPlan:
     split_op: Optional[OperatorIR] = None
     add_op: Optional[OperatorIR] = None
     add_source_names: Tuple[str, ...] = ()
-    extra_adapter_ops: Tuple[OperatorIR, ...] = ()
+    extra_removable_adapter_ops: Tuple[OperatorIR, ...] = ()
     leaky_neg_op: Optional[OperatorIR] = None
     leaky_pos_relu_op: Optional[OperatorIR] = None
     leaky_tensor_names: Tuple[str, ...] = ()
@@ -939,6 +939,7 @@ def _resolve_add_input_plan(
         return None
 
     adapter_ops: List[OperatorIR] = []
+    remove_adapter_flags: List[bool] = []
     source_names: List[str] = []
     for add_input_name in [str(name) for name in add_op.inputs]:
         adapter_op = graph_index.producer(add_input_name)
@@ -946,6 +947,9 @@ def _resolve_add_input_plan(
             None
             if adapter_op is None
             else graph_index.operator_index(adapter_op)
+        )
+        adapter_consumers = set(
+            graph_index.consumer_indices(add_input_name)
         )
         if (
             adapter_op is None
@@ -956,9 +960,8 @@ def _resolve_add_input_plan(
             or str(adapter_op.outputs[0]) != add_input_name
             or _read_transpose_perm(model_ir, adapter_op)
             != _PERM_NHWC_TO_NCHW
-            or add_input_name in model_outputs
-            or set(graph_index.consumer_indices(add_input_name))
-            != {int(add_index)}
+            or int(add_index) not in adapter_consumers
+            or int(concat_index) in adapter_consumers
         ):
             return None
         source_name = str(adapter_op.inputs[0])
@@ -972,24 +975,40 @@ def _resolve_add_input_plan(
         ):
             return None
         adapter_ops.append(adapter_op)
+        remove_adapter_flags.append(
+            adapter_consumers == {int(add_index)}
+            and add_input_name not in model_outputs
+        )
         source_names.append(source_name)
 
     unique_adapter_ops: List[OperatorIR] = []
+    unique_remove_flags: List[bool] = []
     seen_adapter_ids: set[int] = set()
-    for adapter_op in adapter_ops:
+    for adapter_op, remove_adapter in zip(
+        adapter_ops,
+        remove_adapter_flags,
+    ):
         if id(adapter_op) in seen_adapter_ids:
             continue
         seen_adapter_ids.add(id(adapter_op))
         unique_adapter_ops.append(adapter_op)
+        unique_remove_flags.append(bool(remove_adapter))
     return _NhwcConcatInputPlan(
         kind="add",
         adapter_op=unique_adapter_ops[0],
         add_op=add_op,
         add_source_names=tuple(source_names),
-        extra_adapter_ops=tuple(unique_adapter_ops[1:]),
+        extra_removable_adapter_ops=tuple(
+            adapter_op
+            for adapter_op, remove_adapter in zip(
+                unique_adapter_ops[1:],
+                unique_remove_flags[1:],
+            )
+            if remove_adapter
+        ),
         source_name=source_names[0],
         output_name=input_name,
-        remove_adapter=True,
+        remove_adapter=unique_remove_flags[0],
     )
 
 
@@ -2343,8 +2362,7 @@ def _optimize_transpose_pre_concat_nhwc_family(
             *[
                 adapter_op
                 for plan in candidate.input_plans
-                for adapter_op in plan.extra_adapter_ops
-                if plan.remove_adapter
+                for adapter_op in plan.extra_removable_adapter_ops
             ],
             *candidate.post_ops,
         ]

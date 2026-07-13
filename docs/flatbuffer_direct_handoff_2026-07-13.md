@@ -91,13 +91,13 @@ source adapters remain intact for their existing consumers while Split alone
 is rewired to NHWC. This also fixes the legacy omission of per-axis
 quantization remapping. Output post adapters and Add interactions remain
 available through the legacy fallback.
-The bounded Add family requires both operands to come through exclusive
-rank-four NHWC→NCHW adapters and the Add output to feed only the selected
-Concat. Both operands are rewired in their original order, all leading
-adapters are removed, operator options are retained, and Add-output shape and
-per-axis quantization are remapped once. Public/internal adapter boundaries
-and invalid ranks now reject before mutation. Adapter sharing with the root
-Concat, Add-output post adapters, unary operands, recursive Add, and other
+The bounded Add family requires both operands to come through rank-four
+NHWC→NCHW adapters and the Add output to feed only the selected Concat. Both
+operands are rewired in their original order, exclusive leading adapters are
+removed, shared/public adapters remain for external consumers, operator
+options are retained, and Add-output shape and per-axis quantization are
+remapped once. Invalid ranks reject before mutation. Adapter sharing with the
+root Concat, Add-output post adapters, unary operands, recursive Add, and other
 mixed operand families deliberately remain in legacy.
 The pseudo-LeakyRelu family proves the exact
 `ReLU(x) - alpha * ReLU(-x)` topology. It accepts either Mul operand order,
@@ -163,8 +163,9 @@ Focused verification, all in the existing `uv` environment:
   signs, multi-output single-application behavior, shared/public axis
   copy-on-write, shared/public source-adapter retention, fourteen no-op
   boundaries, and one preserved post-adapter legacy case. The
-  Add suite covers mixed/all-Add success, fourteen complete no-op boundaries,
-  and three broader cases retained in legacy. The pseudo-LeakyRelu suite
+  Add suite covers mixed/all-Add success, shared/public source-adapter
+  retention, twelve complete no-op boundaries, and three broader cases
+  retained in legacy. The pseudo-LeakyRelu suite
   covers both alpha operand orders, direct/unary/all-Leaky success, twenty
   complete no-op boundaries, and one Pad-mixed legacy fallback. The quantized
   suite covers canonical and multiple post outputs, shared/public adapter
@@ -179,8 +180,8 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize a Slice/Split post-adapter family or one
-remaining shared-adapter/post-adapter Add subfamily. Keep recursive
+Next work should characterize a Slice/Split post-adapter family or the
+root-shared/post-adapter Add subfamily. Keep recursive
 Add and mixed Swish/Add interactions in legacy until independently fixed. Do
 not begin with a Tier 0–4 corpus run, and do not create a pull request.
 
