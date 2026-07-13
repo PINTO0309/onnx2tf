@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from typing import Dict, List, Optional, Sequence, Set
 
 import numpy as np
@@ -17,14 +18,17 @@ from onnx2tf.tflite_builder.ir import (
     normalize_logical_layout,
 )
 from onnx2tf.tflite_builder.pytorch_layout_utils import (
+    _assign_tensor_logical_layout,
+    _clone_tensor,
     _has_channel_last_factorized_rank3_sequence_consumer,
+    _infer_concat_peer_layout,
     _is_channel_last_factorized_reshape,
     _is_channel_last_factorized_rank3_sequence_reshape,
     _perm_cf_to_cl,
     _perm_cl_to_cf,
     _permute_shape,
     _read_transpose_perm,
-    _clone_tensor,
+    _shared_tensor_layout,
 )
 
 
@@ -131,6 +135,162 @@ _CHANNEL_LAST_LAYOUT_FORWARD_OP_TYPES = {
     "TILE",
     "UNPACK",
 }
+
+_PYTORCH_FRIENDLY_LAYOUT_UNARY_OP_TYPES = {
+    "ABS",
+    "ATAN",
+    "CEIL",
+    "COS",
+    "ELU",
+    "EXP",
+    "FLOOR",
+    "HARD_SWISH",
+    "IDENTITY",
+    "LEAKY_RELU",
+    "LOG",
+    "LOGICAL_NOT",
+    "LOGISTIC",
+    "NEG",
+    "RELU",
+    "RELU6",
+    "ROUND",
+    "RSQRT",
+    "SIGMOID",
+    "SIGN",
+    "SIN",
+    "SQRT",
+    "SQUARE",
+    "TAN",
+    "TANH",
+}
+
+_PYTORCH_FRIENDLY_LAYOUT_BINARY_OP_TYPES = {
+    "ADD",
+    "DIV",
+    "MAXIMUM",
+    "MINIMUM",
+    "MUL",
+    "POW",
+    "SUB",
+}
+
+_PYTORCH_FRIENDLY_LAYOUT_RESIZE_POOL_OP_TYPES = {
+    "AVERAGE_POOL_2D",
+    "MAX_POOL_2D",
+    "RESIZE_BILINEAR",
+    "RESIZE_NEAREST_NEIGHBOR",
+}
+
+_PYTORCH_FRIENDLY_LAYOUT_OP_TYPES = (
+    _PYTORCH_FRIENDLY_LAYOUT_UNARY_OP_TYPES
+    | _PYTORCH_FRIENDLY_LAYOUT_BINARY_OP_TYPES
+    | _PYTORCH_FRIENDLY_LAYOUT_RESIZE_POOL_OP_TYPES
+    | {"CONCATENATION", "PACK", "SPLIT", "UNPACK"}
+)
+
+
+def _propagate_pytorch_friendly_layouts(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
+    """Propagate compatible layouts through only affected graph edges."""
+
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    pending = deque(
+        graph_index.operator_indices_for_types(
+            _PYTORCH_FRIENDLY_LAYOUT_OP_TYPES
+        )
+    )
+    queued = set(pending)
+
+    def _enqueue_adjacent_ops(tensor_names: Sequence[str]) -> None:
+        adjacent_indices: Set[int] = set()
+        for tensor_name in tensor_names:
+            normalized_name = str(tensor_name)
+            producer_indices = graph_index.duplicate_producers.get(
+                normalized_name,
+                (
+                    [int(graph_index.producers[normalized_name])]
+                    if normalized_name in graph_index.producers
+                    else []
+                ),
+            )
+            adjacent_indices.update(int(value) for value in producer_indices)
+            adjacent_indices.update(
+                int(value)
+                for value in graph_index.consumer_indices(normalized_name)
+            )
+        for op_index in sorted(adjacent_indices):
+            if op_index in queued:
+                continue
+            queued.add(op_index)
+            pending.append(op_index)
+
+    while pending:
+        op_index = int(pending.popleft())
+        queued.discard(op_index)
+        op = model_ir.operators[op_index]
+        op_type = str(op.op_type)
+        changed_tensor_names: List[str] = []
+        if op_type in _PYTORCH_FRIENDLY_LAYOUT_UNARY_OP_TYPES and len(op.inputs) >= 1:
+            propagated_layout = _shared_tensor_layout(
+                [model_ir.tensors.get(str(op.inputs[0]), None)]
+            )
+        elif op_type in _PYTORCH_FRIENDLY_LAYOUT_BINARY_OP_TYPES and len(op.inputs) >= 2:
+            propagated_layout = _shared_tensor_layout(
+                [
+                    model_ir.tensors.get(str(op.inputs[0]), None),
+                    model_ir.tensors.get(str(op.inputs[1]), None),
+                ]
+            )
+        elif op_type == "CONCATENATION":
+            concat_input_tensors = [
+                model_ir.tensors.get(str(input_name), None)
+                for input_name in op.inputs
+            ]
+            propagated_layout = _shared_tensor_layout(concat_input_tensors)
+            if propagated_layout == LOGICAL_LAYOUT_UNKNOWN:
+                propagated_layout = _infer_concat_peer_layout(
+                    op,
+                    concat_input_tensors,
+                )
+                if propagated_layout != LOGICAL_LAYOUT_UNKNOWN:
+                    for input_name, input_tensor in zip(
+                        op.inputs,
+                        concat_input_tensors,
+                    ):
+                        if _assign_tensor_logical_layout(
+                            input_tensor,
+                            propagated_layout,
+                        ):
+                            changed_tensor_names.append(str(input_name))
+        elif op_type in {"PACK", "UNPACK"}:
+            propagated_layout = _shared_tensor_layout(
+                [
+                    model_ir.tensors.get(str(input_name), None)
+                    for input_name in op.inputs
+                ]
+            )
+        elif op_type == "SPLIT":
+            propagated_layout = _shared_tensor_layout(
+                [model_ir.tensors.get(str(op.inputs[-1]), None)]
+            )
+        elif op_type in _PYTORCH_FRIENDLY_LAYOUT_RESIZE_POOL_OP_TYPES:
+            propagated_layout = _shared_tensor_layout(
+                [model_ir.tensors.get(str(op.inputs[0]), None)]
+            )
+        else:
+            continue
+        if propagated_layout != LOGICAL_LAYOUT_UNKNOWN:
+            for output_name in op.outputs:
+                if _assign_tensor_logical_layout(
+                    model_ir.tensors.get(str(output_name), None),
+                    propagated_layout,
+                ):
+                    changed_tensor_names.append(str(output_name))
+        if changed_tensor_names:
+            _enqueue_adjacent_ops(changed_tensor_names)
 
 
 def _propagate_channel_last_layouts(

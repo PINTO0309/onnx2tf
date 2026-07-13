@@ -13,6 +13,7 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _is_transpose_sandwiched_last_axis_softmax_op,
     _propagate_channel_last_layouts,
     _propagate_feature_last_tensor_names,
+    _propagate_pytorch_friendly_layouts,
     _restore_non_preserved_channel_first_layouts,
     _shrink_preserved_channel_last_regions_for_pytorch,
 )
@@ -417,3 +418,55 @@ def test_public_boundary_bridge_no_op_avoids_graph_index(monkeypatch) -> None:
 
     assert refresh_count == 0
     assert model_ir.operators == []
+
+
+def test_pytorch_friendly_layout_worklist_handles_reverse_graph_order(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(name="friendly_layout_reverse_order")
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 3, 2, 4], layout="NCHW"),
+        "middle": _tensor("middle", [1, 3, 2, 4]),
+        "y": _tensor("y", [1, 3, 2, 4]),
+    }
+    model_ir.operators = [
+        OperatorIR("RELU", ["middle"], ["y"]),
+        OperatorIR("RELU", ["x"], ["middle"]),
+    ]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    _propagate_pytorch_friendly_layouts(model_ir)
+
+    assert refresh_count == 1
+    assert model_ir.tensors["middle"].logical_layout == "NCHW"
+    assert model_ir.tensors["y"].logical_layout == "NCHW"
+
+
+def test_pytorch_friendly_layout_worklist_infers_concat_peer() -> None:
+    model_ir = ModelIR(name="friendly_layout_concat_peer")
+    model_ir.tensors = {
+        "known": _tensor("known", [1, 2, 3, 4], layout="NCHW"),
+        "unknown": _tensor("unknown", [1, 5, 3, 4]),
+        "y": _tensor("y", [1, 7, 3, 4]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            "CONCATENATION",
+            ["known", "unknown"],
+            ["y"],
+            {"axis": 1},
+        )
+    ]
+
+    _propagate_pytorch_friendly_layouts(model_ir)
+
+    assert model_ir.tensors["unknown"].logical_layout == "NCHW"
+    assert model_ir.tensors["y"].logical_layout == "NCHW"

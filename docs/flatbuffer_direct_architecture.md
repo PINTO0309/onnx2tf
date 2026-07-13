@@ -1727,6 +1727,13 @@ front-of-graph order, and output Transposes are appended in public-output order.
 Tensor names, bridge metadata, layout permutations, and operator provenance are
 unchanged while the former complete operator scans are removed.
 
+General PyTorch-friendly unary, binary, Concat, Pack/Unpack, Split, resize, and
+pool layout propagation is co-located in this module as well. One graph index
+seeds a deterministic operator worklist; a changed tensor schedules only its
+indexed producer and consumers. This retains Concat peer-layout back-propagation
+and works for non-topological graph order without the former repeated complete
+operator sweep to a fixed point.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

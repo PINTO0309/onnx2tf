@@ -97,9 +97,6 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _should_emit_channel_last_space_to_depth,
     _should_emit_channel_last_depth_to_space,
     _primary_data_input_name,
-    _assign_tensor_logical_layout,
-    _shared_tensor_layout,
-    _infer_concat_peer_layout,
     _can_emit_direct_torch_reshape_shape,
     _is_degenerate_sequence_like_rank4_or_rank5_tensor,
     _is_channel_last_factorized_reshape,
@@ -162,6 +159,7 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _is_pytorch_channel_first_safe_rank4_island_op,
     _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island,
     _is_transpose_sandwiched_last_axis_softmax_op,
+    _propagate_pytorch_friendly_layouts,
     _restore_non_preserved_channel_first_layouts,
     _shrink_preserved_channel_last_regions_for_pytorch,
 )
@@ -10110,103 +10108,6 @@ def get_supported_pytorch_kernel_op_types() -> Set[str]:
 
 
 
-
-
-
-
-
-
-def _propagate_pytorch_friendly_layouts(model_ir: ModelIR) -> None:
-    unary_passthrough_ops = {
-        "ABS",
-        "ATAN",
-        "CEIL",
-        "COS",
-        "ELU",
-        "EXP",
-        "FLOOR",
-        "HARD_SWISH",
-        "IDENTITY",
-        "LEAKY_RELU",
-        "LOG",
-        "LOGICAL_NOT",
-        "LOGISTIC",
-        "NEG",
-        "RELU",
-        "RELU6",
-        "ROUND",
-        "RSQRT",
-        "SIGMOID",
-        "SIGN",
-        "SIN",
-        "SQRT",
-        "SQUARE",
-        "TAN",
-        "TANH",
-    }
-    binary_passthrough_ops = {
-        "ADD",
-        "DIV",
-        "MAXIMUM",
-        "MINIMUM",
-        "MUL",
-        "POW",
-        "SUB",
-    }
-    resize_pool_passthrough_ops = {
-        "AVERAGE_POOL_2D",
-        "MAX_POOL_2D",
-        "RESIZE_BILINEAR",
-        "RESIZE_NEAREST_NEIGHBOR",
-    }
-    changed = True
-    while changed:
-        changed = False
-        for op in model_ir.operators:
-            op_type = str(op.op_type)
-            output_tensors = [
-                model_ir.tensors.get(str(output_name), None)
-                for output_name in op.outputs
-            ]
-            if op_type in unary_passthrough_ops and len(op.inputs) >= 1:
-                propagated_layout = _shared_tensor_layout(
-                    [model_ir.tensors.get(str(op.inputs[0]), None)]
-                )
-            elif op_type in binary_passthrough_ops and len(op.inputs) >= 2:
-                propagated_layout = _shared_tensor_layout(
-                    [
-                        model_ir.tensors.get(str(op.inputs[0]), None),
-                        model_ir.tensors.get(str(op.inputs[1]), None),
-                    ]
-                )
-            elif op_type == "CONCATENATION":
-                concat_input_tensors = [
-                    model_ir.tensors.get(str(input_name), None) for input_name in op.inputs
-                ]
-                propagated_layout = _shared_tensor_layout(concat_input_tensors)
-                if propagated_layout == LOGICAL_LAYOUT_UNKNOWN:
-                    propagated_layout = _infer_concat_peer_layout(op, concat_input_tensors)
-                    if propagated_layout != LOGICAL_LAYOUT_UNKNOWN:
-                        for input_tensor in concat_input_tensors:
-                            changed = _assign_tensor_logical_layout(input_tensor, propagated_layout) or changed
-            elif op_type in {"PACK", "UNPACK"}:
-                propagated_layout = _shared_tensor_layout(
-                    [model_ir.tensors.get(str(input_name), None) for input_name in op.inputs]
-                )
-            elif op_type == "SPLIT":
-                propagated_layout = _shared_tensor_layout(
-                    [model_ir.tensors.get(str(op.inputs[-1]), None)]
-                )
-            elif op_type in resize_pool_passthrough_ops:
-                propagated_layout = _shared_tensor_layout(
-                    [model_ir.tensors.get(str(op.inputs[0]), None)]
-                )
-            else:
-                continue
-            if propagated_layout == LOGICAL_LAYOUT_UNKNOWN:
-                continue
-            for output_tensor in output_tensors:
-                changed = _assign_tensor_logical_layout(output_tensor, propagated_layout) or changed
 
 
 

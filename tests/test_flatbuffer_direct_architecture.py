@@ -416,6 +416,8 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "_apply_feature_last_sequence_layouts," in exporter_source
     assert "def _ensure_public_boundary_layout_bridges(" not in exporter_source
     assert "_ensure_public_boundary_layout_bridges," in exporter_source
+    assert "def _propagate_pytorch_friendly_layouts(" not in exporter_source
+    assert "_propagate_pytorch_friendly_layouts," in exporter_source
     focused_layout_owner_functions = {
         "_collect_feature_last_sequence_tensor_names",
         "_is_pytorch_channel_first_safe_rank4_island_op",
@@ -479,6 +481,14 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "replace_operator_outputs(" in boundary_bridge_source
     assert "insert_operator(" in boundary_bridge_source
     assert "append_operator(" in boundary_bridge_source
+    friendly_layout_source = ast.get_source_segment(
+        pass_source,
+        pass_functions["_propagate_pytorch_friendly_layouts"],
+    )
+    assert friendly_layout_source is not None
+    assert "operator_indices_for_types(" in friendly_layout_source
+    assert "consumer_indices(" in friendly_layout_source
+    assert "while changed:" not in friendly_layout_source
 
 
 def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:

@@ -119,6 +119,15 @@ front/append ordering and metadata contract. An already matching public
 contract remains a zero-index no-op. The focused Torch-free suite now passes 84
 tests, with no model conversion or inference.
 
+The general PyTorch-friendly layout fixed point has moved into the same module
+and now uses one indexed worklist. Unary, binary, Concat, Pack/Unpack, Split,
+resize, and pool operators preserve the prior propagation rules, including
+Concat peer inference, but only the producer and consumers adjacent to a
+changed tensor are rescheduled. Reverse-order fixtures pass, and 64 fixed-seed
+randomized ModelIR graphs produce exactly the same tensor layouts as the former
+whole-graph fixed-point loop. The focused suite now passes 86 tests; no model
+conversion or inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC
