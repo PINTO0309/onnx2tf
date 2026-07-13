@@ -292,7 +292,7 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
         baseline_classification_counts[baseline_classification] = int(
             baseline_classification_counts.get(baseline_classification, 0)
         ) + 1
-        if baseline_classification == "timeout":
+        if baseline_classification in {"timeout", "excluded"}:
             excluded_baseline_classification_counts[baseline_classification] = int(
                 excluded_baseline_classification_counts.get(
                     baseline_classification,
@@ -1208,7 +1208,8 @@ def main() -> None:
         help=(
             "Run the models recorded in a managed Tier 0-4 profile. "
             "The profile fixes root-only discovery and its node-count range; "
-            "models whose managed baseline is timeout are excluded."
+            "models whose managed baseline is timeout or explicitly excluded "
+            "are omitted."
         ),
     )
     parser.add_argument(

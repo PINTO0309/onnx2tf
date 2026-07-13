@@ -902,6 +902,7 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
 
     _model(tmp_path / "active.onnx")
     _model(tmp_path / "timed_out.onnx")
+    _model(tmp_path / "excluded.onnx")
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(
         json.dumps(
@@ -924,6 +925,11 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
                         "tier": 0,
                         "model": "timed_out.onnx",
                         "baseline_classification": "timeout",
+                    },
+                    {
+                        "tier": 0,
+                        "model": "excluded.onnx",
+                        "baseline_classification": "excluded",
                     },
                 ],
             }
@@ -961,10 +967,11 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
     assert "-cotof" not in commands[0]
     assert [entry["model"] for entry in state["entries"]] == ["active.onnx"]
     profile_filter = state["summary"]["filters"]["regression_profile"]
-    assert profile_filter["model_count"] == 2
+    assert profile_filter["model_count"] == 3
     assert profile_filter["active_model_count"] == 1
-    assert profile_filter["excluded_model_count"] == 1
+    assert profile_filter["excluded_model_count"] == 2
     assert profile_filter["excluded_baseline_classification_counts"] == {
+        "excluded": 1,
         "timeout": 1,
     }
 
@@ -1197,17 +1204,21 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     profile = bulk_runner._load_regression_profile(str(profile_path))
 
     assert profile["model_count"] == 420
-    assert profile["active_model_count"] == 393
-    assert profile["excluded_model_count"] == 27
-    assert profile["excluded_baseline_classification_counts"] == {"timeout": 27}
+    assert profile["active_model_count"] == 384
+    assert profile["excluded_model_count"] == 36
+    assert profile["excluded_baseline_classification_counts"] == {
+        "excluded": 9,
+        "timeout": 27,
+    }
     assert profile["tiers"] == [0, 1, 2, 3, 4]
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 6,
-        "pass": 367,
+        "pass": 358,
         "tflite_fail": 20,
         "timeout": 27,
+        "excluded": 9,
     }
     assert profile["acceptance_reasons"] == {
         "deim_hgnetv2_n_wholebody28_1250query_fp16.onnx": (
@@ -1391,9 +1402,43 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert maskrcnn_entry == {
         "tier": 3,
         "model": "maskrcnn_resnet50_fpn.onnx",
-        "baseline_classification": "pass",
-        "tflite_max_abs": 0.0,
+        "baseline_classification": "excluded",
+        "baseline_reason": "user_excluded_from_future_validation",
     }
+    for model_name in (
+        "fast_acvnet_generalization_opset16_192x320.onnx",
+        "htdemucs_ft_onnx_1sec.onnx",
+    ):
+        excluded_entry = next(
+            entry
+            for entry in profile_payload["models"]
+            if entry["model"] == model_name
+        )
+        assert excluded_entry == {
+            "tier": 3,
+            "model": model_name,
+            "baseline_classification": "excluded",
+            "baseline_reason": "user_excluded_from_future_validation",
+        }
+    for model_name, tier in (
+        ("model1.onnx", 1),
+        ("paddlepaddle_26_ocr.onnx", 1),
+        ("bread_180x320.onnx", 2),
+        ("bread_nonfm_180x320.onnx", 2),
+        ("double_gru.onnx", 2),
+        ("gtcrn_simple.onnx", 2),
+    ):
+        excluded_entry = next(
+            entry
+            for entry in profile_payload["models"]
+            if entry["model"] == model_name
+        )
+        assert excluded_entry == {
+            "tier": tier,
+            "model": model_name,
+            "baseline_classification": "excluded",
+            "baseline_reason": "user_excluded_from_future_validation",
+        }
     tiny_decoder_entry = next(
         entry
         for entry in profile_payload["models"]
