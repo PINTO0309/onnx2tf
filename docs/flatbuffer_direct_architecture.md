@@ -1844,11 +1844,23 @@ The rank-five NDHWC pre-Concat layout matcher is mechanically isolated in
 `passes/ndhwc_concat_layout.py`. Its extracted function AST matches the
 characterized central implementation at SHA-256
 `0b0c625290f2ed31351ca204b0bbc5f2a463fa09ffe1bf1eccb8ff15de6aee17`.
-The lowerer retains a compatibility wrapper and all five existing production
-calls at this checkpoint, so pass ordering and retry behavior are unchanged.
-The next checkpoint replaces the repeated whole-graph maps and direct list
-deletion with shared `ModelIRGraphIndex`/`LayoutState` mutation and one stable
-transactional runner.
+The indexed checkpoint retains the lowerer compatibility wrapper but replaces
+all five raw production calls with transactional runner
+`layout.ndhwc_pre_concat`. Candidate planning now uses one shared
+`ModelIRGraphIndex`, validates every adapter, fan-out, public boundary,
+permutation, rank, and spatial-shape condition before mutation, removes
+operators through differential index updates, and reconciles `LayoutState`
+after pruning. Rank-five unary and canonical Concat tensors also clone and
+remap per-axis quantization metadata from NCDHW dimension 1 to NDHWC dimension
+4. The original implementation and the indexed implementation produce
+identical ModelIR for all sixteen non-quantized characterization cases; the
+quantized cases intentionally differ only by the corrected quantized axis.
+Focused characterization, runner instrumentation, ownership, and architecture
+validation pass 60 tests. A single sequential `superpoint.onnx` smoke retains
+`evaluation_pass=true`, maximum absolute error
+`1.6666017472743988e-06`, RMSE `1.6207873294228388e-07`, and cosine similarity
+`1.0`; the NDHWC pre-Concat precondition skips all five production positions
+without snapshots or fingerprints for that unrelated rank-four graph.
 
 ## Managed-corpus SWAP exclusion policy
 

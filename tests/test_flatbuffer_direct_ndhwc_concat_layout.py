@@ -5,9 +5,19 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
-from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
+from onnx2tf.tflite_builder.ir import (
+    ModelIR,
+    OperatorIR,
+    QuantParamIR,
+    TensorIR,
+)
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_pre_concat_ndhwc_chains,
+)
+from onnx2tf.tflite_builder.passes.ndhwc_concat_layout import (
+    run_ndhwc_concat_layout_cleanup,
 )
 
 
@@ -155,6 +165,16 @@ def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
 
 def test_ndhwc_pre_concat_direct_unary_multi_post_characterization() -> None:
     model_ir = _model()
+    model_ir.tensors["concat_ncdhw"].quantization = QuantParamIR(
+        scale=[0.25] * 11,
+        zero_point=[0] * 11,
+        quantized_dimension=1,
+    )
+    model_ir.tensors["x1_unary_ncdhw"].quantization = {
+        "scale": [0.5] * 6,
+        "zero_point": [0] * 6,
+        "quantized_dimension": 1,
+    }
 
     stats = _optimize_transpose_pre_concat_ndhwc_chains(model_ir)
 
@@ -163,6 +183,9 @@ def test_ndhwc_pre_concat_direct_unary_multi_post_characterization() -> None:
     unary_op = next(op for op in model_ir.operators if op.op_type == "LEAKY_RELU")
     assert unary_op.inputs == ["x1_ndhwc"]
     assert model_ir.tensors["x1_unary_ncdhw"].shape == [1, 2, 3, 4, 6]
+    unary_quantization = model_ir.tensors["x1_unary_ncdhw"].quantization
+    assert isinstance(unary_quantization, dict)
+    assert unary_quantization["quantized_dimension"] == 4
     concat_op = next(
         op for op in model_ir.operators if op.op_type == "CONCATENATION"
     )
@@ -170,11 +193,60 @@ def test_ndhwc_pre_concat_direct_unary_multi_post_characterization() -> None:
     assert concat_op.outputs == ["post0_ndhwc"]
     assert concat_op.options["axis"] == 4
     assert model_ir.tensors["post0_ndhwc"].shape == [1, 2, 3, 4, 11]
+    quantization = model_ir.tensors["post0_ndhwc"].quantization
+    assert isinstance(quantization, QuantParamIR)
+    assert quantization.scale == [0.25] * 11
+    assert quantization.zero_point == [0] * 11
+    assert quantization.quantized_dimension == 4
     relu_ops = [op for op in model_ir.operators if op.op_type == "RELU"]
     assert [op.inputs for op in relu_ops] == [
         ["post0_ndhwc"],
         ["post0_ndhwc"],
     ]
+
+
+def test_ndhwc_pre_concat_runner_uses_one_index_and_transaction(
+    monkeypatch,
+) -> None:
+    model_ir = _model()
+    calls = {"refresh": 0, "snapshot": 0, "fingerprint": 0}
+    original_refresh = ModelIRGraphIndex.refresh
+    original_snapshot = ModelIRPassState.snapshot
+    original_fingerprint = ModelIRPassState.fingerprint
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        calls["refresh"] += 1
+        original_refresh(index)
+
+    def counted_snapshot(state: ModelIRPassState) -> ModelIR:
+        calls["snapshot"] += 1
+        return original_snapshot(state)
+
+    def counted_fingerprint(state: ModelIRPassState) -> bytes:
+        calls["fingerprint"] += 1
+        return original_fingerprint(state)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    monkeypatch.setattr(ModelIRPassState, "snapshot", counted_snapshot)
+    monkeypatch.setattr(ModelIRPassState, "fingerprint", counted_fingerprint)
+    diagnostics: list[dict] = []
+
+    stats = run_ndhwc_concat_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_ndhwc_chains": 1}
+    assert calls == {"refresh": 1, "snapshot": 1, "fingerprint": 0}
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "layout.ndhwc_pre_concat"
+    assert diagnostics[0]["status"] == "changed"
+    assert diagnostics[0]["metrics"] == {
+        "preflight_operators_visited": 4,
+        "state_built": True,
+        "snapshot_count": 1,
+        "fingerprint_count": 0,
+    }
 
 
 @pytest.mark.parametrize(
