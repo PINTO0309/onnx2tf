@@ -13,8 +13,9 @@ one or more expanded-Swish diamonds with direct or unary companion inputs.
 The bounded Slice family additionally owns one or more direct-source Slice
 inputs, optionally with direct inputs, while retaining shared/public source
 adapters. The bounded Split family owns one
-or more outputs from an exclusive direct-source Split, again optionally with
-direct inputs. The bounded Add family owns the non-recursive direct-only Add
+or more outputs from a direct-source Split, again optionally with direct
+inputs, while retaining shared/public source adapters. The bounded Add family
+owns the non-recursive direct-only Add
 input form. The exact pseudo-LeakyRelu diamond is the eleventh family. All
 eleven float-path families share one
 `ModelIRGraphIndex`/`LayoutState` pass group and run transactionally under
@@ -85,10 +86,11 @@ to be unused or consumed only by the selected Concat. One Split may therefore
 supply multiple Concat inputs while its source, axis, output metadata, and
 quantization are rewritten exactly once. Negative channel axis `-3` and
 positive axis `1` both canonicalize to NHWC axis `3`. Shared/public axis
-tensors use the same provenance-preserving copy-on-write policy. This also
-fixes the legacy omission of per-axis quantization remapping. Source-adapter
-fan-out, output post adapters, and Add interactions remain available through
-the legacy fallback.
+tensors use the same provenance-preserving copy-on-write policy. Shared/public
+source adapters remain intact for their existing consumers while Split alone
+is rewired to NHWC. This also fixes the legacy omission of per-axis
+quantization remapping. Output post adapters and Add interactions remain
+available through the legacy fallback.
 The bounded Add family requires both operands to come through exclusive
 rank-four NHWC→NCHW adapters and the Add output to feed only the selected
 Concat. Both operands are rewired in their original order, all leading
@@ -159,7 +161,8 @@ Focused verification, all in the existing `uv` environment:
   no-op boundaries, and one post-adapter case that must continue through the
   legacy fallback. The Split suite covers both axis
   signs, multi-output single-application behavior, shared/public axis
-  copy-on-write, fifteen no-op boundaries, and two preserved legacy cases. The
+  copy-on-write, shared/public source-adapter retention, fourteen no-op
+  boundaries, and one preserved post-adapter legacy case. The
   Add suite covers mixed/all-Add success, fourteen complete no-op boundaries,
   and three broader cases retained in legacy. The pseudo-LeakyRelu suite
   covers both alpha operand orders, direct/unary/all-Leaky success, twenty
@@ -176,8 +179,8 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize the Slice post-adapter family or one remaining
-shared-adapter/post-adapter Split/Add subfamily. Keep recursive
+Next work should characterize a Slice/Split post-adapter family or one
+remaining shared-adapter/post-adapter Add subfamily. Keep recursive
 Add and mixed Swish/Add interactions in legacy until independently fixed. Do
 not begin with a Tier 0–4 corpus run, and do not create a pull request.
 

@@ -336,10 +336,10 @@ shared/public parameter tensors use copy-on-write with tensor provenance
 retained, shared/public source adapters remain for their external consumers,
 and Slice-output per-axis quantization follows the layout change.
 The bounded Split family accepts one or more outputs from a rank-four Split
-whose source adapter is exclusive and whose outputs are unused or consumed
-only by the selected Concat. It remaps the Split axis to 3 once per operator,
-uses copy-on-write for a shared/public axis tensor, and moves every Split
-output's shape and per-axis quantization into NHWC. Split source adapters,
+whose outputs are unused or consumed only by the selected Concat. It remaps
+the Split axis to 3 once per operator, uses copy-on-write for a shared/public
+axis tensor, retains shared/public source adapters for external consumers, and
+moves every Split output's shape and per-axis quantization into NHWC.
 Slice/Split-output post adapters, Swish-source Slice, and Swish/Add-connected
 Split remain in the legacy matcher. The bounded Add family accepts a direct
 Concat input produced by a non-recursive two-input Add whose operands each

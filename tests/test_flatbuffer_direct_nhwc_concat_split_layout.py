@@ -319,7 +319,6 @@ def test_nhwc_split_copy_on_write_preserves_shared_or_public_axis(
         "single_output",
         "split_output_fanout",
         "public_split_output",
-        "public_split_adapter",
         "invalid_adapter_rank",
         "invalid_split_output_rank",
         "invalid_axis_length",
@@ -344,10 +343,35 @@ def test_nhwc_split_rejects_unsafe_or_partial_match(boundary: str) -> None:
 
 @pytest.mark.parametrize(
     "boundary",
-    ["split_adapter_fanout", "split_output_post_transpose"],
+    ["split_adapter_fanout", "public_split_adapter"],
 )
-def test_nhwc_split_broader_legacy_cases_remain_available(boundary: str) -> None:
+def test_nhwc_split_retains_shared_or_public_source_adapter(
+    boundary: str,
+) -> None:
     model_ir = _split_model(boundary=boundary)
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_split_rewritten(model_ir)
+    remaining_transposes = [
+        op for op in model_ir.operators if op.op_type == "TRANSPOSE"
+    ]
+    assert [op.outputs for op in remaining_transposes] == [["x1_nchw"]]
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_split"
+    )
+    assert event["status"] == "changed"
+
+
+def test_nhwc_split_output_post_adapter_remains_in_legacy() -> None:
+    model_ir = _split_model(boundary="split_output_post_transpose")
     diagnostics: list[dict] = []
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(

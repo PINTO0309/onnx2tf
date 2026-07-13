@@ -12654,7 +12654,6 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
         split_idx = int(plan.get("split_idx", -1))
         if (
             str(source_plan.get("kind", "")) != "direct"
-            or not bool(source_plan.get("remove_pre", False))
             or list(plan.get("post_transpose_indices", [])) != []
             or source_tensor is None
             or len(list(source_tensor.shape)) != 4
