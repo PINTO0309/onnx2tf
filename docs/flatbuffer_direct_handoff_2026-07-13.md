@@ -15,8 +15,8 @@ inputs, optionally with direct inputs, while retaining shared/public source
 adapters. The bounded Split family owns one
 or more outputs from a direct-source Split, again optionally with direct
 inputs, while retaining shared/public source adapters. The bounded Add family
-owns the non-recursive direct/supported-unary Add input form. The exact
-pseudo-LeakyRelu diamond is the eleventh family. All
+owns the non-recursive direct/supported-unary/expanded-Swish Add input form.
+The exact pseudo-LeakyRelu diamond is the eleventh family. All
 eleven float-path families share one
 `ModelIRGraphIndex`/`LayoutState` pass group and run transactionally under
 stable IDs `layout.nhwc_pre_concat_direct` and
@@ -94,19 +94,19 @@ and their consumers are rewired to the corresponding NHWC Split output;
 public post aliases reject before mutation. Add interactions remain available
 through the legacy fallback.
 The bounded Add family requires both operands to come through rank-four
-NHWC→NCHW adapters, optionally followed by a supported unary operation, and
-the Add output to feed only the selected Concat or exact inverse adapters.
-Operands and unary branches are rewired in their original order, exclusive
-leading adapters are removed, shared/public adapters remain for external
-consumers, operator options are retained, and Add/unary output shapes and
-per-axis quantization are remapped once. Valid non-public inverse output
-adapters are bypassed and their consumers are rewired to the NHWC Add output;
+NHWC→NCHW adapters, optionally followed by a supported unary operation or
+complete expanded-Swish diamond, and the Add output to feed only the selected
+Concat or exact inverse adapters. Operands and bounded branches are rewired in
+their original order, exclusive leading adapters are removed, shared/public
+adapters remain for external consumers, operator options are retained, and
+Add/branch output shapes and per-axis quantization are remapped once. Valid
+non-public inverse output adapters are bypassed and their consumers are rewired
+to the NHWC Add output;
 public post aliases and invalid ranks reject before mutation. Source-adapter
 removal uses the post-rewrite GraphIndex rather than coupled precomputed flags:
 external/public consumers retain the adapter, while an adapter shared with the
-root Concat is removed after both Add and Concat are rewired. Swish/Split
-operands, recursive Add, and other mixed operand families deliberately remain
-in legacy.
+root Concat is removed after both Add and Concat are rewired. Split operands,
+recursive Add, and other mixed operand families deliberately remain in legacy.
 The pseudo-LeakyRelu family proves the exact
 `ReLU(x) - alpha * ReLU(-x)` topology. It accepts either Mul operand order,
 requires scalar alpha, preserves Sub order, and supports direct or unary
@@ -156,9 +156,9 @@ Focused verification, all in the existing `uv` environment:
 - Direct, unary, Pad, Dequantize, PReLU, Softmax, expanded-Swish,
   pseudo-LeakyRelu, and bounded Slice/Split/Add ModelIR characterization:
   the preceding combined float-path run passed 176 tests across eight compact
-  modules; the expanded inventory now contains 180. Including the bounded
+  modules; the expanded inventory now contains 181. Including the bounded
   direct and unary/Pad quantized-post suites, the compact inventory contains
-  222 tests across nine modules. The preceding combined run passed 208 tests;
+  223 tests across nine modules. The preceding combined run passed 208 tests;
   the expanded quantized module passes 42 tests, and the focused quantized/Pad
   selection after extracting the shared Pad plan passes 52 tests.
   The Softmax suite includes an exact NumPy equivalence check for the original
@@ -174,7 +174,8 @@ Focused verification, all in the existing `uv` environment:
   Add suite covers mixed/all-Add success, shared/public source-adapter
   retention in both operand positions, root-Concat adapter sharing,
   output-post-adapter bypass, thirteen complete no-op boundaries, and one
-  indexed supported-unary operand case. The pseudo-LeakyRelu suite
+  indexed supported-unary operand case plus one indexed exact expanded-Swish
+  operand case. The pseudo-LeakyRelu suite
   covers both alpha operand orders, direct/unary/all-Leaky success, twenty
   complete no-op boundaries, and one Pad-mixed legacy fallback. The quantized
   suite covers canonical and multiple post outputs, shared/public adapter
@@ -189,8 +190,8 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize a Swish/Split operand Add subfamily. Keep
-recursive Add interactions in legacy until independently fixed. Do
+Next work should characterize a Split operand Add subfamily. Keep recursive
+Add interactions in legacy until independently fixed. Do
 not begin with a Tier 0–4 corpus run, and do not create a pull request.
 
 The section below records the preceding rank-five checkpoint and remains as

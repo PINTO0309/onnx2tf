@@ -1016,6 +1016,14 @@ def _resolve_add_input_plan(
                 model_outputs=model_outputs,
             )
         if operand_plan is None:
+            operand_plan = _resolve_swish_input_plan(
+                model_ir,
+                graph_index,
+                input_name=add_input_name,
+                concat_index=int(add_index),
+                model_outputs=model_outputs,
+            )
+        if operand_plan is None:
             return None
         adapter_output_tensor = model_ir.tensors.get(add_input_name)
         if adapter_output_tensor is None or len(list(adapter_output_tensor.shape)) != 4:
@@ -1033,9 +1041,9 @@ def _resolve_add_input_plan(
         unique_adapter_ops.append(adapter_op)
         unique_remove_flags.append(bool(operand_plan.remove_adapter))
     add_input_names = tuple(
-        operand_plan.output_name
-        if operand_plan.unary_op is not None
-        else operand_plan.source_name
+        operand_plan.source_name
+        if operand_plan.kind == "direct"
+        else operand_plan.output_name
         for operand_plan in operand_plans
     )
     return _NhwcConcatInputPlan(
@@ -2203,6 +2211,12 @@ def _apply_add_input_plan(
     for operand_plan in input_plan.add_operand_plans:
         if operand_plan.unary_op is not None:
             _apply_unary_input_plan(
+                model_ir,
+                graph_index,
+                operand_plan,
+            )
+        elif operand_plan.logistic_op is not None:
+            _apply_swish_input_plan(
                 model_ir,
                 graph_index,
                 operand_plan,

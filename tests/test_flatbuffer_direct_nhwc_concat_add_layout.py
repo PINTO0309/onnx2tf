@@ -214,6 +214,26 @@ def _add_model(
             OperatorIR("RELU", ["a_nchw"], ["a_relu"]),
         )
         add_op.inputs[0] = "a_relu"
+    if boundary == "swish_operand":
+        model_ir.tensors["a_logistic"] = _tensor(
+            "a_logistic",
+            [1, 3, 5, 7],
+        )
+        model_ir.tensors["a_swish"] = _tensor(
+            "a_swish",
+            [1, 3, 5, 7],
+        )
+        add_op = next(op for op in model_ir.operators if op.op_type == "ADD")
+        add_index = model_ir.operators.index(add_op)
+        model_ir.operators[add_index:add_index] = [
+            OperatorIR("LOGISTIC", ["a_nchw"], ["a_logistic"]),
+            OperatorIR(
+                "MUL",
+                ["a_logistic", "a_nchw"],
+                ["a_swish"],
+            ),
+        ]
+        add_op.inputs[0] = "a_swish"
     if boundary == "public_concat":
         model_ir.outputs.append("concat_nchw")
     if boundary == "public_post":
@@ -407,6 +427,37 @@ def test_nhwc_add_unary_operand_is_indexed() -> None:
     unary_op = next(op for op in model_ir.operators if op.op_type == "RELU")
     assert unary_op.inputs == ["a_nhwc"]
     assert model_ir.tensors["a_relu"].shape == [1, 5, 7, 3]
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_add"
+    )
+    assert event["status"] == "changed"
+
+
+def test_nhwc_add_swish_operand_is_indexed() -> None:
+    model_ir = _add_model(boundary="swish_operand")
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_add_rewritten(
+        model_ir,
+        expected_inputs=["a_swish", "b_nhwc"],
+    )
+    logistic_op = next(
+        op for op in model_ir.operators if op.op_type == "LOGISTIC"
+    )
+    mul_op = next(op for op in model_ir.operators if op.op_type == "MUL")
+    assert logistic_op.inputs == ["a_nhwc"]
+    assert mul_op.inputs == ["a_logistic", "a_nhwc"]
+    assert model_ir.tensors["a_logistic"].shape == [1, 5, 7, 3]
+    assert model_ir.tensors["a_swish"].shape == [1, 5, 7, 3]
     assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
     event = next(
         event

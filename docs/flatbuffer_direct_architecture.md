@@ -345,15 +345,15 @@ moves every Split output's shape and per-axis quantization into NHWC while
 bypassing exact inverse output adapters. Swish-source Slice and
 Swish/Add-connected Split remain in the legacy matcher. The bounded Add family
 accepts a non-recursive two-input Add whose operands come from rank-four
-NHWC→NCHW adapters, optionally through a supported unary operation. Both Add
-inputs and unary branches are rewired together, exclusive adapters are
-removed, shared/public adapters remain for external consumers, exact inverse
-output adapters are bypassed, and Add output shape and per-axis quantization
-move into NHWC. Source-adapter removal is decided from the post-rewrite
-GraphIndex, allowing an adapter shared with the root Concat to be removed only
-after every selected consumer is rewired. Swish or Split operands, recursive
-Add, and broader mixed-input quantized-post families remain in legacy until
-independently characterized.
+NHWC→NCHW adapters, optionally through a supported unary operation or exact
+expanded-Swish diamond. Add inputs and bounded operand branches are rewired
+together, exclusive adapters are removed, shared/public adapters remain for
+external consumers, exact inverse output adapters are bypassed, and Add output
+shape and per-axis quantization move into NHWC. Source-adapter removal is
+decided from the post-rewrite GraphIndex, allowing an adapter shared with the
+root Concat to be removed only after every selected consumer is rewired. Split
+operands, recursive Add, and broader mixed-input quantized-post families remain
+in legacy until independently characterized.
 The indexed
 pseudo-LeakyRelu family recognizes the complete
 `ReLU(x) - alpha * ReLU(-x)` diamond with either Mul operand order and direct
