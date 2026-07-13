@@ -1906,6 +1906,17 @@ injected keyword and parses the transformed function source as Python. Thus the
 exporter no longer defines any of the extracted native unary, binary, transpose,
 shape-transform, Concat, or direct-module emitters.
 
+Generated encoder-stage composition now has a separate Torch-free owner in
+`pytorch_codegen_stages.py`. It groups staged BERT encoder statements, derives
+their live inputs and outputs, and emits the optional attention/FFN submodule
+source, initialization lines, and forward calls without importing Torch at
+module import time. The stored native-codegen pipeline still resolves the same
+imported function name, so its contract is unchanged. The former non-composite
+encoder builder had no production or test callers and was removed rather than
+preserved as a second implementation. Deterministic differential validation
+over 300 generated stage specifications fixes exact return-value equivalence
+with the previous composite builder.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
@@ -2654,6 +2665,7 @@ output directory rather than resuming results produced by the older profile.
 3. Complete quantization, split/crop, custom/pseudo op, report, and requested-
    artifact-only regression coverage on the validated ModelIR contract.
 4. Complete the shared PyTorch/TorchScript/Dynamo ONNX/ExportedProgram
-   canonicalization and emitter separation.
+   canonicalization and artifact-emitter separation on top of the extracted
+   native op and encoder-stage codegen boundaries.
 5. Measure warm-run conversion time and peak RSS on the active Tier 0-4 set,
    then document improvements and remaining normalized failures.

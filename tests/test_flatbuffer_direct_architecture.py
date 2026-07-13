@@ -72,6 +72,7 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_bridge_passes.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_model_passes.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_optimizer.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_stages.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_emitters.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_errors.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_support.py",
@@ -3498,3 +3499,20 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
     ).read_text(encoding="utf-8")
     assert "def _constant_int_list(" in codegen_utils_source
     assert "_constant_int_list," in exporter_source
+
+def test_native_pytorch_stage_codegen_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    stage_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_codegen_stages.py"
+    ).read_text(encoding="utf-8")
+
+    assert "def _build_named_encoder_methods_composite(" in stage_source
+    assert "def _build_named_encoder_methods_composite(" not in exporter_source
+    assert "_build_named_encoder_methods_composite," in exporter_source
+    assert "def _build_named_encoder_methods(" not in exporter_source
+    assert "import torch" not in stage_source

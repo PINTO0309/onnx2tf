@@ -163,6 +163,19 @@ pass. The exporter now defines none of the extracted native unary, binary,
 transpose, shape-transform, Concat, or direct-module emitters. No model
 conversion or inference was run.
 
+Native encoder-stage composition now lives in the Torch-free
+`pytorch_codegen_stages.py` module. The production composite builder retains
+the same imported name used by the stored codegen pipeline and preserves BERT
+layer grouping, attention/FFN splitting, liveness-derived signatures,
+initialization lines, and forward calls. The unused older non-composite builder
+was removed from the exporter. Three direct fixtures cover inline, grouped, and
+attention/FFN paths; 300 deterministic generated stage specifications return
+exactly the same values as the pre-extraction implementation. Stage and
+architecture validation passes 61 tests; syntax, Ruff, and diff checks pass.
+No model conversion or inference was run. Resume with the forward-stage
+partition/reshape-folding boundary, then separate artifact exporters only when
+their shared metadata and child-process dependencies can be explicit.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted
