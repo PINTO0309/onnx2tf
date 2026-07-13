@@ -397,12 +397,13 @@ diamonds reject before mutation under stable ID
 mixed-input quantized-post families remain in legacy.
 
 The strict direct, unary, Pad-plus-direct, mixed unary-plus-Pad, all-Pad,
-expanded-Swish, Dequantize, PReLU, and Softmax quantized-post paths are
-independently owned by
+expanded-Swish, Dequantize, PReLU, Softmax, and exact pseudo-LeakyRelu
+quantized-post paths are independently owned by
 `passes/nhwc_concat_quantized_layout.py`. They recognize rank-four direct
 NHWC→NCHW inputs, optionally followed by RELU, RELU6, LOGISTIC, TANH, GELU, or
 an exact constant PAD, the exact `Logistic(x) * x` expanded-Swish diamond,
-Dequantize, PReLU, or Softmax, then channel Concat, one Quantize, and one or more inverse
+Dequantize, PReLU, Softmax, or the exact pseudo-LeakyRelu diamond, then channel
+Concat, one Quantize, and one or more inverse
 post Transposes. The
 mixed pass requires at least one unary and one Pad branch; additional direct
 branches are allowed. The all-Pad pass requires at least two Pad branches. The
@@ -415,6 +416,9 @@ selection, per-axis metadata remapping, and provenance-preserving copy-on-write.
 Softmax reuses the axis-preserving float plan: local NHWC→NHCW→Softmax→NHWC
 adapters retain the original NCHW last-axis meaning while the outer Concat and
 Quantize path remains NHWC.
+The pseudo-LeakyRelu pass shares the exact float matcher/apply pair, preserving
+the non-commutative Sub order, scalar alpha guard, and all internal fan-out and
+public-boundary invariants.
 The transactional passes
 rewire Concat and bounded branches to NHWC, retain shared/public input
 adapters, redirect Quantize to one canonical post output, and coalesce
@@ -435,7 +439,8 @@ under stable IDs
 `layout.nhwc_pre_concat_quantized_swish` and
 `layout.nhwc_pre_concat_quantized_dequantize`, followed by
 `layout.nhwc_pre_concat_quantized_prelu` and
-`layout.nhwc_pre_concat_quantized_softmax`. Shared pads constants are
+`layout.nhwc_pre_concat_quantized_softmax`, followed by
+`layout.nhwc_pre_concat_quantized_leaky`. Shared pads constants are
 materialized once and reused by every selected Pad. Other broader mixed
 quantized inputs remain in legacy.
 

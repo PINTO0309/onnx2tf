@@ -590,6 +590,60 @@ def _quantized_softmax_model(
     return model_ir
 
 
+def _quantized_leaky_model(
+    *,
+    public_leaky_output: bool = False,
+) -> ModelIR:
+    model_ir = _quantized_model()
+    internal_names = (
+        "a_neg",
+        "a_neg_relu",
+        "a_pos_relu",
+        "a_neg_scaled",
+        "a_leaky",
+    )
+    for tensor_name in internal_names:
+        model_ir.tensors[tensor_name] = _tensor(
+            tensor_name,
+            [1, 2, 5, 7],
+        )
+        model_ir.tensors[tensor_name].quantization = QuantParamIR(
+            scale=[0.4] * 2,
+            zero_point=[0] * 2,
+            quantized_dimension=1,
+        )
+    model_ir.tensors["leaky_alpha"] = TensorIR(
+        name="leaky_alpha",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[1],
+        data=np.asarray([0.1], dtype=np.float32),
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    concat_index = model_ir.operators.index(concat_op)
+    model_ir.operators[concat_index:concat_index] = [
+        OperatorIR("NEG", ["a_nchw"], ["a_neg"]),
+        OperatorIR("RELU", ["a_neg"], ["a_neg_relu"]),
+        OperatorIR("RELU", ["a_nchw"], ["a_pos_relu"]),
+        OperatorIR(
+            "MUL",
+            ["a_neg_relu", "leaky_alpha"],
+            ["a_neg_scaled"],
+        ),
+        OperatorIR(
+            "SUB",
+            ["a_pos_relu", "a_neg_scaled"],
+            ["a_leaky"],
+        ),
+    ]
+    concat_op.inputs[0] = "a_leaky"
+    if public_leaky_output:
+        model_ir.outputs.append("a_leaky")
+    return model_ir
+
+
 def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
     assert actual.inputs == expected.inputs
     assert actual.outputs == expected.outputs
@@ -988,6 +1042,58 @@ def test_nhwc_quantized_softmax_input_is_indexed() -> None:
 
 def test_nhwc_quantized_softmax_rejects_public_output() -> None:
     model_ir = _quantized_softmax_model(public_softmax_output=True)
+    original = deepcopy(model_ir)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
+    _assert_model_equal(model_ir, original)
+
+
+def test_nhwc_quantized_leaky_input_is_indexed() -> None:
+    model_ir = _quantized_leaky_model()
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_quantized_rewritten(
+        model_ir,
+        expected_concat_inputs=["a_leaky", "b_nhwc"],
+    )
+    neg_op = next(op for op in model_ir.operators if op.op_type == "NEG")
+    positive_relu = next(
+        op for op in model_ir.operators if op.outputs == ["a_pos_relu"]
+    )
+    sub_op = next(op for op in model_ir.operators if op.op_type == "SUB")
+    assert neg_op.inputs == ["a_nhwc"]
+    assert positive_relu.inputs == ["a_nhwc"]
+    assert sub_op.inputs == ["a_pos_relu", "a_neg_scaled"]
+    for tensor_name in (
+        "a_neg",
+        "a_neg_relu",
+        "a_pos_relu",
+        "a_neg_scaled",
+        "a_leaky",
+    ):
+        tensor = model_ir.tensors[tensor_name]
+        assert tensor.shape == [1, 5, 7, 2]
+        assert isinstance(tensor.quantization, QuantParamIR)
+        assert tensor.quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_quantized_leaky"
+    )
+    assert event["status"] == "changed"
+
+
+def test_nhwc_quantized_leaky_rejects_public_output() -> None:
+    model_ir = _quantized_leaky_model(public_leaky_output=True)
     original = deepcopy(model_ir)
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)

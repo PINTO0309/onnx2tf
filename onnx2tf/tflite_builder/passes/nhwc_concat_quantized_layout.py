@@ -24,10 +24,12 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR
 from onnx2tf.tflite_builder.passes.nhwc_concat_layout import (
     _NhwcConcatInputPlan,
     _apply_dequantize_input_plan,
+    _apply_leaky_input_plan,
     _apply_prelu_input_plan,
     _apply_softmax_input_plan,
     _apply_swish_input_plan,
     _resolve_dequantize_input_plan,
+    _resolve_leaky_input_plan,
     _resolve_prelu_input_plan,
     _resolve_softmax_input_plan,
     _resolve_swish_input_plan,
@@ -65,6 +67,9 @@ _PRELU_STATS_KEY = (
 )
 _SOFTMAX_STATS_KEY = (
     "optimized_transpose_pre_concat_nhwc_quantized_softmax_chains"
+)
+_LEAKY_STATS_KEY = (
+    "optimized_transpose_pre_concat_nhwc_quantized_leaky_chains"
 )
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
@@ -355,6 +360,33 @@ def _resolve_softmax_quantized_input_plan(
     )
 
 
+def _resolve_leaky_quantized_input_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    concat_input: str,
+    concat_index: int,
+    model_outputs: set[str],
+) -> Optional[_QuantizedInputPlan]:
+    leaky_plan = _resolve_leaky_input_plan(
+        model_ir,
+        graph_index,
+        input_name=concat_input,
+        concat_index=concat_index,
+        model_outputs=model_outputs,
+    )
+    if leaky_plan is None:
+        return None
+    return _QuantizedInputPlan(
+        kind="leaky",
+        adapter_op=leaky_plan.adapter_op,
+        nhwc_plan=leaky_plan,
+        concat_input=concat_input,
+        source_name=leaky_plan.source_name,
+        remove_adapter=leaky_plan.remove_adapter,
+    )
+
+
 def _resolve_quantized_concat_candidate(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -490,6 +522,14 @@ def _resolve_quantized_concat_candidate(
                     concat_index=int(concat_index),
                     model_outputs=model_outputs,
                 )
+            if input_plan is None and family == "leaky":
+                input_plan = _resolve_leaky_quantized_input_plan(
+                    model_ir,
+                    graph_index,
+                    concat_input=concat_input,
+                    concat_index=int(concat_index),
+                    model_outputs=model_outputs,
+                )
             if input_plan is None and family in {
                 "pad",
                 "unary_pad",
@@ -542,6 +582,9 @@ def _resolve_quantized_concat_candidate(
             or len(input_plans) - softmax_count < 1
         ):
             continue
+        leaky_count = sum(plan.kind == "leaky" for plan in input_plans)
+        if family == "leaky" and leaky_count < 1:
+            continue
         if family in {
             "unary",
             "pad",
@@ -551,6 +594,7 @@ def _resolve_quantized_concat_candidate(
             "dequantize",
             "prelu",
             "softmax",
+            "leaky",
         }:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
@@ -571,6 +615,7 @@ def _resolve_quantized_concat_candidate(
                     "dequantize",
                     "prelu",
                     "softmax",
+                    "leaky",
                 }:
                     shape = [shape[index] for index in _PERM_NCHW_TO_NHWC]
                 if reference_shape is None:
@@ -712,6 +757,19 @@ def _has_quantized_softmax_concat_candidate(
     )
 
 
+def _has_quantized_leaky_concat_candidate(
+    pass_state: ModelIRPassState,
+) -> bool:
+    return (
+        _resolve_quantized_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="leaky",
+        )
+        is not None
+    )
+
+
 def _optimize_quantized_concat_chains(
     model_ir: ModelIR,
     *,
@@ -760,6 +818,12 @@ def _optimize_quantized_concat_chains(
                     )
                 elif input_plan.kind == "softmax":
                     _apply_softmax_input_plan(
+                        model_ir,
+                        graph_index,
+                        input_plan.nhwc_plan,
+                    )
+                elif input_plan.kind == "leaky":
+                    _apply_leaky_input_plan(
                         model_ir,
                         graph_index,
                         input_plan.nhwc_plan,
@@ -1005,6 +1069,19 @@ def run_nhwc_concat_quantized_layout_cleanup(
             "changed": bool(stats.get(_SOFTMAX_STATS_KEY, 0)),
         }
 
+    def _run_leaky(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_quantized_concat_chains(
+            pass_state.model_ir,
+            family="leaky",
+            stats_key=_LEAKY_STATS_KEY,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get(_LEAKY_STATS_KEY, 0)),
+        }
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -1080,6 +1157,14 @@ def run_nhwc_concat_quantized_layout_cleanup(
                 priority=90,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_quantized_leaky",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_leaky,
+                precondition=_has_quantized_leaky_concat_candidate,
+                priority=100,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -1092,6 +1177,7 @@ def run_nhwc_concat_quantized_layout_cleanup(
             _DEQUANTIZE_STATS_KEY: 0,
             _PRELU_STATS_KEY: 0,
             _SOFTMAX_STATS_KEY: 0,
+            _LEAKY_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(
