@@ -193,9 +193,13 @@ branch adapters, a shared base adapter, two Add fan-ins, channel Concat,
 rank-four MUL/ADD suffix constants, inverse output adaptation, and downstream
 consumer aliasing. Whole-ModelIR no-op cases cover branch and intermediate
 fan-out, public pre/post outputs, invalid leading permutation, invalid Concat
-axis, and a missing suffix constant. The extracted implementation is
-AST-identical to checkpoint `fcf24b2`; the lowerer retains a compatibility
-wrapper and all five raw production calls until indexed migration.
+axis, and a missing suffix constant. Shared suffix constants use copy-on-write
+so unrelated NCHW consumers remain unchanged. Pure indexed candidate planning,
+all input/output rewrites, structural removal, pruning, metadata correction,
+and layout synchronization share one graph index and `LayoutState`.
+`run_add_concat_suffix_layout_cleanup` registers stable `LAYOUT_PLAN` ID
+`layout.add_concat_const_suffix_nhwc`; all five production positions call the
+transactional runner and the lowerer compatibility wrapper remains available.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
