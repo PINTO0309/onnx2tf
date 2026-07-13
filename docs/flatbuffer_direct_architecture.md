@@ -1756,6 +1756,14 @@ Transpose operators and reuses the current consumer table. Public bridge,
 preserved feature-last, recurrent rank-three, unknown-layout, shape-only, and
 Reshape-only exceptions retain their established guards and error signature.
 
+Layout-sensitive axis, vector, pad-matrix, Transpose-permutation,
+transpose-convolution output-shape, and Reshape-target canonicalization is owned
+by `passes/pytorch_layout_validation.py`. It queries only the affected op-family
+indices from the normalizer's shared graph index and retains the one-rewrite
+rule for shared constant tensors. Reshape target selection and channel-last
+name recognition live in `pytorch_layout_utils.py`, so canonicalization and
+native code generation share one policy without an exporter callback.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

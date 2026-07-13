@@ -414,8 +414,15 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
         / "passes"
         / "pytorch_layout_validation.py"
     )
+    layout_utils_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_layout_utils.py"
+    )
     exporter_source = exporter_path.read_text(encoding="utf-8")
     pass_source = pass_path.read_text(encoding="utf-8")
+    layout_utils_source = layout_utils_path.read_text(encoding="utf-8")
     pass_tree = ast.parse(pass_source)
     assert "def _is_attention_like_softmax_op(" not in exporter_source
     assert (
@@ -431,6 +438,16 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "_propagate_pytorch_friendly_layouts," in exporter_source
     assert "def _rewrite_filter_tensors_for_pytorch(" not in exporter_source
     assert "_rewrite_filter_tensors_for_pytorch," in exporter_source
+    assert "def _rewrite_layout_sensitive_ops(" not in exporter_source
+    assert "_rewrite_layout_sensitive_ops," in exporter_source
+    for function_name in {
+        "_preferred_reshape_target_values",
+        "_preferred_reshape_target_values_for_op",
+        "_tensor_name_suggests_channel_last_layout_for_codegen",
+    }:
+        assert f"def {function_name}(" not in exporter_source
+        assert f"{function_name}," in exporter_source
+        assert f"def {function_name}(" in layout_utils_source
     focused_layout_owner_functions = {
         "_collect_feature_last_sequence_tensor_names",
         "_is_pytorch_channel_first_safe_rank4_island_op",
@@ -518,6 +535,13 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert filter_rewrite_source is not None
     assert "operator_indices_for_types(" in filter_rewrite_source
     assert "for op in model_ir.operators" not in filter_rewrite_source
+    sensitive_rewrite_source = ast.get_source_segment(
+        pass_source,
+        pass_functions["_rewrite_layout_sensitive_ops"],
+    )
+    assert sensitive_rewrite_source is not None
+    assert "operator_indices_for_types(" in sensitive_rewrite_source
+    assert "for op in model_ir.operators" not in sensitive_rewrite_source
 
 
 def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:

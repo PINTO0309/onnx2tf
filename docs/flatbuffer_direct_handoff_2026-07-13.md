@@ -153,6 +153,16 @@ required. Focused failure and Reshape-only exception fixtures bring the
 Torch-free suite to 92 tests, with the established error text unchanged. No
 model conversion or inference was run.
 
+The 181-line layout-sensitive op rewrite has moved from the exporter to the
+Torch-free layout owner and now enumerates only its affected op families from
+the shared index. Axis options/constants, Slice vectors, pad matrices,
+Transpose permutations, transpose-convolution output shapes, and Reshape
+targets retain their established ordering and shared-constant one-rewrite
+contract. Reshape target/name policy moved to `pytorch_layout_utils.py` for
+reuse by codegen. The 79-test focused selection passes, and nine synthetic
+op-family graphs match the implementation at checkpoint `09ed6b6` exactly. No
+model conversion or inference was run.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

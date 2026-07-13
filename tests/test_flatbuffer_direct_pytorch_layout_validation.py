@@ -16,6 +16,7 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _propagate_pytorch_friendly_layouts,
     _restore_non_preserved_channel_first_layouts,
     _rewrite_filter_tensors_for_pytorch,
+    _rewrite_layout_sensitive_ops,
     _shrink_preserved_channel_last_regions_for_pytorch,
 )
 
@@ -547,3 +548,55 @@ def test_pytorch_filter_rewrite_indexes_op_family_and_rewrites_shared_weight_onc
     )
     assert model_ir.tensors["weight"].shape == [2, 5, 3, 4]
     assert model_ir.tensors["weight"].shape_signature == [2, 5, 3, 4]
+
+
+def test_layout_sensitive_rewrite_uses_shared_family_index(monkeypatch) -> None:
+    model_ir = ModelIR(name="layout_sensitive_axes")
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 3, 4], layout="NHWC"),
+        "peer": _tensor("peer", [1, 2, 3, 5], layout="NHWC"),
+        "concat": _tensor("concat", [1, 2, 3, 9], layout="NHWC"),
+        "axes": _tensor(
+            "axes",
+            [1],
+            data=np.asarray([3], dtype=np.int32),
+        ),
+        "sum": _tensor("sum", [1, 2, 3], layout="NWC"),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            "CONCATENATION",
+            ["x", "peer"],
+            ["concat"],
+            {"axis": 3},
+        ),
+        OperatorIR("SUM", ["concat", "axes"], ["sum"]),
+        OperatorIR("RELU", ["sum"], ["y"]),
+    ]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    _rewrite_layout_sensitive_ops(
+        model_ir,
+        original_layouts={
+            "x": "NHWC",
+            "concat": "NHWC",
+        },
+        preserve_channel_last_tensor_names=set(),
+        graph_index=graph_index,
+    )
+
+    assert refresh_count == 1
+    assert model_ir.operators[0].options["axis"] == 1
+    np.testing.assert_array_equal(
+        model_ir.tensors["axes"].data,
+        np.asarray([1], dtype=np.int32),
+    )

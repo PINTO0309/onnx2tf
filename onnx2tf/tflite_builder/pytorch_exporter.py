@@ -48,7 +48,6 @@ from onnx2tf.tflite_builder.ir import (
     logical_layout_rank,
     logical_layout_permutation,
     normalize_logical_layout,
-    rewrite_axis_for_layout,
     validate_model_ir_layout_annotations,
 )
 from onnx2tf.tflite_builder.pytorch_package_runtime import (
@@ -76,6 +75,8 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _perm_cl_to_cf,
     _perm_cf_to_cl,
     _permute_shape,
+    _preferred_reshape_target_values,
+    _preferred_reshape_target_values_for_op,
     _is_layout_only_transpose_by_shape,
     _is_standard_channel_layout_permutation,
     _is_inconsistent_standard_layout_transpose,
@@ -89,9 +90,6 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _normalize_constant_pad_pairs,
     _constant_pad_pairs_for_tensor,
     _pad_output_matches_pre_permuted_input,
-    _rewrite_vector_constant_inplace,
-    _rewrite_matrix_constant_inplace,
-    _rewrite_axis_constant_inplace,
     _permute_tensor_to_channel_first_inplace,
     _collect_kernel_weight_tensor_names,
     _should_emit_channel_last_space_to_depth,
@@ -103,6 +101,7 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _is_channel_last_factorized_rank3_sequence_reshape,
     _is_channel_last_factorized_rank3_sequence_reshape_by_shape,
     _has_channel_last_factorized_rank3_sequence_consumer,
+    _tensor_name_suggests_channel_last_layout_for_codegen,
 )
 from onnx2tf.tflite_builder.pytorch_onnx_utils import (
     _clear_onnx_graph_and_node_metadata_in_place,
@@ -165,6 +164,7 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _propagate_pytorch_friendly_layouts,
     _restore_non_preserved_channel_first_layouts,
     _rewrite_filter_tensors_for_pytorch,
+    _rewrite_layout_sensitive_ops,
     _shrink_preserved_channel_last_regions_for_pytorch,
 )
 from onnx2tf.tflite_builder.passes.pytorch_recurrent import (
@@ -781,10 +781,6 @@ def _tensor_shape_list_for_model_ir(
     if tensor is None:
         return None
     return [int(v) for v in list(tensor.shape)]
-
-
-def _tensor_name_suggests_channel_last_layout_for_codegen(tensor_name: str) -> bool:
-    return str(tensor_name).lower().endswith(("_nhwc", "_nwc", "_ndhwc"))
 
 
 def _expected_channel_dim_for_tensor_for_codegen(
@@ -10118,189 +10114,6 @@ def get_supported_pytorch_kernel_op_types() -> Set[str]:
 
 
 
-def _rewrite_layout_sensitive_ops(
-    model_ir: ModelIR,
-    original_layouts: Dict[str, str],
-    preserve_channel_last_tensor_names: Set[str],
-) -> None:
-    rewritten_constant_tensor_names: Set[str] = set()
-
-    def _rewrite_tensor_once(
-        tensor_name: str,
-        rewrite_fn: Callable[[], bool],
-    ) -> None:
-        if str(tensor_name) in rewritten_constant_tensor_names:
-            return
-        if rewrite_fn():
-            rewritten_constant_tensor_names.add(str(tensor_name))
-
-    for op in model_ir.operators:
-        op_type = str(op.op_type)
-        data_input_name = _primary_data_input_name(op)
-        data_tensor = model_ir.tensors.get(str(data_input_name), None) if data_input_name is not None else None
-        if data_tensor is None:
-            continue
-        if any(str(name) in preserve_channel_last_tensor_names for name in list(op.inputs) + list(op.outputs)):
-            continue
-        original_layout = normalize_logical_layout(original_layouts.get(str(data_input_name), data_tensor.logical_layout))
-        rank = len(list(data_tensor.shape))
-        if rank not in {3, 4, 5} or not is_channel_last_logical_layout(original_layout):
-            continue
-        target_layout = channel_first_logical_layout(rank)
-
-        if op_type in {"CONCATENATION", "PACK", "UNPACK", "GATHER", "SOFTMAX", "ARG_MAX", "ARG_MIN"}:
-            axis = op.options.get("axis", None)
-            if axis is not None:
-                op.options["axis"] = rewrite_axis_for_layout(
-                    axis=int(axis),
-                    source_layout=original_layout,
-                    target_layout=target_layout,
-                    rank=rank,
-                )
-            if op_type in {"ARG_MAX", "ARG_MIN"} and len(op.inputs) >= 2:
-                axis_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
-                if axis_tensor is not None:
-                    resolved_axis_tensor = axis_tensor
-                    _rewrite_tensor_once(
-                        str(op.inputs[1]),
-                        lambda: _rewrite_axis_constant_inplace(
-                            tensor=resolved_axis_tensor,
-                            source_layout=original_layout,
-                            target_layout=target_layout,
-                            rank=rank,
-                        ),
-                    )
-        elif op_type == "SPLIT":
-            axis = op.options.get("axis", None)
-            if axis is not None:
-                op.options["axis"] = rewrite_axis_for_layout(
-                    axis=int(axis),
-                    source_layout=original_layout,
-                    target_layout=target_layout,
-                    rank=rank,
-                )
-            if len(op.inputs) >= 1:
-                axis_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
-                if axis_tensor is not None:
-                    resolved_axis_tensor = axis_tensor
-                    _rewrite_tensor_once(
-                        str(op.inputs[0]),
-                        lambda: _rewrite_axis_constant_inplace(
-                            tensor=resolved_axis_tensor,
-                            source_layout=original_layout,
-                            target_layout=target_layout,
-                            rank=rank,
-                        ),
-                    )
-        elif op_type in {"SUM", "MEAN", "REDUCE_MAX", "REDUCE_MIN", "REDUCE_PROD", "REDUCE_ANY"}:
-            if len(op.inputs) >= 2:
-                axis_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
-                if axis_tensor is not None:
-                    resolved_axis_tensor = axis_tensor
-                    _rewrite_tensor_once(
-                        str(op.inputs[1]),
-                        lambda: _rewrite_axis_constant_inplace(
-                            tensor=resolved_axis_tensor,
-                            source_layout=original_layout,
-                            target_layout=target_layout,
-                            rank=rank,
-                        ),
-                    )
-        elif op_type in {"SLICE", "STRIDED_SLICE"}:
-            for input_name in op.inputs[1:4]:
-                vector_tensor = model_ir.tensors.get(str(input_name), None)
-                if vector_tensor is not None:
-                    _rewrite_tensor_once(
-                        str(input_name),
-                        lambda vector_tensor=vector_tensor: _rewrite_vector_constant_inplace(
-                            tensor=vector_tensor,
-                            perm=logical_layout_permutation(
-                                source_layout=original_layout,
-                                target_layout=target_layout,
-                            ) or [],
-                            expected_rank=rank,
-                        ),
-                    )
-        elif op_type in {"PAD", "PADV2", "MIRROR_PAD"} and len(op.inputs) >= 2:
-            pad_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
-            if pad_tensor is not None:
-                _rewrite_tensor_once(
-                    str(op.inputs[1]),
-                    lambda pad_tensor=pad_tensor: _rewrite_matrix_constant_inplace(
-                        tensor=pad_tensor,
-                        perm=logical_layout_permutation(
-                            source_layout=original_layout,
-                            target_layout=target_layout,
-                        ) or [],
-                        expected_rank=rank,
-                    ),
-                )
-        elif op_type == "TRANSPOSE":
-            layout_perm = logical_layout_permutation(
-                source_layout=original_layout,
-                target_layout=target_layout,
-            ) or []
-            if len(layout_perm) != rank:
-                continue
-            old_axis_to_new_axis = [0] * rank
-            for new_axis, old_axis in enumerate(layout_perm):
-                old_axis_to_new_axis[int(old_axis)] = int(new_axis)
-            if len(op.inputs) >= 2:
-                perm_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
-                if perm_tensor is not None and isinstance(perm_tensor.data, np.ndarray):
-                    resolved_perm_tensor = perm_tensor
-                    perm_tensor_dtype = np.asarray(resolved_perm_tensor.data).dtype
-                    perm_values = [int(v) for v in np.asarray(resolved_perm_tensor.data).reshape(-1).tolist()]
-                    if len(perm_values) == rank:
-                        def _rewrite_perm_tensor() -> bool:
-                            rewritten_perm = [int(old_axis_to_new_axis[int(axis)]) for axis in perm_values]
-                            resolved_perm_tensor.data = np.asarray(rewritten_perm, dtype=perm_tensor_dtype)
-                            resolved_perm_tensor.shape = [int(rank)]
-                            resolved_perm_tensor.shape_signature = [int(rank)]
-                            return True
-                        _rewrite_tensor_once(str(op.inputs[1]), _rewrite_perm_tensor)
-            elif "perm" in op.options:
-                perm_values = [int(v) for v in list(op.options.get("perm", []))]
-                if len(perm_values) == rank:
-                    op.options["perm"] = [int(old_axis_to_new_axis[int(axis)]) for axis in perm_values]
-        elif op_type in {"TRANSPOSE_CONV", "CONV_3D_TRANSPOSE"} and len(op.inputs) >= 1:
-            output_shape_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
-            if output_shape_tensor is not None:
-                _rewrite_tensor_once(
-                    str(op.inputs[0]),
-                    lambda output_shape_tensor=output_shape_tensor: _rewrite_vector_constant_inplace(
-                        tensor=output_shape_tensor,
-                        perm=logical_layout_permutation(
-                            source_layout=original_layout,
-                            target_layout=target_layout,
-                        ) or [],
-                        expected_rank=rank,
-                    ),
-                )
-        elif op_type == "RESHAPE" and len(op.outputs) == 1:
-            out_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
-            if out_tensor is not None:
-                preferred_shape = _preferred_reshape_target_values_for_op(
-                    model_ir=model_ir,
-                    op=op,
-                )
-                if preferred_shape is None:
-                    preferred_shape = [int(v) for v in list(out_tensor.shape)]
-                resolved_preferred_shape = [int(v) for v in list(preferred_shape)]
-                if len(op.inputs) >= 2:
-                    shape_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
-                    if shape_tensor is not None and isinstance(shape_tensor.data, np.ndarray):
-                        resolved_shape_tensor = shape_tensor
-                        shape_tensor_dtype = np.asarray(resolved_shape_tensor.data).dtype
-                        def _rewrite_shape_tensor() -> bool:
-                            resolved_shape_tensor.data = np.asarray(resolved_preferred_shape, dtype=shape_tensor_dtype)
-                            resolved_shape_tensor.shape = [int(len(resolved_preferred_shape))]
-                            resolved_shape_tensor.shape_signature = [int(len(resolved_preferred_shape))]
-                            return True
-                        _rewrite_tensor_once(str(op.inputs[1]), _rewrite_shape_tensor)
-                op.options["newShape"] = list(resolved_preferred_shape)
-
-
 def _synchronize_reshape_targets_with_output_tensors(
     model_ir: ModelIR,
     preserve_channel_last_tensor_names: Set[str],
@@ -10586,7 +10399,12 @@ def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
         str(name): normalize_logical_layout(tensor.logical_layout)
         for name, tensor in normalized.tensors.items()
     }
-    _rewrite_layout_sensitive_ops(normalized, original_layouts, preserve_channel_last_tensor_names)
+    _rewrite_layout_sensitive_ops(
+        normalized,
+        original_layouts,
+        preserve_channel_last_tensor_names,
+        graph_index=layout_graph_index,
+    )
     _propagate_pytorch_friendly_layouts(
         normalized,
         graph_index=layout_graph_index,
@@ -38517,43 +38335,6 @@ def _constant_int_list(tensor: Optional[TensorIR]) -> Optional[List[int]]:
     if not np.issubdtype(arr.dtype, np.integer):
         return None
     return [int(v) for v in arr.reshape(-1).tolist()]
-
-
-def _preferred_reshape_target_values(tensor: Optional[TensorIR]) -> Optional[List[int]]:
-    if tensor is None:
-        return None
-    preferred = [int(v) for v in list(tensor.shape)]
-    if tensor.shape_signature is not None:
-        signature = [int(v) for v in list(tensor.shape_signature)]
-        if len(signature) == len(list(tensor.shape)) and any(int(v) <= 0 for v in signature):
-            preferred = signature
-    rank = len(list(preferred))
-    perm_to_cf = _perm_cl_to_cf(rank)
-    if (
-        perm_to_cf is not None
-        and is_channel_first_logical_layout(normalize_logical_layout(tensor.logical_layout))
-        and _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor.name))
-    ):
-        permuted = _permute_shape(preferred, perm_to_cf)
-        if permuted is not None:
-            return [int(v) for v in list(permuted)]
-    return preferred
-
-
-def _preferred_reshape_target_values_for_op(
-    *,
-    model_ir: ModelIR,
-    op: OperatorIR,
-) -> Optional[List[int]]:
-    if str(op.op_type) != "RESHAPE" or len(op.inputs) == 0 or len(op.outputs) == 0:
-        return None
-    output_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
-    if output_tensor is None:
-        return None
-    preferred = _preferred_reshape_target_values(output_tensor)
-    if preferred is None:
-        preferred = [int(v) for v in list(output_tensor.shape)]
-    return preferred
 
 
 def _torch_dtype_literal(dtype_name: str) -> str:
