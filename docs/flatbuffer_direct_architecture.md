@@ -80,8 +80,16 @@ module. It restores NCHW Concat axis 1 only when the downstream
 `GATHER(axis=1)` index count exactly equals the summed input channels and all
 non-channel dimensions agree, then reconciles Concat/Gather metadata. Its
 62-line implementation moved with an identical AST; the lowerer keeps a thin
-compatibility wrapper and the single production position is unchanged pending
-indexed runner integration.
+compatibility wrapper.
+
+The production position now calls `run_stale_nchw_channel_shuffle_repair`,
+registered as `layout.repair_nchw_channel_shuffle_concat` in `LAYOUT_PLAN`.
+Model-only Concat+Gather preflight and an exact indexed guard check producer
+identity, axis/batch dimensions, four-dimensional compatible input shapes, and
+exact index/channel cardinality before snapshotting. Axis and tensor-metadata
+repair reuse one differential index and synchronize `LayoutState`
+transactionally. The complete channel-shuffle family now performs no
+whole-graph index rebuilds or direct operator-list mutation.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and

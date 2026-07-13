@@ -27,6 +27,7 @@ from onnx2tf.tflite_builder.passes.channel_slice_layout import (
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle import (
     run_nchw_channel_shuffle_cleanup,
+    run_stale_nchw_channel_shuffle_repair,
 )
 from onnx2tf.tflite_builder.passes.cast_cleanup import run_redundant_cast_cleanup
 from onnx2tf.tflite_builder.passes.constant_fold import (
@@ -187,6 +188,7 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_boundary_input_normalization_cleanup(model_ir, diagnostics=diagnostics)
     run_channel_slice_merge_layout_cleanup(model_ir, diagnostics=diagnostics)
     run_nchw_channel_shuffle_cleanup(model_ir, diagnostics=diagnostics)
+    run_stale_nchw_channel_shuffle_repair(model_ir, diagnostics=diagnostics)
     run_constant_input_fold_cleanup(model_ir, diagnostics=diagnostics)
     run_redundant_cast_cleanup(model_ir, diagnostics=diagnostics)
     run_terminal_quantize_dequantize_cleanup(model_ir, diagnostics=diagnostics)
@@ -210,7 +212,7 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
     run_transpose_unary_passthrough_cleanup(model_ir, diagnostics=diagnostics)
 
     assert calls == {"refresh": 0, "snapshot": 0, "fingerprint": 0}
-    assert len(diagnostics) == 59
+    assert len(diagnostics) == 60
     assert all(event["status"] == "skipped" for event in diagnostics)
     assert all(
         event["metrics"]

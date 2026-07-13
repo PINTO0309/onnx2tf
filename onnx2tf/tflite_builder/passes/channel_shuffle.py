@@ -5,7 +5,6 @@ from typing import Any, Dict, List
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_producer_map,
     _is_fully_known_positive_shape,
     _prune_unused_tensors,
     _read_transpose_perm,
@@ -177,7 +176,12 @@ def _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(
     return {"optimized_nchw_channel_shuffle_reshape_transpose_reshape_to_gather": int(optimized)}
 
 
-def _repair_nchw_channel_shuffle_concat_gathers(model_ir: ModelIR) -> Dict[str, int]:
+def _repair_nchw_channel_shuffle_concat_gathers(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """Restore NCHW concat axis before an NCHW channel-shuffle GATHER.
 
     A later layout pass can remap CONCATENATION to axis=3 after the original
@@ -187,7 +191,8 @@ def _repair_nchw_channel_shuffle_concat_gathers(model_ir: ModelIR) -> Dict[str, 
     """
 
     repaired = 0
-    producers = _build_tensor_producer_map(model_ir)
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    producers = graph_index.producers
     for gather_op in model_ir.operators:
         if (
             str(gather_op.op_type) != "GATHER"
@@ -238,7 +243,111 @@ def _repair_nchw_channel_shuffle_concat_gathers(model_ir: ModelIR) -> Dict[str, 
             tensor.shape = [int(v) for v in repaired_shape]
             tensor.shape_signature = [int(v) for v in repaired_shape]
         repaired += 1
+    if repaired > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"repaired_nchw_channel_shuffle_concat_gathers": int(repaired)}
+
+
+def run_stale_nchw_channel_shuffle_repair(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Repair stale NHWC Concat metadata before NCHW shuffle Gather."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        found_concat = False
+        found_gather = False
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            operator_type = str(operator.op_type)
+            found_concat = found_concat or operator_type == "CONCATENATION"
+            found_gather = found_gather or operator_type == "GATHER"
+            if found_concat and found_gather:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        for gather_op in candidate_model.operators:
+            if (
+                str(gather_op.op_type) != "GATHER"
+                or len(gather_op.inputs) < 2
+                or len(gather_op.outputs) != 1
+                or int(gather_op.options.get("axis", -1)) != 1
+                or int(gather_op.options.get("batchDims", 0)) != 0
+            ):
+                continue
+            concat_op = pass_state.graph_index.producer(str(gather_op.inputs[0]))
+            indices_tensor = candidate_model.tensors.get(str(gather_op.inputs[1]))
+            if (
+                concat_op is None
+                or indices_tensor is None
+                or indices_tensor.data is None
+                or str(concat_op.op_type) != "CONCATENATION"
+                or len(concat_op.inputs) < 2
+                or len(concat_op.outputs) != 1
+                or int(concat_op.options.get("axis", 1)) == 1
+            ):
+                continue
+            input_tensors = [
+                candidate_model.tensors.get(str(name))
+                for name in concat_op.inputs
+            ]
+            if any(tensor is None for tensor in input_tensors):
+                continue
+            input_shapes = [
+                [int(value) for value in tensor.shape]
+                for tensor in input_tensors
+                if tensor is not None
+            ]
+            if not input_shapes or any(len(shape) != 4 for shape in input_shapes):
+                continue
+            reference = input_shapes[0]
+            if any(
+                any(shape[axis] != reference[axis] for axis in (0, 2, 3))
+                for shape in input_shapes[1:]
+            ):
+                continue
+            expected_channels = sum(shape[1] for shape in input_shapes)
+            if (
+                expected_channels > 0
+                and int(np.asarray(indices_tensor.data).size) == expected_channels
+            ):
+                return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _repair_nchw_channel_shuffle_concat_gathers(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("repaired_nchw_channel_shuffle_concat_gathers", 0)
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.repair_nchw_channel_shuffle_concat",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={"repaired_nchw_channel_shuffle_concat_gathers": 0},
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 

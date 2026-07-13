@@ -3112,3 +3112,33 @@ the complete direct selection:
 ```text
 1142 passed, 5 deselected, 2 warnings in 147.76s
 ```
+
+### Indexed stale channel-shuffle repair checkpoint
+
+The stale Concat/Gather repair now accepts and reuses one
+`ModelIRGraphIndex`/`LayoutState`; producer lookup no longer builds a separate
+whole-graph map, and repaired Concat/Gather shapes synchronize layout state.
+`run_stale_nchw_channel_shuffle_repair` registers stable ID
+`layout.repair_nchw_channel_shuffle_concat` in `LAYOUT_PLAN`. Its model-only
+Concat+Gather preflight and indexed guard prove axis/batch options,
+producer identity, rank-four compatible input shapes, and exact summed-channel
+versus Gather-index cardinality before a transactional snapshot. The sole
+production call now uses this runner and session diagnostics.
+
+Focused family characterization, success/no-op runner instrumentation,
+ownership, and irrelevant-graph efficiency validation passed 11 tests. A
+successful repair uses one initial index and one snapshot; mismatched index
+count rejects before snapshotting. Tier 1 `superpoint.onnx` produced one skipped
+event with zero snapshots/fingerprints, while sequential `-cotof` retained
+`max_abs=1.6666e-06`, `rmse=1.62079e-07`, cosine similarity `1`, and the strict
+pass result.
+
+The complete direct regression selection passed:
+
+```text
+1144 passed, 5 deselected, 2 warnings in 148.26s
+```
+
+No dependency or TensorFlow path was added. Inference remained sequential and
+single-process; `/tmp/onnx2tf_stale_shuffle_superpoint*` was removed after
+metrics inspection.

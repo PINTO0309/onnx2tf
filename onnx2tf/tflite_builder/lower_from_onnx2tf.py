@@ -96,6 +96,7 @@ from onnx2tf.tflite_builder.passes.channel_shuffle import (
     _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather as _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather_pass,
     _repair_nchw_channel_shuffle_concat_gathers as _repair_nchw_channel_shuffle_concat_gathers_pass,
     run_nchw_channel_shuffle_cleanup,
+    run_stale_nchw_channel_shuffle_repair,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -60080,7 +60081,11 @@ def lower_onnx_to_ir(
     )
     _repair_singleton_nhwc_conv_input_reshapes(model_ir)
     _repair_stale_nchw_to_nhwc_conv_input_transposes(model_ir)
-    _repair_nchw_channel_shuffle_concat_gathers(model_ir)
+    run_stale_nchw_channel_shuffle_repair(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     _repair_nchw_concat_transpose_conv_axes(model_ir)
     _repair_nchw_concat_global_pool_conv_axes(model_ir)
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
