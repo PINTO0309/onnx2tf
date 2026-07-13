@@ -495,6 +495,18 @@ non-contiguous/deduplicated removal, refreshed-index equivalence, interleaved
 live/dead chains, one initial refresh, tensor pruning, and layout consistency.
 No model conversion or inference was run.
 
+Unsupported-dtype Split fallback now lives in
+`passes/split_fallback.py`. Initial `SPLIT` candidates come from one type index;
+the existing supported-dtype, constant-axis, rank, output-count, metadata, and
+equal-partition guards are unchanged. Each accepted Split is removed at its
+current position and replaced differentially by an optional dtype-alignment
+`CAST` followed by ordered `SLICE` operators. Generated begin/size tensors are
+pruned/reconciled with the session layout state. Focused cast and no-cast
+fixtures cover axis normalization, slice offsets/sizes, exact operator order,
+one initial refresh, final type indices, and layout consistency. The lowerer
+keeps its compatibility wrapper and production order. No model conversion or
+inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

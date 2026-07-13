@@ -1562,6 +1562,16 @@ that batch primitive and prunes tensors with the active `LayoutState`. Main
 lowering calls pass session layout state; the compatibility wrapper remains in
 the lowerer.
 
+Unsupported-dtype Split fallback is isolated in `passes/split_fallback.py`.
+It enumerates only initial `SPLIT` objects and retains the established LiteRT
+dtype, constant-axis, rank, output-count, and split-size guards. Each proven
+operator is replaced at its live position with an optional output-dtype `CAST`
+and ordered `SLICE` operators through differential remove/insert operations.
+Generated begin/size constants and layout state are reconciled once after the
+rewrite. The lowerer retains a private compatibility wrapper and passes the
+session `LayoutState`; complete operator-list construction is forbidden by the
+ownership gate.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

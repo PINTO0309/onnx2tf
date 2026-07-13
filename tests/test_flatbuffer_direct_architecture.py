@@ -336,6 +336,30 @@ def test_dead_operator_pruning_uses_batch_graph_index_compaction() -> None:
     assert "def remove_operators(" in graph_path.read_text(encoding="utf-8")
 
 
+def test_unsupported_split_fallback_has_indexed_pass_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "split_fallback.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    pass_source = pass_path.read_text(encoding="utf-8")
+    assert (
+        "replace_unsupported_split_with_slice as "
+        "_replace_unsupported_split_with_slice_pass"
+    ) in lowering_source
+    assert "return _replace_unsupported_split_with_slice_pass(" in lowering_source
+    assert "model_ir.operators =" not in pass_source
+    assert "ModelIRGraphIndex" in pass_source
+    assert "graph_index.remove_operator(" in pass_source
+    assert "graph_index.insert_operator(" in pass_source
+
+
 def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

@@ -239,6 +239,9 @@ from onnx2tf.tflite_builder.passes.dynamic_reshape import (
     restore_placeholder_matmul_flattened_inputs as _restore_placeholder_matmul_flattened_inputs_pass,
     rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs as _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs_pass,
 )
+from onnx2tf.tflite_builder.passes.split_fallback import (
+    replace_unsupported_split_with_slice as _replace_unsupported_split_with_slice_pass,
+)
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_consecutive_reshape_passthrough_chains as _optimize_consecutive_reshape_passthrough_chains_pass,
     _optimize_fold_consecutive_mul_constants_chains as _optimize_fold_consecutive_mul_constants_chains_pass,
@@ -2460,192 +2463,17 @@ def _realign_dynamic_boundary_shape_signature_map(model_ir: ModelIR) -> Dict[str
     return {"realigned_dynamic_boundary_shape_signature_map": int(updated)}
 
 
-def _replace_unsupported_split_with_slice(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Replace SPLIT ops whose input dtype is unsupported by LiteRT with SLICE chains.
-
-    LiteRT SPLIT currently accepts only:
-      FLOAT32, UINT8, INT8, INT16, INT32, INT64
-
-    For unsupported input dtypes (e.g. FLOAT16), rewrite:
-      SPLIT(axis, src) -> out_i
-    to:
-      [optional CAST(src -> target_dtype)]
-      SLICE(src_or_cast, begin_i, size_i) -> out_i
-    """
-    split_supported_input_dtypes = {
-        "FLOAT32",
-        "UINT8",
-        "INT8",
-        "INT16",
-        "INT32",
-        "INT64",
-    }
-
-    def _unique_tensor_name(base: str) -> str:
-        candidate = str(base)
-        serial = 1
-        while candidate in model_ir.tensors:
-            candidate = f"{base}_{serial}"
-            serial += 1
-        return candidate
-
-    rewritten = 0
-    new_operators: List[OperatorIR] = []
-
-    for op in model_ir.operators:
-        if str(op.op_type) != "SPLIT" or len(op.inputs) < 2 or len(op.outputs) <= 0:
-            new_operators.append(op)
-            continue
-
-        axis_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
-        source_name = str(op.inputs[1])
-        source_tensor = model_ir.tensors.get(source_name, None)
-        if source_tensor is None:
-            new_operators.append(op)
-            continue
-
-        source_dtype = str(source_tensor.dtype).upper()
-        if source_dtype in split_supported_input_dtypes:
-            new_operators.append(op)
-            continue
-
-        axis_values = _read_const_ints_from_tensor(axis_tensor)
-        if axis_values is None or len(axis_values) == 0:
-            new_operators.append(op)
-            continue
-
-        source_shape = (
-            [int(v) for v in list(source_tensor.shape)]
-            if source_tensor.shape is not None
-            else []
-        )
-        rank = int(len(source_shape))
-        if rank <= 0:
-            new_operators.append(op)
-            continue
-
-        axis = int(axis_values[0])
-        if axis < 0:
-            axis += int(rank)
-        if axis < 0 or axis >= int(rank):
-            new_operators.append(op)
-            continue
-
-        outputs = [str(v) for v in list(op.outputs)]
-        num_splits = int(op.options.get("numSplits", len(outputs)))
-        if num_splits <= 0 or len(outputs) != int(num_splits):
-            new_operators.append(op)
-            continue
-
-        # Prefer explicit output tensor metadata for chunk sizes.
-        split_sizes: List[int] = []
-        can_derive_from_outputs = True
-        output_dtypes: List[str] = []
-        for output_name in outputs:
-            output_tensor = model_ir.tensors.get(output_name, None)
-            if output_tensor is None or output_tensor.shape is None:
-                can_derive_from_outputs = False
-                break
-            output_shape = [int(v) for v in list(output_tensor.shape)]
-            if len(output_shape) != int(rank):
-                can_derive_from_outputs = False
-                break
-            split_dim = int(output_shape[int(axis)])
-            if split_dim <= 0:
-                can_derive_from_outputs = False
-                break
-            split_sizes.append(int(split_dim))
-            output_dtypes.append(str(output_tensor.dtype).upper())
-
-        if not can_derive_from_outputs:
-            axis_dim = int(source_shape[int(axis)]) if int(axis) < len(source_shape) else -1
-            if axis_dim <= 0 or axis_dim % int(num_splits) != 0:
-                new_operators.append(op)
-                continue
-            each = int(axis_dim // int(num_splits))
-            split_sizes = [int(each) for _ in range(int(num_splits))]
-            output_dtypes = [
-                str(model_ir.tensors.get(output_name, source_tensor).dtype).upper()
-                for output_name in outputs
-            ]
-
-        slice_source_name = str(source_name)
-        unique_output_dtypes = sorted(set(output_dtypes))
-        if len(unique_output_dtypes) == 1:
-            target_dtype = str(unique_output_dtypes[0]).upper()
-            if target_dtype != "" and target_dtype != str(source_dtype).upper():
-                cast_output_name = _unique_tensor_name(f"{source_name}_split_cast")
-                source_signature = (
-                    [int(v) for v in list(source_tensor.shape_signature)]
-                    if source_tensor.shape_signature is not None
-                    else [int(v) for v in list(source_shape)]
-                )
-                model_ir.tensors[cast_output_name] = TensorIR(
-                    name=cast_output_name,
-                    dtype=target_dtype,
-                    shape=[int(v) for v in list(source_shape)],
-                    shape_signature=[int(v) for v in list(source_signature)],
-                    data=None,
-                    is_variable=False,
-                    quantization=None,
-                )
-                new_operators.append(
-                    OperatorIR(
-                        op_type="CAST",
-                        inputs=[str(source_name)],
-                        outputs=[cast_output_name],
-                        options={"outDataType": target_dtype},
-                    )
-                )
-                slice_source_name = str(cast_output_name)
-
-        offset = 0
-        for output_index, output_name in enumerate(outputs):
-            begin = [0 for _ in range(int(rank))]
-            begin[int(axis)] = int(offset)
-            size = [-1 for _ in range(int(rank))]
-            size[int(axis)] = int(split_sizes[int(output_index)])
-            offset += int(split_sizes[int(output_index)])
-
-            begin_name = _unique_tensor_name(f"{output_name}_split_fallback_begin")
-            size_name = _unique_tensor_name(f"{output_name}_split_fallback_size")
-
-            model_ir.tensors[begin_name] = TensorIR(
-                name=begin_name,
-                dtype="INT32",
-                shape=[int(rank)],
-                shape_signature=[int(rank)],
-                data=np.asarray(begin, dtype=np.int32),
-                is_variable=False,
-                quantization=None,
-            )
-            model_ir.tensors[size_name] = TensorIR(
-                name=size_name,
-                dtype="INT32",
-                shape=[int(rank)],
-                shape_signature=[int(rank)],
-                data=np.asarray(size, dtype=np.int32),
-                is_variable=False,
-                quantization=None,
-            )
-
-            new_operators.append(
-                OperatorIR(
-                    op_type="SLICE",
-                    inputs=[str(slice_source_name), begin_name, size_name],
-                    outputs=[output_name],
-                    options={},
-                )
-            )
-
-        rewritten += 1
-
-    if rewritten > 0:
-        model_ir.operators = new_operators
-        _prune_unused_tensors(model_ir)
-
-    return {"replaced_unsupported_split_with_slice": int(rewritten)}
+def _replace_unsupported_split_with_slice(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    return _replace_unsupported_split_with_slice_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _infer_slice_output_shape_and_resolved_params(
@@ -52046,7 +51874,10 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
     )
     _reconcile_static_tensor_shapes(model_ir)
-    split_fallback_stats = _replace_unsupported_split_with_slice(model_ir)
+    split_fallback_stats = _replace_unsupported_split_with_slice(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     if int(split_fallback_stats.get("replaced_unsupported_split_with_slice", 0)) > 0:
         _reconcile_static_tensor_shapes(model_ir)
 
