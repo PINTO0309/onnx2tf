@@ -195,6 +195,16 @@ layout synchronization reuse one differential index and active layout state.
 The module has no whole-graph map construction or direct operator-list
 mutation.
 
+EfficientNet-style squeeze/excitation propagation is mechanically owned by
+`passes/se_layout.py`. The SE-Conv matcher covers Logistic and affine gates,
+explicit Transpose and Squeeze/Reshape adapters, Mean axis remapping, shared
+leading adapters, and terminal fan-out bridges. The broader SE-FC matcher
+covers pooled or Mean statistics, stacked FC/1x1-Conv heads, optional unary
+gates/output bridges, and its existing nested specialized variants. Their
+complete 482-line and 977-line implementations are AST-identical to checkpoint
+`5f5de07`; the lowerer retains compatibility wrappers and the original six and
+nine production positions pending indexed migration.
+
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and
 internal tensor metadata agree and no axis-sensitive gather/slice consumer

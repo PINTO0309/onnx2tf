@@ -143,3 +143,31 @@ Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
 TensorFlow-free; use `uv`; and run inference validation sequentially with one
 process.
+
+## Resumed SE layout checkpoint
+
+Checkpoint `5f5de07` added a dedicated compact SE corpus without duplicating
+the large legacy fixtures. It fixes three important boundaries: an SE-Conv
+gate with an additional consumer rejects unchanged, a public SE-FC gate
+rejects unchanged, and an SE-FC target branch sharing its leading NCHW adapter
+rewrites while retaining that adapter for the side branch. Together with the
+six existing success variants, focused characterization passed 9 tests.
+
+The complete `_optimize_transpose_se_conv_mul_prepost_nhwc_chains` and
+`_optimize_transpose_se_fc_mul_prepost_nhwc_chains` implementations then moved
+mechanically to `passes/se_layout.py`. Their ASTs, including docstrings, match
+`5f5de07`. The lowerer retains signature-compatible wrappers; all six SE-Conv
+and nine SE-FC production positions remain unchanged until the separate
+indexed migration checkpoint. An architecture test fixes the single-owner
+boundary.
+
+Focused success, rejection, and ownership validation passed 10 tests. The
+complete sequential direct selection passed:
+
+```text
+1174 passed, 5 deselected, 2 warnings in 149.62s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently. Next work is the GraphIndex/ordered-runner migration of this
+extracted family.
