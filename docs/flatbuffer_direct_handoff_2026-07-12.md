@@ -3094,3 +3094,21 @@ The complete direct regression selection passed:
 No dependency or TensorFlow path was added. Inference remained sequential and
 single-process; `/tmp/onnx2tf_nchw_shuffle_superpoint*` was removed after
 metrics inspection.
+
+### Stale channel-shuffle Concat/Gather extraction
+
+The adjacent 62-line, single-position repair restores an accidentally remapped
+Concat to NCHW axis 1 only when the channel sum exactly matches the downstream
+shuffle Gather index count. Existing success coverage was extended in
+checkpoint `6be2867` with a mismatched-index no-op fixture.
+
+The complete `_repair_nchw_channel_shuffle_concat_gathers` implementation then
+moved mechanically to `passes/channel_shuffle.py`, with an AST identical to
+`6be2867`. The lowerer now retains only a compatibility wrapper; its sole raw
+production position and relative order remain unchanged pending indexed runner
+integration. Focused family/ownership validation passed 7 tests, followed by
+the complete direct selection:
+
+```text
+1142 passed, 5 deselected, 2 warnings in 147.76s
+```

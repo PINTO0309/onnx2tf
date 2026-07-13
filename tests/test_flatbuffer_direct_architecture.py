@@ -588,11 +588,12 @@ def test_nchw_channel_shuffle_cleanup_has_single_owner() -> None:
         / "passes"
         / "channel_shuffle.py"
     )
-    function_name = (
-        "_optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather"
-    )
+    function_names = {
+        "_optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather",
+        "_repair_nchw_channel_shuffle_concat_gathers",
+    }
     pass_tree = ast.parse(pass_path.read_text(encoding="utf-8"))
-    assert function_name in {
+    assert function_names <= {
         node.name
         for node in pass_tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -604,12 +605,13 @@ def test_nchw_channel_shuffle_cleanup_has_single_owner() -> None:
         for node in lowering_tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    wrapper_names = {
-        node.id
-        for node in ast.walk(lowering_functions[function_name])
-        if isinstance(node, ast.Name)
-    }
-    assert f"{function_name}_pass" in wrapper_names
+    for function_name in function_names:
+        wrapper_names = {
+            node.id
+            for node in ast.walk(lowering_functions[function_name])
+            if isinstance(node, ast.Name)
+        }
+        assert f"{function_name}_pass" in wrapper_names
     imports = [
         node
         for node in lowering_tree.body
@@ -617,9 +619,8 @@ def test_nchw_channel_shuffle_cleanup_has_single_owner() -> None:
         and node.module == "onnx2tf.tflite_builder.passes.channel_shuffle"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {
-        function_name,
-        "run_nchw_channel_shuffle_cleanup",
+    assert {alias.name for alias in imports[0].names} == function_names | {
+        "run_nchw_channel_shuffle_cleanup"
     }
 
 

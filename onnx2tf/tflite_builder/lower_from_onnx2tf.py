@@ -94,6 +94,7 @@ from onnx2tf.tflite_builder.passes.precision import (
 )
 from onnx2tf.tflite_builder.passes.channel_shuffle import (
     _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather as _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather_pass,
+    _repair_nchw_channel_shuffle_concat_gathers as _repair_nchw_channel_shuffle_concat_gathers_pass,
     run_nchw_channel_shuffle_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
@@ -17678,68 +17679,7 @@ def _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(
     )
 
 def _repair_nchw_channel_shuffle_concat_gathers(model_ir: ModelIR) -> Dict[str, int]:
-    """Restore NCHW concat axis before an NCHW channel-shuffle GATHER.
-
-    A later layout pass can remap CONCATENATION to axis=3 after the original
-    reshape/transpose channel-shuffle has already been collapsed to
-    GATHER(axis=1). The gather index count is the exact expected channel count,
-    so it safely distinguishes this stale mixed-layout state.
-    """
-
-    repaired = 0
-    producers = _build_tensor_producer_map(model_ir)
-    for gather_op in model_ir.operators:
-        if (
-            str(gather_op.op_type) != "GATHER"
-            or len(gather_op.inputs) < 2
-            or len(gather_op.outputs) != 1
-            or int(gather_op.options.get("axis", -1)) != 1
-            or int(gather_op.options.get("batchDims", 0)) != 0
-        ):
-            continue
-        data_name = str(gather_op.inputs[0])
-        indices_tensor = model_ir.tensors.get(str(gather_op.inputs[1]), None)
-        concat_idx = producers.get(data_name, None)
-        if concat_idx is None or indices_tensor is None or indices_tensor.data is None:
-            continue
-        concat_op = model_ir.operators[int(concat_idx)]
-        if (
-            str(concat_op.op_type) != "CONCATENATION"
-            or len(concat_op.inputs) < 2
-            or len(concat_op.outputs) != 1
-            or int(concat_op.options.get("axis", 1)) == 1
-        ):
-            continue
-        input_tensors = [model_ir.tensors.get(str(name), None) for name in concat_op.inputs]
-        if any(tensor is None for tensor in input_tensors):
-            continue
-        input_shapes = [[int(v) for v in list(tensor.shape)] for tensor in input_tensors if tensor is not None]
-        if not input_shapes or any(len(shape) != 4 for shape in input_shapes):
-            continue
-        reference = input_shapes[0]
-        if any(
-            any(int(shape[axis]) != int(reference[axis]) for axis in [0, 2, 3])
-            for shape in input_shapes[1:]
-        ):
-            continue
-        expected_channels = int(sum(int(shape[1]) for shape in input_shapes))
-        gather_index_count = int(np.asarray(indices_tensor.data).size)
-        if expected_channels <= 0 or gather_index_count != expected_channels:
-            continue
-
-        concat_op.options["axis"] = 1
-        repaired_shape = [int(v) for v in reference]
-        repaired_shape[1] = int(expected_channels)
-        concat_tensor = model_ir.tensors.get(data_name, None)
-        gather_tensor = model_ir.tensors.get(str(gather_op.outputs[0]), None)
-        for tensor in [concat_tensor, gather_tensor]:
-            if tensor is None:
-                continue
-            tensor.shape = [int(v) for v in repaired_shape]
-            tensor.shape_signature = [int(v) for v in repaired_shape]
-        repaired += 1
-    return {"repaired_nchw_channel_shuffle_concat_gathers": int(repaired)}
-
+    return _repair_nchw_channel_shuffle_concat_gathers_pass(model_ir)
 
 def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]:
     """Restore axis=1 for NCHW concat feeding an NHWC Conv adapter.

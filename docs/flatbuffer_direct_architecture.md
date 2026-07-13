@@ -75,6 +75,14 @@ removal, and pruning share one differential index and `LayoutState` under a
 transactional invariant check. The module performs no whole-graph consumer-map
 rebuild and no direct operator-list deletion.
 
+The adjacent stale Concat/Gather repair is mechanically owned by the same
+module. It restores NCHW Concat axis 1 only when the downstream
+`GATHER(axis=1)` index count exactly equals the summed input channels and all
+non-channel dimensions agree, then reconciles Concat/Gather metadata. Its
+62-line implementation moved with an identical AST; the lowerer keeps a thin
+compatibility wrapper and the single production position is unchanged pending
+indexed runner integration.
+
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and
 internal tensor metadata agree and no axis-sensitive gather/slice consumer
