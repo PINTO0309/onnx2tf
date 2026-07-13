@@ -97,8 +97,20 @@ five-dimensional group/channel Reshape+swap, NCHW collapse, and final NHWC
 Transpose, replacing the branch with `GATHER(axis=3)`. Shared leading
 Transpose users are preserved, while intermediate fan-out and public
 intermediates remain guarded. Its full 268-line implementation moved with an
-identical AST; the lowerer keeps a compatibility wrapper and all five
-production positions remain unchanged pending indexed runner migration.
+identical AST before indexed migration; the lowerer keeps a compatibility
+wrapper.
+
+All five production positions now call `run_nhwc_channel_shuffle_cleanup`,
+registered as `canonicalize.nhwc_channel_shuffle_gather` in `CANONICALIZE`.
+Model-only Reshape+Transpose preflight and an exact indexed guard cover direct
+and optional-unary prefixes, shared leading Transpose users, exclusive
+intermediate edges, public intermediates, permutations, static ranks/shapes,
+group/channel factorization, and non-identity indices before snapshotting.
+Gather mutation, optional unary rewiring/metadata permutation, conditional
+leading-Transpose retention, structural removal, and pruning share one
+differential index and `LayoutState` transactionally. The entire extracted
+channel-shuffle family now has no whole-graph map builders or direct
+operator-list deletion.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and

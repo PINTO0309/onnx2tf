@@ -622,6 +622,7 @@ def test_nchw_channel_shuffle_cleanup_has_single_owner() -> None:
     assert len(imports) == 1
     assert {alias.name for alias in imports[0].names} == function_names | {
         "run_nchw_channel_shuffle_cleanup",
+        "run_nhwc_channel_shuffle_cleanup",
         "run_stale_nchw_channel_shuffle_repair",
     }
 
@@ -644,6 +645,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_flatten_concat_reshape_cleanup",
         "run_mixed_attention_layout_cleanup",
         "run_nchw_channel_shuffle_cleanup",
+        "run_nhwc_channel_shuffle_cleanup",
         "run_maximum_zero_relu_cleanup",
         "run_qkv_attention_bridge_cleanup",
         "run_qkv_attention_prefix_cleanup",
@@ -680,7 +682,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 158
+    assert len(calls) == 163
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -890,6 +892,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_nchw_channel_shuffle_cleanup"
     ]
     assert len(nchw_channel_shuffle_calls) == 6
+
+    nhwc_channel_shuffle_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_nhwc_channel_shuffle_cleanup"
+    ]
+    assert len(nhwc_channel_shuffle_calls) == 5
 
     stale_nchw_channel_shuffle_calls = [
         call

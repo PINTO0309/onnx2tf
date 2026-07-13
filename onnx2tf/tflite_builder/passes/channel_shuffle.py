@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
     _is_fully_known_positive_shape,
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
@@ -23,7 +22,31 @@ from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
 
-def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+_NHWC_TO_NCHW_PERM = [0, 3, 1, 2]
+_NCHW_TO_NHWC_PERM = [0, 2, 3, 1]
+_CHANNEL_SHUFFLE_SWAP_PERM = [0, 2, 1, 3, 4]
+_NHWC_CHANNEL_SHUFFLE_UNARY_OPS = frozenset(
+    {
+        "RELU",
+        "RELU6",
+        "LOGISTIC",
+        "TANH",
+        "LEAKY_RELU",
+        "HARD_SWISH",
+        "ABS",
+        "EXP",
+        "NEG",
+        "SQRT",
+    }
+)
+
+
+def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Collapse ShuffleNet channel-shuffle chains expressed as:
 
@@ -42,21 +65,7 @@ def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir: ModelIR
     where C=g*cpg and shuffle_indices[k] = (k % g) * cpg + (k // g).
     """
     optimized = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-    perm_shuffle_swap = [0, 2, 1, 3, 4]
-    unary_passthrough_ops = {
-        "RELU",
-        "RELU6",
-        "LOGISTIC",
-        "TANH",
-        "LEAKY_RELU",
-        "HARD_SWISH",
-        "ABS",
-        "EXP",
-        "NEG",
-        "SQRT",
-    }
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -68,13 +77,13 @@ def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir: ModelIR
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = graph_index.consumers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for t0_idx, t0_op in enumerate(model_ir.operators):
             if str(t0_op.op_type) != "TRANSPOSE" or len(t0_op.inputs) < 2 or len(t0_op.outputs) != 1:
                 continue
-            if _read_transpose_perm(model_ir, t0_op) != perm_nhwc_to_nchw:
+            if _read_transpose_perm(model_ir, t0_op) != _NHWC_TO_NCHW_PERM:
                 continue
 
             x_nhwc_name = str(t0_op.inputs[0])
@@ -102,7 +111,7 @@ def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir: ModelIR
                     r1_idx = int(t0_user_idx)
                     r1_op = t0_user_op
                 elif (
-                    str(t0_user_op.op_type) in unary_passthrough_ops
+                    str(t0_user_op.op_type) in _NHWC_CHANNEL_SHUFFLE_UNARY_OPS
                     and len(t0_user_op.inputs) == 1
                     and len(t0_user_op.outputs) == 1
                     and str(t0_user_op.inputs[0]) == x_nchw_name
@@ -144,7 +153,7 @@ def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir: ModelIR
                     or len(t1_op.inputs) < 2
                     or len(t1_op.outputs) != 1
                     or str(t1_op.inputs[0]) != r1_out_name
-                    or _read_transpose_perm(model_ir, t1_op) != perm_shuffle_swap
+                    or _read_transpose_perm(model_ir, t1_op) != _CHANNEL_SHUFFLE_SWAP_PERM
                 ):
                     continue
                 t1_out_name = str(t1_op.outputs[0])
@@ -177,7 +186,7 @@ def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir: ModelIR
                     or len(t2_op.inputs) < 2
                     or len(t2_op.outputs) != 1
                     or str(t2_op.inputs[0]) != r2_out_name
-                    or _read_transpose_perm(model_ir, t2_op) != perm_nchw_to_nhwc
+                    or _read_transpose_perm(model_ir, t2_op) != _NCHW_TO_NHWC_PERM
                 ):
                     continue
 
@@ -244,6 +253,7 @@ def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir: ModelIR
                     model_ir=model_ir,
                     op=t2_op,
                     new_inputs=[gather_src_name, gather_idx_name],
+                    graph_index=graph_index,
                 )
                 t2_op.options = {"axis": 3, "batchDims": 0}
 
@@ -252,10 +262,11 @@ def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir: ModelIR
                         model_ir=model_ir,
                         op=unary_bridge_op,
                         new_inputs=[x_nhwc_name],
+                        graph_index=graph_index,
                     )
                     _permute_tensor_metadata_if_rank_matches(
                         model_ir.tensors.get(str(unary_bridge_op.outputs[0]), None),
-                        perm_nchw_to_nhwc,
+                        _NCHW_TO_NHWC_PERM,
                     )
 
                 if y_tensor is not None:
@@ -277,7 +288,7 @@ def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir: ModelIR
                     remove_indices.add(int(t0_idx))
 
                 for remove_idx in sorted(list(remove_indices), reverse=True):
-                    del model_ir.operators[int(remove_idx)]
+                    graph_index.remove_operator(int(remove_idx))
 
                 optimized += 1
                 changed = True
@@ -289,8 +300,205 @@ def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir: ModelIR
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_shufflenet_reshape_transpose_shuffle_nhwc_chains": int(optimized)}
+
+
+def run_nhwc_channel_shuffle_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Canonicalize strict ShuffleNet NHWC channel shuffle to Gather."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        found_reshape = False
+        found_transpose = False
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            operator_type = str(operator.op_type)
+            found_reshape = found_reshape or operator_type == "RESHAPE"
+            found_transpose = found_transpose or operator_type == "TRANSPOSE"
+            if found_reshape and found_transpose:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        model_outputs = set(str(name) for name in candidate_model.outputs)
+        for t0_op in candidate_model.operators:
+            if (
+                str(t0_op.op_type) != "TRANSPOSE"
+                or len(t0_op.inputs) < 2
+                or len(t0_op.outputs) != 1
+                or _read_transpose_perm(candidate_model, t0_op)
+                != _NHWC_TO_NCHW_PERM
+            ):
+                continue
+            x_nhwc_name = str(t0_op.inputs[0])
+            x_nchw_name = str(t0_op.outputs[0])
+            if x_nchw_name in model_outputs:
+                continue
+            t0_users = pass_state.graph_index.consumer_indices(x_nchw_name)
+            for t0_user_index in t0_users:
+                t0_user_op = candidate_model.operators[int(t0_user_index)]
+                if (
+                    str(t0_user_op.op_type) == "RESHAPE"
+                    and len(t0_user_op.inputs) >= 1
+                    and len(t0_user_op.outputs) == 1
+                    and str(t0_user_op.inputs[0]) == x_nchw_name
+                ):
+                    r1_op = t0_user_op
+                elif (
+                    str(t0_user_op.op_type) in _NHWC_CHANNEL_SHUFFLE_UNARY_OPS
+                    and len(t0_user_op.inputs) == 1
+                    and len(t0_user_op.outputs) == 1
+                    and str(t0_user_op.inputs[0]) == x_nchw_name
+                    and str(t0_user_op.outputs[0]) not in model_outputs
+                ):
+                    unary_output_name = str(t0_user_op.outputs[0])
+                    unary_users = pass_state.graph_index.consumer_indices(
+                        unary_output_name
+                    )
+                    if len(unary_users) != 1:
+                        continue
+                    r1_op = candidate_model.operators[int(unary_users[0])]
+                    if (
+                        str(r1_op.op_type) != "RESHAPE"
+                        or len(r1_op.inputs) < 1
+                        or len(r1_op.outputs) != 1
+                        or str(r1_op.inputs[0]) != unary_output_name
+                    ):
+                        continue
+                else:
+                    continue
+                r1_output_name = str(r1_op.outputs[0])
+                if r1_output_name in model_outputs:
+                    continue
+                r1_users = pass_state.graph_index.consumer_indices(r1_output_name)
+                if len(r1_users) != 1:
+                    continue
+                t1_op = candidate_model.operators[int(r1_users[0])]
+                if (
+                    str(t1_op.op_type) != "TRANSPOSE"
+                    or len(t1_op.inputs) < 2
+                    or len(t1_op.outputs) != 1
+                    or str(t1_op.inputs[0]) != r1_output_name
+                    or _read_transpose_perm(candidate_model, t1_op)
+                    != _CHANNEL_SHUFFLE_SWAP_PERM
+                ):
+                    continue
+                t1_output_name = str(t1_op.outputs[0])
+                if t1_output_name in model_outputs:
+                    continue
+                t1_users = pass_state.graph_index.consumer_indices(t1_output_name)
+                if len(t1_users) != 1:
+                    continue
+                r2_op = candidate_model.operators[int(t1_users[0])]
+                if (
+                    str(r2_op.op_type) != "RESHAPE"
+                    or len(r2_op.inputs) < 1
+                    or len(r2_op.outputs) != 1
+                    or str(r2_op.inputs[0]) != t1_output_name
+                ):
+                    continue
+                r2_output_name = str(r2_op.outputs[0])
+                if r2_output_name in model_outputs:
+                    continue
+                r2_users = pass_state.graph_index.consumer_indices(r2_output_name)
+                if len(r2_users) != 1:
+                    continue
+                t2_op = candidate_model.operators[int(r2_users[0])]
+                if (
+                    str(t2_op.op_type) != "TRANSPOSE"
+                    or len(t2_op.inputs) < 2
+                    or len(t2_op.outputs) != 1
+                    or str(t2_op.inputs[0]) != r2_output_name
+                    or _read_transpose_perm(candidate_model, t2_op)
+                    != _NCHW_TO_NHWC_PERM
+                ):
+                    continue
+                x_tensor = candidate_model.tensors.get(x_nhwc_name)
+                r1_tensor = candidate_model.tensors.get(r1_output_name)
+                t1_tensor = candidate_model.tensors.get(t1_output_name)
+                if x_tensor is None or r1_tensor is None or t1_tensor is None:
+                    continue
+                x_shape = [int(value) for value in x_tensor.shape]
+                r1_shape = [int(value) for value in r1_tensor.shape]
+                t1_shape = [int(value) for value in t1_tensor.shape]
+                if (
+                    not _is_fully_known_positive_shape(x_shape)
+                    or not _is_fully_known_positive_shape(r1_shape)
+                    or not _is_fully_known_positive_shape(t1_shape)
+                    or [len(x_shape), len(r1_shape), len(t1_shape)] != [4, 5, 5]
+                ):
+                    continue
+                n, height, width, channels = x_shape
+                groups = r1_shape[1]
+                channels_per_group = r1_shape[2]
+                if (
+                    channels > 1
+                    and groups > 1
+                    and channels_per_group > 0
+                    and groups * channels_per_group == channels
+                    and r1_shape
+                    == [n, groups, channels_per_group, height, width]
+                    and t1_shape
+                    == [n, channels_per_group, groups, height, width]
+                ):
+                    shuffle_indices = np.asarray(
+                        [
+                            (index % groups) * channels_per_group
+                            + (index // groups)
+                            for index in range(channels)
+                        ],
+                        dtype=np.int32,
+                    )
+                    if not np.array_equal(
+                        shuffle_indices,
+                        np.arange(channels, dtype=np.int32),
+                    ):
+                        return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get(
+                    "optimized_shufflenet_reshape_transpose_shuffle_nhwc_chains",
+                    0,
+                )
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="canonicalize.nhwc_channel_shuffle_gather",
+                phase=PassPhase.CANONICALIZE,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={
+            "optimized_shufflenet_reshape_transpose_shuffle_nhwc_chains": 0,
+        },
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 

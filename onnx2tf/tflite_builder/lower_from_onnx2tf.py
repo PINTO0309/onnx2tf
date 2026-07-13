@@ -97,6 +97,7 @@ from onnx2tf.tflite_builder.passes.channel_shuffle import (
     _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains as _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains_pass,
     _repair_nchw_channel_shuffle_concat_gathers as _repair_nchw_channel_shuffle_concat_gathers_pass,
     run_nchw_channel_shuffle_cleanup,
+    run_nhwc_channel_shuffle_cleanup,
     run_stale_nchw_channel_shuffle_repair,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
@@ -58371,7 +58372,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
-        _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
+        run_nhwc_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_nchw_channel_shuffle_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -58528,7 +58533,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
-        _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
+        run_nhwc_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_nchw_channel_shuffle_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -58686,7 +58695,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
-        _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
+        run_nhwc_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_nchw_channel_shuffle_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -58899,7 +58912,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
-        _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
+        run_nhwc_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_nchw_channel_shuffle_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -58995,7 +59012,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _optimize_shufflenet_transpose_shuffle_chains(model_ir)
-        _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(model_ir)
+        run_nhwc_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         run_nchw_channel_shuffle_cleanup(
             model_ir,
             layout_state=session.layout_state,

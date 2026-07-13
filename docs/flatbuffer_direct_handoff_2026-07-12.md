@@ -3164,3 +3164,38 @@ direct selection:
 ```text
 1146 passed, 5 deselected, 2 warnings in 148.20s
 ```
+
+### Indexed ShuffleNet NHWC channel-shuffle checkpoint
+
+The NHWC ShuffleNet implementation now accepts and reuses one
+`ModelIRGraphIndex` and active `LayoutState`. Final Transpose-to-Gather
+mutation, optional unary bypass/metadata permutation, conditional shared-pre
+retention, all structural removals, and pruning update that state. The complete
+extracted channel-shuffle family now contains zero whole-graph producer or
+consumer map builders and zero direct operator-list deletes.
+
+`run_nhwc_channel_shuffle_cleanup` registers stable ID
+`canonicalize.nhwc_channel_shuffle_gather` in `CANONICALIZE`. Its model-only
+Reshape+Transpose preflight and indexed guard prove direct/optional-unary
+prefixes, exclusive intermediate edges, public protections, three exact
+permutations, static ranks/shapes, group/channel factorization, and
+non-identity deterministic indices before a transactional snapshot. All five
+production positions now use the runner and session diagnostics.
+
+Focused NHWC/NCHW/repair family, runner, ownership, and irrelevant-graph
+efficiency validation passed 15 tests. A shared leading Transpose rewrite uses
+one initial index and one snapshot; intermediate fan-out rejects with zero
+snapshots. Tier 1 `superpoint.onnx` produced five skipped events and zero
+snapshots/fingerprints, while sequential `-cotof` retained
+`max_abs=1.6666e-06`, `rmse=1.62079e-07`, cosine similarity `1`, and the strict
+pass result.
+
+The complete direct regression selection passed:
+
+```text
+1148 passed, 5 deselected, 2 warnings in 148.59s
+```
+
+No dependency or TensorFlow path was added. Inference remained sequential and
+single-process; `/tmp/onnx2tf_nhwc_shuffle_superpoint*` was removed after
+metrics inspection.
