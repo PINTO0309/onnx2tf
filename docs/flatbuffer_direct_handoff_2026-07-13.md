@@ -1,5 +1,156 @@
 # flatbuffer_direct refactor handoff — 2026-07-13
 
+## `fb-refactor4` pause checkpoint — `1a343c5`
+
+Work is paused at a clean implementation checkpoint. No new pull request must
+be created on resume; use appropriately scoped commits and pushes to
+`fb-refactor4` only. The local branch and `origin/fb-refactor4` are synchronized
+at `1a343c5` (`index ndhwc pre concat layout pass`) before this handoff-only
+commit.
+
+### Completed work in `fb-refactor4`
+
+- The managed Tier 0–4 profile runs in authoritative tier/model order and
+  contains 420 recorded models: 382 active and 38 excluded from execution.
+  The excluded set consists of 27 expected timeouts and 11 explicit user
+  exclusions. The active baseline classifications are 356 pass, 20
+  `tflite_fail`, and 6 `missing_tflite_report`.
+- User-approved DEIM TopK index instability is accepted without discarding the
+  raw maximum absolute errors or the unaccepted classification. The bulk
+  result records both the managed acceptance and the underlying numeric
+  result.
+- `encoder.onnx` is classified as an expected 600-second timeout.
+- The explicit future-validation exclusions are:
+  `fast_acvnet_generalization_opset16_192x320.onnx`,
+  `htdemucs_ft_onnx_1sec.onnx`, `maskrcnn_resnet50_fpn.onnx`, `model1.onnx`,
+  `paddlepaddle_26_ocr.onnx`, `bread_180x320.onnx`,
+  `bread_nonfm_180x320.onnx`, `double_gru.onnx`, `gtcrn_simple.onnx`,
+  `conv_tasnet_dnn_ins.onnx`, and `spkrec-resnet-voxceleb.onnx`.
+- The sequential bulk runner now samples Linux `VmSwap` for the active
+  converter subprocess and all descendants. Any nonzero process-tree SWAP
+  stops that model, records `swap_detected`, peak tree KiB, and per-process
+  peaks, and leaves unrelated host-wide SWAP out of the decision. Future
+  detected models must be added to the managed profile as `excluded` with
+  reason `swap_detected_during_managed_validation` before the next managed
+  run.
+- The 258-line rank-five NDHWC pre-Concat matcher was mechanically moved to
+  `passes/ndhwc_concat_layout.py` at `8908a90`. Its extracted function AST
+  exactly matched the characterized central implementation with SHA-256
+  `0b0c625290f2ed31351ca204b0bbc5f2a463fa09ffe1bf1eccb8ff15de6aee17`.
+- Checkpoint `1a343c5` replaced its repeated producer/consumer maps and direct
+  operator deletion with pure `ModelIRGraphIndex` candidate planning,
+  differential mutation, `LayoutState` reconciliation, and transactional pass
+  ID `layout.ndhwc_pre_concat`. All five raw production calls now use the
+  stable runner. Per-axis quantization metadata is cloned and remapped from
+  NCDHW dimension 1 to NDHWC dimension 4 for unary and canonical Concat
+  tensors.
+- The 2,000 threshold remains only the Tier 5 ONNX node-count boundary. It is
+  not a source-file line limit.
+
+### Unfinished work
+
+- Continue staged characterization and indexed migration of the remaining
+  central layout families. The adjacent rank-four generic
+  `_optimize_transpose_pre_concat_nhwc_chains` matcher is much larger and must
+  first be audited and divided into semantic characterization units; do not
+  treat it as one blind monolithic extraction.
+- Complete remaining lowerer/registry decomposition and consolidate op-family
+  validation, capability selection, and lowering.
+- Complete fixed-ModelIR coverage for quantization modes, split/crop,
+  custom/pseudo ops, weights, reports, and requested-artifact-only execution.
+- Complete shared PyTorch, TorchScript, Dynamo ONNX, and ExportedProgram
+  canonicalization/emitter decomposition.
+- Complete the public CLI/Python and artifact matrix audits, optional
+  TensorFlow exporter compatibility, TensorFlow-free direct/`-cotof` boundary,
+  remaining tier gates, normalized failure comparison, and three-run median
+  timing/peak-RSS measurements.
+- A full current Tier 0–4 run was intentionally not completed. The latest user
+  direction is to keep conversion tests minimal and prioritize implementation
+  improvements. Do not restart a whole-corpus run as the first resumed task.
+- The previously noted DPT producer-rank investigation and any other
+  corpus-only candidates remain unproven until a focused reproducer justifies
+  work; do not infer broad non-regression from the partial run.
+
+### Branch and changed files
+
+- Branch: `fb-refactor4`
+- Implementation checkpoint: `1a343c5`
+- Local/remote divergence before this documentation commit: `0 0`
+- Worktree before this documentation commit: clean
+- Pull requests: do not create one on resume
+
+Files changed by the `fb-refactor4` checkpoints covered here:
+
+- `docs/baselines/flatbuffer_direct_active_tier0_4.json`
+- `docs/flatbuffer_direct_architecture.md`
+- `docs/flatbuffer_direct_handoff_2026-07-13.md`
+- `onnx2tf/utils/flatbuffer_direct_bulk_runner.py`
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py`
+- `onnx2tf/tflite_builder/passes/ndhwc_concat_layout.py`
+- `tests/test_flatbuffer_direct_bulk_runner.py`
+- `tests/test_flatbuffer_direct_architecture.py`
+- `tests/test_flatbuffer_direct_ndhwc_concat_layout.py`
+
+### Tests executed and results
+
+All inference remained sequential with one model process at a time and all
+commands used the existing `uv` environment.
+
+- Managed-profile/bulk-runner focused suite after the two latest explicit
+  exclusions: `34 passed`.
+- SWAP monitoring, bulk-runner, and architecture focus: `78 passed`.
+- Actual `Acos_11.onnx` SWAP-monitor smoke: pass,
+  `swap_detected=false`, peak SWAP `0 KiB`, maximum absolute error
+  `7.972121238708496e-07`.
+- NDHWC mechanical extraction characterization plus architecture:
+  `59 passed`.
+- Indexed NDHWC characterization, transaction metrics, ownership, and
+  architecture: `60 passed`.
+- Differential comparison against checkpoint `8908a90`: all 16 cases (one
+  success and fifteen unsafe boundaries) produced identical non-quantized
+  ModelIR and statistics.
+- Sequential `superpoint.onnx` direct/`-cotof` smoke:
+  `evaluation_pass=true`, maximum absolute error
+  `1.6666017472743988e-06`, RMSE `1.6207873294228388e-07`, cosine similarity
+  `1.0`. The new rank-five pass skipped all five positions with zero snapshots
+  and fingerprints on this unrelated rank-four graph.
+- Ruff check of the touched NDHWC pass and tests: passed.
+- The intentionally interrupted current-profile Tier 0 run completed 37 of
+  382 active models: all 37 passed and none reported process-tree SWAP. This is
+  diagnostic evidence only, not a complete tier gate.
+
+### Failing tests and known issues
+
+- No focused test is failing at this checkpoint.
+- No process-tree SWAP was detected in the 37-model partial run. Existing
+  host-wide SWAP was deliberately ignored and is not evidence against a model.
+- The managed profile still intentionally records 20 numeric failures and 6
+  missing reports among active models, plus 27 expected timeouts. These are
+  known baseline classifications, not new failures from the NDHWC migration.
+- Current broad corpus non-regression and performance targets are not proven by
+  the deliberately minimal validation scope.
+- Temporary copied ONNX, generated TFLite, and schema artifacts from the
+  interrupted run were deleted. Its JSON/log evidence remains under
+  `/tmp/onnx2tf_tier0_4_fb4_ccf5277` (about 7.5 MiB at pause time).
+
+### First work on resume
+
+1. Confirm `git status --short --branch` is clean and local/remote divergence
+   is `0 0` after the handoff commit.
+2. Do not start a whole Tier 0–4 conversion run. Re-run only the 60-test NDHWC
+   focused gate if the environment or base commit changed.
+3. Audit the rank-four `_optimize_transpose_pre_concat_nhwc_chains` matcher and
+   its existing tests. Select one bounded semantic subfamily and add compact
+   success/no-op characterization before moving implementation.
+4. Preserve the staged sequence: characterization → exact mechanical
+   extraction → indexed transactional runner. Use one representative model at
+   most when the selected pass has a known exercising model.
+5. If any future sequential model run reports `swap_detected`, immediately add
+   that model to the managed profile exclusion set, update exact count tests,
+   and start any later authoritative run with a clean output directory.
+6. Commit and push each safe checkpoint to `fb-refactor4`; do not open a pull
+   request.
+
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
