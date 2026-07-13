@@ -3,9 +3,9 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `56516ef` (`index cost volume scatter layout pass`)
+- Latest implementation checkpoint: `fcf24b2` (`characterize add concat suffix layout`)
 - Remote: after this handoff is pushed, `origin/fb-refactor3` contains
-  `56516ef` and the documentation checkpoint
+  `fcf24b2` and the documentation checkpoint
 - Pull request: none; do not create one on resume
 - The final handoff commit contains documentation only. After it is pushed,
   the expected working-tree state is clean and local/remote divergence is
@@ -14,7 +14,8 @@
 ## Completed work
 
 This resumed interval completed eleven adjacent semantic layout families using
-the staged characterization → mechanical extraction → indexed runner process.
+the staged characterization → mechanical extraction → indexed runner process,
+then characterized the next Add/Concat/constant-suffix family.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -106,6 +107,14 @@ the staged characterization → mechanical extraction → indexed runner process
     - Fixed late-validation partial mutation for invalid ScatterND shape,
       coordinate rank, and out-of-bounds coordinates; all now reject before a
       snapshot and preserve the complete ModelIR.
+12. Add/Concat/constant-suffix layout
+    - Added the first dedicated success corpus for the previously untested
+      central matcher in `fcf24b2`.
+    - Fixed nine complete no-op boundaries covering branch/Add/Concat/Mul
+      fan-out, public intermediate/post output, invalid permutation/axis, and
+      missing suffix constant.
+    - Preserved production behavior and all five raw call positions;
+      mechanical extraction remains the next checkpoint.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -121,10 +130,10 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is
-  `_optimize_transpose_add_concat_const_suffix_nhwc_chains`: add a dedicated
-  compact success/rejection corpus before its mechanical extraction from the
-  central lowerer.
+  The immediate next unit is the characterized
+  `_optimize_transpose_add_concat_const_suffix_nhwc_chains`: move it
+  mechanically to a focused pass-family module, prove AST identity, and retain
+  all five raw production positions until indexed migration.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -146,7 +155,7 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this handoff-document update, the
-implementation working tree is clean at `56516ef`; after the documentation
+implementation working tree is clean at `fcf24b2`; after the documentation
 commit is pushed, local/remote divergence must be `0 0`. The implementation
 checkpoints since the previous pause changed:
 
@@ -276,6 +285,10 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 - Full direct selection after indexed cost-volume/ScatterND migration:
   `1252 passed, 5 deselected, 2 warnings in 164.88s`.
+- Dedicated Add/Concat/constant-suffix characterization: `10 passed in 0.32s`.
+- Full direct selection after adding the previously missing success and nine
+  unsafe-boundary cases:
+  `1262 passed, 5 deselected, 2 warnings in 195.24s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -307,13 +320,13 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Inspect `_optimize_transpose_add_concat_const_suffix_nhwc_chains`, its five
-   production positions, and any existing success coverage; record the exact
-   current output/constant/layout contract.
-3. Create a dedicated compact characterization module with fan-out,
-   public-boundary, permutation, axis, and constant-shape rejection cases.
-4. Run focused and full direct gates, then commit and push characterization
-   before mechanical extraction.
+2. Move `_optimize_transpose_add_concat_const_suffix_nhwc_chains` mechanically
+   from the central lowerer to a focused pass-family module while leaving a
+   signature-compatible wrapper.
+3. Add AST-equivalence and single-owner architecture coverage, preserving all
+   five raw production call positions and their ordering.
+4. Run focused and full direct gates, then commit and push the extraction
+   checkpoint before indexed mutation changes.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -883,3 +896,32 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_cost_volume_superpoint` artifacts were removed after metrics
 inspection.
+
+### Add/Concat/constant-suffix characterization checkpoint
+
+Checkpoint `fcf24b2` added the first dedicated coverage for
+`_optimize_transpose_add_concat_const_suffix_nhwc_chains`. The compact success
+graph includes two independent branch adapters, one shared base adapter, both
+Add fan-ins, channel Concat, strict MUL(const) then ADD(const) suffix, inverse
+output adapter, and a downstream Conv consumer. It proves all four adapters
+are removed, both Add inputs become NHWC, Concat moves to axis 3, both rank-four
+constants are transposed to NHWC, metadata follows the rewrite, and the suffix
+Add directly owns the canonical post-adapter tensor name.
+
+Nine parameterized boundaries prove a complete ModelIR no-op for branch
+adapter fan-out, Add output fan-out, Concat fan-out, Mul output fan-out, public
+suffix intermediate, public post output, invalid leading permutation, invalid
+Concat axis, and missing suffix constant. Snapshots compare operator topology
+and options plus every tensor dtype, shape, shape signature, and constant
+value. Production code and all five raw call positions were unchanged.
+
+Focused characterization passed 10 tests. The complete sequential direct
+selection passed:
+
+```text
+1262 passed, 5 deselected, 2 warnings in 195.24s
+```
+
+No dependency or TensorFlow path was added, and no inference process was run
+concurrently. Mechanical extraction with AST-equivalence and ownership gates
+is the next separate unit.
