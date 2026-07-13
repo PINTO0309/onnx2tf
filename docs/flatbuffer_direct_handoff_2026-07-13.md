@@ -63,6 +63,15 @@ Focused index-reuse, attention, sandwich, duplicate-producer, recurrent,
 control-flow, compatibility, and architecture validation passes 71 tests. No
 model conversion or inference was run for this checkpoint.
 
+Recurrent orphan-step repair moved beside the recurrent capability policy. It
+first identifies names matching the legacy `_h_step_`/`_c_step_` contract; an
+irrelevant graph returns before index construction. Candidate graphs build one
+`ModelIRGraphIndex`, resolve the shape-driven Reshape through indexed consumers,
+rewire orphan consumers through differential input replacement, and preserve
+public-output tensors. This replaces the former candidate-by-candidate complete
+operator scan and keeps the index coherent during multiple repairs. The focused
+suite now passes 73 tests, including one-index and zero-index fast-path checks.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

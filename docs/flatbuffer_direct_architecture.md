@@ -1673,6 +1673,13 @@ use the shared append-only split-planner rewrite, while directly supported or
 absent recurrent ops return the borrowed graph for the subsequent owning
 normalizer copy.
 
+The same recurrent module owns legacy orphan step-tensor repair. It preflights
+`_h_step_`/`_c_step_` names before allocating graph state, then uses one
+`ModelIRGraphIndex` to find the corresponding shape-driven Reshape and update
+all orphan consumers differentially. It no longer constructs ad hoc producer
+and consumer maps or scans every operator once per candidate; graphs without a
+candidate return without index construction.
+
 Softmax-specific channel-first validation is isolated in Torch-free
 `passes/pytorch_layout_validation.py`. Attention-like Softmax consumers and
 Transpose-sandwich producers/consumers are resolved from one shared

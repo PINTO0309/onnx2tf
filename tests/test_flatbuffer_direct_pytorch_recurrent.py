@@ -3,11 +3,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes import pytorch_recurrent
 from onnx2tf.tflite_builder.passes.pytorch_recurrent import (
     _can_direct_codegen_sequence_lstm_op,
     _can_direct_codegen_sequence_rnn_op,
+    _repair_orphan_recurrent_step_tensors,
     _rewrite_recurrent_ops_for_native_export,
     _sequence_lstm_index_spec,
 )
@@ -130,3 +132,64 @@ def test_recurrent_unroll_failure_is_normalized(monkeypatch) -> None:
 
     with pytest.raises(ModelIRPyTorchExportError, match="could not rewrite"):
         _rewrite_recurrent_ops_for_native_export(model_ir)
+
+
+def test_orphan_recurrent_step_repair_uses_one_differential_index(monkeypatch) -> None:
+    model_ir = ModelIR(name="orphan_recurrent_step")
+    model_ir.inputs = ["source"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "source": TensorIR("source", "FLOAT32", [1, 4], [1, 4]),
+        "state_h_step_shape_3": TensorIR(
+            "state_h_step_shape_3",
+            "INT32",
+            [2],
+            [2],
+            data=np.asarray([1, 4], dtype=np.int32),
+        ),
+        "state_h_step_3": TensorIR("state_h_step_3", "FLOAT32", [1, 4], [1, 4]),
+        "reshaped_state": TensorIR("reshaped_state", "FLOAT32", [1, 4], [1, 4]),
+        "y": TensorIR("y", "FLOAT32", [1, 4], [1, 4]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            "RESHAPE",
+            ["source", "state_h_step_shape_3"],
+            ["reshaped_state"],
+        ),
+        OperatorIR("ADD", ["state_h_step_3", "reshaped_state"], ["y"]),
+    ]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    _repair_orphan_recurrent_step_tensors(model_ir)
+
+    assert refresh_count == 1
+    assert model_ir.operators[1].inputs == ["reshaped_state", "reshaped_state"]
+    assert "state_h_step_3" not in model_ir.tensors
+
+
+def test_orphan_recurrent_step_repair_skips_index_without_candidates(
+    monkeypatch,
+) -> None:
+    model_ir, _ = _direct_rnn_model_ir()
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    _repair_orphan_recurrent_step_tensors(model_ir)
+
+    assert refresh_count == 0

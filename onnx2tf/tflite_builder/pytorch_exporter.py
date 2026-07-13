@@ -161,6 +161,7 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
 from onnx2tf.tflite_builder.passes.pytorch_recurrent import (
     _can_direct_codegen_sequence_lstm_op,
     _can_direct_codegen_sequence_rnn_op,
+    _repair_orphan_recurrent_step_tensors,
     _rewrite_recurrent_ops_for_native_export,
     _sequence_lstm_index_spec,
     _sequence_lstm_input_name,
@@ -11177,45 +11178,6 @@ def _has_recurrent_sequence_context(model_ir: ModelIR) -> bool:
     return False
 
 
-def _repair_orphan_recurrent_step_tensors(model_ir: ModelIR) -> None:
-    producer_index: Dict[str, int] = {}
-    consumers: Dict[str, List[int]] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        for output_name in op.outputs:
-            producer_index[str(output_name)] = int(op_idx)
-        for input_name in op.inputs:
-            consumers.setdefault(str(input_name), []).append(int(op_idx))
-
-    for tensor_name in list(model_ir.tensors.keys()):
-        tensor_name = str(tensor_name)
-        if tensor_name in producer_index or tensor_name in set(str(v) for v in model_ir.inputs):
-            continue
-        match = re.match(r"^(.+_(?:h|c)_step_)(\d+)$", tensor_name)
-        if match is None:
-            continue
-        shape_tensor_name = f"{match.group(1)}shape_{match.group(2)}"
-        replacement_name: Optional[str] = None
-        for op in model_ir.operators:
-            if str(op.op_type) != "RESHAPE" or len(op.inputs) < 2 or len(op.outputs) != 1:
-                continue
-            if str(op.inputs[1]) != shape_tensor_name:
-                continue
-            candidate_name = str(op.outputs[0])
-            if candidate_name == tensor_name:
-                replacement_name = None
-                break
-            replacement_name = candidate_name
-            break
-        if replacement_name is None:
-            continue
-        for consumer_idx in consumers.get(tensor_name, []):
-            consumer = model_ir.operators[int(consumer_idx)]
-            consumer.inputs = [
-                replacement_name if str(input_name) == tensor_name else str(input_name)
-                for input_name in consumer.inputs
-            ]
-        if tensor_name not in set(str(v) for v in model_ir.outputs):
-            model_ir.tensors.pop(tensor_name, None)
 
 
 def _reject_residual_layout_transposes(

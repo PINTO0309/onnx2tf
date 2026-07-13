@@ -364,6 +364,7 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     focused_recurrent_functions = {
+        "_repair_orphan_recurrent_step_tensors",
         "_sequence_lstm_input_name",
         "_tensor_has_constant_data",
         "_sequence_lstm_bias_inputs_supported",
@@ -381,6 +382,14 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
     assert recurrent_rewrite_source is not None
     assert "return copy.deepcopy(model_ir)" not in recurrent_rewrite_source
     assert "return model_ir" in recurrent_rewrite_source
+    orphan_repair_source = ast.get_source_segment(
+        recurrent_source,
+        recurrent_functions["_repair_orphan_recurrent_step_tensors"],
+    )
+    assert orphan_repair_source is not None
+    assert "ModelIRGraphIndex(model_ir)" in orphan_repair_source
+    assert "graph_index.replace_operator_inputs(" in orphan_repair_source
+    assert "for op in model_ir.operators" not in orphan_repair_source
 
 
 def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
