@@ -146,6 +146,7 @@ from onnx2tf.tflite_builder.pytorch_onnx_optimizer import (
     _optimize_dynamo_exported_onnx_in_place,
 )
 from onnx2tf.tflite_builder.passes.pytorch_compat import (
+    _remove_redundant_layout_transposes,
     _restore_same_average_pool_exclude_pad_correction_for_native_runtime,
 )
 from onnx2tf.tflite_builder.split_planner import (
@@ -11105,110 +11106,6 @@ def _synchronize_reshape_targets_with_output_tensors(
         shape_tensor.data = np.asarray(preferred_shape, dtype=dtype)
         shape_tensor.shape = [int(len(preferred_shape))]
         shape_tensor.shape_signature = [int(len(preferred_shape))]
-
-
-def _remove_redundant_layout_transposes(
-    model_ir: ModelIR,
-    original_layouts: Dict[str, str],
-    preserve_channel_last_tensor_names: Set[str],
-) -> None:
-    consumers: Dict[str, List[int]] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        for input_name in op.inputs:
-            consumers.setdefault(str(input_name), []).append(int(op_idx))
-
-    delete_op_indices: Set[int] = set()
-    for op_idx, op in enumerate(model_ir.operators):
-        if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 1 or len(op.outputs) != 1:
-            continue
-        input_name = str(op.inputs[0])
-        output_name = str(op.outputs[0])
-        if input_name in preserve_channel_last_tensor_names or output_name in preserve_channel_last_tensor_names:
-            continue
-        input_tensor = model_ir.tensors.get(input_name, None)
-        output_tensor = model_ir.tensors.get(output_name, None)
-        reference_tensor = output_tensor if output_tensor is not None else input_tensor
-        rank = len(list(reference_tensor.shape)) if reference_tensor is not None else -1
-        if rank not in {3, 4, 5}:
-            continue
-        consumer_op_types = {
-            str(model_ir.operators[int(consumer_idx)].op_type)
-            for consumer_idx in consumers.get(output_name, [])
-            if int(consumer_idx) != int(op_idx)
-        }
-        reshape_only_consumers = len(consumer_op_types) > 0 and consumer_op_types == {"RESHAPE"}
-        if (
-            reshape_only_consumers
-            and input_tensor is not None
-            and output_tensor is not None
-            and [int(v) for v in list(input_tensor.shape)] != [int(v) for v in list(output_tensor.shape)]
-        ):
-            continue
-        if len(consumer_op_types & {"GATHER", "GATHER_ND", "SLICE", "STRIDED_SLICE"}) > 0:
-            continue
-        perm = _read_transpose_perm(model_ir, op)
-        input_layout = normalize_logical_layout(original_layouts.get(input_name, LOGICAL_LAYOUT_UNKNOWN))
-        output_layout = normalize_logical_layout(original_layouts.get(output_name, LOGICAL_LAYOUT_UNKNOWN))
-        remove_as_identity = bool(
-            perm is not None
-            and (
-                perm == list(range(rank))
-                or _is_layout_only_transpose_by_shape(
-                    input_tensor=input_tensor,
-                    output_tensor=output_tensor,
-                    perm=perm,
-                )
-                and _is_standard_channel_layout_permutation(
-                    perm=perm,
-                    rank=rank,
-                )
-                or
-                (
-                    is_channel_last_logical_layout(input_layout)
-                    and perm == logical_layout_permutation(
-                        source_layout=input_layout,
-                        target_layout=channel_first_logical_layout(rank),
-                    )
-                )
-                or (
-                    is_channel_last_logical_layout(output_layout)
-                    and perm == logical_layout_permutation(
-                        source_layout=channel_first_logical_layout(rank),
-                        target_layout=output_layout,
-                    )
-                )
-                or _is_inconsistent_standard_layout_transpose(
-                    input_tensor=input_tensor,
-                    output_tensor=output_tensor,
-                    perm=perm,
-                ) and not reshape_only_consumers
-            )
-        )
-        if not remove_as_identity:
-            continue
-        if output_name in model_ir.outputs:
-            source_tensor = input_tensor if input_tensor is not None else output_tensor
-            if source_tensor is not None:
-                replacement = _clone_tensor(source_tensor)
-                replacement.name = output_name
-                model_ir.tensors[output_name] = replacement
-            model_ir.operators[int(op_idx)] = OperatorIR(
-                "IDENTITY",
-                [input_name],
-                [output_name],
-                {},
-            )
-            continue
-        for consumer_idx in consumers.get(output_name, []):
-            consumer = model_ir.operators[int(consumer_idx)]
-            consumer.inputs = [input_name if str(v) == output_name else str(v) for v in consumer.inputs]
-        delete_op_indices.add(int(op_idx))
-        model_ir.tensors.pop(output_name, None)
-
-    if len(delete_op_indices) > 0:
-        model_ir.operators = [
-            op for op_idx, op in enumerate(model_ir.operators) if int(op_idx) not in delete_op_indices
-        ]
 
 
 def _rewrite_atan2_ones_like_to_atan(model_ir: ModelIR) -> None:

@@ -573,6 +573,18 @@ rewriters, and synthetic grouped-Conv and batched-MatMul fixtures verify each
 nontrivial expansion occurs exactly once without mutating the source graph. No
 SavedModel export, model conversion, or inference was run.
 
+PyTorch redundant layout-Transpose cleanup now lives beside the AveragePool
+compatibility rewrite in the Torch-free `passes/pytorch_compat.py` module. It
+enumerates indexed Transpose candidates and consumers, preserves all existing
+rank/layout/shape-sensitive guards, rewires internal consumers differentially,
+and removes each adapter through the index. A graph-output adapter is replaced
+at the same position by Identity with the established cloned output-tensor
+metadata. The PyTorch exporter no longer builds a separate consumer map or
+filters its complete operator list. Focused internal and public-output fixtures
+prove one initial refresh, final type indices, consumer rewiring, tensor
+cleanup, output metadata, and layout consistency without importing Torch. No
+PyTorch package generation, model conversion, or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

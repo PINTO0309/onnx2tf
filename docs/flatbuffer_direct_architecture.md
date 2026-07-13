@@ -1623,6 +1623,15 @@ unrolling emit directly into that stream and no longer retain a second
 `rewritten_ops` list or assign it at completion. Unchanged operators are copied
 with options, version, axis semantics, and ONNX node/op provenance intact.
 
+PyTorch layout-only Transpose cleanup is owned by the Torch-free
+`passes/pytorch_compat.py` boundary. It indexes initial `TRANSPOSE` objects and
+their live consumers once. Internal adapters rewire consumers and are removed
+differentially; public-output adapters are replaced in place by an Identity
+through indexed remove/insert while retaining the established output-tensor
+clone semantics. The PyTorch exporter no longer owns a consumer-map builder or
+complete operator-list deletion, and the pass can be tested without importing
+Torch.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

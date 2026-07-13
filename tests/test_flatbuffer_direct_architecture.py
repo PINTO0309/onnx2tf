@@ -273,6 +273,13 @@ def test_pytorch_compat_rewrite_uses_differential_graph_index() -> None:
     assert "model_ir.operators =" not in source
     assert "op.outputs =" not in source
     assert "ModelIRGraphIndex" in source
+    exporter_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    )
+    exporter_source = exporter_path.read_text(encoding="utf-8")
+    assert "def _remove_redundant_layout_transposes(" not in exporter_source
+    assert "_remove_redundant_layout_transposes," in exporter_source
+    assert "model_ir.operators =" not in exporter_source
 
 
 def test_dynamic_rank1_reshape_rewrite_has_indexed_pass_owner() -> None:

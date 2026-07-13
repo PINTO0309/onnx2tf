@@ -8,13 +8,157 @@ import numpy as np
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import (
+    LOGICAL_LAYOUT_UNKNOWN,
     ModelIR,
     OperatorIR,
     TensorIR,
+    channel_first_logical_layout,
     is_channel_first_logical_layout,
     is_channel_last_logical_layout,
+    logical_layout_permutation,
     normalize_logical_layout,
 )
+from onnx2tf.tflite_builder.pytorch_layout_utils import (
+    _clone_tensor,
+    _is_inconsistent_standard_layout_transpose,
+    _is_layout_only_transpose_by_shape,
+    _is_standard_channel_layout_permutation,
+    _read_transpose_perm,
+)
+
+
+def _remove_redundant_layout_transposes(
+    model_ir: ModelIR,
+    original_layouts: Dict[str, str],
+    preserve_channel_last_tensor_names: set[str],
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> None:
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    candidate_ops = [
+        model_ir.operators[int(index)]
+        for index in graph_index.operator_indices("TRANSPOSE")
+    ]
+    changed = False
+    for op in candidate_ops:
+        op_index = graph_index.operator_index(op)
+        if op_index is None or len(op.inputs) < 1 or len(op.outputs) != 1:
+            continue
+        input_name = str(op.inputs[0])
+        output_name = str(op.outputs[0])
+        if (
+            input_name in preserve_channel_last_tensor_names
+            or output_name in preserve_channel_last_tensor_names
+        ):
+            continue
+        input_tensor = model_ir.tensors.get(input_name, None)
+        output_tensor = model_ir.tensors.get(output_name, None)
+        reference_tensor = output_tensor if output_tensor is not None else input_tensor
+        rank = len(list(reference_tensor.shape)) if reference_tensor is not None else -1
+        if rank not in {3, 4, 5}:
+            continue
+        consumer_ops = [
+            consumer
+            for consumer in graph_index.consumers_of(output_name)
+            if consumer is not op
+        ]
+        consumer_op_types = {str(consumer.op_type) for consumer in consumer_ops}
+        reshape_only_consumers = (
+            len(consumer_op_types) > 0 and consumer_op_types == {"RESHAPE"}
+        )
+        if (
+            reshape_only_consumers
+            and input_tensor is not None
+            and output_tensor is not None
+            and [int(value) for value in list(input_tensor.shape)]
+            != [int(value) for value in list(output_tensor.shape)]
+        ):
+            continue
+        if consumer_op_types & {"GATHER", "GATHER_ND", "SLICE", "STRIDED_SLICE"}:
+            continue
+        perm = _read_transpose_perm(model_ir, op)
+        input_layout = normalize_logical_layout(
+            original_layouts.get(input_name, LOGICAL_LAYOUT_UNKNOWN)
+        )
+        output_layout = normalize_logical_layout(
+            original_layouts.get(output_name, LOGICAL_LAYOUT_UNKNOWN)
+        )
+        remove_as_identity = bool(
+            perm is not None
+            and (
+                perm == list(range(rank))
+                or (
+                    _is_layout_only_transpose_by_shape(
+                        input_tensor=input_tensor,
+                        output_tensor=output_tensor,
+                        perm=perm,
+                    )
+                    and _is_standard_channel_layout_permutation(
+                        perm=perm,
+                        rank=rank,
+                    )
+                )
+                or (
+                    is_channel_last_logical_layout(input_layout)
+                    and perm
+                    == logical_layout_permutation(
+                        source_layout=input_layout,
+                        target_layout=channel_first_logical_layout(rank),
+                    )
+                )
+                or (
+                    is_channel_last_logical_layout(output_layout)
+                    and perm
+                    == logical_layout_permutation(
+                        source_layout=channel_first_logical_layout(rank),
+                        target_layout=output_layout,
+                    )
+                )
+                or (
+                    _is_inconsistent_standard_layout_transpose(
+                        input_tensor=input_tensor,
+                        output_tensor=output_tensor,
+                        perm=perm,
+                    )
+                    and not reshape_only_consumers
+                )
+            )
+        )
+        if not remove_as_identity:
+            continue
+        if output_name in model_ir.outputs:
+            source_tensor = input_tensor if input_tensor is not None else output_tensor
+            if source_tensor is not None:
+                replacement = _clone_tensor(source_tensor)
+                replacement.name = output_name
+                model_ir.tensors[output_name] = replacement
+            graph_index.remove_operator(int(op_index))
+            graph_index.insert_operator(
+                int(op_index),
+                OperatorIR("IDENTITY", [input_name], [output_name], {}),
+            )
+            changed = True
+            continue
+        for consumer in consumer_ops:
+            consumer_index = graph_index.operator_index(consumer)
+            if consumer_index is None:
+                continue
+            graph_index.replace_operator_inputs(
+                int(consumer_index),
+                [
+                    input_name if str(value) == output_name else str(value)
+                    for value in consumer.inputs
+                ],
+            )
+        current_index = graph_index.operator_index(op)
+        if current_index is not None:
+            graph_index.remove_operator(int(current_index))
+        model_ir.tensors.pop(output_name, None)
+        changed = True
+
+    if changed and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
 
 
 def _restore_same_average_pool_exclude_pad_correction_for_native_runtime(
