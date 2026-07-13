@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.quantized_layout import (
     repair_channel_last_convinteger_input_transposes,
@@ -85,10 +87,25 @@ def _make_convinteger_bridge_ir(*, mark_channel_last: bool) -> ModelIR:
     return model_ir
 
 
-def test_repairs_stale_convinteger_transpose_after_channel_last_promotion() -> None:
+def test_repairs_stale_convinteger_transpose_after_channel_last_promotion(
+    monkeypatch,
+) -> None:
     model_ir = _make_convinteger_bridge_ir(mark_channel_last=True)
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = repair_channel_last_convinteger_input_transposes(model_ir)
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = repair_channel_last_convinteger_input_transposes(
+        model_ir,
+        layout_state=layout_state,
+    )
 
     assert stats == {
         "propagated_channel_last_layout_hints": 2,
@@ -101,6 +118,8 @@ def test_repairs_stale_convinteger_transpose_after_channel_last_promotion() -> N
     assert model_ir.tensors["centered_nchw"].physical_layout == "NHWC"
     assert "input_nhwc" not in model_ir.tensors
     assert "perm" not in model_ir.tensors
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
 
 def test_keeps_convinteger_transpose_without_channel_last_provenance() -> None:

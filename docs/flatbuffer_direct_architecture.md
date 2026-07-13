@@ -1730,7 +1730,12 @@ reports. Median and maximum durations were 7.124 and 120.360 seconds.
 The layout planner records channel-last provenance through elementwise and
 decomposed DynamicQuantizeLinear regions, and a bounded quantized-layout pass
 removes stale ConvInteger NCHW-to-NHWC input bridges only when that provenance
-proves the input is already NHWC. This eliminates the double transpose and
+proves the input is already NHWC. The repair now builds one
+`ModelIRGraphIndex`, enumerates only indexed Transpose roots, updates the Conv
+input and removes the stale adapter differentially, and synchronizes the active
+LayoutState after pruning. It no longer rebuilds producer/consumer maps on each
+iteration or mutates the operator list directly. This eliminates the double
+transpose and
 improves the fixed-seed maximum error from `2.7819780111312866` to
 `0.22717905044555664`, while cosine similarity improves from
 `0.7283386855698387` to `0.999042264918951`. DynamicQuantizeLinear now rounds

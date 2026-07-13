@@ -311,6 +311,12 @@ and float16 artifact clones build one index and share it across both folds, so
 `constant_fold.py` contains no full operator scan or direct operator-list
 deletion.
 
+The final ConvInteger channel-last bridge repair now uses one differential
+`ModelIRGraphIndex` instead of rebuilding producer/consumer maps per iteration.
+It enumerates indexed Transpose roots, updates the Conv input through the index,
+removes the stale adapter differentially, prunes through the shared helper, and
+synchronizes LayoutState after changing tensor layout metadata.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its
@@ -474,6 +480,9 @@ Focused verification, all in the existing `uv` environment:
   differential removal and LayoutState validation; targeted compilation, Ruff,
   and diff checks passed. The existing ScatterND constant-update lowering
   regression also passed (`1 passed`, `754 deselected`).
+- After migrating the ConvInteger channel-last repair, its focused suite passed
+  `3 tests in 0.28s`, including one-refresh accounting and LayoutState
+  validation; targeted compilation, Ruff, and diff checks passed.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.

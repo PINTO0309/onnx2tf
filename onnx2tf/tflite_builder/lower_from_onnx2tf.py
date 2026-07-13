@@ -52419,7 +52419,8 @@ def lower_onnx_to_ir(
     _topologically_sort_operators(model_ir)
     infer_model_ir_logical_layouts(model_ir)
     final_convinteger_layout_stats = repair_channel_last_convinteger_input_transposes(
-        model_ir
+        model_ir,
+        layout_state=session.layout_state,
     )
     if int(
         final_convinteger_layout_stats.get(
