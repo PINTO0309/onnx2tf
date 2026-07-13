@@ -278,6 +278,18 @@ conversion or inference was run. Resume with the remaining pure reduction and
 generated-call decoders, leaving graph-aware canonicalization local until their
 ModelIR dependencies can be explicit.
 
+The final 12 pure top-level source decoders now share the parser owner. They
+cover `copy_`, aligned assignment, cached permute assignment, local response
+normalization, compact pool/resize/softmax input forms, constant Pad, and three
+binary-alignment forms. Their ASTs—including the permute parser's
+`lru_cache(maxsize=131072)` decorator—exactly match the exporter checkpoint.
+Direct fixtures cover positional and keyword calls, copied-buffer kwargs,
+constant padding, dynamic/static target shapes, and anchor alignment. Parser and
+architecture validation passes 73 tests; syntax, Ruff, pycompile, and diff
+checks pass. No model conversion or inference was run. Resume with graph-aware
+source canonicalization helpers only after defining explicit ModelIR/query
+callbacks; the pure parser extraction is complete.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

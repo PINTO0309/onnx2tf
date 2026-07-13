@@ -90,23 +90,35 @@ from onnx2tf.tflite_builder.pytorch_codegen_stages import (
 from onnx2tf.tflite_builder.pytorch_source_parser import (
     _SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN,
     _normalize_permute_dims_expr,
+    _parse_align_binary_inputs_to_anchor_assign_with_shape,
     _parse_align_tensor_target_shape_expr,
+    _parse_align_tensor_target_shape_assign,
     _parse_apply_concat_inputs_axis_and_shape,
     _parse_apply_pool2d_assign_with_shape,
+    _parse_apply_pool2d_input_and_channel_last,
+    _parse_apply_pool2d_input_expr,
     _parse_apply_pool2d_input_channel_last_and_is_max,
     _parse_apply_resize_input_size_shape_and_channel_last,
+    _parse_apply_resize_input_and_channel_last,
     _parse_apply_softmax_input_axis_and_shape,
+    _parse_apply_softmax_input_and_axis,
     _parse_binary_add_args,
     _parse_binary_mul_args,
     _parse_channel_last_gather_slice_assign,
+    _parse_constant_pad_assign,
+    _parse_copy_call_expr,
+    _parse_dynamic_binary_add_align_assign,
     _parse_int_list_literal,
     _parse_rank4_shape_expr,
     _parse_rank4_shape_literal,
     _parse_simple_assignment_line,
     _parse_simple_assignment_line_cached,
+    _parse_static_binary_add_align_assign,
     _parse_tensor_split_assign,
+    _parse_torch_permute_assign,
     _parse_torch_cat_inputs_and_dim,
     _resolve_nhwc_to_nchw_bridge_source,
+    _parse_local_response_norm_input_expr,
     _split_top_level_csv_exprs,
     _strip_outer_parentheses,
 )
@@ -27399,38 +27411,6 @@ def _count_lines_matching(lines: Sequence[str], pattern: str) -> int:
     return sum(1 for line in lines if regex.search(str(line)) is not None)
 
 
-def _parse_copy_call_expr(
-    line: str,
-) -> Tuple[str, str, str, str, str] | None:
-    current_line = str(line)
-    indent = current_line[: len(current_line) - len(current_line.lstrip())]
-    stripped = current_line.strip()
-    copy_token = ".copy_("
-    copy_index = stripped.find(copy_token)
-    if copy_index <= 0 or not stripped.endswith(")"):
-        return None
-    target_expr = stripped[:copy_index].strip()
-    args_expr = stripped[copy_index + len(copy_token) : -1].strip()
-    normalized_target = _strip_outer_parentheses(target_expr)
-    buffer_name = normalized_target[5:] if normalized_target.startswith("self.") else normalized_target
-    if re.fullmatch(r"[A-Za-z0-9_]+", buffer_name) is None:
-        return None
-    parts = _split_top_level_csv_exprs(args_expr)
-    if not parts:
-        return None
-    src_expr = parts[0].strip()
-    copy_kwargs_parts: List[str] = []
-    for part in parts[1:]:
-        stripped_part = part.strip()
-        if not stripped_part:
-            continue
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", stripped_part) is None:
-            return None
-        copy_kwargs_parts.append(stripped_part)
-    copy_kwargs = "".join(f", {part}" for part in copy_kwargs_parts)
-    return indent, target_expr, buffer_name, src_expr, copy_kwargs
-
-
 def _extract_shadowformer_copy_permute_source_expr(src_expr: str) -> str | None:
     stripped = _strip_outer_parentheses(str(src_expr).strip())
     method_match = _SHADOWFORMER_METHOD_COPY_PERMUTE_SRC_RE.match(stripped)
@@ -27459,85 +27439,6 @@ def _is_channel_last_resize_like_expr(expr: str, known_resize_outputs: Set[str])
     return False
 
 
-def _parse_align_tensor_target_shape_assign(line: str) -> Tuple[str, str] | None:
-    current_line = str(line)
-    if "=" not in current_line:
-        return None
-    lhs, rhs = current_line.split("=", 1)
-    if re.fullmatch(r"\s*[A-Za-z0-9_]+\s*", lhs) is None:
-        return None
-    return _parse_align_tensor_target_shape_expr(rhs.strip())
-
-
-@functools.lru_cache(maxsize=131072)
-def _parse_torch_permute_assign(
-    line: str,
-) -> Tuple[str, str, str, List[int]] | None:
-    assign = _parse_simple_assignment_line(line)
-    if assign is None:
-        return None
-    indent, lhs, rhs = assign
-    stripped = rhs.strip()
-    if stripped.endswith(".contiguous()"):
-        stripped = stripped[: -len(".contiguous()")].strip()
-
-    def _parse_permute_like_args(args_expr: str) -> Tuple[str, List[int]] | None:
-        parts = _split_top_level_csv_exprs(args_expr)
-        input_expr: str | None = None
-        perm_expr: str | None = None
-        if len(parts) == 2 and all(
-            re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None for part in parts
-        ):
-            input_expr = parts[0].strip()
-            perm_expr = parts[1].strip()
-        else:
-            kwargs: Dict[str, str] = {}
-            for part in parts:
-                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
-                    continue
-                key, value = part.split("=", 1)
-                kwargs[key.strip()] = value.strip()
-            input_expr = kwargs.get("input", kwargs.get("x"))
-            perm_expr = kwargs.get("perm", kwargs.get("dims"))
-        if input_expr is None or perm_expr is None:
-            return None
-        if re.fullmatch(r"[A-Za-z0-9_]+", input_expr) is None:
-            return None
-        try:
-            perm_value = ast.literal_eval(perm_expr)
-        except Exception:
-            return None
-        if not isinstance(perm_value, (list, tuple)):
-            return None
-        try:
-            perm = [int(v) for v in list(perm_value)]
-        except Exception:
-            return None
-        return input_expr, perm
-
-    for prefix in ("_torch_permute(", "torch.permute("):
-        if stripped.startswith(prefix) and stripped.endswith(")"):
-            parsed = _parse_permute_like_args(stripped[len(prefix) : -1])
-            if parsed is not None:
-                return indent, lhs, parsed[0], parsed[1]
-    method_match = re.fullmatch(
-        r"(?P<input>[A-Za-z0-9_]+)\.permute\((?P<perm>.+)\)",
-        stripped,
-    )
-    if method_match is None:
-        return None
-    if re.fullmatch(r"[A-Za-z0-9_]+", str(method_match.group("input"))) is None:
-        return None
-    try:
-        perm = [
-            int(v)
-            for v in _normalize_permute_dims_expr(str(method_match.group("perm"))).split(",")
-        ]
-    except Exception:
-        return None
-    return indent, lhs, str(method_match.group("input")), perm
-
-
 def _has_immediate_rank4_permute_source(
     lines: Sequence[str],
     index: int,
@@ -27557,28 +27458,6 @@ def _has_immediate_rank4_permute_source(
             and list(permute_assign[3]) == [int(v) for v in list(expected_perm)]
         )
     return False
-
-
-def _parse_local_response_norm_input_expr(expr: str) -> str | None:
-    stripped = str(expr).strip()
-    prefix = "F.local_response_norm("
-    if not stripped.startswith(prefix) or not stripped.endswith(")"):
-        return None
-    parts = _split_top_level_csv_exprs(stripped[len(prefix) : -1])
-    input_expr: str | None = None
-    positional_index = 0
-    for part in parts:
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is not None:
-            key, value = part.split("=", 1)
-            if key.strip() == "input":
-                input_expr = value.strip()
-            continue
-        if positional_index == 0:
-            input_expr = part.strip()
-        positional_index += 1
-    if input_expr is None or re.fullmatch(r"[A-Za-z0-9_]+", input_expr) is None:
-        return None
-    return input_expr
 
 
 def _extract_prefixed_call_exprs(text: str, prefix: str) -> List[str]:
@@ -27604,234 +27483,6 @@ def _extract_prefixed_call_exprs(text: str, prefix: str) -> List[str]:
             end_index += 1
         start = max(call_index + len(prefix), end_index)
     return expressions
-
-
-def _parse_apply_pool2d_input_expr(expr: str) -> str | None:
-    stripped = str(expr).strip()
-    prefix = "_apply_pool2d("
-    if not stripped.startswith(prefix) or not stripped.endswith(")"):
-        return None
-    parts = _split_top_level_csv_exprs(stripped[len(prefix) : -1])
-    if parts and re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", parts[0]) is None:
-        return parts[0].strip()
-
-    kwargs: Dict[str, str] = {}
-    for part in parts:
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
-            continue
-        key, value = part.split("=", 1)
-        kwargs[key.strip()] = value.strip()
-    return kwargs.get("input")
-
-
-def _parse_apply_resize_input_and_channel_last(expr: str) -> Tuple[str, bool] | None:
-    stripped = str(expr).strip()
-    prefix = "_apply_resize("
-    if not stripped.startswith(prefix) or not stripped.endswith(")"):
-        return None
-    parts = _split_top_level_csv_exprs(stripped[len(prefix) : -1])
-    input_expr: str | None = None
-    channel_last_expr: str | None = None
-    if parts and re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", parts[0]) is None:
-        input_expr = parts[0].strip()
-    for part in parts:
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
-            continue
-        key, value = part.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if key == "input":
-            input_expr = value
-        elif key == "channel_last":
-            channel_last_expr = value
-    if input_expr is None or channel_last_expr not in {"True", "False"}:
-        return None
-    return input_expr, channel_last_expr == "True"
-
-
-def _parse_apply_pool2d_input_and_channel_last(expr: str) -> Tuple[str, bool] | None:
-    stripped = str(expr).strip()
-    prefix = "_apply_pool2d("
-    if not stripped.startswith(prefix) or not stripped.endswith(")"):
-        return None
-    parts = _split_top_level_csv_exprs(stripped[len(prefix) : -1])
-    input_expr: str | None = None
-    channel_last_expr: str | None = None
-    if parts and re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", parts[0]) is None:
-        input_expr = parts[0].strip()
-    for part in parts:
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
-            continue
-        key, value = part.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if key == "input":
-            input_expr = value
-        elif key == "channel_last":
-            channel_last_expr = value
-    if input_expr is None or channel_last_expr not in {"True", "False"}:
-        return None
-    return input_expr, channel_last_expr == "True"
-
-
-def _parse_apply_softmax_input_and_axis(expr: str) -> Tuple[str, int] | None:
-    stripped = str(expr).strip()
-    prefix = "_apply_softmax("
-    if not stripped.startswith(prefix) or not stripped.endswith(")"):
-        return None
-    parts = _split_top_level_csv_exprs(stripped[len(prefix) : -1])
-    input_expr: str | None = None
-    axis_expr: str | None = None
-    if parts and re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", parts[0]) is None:
-        input_expr = parts[0].strip()
-    for part in parts:
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
-            continue
-        key, value = part.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if key == "input":
-            input_expr = value
-        elif key == "axis":
-            axis_expr = value
-    if input_expr is None or axis_expr is None:
-        return None
-    try:
-        axis_value = int(axis_expr)
-    except ValueError:
-        return None
-    return input_expr, axis_value
-
-
-def _parse_constant_pad_assign(
-    line: str,
-) -> Tuple[str, str, str, List[int], str] | None:
-    assign = _parse_simple_assignment_line(line)
-    if assign is None:
-        return None
-    indent, lhs, rhs = assign
-    stripped = rhs.strip()
-    prefix = "F.pad("
-    if not stripped.startswith(prefix) or not stripped.endswith(")"):
-        return None
-    parts = _split_top_level_csv_exprs(stripped[len(prefix) : -1])
-    input_expr: str | None = None
-    pad_expr: str | None = None
-    mode_expr: str | None = None
-    value_expr: str | None = None
-    positional_index = 0
-    for part in parts:
-        keyword_match = re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part)
-        if keyword_match is not None:
-            key, value = part.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            if key == "input":
-                input_expr = value
-            elif key == "pad":
-                pad_expr = value
-            elif key == "mode":
-                mode_expr = value
-            elif key == "value":
-                value_expr = value
-            continue
-        if positional_index == 0:
-            input_expr = part.strip()
-        elif positional_index == 1:
-            pad_expr = part.strip()
-        elif positional_index == 2:
-            mode_expr = part.strip()
-        elif positional_index == 3:
-            value_expr = part.strip()
-        positional_index += 1
-    if input_expr is None or pad_expr is None or mode_expr != "'constant'" or value_expr is None:
-        return None
-    pad_match = re.fullmatch(r"[\[\(](?P<values>[0-9,\s-]+)[\]\)]", pad_expr.strip())
-    if pad_match is None:
-        return None
-    return indent, lhs, input_expr, _parse_int_list_literal(str(pad_match.group("values"))), value_expr
-
-
-def _parse_dynamic_binary_add_align_assign(
-    line: str,
-) -> Tuple[str, str, str, str, int] | None:
-    assign = _parse_simple_assignment_line(line)
-    if assign is None:
-        return None
-    indent, lhs, rhs = assign
-    match = re.fullmatch(
-        r"_align_tensor_to_target_shape\("
-        r"torch\.add\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), "
-        r"\[int\((?P<ref>[A-Za-z0-9_]+)\.shape\[0\]\), (?P<c>\d+), "
-        r"int\((?P=ref)\.shape\[2\]\), int\((?P=ref)\.shape\[3\]\)\]\)",
-        rhs.strip(),
-    )
-    if match is None:
-        return None
-    return (
-        indent,
-        lhs,
-        str(match.group("a")),
-        str(match.group("b")),
-        int(match.group("c")),
-    )
-
-
-def _parse_static_binary_add_align_assign(
-    line: str,
-) -> Tuple[str, str, str, str, List[int]] | None:
-    assign = _parse_simple_assignment_line(line)
-    if assign is None:
-        return None
-    indent, lhs, rhs = assign
-    align_parts = _parse_align_tensor_target_shape_expr(rhs)
-    if align_parts is None:
-        return None
-    input_expr, target_shape_expr = align_parts
-    add_match = re.fullmatch(r"torch\.add\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\)", input_expr.strip())
-    target_shape = _parse_rank4_shape_literal(target_shape_expr)
-    if add_match is None or target_shape is None:
-        return None
-    return (
-        indent,
-        lhs,
-        str(add_match.group("a")),
-        str(add_match.group("b")),
-        [int(v) for v in list(target_shape)],
-    )
-
-
-def _parse_align_binary_inputs_to_anchor_assign_with_shape(
-    line: str,
-) -> Tuple[str, str, str, str, str, List[int]] | None:
-    assign_match = re.match(
-        r"^(?P<indent>\s*)\(*\s*(?P<lhs0>[A-Za-z0-9_]+)(?::\s*torch\.Tensor)?\s*,\s*(?P<lhs1>[A-Za-z0-9_]+)(?::\s*torch\.Tensor)?\s*\)*\s*=\s*(?P<rhs>.+)$",
-        str(line),
-    )
-    if assign_match is None:
-        return None
-    rhs = str(assign_match.group("rhs")).strip()
-    prefix = "_align_binary_inputs_to_anchor("
-    if not rhs.startswith(prefix) or not rhs.endswith(")"):
-        return None
-    parts = _split_top_level_csv_exprs(rhs[len(prefix) : -1])
-    if len(parts) != 3:
-        return None
-    target_shape = _parse_rank4_shape_literal(parts[2].strip())
-    if (
-        target_shape is None
-        or re.fullmatch(r"[A-Za-z0-9_]+", parts[0].strip()) is None
-        or re.fullmatch(r"[A-Za-z0-9_]+", parts[1].strip()) is None
-    ):
-        return None
-    return (
-        str(assign_match.group("indent")),
-        str(assign_match.group("lhs0")),
-        str(assign_match.group("lhs1")),
-        parts[0].strip(),
-        parts[1].strip(),
-        [int(v) for v in list(target_shape)],
-    )
 
 
 def _has_mixed_layout_decoder_merge_signature(lines: Sequence[str]) -> bool:

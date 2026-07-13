@@ -2009,6 +2009,14 @@ group and remains imported by the exporter's narrower structural rewrites. All
 eight function ASTs and the pattern value are identical to their previous
 definitions, bringing the common top-level parser boundary to 20 functions.
 
+The remaining 12 pure top-level decoders now use that boundary too: buffer
+`copy_`, aligned assignment, cached functional/method permute assignment,
+local-response-normalization input, compact pool/resize/softmax inputs,
+constant Pad, dynamic/static binary alignment, and anchor alignment. All ASTs,
+including the permute parser's 131,072-entry LRU decorator, are unchanged. The
+shared owner therefore contains 32 reusable parsers while graph-aware signature
+and rewrite decisions remain in the exporter.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

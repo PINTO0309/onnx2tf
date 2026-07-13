@@ -3770,6 +3770,18 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
         "_parse_tensor_split_assign",
         "_parse_apply_softmax_input_axis_and_shape",
         "_resolve_nhwc_to_nchw_bridge_source",
+        "_parse_copy_call_expr",
+        "_parse_align_tensor_target_shape_assign",
+        "_parse_torch_permute_assign",
+        "_parse_local_response_norm_input_expr",
+        "_parse_apply_pool2d_input_expr",
+        "_parse_apply_resize_input_and_channel_last",
+        "_parse_apply_pool2d_input_and_channel_last",
+        "_parse_apply_softmax_input_and_axis",
+        "_parse_constant_pad_assign",
+        "_parse_dynamic_binary_add_align_assign",
+        "_parse_static_binary_add_align_assign",
+        "_parse_align_binary_inputs_to_anchor_assign_with_shape",
     ):
         assert function_name in parser_functions
         assert function_name not in exporter_functions

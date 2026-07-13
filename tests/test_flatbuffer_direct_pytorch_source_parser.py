@@ -2,19 +2,31 @@ from __future__ import annotations
 
 from onnx2tf.tflite_builder.pytorch_source_parser import (
     _normalize_permute_dims_expr,
+    _parse_align_binary_inputs_to_anchor_assign_with_shape,
+    _parse_align_tensor_target_shape_assign,
     _parse_align_tensor_target_shape_expr,
     _parse_apply_concat_inputs_axis_and_shape,
     _parse_apply_pool2d_assign_with_shape,
+    _parse_apply_pool2d_input_and_channel_last,
+    _parse_apply_pool2d_input_expr,
+    _parse_apply_resize_input_and_channel_last,
     _parse_apply_resize_input_size_shape_and_channel_last,
+    _parse_apply_softmax_input_and_axis,
     _parse_apply_softmax_input_axis_and_shape,
     _parse_binary_add_args,
     _parse_binary_mul_args,
     _parse_channel_last_gather_slice_assign,
+    _parse_constant_pad_assign,
+    _parse_copy_call_expr,
+    _parse_dynamic_binary_add_align_assign,
+    _parse_local_response_norm_input_expr,
     _parse_rank4_shape_expr,
     _parse_rank4_shape_literal,
     _parse_simple_assignment_line,
+    _parse_static_binary_add_align_assign,
     _parse_tensor_split_assign,
     _parse_torch_cat_inputs_and_dim,
+    _parse_torch_permute_assign,
     _resolve_nhwc_to_nchw_bridge_source,
     _split_top_level_csv_exprs,
     _strip_outer_parentheses,
@@ -112,3 +124,58 @@ def test_source_parser_decodes_gather_slice_and_nchw_bridge() -> None:
         _resolve_nhwc_to_nchw_bridge_source("x.permute(0, 2, 3, 1).contiguous()")
         is None
     )
+
+
+def test_source_parser_decodes_copy_alignment_and_permute_assignments() -> None:
+    assert _parse_copy_call_expr(
+        "    self.buf.copy_(torch.relu(x), non_blocking=True)"
+    ) == (
+        "    ",
+        "self.buf",
+        "buf",
+        "torch.relu(x)",
+        ", non_blocking=True",
+    )
+    assert _parse_align_tensor_target_shape_assign(
+        "y = _align_tensor_to_target_shape(x, [1,2,3,4])"
+    ) == ("x", "[1,2,3,4]")
+    assert _parse_torch_permute_assign(
+        "    y = _torch_permute(input=x, dims=[0, 2, 3, 1]).contiguous()"
+    ) == ("    ", "y", "x", [0, 2, 3, 1])
+
+
+def test_source_parser_decodes_runtime_helper_inputs() -> None:
+    assert (
+        _parse_local_response_norm_input_expr("F.local_response_norm(input=x, size=5)")
+        == "x"
+    )
+    assert (
+        _parse_apply_pool2d_input_expr("_apply_pool2d(input=x, channel_last=True)")
+        == "x"
+    )
+    assert _parse_apply_resize_input_and_channel_last(
+        "_apply_resize(input=x, channel_last=False)"
+    ) == ("x", False)
+    assert _parse_apply_pool2d_input_and_channel_last(
+        "_apply_pool2d(x, channel_last=True)"
+    ) == ("x", True)
+    assert _parse_apply_softmax_input_and_axis("_apply_softmax(input=x, axis=-1)") == (
+        "x",
+        -1,
+    )
+
+
+def test_source_parser_decodes_constant_pad_and_binary_alignment() -> None:
+    assert _parse_constant_pad_assign(
+        "y = F.pad(x, [1, 2, 3, 4], 'constant', 0.0)"
+    ) == ("", "y", "x", [1, 2, 3, 4], "0.0")
+    assert _parse_dynamic_binary_add_align_assign(
+        "y = _align_tensor_to_target_shape(torch.add(a, b), "
+        "[int(ref.shape[0]), 8, int(ref.shape[2]), int(ref.shape[3])])"
+    ) == ("", "y", "a", "b", 8)
+    assert _parse_static_binary_add_align_assign(
+        "y = _align_tensor_to_target_shape(torch.add(a, b), [1, 8, 4, 4])"
+    ) == ("", "y", "a", "b", [1, 8, 4, 4])
+    assert _parse_align_binary_inputs_to_anchor_assign_with_shape(
+        "a2, b2 = _align_binary_inputs_to_anchor(a, b, [1, 8, 4, 4])"
+    ) == ("", "a2", "b2", "a", "b", [1, 8, 4, 4])
