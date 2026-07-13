@@ -3,8 +3,8 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `8edf5c2`
-  (`index generic spp layout pass`)
+- Latest implementation checkpoint: `9a09553`
+  (`characterize ndhwc pre concat layout`)
 - Previous pause checkpoint: `3df2903`
   (`document flatbuffer direct pause checkpoint`)
 - Remote: after this resumed documentation checkpoint is pushed, local and
@@ -23,13 +23,15 @@
   complete matcher is owned by `passes/spp_layout.py`. Pure indexed planning,
   shared-constant copy-on-write, differential graph/layout mutation, and
   stable runner `layout.generic_spp_nhwc` replace all seven raw calls.
+- The five-call NDHWC pre-Concat matcher now has a dedicated 16-case compact
+  characterization corpus. Production remains central and unchanged.
 
 ## Completed work
 
 This resumed interval completed sixteen adjacent semantic layout families
 using the staged characterization → mechanical extraction → indexed runner
 process and completed the same three-stage migration for the seventeenth
-family.
+family. Characterization is complete for the eighteenth family.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -217,6 +219,16 @@ family.
       copy-on-write, quantized-dimension remapping, differential graph/layout
       mutation, stable runner `layout.generic_spp_nhwc`, and all seven runner
       calls in `8edf5c2`.
+18. NDHWC pre-Concat layout characterization
+    - Moved the only 96-line central success fixture to
+      `tests/test_flatbuffer_direct_ndhwc_concat_layout.py` in `9a09553`.
+    - Extended success coverage to mixed direct/unary inputs with two inverse
+      post adapters and canonical alias replacement.
+    - Added fifteen complete no-op boundaries covering input/unary/Concat
+      fan-out, public tensors, invalid permutations/axis, unsupported unary,
+      invalid rank, and incompatible spatial shape.
+    - Preserved the complete 258-line production matcher and all five raw
+      production calls; mechanical extraction is the next checkpoint.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -232,8 +244,8 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is characterization of the adjacent 258-line,
-  six-call `_optimize_transpose_pre_concat_ndhwc_chains` matcher. Keep the
+  The immediate next unit is exact-AST mechanical extraction of the 258-line,
+  five-call `_optimize_transpose_pre_concat_ndhwc_chains` matcher. Keep the
   much larger generic NHWC pre-Concat matcher as a separately planned family;
   source length is not a Goal gate.
 - Complete the remaining central lowerer/registry decomposition and consolidate
@@ -257,9 +269,9 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this resumed documentation update, the
-working tree is clean at indexed SPP checkpoint `8edf5c2`. The generic SPP
-corpus, focused pass ownership, and all seven runner integrations are
-committed.
+working tree is clean at NDHWC characterization checkpoint `9a09553`. The
+indexed SPP work and the dedicated NDHWC pre-Concat corpus are committed;
+NDHWC mechanical extraction has not begun.
 After the documentation commit is pushed, local/remote divergence must be
 `0 0`. The implementation checkpoints since the previous pause changed:
 
@@ -287,6 +299,7 @@ After the documentation commit is pushed, local/remote divergence must be
 - `tests/test_flatbuffer_direct_axis3_const_concat_layout.py`
 - `tests/test_flatbuffer_direct_concat_unary_conv_layout.py`
 - `tests/test_flatbuffer_direct_dequant_concat_quantize_layout.py`
+- `tests/test_flatbuffer_direct_ndhwc_concat_layout.py`
 - `tests/test_flatbuffer_direct_spp_layout.py`
 - `tests/test_tflite_builder_direct.py`
 
@@ -499,6 +512,10 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 - Full direct selection after indexed SPP migration:
   `1430 passed, 5 deselected, 2 warnings in 161.91s`.
+- Dedicated NDHWC pre-ConCat characterization: `16 passed in 0.30s`.
+- Full direct selection after moving the central fixture and adding fifteen
+  no-op boundaries:
+  `1445 passed, 5 deselected, 2 warnings in 170.91s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -530,13 +547,12 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Add a compact success fixture and complete fan-out/public/permutation/axis/
-   rank no-op boundaries for
-   `_optimize_transpose_pre_concat_ndhwc_chains`, preserving production code.
-3. Run the focused characterization and full direct gate, then commit and push
-   before mechanically extracting the complete matcher.
-4. Continue with exact-AST mechanical extraction and only then design its
-   indexed candidate and stable runner as separate checkpoints.
+2. Move the complete
+   `_optimize_transpose_pre_concat_ndhwc_chains` implementation mechanically
+   to a focused pass module while retaining its wrapper and all five raw calls.
+3. Confirm exact function-AST equivalence against `9a09553`, add a single-owner
+   architecture gate, and run focused plus full direct gates.
+4. Commit and push extraction before beginning indexed candidate planning.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1430,9 +1446,37 @@ similarity `1.0`. The complete sequential direct selection passed:
 
 No dependency or TensorFlow import path was added. Temporary
 `/tmp/onnx2tf_spp_superpoint` artifacts were removed after metrics inspection.
-The next staged family is the adjacent 258-line, six-call NDHWC pre-Concat
+The next staged family is the adjacent 258-line, five-call NDHWC pre-Concat
 matcher; the larger generic NHWC pre-Concat matcher remains a separate future
 unit.
+
+### NDHWC pre-Concat characterization checkpoint
+
+Checkpoint `9a09553` moved the only 96-line central success fixture into
+`tests/test_flatbuffer_direct_ndhwc_concat_layout.py` and expanded it into a
+compact 16-case semantic corpus. The success graph combines one direct NDHWC
+input adapter with one adapter/unary input, a channel-axis NCDHW Concat, and two
+inverse post adapters. It fixes unary propagation in NDHWC, axis 4, canonical
+post-output selection, alias replacement for the second post branch, and
+removal of all three adapters.
+
+Fifteen parameterized cases prove a complete ModelIR no-op for direct-adapter,
+unary-adapter, unary-output, and Concat fan-out; public direct/unary/Concat/post
+tensors; invalid pre/post permutations or Concat axis; an unsupported unary;
+invalid direct-input rank; and incompatible projected spatial shapes. The
+production matcher and all five raw call positions remain unchanged.
+
+Focused characterization passed 16 tests. The complete sequential direct
+selection passed:
+
+```text
+1445 passed, 5 deselected, 2 warnings in 170.91s
+```
+
+No dependency or TensorFlow path was added, and no inference process ran
+concurrently. Exact-AST mechanical extraction against `9a09553` is the first
+work on resume. The five-call count is authoritative; the earlier six-call
+handoff text accidentally counted the function definition and is superseded.
 
 ### Dequantize/Concat/Quantize mechanical extraction checkpoint
 

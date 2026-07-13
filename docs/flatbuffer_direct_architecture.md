@@ -282,6 +282,15 @@ mutation uses one `ModelIRGraphIndex` and `LayoutState`, and stable runner
 `layout.generic_spp_nhwc` occupies all seven production positions while the
 lowerer keeps its compatibility wrapper.
 
+The adjacent rank-five NDHWC pre-Concat rule has a compact corpus in
+`tests/test_flatbuffer_direct_ndhwc_concat_layout.py`. It fixes mixed direct
+and unary inputs, two inverse post branches, axis-4 canonicalization, and
+complete no-op behavior for fan-out, public, permutation, axis, unary, rank,
+and spatial-shape boundaries. Its 258-line implementation and five production
+calls remain central at the characterization checkpoint; exact-AST mechanical
+extraction is next. The larger generic NHWC pre-Concat matcher is intentionally
+a separate future unit.
+
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization
