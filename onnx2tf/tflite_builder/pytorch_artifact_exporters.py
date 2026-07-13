@@ -7,6 +7,9 @@ from typing import Any, Callable, List, Optional
 from onnx2tf.tflite_builder.pytorch_export_errors import (
     ModelIRPyTorchExportError,
 )
+from onnx2tf.tflite_builder.pytorch_exported_program_child import (
+    _EXPORTED_PROGRAM_CHILD_SCRIPT,
+)
 from onnx2tf.tflite_builder.pytorch_export_support import (
     _build_pytorch_export_example_inputs,
     _generated_package_non_native_skip_reason,
@@ -446,3 +449,157 @@ print(json.dumps({"file_name": dynamo_onnx_path.name}))
     )
     reapply_post_export_final_model_repairs_fn(package_path)
     return str(dynamo_onnx_path)
+
+
+def _export_exported_program_from_generated_package(
+    *,
+    package_dir: str,
+    custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+    shape_hints: Optional[List[str]] = None,
+    test_data_nhwc_path: Optional[str] = None,
+    native_package_generation_timeout_sec: Optional[int] = 0,
+    raise_on_failure: bool = True,
+    temporarily_rewrite_generated_model_source_for_exported_program_fn: Callable[
+        ..., Any
+    ],
+    reapply_post_export_final_model_repairs_fn: Callable[[Path], None],
+    strip_stack_traces_from_exported_program_archive_fn: Callable[[Path], None],
+    fold_inverse_permute_round_trips_in_exported_program_archive_fn: Callable[
+        [Path], None
+    ],
+) -> Optional[str]:
+    try:
+        package_path, metadata_path, metadata = _load_generated_package_export_metadata(
+            package_dir=package_dir,
+            export_label="ExportedProgram export",
+        )
+    except Exception as ex:
+        if raise_on_failure:
+            raise
+        package_path = Path(package_dir)
+        metadata_path = package_path / "metadata.json"
+        if metadata_path.exists():
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        else:
+            metadata = {}
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="exported_program",
+            file_name=None,
+            example_input_shapes={},
+            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
+            error=str(ex),
+        )
+        return None
+    skip_reason = _generated_package_torch_export_skip_reason(package_path)
+    if skip_reason is not None:
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="exported_program",
+            file_name=None,
+            example_input_shapes={},
+            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
+            extra_fields={
+                "skipped_reason": skip_reason,
+            },
+        )
+        return None
+    try:
+        example_inputs, example_input_shapes, dynamic_inputs_present = (
+            _build_pytorch_export_example_inputs(
+                package_dir=package_dir,
+                package_metadata=metadata,
+                custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+                shape_hints=shape_hints,
+                test_data_nhwc_path=test_data_nhwc_path,
+                export_label="ExportedProgram export",
+            )
+        )
+    except Exception as ex:
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="exported_program",
+            file_name=None,
+            example_input_shapes={},
+            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
+            error=str(ex),
+        )
+        if raise_on_failure:
+            raise
+        return None
+    file_stem = _sanitize_torchscript_file_stem(
+        str(metadata.get("name", "")),
+        fallback=package_path.name,
+    )
+    exported_program_file_name = f"{file_stem}_ep.pt2"
+    exported_program_path = package_path / exported_program_file_name
+    timeout_sec = int(native_package_generation_timeout_sec or 0)
+    child_script = _EXPORTED_PROGRAM_CHILD_SCRIPT
+    with temporarily_rewrite_generated_model_source_for_exported_program_fn(
+        package_path,
+        model_ir=None,
+    ):
+        child_payload, last_error_message = _run_generated_package_export_child(
+            example_inputs=example_inputs,
+            child_script=child_script,
+            package_path=package_path,
+            artifact_path=exported_program_path,
+            child_payload={},
+            temp_prefix="onnx2tf_exported_program_",
+            timeout_sec=timeout_sec,
+        )
+    if child_payload is None or not exported_program_path.exists():
+        _remove_generated_package_artifact_if_exists(exported_program_path)
+        extra_fields = None
+        if timeout_sec > 0 and "timed out after" in str(last_error_message):
+            extra_fields = {
+                "timed_out": True,
+                "timeout_sec": int(timeout_sec),
+            }
+        _write_generated_package_export_metadata(
+            metadata_path=metadata_path,
+            metadata=metadata,
+            metadata_key="exported_program",
+            file_name=None,
+            example_input_shapes=example_input_shapes,
+            dynamic_inputs_present=dynamic_inputs_present,
+            error=last_error_message
+            or "torch.export.save did not produce an artifact.",
+            extra_fields=extra_fields,
+        )
+        if raise_on_failure:
+            raise ModelIRPyTorchExportError(
+                "ExportedProgram export failed for the generated native PyTorch package. "
+                f"package_dir={package_dir} details={last_error_message}"
+            )
+        reapply_post_export_final_model_repairs_fn(package_path)
+        return None
+    try:
+        strip_stack_traces_from_exported_program_archive_fn(exported_program_path)
+    except Exception as ex:
+        if raise_on_failure:
+            raise ModelIRPyTorchExportError(
+                "ExportedProgram archive cleanup failed for the generated native PyTorch package. "
+                f"package_dir={package_dir} artifact={exported_program_path} details={ex}"
+            ) from ex
+        last_error_message = str(ex)
+    try:
+        fold_inverse_permute_round_trips_in_exported_program_archive_fn(
+            exported_program_path
+        )
+    except Exception:
+        pass
+    _write_generated_package_export_metadata(
+        metadata_path=metadata_path,
+        metadata=metadata,
+        metadata_key="exported_program",
+        file_name=str(child_payload.get("file_name", exported_program_file_name)),
+        example_input_shapes=example_input_shapes,
+        dynamic_inputs_present=dynamic_inputs_present,
+    )
+    reapply_post_export_final_model_repairs_fn(package_path)
+    return str(exported_program_path)

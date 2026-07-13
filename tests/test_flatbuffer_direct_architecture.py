@@ -3629,6 +3629,12 @@ def test_exported_program_child_script_has_single_owner() -> None:
     exporter_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
     ).read_text(encoding="utf-8")
+    artifact_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_artifact_exporters.py"
+    ).read_text(encoding="utf-8")
     child_source = (
         REPO_ROOT
         / "onnx2tf"
@@ -3637,6 +3643,47 @@ def test_exported_program_child_script_has_single_owner() -> None:
     ).read_text(encoding="utf-8")
 
     assert "_EXPORTED_PROGRAM_CHILD_SCRIPT =" in child_source
-    assert "child_script = _EXPORTED_PROGRAM_CHILD_SCRIPT" in exporter_source
+    assert "child_script = _EXPORTED_PROGRAM_CHILD_SCRIPT" in artifact_source
     assert "child_script = \"\"\"" not in exporter_source
-    assert "_EXPORTED_PROGRAM_CHILD_SCRIPT," in exporter_source
+    assert artifact_source.count("child_script = \"\"\"") == 2
+    assert "_EXPORTED_PROGRAM_CHILD_SCRIPT," in artifact_source
+
+
+def test_exported_program_artifact_host_has_focused_owner() -> None:
+    exporter_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    )
+    exporter_source = exporter_path.read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name: node
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    artifact_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_artifact_exporters.py"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "def _export_exported_program_from_generated_package("
+        in artifact_source
+    )
+    wrapper_source = ast.get_source_segment(
+        exporter_source,
+        exporter_functions[
+            "export_exported_program_from_generated_package"
+        ],
+    )
+    assert wrapper_source is not None
+    assert "_export_exported_program_from_generated_package(" in wrapper_source
+    assert "child_script" not in wrapper_source
+    assert "_write_generated_package_export_metadata(" not in wrapper_source
+    for callback_name in (
+        "_temporarily_rewrite_generated_model_source_for_exported_program",
+        "_reapply_post_export_final_model_repairs",
+        "_strip_stack_traces_from_exported_program_archive",
+        "_fold_inverse_permute_round_trips_in_exported_program_archive",
+    ):
+        assert callback_name in wrapper_source

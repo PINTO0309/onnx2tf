@@ -220,10 +220,19 @@ drift. The exporter host now contains only `child_script =` the imported
 constant, exposing its approximately 140 lines of metadata, rewrite-context,
 child-runner, archive-cleanup, and repair orchestration. Artifact and
 architecture validation passes 66 tests; syntax, Ruff, and diff checks pass. No
-model conversion or inference was run. Resume by moving that host orchestration
-behind explicit source-rewrite, final-repair, and archive-cleanup callbacks;
-keep the separate 2,015-line inverse-permute archive optimizer for a later
-characterized checkpoint.
+model conversion or inference was run.
+
+The exposed ExportedProgram host now lives in
+`pytorch_artifact_exporters.py`. Its public-signature wrapper supplies explicit
+temporary source-rewrite, final-repair, stack-trace-strip, and inverse-permute-
+archive-fold callbacks; the artifact owner retains metadata, skip, input,
+single-child, timeout, cleanup, and error ordering. After normalizing those four
+callback names, the host AST exactly matches the previous implementation. A
+non-native-package fixture proves skip metadata and that no callback or child is
+invoked. Artifact and architecture validation passes 68 tests; syntax, Ruff,
+and diff checks pass. No model conversion or inference was run. Resume by
+characterizing the 46-line stack-trace stripper separately, then the 2,015-line
+inverse-permute archive optimizer before changing either archive algorithm.
 
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/

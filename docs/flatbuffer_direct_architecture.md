@@ -1962,6 +1962,17 @@ previous literal, has fixed SHA-256
 `548c123d658c61780a134e34dbc02939f07d1db7e6bccc81db08fddf6cf77d5e`, and
 parses as Python. Importing the payload module does not import or execute Torch.
 
+That exposed ExportedProgram host orchestration now lives beside TorchScript and
+Dynamo ONNX in `pytorch_artifact_exporters.py`. The public exporter wrapper
+supplies four established hooks: temporary generated-source rewriting, final
+model repair, stack-trace stripping, and inverse-permute archive folding. All
+metadata, native/torch.export skip policy, example-input construction,
+sequential child execution, timeout behavior, cleanup ordering, and return/error
+contracts remain in the focused artifact implementation. After normalizing the
+four callback names, the moved host function is AST-identical to its former
+exporter implementation. The large inverse-permute archive optimizer remains a
+separate exporter-owned responsibility pending focused characterization.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
