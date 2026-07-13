@@ -457,6 +457,19 @@ because a Python 3.10 user-site `libtorch_python.so` is being resolved under
 Python 3.12; this is an environment mismatch rather than a test assertion
 failure. No model conversion or inference was run.
 
+Dynamic rank-one Unsqueeze shape materialization is now owned by
+`passes/dynamic_reshape.py`. The lowerer keeps a signature-compatible wrapper,
+but the implementation enumerates only indexed `RESHAPE` candidates and no
+longer builds or assigns a complete replacement operator list. For a true
+rank-one dynamic input it updates the existing Reshape input through the
+index, then inserts `SHAPE` and `CONCATENATION` at the live graph position. The
+folded higher-rank fallback retains the established shape-constant `-1`
+repair. Main-path calls pass the session layout state; fallback relowering
+retains the compatible self-indexing call. Focused dynamic-shape and
+architecture validation passes 54 tests, including exact operator order,
+one initial index refresh, live type/object indices, and final layout
+consistency. No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

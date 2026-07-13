@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _infer_batch_matmul_output_shape_and_signature,
@@ -139,6 +141,75 @@ def test_dynamic_unsqueeze_contract_survives_folded_higher_rank_input() -> None:
     assert [op.op_type for op in model_ir.operators] == ["RESHAPE"]
     assert model_ir.operators[0].options["newShape"] == []
     assert np.asarray(model_ir.tensors["shape"].data).tolist() == [-1, 1]
+
+
+def test_dynamic_rank1_unsqueeze_inserts_indexed_runtime_shape_pipeline(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("dynamic_rank1_unsqueeze")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = TensorIR(
+        name="x",
+        dtype="FLOAT32",
+        shape=[1],
+        shape_signature=[-1],
+    )
+    model_ir.tensors["shape"] = TensorIR(
+        name="shape",
+        dtype="INT32",
+        shape=[2],
+        shape_signature=[2],
+        data=np.asarray([1, 1], dtype=np.int32),
+    )
+    model_ir.tensors["y"] = TensorIR(
+        name="y",
+        dtype="FLOAT32",
+        shape=[1, 1],
+        shape_signature=[-1, 1],
+    )
+    reshape_op = OperatorIR(
+        op_type="RESHAPE",
+        inputs=["x", "shape"],
+        outputs=["y"],
+        options={"newShape": [1, 1]},
+    )
+    model_ir.operators = [reshape_op]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+    assert stats == {
+        "rewritten_dynamic_rank1_unsqueeze_reshape_shape_inputs": 1,
+    }
+    assert refresh_count == 1
+    assert [op.op_type for op in model_ir.operators] == [
+        "SHAPE",
+        "CONCATENATION",
+        "RESHAPE",
+    ]
+    assert graph_index.operator_index(reshape_op) == 2
+    assert graph_index.operator_indices("SHAPE") == [0]
+    assert graph_index.operator_indices("CONCATENATION") == [1]
+    assert graph_index.operator_indices("RESHAPE") == [2]
+    assert reshape_op.inputs[0] == "x"
+    assert reshape_op.inputs[1].endswith("_unsqueeze_runtime_shape")
+    assert reshape_op.options["newShape"] == []
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
 
 def test_batch_matmul_shape_inference_accepts_unbatched_rhs() -> None:

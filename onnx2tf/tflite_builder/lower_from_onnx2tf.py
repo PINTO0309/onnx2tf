@@ -235,6 +235,9 @@ from onnx2tf.tflite_builder.passes.high_rank_binary import (
 from onnx2tf.tflite_builder.passes.high_rank_matmul import (
     _compress_static_high_rank_batch_matmul as _compress_static_high_rank_batch_matmul_pass,
 )
+from onnx2tf.tflite_builder.passes.dynamic_reshape import (
+    rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs as _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs_pass,
+)
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_consecutive_reshape_passthrough_chains as _optimize_consecutive_reshape_passthrough_chains_pass,
     _optimize_fold_consecutive_mul_constants_chains as _optimize_fold_consecutive_mul_constants_chains_pass,
@@ -1362,134 +1365,15 @@ def _resolve_dynamic_reshape_shapes(
 
 def _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    def _unique_tensor_name(base: str) -> str:
-        if str(base) not in model_ir.tensors:
-            return str(base)
-        index = 1
-        while f"{base}_{index}" in model_ir.tensors:
-            index += 1
-        return f"{base}_{index}"
-
-    rewritten = 0
-    rewritten_ops: List[OperatorIR] = []
-    for op in model_ir.operators:
-        if str(op.op_type) != "RESHAPE" or len(op.inputs) < 2 or len(op.outputs) != 1:
-            rewritten_ops.append(op)
-            continue
-
-        input_name = str(op.inputs[0])
-        shape_name = str(op.inputs[1])
-        output_name = str(op.outputs[0])
-        input_tensor = model_ir.tensors.get(input_name, None)
-        output_tensor = model_ir.tensors.get(output_name, None)
-        shape_tensor = model_ir.tensors.get(shape_name, None)
-        if input_tensor is None or output_tensor is None or shape_tensor is None:
-            rewritten_ops.append(op)
-            continue
-        if shape_tensor.data is None:
-            rewritten_ops.append(op)
-            continue
-
-        input_signature = (
-            [int(v) for v in list(input_tensor.shape_signature)]
-            if input_tensor.shape_signature is not None
-            else [int(v) for v in list(input_tensor.shape)]
-        )
-        output_signature = (
-            [int(v) for v in list(output_tensor.shape_signature)]
-            if output_tensor.shape_signature is not None
-            else [int(v) for v in list(output_tensor.shape)]
-        )
-        try:
-            shape_values = [
-                int(v) for v in np.asarray(shape_tensor.data).reshape(-1).tolist()
-            ]
-        except Exception:
-            rewritten_ops.append(op)
-            continue
-
-        if output_signature != [-1, 1] and output_signature != [1, -1]:
-            rewritten_ops.append(op)
-            continue
-        if (
-            shape_values not in ([-1, 1], [1, -1], [1, 1])
-            and list(op.options.get("newShape", [])) not in ([], [1, 1])
-        ):
-            rewritten_ops.append(op)
-            continue
-
-        if len(input_signature) != 1:
-            # Late Squeeze/Unsqueeze folding can remove the rank-1 intermediate
-            # while retaining its two-dimensional output contract. In that
-            # case SHAPE(input) would expose stale higher-rank metadata. Keep
-            # the one runtime-inferred extent directly instead; TFLite RESHAPE
-            # accepts one -1 independently of the input rank.
-            inferred_shape = [int(v) for v in output_signature]
-            shape_tensor.data = np.asarray(inferred_shape, dtype=np.int32)
-            shape_tensor.dtype = "INT32"
-            shape_tensor.shape = [int(len(inferred_shape))]
-            shape_tensor.shape_signature = [int(len(inferred_shape))]
-            op.options["newShape"] = []
-            rewritten_ops.append(op)
-            rewritten += 1
-            continue
-
-        runtime_shape_name = _unique_tensor_name(f"{output_name}_runtime_shape")
-        runtime_shape_tensor = TensorIR(
-            name=runtime_shape_name,
-            dtype="INT32",
-            shape=[1],
-            shape_signature=[1],
-        )
-        model_ir.tensors[runtime_shape_name] = runtime_shape_tensor
-        rewritten_ops.append(
-            OperatorIR(
-                op_type="SHAPE",
-                inputs=[input_name],
-                outputs=[runtime_shape_name],
-                options={"outType": "INT32"},
-            )
-        )
-
-        one_name = _unique_tensor_name(f"{output_name}_unsqueeze_runtime_one")
-        model_ir.tensors[one_name] = TensorIR(
-            name=one_name,
-            dtype="INT32",
-            shape=[1],
-            shape_signature=[1],
-            data=np.asarray([1], dtype=np.int32),
-        )
-        merged_shape_name = _unique_tensor_name(f"{output_name}_unsqueeze_runtime_shape")
-        model_ir.tensors[merged_shape_name] = TensorIR(
-            name=merged_shape_name,
-            dtype="INT32",
-            shape=[2],
-            shape_signature=[2],
-        )
-        concat_inputs = [runtime_shape_name, one_name]
-        if output_signature == [1, -1]:
-            concat_inputs = [one_name, runtime_shape_name]
-        rewritten_ops.append(
-            OperatorIR(
-                op_type="CONCATENATION",
-                inputs=concat_inputs,
-                outputs=[merged_shape_name],
-                options={
-                    "axis": 0,
-                    "fusedActivationFunction": "NONE",
-                },
-            )
-        )
-
-        op.inputs[1] = merged_shape_name
-        op.options["newShape"] = []
-        rewritten_ops.append(op)
-        rewritten += 1
-
-    if rewritten > 0:
-        model_ir.operators = rewritten_ops
-    return {"rewritten_dynamic_rank1_unsqueeze_reshape_shape_inputs": int(rewritten)}
+    return _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _sanitize_hardswish_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
@@ -52250,7 +52134,10 @@ def lower_onnx_to_ir(
     )
     _repair_nchw_concat_transpose_conv_axes(model_ir)
     _repair_nchw_concat_global_pool_conv_axes(model_ir)
-    _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
+    _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _reconcile_static_tensor_shapes(model_ir)
     split_fallback_stats = _replace_unsupported_split_with_slice(model_ir)
     if int(split_fallback_stats.get("replaced_unsupported_split_with_slice", 0)) > 0:
@@ -52480,7 +52367,10 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(model_ir)
+    _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _topologically_sort_operators(model_ir)
     infer_model_ir_logical_layouts(model_ir)
     final_convinteger_layout_stats = repair_channel_last_convinteger_input_transposes(

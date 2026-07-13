@@ -1534,6 +1534,16 @@ retaining its existing single-argument exporter call. This keeps the optional
 PyTorch artifact boundary independent of TensorFlow and permits focused pass
 validation without importing Torch.
 
+Dynamic rank-one Unsqueeze shape materialization is isolated in
+`passes/dynamic_reshape.py`. The lowerer retains its private compatibility
+wrapper, while the pass indexes only initial `RESHAPE` candidates. A proven
+rank-one case rewires the existing Reshape through the differential graph
+index and inserts its runtime `SHAPE` and shape `CONCATENATION` immediately
+before the live operator position. Folded higher-rank inputs retain the
+existing direct `-1` shape-constant repair. Complete operator-list rebuilding
+and direct input-slot assignment are forbidden by the ownership gate, and the
+two main production calls synchronize the session `LayoutState`.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
