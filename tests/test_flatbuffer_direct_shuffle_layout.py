@@ -60,3 +60,39 @@ def test_repair_restores_channel_axis_for_nchw_shuffle_gather() -> None:
     assert model_ir.operators[0].options["axis"] == 1
     assert model_ir.tensors["concat"].shape == [1, 464, 7, 7]
     assert model_ir.tensors["shuffled"].shape == [1, 464, 7, 7]
+
+
+def test_repair_rejects_mismatched_shuffle_index_count() -> None:
+    model_ir = ModelIR("mismatched_shuffle_index_count")
+    model_ir.inputs = ["left", "right"]
+    model_ir.outputs = ["shuffled"]
+    _tensor(model_ir, "left", [1, 4, 3, 3])
+    _tensor(model_ir, "right", [1, 4, 3, 3])
+    _tensor(model_ir, "concat", [1, 4, 3, 6])
+    _tensor(
+        model_ir,
+        "indices",
+        [7],
+        data=np.arange(7, dtype=np.int32),
+    )
+    _tensor(model_ir, "shuffled", [1, 7, 3, 6])
+    model_ir.operators = [
+        OperatorIR(
+            "CONCATENATION",
+            ["left", "right"],
+            ["concat"],
+            {"axis": 3, "fusedActivationFunction": "NONE"},
+        ),
+        OperatorIR(
+            "GATHER",
+            ["concat", "indices"],
+            ["shuffled"],
+            {"axis": 1, "batchDims": 0},
+        ),
+    ]
+
+    stats = _repair_nchw_channel_shuffle_concat_gathers(model_ir)
+
+    assert stats == {"repaired_nchw_channel_shuffle_concat_gathers": 0}
+    assert model_ir.operators[0].options["axis"] == 3
+    assert model_ir.tensors["concat"].shape == [1, 4, 3, 6]
