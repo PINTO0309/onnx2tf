@@ -308,6 +308,16 @@ validation passes 69 tests; syntax, Ruff, pycompile, and diff checks pass. No
 model conversion or inference was run. Resume by moving another cohesive source
 rewrite family only after adding its direct success/no-op characterization.
 
+The next affine/GAP rewrite family is now owned by the same Torch-free module.
+Channel-last Mul/Add affine chains feeding Conv and channel-last GAP means for
+rank-3/rank-4 permute forms moved without semantic changes; both function ASTs
+exactly match the previous exporter checkpoint. Focused success fixtures cover
+compact affine assignments and helper/functional permutes, and both paths retain
+explicit unmatched-source no-op coverage. Rewrite and architecture validation
+passes 73 tests; syntax, Ruff, pycompile, diff, and AST-equivalence checks pass.
+No model conversion or inference was run. Resume with another cohesive pure
+source-rewrite family; do not start broad canonicalizer extraction as one block.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

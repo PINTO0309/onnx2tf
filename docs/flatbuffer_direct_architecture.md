@@ -2022,12 +2022,14 @@ prefixed nested calls are co-located with those parsers. The four utility ASTs
 are unchanged, bringing the directly testable generated-source boundary to 36
 functions without moving graph-aware canonicalization policy.
 
-The first pure generated-source rewrite family now lives in the Torch-free
+Pure generated-source rewrites now live in the Torch-free
 `pytorch_source_rewrites.py`. Channel-first GAP-to-Conv bridge folding, explicit
-channel-last GAP output materialization, and SE scale/binary bridge rewriting
-share the common parser boundary and retain their established ordering. All
-three ASTs are identical to their exporter definitions; direct fixtures fix two
-GAP success forms and complete unmatched-source no-op behavior.
+channel-last GAP output materialization, SE scale/binary bridge rewriting,
+channel-last affine-to-Conv bridge folding, and rank-3/rank-4 channel-last GAP
+mean rewriting share the common parser boundary and retain their established
+ordering. All five ASTs are identical to their former exporter definitions.
+Direct fixtures fix the compact affine chain, rank-3 and rank-4 permute forms,
+the earlier GAP success forms, and unmatched-source no-op behavior.
 
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
