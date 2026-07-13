@@ -110,6 +110,15 @@ public-boundary, and public-layout-bridge decisions remain unchanged. After
 normalizing the indexed fallback substitution, all six moved function ASTs are
 identical to checkpoint `db18f97`. Focused validation now passes 82 tests.
 
+Public input/output layout bridge insertion has also moved to
+`passes/pytorch_layout_validation.py`. It validates shape/layout compatibility
+before constructing graph state, then shares one lazy `ModelIRGraphIndex`
+across all boundary rewrites. Input consumers, output producers, and output
+consumers are updated differentially; bridge operators retain their established
+front/append ordering and metadata contract. An already matching public
+contract remains a zero-index no-op. The focused Torch-free suite now passes 84
+tests, with no model conversion or inference.
+
 ## `fb-refactor4` rank-four bounded-family checkpoint
 
 The first sixteen bounded families of the rank-four generic NHWC

@@ -1717,6 +1717,16 @@ collector's graph index or accept the normalizer's existing producer/consumer
 maps, so the exporter no longer implements a second layout-region policy or ad
 hoc fallback map construction.
 
+Public PyTorch input/output layout bridges are now owned by the same Torch-free
+layout module. Bridge eligibility is resolved before graph indexing, so a graph
+whose public shape and layout already match its contract pays no indexing cost.
+When a bridge is required, one lazily created `ModelIRGraphIndex` is shared
+across every public input and output: indexed consumers and producers are
+rewired differentially, input Transposes are inserted in the established
+front-of-graph order, and output Transposes are appended in public-output order.
+Tensor names, bridge metadata, layout permutations, and operator provenance are
+unchanged while the former complete operator scans are removed.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

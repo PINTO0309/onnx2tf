@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Sequence, Set
 
 import numpy as np
 
@@ -13,6 +13,7 @@ from onnx2tf.tflite_builder.ir import (
     channel_first_logical_layout,
     channel_last_logical_layout,
     is_channel_last_logical_layout,
+    logical_layout_permutation,
     normalize_logical_layout,
 )
 from onnx2tf.tflite_builder.pytorch_layout_utils import (
@@ -21,7 +22,9 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _is_channel_last_factorized_rank3_sequence_reshape,
     _perm_cf_to_cl,
     _perm_cl_to_cf,
+    _permute_shape,
     _read_transpose_perm,
+    _clone_tensor,
 )
 
 
@@ -990,3 +993,190 @@ def _restore_non_preserved_channel_first_layouts(
         layout = normalize_logical_layout(tensor.logical_layout)
         if is_channel_last_logical_layout(layout):
             tensor.logical_layout = channel_first_logical_layout(rank)
+
+
+def _ensure_public_boundary_layout_bridges(
+    *,
+    model_ir: ModelIR,
+    desired_public_shape_map: Dict[str, List[int]],
+    desired_public_layout_map: Dict[str, str],
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> None:
+    used_tensor_names: Set[str] = set(model_ir.tensors.keys())
+    bridge_tensor_names = model_ir.metadata.get("public_layout_bridge_tensor_names", [])
+    if not isinstance(bridge_tensor_names, list):
+        bridge_tensor_names = []
+    model_ir.metadata["public_layout_bridge_tensor_names"] = bridge_tensor_names
+
+    def _make_unique_identifier(base_name: str) -> str:
+        candidate = str(base_name)
+        suffix = 1
+        while candidate in used_tensor_names:
+            candidate = f"{base_name}_{suffix}"
+            suffix += 1
+        used_tensor_names.add(candidate)
+        return candidate
+
+    def _shared_graph_index() -> ModelIRGraphIndex:
+        nonlocal graph_index
+        if graph_index is None:
+            graph_index = ModelIRGraphIndex(model_ir)
+        return graph_index
+
+    def _insert_public_boundary_layout_bridge(
+        *,
+        tensor_name: str,
+        current_tensor: TensorIR,
+        desired_shape: Sequence[int],
+        desired_layout: str,
+        is_input: bool,
+    ) -> None:
+        current_shape = [
+            int(value)
+            for value in list(current_tensor.shape_signature or current_tensor.shape)
+        ]
+        target_shape = [int(value) for value in list(desired_shape)]
+        current_layout = normalize_logical_layout(current_tensor.logical_layout)
+        normalized_target_layout = normalize_logical_layout(desired_layout)
+        if (
+            len(current_shape) not in {3, 4, 5}
+            or len(current_shape) != len(target_shape)
+            or current_layout == LOGICAL_LAYOUT_UNKNOWN
+            or normalized_target_layout == LOGICAL_LAYOUT_UNKNOWN
+            or current_layout == normalized_target_layout
+        ):
+            return
+        perm = logical_layout_permutation(
+            source_layout=normalized_target_layout if is_input else current_layout,
+            target_layout=current_layout if is_input else normalized_target_layout,
+        )
+        expected_shape = current_shape if is_input else target_shape
+        seed_shape = target_shape if is_input else current_shape
+        if perm is None or _permute_shape(seed_shape, perm) != expected_shape:
+            return
+
+        bridge_tensor_name = _make_unique_identifier(
+            f"{tensor_name}_public_layout_bridge"
+        )
+        bridge_tensor = _clone_tensor(current_tensor)
+        bridge_tensor.name = str(bridge_tensor_name)
+        model_ir.tensors[str(bridge_tensor_name)] = bridge_tensor
+        if str(bridge_tensor_name) not in bridge_tensor_names:
+            bridge_tensor_names.append(str(bridge_tensor_name))
+        perm_name = _make_unique_identifier(f"{bridge_tensor_name}_perm")
+        perm_arr = np.asarray([int(value) for value in list(perm)], dtype=np.int32)
+        model_ir.tensors[str(perm_name)] = TensorIR(
+            name=str(perm_name),
+            dtype="INT32",
+            shape=[int(perm_arr.size)],
+            shape_signature=[int(perm_arr.size)],
+            data=perm_arr,
+        )
+
+        active_index = _shared_graph_index()
+        if is_input:
+            for consumer in active_index.consumers_of(tensor_name):
+                consumer_index = active_index.operator_index(consumer)
+                if consumer_index is None:
+                    continue
+                active_index.replace_operator_inputs(
+                    int(consumer_index),
+                    [
+                        str(bridge_tensor_name)
+                        if str(name) == str(tensor_name)
+                        else str(name)
+                        for name in consumer.inputs
+                    ],
+                )
+            active_index.insert_operator(
+                0,
+                OperatorIR(
+                    op_type="TRANSPOSE",
+                    inputs=[str(tensor_name), str(perm_name)],
+                    outputs=[str(bridge_tensor_name)],
+                    options={"perm": [int(value) for value in list(perm)]},
+                ),
+            )
+            return
+
+        producer_indices = active_index.duplicate_producers.get(
+            str(tensor_name),
+            (
+                [int(active_index.producers[str(tensor_name)])]
+                if str(tensor_name) in active_index.producers
+                else []
+            ),
+        )
+        producer_ops = [
+            model_ir.operators[int(producer_index)]
+            for producer_index in producer_indices
+        ]
+        consumer_ops = active_index.consumers_of(tensor_name)
+        for producer in producer_ops:
+            producer_index = active_index.operator_index(producer)
+            if producer_index is None:
+                continue
+            active_index.replace_operator_outputs(
+                int(producer_index),
+                [
+                    str(bridge_tensor_name)
+                    if str(name) == str(tensor_name)
+                    else str(name)
+                    for name in producer.outputs
+                ],
+            )
+        for consumer in consumer_ops:
+            consumer_index = active_index.operator_index(consumer)
+            if consumer_index is None:
+                continue
+            active_index.replace_operator_inputs(
+                int(consumer_index),
+                [
+                    str(bridge_tensor_name)
+                    if str(name) == str(tensor_name)
+                    else str(name)
+                    for name in consumer.inputs
+                ],
+            )
+        active_index.append_operator(
+            OperatorIR(
+                op_type="TRANSPOSE",
+                inputs=[str(bridge_tensor_name), str(perm_name)],
+                outputs=[str(tensor_name)],
+                options={"perm": [int(value) for value in list(perm)]},
+            )
+        )
+
+    for tensor_name in list(model_ir.inputs):
+        current_tensor = model_ir.tensors.get(str(tensor_name), None)
+        desired_shape = desired_public_shape_map.get(str(tensor_name), None)
+        desired_layout = desired_public_layout_map.get(
+            str(tensor_name),
+            LOGICAL_LAYOUT_UNKNOWN,
+        )
+        if current_tensor is None or desired_shape is None:
+            continue
+        _insert_public_boundary_layout_bridge(
+            tensor_name=str(tensor_name),
+            current_tensor=current_tensor,
+            desired_shape=desired_shape,
+            desired_layout=desired_layout,
+            is_input=True,
+        )
+
+    for tensor_name in list(model_ir.outputs):
+        current_tensor = model_ir.tensors.get(str(tensor_name), None)
+        desired_shape = desired_public_shape_map.get(str(tensor_name), None)
+        desired_layout = desired_public_layout_map.get(
+            str(tensor_name),
+            LOGICAL_LAYOUT_UNKNOWN,
+        )
+        if current_tensor is None or desired_shape is None:
+            continue
+        _insert_public_boundary_layout_bridge(
+            tensor_name=str(tensor_name),
+            current_tensor=current_tensor,
+            desired_shape=desired_shape,
+            desired_layout=desired_layout,
+            is_input=False,
+        )

@@ -7,6 +7,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _apply_feature_last_sequence_layouts,
     _collect_feature_last_sequence_tensor_names,
+    _ensure_public_boundary_layout_bridges,
     _is_attention_like_softmax_op,
     _is_pytorch_preserved_channel_last_rank4_or_rank5_model_island,
     _is_transpose_sandwiched_last_axis_softmax_op,
@@ -336,3 +337,83 @@ def test_restore_non_preserved_channel_first_layouts_respects_boundaries() -> No
     assert model_ir.tensors["restore"].logical_layout == "NCHW"
     assert model_ir.tensors["preserve"].logical_layout == "NHWC"
     assert model_ir.tensors["bridge"].logical_layout == "NHWC"
+
+
+def test_public_boundary_bridges_use_one_differential_index(monkeypatch) -> None:
+    model_ir = ModelIR(name="public_boundary_bridges")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 3, 2, 4], layout="NCHW"),
+        "y": _tensor("y", [1, 3, 2, 4], layout="NCHW"),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            "RELU",
+            ["x"],
+            ["y"],
+            version=2,
+            onnx_node_name="relu_boundary",
+            onnx_op_type="Relu",
+        )
+    ]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    _ensure_public_boundary_layout_bridges(
+        model_ir=model_ir,
+        desired_public_shape_map={
+            "x": [1, 2, 4, 3],
+            "y": [1, 2, 4, 3],
+        },
+        desired_public_layout_map={"x": "NHWC", "y": "NHWC"},
+    )
+
+    assert refresh_count == 1
+    assert [op.op_type for op in model_ir.operators] == [
+        "TRANSPOSE",
+        "RELU",
+        "TRANSPOSE",
+    ]
+    input_bridge_name = model_ir.operators[0].outputs[0]
+    output_bridge_name = model_ir.operators[1].outputs[0]
+    assert model_ir.operators[1].inputs == [input_bridge_name]
+    assert model_ir.operators[2].inputs[0] == output_bridge_name
+    assert model_ir.operators[2].outputs == ["y"]
+    assert model_ir.operators[1].version == 2
+    assert model_ir.operators[1].onnx_node_name == "relu_boundary"
+    assert model_ir.metadata["public_layout_bridge_tensor_names"] == [
+        input_bridge_name,
+        output_bridge_name,
+    ]
+
+
+def test_public_boundary_bridge_no_op_avoids_graph_index(monkeypatch) -> None:
+    model_ir = ModelIR(name="public_boundary_no_op")
+    model_ir.inputs = ["x"]
+    model_ir.tensors["x"] = _tensor("x", [1, 2, 4, 3], layout="NHWC")
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    _ensure_public_boundary_layout_bridges(
+        model_ir=model_ir,
+        desired_public_shape_map={"x": [1, 2, 4, 3]},
+        desired_public_layout_map={"x": "NHWC"},
+    )
+
+    assert refresh_count == 0
+    assert model_ir.operators == []
