@@ -171,6 +171,7 @@ from onnx2tf.tflite_builder.passes.concat_unary_conv_layout import (
 )
 from onnx2tf.tflite_builder.passes.spp_layout import (
     _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains as _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains_pass,
+    run_spp_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -50199,7 +50200,11 @@ def lower_onnx_to_ir(
         _optimize_leakyrelu_transpose_passthrough_chains(model_ir)
         _optimize_prelu_transpose_passthrough_chains(model_ir)
         _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
-        _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
+        run_spp_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_concat_nhwc_chains(model_ir)
         _optimize_transpose_pre_concat_ndhwc_chains(model_ir)
         _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir)
@@ -50406,7 +50411,11 @@ def lower_onnx_to_ir(
         _optimize_leakyrelu_transpose_passthrough_chains(model_ir)
         _optimize_prelu_transpose_passthrough_chains(model_ir)
         _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
-        _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
+        run_spp_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_concat_nhwc_chains(model_ir)
         _optimize_transpose_pre_concat_ndhwc_chains(model_ir)
         _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir)
@@ -50611,7 +50620,11 @@ def lower_onnx_to_ir(
         _optimize_leakyrelu_transpose_passthrough_chains(model_ir)
         _optimize_prelu_transpose_passthrough_chains(model_ir)
         _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
-        _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
+        run_spp_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_concat_nhwc_chains(model_ir)
         _optimize_transpose_pre_concat_ndhwc_chains(model_ir)
         _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir)
@@ -50871,7 +50884,11 @@ def lower_onnx_to_ir(
         _optimize_leakyrelu_transpose_passthrough_chains(model_ir)
         _optimize_prelu_transpose_passthrough_chains(model_ir)
         _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
-        _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
+        run_spp_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_concat_nhwc_chains(model_ir)
         _optimize_transpose_pre_concat_ndhwc_chains(model_ir)
         _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir)
@@ -51014,7 +51031,11 @@ def lower_onnx_to_ir(
         _optimize_transpose_binary_full_post_fanout_bridges(model_ir)
         # Binary bridge recovery can recreate pre/post transpose wrappers around CONCAT.
         _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
-        _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
+        run_spp_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
         _optimize_transpose_pre_concat_nhwc_chains(model_ir)
         _optimize_transpose_pre_concat_ndhwc_chains(model_ir)
         _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir)
@@ -51844,7 +51865,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir)
     _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
-    _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
+    run_spp_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_concat_unary_conv_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
@@ -51899,7 +51924,11 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(model_ir)
+    run_spp_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_transpose_gather_axis_cleanup(
         model_ir,
         layout_state=session.layout_state,

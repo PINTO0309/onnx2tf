@@ -5,10 +5,13 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
-from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains,
 )
+from onnx2tf.tflite_builder.passes.spp_layout import run_spp_layout_cleanup
 
 
 def _tensor(
@@ -200,10 +203,27 @@ def _model(*, boundary: str | None = None) -> ModelIR:
         )
         model_ir.outputs.append("side")
         model_ir.operators.append(OperatorIR("IDENTITY", [source], ["side"]))
+    if boundary in {"shared_mul0_constant", "shared_mul1_constant"}:
+        source = (
+            "mul0_const"
+            if boundary == "shared_mul0_constant"
+            else "mul1_const"
+        )
+        model_ir.tensors["constant_side"] = _tensor(
+            "constant_side",
+            list(model_ir.tensors[source].shape),
+        )
+        model_ir.outputs.append("constant_side")
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [source], ["constant_side"])
+        )
     if boundary == "public_pre":
         model_ir.outputs.append("base_nchw")
     elif boundary == "public_concat0":
         model_ir.outputs.append("cat0_nchw")
+    elif boundary == "invalid_rank":
+        model_ir.tensors["cat0_nchw"].shape = [1, 8, 6]
+        model_ir.tensors["cat0_nchw"].shape_signature = [1, 8, 6]
     return model_ir
 
 
@@ -268,6 +288,72 @@ def test_spp_layout_characterization() -> None:
 
 
 @pytest.mark.parametrize(
+    ("boundary", "constant_name", "expected_data"),
+    [
+        (
+            "shared_mul0_constant",
+            "mul0_const",
+            np.arange(8, dtype=np.float32).reshape(1, 8, 1, 1),
+        ),
+        (
+            "shared_mul1_constant",
+            "mul1_const",
+            np.arange(4, dtype=np.float32).reshape(1, 4, 1, 1),
+        ),
+    ],
+)
+def test_spp_layout_clones_shared_constant(
+    boundary: str,
+    constant_name: str,
+    expected_data: np.ndarray,
+) -> None:
+    model_ir = _model(boundary=boundary)
+
+    stats = _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(
+        model_ir
+    )
+
+    assert stats[
+        "optimized_transpose_resize_add_concat_affine_conv_spp_nhwc_chains"
+    ] == 1
+    np.testing.assert_array_equal(
+        model_ir.tensors[constant_name].data,
+        expected_data,
+    )
+    side_op = next(op for op in model_ir.operators if op.outputs == ["constant_side"])
+    assert side_op.inputs == [constant_name]
+    mul_output = "mul0_nchw" if constant_name == "mul0_const" else "mul1_nchw"
+    mul_op = next(op for op in model_ir.operators if op.outputs == [mul_output])
+    cloned_name = next(
+        name for name in mul_op.inputs if name.startswith(f"{constant_name}_nhwc")
+    )
+    np.testing.assert_array_equal(
+        model_ir.tensors[cloned_name].data,
+        np.transpose(expected_data, [0, 2, 3, 1]),
+    )
+
+
+def test_spp_layout_remaps_constant_quantized_dimension() -> None:
+    model_ir = _model()
+    model_ir.tensors["mul0_const"].quantization = QuantParamIR(
+        scale=[0.25] * 8,
+        zero_point=[0] * 8,
+        quantized_dimension=1,
+    )
+
+    stats = _optimize_transpose_resize_add_concat_affine_conv_spp_nhwc_chains(
+        model_ir
+    )
+
+    assert stats[
+        "optimized_transpose_resize_add_concat_affine_conv_spp_nhwc_chains"
+    ] == 1
+    quantization = model_ir.tensors["mul0_const"].quantization
+    assert isinstance(quantization, QuantParamIR)
+    assert quantization.quantized_dimension == 3
+
+
+@pytest.mark.parametrize(
     "boundary",
     [
         "branch_fanout",
@@ -286,6 +372,7 @@ def test_spp_layout_characterization() -> None:
         "resize_producer",
         "missing_mul0_constant",
         "missing_mul1_constant",
+        "invalid_rank",
     ],
 )
 def test_spp_layout_rejects_unsafe_boundary(boundary: str) -> None:
@@ -299,4 +386,76 @@ def test_spp_layout_rejects_unsafe_boundary(boundary: str) -> None:
     assert stats[
         "optimized_transpose_resize_add_concat_affine_conv_spp_nhwc_chains"
     ] == 0
+    _assert_model_equal(model_ir, original)
+
+
+def test_spp_layout_runner_reuses_one_index_and_syncs_layout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model()
+    layout_state = LayoutState.from_model_ir(model_ir)
+    diagnostics: list[dict[str, object]] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_spp_layout_cleanup(
+        model_ir,
+        layout_state=layout_state,
+        diagnostics=diagnostics,
+    )
+
+    assert stats[
+        "optimized_transpose_resize_add_concat_affine_conv_spp_nhwc_chains"
+    ] == 1
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "layout.generic_spp_nhwc"
+    assert diagnostics[0]["changed"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "branch_fanout",
+        "concat0_fanout",
+        "mul0_fanout",
+        "post0_fanout",
+        "conv0_fanout",
+        "concat1_fanout",
+        "mul1_fanout",
+        "post1_fanout",
+        "public_pre",
+        "public_concat0",
+        "pre_permutation",
+        "concat0_axis",
+        "concat1_axis",
+        "resize_producer",
+        "missing_mul0_constant",
+        "missing_mul1_constant",
+        "invalid_rank",
+    ],
+)
+def test_spp_layout_runner_rejects_before_snapshot(boundary: str) -> None:
+    model_ir = _model(boundary=boundary)
+    original = deepcopy(model_ir)
+    diagnostics: list[dict[str, object]] = []
+
+    stats = run_spp_layout_cleanup(model_ir, diagnostics=diagnostics)
+
+    assert stats[
+        "optimized_transpose_resize_add_concat_affine_conv_spp_nhwc_chains"
+    ] == 0
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["changed"] is False
+    assert diagnostics[0]["skipped_by_precondition"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 0
     _assert_model_equal(model_ir, original)
