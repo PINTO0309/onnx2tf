@@ -88,6 +88,7 @@ from onnx2tf.tflite_builder.pytorch_codegen_stages import (
     _build_named_encoder_methods_composite,
 )
 from onnx2tf.tflite_builder.pytorch_artifact_exporters import (
+    _export_dynamo_onnx_from_generated_package,
     export_torchscript_from_generated_package,
 )
 from onnx2tf.tflite_builder.pytorch_layout_utils import (
@@ -153,6 +154,9 @@ from onnx2tf.tflite_builder.pytorch_onnx_layout_passes import (
 )
 from onnx2tf.tflite_builder.pytorch_onnx_optimizer import (
     _optimize_dynamo_exported_onnx_in_place,
+)
+from onnx2tf.tflite_builder.pytorch_onnx_artifact_support import (
+    _sanitize_dynamo_exported_onnx_metadata,
 )
 from onnx2tf.tflite_builder.passes.pytorch_compat import (
     _restore_same_average_pool_exclude_pad_correction_for_native_runtime,
@@ -8094,18 +8098,6 @@ from onnx2tf.tflite_builder.pytorch_export_support import (
 
 
 
-def _onnx_model_uses_external_data(model: onnx.ModelProto) -> bool:
-    return any(
-        initializer.data_location == onnx.TensorProto.EXTERNAL
-        for initializer in model.graph.initializer
-    )
-
-
-def _inspect_onnx_uses_external_data(onnx_path: Path) -> bool:
-    model = onnx.load(str(onnx_path), load_external_data=False)
-    return _onnx_model_uses_external_data(model)
-
-
 def _suppress_torch_onnx_optional_registration_warnings() -> None:
     try:
         import logging
@@ -8113,90 +8105,6 @@ def _suppress_torch_onnx_optional_registration_warnings() -> None:
         logging.getLogger("torch.onnx._internal.exporter._registration").setLevel(logging.ERROR)
     except Exception:
         pass
-
-
-def _restore_missing_onnx_output_shapes_from_package_metadata(
-    model: onnx.ModelProto,
-    *,
-    package_dir: Path,
-) -> None:
-    metadata_path = package_dir / "metadata.json"
-    if not metadata_path.exists():
-        return
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-    except Exception:
-        return
-    tensor_meta_map = metadata.get("tensors", {})
-    if not isinstance(tensor_meta_map, dict):
-        return
-    for output in model.graph.output:
-        tensor_type = getattr(output.type, "tensor_type", None)
-        if tensor_type is None:
-            continue
-        shape = getattr(tensor_type, "shape", None)
-        if shape is None or len(list(shape.dim)) != 0:
-            continue
-        tensor_meta = tensor_meta_map.get(str(output.name), {})
-        if not isinstance(tensor_meta, dict):
-            continue
-        shape_values = tensor_meta.get("shape_signature", tensor_meta.get("shape", []))
-        if not isinstance(shape_values, list):
-            shape_values = tensor_meta.get("shape", [])
-        if not isinstance(shape_values, list) or len(shape_values) == 0:
-            continue
-        for dim_index, raw_dim_value in enumerate(shape_values):
-            output_dim = shape.dim.add()
-            try:
-                dim_value = int(raw_dim_value)
-            except Exception:
-                output_dim.dim_param = str(raw_dim_value)
-                continue
-            if dim_value > 0:
-                output_dim.dim_value = dim_value
-            else:
-                sanitized_output_name = re.sub(r"[^0-9A-Za-z_]", "_", str(output.name)).strip("_")
-                if sanitized_output_name == "":
-                    sanitized_output_name = "output"
-                output_dim.dim_param = f"{sanitized_output_name}_dim_{dim_index}"
-
-
-def _sanitize_dynamo_exported_onnx_metadata(onnx_path: Path) -> None:
-    external_data_sidecar_path = onnx_path.with_name(f"{onnx_path.name}.data")
-    original_uses_external_data = _inspect_onnx_uses_external_data(onnx_path)
-    model = onnx.load(str(onnx_path))
-    _onnx_fold_relu_layout_bridges_in_place(model.graph)
-    _onnx_fold_pad_layout_bridges_in_place(model.graph)
-    _onnx_fold_residual_add_layout_bridges_in_place(model.graph)
-    _onnx_repair_inferred_shapes_in_place(model)
-    _onnx_fold_residual_add_layout_bridges_in_place(model.graph)
-    _onnx_repair_inferred_shapes_in_place(model)
-    _optimize_dynamo_exported_onnx_in_place(model)
-    import onnx2tf.gs as gs
-    model = gs.export_onnx(gs.import_onnx(model).cleanup().toposort())
-    _onnx_repair_inferred_shapes_in_place(model)
-    _restore_missing_onnx_output_shapes_from_package_metadata(model, package_dir=onnx_path.parent)
-    del model.metadata_props[:]
-    _clear_onnx_graph_and_node_metadata_in_place(model.graph)
-    onnx.checker.check_model(model)
-    if original_uses_external_data:
-        onnx.save_model(
-            model,
-            str(onnx_path),
-            save_as_external_data=True,
-            all_tensors_to_one_file=True,
-            location=external_data_sidecar_path.name,
-            size_threshold=0,
-        )
-    else:
-        onnx.save_model(
-            model,
-            str(onnx_path),
-            save_as_external_data=False,
-        )
-    if not _inspect_onnx_uses_external_data(onnx_path) and external_data_sidecar_path.exists():
-        external_data_sidecar_path.unlink()
 
 
 def export_dynamo_onnx_from_generated_package(
@@ -8208,203 +8116,20 @@ def export_dynamo_onnx_from_generated_package(
     native_package_generation_timeout_sec: Optional[int] = 0,
     raise_on_failure: bool = True,
 ) -> Optional[str]:
-    try:
-        package_path, metadata_path, metadata = _load_generated_package_export_metadata(
-            package_dir=package_dir,
-            export_label="Dynamo ONNX export",
-        )
-    except Exception as ex:
-        if raise_on_failure:
-            raise
-        package_path = Path(package_dir)
-        metadata_path = package_path / "metadata.json"
-        if metadata_path.exists():
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                metadata = json.load(f)
-        else:
-            metadata = {}
-        _write_generated_package_export_metadata(
-            metadata_path=metadata_path,
-            metadata=metadata,
-            metadata_key="dynamo_onnx",
-            file_name=None,
-            example_input_shapes={},
-            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
-            error=str(ex),
-        )
-        return None
-    skip_reason = _generated_package_torch_export_skip_reason(package_path)
-    if skip_reason is not None:
-        _write_generated_package_export_metadata(
-            metadata_path=metadata_path,
-            metadata=metadata,
-            metadata_key="dynamo_onnx",
-            file_name=None,
-            example_input_shapes={},
-            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
-            extra_fields={
-                "skipped_reason": skip_reason,
-            },
-        )
-        return None
-    try:
-        example_inputs, example_input_shapes, dynamic_inputs_present = _build_pytorch_export_example_inputs(
-            package_dir=package_dir,
-            package_metadata=metadata,
-            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
-            shape_hints=shape_hints,
-            test_data_nhwc_path=test_data_nhwc_path,
-            export_label="Dynamo ONNX export",
-        )
-    except Exception as ex:
-        _write_generated_package_export_metadata(
-            metadata_path=metadata_path,
-            metadata=metadata,
-            metadata_key="dynamo_onnx",
-            file_name=None,
-            example_input_shapes={},
-            dynamic_inputs_present=_metadata_has_dynamic_public_inputs(metadata),
-            error=str(ex),
-        )
-        if raise_on_failure:
-            raise
-        return None
-    file_stem = _sanitize_torchscript_file_stem(
-        str(metadata.get("name", "")),
-        fallback=package_path.name,
+    return _export_dynamo_onnx_from_generated_package(
+        package_dir=package_dir,
+        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+        shape_hints=shape_hints,
+        test_data_nhwc_path=test_data_nhwc_path,
+        native_package_generation_timeout_sec=native_package_generation_timeout_sec,
+        raise_on_failure=raise_on_failure,
+        temporarily_rewrite_generated_model_source_for_exported_program_fn=(
+            _temporarily_rewrite_generated_model_source_for_exported_program
+        ),
+        reapply_post_export_final_model_repairs_fn=(
+            _reapply_post_export_final_model_repairs
+        ),
     )
-    dynamo_onnx_file_name = f"{file_stem}_dynamo.onnx"
-    dynamo_onnx_path = package_path / dynamo_onnx_file_name
-    timeout_sec = int(native_package_generation_timeout_sec or 0)
-    child_script = """
-import hashlib
-import importlib
-import importlib.util
-import json
-import logging
-import sys
-from pathlib import Path
-
-import torch
-
-package_path = Path(sys.argv[1])
-package_init_path = package_path / "__init__.py"
-inputs_path = Path(sys.argv[2])
-dynamo_onnx_path = Path(sys.argv[3])
-
-module_name = (
-    "_onnx2tf_generated_dynamo_onnx_child_"
-    + hashlib.sha256(str(package_path.resolve()).encode("utf-8")).hexdigest()
-)
-if module_name in sys.modules:
-    del sys.modules[module_name]
-spec = importlib.util.spec_from_file_location(
-    module_name,
-    str(package_init_path),
-    submodule_search_locations=[str(package_path)],
-)
-if spec is None or spec.loader is None:
-    raise ImportError(
-        f"Failed to create an import spec for the generated PyTorch package. path={package_init_path}"
-    )
-module = importlib.util.module_from_spec(spec)
-sys.modules[module_name] = module
-spec.loader.exec_module(module)
-if not hasattr(module, "load_model"):
-    raise RuntimeError(
-        "Generated native PyTorch package does not expose load_model(). "
-        f"package_dir={package_path}"
-    )
-payload = torch.load(str(inputs_path), map_location="cpu")
-example_inputs = tuple(payload["inputs"])
-input_names = [str(v) for v in list(payload.get("input_names", []))]
-output_names = [str(v) for v in list(payload.get("output_names", []))]
-logging.getLogger("torch.onnx._internal.exporter._registration").setLevel(logging.ERROR)
-model = module.load_model(device="cpu", eval_mode=True)
-if hasattr(model, "cpu"):
-    model = model.cpu()
-with torch.no_grad():
-    torch.onnx.export(
-        model,
-        example_inputs,
-        str(dynamo_onnx_path),
-        dynamo=True,
-        input_names=input_names,
-        output_names=output_names,
-    )
-print(json.dumps({"file_name": dynamo_onnx_path.name}))
-    """
-    with _temporarily_rewrite_generated_model_source_for_exported_program(
-        package_path,
-        model_ir=None,
-    ):
-        child_payload, last_error_message = _run_generated_package_export_child(
-            example_inputs=example_inputs,
-            child_script=child_script,
-            package_path=package_path,
-            artifact_path=dynamo_onnx_path,
-            child_payload={
-                "input_names": [str(v) for v in list(metadata.get("inputs", []))],
-                "output_names": [str(v) for v in list(metadata.get("outputs", []))],
-            },
-            temp_prefix="onnx2tf_dynamo_onnx_",
-            timeout_sec=timeout_sec,
-        )
-    if child_payload is None or not dynamo_onnx_path.exists():
-        _remove_generated_package_artifact_if_exists(dynamo_onnx_path)
-        extra_fields = None
-        if timeout_sec > 0 and "timed out after" in str(last_error_message):
-            extra_fields = {
-                "timed_out": True,
-                "timeout_sec": int(timeout_sec),
-            }
-        _write_generated_package_export_metadata(
-            metadata_path=metadata_path,
-            metadata=metadata,
-            metadata_key="dynamo_onnx",
-            file_name=None,
-            example_input_shapes=example_input_shapes,
-            dynamic_inputs_present=dynamic_inputs_present,
-            error=last_error_message or "dynamo=True ONNX export did not produce an artifact.",
-            extra_fields=extra_fields,
-        )
-        if raise_on_failure:
-            raise ModelIRPyTorchExportError(
-                "Dynamo ONNX export failed for the generated native PyTorch package. "
-                f"package_dir={package_dir} details={last_error_message}"
-            )
-        _reapply_post_export_final_model_repairs(package_path)
-        return None
-    try:
-        _sanitize_dynamo_exported_onnx_metadata(dynamo_onnx_path)
-    except Exception as ex:
-        _remove_generated_package_artifact_if_exists(dynamo_onnx_path)
-        _write_generated_package_export_metadata(
-            metadata_path=metadata_path,
-            metadata=metadata,
-            metadata_key="dynamo_onnx",
-            file_name=None,
-            example_input_shapes=example_input_shapes,
-            dynamic_inputs_present=dynamic_inputs_present,
-            error=str(ex),
-        )
-        if raise_on_failure:
-            raise ModelIRPyTorchExportError(
-                "Dynamo ONNX sanitize failed for the generated native PyTorch package. "
-                f"package_dir={package_dir} artifact={dynamo_onnx_path} details={ex}"
-            ) from ex
-        _reapply_post_export_final_model_repairs(package_path)
-        return None
-    _write_generated_package_export_metadata(
-        metadata_path=metadata_path,
-        metadata=metadata,
-        metadata_key="dynamo_onnx",
-        file_name=str(child_payload.get("file_name", dynamo_onnx_file_name)),
-        example_input_shapes=example_input_shapes,
-        dynamic_inputs_present=dynamic_inputs_present,
-    )
-    _reapply_post_export_final_model_repairs(package_path)
-    return str(dynamo_onnx_path)
 
 
 def export_exported_program_from_generated_package(

@@ -5,6 +5,7 @@ import sys
 import types
 
 from onnx2tf.tflite_builder.pytorch_artifact_exporters import (
+    _export_dynamo_onnx_from_generated_package,
     export_torchscript_from_generated_package,
 )
 from onnx2tf.tflite_builder.pytorch_export_support import (
@@ -46,6 +47,39 @@ def test_torchscript_export_records_non_native_skip_without_child(
     assert artifact_metadata["file_name"] is None
     assert artifact_metadata["dynamic_inputs_present"] is True
     assert artifact_metadata["trace_mode"] is None
+    assert "non-native execution backend" in artifact_metadata["skipped_reason"]
+
+
+def test_dynamo_export_records_non_native_skip_without_hooks(tmp_path) -> None:
+    (tmp_path / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "metadata.json").write_text(
+        json.dumps(
+            {
+                "name": "runtime-wrapper",
+                "execution_backend": "runtime_wrapper",
+                "inputs": ["x"],
+                "tensors": {"x": {"shape": [1, 3]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def unexpected_hook(*args, **kwargs):
+        raise AssertionError(f"unexpected hook call: args={args} kwargs={kwargs}")
+
+    result = _export_dynamo_onnx_from_generated_package(
+        package_dir=str(tmp_path),
+        temporarily_rewrite_generated_model_source_for_exported_program_fn=(
+            unexpected_hook
+        ),
+        reapply_post_export_final_model_repairs_fn=unexpected_hook,
+    )
+
+    assert result is None
+    metadata = json.loads((tmp_path / "metadata.json").read_text())
+    artifact_metadata = metadata["dynamo_onnx"]
+    assert artifact_metadata["file_name"] is None
+    assert artifact_metadata["dynamic_inputs_present"] is False
     assert "non-native execution backend" in artifact_metadata["skipped_reason"]
 
 

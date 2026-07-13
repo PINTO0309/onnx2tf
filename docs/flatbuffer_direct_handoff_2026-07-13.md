@@ -197,9 +197,21 @@ imports Torch only when requested. Direct tests prove legacy runtime-wrapper
 detection, dynamic shape-signature handling, and non-native TorchScript skip
 metadata without spawning a child. Artifact and architecture validation passes
 62 tests; syntax, Ruff, and diff checks pass. No model conversion or inference
-was run. Resume with Dynamo ONNX export by keeping ONNX sanitization and model-
-source rewrite hooks explicit; do not fold the large ExportedProgram path into
-the same checkpoint.
+was run.
+
+Dynamo ONNX export is now implemented in the same artifact module. The exporter
+retains only a public-signature wrapper that supplies the existing temporary
+model-source rewrite and final-repair hooks. External-data inspection, missing
+output-shape restoration, and ONNX cleanup/sanitization moved to the Torch-free
+`pytorch_onnx_artifact_support.py`. The four ONNX helpers are AST-identical to
+their old implementations; the Dynamo artifact body is AST-identical after
+normalizing its two explicit callback names. A direct non-native-package test
+proves skip metadata and verifies that neither callback nor a child process is
+invoked. Artifact and architecture validation passes 64 tests; syntax, Ruff,
+and diff checks pass. No model conversion or inference was run. Resume by
+characterizing the ExportedProgram artifact boundary separately; do not move
+its approximately 1,950-line implementation before its rewrite, archive, and
+metadata sub-responsibilities have focused tests.
 
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/

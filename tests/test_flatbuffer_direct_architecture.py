@@ -72,6 +72,10 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_bridge_passes.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_model_passes.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_optimizer.py",
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "pytorch_onnx_artifact_support.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_stages.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_emitters.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_errors.py",
@@ -3565,3 +3569,53 @@ def test_torchscript_artifact_export_has_single_owner() -> None:
             for alias in node.names
         }
         assert "torch" not in top_level_imports
+
+
+def test_dynamo_onnx_artifact_export_has_focused_owners() -> None:
+    exporter_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    )
+    exporter_source = exporter_path.read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name: node
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    artifact_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_artifact_exporters.py"
+    ).read_text(encoding="utf-8")
+    onnx_support_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_onnx_artifact_support.py"
+    ).read_text(encoding="utf-8")
+
+    assert "def _export_dynamo_onnx_from_generated_package(" in artifact_source
+    wrapper_source = ast.get_source_segment(
+        exporter_source,
+        exporter_functions["export_dynamo_onnx_from_generated_package"],
+    )
+    assert wrapper_source is not None
+    assert "_export_dynamo_onnx_from_generated_package(" in wrapper_source
+    assert "child_script" not in wrapper_source
+    assert "_write_generated_package_export_metadata(" not in wrapper_source
+    assert (
+        "_temporarily_rewrite_generated_model_source_for_exported_program"
+        in wrapper_source
+    )
+    assert "_reapply_post_export_final_model_repairs" in wrapper_source
+
+    assert "def _sanitize_dynamo_exported_onnx_metadata(" in onnx_support_source
+    assert "def _sanitize_dynamo_exported_onnx_metadata(" not in exporter_source
+    assert "_sanitize_dynamo_exported_onnx_metadata," in exporter_source
+    for helper_name in (
+        "_onnx_model_uses_external_data",
+        "_inspect_onnx_uses_external_data",
+        "_restore_missing_onnx_output_shapes_from_package_metadata",
+    ):
+        assert f"def {helper_name}(" in onnx_support_source
+        assert f"def {helper_name}(" not in exporter_source

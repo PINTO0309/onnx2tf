@@ -1940,6 +1940,19 @@ only image resize and requested artifact execution import it locally. The five
 moved helpers are AST-identical to their previous exporter implementations, and
 the TorchScript body is identical after its lazy Torch availability guard.
 
+Dynamo ONNX package export now shares the same artifact owner. The exporter
+keeps a signature-compatible wrapper whose only responsibility is to supply the
+existing generated-model source-rewrite context and final-repair callback;
+input construction, skip/error metadata, the sequential child invocation,
+timeout handling, artifact naming, sanitization, and return behavior live in
+the artifact module. ONNX external-data preservation, missing public-output
+shape restoration, graph cleanup, layout-bridge folding, and final metadata
+sanitization are isolated in the Torch-free
+`pytorch_onnx_artifact_support.py`. After normalizing the two explicit callback
+names, the artifact function is AST-identical to the previous implementation,
+and all four moved ONNX support functions are AST-identical without
+normalization.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,
