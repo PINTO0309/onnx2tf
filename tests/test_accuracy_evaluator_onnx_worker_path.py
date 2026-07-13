@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import queue
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from onnx2tf.tflite_builder.accuracy_evaluator import (
     _all_input_shapes_are_static,
     _onnx_inference_worker,
     _run_tflite_worker_with_delegate_fallback,
+    _run_with_numeric_delegate_fallback,
 )
 
 
@@ -119,3 +121,108 @@ def test_tflite_worker_does_not_retry_builtin_failure(
         )
 
     assert attempts == 1
+
+
+def _accuracy_report(*, evaluation_pass: bool, max_abs: float) -> dict:
+    return {
+        "evaluation_pass": bool(evaluation_pass),
+        "overall_metrics": {
+            "max_abs": float(max_abs),
+            "rmse": float(max_abs) / 2.0,
+            "mean_abs": float(max_abs) / 4.0,
+            "cosine_similarity": 1.0 if evaluation_pass else 0.0,
+        },
+        "allclose_summary": {"matched": 0, "total": 1, "pass": False},
+    }
+
+
+def test_numeric_delegate_fallback_is_not_run_for_strict_pass(
+    tmp_path: Path,
+) -> None:
+    attempts: list[object] = []
+    primary = _accuracy_report(evaluation_pass=True, max_abs=0.01)
+
+    def run_once(override):
+        attempts.append(override)
+        return primary, True
+
+    report_path = tmp_path / "accuracy.json"
+    selected = _run_with_numeric_delegate_fallback(
+        run_once=run_once,
+        output_report_path=str(report_path),
+        fail_on_threshold=False,
+    )
+
+    assert attempts == [None]
+    assert selected == primary
+    assert json.loads(report_path.read_text(encoding="utf-8")) == primary
+
+
+def test_numeric_delegate_fallback_retries_hard_max_abs_failure(
+    tmp_path: Path,
+) -> None:
+    attempts: list[object] = []
+    primary = _accuracy_report(evaluation_pass=True, max_abs=0.18)
+    fallback = _accuracy_report(evaluation_pass=True, max_abs=0.05)
+
+    def run_once(override):
+        attempts.append(override)
+        return (primary, True) if override is None else (fallback, False)
+
+    report_path = tmp_path / "accuracy.json"
+    selected = _run_with_numeric_delegate_fallback(
+        run_once=run_once,
+        output_report_path=str(report_path),
+        fail_on_threshold=False,
+    )
+
+    assert attempts == [None, False]
+    assert selected == fallback
+    assert json.loads(report_path.read_text(encoding="utf-8")) == fallback
+
+
+def test_numeric_delegate_fallback_keeps_better_primary_failure(
+    tmp_path: Path,
+) -> None:
+    attempts: list[object] = []
+    primary = _accuracy_report(evaluation_pass=False, max_abs=1.0)
+    fallback = _accuracy_report(evaluation_pass=False, max_abs=10.0)
+
+    def run_once(override):
+        attempts.append(override)
+        return (primary, True) if override is None else (fallback, False)
+
+    report_path = tmp_path / "accuracy.json"
+    selected = _run_with_numeric_delegate_fallback(
+        run_once=run_once,
+        output_report_path=str(report_path),
+        fail_on_threshold=False,
+    )
+
+    assert attempts == [None, False]
+    assert selected == primary
+    assert json.loads(report_path.read_text(encoding="utf-8")) == primary
+
+
+def test_numeric_delegate_fallback_preserves_primary_when_retry_errors(
+    tmp_path: Path,
+) -> None:
+    attempts: list[object] = []
+    primary = _accuracy_report(evaluation_pass=False, max_abs=1.0)
+
+    def run_once(override):
+        attempts.append(override)
+        if override is False:
+            raise RuntimeError("builtin evaluator unavailable")
+        return primary, True
+
+    report_path = tmp_path / "accuracy.json"
+    selected = _run_with_numeric_delegate_fallback(
+        run_once=run_once,
+        output_report_path=str(report_path),
+        fail_on_threshold=False,
+    )
+
+    assert attempts == [None, False]
+    assert selected == primary
+    assert json.loads(report_path.read_text(encoding="utf-8")) == primary

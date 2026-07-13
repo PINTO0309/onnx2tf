@@ -8,7 +8,7 @@ import re
 import hashlib
 import time
 import traceback
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import onnx
@@ -1770,7 +1770,102 @@ def _resolve_tflite_evaluation_pass(
     )
 
 
-def evaluate_onnx_tflite_outputs(
+_TFLITE_STRICT_MAX_ABS_LIMIT = 1.0e-1
+
+
+def _report_metric(
+    report: Dict[str, Any],
+    name: str,
+    *,
+    default: float,
+) -> float:
+    try:
+        value = float(report.get("overall_metrics", {}).get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+    return value if np.isfinite(value) else float(default)
+
+
+def _tflite_report_meets_strict_numeric_contract(
+    report: Dict[str, Any],
+) -> bool:
+    return bool(
+        bool(report.get("evaluation_pass", False))
+        and _report_metric(report, "max_abs", default=float("inf"))
+        <= _TFLITE_STRICT_MAX_ABS_LIMIT
+    )
+
+
+def _tflite_report_quality_key(report: Dict[str, Any]) -> Tuple[Any, ...]:
+    max_abs = _report_metric(report, "max_abs", default=float("inf"))
+    rmse = _report_metric(report, "rmse", default=float("inf"))
+    mean_abs = _report_metric(report, "mean_abs", default=float("inf"))
+    cosine = _report_metric(report, "cosine_similarity", default=float("-inf"))
+    return (
+        not _tflite_report_meets_strict_numeric_contract(report),
+        not bool(report.get("evaluation_pass", False)),
+        max_abs > _TFLITE_STRICT_MAX_ABS_LIMIT,
+        max_abs,
+        rmse,
+        mean_abs,
+        -cosine,
+    )
+
+
+def _write_tflite_accuracy_report(
+    *,
+    report: Dict[str, Any],
+    output_report_path: str,
+) -> None:
+    os.makedirs(os.path.dirname(output_report_path) or ".", exist_ok=True)
+    with open(output_report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+
+
+def _run_with_numeric_delegate_fallback(
+    *,
+    run_once: Callable[[Optional[bool]], Tuple[Dict[str, Any], bool]],
+    output_report_path: str,
+    fail_on_threshold: bool,
+) -> Dict[str, Any]:
+    primary_report, primary_used_default_delegates = run_once(None)
+    selected_report = primary_report
+    if (
+        bool(primary_used_default_delegates)
+        and not _tflite_report_meets_strict_numeric_contract(primary_report)
+    ):
+        try:
+            fallback_report, _ = run_once(False)
+        except Exception:
+            # Numeric fallback is opportunistic. Preserve the completed primary
+            # report if the builtin-only backend cannot evaluate the model.
+            fallback_report = None
+        if (
+            fallback_report is not None
+            and _tflite_report_quality_key(fallback_report)
+            < _tflite_report_quality_key(primary_report)
+        ):
+            selected_report = fallback_report
+
+    # Each attempt writes to the same path. Restore the selected report when a
+    # later fallback is worse, while keeping the public report schema unchanged.
+    _write_tflite_accuracy_report(
+        report=selected_report,
+        output_report_path=output_report_path,
+    )
+    if bool(fail_on_threshold) and not bool(
+        selected_report.get("evaluation_pass", False)
+    ):
+        raise RuntimeError(
+            "ONNX/TFLite evaluation failed thresholds. "
+            f"report={output_report_path} "
+            f"metrics={selected_report.get('overall_metrics', {})} "
+            f"allclose={selected_report.get('allclose_summary', {})}"
+        )
+    return selected_report
+
+
+def _evaluate_onnx_tflite_outputs_once(
     *,
     onnx_graph: onnx.ModelProto,
     tflite_path: str,
@@ -1786,7 +1881,8 @@ def evaluate_onnx_tflite_outputs(
     metric_thresholds: Optional[Dict[str, float]] = None,
     onnxruntime_output_memmap: bool = True,
     onnxruntime_output_memmap_dir: Optional[str] = None,
-) -> Dict[str, Any]:
+    _use_default_delegates_override: Optional[bool] = None,
+) -> Tuple[Dict[str, Any], bool]:
     if int(num_samples) <= 0:
         raise ValueError(f"num_samples must be > 0. got: {num_samples}")
     rtol = float(rtol)
@@ -1835,7 +1931,11 @@ def evaluate_onnx_tflite_outputs(
     ]
 
     onnx_session = _create_onnx_inference_session(onnx_runtime_graph)
-    use_default_delegates = _all_input_shapes_are_static(input_specs)
+    use_default_delegates = (
+        _all_input_shapes_are_static(input_specs)
+        if _use_default_delegates_override is None
+        else bool(_use_default_delegates_override)
+    )
     interpreter = _create_tflite_interpreter(
         model_path=tflite_path,
         use_default_delegates=use_default_delegates,
@@ -2124,7 +2224,52 @@ def evaluate_onnx_tflite_outputs(
             f"metrics={overall_metrics} "
             f"allclose={report['allclose_summary']}"
         )
-    return report
+    return report, bool(use_default_delegates)
+
+
+def evaluate_onnx_tflite_outputs(
+    *,
+    onnx_graph: onnx.ModelProto,
+    tflite_path: str,
+    output_report_path: str,
+    num_samples: int = 10,
+    seed: int = 0,
+    custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+    shape_hints: Optional[Sequence[str]] = None,
+    rtol: float = 1.0e-4,
+    atol: float = 1.0e-4,
+    compare_mode: str = "auto",
+    fail_on_threshold: bool = False,
+    metric_thresholds: Optional[Dict[str, float]] = None,
+    onnxruntime_output_memmap: bool = True,
+    onnxruntime_output_memmap_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    def run_once(
+        use_default_delegates_override: Optional[bool],
+    ) -> Tuple[Dict[str, Any], bool]:
+        return _evaluate_onnx_tflite_outputs_once(
+            onnx_graph=onnx_graph,
+            tflite_path=tflite_path,
+            output_report_path=output_report_path,
+            num_samples=num_samples,
+            seed=seed,
+            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+            shape_hints=shape_hints,
+            rtol=rtol,
+            atol=atol,
+            compare_mode=compare_mode,
+            fail_on_threshold=False,
+            metric_thresholds=metric_thresholds,
+            onnxruntime_output_memmap=onnxruntime_output_memmap,
+            onnxruntime_output_memmap_dir=onnxruntime_output_memmap_dir,
+            _use_default_delegates_override=use_default_delegates_override,
+        )
+
+    return _run_with_numeric_delegate_fallback(
+        run_once=run_once,
+        output_report_path=output_report_path,
+        fail_on_threshold=fail_on_threshold,
+    )
 
 
 def _onnx_inference_worker(
@@ -2408,7 +2553,7 @@ def _run_tflite_worker_with_delegate_fallback(
         )
 
 
-def evaluate_onnx_tflite_outputs_isolated(
+def _evaluate_onnx_tflite_outputs_isolated_once(
     *,
     onnx_graph: onnx.ModelProto,
     tflite_path: str,
@@ -2425,7 +2570,8 @@ def evaluate_onnx_tflite_outputs_isolated(
     timeout_sec: int = 600,
     onnxruntime_output_memmap: bool = True,
     onnxruntime_output_memmap_dir: Optional[str] = None,
-) -> Dict[str, Any]:
+    _use_default_delegates_override: Optional[bool] = None,
+) -> Tuple[Dict[str, Any], bool]:
     if int(num_samples) <= 0:
         raise ValueError(f"num_samples must be > 0. got: {num_samples}")
     rtol = float(rtol)
@@ -2507,7 +2653,11 @@ def evaluate_onnx_tflite_outputs_isolated(
         fallback_dir=worker_output_memmap_dir,
     )
     use_worker_input_memmap = bool(worker_input_memmap_dir is not None)
-    use_default_delegates = _all_input_shapes_are_static(input_specs)
+    use_default_delegates = (
+        _all_input_shapes_are_static(input_specs)
+        if _use_default_delegates_override is None
+        else bool(_use_default_delegates_override)
+    )
 
     runtime_compare_mode = str(compare_mode).lower()
     if runtime_compare_mode == "auto":
@@ -2820,4 +2970,51 @@ def evaluate_onnx_tflite_outputs_isolated(
             f"metrics={overall_metrics} "
             f"allclose={report['allclose_summary']}"
         )
-    return report
+    return report, bool(use_default_delegates)
+
+
+def evaluate_onnx_tflite_outputs_isolated(
+    *,
+    onnx_graph: onnx.ModelProto,
+    tflite_path: str,
+    output_report_path: str,
+    num_samples: int = 10,
+    seed: int = 0,
+    custom_input_op_name_np_data_path: Optional[List[Any]] = None,
+    shape_hints: Optional[Sequence[str]] = None,
+    rtol: float = 1.0e-4,
+    atol: float = 1.0e-4,
+    compare_mode: str = "auto",
+    fail_on_threshold: bool = False,
+    metric_thresholds: Optional[Dict[str, float]] = None,
+    timeout_sec: int = 600,
+    onnxruntime_output_memmap: bool = True,
+    onnxruntime_output_memmap_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    def run_once(
+        use_default_delegates_override: Optional[bool],
+    ) -> Tuple[Dict[str, Any], bool]:
+        return _evaluate_onnx_tflite_outputs_isolated_once(
+            onnx_graph=onnx_graph,
+            tflite_path=tflite_path,
+            output_report_path=output_report_path,
+            num_samples=num_samples,
+            seed=seed,
+            custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+            shape_hints=shape_hints,
+            rtol=rtol,
+            atol=atol,
+            compare_mode=compare_mode,
+            fail_on_threshold=False,
+            metric_thresholds=metric_thresholds,
+            timeout_sec=timeout_sec,
+            onnxruntime_output_memmap=onnxruntime_output_memmap,
+            onnxruntime_output_memmap_dir=onnxruntime_output_memmap_dir,
+            _use_default_delegates_override=use_default_delegates_override,
+        )
+
+    return _run_with_numeric_delegate_fallback(
+        run_once=run_once,
+        output_report_path=output_report_path,
+        fail_on_threshold=fail_on_threshold,
+    )
