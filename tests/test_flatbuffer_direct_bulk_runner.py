@@ -1204,10 +1204,10 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     profile = bulk_runner._load_regression_profile(str(profile_path))
 
     assert profile["model_count"] == 420
-    assert profile["active_model_count"] == 384
-    assert profile["excluded_model_count"] == 36
+    assert profile["active_model_count"] == 382
+    assert profile["excluded_model_count"] == 38
     assert profile["excluded_baseline_classification_counts"] == {
-        "excluded": 9,
+        "excluded": 11,
         "timeout": 27,
     }
     assert profile["tiers"] == [0, 1, 2, 3, 4]
@@ -1215,10 +1215,10 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 6,
-        "pass": 358,
+        "pass": 356,
         "tflite_fail": 20,
         "timeout": 27,
-        "excluded": 9,
+        "excluded": 11,
     }
     assert profile["acceptance_reasons"] == {
         "deim_hgnetv2_n_wholebody28_1250query_fp16.onnx": (
@@ -1421,12 +1421,14 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
             "baseline_reason": "user_excluded_from_future_validation",
         }
     for model_name, tier in (
+        ("conv_tasnet_dnn_ins.onnx", 0),
         ("model1.onnx", 1),
         ("paddlepaddle_26_ocr.onnx", 1),
         ("bread_180x320.onnx", 2),
         ("bread_nonfm_180x320.onnx", 2),
         ("double_gru.onnx", 2),
         ("gtcrn_simple.onnx", 2),
+        ("spkrec-resnet-voxceleb.onnx", 2),
     ):
         excluded_entry = next(
             entry

@@ -317,8 +317,8 @@
     {
       "tier": 0,
       "model": "conv_tasnet_dnn_ins.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 4.76837158203125e-06
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 0,
@@ -1809,8 +1809,8 @@
     {
       "tier": 2,
       "model": "spkrec-resnet-voxceleb.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 3.904104232788086e-06
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 2,
