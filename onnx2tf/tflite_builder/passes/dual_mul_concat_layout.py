@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPassState,
+    ModelIRPreflightResult,
+    run_model_ir_pass_group,
+)
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _broadcast_static_shapes,
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _is_fully_known_positive_shape,
     _permute_tensor_metadata_if_rank_matches,
@@ -17,10 +23,258 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_inputs,
     _set_operator_outputs,
 )
-from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
 
-def _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+_PERM_NHWC_TO_NCHW = [0, 3, 1, 2]
+_PERM_NCHW_TO_NHWC = [0, 2, 3, 1]
+
+
+@dataclass(frozen=True)
+class _MulConstantPlan:
+    mul_op: OperatorIR
+    data_input_index: int
+    side_input_index: int
+    side_input_name: str
+    nhwc_data: Optional[np.ndarray]
+    clone_required: bool
+
+
+@dataclass(frozen=True)
+class _DualMulConcatCandidate:
+    pre_op: OperatorIR
+    mul_plans: Tuple[_MulConstantPlan, ...]
+    concat_op: OperatorIR
+    post_op: OperatorIR
+    post_output: str
+
+
+def _plan_constant_data(
+    side_tensor: TensorIR,
+    target_shape_nhwc: Optional[List[int]],
+) -> Optional[np.ndarray | bool]:
+    if side_tensor.data is None:
+        return None
+    side_data = np.asarray(side_tensor.data)
+    if int(side_data.size) == 1:
+        return False
+    if int(side_data.ndim) != 4:
+        return None
+    target_shape = (
+        [int(value) for value in target_shape_nhwc]
+        if _is_fully_known_positive_shape(target_shape_nhwc)
+        else None
+    )
+    if target_shape is not None:
+        side_shape = [int(value) for value in side_data.shape]
+        if _broadcast_static_shapes(target_shape, side_shape) is not None:
+            return np.asarray(side_data)
+        rotated = np.transpose(side_data, _PERM_NCHW_TO_NHWC).astype(
+            side_data.dtype,
+            copy=False,
+        )
+        if _broadcast_static_shapes(
+            target_shape,
+            [int(value) for value in rotated.shape],
+        ) is None:
+            return None
+        return np.asarray(rotated)
+    side_shape = [int(value) for value in side_data.shape]
+    if (
+        int(side_shape[0]) == 1
+        and int(side_shape[1]) > 0
+        and int(side_shape[2]) == 1
+        and int(side_shape[3]) == 1
+    ):
+        return np.transpose(side_data, _PERM_NCHW_TO_NHWC).astype(
+            side_data.dtype,
+            copy=False,
+        )
+    return np.asarray(side_data)
+
+
+def _resolve_dual_mul_concat_candidate(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+) -> Optional[_DualMulConcatCandidate]:
+    model_outputs = {str(name) for name in model_ir.outputs}
+    for post_op in model_ir.operators:
+        post_index = graph_index.operator_index(post_op)
+        if (
+            post_index is None
+            or str(post_op.op_type) != "TRANSPOSE"
+            or len(post_op.inputs) < 2
+            or len(post_op.outputs) != 1
+            or _read_transpose_perm(model_ir, post_op) != _PERM_NCHW_TO_NHWC
+        ):
+            continue
+        concat_output = str(post_op.inputs[0])
+        post_output = str(post_op.outputs[0])
+        if concat_output in model_outputs or post_output in model_outputs:
+            continue
+        concat_op = graph_index.producer(concat_output)
+        concat_index = (
+            None if concat_op is None else graph_index.operator_index(concat_op)
+        )
+        if (
+            concat_op is None
+            or concat_index is None
+            or str(concat_op.op_type) != "CONCATENATION"
+            or len(concat_op.inputs) != 2
+            or len(concat_op.outputs) != 1
+            or set(graph_index.consumer_indices(concat_output))
+            != {int(post_index)}
+        ):
+            continue
+        axis = int(concat_op.options.get("axis", 1))
+        if axis < 0:
+            axis += 4
+        if axis != 1:
+            continue
+
+        raw_plans: List[Tuple[OperatorIR, int, int, str]] = []
+        shared_data_name: str | None = None
+        rewritable = True
+        for concat_input in [str(value) for value in concat_op.inputs]:
+            mul_op = graph_index.producer(concat_input)
+            mul_index = (
+                None if mul_op is None else graph_index.operator_index(mul_op)
+            )
+            if (
+                mul_op is None
+                or mul_index is None
+                or str(mul_op.op_type) != "MUL"
+                or len(mul_op.inputs) != 2
+                or len(mul_op.outputs) != 1
+                or str(mul_op.outputs[0]) != concat_input
+                or set(graph_index.consumer_indices(concat_input))
+                != {int(concat_index)}
+            ):
+                rewritable = False
+                break
+            inputs = [str(value) for value in mul_op.inputs]
+            data_index: int | None = None
+            side_index: int | None = None
+            if shared_data_name is None:
+                for candidate_data_index in [0, 1]:
+                    candidate_name = inputs[candidate_data_index]
+                    producer = graph_index.producer(candidate_name)
+                    if (
+                        producer is not None
+                        and str(producer.op_type) == "TRANSPOSE"
+                        and len(producer.inputs) >= 2
+                        and len(producer.outputs) == 1
+                        and str(producer.outputs[0]) == candidate_name
+                        and _read_transpose_perm(model_ir, producer)
+                        == _PERM_NHWC_TO_NCHW
+                    ):
+                        shared_data_name = candidate_name
+                        data_index = int(candidate_data_index)
+                        side_index = 1 - int(candidate_data_index)
+                        break
+            elif inputs[0] == shared_data_name:
+                data_index, side_index = 0, 1
+            elif inputs[1] == shared_data_name:
+                data_index, side_index = 1, 0
+            if data_index is None or side_index is None:
+                rewritable = False
+                break
+            side_name = inputs[int(side_index)]
+            side_tensor = model_ir.tensors.get(side_name, None)
+            if side_tensor is None or side_tensor.data is None:
+                rewritable = False
+                break
+            raw_plans.append((mul_op, data_index, side_index, side_name))
+        if not rewritable or shared_data_name is None:
+            continue
+
+        pre_op = graph_index.producer(shared_data_name)
+        if (
+            pre_op is None
+            or str(pre_op.op_type) != "TRANSPOSE"
+            or len(pre_op.inputs) < 2
+            or len(pre_op.outputs) != 1
+            or str(pre_op.outputs[0]) != shared_data_name
+            or _read_transpose_perm(model_ir, pre_op) != _PERM_NHWC_TO_NCHW
+            or shared_data_name in model_outputs
+            or str(pre_op.inputs[0]) in model_outputs
+        ):
+            continue
+        mul_indices = {
+            int(index)
+            for mul_op, _, _, _ in raw_plans
+            if (index := graph_index.operator_index(mul_op)) is not None
+        }
+        if set(graph_index.consumer_indices(shared_data_name)) != mul_indices:
+            continue
+        pre_index = graph_index.operator_index(pre_op)
+        if pre_index is None:
+            continue
+        chain_indices = {
+            int(pre_index),
+            int(concat_index),
+            int(post_index),
+            *mul_indices,
+        }
+        source_tensor = model_ir.tensors.get(str(pre_op.inputs[0]), None)
+        target_shape = (
+            None
+            if source_tensor is None
+            else [int(value) for value in source_tensor.shape]
+        )
+        plans: List[_MulConstantPlan] = []
+        for mul_op, data_index, side_index, side_name in raw_plans:
+            side_tensor = model_ir.tensors[side_name]
+            planned_data = _plan_constant_data(side_tensor, target_shape)
+            if planned_data is None:
+                rewritable = False
+                break
+            side_users = graph_index.consumer_indices(side_name)
+            plans.append(
+                _MulConstantPlan(
+                    mul_op=mul_op,
+                    data_input_index=int(data_index),
+                    side_input_index=int(side_index),
+                    side_input_name=side_name,
+                    nhwc_data=(
+                        None
+                        if planned_data is False
+                        else np.asarray(planned_data)
+                    ),
+                    clone_required=any(
+                        int(user) not in chain_indices for user in side_users
+                    ),
+                )
+            )
+        if not rewritable:
+            continue
+        return _DualMulConcatCandidate(
+            pre_op=pre_op,
+            mul_plans=tuple(plans),
+            concat_op=concat_op,
+            post_op=post_op,
+            post_output=post_output,
+        )
+    return None
+
+
+def _has_dual_mul_concat_candidate(pass_state: ModelIRPassState) -> bool:
+    return (
+        _resolve_dual_mul_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+        )
+        is not None
+    )
+
+
+def _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate NCHW round-trips around dual-MUL concat blocks.
 
@@ -37,8 +291,7 @@ def _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir: ModelIR) -
       CONCAT(axis=3, [m0_nhwc, m1_nhwc]) -> y_nhwc
     """
     rewritten = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -48,274 +301,148 @@ def _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(model_ir: ModelIR) -
             suffix += 1
         return name
 
-    def _clone_or_rewrite_mul_const_to_nhwc(
-        *,
-        mul_idx: int,
-        side_input_index: int,
-        side_input_name: str,
-        target_shape_nhwc: Optional[List[int]],
-        chain_indices: set[int],
-        consumers: Dict[str, List[int]],
-    ) -> bool:
-        side_tensor = model_ir.tensors.get(str(side_input_name), None)
-        if side_tensor is None or side_tensor.data is None:
-            return False
-        side_data = np.asarray(side_tensor.data)
-        if int(side_data.size) == 1:
-            return True
-        if side_data.ndim != 4:
-            return False
-
-        target_shape = (
-            [int(v) for v in list(target_shape_nhwc)]
-            if _is_fully_known_positive_shape(target_shape_nhwc)
-            else None
-        )
-        nhwc_data: Optional[np.ndarray] = None
-        if target_shape is not None:
-            side_shape = [int(v) for v in list(side_data.shape)]
-            if _broadcast_static_shapes(target_shape, side_shape) is not None:
-                nhwc_data = np.asarray(side_data)
-            else:
-                rotated = np.transpose(side_data, perm_nchw_to_nhwc).astype(side_data.dtype, copy=False)
-                rotated_shape = [int(v) for v in list(rotated.shape)]
-                if _broadcast_static_shapes(target_shape, rotated_shape) is None:
-                    return False
-                nhwc_data = np.asarray(rotated)
-        else:
-            side_shape = [int(v) for v in list(side_data.shape)]
-            if (
-                len(side_shape) == 4
-                and int(side_shape[0]) == 1
-                and int(side_shape[1]) > 0
-                and int(side_shape[2]) == 1
-                and int(side_shape[3]) == 1
-            ):
-                nhwc_data = np.transpose(side_data, perm_nchw_to_nhwc).astype(side_data.dtype, copy=False)
-            else:
-                nhwc_data = np.asarray(side_data)
-        if nhwc_data is None:
-            return False
-
-        side_users = [int(v) for v in consumers.get(str(side_input_name), [])]
-        shared_outside_chain = any(int(u) not in chain_indices for u in side_users)
-        rewritten_side_name = str(side_input_name)
-        if shared_outside_chain:
-            rewritten_side_name = _unique_tensor_name(f"{side_input_name}_nhwc")
-            model_ir.tensors[rewritten_side_name] = TensorIR(
-                name=rewritten_side_name,
-                dtype=str(side_tensor.dtype),
-                shape=[int(v) for v in list(nhwc_data.shape)],
-                shape_signature=[int(v) for v in list(nhwc_data.shape)],
-                data=np.asarray(nhwc_data),
-                is_variable=False,
-                quantization=_clone_quantization(side_tensor.quantization),
-            )
-        else:
-            side_tensor.data = np.asarray(nhwc_data)
-            side_tensor.shape = [int(v) for v in list(nhwc_data.shape)]
-            side_tensor.shape_signature = [int(v) for v in list(nhwc_data.shape)]
-
-        _replace_operator_input_at(
-            model_ir=model_ir,
-            op=model_ir.operators[int(mul_idx)],
-            input_index=int(side_input_index),
-            new_input_name=str(rewritten_side_name),
-        )
-        return True
-
     while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for post_idx, post_op in enumerate(model_ir.operators):
-            if str(post_op.op_type) != "TRANSPOSE" or len(post_op.inputs) < 2 or len(post_op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, post_op) != perm_nchw_to_nhwc:
-                continue
-            concat_out_name = str(post_op.inputs[0])
-            post_out_name = str(post_op.outputs[0])
-            if concat_out_name in model_outputs or post_out_name in model_outputs:
-                continue
-
-            concat_idx = producers.get(str(concat_out_name), None)
-            if concat_idx is None:
-                continue
-            concat_op = model_ir.operators[int(concat_idx)]
-            if str(concat_op.op_type) != "CONCATENATION" or len(concat_op.inputs) != 2 or len(concat_op.outputs) != 1:
-                continue
-            axis = int(concat_op.options.get("axis", 1))
-            if axis < 0:
-                axis += 4
-            if axis != 1:
-                continue
-            if set(int(v) for v in consumers.get(str(concat_out_name), [])) != {int(post_idx)}:
-                continue
-
-            mul_indices: List[int] = []
-            mul_plans: List[Tuple[int, int, str, str]] = []
-            shared_data_name: Optional[str] = None
-            rewritable = True
-            for concat_input_name in [str(v) for v in list(concat_op.inputs)]:
-                mul_idx = producers.get(str(concat_input_name), None)
-                if mul_idx is None:
-                    rewritable = False
-                    break
-                mul_op = model_ir.operators[int(mul_idx)]
-                if (
-                    str(mul_op.op_type) != "MUL"
-                    or len(mul_op.inputs) != 2
-                    or len(mul_op.outputs) != 1
-                    or str(mul_op.outputs[0]) != str(concat_input_name)
-                ):
-                    rewritable = False
-                    break
-                if set(int(v) for v in consumers.get(str(concat_input_name), [])) != {int(concat_idx)}:
-                    rewritable = False
-                    break
-                mul_inputs = [str(v) for v in list(mul_op.inputs)]
-                data_input_index = None
-                side_input_index = None
-                if shared_data_name is None:
-                    for candidate_data_index in [0, 1]:
-                        candidate_side_index = 1 - int(candidate_data_index)
-                        candidate_data_name = str(mul_inputs[int(candidate_data_index)])
-                        candidate_prod_idx = producers.get(candidate_data_name, None)
-                        if candidate_prod_idx is None:
-                            continue
-                        candidate_prod_op = model_ir.operators[int(candidate_prod_idx)]
-                        if (
-                            str(candidate_prod_op.op_type) == "TRANSPOSE"
-                            and len(candidate_prod_op.inputs) >= 2
-                            and len(candidate_prod_op.outputs) == 1
-                            and str(candidate_prod_op.outputs[0]) == candidate_data_name
-                            and _read_transpose_perm(model_ir, candidate_prod_op) == perm_nhwc_to_nchw
-                        ):
-                            shared_data_name = str(candidate_data_name)
-                            data_input_index = int(candidate_data_index)
-                            side_input_index = int(candidate_side_index)
-                            break
-                else:
-                    if mul_inputs[0] == str(shared_data_name):
-                        data_input_index = 0
-                        side_input_index = 1
-                    elif mul_inputs[1] == str(shared_data_name):
-                        data_input_index = 1
-                        side_input_index = 0
-                if data_input_index is None or side_input_index is None:
-                    rewritable = False
-                    break
-                side_input_name = str(mul_inputs[int(side_input_index)])
-                side_tensor = model_ir.tensors.get(str(side_input_name), None)
-                if side_tensor is None or side_tensor.data is None:
-                    rewritable = False
-                    break
-
-                mul_indices.append(int(mul_idx))
-                mul_plans.append(
-                    (
-                        int(mul_idx),
-                        int(side_input_index),
-                        str(side_input_name),
-                        str(mul_inputs[int(data_input_index)]),
+        candidate = _resolve_dual_mul_concat_candidate(model_ir, graph_index)
+        if candidate is None:
+            break
+        source_name = str(candidate.pre_op.inputs[0])
+        for plan in candidate.mul_plans:
+            if plan.nhwc_data is not None:
+                side_tensor = model_ir.tensors[plan.side_input_name]
+                rewritten_name = plan.side_input_name
+                if plan.clone_required:
+                    rewritten_name = _unique_tensor_name(
+                        f"{plan.side_input_name}_nhwc"
                     )
-                )
-
-            if not rewritable or shared_data_name is None:
-                continue
-
-            pre_idx = producers.get(str(shared_data_name), None)
-            if pre_idx is None:
-                continue
-            pre_op = model_ir.operators[int(pre_idx)]
-            if (
-                str(pre_op.op_type) != "TRANSPOSE"
-                or len(pre_op.inputs) < 2
-                or len(pre_op.outputs) != 1
-                or str(pre_op.outputs[0]) != str(shared_data_name)
-                or _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw
-            ):
-                continue
-            if shared_data_name in model_outputs or str(pre_op.inputs[0]) in model_outputs:
-                continue
-            if set(int(v) for v in consumers.get(str(shared_data_name), [])) != set(int(v) for v in mul_indices):
-                continue
-
-            chain_indices = {int(pre_idx), int(concat_idx), int(post_idx)} | set(int(v) for v in mul_indices)
-            target_shape_nhwc = (
-                [int(v) for v in list(model_ir.tensors[str(pre_op.inputs[0])].shape)]
-                if str(pre_op.inputs[0]) in model_ir.tensors
-                else None
-            )
-            for mul_idx, side_input_index, side_input_name, _ in mul_plans:
-                if not _clone_or_rewrite_mul_const_to_nhwc(
-                    mul_idx=int(mul_idx),
-                    side_input_index=int(side_input_index),
-                    side_input_name=str(side_input_name),
-                    target_shape_nhwc=target_shape_nhwc,
-                    chain_indices=chain_indices,
-                    consumers=consumers,
-                ):
-                    rewritable = False
-                    break
-            if not rewritable:
-                continue
-
-            for mul_idx in mul_indices:
-                mul_op = model_ir.operators[int(mul_idx)]
-                mul_inputs = [str(v) for v in list(mul_op.inputs)]
-                for input_index, input_name in enumerate(list(mul_inputs)):
-                    if str(input_name) == str(shared_data_name):
-                        mul_inputs[int(input_index)] = str(pre_op.inputs[0])
-                _set_operator_inputs(
+                    model_ir.tensors[rewritten_name] = TensorIR(
+                        name=rewritten_name,
+                        dtype=str(side_tensor.dtype),
+                        shape=[int(value) for value in plan.nhwc_data.shape],
+                        shape_signature=[
+                            int(value) for value in plan.nhwc_data.shape
+                        ],
+                        data=np.asarray(plan.nhwc_data),
+                        is_variable=False,
+                        quantization=_clone_quantization(
+                            side_tensor.quantization
+                        ),
+                    )
+                else:
+                    side_tensor.data = np.asarray(plan.nhwc_data)
+                    side_tensor.shape = [
+                        int(value) for value in plan.nhwc_data.shape
+                    ]
+                    side_tensor.shape_signature = [
+                        int(value) for value in plan.nhwc_data.shape
+                    ]
+                _replace_operator_input_at(
                     model_ir=model_ir,
-                    op=mul_op,
-                    new_inputs=mul_inputs,
-                )
-                _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(str(mul_op.outputs[0]), None),
-                    perm_nchw_to_nhwc,
+                    op=plan.mul_op,
+                    input_index=plan.side_input_index,
+                    new_input_name=rewritten_name,
+                    graph_index=graph_index,
                 )
 
-            concat_op.options["axis"] = 3
-            _set_operator_outputs(
+            new_inputs = [str(value) for value in plan.mul_op.inputs]
+            new_inputs[int(plan.data_input_index)] = source_name
+            _set_operator_inputs(
                 model_ir=model_ir,
-                op=concat_op,
-                new_outputs=[post_out_name],
+                op=plan.mul_op,
+                new_inputs=new_inputs,
+                graph_index=graph_index,
             )
             _permute_tensor_metadata_if_rank_matches(
-                model_ir.tensors.get(str(concat_out_name), None),
-                perm_nchw_to_nhwc,
+                model_ir.tensors.get(str(plan.mul_op.outputs[0]), None),
+                _PERM_NCHW_TO_NHWC,
             )
 
-            old_concat_tensor = model_ir.tensors.get(str(concat_out_name), None)
-            post_out_tensor = model_ir.tensors.get(str(post_out_name), None)
-            if old_concat_tensor is not None and post_out_tensor is not None:
-                post_out_tensor.dtype = str(old_concat_tensor.dtype)
-                post_out_tensor.quantization = _clone_quantization(old_concat_tensor.quantization)
-                post_out_tensor.shape = [int(v) for v in list(old_concat_tensor.shape)]
-                post_out_tensor.shape_signature = (
-                    [int(v) for v in list(old_concat_tensor.shape_signature)]
-                    if old_concat_tensor.shape_signature is not None
-                    else [int(v) for v in list(old_concat_tensor.shape)]
-                )
-                _permute_tensor_metadata_if_rank_matches(
-                    post_out_tensor,
-                    perm_nchw_to_nhwc,
-                )
+        concat_op = candidate.concat_op
+        concat_output = str(concat_op.outputs[0])
+        concat_op.options["axis"] = 3
+        _set_operator_outputs(
+            model_ir=model_ir,
+            op=concat_op,
+            new_outputs=[candidate.post_output],
+            graph_index=graph_index,
+        )
+        old_concat_tensor = model_ir.tensors.get(concat_output, None)
+        post_tensor = model_ir.tensors.get(candidate.post_output, None)
+        if old_concat_tensor is not None:
+            _permute_tensor_metadata_if_rank_matches(
+                old_concat_tensor,
+                _PERM_NCHW_TO_NHWC,
+            )
+        if old_concat_tensor is not None and post_tensor is not None:
+            post_tensor.dtype = str(old_concat_tensor.dtype)
+            post_tensor.quantization = _clone_quantization(
+                old_concat_tensor.quantization
+            )
+            post_tensor.shape = [int(value) for value in old_concat_tensor.shape]
+            post_tensor.shape_signature = (
+                [int(value) for value in old_concat_tensor.shape_signature]
+                if old_concat_tensor.shape_signature is not None
+                else [int(value) for value in old_concat_tensor.shape]
+            )
 
-            for remove_idx in sorted([int(post_idx), int(pre_idx)], reverse=True):
-                del model_ir.operators[int(remove_idx)]
+        remove_indices = sorted(
+            (
+                int(index)
+                for op in [candidate.pre_op, candidate.post_op]
+                if (index := graph_index.operator_index(op)) is not None
+            ),
+            reverse=True,
+        )
+        for remove_index in remove_indices:
+            graph_index.remove_operator(remove_index)
+        rewritten += 1
 
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_dual_mul_concat_prepost_nhwc_chains": int(rewritten)}
 
+
+def run_dual_mul_concat_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Propagate a validated dual-Mul/Concat island to NHWC."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"TRANSPOSE", "MUL", "CONCATENATION"}
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            required.discard(str(operator.op_type))
+            if not required:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    stats_key = "optimized_transpose_dual_mul_concat_prepost_nhwc_chains"
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_dual_mul_concat_prepost_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {**stats, "changed": bool(stats.get(stats_key, 0))}
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.dual_mul_concat_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_dual_mul_concat_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={stats_key: 0},
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
