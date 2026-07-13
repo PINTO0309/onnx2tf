@@ -3,8 +3,8 @@
 ## Pause checkpoint
 
 - Branch: `fb-refactor3`
-- Latest implementation checkpoint: `a261462`
-  (`index axis3 const concat bridge layout pass`)
+- Latest implementation checkpoint: `ea74ffd`
+  (`characterize dequant concat quantize layout`)
 - Previous pause checkpoint: `3df2903`
   (`document flatbuffer direct pause checkpoint`)
 - Remote: after this resumed documentation checkpoint is pushed, local and
@@ -13,12 +13,14 @@
 - The axis-3 constant-Concat bridge matcher uses pure indexed planning,
   differential graph/layout mutation, and one stable transactional runner.
   Its lowerer wrapper remains; the raw production call is removed.
+- The next Dequantize/Concat/Quantize family has a dedicated 15-case
+  characterization corpus; its production matcher and two calls are unchanged.
 
 ## Completed work
 
 This resumed interval completed fourteen adjacent semantic layout families
 using the staged characterization → mechanical extraction → indexed runner
-process.
+process and established characterization for the fifteenth family.
 
 1. Mean layout
    - Characterized the long Mean/Mul/Reshape/Add/Conv success path and Mean
@@ -158,6 +160,15 @@ process.
       `LayoutState` reconciliation, stable runner
       `layout.axis3_const_concat_bridge_nhwc`, and the single production runner
       call in `a261462`.
+15. Dequantize/Concat/Quantize layout characterization
+    - Added the first dedicated corpus for the previously untested central
+      matcher in `ea74ffd`.
+    - Fixed ordinary rewrite, multiple post-adapter canonicalization, shared
+      pre-adapter retention, and quantization metadata preservation.
+    - Added twelve complete no-op boundaries covering intermediate fan-out,
+      public tensors, invalid permutations/axis, and a non-Dequantize branch.
+    - Preserved the central production matcher and both raw calls exactly;
+      extraction is the next checkpoint.
 
 Compatibility wrappers remain in `lower_from_onnx2tf.py` for all extracted
 families. Every implementation migrated through the indexed-runner stage
@@ -173,9 +184,9 @@ source-file line limit and no source-line gate should be introduced.
 The overall Goal is not complete. In particular:
 
 - Continue staged extraction/indexing of the remaining legacy layout rules.
-  The immediate next unit is characterization of
-  `_optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains`, including
-  both production positions and quantized public/fan-out boundaries.
+  The immediate next unit is mechanical extraction of
+  `_optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains` with exact
+  AST equivalence and a single-owner architecture gate.
 - Complete the remaining central lowerer/registry decomposition and consolidate
   op-family validation, capability selection, and lowering.
 - Reconnect and exhaustively validate quantization, split/crop, custom/pseudo
@@ -197,9 +208,9 @@ The overall Goal is not complete. In particular:
 ## Branch and changed files
 
 Current branch is `fb-refactor3`. Before this resumed documentation update, the
-working tree is clean at indexed checkpoint `a261462`. The axis-3
-constant-Concat function is singly owned by its focused pass module and its
-single production position uses the transactional runner.
+working tree is clean at characterization checkpoint `ea74ffd`. The new
+Dequantize/Concat/Quantize tests are committed; production remains unchanged
+and mechanical extraction has not begun.
 After the documentation commit is pushed, local/remote divergence must be
 `0 0`. The implementation checkpoints since the previous pause changed:
 
@@ -222,6 +233,7 @@ After the documentation commit is pushed, local/remote divergence must be
 - `tests/test_flatbuffer_direct_pass_efficiency.py`
 - `tests/test_flatbuffer_direct_se_layout.py`
 - `tests/test_flatbuffer_direct_axis3_const_concat_layout.py`
+- `tests/test_flatbuffer_direct_dequant_concat_quantize_layout.py`
 - `tests/test_tflite_builder_direct.py`
 
 The resumed handoff checkpoint updates documentation only. No implementation
@@ -383,6 +395,10 @@ sequential with only one model/process active at a time.
   `rmse=1.6207873294228388e-07`, and cosine similarity `1.0`.
 - Full direct selection after indexed migration:
   `1323 passed, 5 deselected, 2 warnings in 166.52s`.
+- Dedicated Dequantize/Concat/Quantize characterization:
+  `15 passed in 0.34s`.
+- Full direct selection after characterization:
+  `1338 passed, 5 deselected, 2 warnings in 166.21s`.
 - Tier 1 `superpoint.onnx` was run sequentially after both indexed SE units and
   indexed elementwise gates. Every run retained `evaluation_pass=true`,
   `max_abs=1.6666017472743988e-06`,
@@ -414,14 +430,14 @@ optional/environment-sensitive cases used by the established gate:
 
 1. Verify `git status --short --branch`, local/remote divergence, and the two
    latest commits; do not create a pull request.
-2. Inspect
-   `_optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains`, its two
-   production calls, and all existing direct/quantized coverage.
-3. Move any large inline success fixture to a compact dedicated module and add
-   complete no-op boundaries for adapter/Dequantize/Concat/Quantize fan-out,
-   graph outputs, permutations, axis, and quantization metadata.
-4. Run focused and full direct gates, then commit and push characterization
-   before mechanical extraction.
+2. Move the complete
+   `_optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains`
+   implementation mechanically to a focused pass module while retaining its
+   lowerer wrapper and both raw production calls.
+3. Confirm the function AST exactly matches `ea74ffd` and add a single-owner
+   architecture gate.
+4. Run focused and full direct gates, then commit and push extraction before
+   indexed candidate planning.
 
 Resume constraints remain: commit and push at coherent checkpoints only; no
 pull request; no new dependency; default direct TFLite and `-cotof` must remain
@@ -1250,3 +1266,34 @@ The complete sequential direct selection passed:
 No dependency or TensorFlow path was added. Temporary
 `/tmp/onnx2tf_axis3_const_concat_superpoint` artifacts were removed after
 metrics inspection.
+
+### Dequantize/Concat/Quantize characterization checkpoint
+
+Checkpoint `ea74ffd` added
+`tests/test_flatbuffer_direct_dequant_concat_quantize_layout.py`, the first
+dedicated coverage for this central matcher. The compact quantized graph uses
+two NHWC INT8 inputs, two leading adapters and Dequantize branches, axis-1
+Concat, Quantize, inverse post adapters, and downstream Dequantize consumers.
+It proves direct NHWC Dequantize inputs, axis-3 Concat, removal of exclusive
+adapters, and preservation of the quantized dtype, shape, and full
+`QuantParamIR` on the canonical output.
+
+Additional success variants prove that multiple post adapters merge into one
+canonical quantized tensor and that a leading adapter shared outside the
+island remains available. Twelve parameterized boundaries prove a complete
+ModelIR no-op for Dequantize/Concat/quantized fan-out; public pre,
+Dequantize, Concat, Quantize, and post tensors; invalid pre/post permutations;
+invalid Concat axis; and a non-Dequantize branch. Snapshots include operator
+options, tensor metadata, quantization, and constant values.
+
+Focused characterization passed 15 tests. The complete sequential direct
+selection passed:
+
+```text
+1338 passed, 5 deselected, 2 warnings in 166.21s
+```
+
+Production code and both raw calls remain unchanged. No dependency or
+TensorFlow path was added, and no inference process was run concurrently.
+Mechanical extraction with exact AST-equivalence and single-owner gates is the
+next separate checkpoint.

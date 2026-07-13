@@ -233,6 +233,18 @@ operator removal/insertion, pruning, and layout reconciliation share one
 `layout.axis3_const_concat_bridge_nhwc`; the single production position calls
 the runner and the lowerer compatibility wrapper remains available.
 
+The adjacent Dequantize/Concat/Quantize round-trip rule now has a dedicated
+compact corpus in
+`tests/test_flatbuffer_direct_dequant_concat_quantize_layout.py`. It fixes two
+quantized NHWC input adapters, exclusive Dequantize branches, channel Concat,
+Quantize, inverse post fan-out, canonical quantized-output aliasing, and
+preservation of `QuantParamIR`. A shared leading adapter remains for unrelated
+NCHW consumers. Whole-ModelIR no-op cases cover Dequantize, Concat, and
+quantized-output fan-out; public pre/Dequantize/Concat/Quantize/post tensors;
+invalid pre/post permutations; invalid Concat axis; and a non-Dequantize
+branch. The production matcher and both raw calls remain central and unchanged
+at this checkpoint; mechanical extraction is next.
+
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
 Conv. Compact characterization fixes successful two-output canonicalization
