@@ -291,6 +291,12 @@ Prepared data is isolated per conversion session and cleared during rollback,
 so restored ModelIR objects cannot retain stale operator references. The next
 candidate search after a successful rewrite remains unchanged.
 
+Six additional bounded Concat-root passes now enumerate graph-order
+`CONCATENATION` indices directly from `ModelIRGraphIndex`: axis-3 constant
+Concat, Add/Concat suffix, rank-five NDHWC Concat, Concat/unary/Conv, SPP, and
+Dequantize/Concat/Quantize. Their semantic guards and transactional behavior
+are unchanged; unrelated operators are no longer visited by root discovery.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its
@@ -440,6 +446,9 @@ Focused verification, all in the existing `uv` environment:
 - After consolidating simple float appliers and lifting cleanup helpers, the
   same selection passed `284 tests in 0.76s`; targeted compilation, Ruff, and
   diff checks passed.
+- After converting six additional bounded Concat-root scans to the shared
+  operator-type index, their focused suites passed `169 tests in 0.60s`;
+  targeted compilation, Ruff, and diff checks passed.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.

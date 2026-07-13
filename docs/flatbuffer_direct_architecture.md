@@ -41,6 +41,12 @@ for compatibility with external mutations that bypass these APIs.
 Lineage-aware graph mutation helpers accept an optional ModelIR index and
 update it atomically.
 
+Indexed root enumeration is used by the rank-four float and quantized Concat
+families and by the bounded axis-3 constant-Concat, Add/Concat suffix, rank-five
+NDHWC Concat, Concat/unary/Conv, SPP, and Dequantize/Concat/Quantize passes.
+Each visits only graph-order `CONCATENATION` positions; its semantic and
+boundary guards remain unchanged.
+
 Operator additions keep capability validation and lowering in the same
 op-family module. Do not add model-name checks. A model-specific failure should
 be reduced to a semantic graph pattern with explicit guards and a focused ONNX

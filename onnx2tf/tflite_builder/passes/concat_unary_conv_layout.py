@@ -61,12 +61,10 @@ def _resolve_concat_unary_conv_candidate(
     graph_index: ModelIRGraphIndex,
 ) -> Optional[_ConcatUnaryConvCandidate]:
     model_outputs = {str(name) for name in model_ir.outputs}
-    for concat_op in model_ir.operators:
-        concat_index = graph_index.operator_index(concat_op)
+    for concat_index in graph_index.operator_indices("CONCATENATION"):
+        concat_op = model_ir.operators[int(concat_index)]
         if (
-            concat_index is None
-            or str(concat_op.op_type) != "CONCATENATION"
-            or len(concat_op.outputs) != 1
+            len(concat_op.outputs) != 1
         ):
             continue
         axis = int(concat_op.options.get("axis", 1))
