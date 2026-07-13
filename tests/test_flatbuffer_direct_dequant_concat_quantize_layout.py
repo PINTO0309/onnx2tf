@@ -5,6 +5,7 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
@@ -13,6 +14,9 @@ from onnx2tf.tflite_builder.ir import (
 )
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains,
+)
+from onnx2tf.tflite_builder.passes.dequant_concat_quantize_layout import (
+    run_dequant_concat_quantize_layout_cleanup,
 )
 
 
@@ -169,6 +173,13 @@ def _model(
         model_ir.outputs.append(public_sources[boundary])
     if boundary == "non_dequant_input":
         model_ir.operators[1].op_type = "IDENTITY"
+    elif boundary == "missing_quantization":
+        model_ir.tensors["qcat_nchw"].quantization = None
+    elif boundary == "missing_source_quantization":
+        model_ir.tensors["q0_nhwc"].quantization = None
+    elif boundary == "invalid_rank":
+        model_ir.tensors["cat_nchw"].shape = [1, 4, 6]
+        model_ir.tensors["cat_nchw"].shape_signature = [1, 4, 6]
     return model_ir
 
 
@@ -288,6 +299,9 @@ def test_dequant_concat_quantize_layout_retains_shared_pre_adapter() -> None:
         "post_permutation",
         "concat_axis",
         "non_dequant_input",
+        "missing_quantization",
+        "missing_source_quantization",
+        "invalid_rank",
     ],
 )
 def test_dequant_concat_quantize_layout_rejects_unsafe_boundary(
@@ -303,4 +317,78 @@ def test_dequant_concat_quantize_layout_rejects_unsafe_boundary(
     assert stats[
         "optimized_transpose_pre_dequant_concat_quantize_post_nhwc_chains"
     ] == 0
+    _assert_model_equal(model_ir, original)
+
+
+def test_dequant_concat_quantize_layout_runner_reuses_one_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = _model(post_count=2)
+    diagnostics: list[dict[str, object]] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = run_dequant_concat_quantize_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    stats_key = (
+        "optimized_transpose_pre_dequant_concat_quantize_post_nhwc_chains"
+    )
+    assert stats[stats_key] == 1
+    assert refresh_count == 1
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["code"] == "layout.dequant_concat_quantize_nhwc"
+    assert diagnostics[0]["changed"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "dequant_fanout",
+        "concat_fanout",
+        "quantized_fanout",
+        "public_pre",
+        "public_dequant",
+        "public_concat",
+        "public_quantized",
+        "public_post",
+        "pre_permutation",
+        "post_permutation",
+        "concat_axis",
+        "non_dequant_input",
+        "missing_quantization",
+        "missing_source_quantization",
+        "invalid_rank",
+    ],
+)
+def test_dequant_concat_quantize_layout_runner_rejects_before_snapshot(
+    boundary: str,
+) -> None:
+    model_ir = _model(boundary=boundary)
+    original = deepcopy(model_ir)
+    diagnostics: list[dict[str, object]] = []
+
+    stats = run_dequant_concat_quantize_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    stats_key = (
+        "optimized_transpose_pre_dequant_concat_quantize_post_nhwc_chains"
+    )
+    assert stats[stats_key] == 0
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["changed"] is False
+    assert diagnostics[0]["skipped_by_precondition"] is True
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 0
     _assert_model_equal(model_ir, original)

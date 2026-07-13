@@ -163,6 +163,7 @@ from onnx2tf.tflite_builder.passes.axis3_const_concat_layout import (
 )
 from onnx2tf.tflite_builder.passes.dequant_concat_quantize_layout import (
     _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains as _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains_pass,
+    run_dequant_concat_quantize_layout_cleanup,
 )
 from onnx2tf.tflite_builder.passes.layout_transpose import (
     _is_identity_perm,
@@ -52042,7 +52043,11 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains(model_ir)
+    run_dequant_concat_quantize_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     run_layernorm_statistics_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
@@ -52160,7 +52165,11 @@ def lower_onnx_to_ir(
         # chains are still reduced.
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
     _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
-    _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains(model_ir)
+    run_dequant_concat_quantize_layout_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+        diagnostics=session.diagnostics,
+    )
     # Some late specialized rewrites can still leave trivial
     # NHWC->NCHW->NHWC wrappers around unary activations.
     # Run one final strict unary transpose fold before serialization guards.
