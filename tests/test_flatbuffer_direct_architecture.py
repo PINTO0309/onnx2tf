@@ -1103,6 +1103,57 @@ def test_ndhwc_gate_layout_rewrites_have_single_owner() -> None:
     }
 
 
+def test_cost_volume_scatter_layout_rewrite_has_single_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "cost_volume_scatter_layout.py"
+    )
+    function_name = "_optimize_transpose_cost_volume_scatter_ndhwc_chains"
+    pass_tree = ast.parse(pass_path.read_text(encoding="utf-8"))
+    pass_functions = {
+        node.name: node
+        for node in pass_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert function_name in pass_functions
+
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowering_functions = {
+        node.name: node
+        for node in lowering_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    wrapper_names = {
+        node.id
+        for node in ast.walk(lowering_functions[function_name])
+        if isinstance(node, ast.Name)
+    }
+    assert f"{function_name}_pass" in wrapper_names
+    imports = [
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module
+        == "onnx2tf.tflite_builder.passes.cost_volume_scatter_layout"
+    ]
+    assert len(imports) == 1
+    assert {alias.name for alias in imports[0].names} == {function_name}
+    production_calls = [
+        call
+        for call in ast.walk(lowering_tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == function_name
+    ]
+    assert len(production_calls) == 6
+
+
 def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
