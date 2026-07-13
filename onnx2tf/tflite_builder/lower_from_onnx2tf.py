@@ -52640,7 +52640,10 @@ def lower_onnx_to_ir(
         )
         _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
         _reconcile_static_tensor_shapes(model_ir)
-    coalesce_static_high_rank_binary_operators(model_ir)
+    coalesce_static_high_rank_binary_operators(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _realign_dynamic_boundary_shape_signature_map(model_ir)
     _topologically_sort_operators(model_ir)
     return _finalize_model_ir(model_ir)

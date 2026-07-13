@@ -1505,6 +1505,15 @@ producer/consumer edges intact. Neither precision family rebuilds consumer
 maps or replaces the complete operator list; the main lowerer path also keeps
 the session `LayoutState` synchronized with materialized and pruned constants.
 
+Fully static high-rank binary coalescing in `passes/high_rank_binary.py` no
+longer rebuilds the complete operator list. It captures the original supported
+binary objects from the type index, validates static broadcast coalescing, and
+replaces each selected operator at its current graph position with two input
+Reshapes, the rank-at-most-four binary, and one restoring Reshape. All
+remove/insert operations update one `ModelIRGraphIndex` differentially; the
+main lowerer path synchronizes the session `LayoutState` for the generated
+shape and intermediate tensors.
+
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
 shape/dtype/layout/quantization/provenance, operator options/axis semantics,

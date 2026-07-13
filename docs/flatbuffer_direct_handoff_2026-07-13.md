@@ -418,6 +418,17 @@ integer-Cast preservation, and affine-chain restoration. Core and precision
 focused validation passes 29 tests with one initial index refresh in each
 instrumented case. No model conversion or inference was run.
 
+Static high-rank binary coalescing now replaces each indexed candidate in
+place rather than constructing and assigning a complete rebuilt operator list.
+The original supported binary objects are fixed in graph order, so generated
+rank-four binary operators are not reconsidered. Each candidate retains the
+same two input Reshapes, coalesced binary, and output-restoring Reshape at the
+original position, while differential remove/insert calls keep producer,
+consumer, object, and type indices current. The production call supplies the
+session layout state. Static-success and dynamic-signature no-op tests pass;
+the success case proves one initial index refresh and exact final operator-type
+indices. No model conversion or inference was run.
+
 The float NHWC Concat runner now uses the same declarative structure. One table
 owns its eleven family names, statistics keys, and priorities; frozen specs,
 callbacks, preconditions, defaults, and preflight are constructed once. Its

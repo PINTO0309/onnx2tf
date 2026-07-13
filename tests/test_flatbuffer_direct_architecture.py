@@ -243,6 +243,19 @@ def test_precision_rewrites_use_differential_graph_index() -> None:
     assert "op.inputs =" not in source
 
 
+def test_high_rank_binary_rewrite_uses_differential_graph_index() -> None:
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "high_rank_binary.py"
+    )
+    source = pass_path.read_text(encoding="utf-8")
+    assert "model_ir.operators =" not in source
+    assert "ModelIRGraphIndex" in source
+
+
 def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
