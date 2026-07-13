@@ -4,8 +4,9 @@
 
 The first two bounded families of the 2,117-line rank-four generic NHWC
 pre-Concat matcher are now separated. `passes/nhwc_concat_layout.py` owns the
-strict all-direct float path and the exactly-one-unary-plus-direct float path.
-The unary allowlist is RELU, RELU6, LOGISTIC, TANH, and GELU. Both share one
+strict all-direct float path and the one-or-more-unary float path, with or
+without direct inputs. The unary allowlist is RELU, RELU6, LOGISTIC, TANH, and
+GELU. Both share one
 `ModelIRGraphIndex`/`LayoutState` pass group and run transactionally under
 stable IDs `layout.nhwc_pre_concat_direct` and
 `layout.nhwc_pre_concat_unary` at all seven production positions.
@@ -23,8 +24,8 @@ NHWC batch/spatial metadata, and remaps unary output quantization metadata.
 
 The lowerer compatibility helper still returns the original aggregate statistic
 and runs the legacy matcher after the direct pass. The legacy matcher now
-skips the two indexed families, but continues to own multi-unary, swish, split,
-slice, Add, Pad, PReLU, Dequantize, and Softmax inputs plus the separate
+skips the two indexed families, but continues to own swish, split, slice, Add,
+Pad, PReLU, Dequantize, and Softmax inputs plus the separate
 quantized-post path.
 
 Changed files for this checkpoint:
@@ -37,7 +38,7 @@ Changed files for this checkpoint:
 
 Focused verification, all in the existing `uv` environment:
 
-- Direct and one-unary ModelIR characterization: `21 passed`.
+- Direct and unary ModelIR characterization: `24 passed`.
 - Existing mixed-family NHWC matcher characterization: `5 passed`, `750`
   deselected.
 - TensorFlow boundary and flatbuffer-direct architecture suite: `43 passed`.
@@ -47,10 +48,9 @@ Focused verification, all in the existing `uv` environment:
 - No ONNX corpus or large-model conversion was run for this checkpoint, per
   the instruction to minimize conversion testing and prioritize improvement.
 
-Next work should characterize multi-unary combinations and then decide whether
-the unary resolver can safely accept one-or-more unary inputs without changing
-the exclusive boundary contract. Do not begin with a Tier 0–4 corpus run, and
-do not create a pull request.
+Next work should audit the bounded Pad-plus-direct family, beginning with its
+constant ownership and copy-on-write behavior. Do not begin with a Tier 0–4
+corpus run, and do not create a pull request.
 
 The section below records the preceding rank-five checkpoint and remains as
 historical context.

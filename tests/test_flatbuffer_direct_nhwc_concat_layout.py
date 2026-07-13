@@ -172,6 +172,32 @@ def _unary_model(
     return model_ir
 
 
+def _all_unary_model(*, fanout_input: int | None = None) -> ModelIR:
+    model_ir = _unary_model(unary_op="GELU")
+    model_ir.tensors["x0_unary"] = _tensor(
+        "x0_unary",
+        [1, 2, 5, 7],
+    )
+    model_ir.operators.insert(
+        1,
+        OperatorIR("TANH", ["x0_nchw"], ["x0_unary"]),
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    concat_op.inputs = ["x0_unary", "x1_unary"]
+    if fanout_input is not None:
+        source_name = "x0_unary" if fanout_input == 0 else "x1_unary"
+        source_shape = list(model_ir.tensors[source_name].shape)
+        side_name = f"unary{fanout_input}_side"
+        model_ir.tensors[side_name] = _tensor(side_name, source_shape)
+        model_ir.outputs.append(side_name)
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [source_name], [side_name])
+        )
+    return model_ir
+
+
 def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
     assert actual.inputs == expected.inputs
     assert actual.outputs == expected.outputs
@@ -327,6 +353,57 @@ def test_nhwc_one_unary_plus_direct_rejects_unsafe_boundary(
     unary_op: str,
 ) -> None:
     model_ir = _unary_model(unary_op=unary_op, boundary=boundary)
+    original = deepcopy(model_ir)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
+    _assert_model_equal(model_ir, original)
+
+
+def test_nhwc_all_unary_pre_concat_uses_same_indexed_family() -> None:
+    model_ir = _all_unary_model()
+    model_ir.tensors["x0_unary"].quantization = QuantParamIR(
+        scale=[0.125] * 2,
+        zero_point=[0] * 2,
+        quantized_dimension=1,
+    )
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    tanh_op = next(op for op in model_ir.operators if op.op_type == "TANH")
+    gelu_op = next(op for op in model_ir.operators if op.op_type == "GELU")
+    assert tanh_op.inputs == ["x0_nhwc"]
+    assert gelu_op.inputs == ["x1_nhwc"]
+    assert model_ir.tensors["x0_unary"].shape == [1, 5, 7, 2]
+    assert model_ir.tensors["x1_unary"].shape == [1, 5, 7, 3]
+    quantization = model_ir.tensors["x0_unary"].quantization
+    assert isinstance(quantization, QuantParamIR)
+    assert quantization.quantized_dimension == 3
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    assert concat_op.inputs == ["x0_unary", "x1_unary"]
+    assert concat_op.options["axis"] == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    unary_event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_unary"
+    )
+    assert unary_event["status"] == "changed"
+
+
+@pytest.mark.parametrize("fanout_input", [0, 1])
+def test_nhwc_all_unary_rejects_fanout_without_partial_mutation(
+    fanout_input: int,
+) -> None:
+    model_ir = _all_unary_model(fanout_input=fanout_input)
     original = deepcopy(model_ir)
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)

@@ -72,7 +72,7 @@ def _resolve_nhwc_concat_candidate(
     *,
     family: str,
 ) -> _NhwcConcatCandidate | None:
-    """Find one strict float-path direct or one-unary Concat island."""
+    """Find one strict float-path direct or unary Concat island."""
 
     model_outputs = {str(name) for name in model_ir.outputs}
     for concat_op in model_ir.operators:
@@ -205,9 +205,7 @@ def _resolve_nhwc_concat_candidate(
         unary_count = sum(plan.kind == "unary" for plan in input_plans)
         if family == "direct" and unary_count != 0:
             continue
-        if family == "unary" and (
-            unary_count != 1 or len(input_plans) <= unary_count
-        ):
+        if family == "unary" and unary_count < 1:
             continue
 
         if family == "unary":

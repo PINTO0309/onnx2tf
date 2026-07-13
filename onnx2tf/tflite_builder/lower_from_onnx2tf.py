@@ -13740,12 +13740,11 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
                 continue
             indexed_unary_family = (
                 post_quantize_idx is None
-                and len(concat_input_actions) > 1
                 and sum(
                     str(action.get("kind", "")) == "unary"
                     for action in concat_input_actions
                 )
-                == 1
+                >= 1
                 and all(
                     str(action.get("kind", "")) in {"direct", "unary"}
                     for action in concat_input_actions
