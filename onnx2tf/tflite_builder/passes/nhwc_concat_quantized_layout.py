@@ -40,6 +40,9 @@ _PAD_STATS_KEY = "optimized_transpose_pre_concat_nhwc_quantized_pad_chains"
 _UNARY_PAD_STATS_KEY = (
     "optimized_transpose_pre_concat_nhwc_quantized_unary_pad_chains"
 )
+_ALL_PAD_STATS_KEY = (
+    "optimized_transpose_pre_concat_nhwc_quantized_all_pad_chains"
+)
 _UNARY_OPS = {"RELU", "RELU6", "LOGISTIC", "TANH", "GELU"}
 
 
@@ -317,7 +320,11 @@ def _resolve_quantized_concat_candidate(
                     concat_index=int(concat_index),
                     model_outputs=model_outputs,
                 )
-            if input_plan is None and family in {"pad", "unary_pad"}:
+            if input_plan is None and family in {
+                "pad",
+                "unary_pad",
+                "all_pad",
+            }:
                 input_plan = _resolve_pad_input_plan(
                     model_ir,
                     graph_index,
@@ -344,7 +351,11 @@ def _resolve_quantized_concat_candidate(
             continue
         if family == "unary_pad" and (unary_count < 1 or pad_count < 1):
             continue
-        if family in {"unary", "pad", "unary_pad"}:
+        if family == "all_pad" and (
+            len(input_plans) < 2 or pad_count != len(input_plans)
+        ):
+            continue
+        if family in {"unary", "pad", "unary_pad", "all_pad"}:
             reference_shape: Optional[List[int]] = None
             shapes_compatible = True
             for input_plan in input_plans:
@@ -428,6 +439,19 @@ def _has_quantized_unary_pad_concat_candidate(
             pass_state.model_ir,
             pass_state.graph_index,
             family="unary_pad",
+        )
+        is not None
+    )
+
+
+def _has_quantized_all_pad_concat_candidate(
+    pass_state: ModelIRPassState,
+) -> bool:
+    return (
+        _resolve_quantized_concat_candidate(
+            pass_state.model_ir,
+            pass_state.graph_index,
+            family="all_pad",
         )
         is not None
     )
@@ -621,6 +645,21 @@ def run_nhwc_concat_quantized_layout_cleanup(
             "changed": bool(stats.get(_UNARY_PAD_STATS_KEY, 0)),
         }
 
+    def _run_all_pad(
+        pass_state: ModelIRPassState,
+    ) -> Dict[str, int | bool]:
+        stats = _optimize_quantized_concat_chains(
+            pass_state.model_ir,
+            family="all_pad",
+            stats_key=_ALL_PAD_STATS_KEY,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(stats.get(_ALL_PAD_STATS_KEY, 0)),
+        }
+
     details, _ = run_model_ir_pass_group(
         model_ir,
         specs=[
@@ -656,6 +695,14 @@ def run_nhwc_concat_quantized_layout_cleanup(
                 priority=40,
                 transactional=True,
             ),
+            PassSpec(
+                pass_id="layout.nhwc_pre_concat_quantized_all_pad",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run_all_pad,
+                precondition=_has_quantized_all_pad_concat_candidate,
+                priority=50,
+                transactional=True,
+            ),
         ],
         layout_state=layout_state,
         default_details={
@@ -663,6 +710,7 @@ def run_nhwc_concat_quantized_layout_cleanup(
             _UNARY_STATS_KEY: 0,
             _PAD_STATS_KEY: 0,
             _UNARY_PAD_STATS_KEY: 0,
+            _ALL_PAD_STATS_KEY: 0,
         },
         diagnostics=diagnostics,
         preflight=lambda candidate_model: preflight_required_op_types(

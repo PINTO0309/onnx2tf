@@ -403,6 +403,37 @@ def _quantized_pad_model(
     return model_ir
 
 
+def _quantized_all_pad_model(
+    *,
+    boundary: str | None = None,
+) -> ModelIR:
+    model_ir = _quantized_pad_model(boundary=boundary)
+    model_ir.tensors["b_nhwc"].shape = [1, 4, 7, 3]
+    model_ir.tensors["b_nhwc"].shape_signature = [1, 4, 7, 3]
+    model_ir.tensors["b_nchw"].shape = [1, 3, 4, 7]
+    model_ir.tensors["b_nchw"].shape_signature = [1, 3, 4, 7]
+    model_ir.tensors["b_pad"] = _tensor("b_pad", [1, 3, 5, 7])
+    model_ir.tensors["b_pad"].quantization = QuantParamIR(
+        scale=[0.5] * 3,
+        zero_point=[0] * 3,
+        quantized_dimension=1,
+    )
+    concat_op = next(
+        op for op in model_ir.operators if op.op_type == "CONCATENATION"
+    )
+    concat_index = model_ir.operators.index(concat_op)
+    model_ir.operators.insert(
+        concat_index,
+        OperatorIR(
+            "PAD",
+            ["b_nchw", "pads_nchw", "pad_value"],
+            ["b_pad"],
+        ),
+    )
+    concat_op.inputs[1] = "b_pad"
+    return model_ir
+
+
 def _assert_model_equal(actual: ModelIR, expected: ModelIR) -> None:
     assert actual.inputs == expected.inputs
     assert actual.outputs == expected.outputs
@@ -693,6 +724,60 @@ def test_nhwc_quantized_unary_pad_rejects_unsafe_match(
         boundary=boundary,
         unary_companion=True,
     )
+    original = deepcopy(model_ir)
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 0}
+    _assert_model_equal(model_ir, original)
+
+
+def test_nhwc_quantized_all_pad_family_reuses_materialized_pads() -> None:
+    model_ir = _quantized_all_pad_model()
+    diagnostics: list[dict] = []
+
+    stats = _optimize_transpose_pre_concat_nhwc_chains(
+        model_ir,
+        diagnostics=diagnostics,
+    )
+
+    assert stats == {"optimized_transpose_pre_concat_nhwc_chains": 1}
+    _assert_quantized_rewritten(
+        model_ir,
+        expected_concat_inputs=["a_pad", "b_pad"],
+    )
+    pad_ops = [op for op in model_ir.operators if op.op_type == "PAD"]
+    assert len(pad_ops) == 2
+    assert [op.inputs[0] for op in pad_ops] == ["a_nhwc", "b_nhwc"]
+    rewritten_pads_names = {str(op.inputs[1]) for op in pad_ops}
+    assert len(rewritten_pads_names) == 1
+    rewritten_pads_name = rewritten_pads_names.pop()
+    np.testing.assert_array_equal(
+        model_ir.tensors[rewritten_pads_name].data,
+        np.asarray(
+            [[0, 0], [0, 1], [0, 0], [0, 0]],
+            dtype=np.int32,
+        ),
+    )
+    for tensor_name in ["a_pad", "b_pad"]:
+        tensor = model_ir.tensors[tensor_name]
+        assert isinstance(tensor.quantization, QuantParamIR)
+        assert tensor.quantization.quantized_dimension == 3
+    assert all(op.op_type != "TRANSPOSE" for op in model_ir.operators)
+    event = next(
+        event
+        for event in diagnostics
+        if event["code"] == "layout.nhwc_pre_concat_quantized_all_pad"
+    )
+    assert event["status"] == "changed"
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    ["pad_output_fanout", "spatial_shape_mismatch"],
+)
+def test_nhwc_quantized_all_pad_rejects_unsafe_match(boundary: str) -> None:
+    model_ir = _quantized_all_pad_model(boundary=boundary)
     original = deepcopy(model_ir)
 
     stats = _optimize_transpose_pre_concat_nhwc_chains(model_ir)

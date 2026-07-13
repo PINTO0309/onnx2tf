@@ -13891,6 +13891,16 @@ def _optimize_transpose_pre_concat_nhwc_chains_legacy(
             )
             if indexed_quantized_unary_pad_family:
                 continue
+            indexed_quantized_all_pad_family = (
+                post_quantize_idx is not None
+                and len(concat_input_actions) >= 2
+                and all(
+                    str(action.get("kind", "")) == "pad"
+                    for action in concat_input_actions
+                )
+            )
+            if indexed_quantized_all_pad_family:
+                continue
             indexed_unary_family = (
                 post_quantize_idx is None
                 and sum(
@@ -14387,6 +14397,12 @@ def _optimize_transpose_pre_concat_nhwc_chains(
         + int(
             quantized_indexed_stats.get(
                 "optimized_transpose_pre_concat_nhwc_quantized_unary_pad_chains",
+                0,
+            )
+        )
+        + int(
+            quantized_indexed_stats.get(
+                "optimized_transpose_pre_concat_nhwc_quantized_all_pad_chains",
                 0,
             )
         )
