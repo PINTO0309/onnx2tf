@@ -994,11 +994,23 @@ def test_dual_postconv_gate_layout_rewrite_has_single_owner() -> None:
         "_optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains"
     )
     pass_tree = ast.parse(pass_path.read_text(encoding="utf-8"))
-    assert function_name in {
-        node.name
+    pass_functions = {
+        node.name: node
         for node in pass_tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+    assert function_name in pass_functions
+    referenced_names = {
+        node.id
+        for node in ast.walk(pass_functions[function_name])
+        if isinstance(node, ast.Name)
+    }
+    assert "_build_tensor_consumer_map" not in referenced_names
+    assert "_build_tensor_producer_map" not in referenced_names
+    assert not any(
+        isinstance(node, ast.Delete)
+        for node in ast.walk(pass_functions[function_name])
+    )
 
     lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
     lowering_functions = {
@@ -1020,7 +1032,10 @@ def test_dual_postconv_gate_layout_rewrite_has_single_owner() -> None:
         == "onnx2tf.tflite_builder.passes.dual_postconv_gate_layout"
     ]
     assert len(imports) == 1
-    assert {alias.name for alias in imports[0].names} == {function_name}
+    assert {alias.name for alias in imports[0].names} == {
+        function_name,
+        "run_dual_postconv_gate_layout_cleanup",
+    }
 
 
 def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
@@ -1038,6 +1053,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         "run_consecutive_mul_constants_cleanup",
         "run_conv_attention_layout_cleanup",
         "run_duplicate_fanout_cleanup",
+        "run_dual_postconv_gate_layout_cleanup",
         "run_elementwise_gate_layout_cleanup",
         "run_flatten_concat_reshape_cleanup",
         "run_mixed_attention_layout_cleanup",
@@ -1087,7 +1103,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 210
+    assert len(calls) == 215
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -1385,6 +1401,14 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         and call.func.id == "run_multi_branch_gate_layout_cleanup"
     ]
     assert len(multi_branch_gate_calls) == 1
+
+    dual_postconv_gate_calls = [
+        call
+        for call in calls
+        if isinstance(call.func, ast.Name)
+        and call.func.id == "run_dual_postconv_gate_layout_cleanup"
+    ]
+    assert len(dual_postconv_gate_calls) == 5
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:

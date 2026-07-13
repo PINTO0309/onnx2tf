@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _permute_tensor_metadata_if_rank_matches,
     _prune_unused_tensors,
@@ -13,9 +11,22 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _set_operator_inputs,
     _set_operator_outputs,
 )
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPreflightResult,
+    ModelIRPassState,
+    run_model_ir_pass_group,
+)
+from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
 
-def _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Eliminate NCHW round-trips around a logistic/sub-gated dual-MUL/ADD block feeding two convs.
 
@@ -36,11 +47,12 @@ def _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir: 
     rewritten = 0
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for gate_pre_idx, gate_pre_op in enumerate(model_ir.operators):
@@ -240,6 +252,7 @@ def _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir: 
                 model_ir=model_ir,
                 op=logistic_op,
                 new_inputs=[str(gate_pre_in_name)],
+                graph_index=graph_index,
             )
 
             # 2) Bypass the two data pre-transposes in MUL and ADD.
@@ -256,6 +269,7 @@ def _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir: 
                     model_ir=model_ir,
                     op=mul_op,
                     new_inputs=mul_inputs,
+                    graph_index=graph_index,
                 )
 
             for add_op, pre_out_name, pre_in_name in [
@@ -273,6 +287,7 @@ def _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir: 
                     model_ir=model_ir,
                     op=add_op,
                     new_inputs=rewritten_inputs,
+                    graph_index=graph_index,
                 )
 
             # 3) Mark rewritten intermediates as NHWC.
@@ -299,9 +314,15 @@ def _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir: 
                     model_ir=model_ir,
                     op=add_op,
                     new_outputs=[canonical_post_output_name],
+                    graph_index=graph_index,
                 )
                 for alias_name in list(post_output_names[1:]):
-                    _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name)
+                    _replace_tensor_inputs(
+                        model_ir,
+                        str(alias_name),
+                        canonical_post_output_name,
+                        graph_index=graph_index,
+                    )
 
                 old_add_out_tensor = model_ir.tensors.get(str(old_add_out_name), None)
                 canonical_tensor = model_ir.tensors.get(str(canonical_post_output_name), None)
@@ -327,7 +348,7 @@ def _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir: 
                 *[int(v) for v in sub_post_indices],
             }
             for remove_idx in sorted(remove_indices, reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -336,5 +357,220 @@ def _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(model_ir: 
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains": int(rewritten)}
+
+
+def _has_dual_postconv_gate_candidate(pass_state: ModelIRPassState) -> bool:
+    model_ir = pass_state.model_ir
+    graph_index = pass_state.graph_index
+    model_outputs = {str(name) for name in model_ir.outputs}
+
+    def _is_transpose(op: OperatorIR | None, perm: List[int]) -> bool:
+        return bool(
+            op is not None
+            and str(op.op_type) == "TRANSPOSE"
+            and len(op.inputs) >= 2
+            and len(op.outputs) == 1
+            and _read_transpose_perm(model_ir, op) == perm
+        )
+
+    def _data_pre_for_mul(
+        mul_op: OperatorIR,
+        gate_name: str,
+    ) -> Optional[Tuple[OperatorIR, int, str]]:
+        if (
+            str(mul_op.op_type) != "MUL"
+            or len(mul_op.inputs) != 2
+            or len(mul_op.outputs) != 1
+            or gate_name not in {str(name) for name in mul_op.inputs}
+        ):
+            return None
+        data_names = [
+            str(name) for name in mul_op.inputs if str(name) != gate_name
+        ]
+        if len(data_names) != 1:
+            return None
+        pre_op = graph_index.producer(data_names[0])
+        if (
+            not _is_transpose(pre_op, [0, 3, 1, 2])
+            or pre_op is None
+            or str(pre_op.inputs[0]) in model_outputs
+            or data_names[0] in model_outputs
+        ):
+            return None
+        pre_index = graph_index.operator_index(pre_op)
+        if pre_index is None:
+            return None
+        return pre_op, pre_index, data_names[0]
+
+    def _inverse_posts_only(tensor_name: str) -> bool:
+        users = graph_index.consumers_of(tensor_name)
+        return bool(users) and all(
+            _is_transpose(user, [0, 2, 3, 1])
+            and str(user.outputs[0]) not in model_outputs
+            for user in users
+        )
+
+    for gate_pre_op in model_ir.operators:
+        if not _is_transpose(gate_pre_op, [0, 3, 1, 2]):
+            continue
+        gate_pre_in = str(gate_pre_op.inputs[0])
+        gate_pre_out = str(gate_pre_op.outputs[0])
+        if gate_pre_in in model_outputs or gate_pre_out in model_outputs:
+            continue
+        gate_users = graph_index.consumers_of(gate_pre_out)
+        if len(gate_users) != 1:
+            continue
+        logistic_op = gate_users[0]
+        logistic_index = graph_index.operator_index(logistic_op)
+        if (
+            logistic_index is None
+            or str(logistic_op.op_type) != "LOGISTIC"
+            or len(logistic_op.inputs) != 1
+            or len(logistic_op.outputs) != 1
+        ):
+            continue
+        logistic_out = str(logistic_op.outputs[0])
+        if logistic_out in model_outputs:
+            continue
+        logistic_users = graph_index.consumers_of(logistic_out)
+        sub_ops = [op for op in logistic_users if str(op.op_type) == "SUB"]
+        mul_sig_ops = [op for op in logistic_users if str(op.op_type) == "MUL"]
+        if len(logistic_users) != 2 or len(sub_ops) != 1 or len(mul_sig_ops) != 1:
+            continue
+        sub_op = sub_ops[0]
+        mul_sig_op = mul_sig_ops[0]
+        if (
+            len(sub_op.inputs) != 2
+            or len(sub_op.outputs) != 1
+            or logistic_out not in {str(name) for name in sub_op.inputs}
+        ):
+            continue
+        sub_out = str(sub_op.outputs[0])
+        if sub_out in model_outputs:
+            continue
+        sub_users = graph_index.consumers_of(sub_out)
+        if len(sub_users) != 1 or str(sub_users[0].op_type) != "MUL":
+            continue
+        mul_sub_op = sub_users[0]
+        sig_pre = _data_pre_for_mul(mul_sig_op, logistic_out)
+        sub_pre = _data_pre_for_mul(mul_sub_op, sub_out)
+        if sig_pre is None or sub_pre is None or sig_pre[1] == sub_pre[1]:
+            continue
+
+        mul_sig_index = graph_index.operator_index(mul_sig_op)
+        mul_sub_index = graph_index.operator_index(mul_sub_op)
+        if mul_sig_index is None or mul_sub_index is None:
+            continue
+        mul_sig_out = str(mul_sig_op.outputs[0])
+        mul_sub_out = str(mul_sub_op.outputs[0])
+        if mul_sig_out in model_outputs or mul_sub_out in model_outputs:
+            continue
+        add_sig_users = graph_index.consumers_of(mul_sig_out)
+        add_sub_users = graph_index.consumers_of(mul_sub_out)
+        if len(add_sig_users) != 1 or len(add_sub_users) != 1:
+            continue
+        add_sig_op = add_sig_users[0]
+        add_sub_op = add_sub_users[0]
+        add_sig_index = graph_index.operator_index(add_sig_op)
+        add_sub_index = graph_index.operator_index(add_sub_op)
+        if (
+            add_sig_index is None
+            or add_sub_index is None
+            or add_sig_index == add_sub_index
+            or str(add_sig_op.op_type) != "ADD"
+            or str(add_sub_op.op_type) != "ADD"
+            or len(add_sig_op.inputs) != 2
+            or len(add_sub_op.inputs) != 2
+            or len(add_sig_op.outputs) != 1
+            or len(add_sub_op.outputs) != 1
+        ):
+            continue
+        add_sig_other = [
+            str(name) for name in add_sig_op.inputs if str(name) != mul_sig_out
+        ]
+        add_sub_other = [
+            str(name) for name in add_sub_op.inputs if str(name) != mul_sub_out
+        ]
+        if (
+            len(add_sig_other) != 1
+            or len(add_sub_other) != 1
+            or {add_sig_other[0], add_sub_other[0]} != {sig_pre[2], sub_pre[2]}
+        ):
+            continue
+        add_sig_out = str(add_sig_op.outputs[0])
+        add_sub_out = str(add_sub_op.outputs[0])
+        if (
+            add_sig_out in model_outputs
+            or add_sub_out in model_outputs
+            or not _inverse_posts_only(add_sig_out)
+            or not _inverse_posts_only(add_sub_out)
+        ):
+            continue
+        allowed_users = {
+            mul_sig_index,
+            mul_sub_index,
+            add_sig_index,
+            add_sub_index,
+        }
+        if not set(graph_index.consumer_indices(sig_pre[2])).issubset(
+            allowed_users
+        ):
+            continue
+        if not set(graph_index.consumer_indices(sub_pre[2])).issubset(
+            allowed_users
+        ):
+            continue
+        return True
+    return False
+
+
+def run_dual_postconv_gate_layout_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Propagate NHWC through guarded complementary-gate output branches."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        required = {"TRANSPOSE", "LOGISTIC", "SUB", "MUL", "ADD"}
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            required.discard(str(operator.op_type))
+            if not required:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    stats_key = (
+        "optimized_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains"
+    )
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_transpose_logistic_sub_muladd_dual_postconv_nhwc_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {**stats, "changed": bool(stats.get(stats_key, 0))}
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="layout.dual_postconv_complementary_gate_nhwc",
+                phase=PassPhase.LAYOUT_PLAN,
+                callback=_run,
+                precondition=_has_dual_postconv_gate_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={stats_key: 0},
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}

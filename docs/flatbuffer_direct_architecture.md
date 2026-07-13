@@ -131,10 +131,15 @@ owned by `passes/dual_postconv_gate_layout.py`. It recognizes three independent
 NHWC-to-NCHW adapters, a Logistic/Sub complementary gate, two Mul/Add branches,
 and inverse adapters feeding both downstream convolution branches. Compact
 characterization fixes successful propagation plus gate fan-out, data-adapter
-fan-out, and public-intermediate rejection. The complete implementation is
-AST-identical to checkpoint `ed6d8c1`; the lowerer keeps a compatibility
-wrapper and all five production positions remain unchanged until the separate
-indexed migration checkpoint.
+fan-out, and public-intermediate rejection.
+`run_dual_postconv_gate_layout_cleanup` registers stable `LAYOUT_PLAN` ID
+`layout.dual_postconv_complementary_gate_nhwc`. Model-only required-op
+preflight and an indexed complementary-gate/two-branch guard reject incomplete
+or unsafe graphs before snapshotting. All input/output and alias rewrites,
+structural removals, pruning, metadata, and layout reconciliation use one
+shared differential graph index and `LayoutState`. The lowerer retains its
+compatibility wrapper, and all five production positions supply session layout
+state and diagnostics to the runner.
 
 The larger generic two-way shuffle/branch/Concat propagation rule is now
 mechanically owned by the same family. It accepts rank-five Gather selectors or
