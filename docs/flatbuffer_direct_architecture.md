@@ -2029,8 +2029,10 @@ channel-last affine-to-Conv bridge folding, and rank-3/rank-4 channel-last GAP
 mean rewriting share the common parser boundary and retain their established
 ordering. Boundary transpose/Conv folding, redundant permute-chain collapse,
 public layout-bridge alias inlining, channel-last PReLU bridge folding, and
-rank-4 reshape/permute/Conv folding use the same owner. All ten ASTs are
-identical to their former exporter definitions. Direct fixtures fix each
+rank-4 reshape/permute/Conv folding use the same owner. The channel-first
+hard-sigmoid gate/Conv rewrite is co-located with these pure transforms as
+well. All eleven ASTs are identical to their former exporter definitions.
+Direct fixtures fix each
 rewrite's representative success form and unmatched-source no-op behavior.
 Graph-aware GatherND boundary repair remains in the exporter and is deliberately
 not mixed into this pure source-rewrite boundary.

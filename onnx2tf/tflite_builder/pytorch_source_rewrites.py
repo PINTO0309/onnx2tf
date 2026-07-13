@@ -1453,3 +1453,476 @@ def _fold_rank4_reshape_permute_conv_bridges(
         )
         index += 3
     return rewritten
+
+
+def _fold_channel_first_hardsigmoid_gate_conv_bridges(
+    lines: Sequence[str],
+) -> List[str]:
+    clamp_re = re.compile(
+        r"^(?P<indent>\s*)(?P<out>[A-Za-z0-9_]+)\s*=\s*torch\.clamp\((?P<input>[A-Za-z0-9_]+), min=0\.0, max=1\.0\)$"
+    )
+    anchor_cf_re = re.compile(
+        r"^\s*[A-Za-z0-9_]+,\s*[A-Za-z0-9_]+ = _align_binary_inputs_to_anchor\((?P<input0>[A-Za-z0-9_]+), (?P<input1>[A-Za-z0-9_]+), \[(?P<n>\d+), (?P<c>\d+), (?P<h>\d+), (?P<w>\d+)\]\)$"
+    )
+    binary_cf_re = re.compile(
+        r"^\s*[A-Za-z0-9_]+,\s*[A-Za-z0-9_]+ = _align_binary_inputs\((?P<input0>[A-Za-z0-9_]+), (?P<input1>[A-Za-z0-9_]+), \[(?P<n>\d+), (?P<c>\d+), (?P<h>\d+), (?P<w>\d+)\]\)$"
+    )
+    rewritten = [str(line) for line in lines]
+    alpha_ref = float(1.0 / 6.0)
+    beta_ref = 0.5
+    eps = 1e-6
+
+    def _function_end_index(line_index: int) -> int:
+        for candidate in range(line_index + 1, len(rewritten)):
+            if rewritten[candidate].startswith("    def "):
+                return candidate
+        return len(rewritten)
+
+    def _line_mentions_name(line: str, name: str) -> bool:
+        return re.search(rf"\b{re.escape(name)}\b", line) is not None
+
+    def _parse_gap_mean_assign(line: str) -> Tuple[str, str, str, List[int]] | None:
+        assign = _parse_simple_assignment_line(line)
+        if assign is None:
+            return None
+        indent, lhs, rhs = assign
+        stripped = rhs.strip()
+        prefix = "torch.mean("
+        if not stripped.startswith(prefix) or not stripped.endswith(")"):
+            return None
+        parts = _split_top_level_csv_exprs(stripped[len(prefix) : -1])
+        input_expr: str | None = None
+        dim_expr: str | None = None
+        keepdim_expr: str | None = None
+        if len(parts) >= 1 and all(
+            re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None for part in parts[:1]
+        ):
+            input_expr = parts[0].strip()
+            for part in parts[1:]:
+                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
+                    continue
+                key, value = part.split("=", 1)
+                if key.strip() == "dim":
+                    dim_expr = value.strip()
+                elif key.strip() == "keepdim":
+                    keepdim_expr = value.strip()
+        else:
+            kwargs: Dict[str, str] = {}
+            for part in parts:
+                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
+                    continue
+                key, value = part.split("=", 1)
+                kwargs[key.strip()] = value.strip()
+            input_expr = kwargs.get("input")
+            dim_expr = kwargs.get("dim")
+            keepdim_expr = kwargs.get("keepdim")
+        if (
+            input_expr is None
+            or dim_expr is None
+            or not re.fullmatch(r"[A-Za-z0-9_]+", input_expr)
+        ):
+            return None
+        try:
+            dim_value = ast.literal_eval(dim_expr)
+        except Exception:
+            return None
+        if isinstance(dim_value, tuple):
+            dim_list = [int(v) for v in list(dim_value)]
+        elif isinstance(dim_value, list):
+            dim_list = [int(v) for v in dim_value]
+        else:
+            return None
+        if dim_list not in ([1, 2], [2, 3]):
+            return None
+        if keepdim_expr is not None and keepdim_expr != "True":
+            return None
+        return indent, lhs, input_expr, list(dim_list)
+
+    def _parse_cf_conv_assign(line: str) -> Tuple[str, str, str, str] | None:
+        assign = _parse_simple_assignment_line(line)
+        if assign is None:
+            return None
+        indent, lhs, rhs = assign
+        match = re.fullmatch(
+            r"self\.(?P<module>[A-Za-z0-9_]+)\((?P<input>[A-Za-z0-9_]+)\.permute\(0,\s*3,\s*1,\s*2\)\.contiguous\(\)\)",
+            rhs.strip(),
+        )
+        if match is not None:
+            return indent, lhs, str(match.group("module")), str(match.group("input"))
+        direct_match = re.fullmatch(
+            r"self\.(?P<module>[A-Za-z0-9_]+)\((?P<input>[A-Za-z0-9_]+)\)",
+            rhs.strip(),
+        )
+        if direct_match is not None:
+            return (
+                indent,
+                lhs,
+                str(direct_match.group("module")),
+                str(direct_match.group("input")),
+            )
+        stripped = rhs.strip()
+        prefix = "self."
+        open_paren = stripped.find("(")
+        if (
+            not stripped.startswith(prefix)
+            or open_paren <= len(prefix)
+            or not stripped.endswith(")")
+        ):
+            return None
+        module_name = stripped[len(prefix) : open_paren]
+        args_expr = stripped[open_paren + 1 : -1]
+        input_expr = _resolve_nhwc_to_nchw_bridge_source(args_expr)
+        if input_expr is None or not re.fullmatch(r"[A-Za-z0-9_]+", input_expr):
+            return None
+        return indent, lhs, module_name, input_expr
+
+    def _parse_scalar_mul_assign(line: str) -> Tuple[str, str, str, float] | None:
+        assign = _parse_simple_assignment_line(line)
+        if assign is None:
+            return None
+        indent, lhs, rhs = assign
+        binary_match = re.fullmatch(r"torch\.mul\((?P<args>.+)\)", rhs.strip())
+        if binary_match is None:
+            return None
+        binary_args = _parse_binary_mul_args(str(binary_match.group("args")))
+        if binary_args is None:
+            return None
+        input_name: str | None = None
+        scalar_expr: str | None = None
+        for candidate in binary_args:
+            candidate = str(candidate).strip()
+            if re.fullmatch(r"[A-Za-z0-9_]+", candidate):
+                input_name = candidate
+            elif re.fullmatch(r"[-+0-9.eE]+", candidate):
+                scalar_expr = candidate
+        if input_name is None or scalar_expr is None:
+            return None
+        try:
+            scalar_value = float(scalar_expr)
+        except Exception:
+            return None
+        return indent, lhs, input_name, scalar_value
+
+    def _parse_scalar_add_align_assign(
+        line: str,
+    ) -> Tuple[str, str, str, float, List[int]] | None:
+        assign = _parse_simple_assignment_line(line)
+        if assign is None:
+            return None
+        indent, lhs, rhs = assign
+        align_parts = _parse_align_tensor_target_shape_expr(rhs)
+        if align_parts is None:
+            return None
+        input_expr, target_expr = align_parts
+        target_shape = _parse_rank4_shape_literal(target_expr)
+        if target_shape is None:
+            return None
+        binary_match = re.fullmatch(r"torch\.add\((?P<args>.+)\)", input_expr.strip())
+        if binary_match is None:
+            return None
+        binary_args = _parse_binary_add_args(str(binary_match.group("args")))
+        if binary_args is None:
+            return None
+        input_name: str | None = None
+        scalar_expr: str | None = None
+        for candidate in binary_args:
+            candidate = str(candidate).strip()
+            if re.fullmatch(r"[A-Za-z0-9_]+", candidate):
+                input_name = candidate
+            elif re.fullmatch(r"[-+0-9.eE]+", candidate):
+                scalar_expr = candidate
+        if input_name is None or scalar_expr is None:
+            return None
+        try:
+            scalar_value = float(scalar_expr)
+        except Exception:
+            return None
+        return indent, lhs, input_name, scalar_value, list(target_shape)
+
+    def _parse_anchor_assign(
+        line: str,
+    ) -> Tuple[str, str, str, str, str, List[int]] | None:
+        assign_match = re.match(
+            r"^(?P<indent>\s*)(?P<lhs0>[A-Za-z0-9_]+)\s*,\s*(?P<lhs1>[A-Za-z0-9_]+)\s*=\s*(?P<expr>.+)$",
+            str(line),
+        )
+        if assign_match is None:
+            return None
+        expr = str(assign_match.group("expr")).strip()
+        prefix = "_align_binary_inputs_to_anchor("
+        if not expr.startswith(prefix) or not expr.endswith(")"):
+            return None
+        parts = _split_top_level_csv_exprs(expr[len(prefix) : -1])
+        input0: str | None = None
+        input1: str | None = None
+        target_expr: str | None = None
+        if len(parts) == 3 and all(
+            re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None for part in parts
+        ):
+            input0, input1, target_expr = (part.strip() for part in parts)
+        else:
+            kwargs: Dict[str, str] = {}
+            for part in parts:
+                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
+                    continue
+                key, value = part.split("=", 1)
+                kwargs[key.strip()] = value.strip()
+            input0 = kwargs.get("a", kwargs.get("input", kwargs.get("lhs")))
+            input1 = kwargs.get("b", kwargs.get("other", kwargs.get("rhs")))
+            target_expr = kwargs.get("target_shape", kwargs.get("shape"))
+        target_shape = (
+            _parse_rank4_shape_literal(target_expr) if target_expr is not None else None
+        )
+        if (
+            input0 is None
+            or input1 is None
+            or target_shape is None
+            or re.fullmatch(r"[A-Za-z0-9_]+", input0) is None
+            or re.fullmatch(r"[A-Za-z0-9_]+", input1) is None
+        ):
+            return None
+        return (
+            str(assign_match.group("indent")),
+            str(assign_match.group("lhs0")),
+            str(assign_match.group("lhs1")),
+            input0,
+            input1,
+            list(target_shape),
+        )
+
+    def _parse_mul_out_assign(line: str) -> Tuple[str, str, str, str, List[int]] | None:
+        assign = _parse_simple_assignment_line(line)
+        if assign is None:
+            return None
+        indent, lhs, rhs = assign
+        align_parts = _parse_align_tensor_target_shape_expr(rhs)
+        if align_parts is None:
+            return None
+        input_expr, target_expr = align_parts
+        target_shape = _parse_rank4_shape_literal(target_expr)
+        if target_shape is None:
+            return None
+        binary_match = re.fullmatch(r"torch\.mul\((?P<args>.+)\)", input_expr.strip())
+        if binary_match is None:
+            return None
+        binary_args = _parse_binary_mul_args(str(binary_match.group("args")))
+        if (
+            binary_args is None
+            or re.fullmatch(r"[A-Za-z0-9_]+", str(binary_args[0]).strip()) is None
+            or re.fullmatch(r"[A-Za-z0-9_]+", str(binary_args[1]).strip()) is None
+        ):
+            return None
+        return (
+            indent,
+            lhs,
+            str(binary_args[0]).strip(),
+            str(binary_args[1]).strip(),
+            list(target_shape),
+        )
+
+    def _parse_cf_dynamic_mul_out_assign(
+        line: str,
+    ) -> Tuple[str, str, str, str, str, int] | None:
+        assign = _parse_simple_assignment_line(line)
+        if assign is None:
+            return None
+        indent, lhs, rhs = assign
+        align_parts = _parse_align_tensor_target_shape_expr(rhs)
+        if align_parts is None:
+            return None
+        input_expr, target_expr = align_parts
+        binary_match = re.fullmatch(r"torch\.mul\((?P<args>.+)\)", input_expr.strip())
+        if binary_match is None:
+            return None
+        binary_args = _parse_binary_mul_args(str(binary_match.group("args")))
+        if (
+            binary_args is None
+            or re.fullmatch(r"[A-Za-z0-9_]+", str(binary_args[0]).strip()) is None
+            or re.fullmatch(r"[A-Za-z0-9_]+", str(binary_args[1]).strip()) is None
+        ):
+            return None
+        target_match = re.fullmatch(
+            r"\[int\((?P<ref>[A-Za-z0-9_]+)\.shape\[0\]\), (?P<c>\d+), "
+            r"int\((?P=ref)\.shape\[2\]\), int\((?P=ref)\.shape\[3\]\)\]",
+            target_expr.strip(),
+        )
+        if target_match is None:
+            return None
+        return (
+            indent,
+            lhs,
+            str(binary_args[0]).strip(),
+            str(binary_args[1]).strip(),
+            str(target_match.group("ref")),
+            int(target_match.group("c")),
+        )
+
+    def _parse_return_identifier(line: str) -> str | None:
+        stripped = str(line).strip()
+        direct_match = re.fullmatch(r"return\s+(?P<value>[A-Za-z0-9_]+)", stripped)
+        if direct_match is not None:
+            return str(direct_match.group("value"))
+        parenthesized_match = re.fullmatch(
+            r"return\s+\(\s*(?P<value>[A-Za-z0-9_]+)\s*\)", stripped
+        )
+        if parenthesized_match is not None:
+            return str(parenthesized_match.group("value"))
+        return None
+
+    index = 0
+    while index <= len(rewritten) - 5:
+        mul_match = _parse_scalar_mul_assign(rewritten[index])
+        add_match = _parse_scalar_add_align_assign(rewritten[index + 1])
+        clamp_match = clamp_re.match(rewritten[index + 2])
+        anchor_match = _parse_anchor_assign(rewritten[index + 3])
+        mul_out_match = _parse_mul_out_assign(rewritten[index + 4])
+        mul_out_cf_match = _parse_cf_dynamic_mul_out_assign(rewritten[index + 4])
+        if (
+            mul_match is None
+            or add_match is None
+            or clamp_match is None
+            or anchor_match is None
+            or (mul_out_match is None and mul_out_cf_match is None)
+        ):
+            index += 1
+            continue
+        try:
+            alpha = float(mul_match[3])
+            beta = float(add_match[3])
+        except Exception:
+            index += 1
+            continue
+        if abs(alpha - alpha_ref) > eps or abs(beta - beta_ref) > eps:
+            index += 1
+            continue
+        mul_out = str(mul_match[1])
+        add_out = str(add_match[1])
+        clamp_out = str(clamp_match.group("out"))
+        source_input = str(mul_match[2])
+        if (
+            str(add_match[2]) != mul_out
+            or str(clamp_match.group("input")) != add_out
+            or str(anchor_match[3]) != clamp_out
+            or sorted(int(v) for v in list(anchor_match[5]))
+            != sorted(int(v) for v in list(add_match[4]))
+        ):
+            index += 1
+            continue
+        anchor_source = str(anchor_match[4])
+        if anchor_source != source_input:
+            index += 1
+            continue
+        try:
+            nhwc_target = [int(v) for v in list(add_match[4])]
+        except Exception:
+            index += 1
+            continue
+        if len(nhwc_target) != 4:
+            index += 1
+            continue
+        cf_target = [nhwc_target[0], nhwc_target[3], nhwc_target[1], nhwc_target[2]]
+        anchor_lhs = {str(anchor_match[1]), str(anchor_match[2])}
+        if mul_out_match is not None:
+            if list(mul_out_match[4]) != list(add_match[4]):
+                index += 1
+                continue
+            mul_inputs = {str(mul_out_match[2]), str(mul_out_match[3])}
+            gated_output = str(mul_out_match[1])
+            gated_indent = str(mul_out_match[0])
+        else:
+            assert mul_out_cf_match is not None
+            cf_ref = str(mul_out_cf_match[4])
+            cf_channel = int(mul_out_cf_match[5])
+            if cf_ref not in anchor_lhs or cf_channel != int(cf_target[1]):
+                index += 1
+                continue
+            mul_inputs = {str(mul_out_cf_match[2]), str(mul_out_cf_match[3])}
+            gated_output = str(mul_out_cf_match[1])
+            gated_indent = str(mul_out_cf_match[0])
+        if anchor_lhs != mul_inputs:
+            index += 1
+            continue
+        function_end = _function_end_index(index)
+        supported_gap_vars: Set[str] = set()
+        safe_to_rewrite = True
+        for lookahead_index in range(index + 5, function_end):
+            line = rewritten[lookahead_index]
+            if not _line_mentions_name(line, gated_output):
+                continue
+            conv_match = _parse_cf_conv_assign(line)
+            if conv_match is not None and str(conv_match[3]) == gated_output:
+                continue
+            mean_match = _parse_gap_mean_assign(line)
+            if mean_match is not None and str(mean_match[2]) == gated_output:
+                supported_gap_vars.add(str(mean_match[1]))
+                continue
+            return_value = _parse_return_identifier(line)
+            if return_value == gated_output:
+                continue
+            anchor_cf_match = anchor_cf_re.match(line) or binary_cf_re.match(line)
+            if anchor_cf_match is not None and gated_output in {
+                str(anchor_cf_match.group("input0")),
+                str(anchor_cf_match.group("input1")),
+            }:
+                continue
+            safe_to_rewrite = False
+            break
+        if not safe_to_rewrite:
+            index += 1
+            continue
+        for gap_var in supported_gap_vars:
+            for lookahead_index in range(index + 5, function_end):
+                line = rewritten[lookahead_index]
+                if not _line_mentions_name(line, gap_var):
+                    continue
+                conv_match = _parse_cf_conv_assign(line)
+                if conv_match is not None and str(conv_match[3]) == gap_var:
+                    continue
+                mean_match = _parse_gap_mean_assign(line)
+                if mean_match is not None and str(mean_match[1]) == gap_var:
+                    continue
+                return_value = _parse_return_identifier(line)
+                if return_value == gap_var:
+                    continue
+                safe_to_rewrite = False
+                break
+            if not safe_to_rewrite:
+                break
+        if not safe_to_rewrite:
+            index += 1
+            continue
+        indent = str(mul_match[0])
+        rewritten[index] = (
+            f"{indent}{clamp_out} = torch.nn.functional.hardsigmoid({source_input})"
+        )
+        rewritten[index + 1] = ""
+        rewritten[index + 2] = ""
+        rewritten[index + 3] = ""
+        rewritten[index + 4] = (
+            f"{gated_indent}{gated_output} = torch.mul({source_input}, {clamp_out})"
+        )
+        for lookahead_index in range(index + 5, function_end):
+            conv_match = _parse_cf_conv_assign(rewritten[lookahead_index])
+            if conv_match is not None and str(conv_match[3]) == gated_output:
+                rewritten[lookahead_index] = (
+                    f"{conv_match[0]}{conv_match[1]} = "
+                    f"self.{conv_match[2]}({gated_output})"
+                )
+                continue
+            mean_match = _parse_gap_mean_assign(rewritten[lookahead_index])
+            if mean_match is not None and str(mean_match[2]) == gated_output:
+                gap_var = str(mean_match[1])
+                if list(mean_match[3]) == [1, 2]:
+                    rewritten[lookahead_index] = (
+                        f"{mean_match[0]}{gap_var} = "
+                        f"torch.mean({gated_output}, dim=[2, 3], keepdim=True)"
+                    )
+                continue
+            conv_match = _parse_cf_conv_assign(rewritten[lookahead_index])
+            if conv_match is not None and str(conv_match[3]) in supported_gap_vars:
+                rewritten[lookahead_index] = (
+                    f"{conv_match[0]}{conv_match[1]} = "
+                    f"self.{conv_match[2]}({conv_match[3]})"
+                )
+        index += 5
+    return [line for line in rewritten if line != ""]

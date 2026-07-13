@@ -6,6 +6,7 @@ from onnx2tf.tflite_builder.pytorch_source_rewrites import (
     _collapse_redundant_torch_permute_chains,
     _fold_boundary_transpose_pad_conv_bridges,
     _fold_channel_first_gap_conv_bridges,
+    _fold_channel_first_hardsigmoid_gate_conv_bridges,
     _fold_channel_last_affine_conv_bridges,
     _fold_channel_last_prelu_bridges,
     _fold_rank4_reshape_permute_conv_bridges,
@@ -145,12 +146,34 @@ def test_rank4_reshape_permute_conv_rewrite_folds_layout_round_trip() -> None:
     ]
 
 
+def test_channel_first_hardsigmoid_gate_rewrite_folds_classifier_block() -> None:
+    assert _fold_channel_first_hardsigmoid_gate_conv_bridges(
+        [
+            "        gate_mul = torch.mul(features_cf, 0.1666666716337204)",
+            "        gate_add = _align_tensor_to_target_shape(torch.add(gate_mul, 0.5), [1, 8, 16, 960])",
+            "        gate_sig = torch.clamp(gate_add, min=0.0, max=1.0)",
+            "        _binary_rhs_0, _binary_lhs_0 = _align_binary_inputs_to_anchor(gate_sig, features_cf, [1, 8, 16, 960])",
+            "        gated_nhwc = _align_tensor_to_target_shape(torch.mul(_binary_lhs_0, _binary_rhs_0), [1, 8, 16, 960])",
+            "        y0 = self.conv_block_62(gated_nhwc.permute(0, 3, 1, 2).contiguous())",
+            "        gap = torch.mean(gated_nhwc, dim=[1, 2], keepdim=True)",
+            "        ygap = self.conv_block_66(gap.permute(0, 3, 1, 2).contiguous())",
+        ]
+    ) == [
+        "        gate_sig = torch.nn.functional.hardsigmoid(features_cf)",
+        "        gated_nhwc = torch.mul(features_cf, gate_sig)",
+        "        y0 = self.conv_block_62(gated_nhwc)",
+        "        gap = torch.mean(gated_nhwc, dim=[2, 3], keepdim=True)",
+        "        ygap = self.conv_block_66(gap)",
+    ]
+
+
 @pytest.mark.parametrize(
     "rewrite",
     [
         _collapse_redundant_torch_permute_chains,
         _fold_boundary_transpose_pad_conv_bridges,
         _fold_channel_first_gap_conv_bridges,
+        _fold_channel_first_hardsigmoid_gate_conv_bridges,
         _fold_channel_last_prelu_bridges,
         _fold_rank4_reshape_permute_conv_bridges,
         _inline_trivial_public_layout_bridge_aliases,

@@ -330,6 +330,16 @@ design. No model conversion or inference was run. Resume with the remaining
 pure GAP/hardsigmoid/binary rewrite helpers before changing graph-aware repair
 policy.
 
+The channel-first hard-sigmoid gate/Conv rewrite also moved to the Torch-free
+source-rewrite owner. Its 441-line implementation is AST-identical to the prior
+exporter definition, including safety checks for later consumers and function
+boundaries. A direct classifier-gate fixture fixes the successful rewrite and
+the shared no-op matrix covers unmatched source. Rewrite and architecture
+validation passes 85 tests; syntax, Ruff, pycompile, diff, and AST-equivalence
+checks pass. No model conversion or inference was run. Resume with the remaining
+channel-last binary bridge rewrite; defer GAP/Conv input repair until its shared
+shape-normalization dependency has a clear owner.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

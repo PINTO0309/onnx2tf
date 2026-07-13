@@ -3822,6 +3822,7 @@ def test_generated_pytorch_gap_se_rewrites_have_single_owner() -> None:
         "_collapse_redundant_torch_permute_chains",
         "_fold_boundary_transpose_pad_conv_bridges",
         "_fold_channel_first_gap_conv_bridges",
+        "_fold_channel_first_hardsigmoid_gate_conv_bridges",
         "_fold_channel_last_affine_conv_bridges",
         "_fold_channel_last_prelu_bridges",
         "_fold_rank4_reshape_permute_conv_bridges",
