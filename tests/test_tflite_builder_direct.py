@@ -124,7 +124,6 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains,
     _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather,
     _optimize_transpose_gather_transpose_axis_remap_nhwc_chains,
-    _optimize_shufflenet_transpose_shuffle_chains,
     _optimize_sinet_concat_resize_affine_transpose_chains,
     _optimize_sinet_dual_resize_affine_transpose_chains,
     _optimize_transposeconv_output_nhwc_passthrough_chains,
@@ -195,6 +194,9 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _sanitize_static_shape_signature_consistency,
     _repair_rank4_channelwise_broadcast_constants_to_runtime_layout,
     lower_onnx_to_ir,
+)
+from onnx2tf.tflite_builder.passes.channel_shuffle import (
+    run_two_way_channel_shuffle_cleanup,
 )
 from onnx2tf.utils.onnx_litert_runtime import check_model_has_external_data
 from onnx2tf.tflite_builder.model_writer import serialize_model
@@ -23527,7 +23529,9 @@ def test_flatbuffer_direct_transpose_relu_split_conv_relu_concat_posttranspose_t
     assert list(model_ir.tensors["cat_nchw"].shape) == [1, 5, 7, 6]
 
 
-def test_flatbuffer_direct_shufflenet_transpose_shuffle_chain_optimized() -> None:
+def test_flatbuffer_direct_shufflenet_transpose_shuffle_chain_optimized(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("shufflenet_transpose_shuffle_chain_opt_test")
     model_ir.inputs = ["x0_nhwc", "x1_nhwc"]
     model_ir.outputs = ["out_nchw"]
@@ -23713,8 +23717,25 @@ def test_flatbuffer_direct_shufflenet_transpose_shuffle_chain_optimized() -> Non
         ),
     ]
 
-    stats = _optimize_shufflenet_transpose_shuffle_chains(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    diagnostics: list[dict] = []
+    stats = run_two_way_channel_shuffle_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+    )
     assert stats["optimized_shufflenet_transpose_shuffle_chains"] == 1
+    assert refresh_count == 1
+    assert diagnostics[0]["code"] == "canonicalize.two_way_channel_shuffle_branch"
+    assert diagnostics[0]["status"] == "changed"
+    assert diagnostics[0]["metrics"]["snapshot_count"] == 1
 
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("TRANSPOSE") <= 2
@@ -23934,7 +23955,7 @@ def test_flatbuffer_direct_shufflenet_transpose_slice_shuffle_chain_optimized() 
         ),
     ]
 
-    stats = _optimize_shufflenet_transpose_shuffle_chains(model_ir)
+    stats = run_two_way_channel_shuffle_cleanup(model_ir)
     assert stats["optimized_shufflenet_transpose_shuffle_chains"] == 1
 
     op_types = [str(op.op_type) for op in model_ir.operators]

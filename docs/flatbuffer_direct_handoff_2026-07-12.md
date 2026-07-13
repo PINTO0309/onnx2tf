@@ -3222,3 +3222,40 @@ complete direct selection:
 ```text
 1148 passed, 5 deselected, 2 warnings in 147.45s
 ```
+
+### Indexed two-way shuffle branch/Concat checkpoint
+
+The 609-line rewrite now accepts one differential `ModelIRGraphIndex` and
+active `LayoutState`. All producer/consumer reads, branch input replacement,
+unary and Concat input/output mutation, three operator insertions, eight
+identity-based removals, and pruning update the shared state. The previous
+whole-graph producer/consumer builds, `_op_index` scan, removal scan, and direct
+list mutation were removed. The complete extracted channel-shuffle family now
+has zero whole-graph map builders and zero direct operator-list insert/delete.
+
+`run_two_way_channel_shuffle_cleanup` registers stable ID
+`canonicalize.two_way_channel_shuffle_branch` in `CANONICALIZE`. Model-only
+preflight requires Concat, Reshape, Transpose, and Gather/Slice selector
+capabilities. Its indexed prefix guard proves the exclusive common shuffle
+prefix and exactly two selector consumers before snapshotting; the existing
+deep matcher retains full selector-constant, branch/skip, allowed-op,
+permutation, shape, public-output, and downstream Concat validation. All five
+production positions now use the runner and session diagnostics.
+
+Both existing full positive graphs now execute through the runner, covering
+rank-five Gather and rank-four Slice selectors. The Gather variant proves one
+initial index refresh and one transactional snapshot. Architecture and
+irrelevant-graph efficiency checks also passed. Tier 1 `superpoint.onnx`
+produced five skipped events and zero snapshots/fingerprints; sequential
+`-cotof` retained `max_abs=1.6666e-06`, `rmse=1.62079e-07`, cosine similarity
+`1`, and the strict pass result.
+
+The complete direct regression selection passed:
+
+```text
+1148 passed, 5 deselected, 2 warnings in 148.25s
+```
+
+No dependency or TensorFlow path was added. Inference remained sequential and
+single-process; `/tmp/onnx2tf_two_way_shuffle_superpoint*` was removed after
+metrics inspection.

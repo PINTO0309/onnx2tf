@@ -119,8 +119,20 @@ Conv/elementwise branch and the other as a skip, converts both selectors to
 axis-3 Gathers, moves the final Concat to NHWC, and restores the downstream
 NCHW boundary. The complete 609-line implementation moved with an identical
 AST; its two existing positive tests cover both selector representations. The
-lowerer retains a compatibility wrapper and all five production calls remain
-in place pending a separate differential-index migration.
+lowerer retains a compatibility wrapper.
+
+All five production positions now call `run_two_way_channel_shuffle_cleanup`,
+registered as `canonicalize.two_way_channel_shuffle_branch` in
+`CANONICALIZE`. Model-only Concat/Reshape/Transpose/selector preflight avoids
+state construction for irrelevant graphs. An indexed prefix guard proves the
+exclusive Concat→layout-Transpose→Reshape→shuffle-Transpose→Reshape→two-selector
+shape before snapshotting; the existing deep matcher then validates selector
+constants, branch/skip topology, op allowlists, layouts, shapes, and public
+boundaries. Every consumer/producer lookup, input/output rewrite, Gather and
+boundary insertion, id-based structural removal replacement, and pruning now
+uses one differential index and `LayoutState` transactionally. The family has
+no whole-graph map builders, full operator searches for removal, or direct
+operator-list insert/delete operations.
 
 Synthetic input-boundary transpose elision lives in
 `passes/boundary_input_layout.py`. It only removes the adapter when public and

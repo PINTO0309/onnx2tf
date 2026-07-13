@@ -5,8 +5,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _is_fully_known_positive_shape,
     _permute_tensor_metadata_if_rank_matches,
@@ -48,7 +46,12 @@ _NHWC_CHANNEL_SHUFFLE_UNARY_OPS = frozenset(
 )
 
 
-def _optimize_shufflenet_transpose_shuffle_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_shufflenet_transpose_shuffle_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+    layout_state: LayoutState | None = None,
+) -> Dict[str, int]:
     """
     Optimize ShuffleNet-style channel-shuffle blocks that rely on NCHW transpose chains.
 
@@ -70,6 +73,7 @@ def _optimize_shufflenet_transpose_shuffle_chains(model_ir: ModelIR) -> Dict[str
     This preserves downstream NCHW contracts while reducing redundant transpose chains.
     """
     optimized = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     perm_nhwc_to_nchw = [0, 3, 1, 2]
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     unary_ops = {
@@ -111,10 +115,7 @@ def _optimize_shufflenet_transpose_shuffle_chains(model_ir: ModelIR) -> Dict[str
             suffix += 1
 
     def _op_index(op_ref: OperatorIR) -> Optional[int]:
-        for idx, op in enumerate(model_ir.operators):
-            if id(op) == id(op_ref):
-                return int(idx)
-        return None
+        return graph_index.operator_index(op_ref)
 
     def _is_singleton_channel_nhwc_to_nchw_reshape(
         *,
@@ -209,8 +210,8 @@ def _optimize_shufflenet_transpose_shuffle_chains(model_ir: ModelIR) -> Dict[str
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for concat0_idx, concat0_op in enumerate(model_ir.operators):
@@ -530,7 +531,12 @@ def _optimize_shufflenet_transpose_shuffle_chains(model_ir: ModelIR) -> Dict[str
             skip_branch_input_nhwc = odd_name if int(conv_split_idx_value) == 0 else even_name
 
             # Rewrite branch start input.
-            _replace_tensor_inputs(model_ir, pre_conv_out_name, conv_branch_input_nhwc)
+            _replace_tensor_inputs(
+                model_ir,
+                pre_conv_out_name,
+                conv_branch_input_nhwc,
+                graph_index=graph_index,
+            )
 
             # Rewire unary tail (if present) to NHWC by bypassing post transpose.
             if len(unary_chain_indices) > 0:
@@ -539,6 +545,7 @@ def _optimize_shufflenet_transpose_shuffle_chains(model_ir: ModelIR) -> Dict[str
                     model_ir=model_ir,
                     op=model_ir.operators[first_unary_idx],
                     new_inputs=[branch_nhwc_tail_name],
+                    graph_index=graph_index,
                 )
                 for unary_idx in unary_chain_indices:
                     unary_out_name = str(model_ir.operators[int(unary_idx)].outputs[0])
@@ -590,12 +597,14 @@ def _optimize_shufflenet_transpose_shuffle_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=concat1_op,
                 new_inputs=[str(v) for v in list(new_concat1_inputs)],
+                graph_index=graph_index,
             )
             concat1_op.options["axis"] = 3
             _set_operator_outputs(
                 model_ir=model_ir,
                 op=concat1_op,
                 new_outputs=[concat1_out_nhwc_name],
+                graph_index=graph_index,
             )
 
             post_perm_name = str(transpose_post_op.inputs[1]) if len(transpose_post_op.inputs) >= 2 else ""
@@ -615,7 +624,7 @@ def _optimize_shufflenet_transpose_shuffle_chains(model_ir: ModelIR) -> Dict[str
             concat1_current_idx = _op_index(concat1_op)
             if concat1_current_idx is None:
                 continue
-            model_ir.operators.insert(
+            graph_index.insert_operator(
                 int(concat1_current_idx) + 1,
                 OperatorIR(
                     op_type="TRANSPOSE",
@@ -627,26 +636,35 @@ def _optimize_shufflenet_transpose_shuffle_chains(model_ir: ModelIR) -> Dict[str
             concat0_current_idx = _op_index(concat0_op)
             if concat0_current_idx is None:
                 continue
-            model_ir.operators.insert(int(concat0_current_idx) + 1, even_gather_op)
-            model_ir.operators.insert(int(concat0_current_idx) + 2, odd_gather_op)
+            graph_index.insert_operator(
+                int(concat0_current_idx) + 1,
+                even_gather_op,
+            )
+            graph_index.insert_operator(
+                int(concat0_current_idx) + 2,
+                odd_gather_op,
+            )
 
-            remove_ids = {
-                int(id(t0_op)),
-                int(id(r1_op)),
-                int(id(t1_op)),
-                int(id(r2_op)),
-                int(id(split_candidates[0][1])),
-                int(id(split_candidates[1][1])),
-                int(id(pre_conv_t_op)),
-                int(id(transpose_post_op)),
+            remove_ops = {
+                id(op): op
+                for op in (
+                    t0_op,
+                    r1_op,
+                    t1_op,
+                    r2_op,
+                    split_candidates[0][1],
+                    split_candidates[1][1],
+                    pre_conv_t_op,
+                    transpose_post_op,
+                )
             }
             remove_indices = [
-                int(idx)
-                for idx, op in enumerate(model_ir.operators)
-                if int(id(op)) in remove_ids
+                int(operator_index)
+                for op in remove_ops.values()
+                if (operator_index := graph_index.operator_index(op)) is not None
             ]
             for remove_idx in sorted(list(set(remove_indices)), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             optimized += 1
             changed = True
@@ -655,8 +673,146 @@ def _optimize_shufflenet_transpose_shuffle_chains(model_ir: ModelIR) -> Dict[str
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_shufflenet_transpose_shuffle_chains": int(optimized)}
+
+
+def run_two_way_channel_shuffle_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: LayoutState | None = None,
+    diagnostics: List[Dict[str, Any]] | None = None,
+) -> Dict[str, int]:
+    """Canonicalize guarded two-way channel-shuffle branch/Concat graphs."""
+
+    def _preflight(candidate_model: ModelIR) -> ModelIRPreflightResult:
+        found_concat = False
+        found_reshape = False
+        found_transpose = False
+        found_selector = False
+        for visited, operator in enumerate(candidate_model.operators, start=1):
+            operator_type = str(operator.op_type)
+            found_concat = found_concat or operator_type == "CONCATENATION"
+            found_reshape = found_reshape or operator_type == "RESHAPE"
+            found_transpose = found_transpose or operator_type == "TRANSPOSE"
+            found_selector = found_selector or operator_type in {"GATHER", "SLICE"}
+            if found_concat and found_reshape and found_transpose and found_selector:
+                return ModelIRPreflightResult(True, visited)
+        return ModelIRPreflightResult(False, len(candidate_model.operators))
+
+    def _has_candidate(pass_state: ModelIRPassState) -> bool:
+        candidate_model = pass_state.model_ir
+        model_outputs = set(str(name) for name in candidate_model.outputs)
+        for concat_op in candidate_model.operators:
+            if (
+                str(concat_op.op_type) != "CONCATENATION"
+                or len(concat_op.outputs) != 1
+                or int(concat_op.options.get("axis", -1)) != 3
+            ):
+                continue
+            concat_output_name = str(concat_op.outputs[0])
+            concat_tensor = candidate_model.tensors.get(concat_output_name)
+            if concat_tensor is None or len(concat_tensor.shape) != 4:
+                continue
+            channels = int(concat_tensor.shape[3])
+            if channels <= 0 or channels % 2 != 0:
+                continue
+            concat_users = pass_state.graph_index.consumer_indices(
+                concat_output_name
+            )
+            if len(concat_users) != 1:
+                continue
+            t0_op = candidate_model.operators[int(concat_users[0])]
+            if (
+                str(t0_op.op_type) != "TRANSPOSE"
+                or len(t0_op.inputs) < 2
+                or len(t0_op.outputs) != 1
+                or _read_transpose_perm(candidate_model, t0_op)
+                != _NHWC_TO_NCHW_PERM
+                or str(t0_op.outputs[0]) in model_outputs
+            ):
+                continue
+            t0_users = pass_state.graph_index.consumer_indices(str(t0_op.outputs[0]))
+            if len(t0_users) != 1:
+                continue
+            r1_op = candidate_model.operators[int(t0_users[0])]
+            if (
+                str(r1_op.op_type) != "RESHAPE"
+                or len(r1_op.inputs) < 1
+                or len(r1_op.outputs) != 1
+                or str(r1_op.outputs[0]) in model_outputs
+            ):
+                continue
+            r1_users = pass_state.graph_index.consumer_indices(str(r1_op.outputs[0]))
+            if len(r1_users) != 1:
+                continue
+            t1_op = candidate_model.operators[int(r1_users[0])]
+            if (
+                str(t1_op.op_type) != "TRANSPOSE"
+                or len(t1_op.inputs) < 2
+                or len(t1_op.outputs) != 1
+                or _read_transpose_perm(candidate_model, t1_op)
+                not in ([1, 0, 2], _CHANNEL_SHUFFLE_SWAP_PERM)
+                or str(t1_op.outputs[0]) in model_outputs
+            ):
+                continue
+            t1_users = pass_state.graph_index.consumer_indices(str(t1_op.outputs[0]))
+            if len(t1_users) != 1:
+                continue
+            r2_op = candidate_model.operators[int(t1_users[0])]
+            if (
+                str(r2_op.op_type) != "RESHAPE"
+                or len(r2_op.inputs) < 1
+                or len(r2_op.outputs) != 1
+                or str(r2_op.outputs[0]) in model_outputs
+            ):
+                continue
+            selector_users = pass_state.graph_index.consumer_indices(
+                str(r2_op.outputs[0])
+            )
+            if len(selector_users) != 2:
+                continue
+            selector_types = {
+                str(candidate_model.operators[int(index)].op_type)
+                for index in selector_users
+            }
+            if selector_types <= {"GATHER", "SLICE"}:
+                return True
+        return False
+
+    def _run(pass_state: ModelIRPassState) -> Dict[str, int | bool]:
+        stats = _optimize_shufflenet_transpose_shuffle_chains(
+            pass_state.model_ir,
+            graph_index=pass_state.graph_index,
+            layout_state=pass_state.layout_state,
+        )
+        return {
+            **stats,
+            "changed": bool(
+                stats.get("optimized_shufflenet_transpose_shuffle_chains", 0)
+            ),
+        }
+
+    details, _ = run_model_ir_pass_group(
+        model_ir,
+        specs=[
+            PassSpec(
+                pass_id="canonicalize.two_way_channel_shuffle_branch",
+                phase=PassPhase.CANONICALIZE,
+                callback=_run,
+                precondition=_has_candidate,
+                priority=10,
+                transactional=True,
+            )
+        ],
+        layout_state=layout_state,
+        default_details={"optimized_shufflenet_transpose_shuffle_chains": 0},
+        diagnostics=diagnostics,
+        preflight=_preflight,
+    )
+    return {str(key): int(value) for key, value in details.items()}
 
 
 
