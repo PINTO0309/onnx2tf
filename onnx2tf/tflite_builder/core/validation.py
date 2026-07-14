@@ -69,10 +69,23 @@ def assert_model_ir_invariants(model_ir: ModelIR) -> None:
         )
 
 
-def run_model_ir_validation_pipeline(model_ir: ModelIR) -> None:
-    """Run the final invariant gate through the shared ordered pass engine."""
+def run_model_ir_validation_pipeline(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex | None = None,
+) -> None:
+    """Run the final invariant gate through the shared ordered pass engine.
 
-    manager = OrderedPassManager[ModelIR](validator=validate_model_ir_invariants)
+    Callers that already maintain a current index may pass it to avoid rebuilding
+    the same producer/consumer state immediately before serialization.
+    """
+
+    manager = OrderedPassManager[ModelIR](
+        validator=lambda candidate: validate_model_ir_invariants(
+            candidate,
+            graph_index=graph_index,
+        )
+    )
     manager.register(
         PassSpec(
             pass_id="model_ir.structural_invariants",

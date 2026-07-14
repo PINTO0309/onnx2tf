@@ -784,7 +784,10 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             model_ir_fp32_tflite,
             graph_index=fp32_write_graph_index,
         )
-        run_model_ir_validation_pipeline(model_ir_fp32_tflite)
+        run_model_ir_validation_pipeline(
+            model_ir_fp32_tflite,
+            graph_index=fp32_write_graph_index,
+        )
         write_model_file(
             schema_tflite=schema_tflite,
             model_ir=model_ir_fp32_tflite,
@@ -1028,7 +1031,10 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             model_ir_fp16_tflite,
             graph_index=fp16_write_graph_index,
         )
-        run_model_ir_validation_pipeline(model_ir_fp16_tflite)
+        run_model_ir_validation_pipeline(
+            model_ir_fp16_tflite,
+            graph_index=fp16_write_graph_index,
+        )
         write_model_file(
             schema_tflite=schema_tflite,
             model_ir=model_ir_fp16_tflite,

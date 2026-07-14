@@ -53,6 +53,13 @@ constant-input Cast/Pool/Pad/ScatterND/binary folding use these single- or
 multi-type indices; each successful mutation restarts against the updated
 index.
 
+The final ModelIR validation pipeline accepts an optional current caller-owned
+index. Float32 and float16 serialization preparation passes the same index used
+and differentially maintained by terminal ScatterND/binary constant folding,
+so invariant validation does not reconstruct identical producer/consumer and
+duplicate-producer state immediately before writing. Callers without a current
+index retain the original self-contained validation behavior.
+
 Indexed root enumeration is used by the rank-four float and quantized Concat
 families and by the bounded axis-3 constant-Concat, Add/Concat suffix, rank-five
 NDHWC Concat, Concat/unary/Conv, SPP, and Dequantize/Concat/Quantize passes.

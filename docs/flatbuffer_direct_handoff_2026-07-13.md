@@ -754,6 +754,16 @@ byte for byte at the ModelIR fingerprint level. Focused crop/split/clone tests
 pass 32 tests. An 11-run synthetic 2,000-op median improved from 0.039883s to
 0.037330s (1.07x). No model conversion or inference was run.
 
+The final ModelIR invariant gate now accepts an optional current
+`ModelIRGraphIndex`. Float32 and float16 artifact preparation reuses the index
+already built and differentially maintained by terminal ScatterND and binary
+constant folding instead of rebuilding the same topology immediately before
+serialization. Callers that do not own an index keep the previous behavior.
+Two hundred fixed-seed graphs produce identical validation problem lists with
+eager and shared indexes, and the focused core/artifact selection passes 41
+tests. A 21-run synthetic 2,000-op validation median improved from 0.002606s to
+0.001233s (2.11x). No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

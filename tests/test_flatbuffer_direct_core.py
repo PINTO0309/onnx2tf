@@ -6,6 +6,7 @@ import numpy as np
 import onnx
 import pytest
 from onnx import TensorProto, helper
+import onnx2tf.tflite_builder.core.validation as validation_module
 
 from onnx2tf.tflite_builder.core import (
     ConversionRequest,
@@ -97,6 +98,26 @@ def test_conversion_session_builds_one_graph_index() -> None:
     )
     session.refresh_indexes()
     assert session.layout_state.logical_of("new") == "NHWC"
+
+
+def test_validation_pipeline_reuses_current_caller_index(monkeypatch) -> None:
+    model_ir = _add_model_ir()
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    class _UnexpectedGraphIndex:
+        def __init__(self, _model_ir):
+            raise AssertionError("validation rebuilt a caller-owned graph index")
+
+    monkeypatch.setattr(
+        validation_module,
+        "ModelIRGraphIndex",
+        _UnexpectedGraphIndex,
+    )
+
+    validation_module.run_model_ir_validation_pipeline(
+        model_ir,
+        graph_index=graph_index,
+    )
 
 
 def test_lowerer_private_sink_collects_internal_pass_diagnostics() -> None:

@@ -163,6 +163,45 @@ def test_float16_tflite_write_reuses_its_terminal_precision_ir() -> None:
     assert assignments[0].value.id == "model_ir_fp16"
 
 
+def test_precision_validation_reuses_write_graph_indexes() -> None:
+    builder_tree = ast.parse(
+        (REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py").read_text(
+            encoding="utf-8"
+        )
+    )
+    export_function = next(
+        node
+        for node in builder_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "export_tflite_model_flatbuffer_direct"
+    )
+    validation_index_by_model = {}
+    for node in ast.walk(export_function):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "run_model_ir_validation_pipeline"
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+        ):
+            continue
+        graph_index_keyword = next(
+            (
+                keyword.value
+                for keyword in node.keywords
+                if keyword.arg == "graph_index"
+            ),
+            None,
+        )
+        if isinstance(graph_index_keyword, ast.Name):
+            validation_index_by_model[node.args[0].id] = graph_index_keyword.id
+
+    assert validation_index_by_model == {
+        "model_ir_fp32_tflite": "fp32_write_graph_index",
+        "model_ir_fp16_tflite": "fp16_write_graph_index",
+    }
+
+
 def test_terminal_artifact_state_is_released_after_its_last_use() -> None:
     builder_tree = ast.parse(
         (REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py").read_text(
