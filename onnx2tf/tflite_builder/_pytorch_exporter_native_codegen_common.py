@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR
 
 
@@ -16,12 +17,19 @@ class _NativeModelFileWriterContext:
     package_dir: Path
     preserve_channel_last_tensor_names: Set[str]
     tensor_var_names: Dict[str, str]
-    producer_index: Dict[str, int]
-    consumer_index: Dict[str, List[int]]
+    graph_index: ModelIRGraphIndex
     module_init_lines: List[str] = field(default_factory=list)
     load_specs: List[Tuple[str, str]] = field(default_factory=list)
     runtime_imports: Set[str] = field(default_factory=set)
     forward_lines: List[str] = field(default_factory=list)
+
+    @property
+    def producer_index(self) -> Dict[str, int]:
+        return self.graph_index.producers
+
+    @property
+    def consumer_index(self) -> Dict[str, List[int]]:
+        return self.graph_index.consumers
 
 
 @dataclass

@@ -25761,8 +25761,6 @@ def _write_native_model_file(
     package_dir = Path(output_folder_path)
     _ensure_direct_codegen_supported(model_ir)
     graph_index = ModelIRGraphIndex(model_ir)
-    producer_index = graph_index.producers
-    consumer_index = graph_index.consumers
     load_specs = _write_native_model_file_impl(
         _NativeModelFileWriterContext(
             output_folder_path,
@@ -25775,8 +25773,7 @@ def _write_native_model_file(
                 graph_index=graph_index,
             ),
             _build_tensor_var_name_map(model_ir),
-            producer_index,
-            consumer_index,
+            graph_index,
         )
     )
     _patch_generated_runtime_pool2d_channel_last_recovery(package_dir)

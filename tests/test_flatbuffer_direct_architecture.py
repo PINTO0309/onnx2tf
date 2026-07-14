@@ -4154,6 +4154,12 @@ def test_native_pytorch_codegen_uses_shared_model_ir_graph_index() -> None:
     exporter_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
     ).read_text(encoding="utf-8")
+    context_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "_pytorch_exporter_native_codegen_common.py"
+    ).read_text(encoding="utf-8")
     exporter_tree = ast.parse(exporter_source)
     exporter_functions = {
         node.name: node
@@ -4171,6 +4177,23 @@ def test_native_pytorch_codegen_uses_shared_model_ir_graph_index() -> None:
         and node.func.id == "ModelIRGraphIndex"
     ]
     assert len(constructor_calls) == 1
+    context_class = next(
+        node
+        for node in ast.parse(context_source).body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "_NativeModelFileWriterContext"
+    )
+    context_fields = {
+        node.target.id
+        for node in context_class.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+    }
+    assert "graph_index" in context_fields
+    assert "producer_index" not in context_fields
+    assert "consumer_index" not in context_fields
+    assert "def producer_index(" in context_source
+    assert "def consumer_index(" in context_source
     collector_calls = [
         node
         for node in ast.walk(writer)
@@ -4185,6 +4208,16 @@ def test_native_pytorch_codegen_uses_shared_model_ir_graph_index() -> None:
         and keyword.value.id == "graph_index"
         for keyword in collector_calls[0].keywords
     )
+    context_calls = [
+        node
+        for node in ast.walk(writer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_NativeModelFileWriterContext"
+    ]
+    assert len(context_calls) == 1
+    assert isinstance(context_calls[0].args[-1], ast.Name)
+    assert context_calls[0].args[-1].id == "graph_index"
     assert not any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)

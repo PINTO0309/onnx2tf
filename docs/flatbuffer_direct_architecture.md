@@ -1888,9 +1888,10 @@ former second index over the same prepared graph. The public
 returns only ModelIR, and the layout-agnostic error fallback creates its own
 index after constructing a different fallback graph.
 Native model-file generation likewise creates one index and supplies it to
-feature-last collection before reusing its producer and consumer tables in the
-writer context. Code generation therefore does not build a second index over
-the same prepared ModelIR.
+feature-last collection before placing the index itself in the writer context.
+Read-only producer and consumer compatibility properties expose that same
+object's maps to the generated pipeline. Code generation therefore does not
+build a second index or detach raw tables from their owner.
 
 PyTorch convolution-filter physicalization is also owned by the Torch-free
 layout module. It queries only Conv2D, depthwise Conv2D, transpose-Conv2D,
@@ -2378,9 +2379,10 @@ source strings and ModelIR layout/consumer guards therefore remain unchanged.
 
 Native model-file generation builds its producer/consumer view through the
 shared `ModelIRGraphIndex`. The exporter no longer owns a second complete graph
-scan or a separate indexing policy. Codegen receives the shared index maps as
-read-only context, preserving operator-index semantics while aligning package
-generation with the fixed conversion-session graph contract.
+scan or a separate indexing policy. Codegen context owns the shared index and
+exposes its maps through read-only compatibility properties, preserving
+operator-index semantics while aligning package generation with the fixed
+conversion-session graph contract.
 
 Generated-package import and native state-dict reconciliation live in
 `pytorch_state_dict_support.py`. Import-name sanitization, stale generated

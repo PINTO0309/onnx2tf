@@ -913,6 +913,13 @@ argument and passes 81 tests. A 101-run synthetic 2,000-op writer-preflight
 median improved from 0.003089471s to 0.001504030s (2.05x), with an identical
 feature-last closure. No model conversion or inference was run.
 
+The writer context now retains that `ModelIRGraphIndex` itself instead of two
+detached raw map fields. Read-only `producer_index` and `consumer_index`
+properties preserve the generated pipeline contract while guaranteeing both
+views come from the same index owner. A direct identity test and the focused
+architecture contract pass, together with Ruff and syntax validation. No model
+conversion or inference was run.
+
 Conv2D, Conv3D, and transpose-Conv3D output-spatial shape calculation moved
 from the monolithic exporter to the Torch-free `pytorch_shape_policy.py`
 owner. Forward 2-D and 3-D formulas now share one rank-parameterized helper,
