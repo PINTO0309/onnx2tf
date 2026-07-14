@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit centralizes the remaining two exact 5-call
-families. Three safe binary-bridge sequences, including the quantized-helper
-copy, now use one owner; two QLinear/Mean/Concat recovery sequences use a
-second owner. All ten operations are raw ModelIR mutators. Conditional binary,
-post-QDQ, progress-description, layout-prefix, and Concat-recovery boundaries
-remain outside their respective helpers. Runtime-expanded AST comparison with
-the preceding commit is identical, while the lowerer loses another 6 net
-lines.
+The latest implementation unit shares one `ModelIRGraphIndex` across each of
+the two repeated post-lowering shape-convergence blocks. Dead-operator pruning
+updates that index differentially; both shape-reconciliation calls reuse its
+producer map, and dynamic Reshape resolution enumerates only indexed Reshape
+roots. The remaining operations mutate tensor shapes, signatures, constant
+data, and options without changing graph structure, so no index rebuild is
+needed. A characterization test proves exact operator/tensor equality with the
+former four-call sequence and records one index build per block.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains fifty-two coherent continuations:
+The current `fb-refactor5` work contains fifty-three coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -147,8 +147,10 @@ The current `fb-refactor5` work contains fifty-two coherent continuations:
   sequences while retaining their distinct boundaries;
 - `ef61c03c` centralizes four identical 6-call SiNet pre-Add/Resize recovery
   sequences while retaining all external boundaries;
-- the current checkpoint centralizes the remaining safe-binary and QLinear/
-  Mean/Concat 5-call families while preserving their conditions.
+- `48dd2324` centralizes the remaining safe-binary and QLinear/Mean/Concat
+  5-call families while preserving their conditions;
+- the current checkpoint shares one differential graph index through each
+  repeated prune/reconcile/Reshape-resolution convergence block.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -167,6 +169,7 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
+- `tests/test_flatbuffer_direct_dynamic_reshape.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -269,6 +272,13 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   index. All six production occurrences retain the exact order
   transpose-Mean, Mean/Mul/Add/Conv, optional LayerNorm, terminal Mean, SE conv,
   SE FC, and optional Conv attention.
+- Each repeated shape-convergence block now builds one `ModelIRGraphIndex`.
+  Dead-operator pruning is the only structural mutation and updates that index
+  through `remove_operators`; the following reconciliation and dynamic-
+  Reshape steps change only metadata, options, and constant data. A supplied
+  index lets reconciliation reuse its producer map and lets Reshape resolution
+  enumerate only `RESHAPE` roots. Callers that omit an index retain the former
+  full-scan behavior, and an index for another ModelIR is ignored safely.
 - The same scope contract covers only the five repeated gate-layout sequences
   that were audited as contiguous registered runners. Four keep the exact
   mixed-attention, elementwise-gate, Pad, dual-postconv-gate, NDHWC-gate,
@@ -1194,6 +1204,14 @@ core, and pass-efficiency passed separately with `85 passed`, for a combined
 selection total of `224 passed`. Its single sequential quantization,
 evaluation, and coverage integration smoke passed with `1 passed`.
 
+The indexed shape-convergence checkpoint passed its focused dynamic-Reshape,
+shape-reconciliation, legacy-equivalence, single-index-build, and ownership
+selection with `13 passed`. The complete architecture file passed with
+`140 passed`; artifact-metadata, artifact-policy, core, and pass-efficiency
+passed separately with `85 passed`, for a combined selection total of
+`225 passed`. Its single sequential quantization, evaluation, and coverage
+integration smoke passed with `1 passed`.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1239,10 +1257,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit remaining repeated post-lowering sequences for exact structural
-   identity before extracting another ordered helper. Do not merge variant
-   sequences or share pass state across a raw ModelIR mutation, shape
-   reconciliation, topological sort, condition, or fallback-IR boundary.
+2. Use the indexed convergence boundary as the next entry point for reducing
+   redundant post-lowering graph scans. Share an index only when every
+   structural mutation updates it differentially; retain the compatibility
+   fallback for standalone callers and do not cross a fallback-IR boundary.
 3. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

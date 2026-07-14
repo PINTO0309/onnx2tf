@@ -1310,11 +1310,94 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
         next_call_names.append(following.value.func.id)
     assert previous_call_names == [
         "_run_terminal_clamp_unary_relu_pass_cluster",
-        "_reconcile_static_tensor_shapes",
+        "_run_indexed_shape_convergence_cleanup",
     ]
     assert next_call_names == [
         "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains",
         "_run_sinet_preadd_resize_recovery_sequence",
+    ]
+
+
+def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    helper_name = "_run_indexed_shape_convergence_cleanup"
+    helper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    assignments = [
+        statement
+        for statement in helper.body
+        if isinstance(statement, (ast.Assign, ast.AnnAssign))
+    ]
+    calls = []
+    for statement in assignments:
+        value = statement.value
+        if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+            calls.append(value)
+    assert [call.func.id for call in calls] == [
+        "ModelIRGraphIndex",
+        "_prune_dead_operators",
+        "_reconcile_static_tensor_shapes",
+        "_resolve_dynamic_reshape_shapes",
+        "_reconcile_static_tensor_shapes",
+    ]
+    for call in calls[1:]:
+        graph_index_keyword = next(
+            keyword for keyword in call.keywords if keyword.arg == "graph_index"
+        )
+        assert isinstance(graph_index_keyword.value, ast.Name)
+        assert graph_index_keyword.value.id == "graph_index"
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    invocation_indexes = [
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == helper_name
+    ]
+    assert len(invocation_indexes) == 2
+    previous_call_names = []
+    next_call_names = []
+    for index in invocation_indexes:
+        invocation = lowerer.body[index].value
+        assert len(invocation.args) == 1
+        assert isinstance(invocation.args[0], ast.Name)
+        assert invocation.args[0].id == "model_ir"
+        layout_keyword = next(
+            keyword
+            for keyword in invocation.keywords
+            if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
+        previous = lowerer.body[index - 1]
+        following = lowerer.body[index + 1]
+        for boundary in (previous, following):
+            assert isinstance(boundary, ast.Expr)
+            assert isinstance(boundary.value, ast.Call)
+            assert isinstance(boundary.value.func, ast.Name)
+        previous_call_names.append(previous.value.func.id)
+        next_call_names.append(following.value.func.id)
+    assert previous_call_names == [
+        "_run_singleton_reshape_layout_pass_cluster",
+        "_optimize_window_reverse_reshape_transpose_to_depth_to_space_chains",
+    ]
+    assert next_call_names == [
+        "_run_sinet_terminal_layout_recovery_sequence",
+        "_sanitize_hardswish_tensor_shapes",
     ]
 
 

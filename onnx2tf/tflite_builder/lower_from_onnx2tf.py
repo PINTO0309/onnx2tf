@@ -1009,6 +1009,8 @@ def _resolve_reshape_new_shape_from_static_input(
 def _resolve_dynamic_reshape_shapes(
     model_ir: ModelIR,
     prefer_runtime_inferable_from_onnx_raw: bool = False,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Dict[str, int]:
     def _sanitize_reshape_template(
         *,
@@ -1034,8 +1036,22 @@ def _resolve_dynamic_reshape_shapes(
 
         return [int(v) for v in list(sanitized)]
 
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    candidate_operators = (
+        (
+            model_ir.operators[int(operator_index)]
+            for operator_index in active_index.operator_indices("RESHAPE")
+        )
+        if active_index is not None
+        else iter(model_ir.operators)
+    )
+
     resolved_count = 0
-    for op in model_ir.operators:
+    for op in candidate_operators:
         if str(op.op_type) != "RESHAPE":
             continue
         if bool(op.options.get("layoutTransposeAsReshape", False)):
@@ -2811,7 +2827,11 @@ def _infer_conv_out_dim(
     return None
 
 
-def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
+def _reconcile_static_tensor_shapes(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Dict[str, int]:
     """
     Recompute static tensor shapes after aggressive graph rewrites.
 
@@ -2820,12 +2840,25 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
     shape propagation and syncs `shape` / `shape_signature` for common TFLite ops.
     """
     updated_tensors = 0
-    producer_by_output = {
-        str(output_name): op
-        for op in model_ir.operators
-        for output_name in op.outputs
-        if str(output_name) != ""
-    }
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    producer_by_output = (
+        {
+            str(output_name): model_ir.operators[int(operator_index)]
+            for output_name, operator_index in active_index.producers.items()
+            if str(output_name) != ""
+        }
+        if active_index is not None
+        else {
+            str(output_name): op
+            for op in model_ir.operators
+            for output_name in op.outputs
+            if str(output_name) != ""
+        }
+    )
 
     def _update_tensor_shape(
         tensor_name: str,
@@ -4083,6 +4116,43 @@ def _reconcile_static_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
             break
 
     return {"reconciled_static_tensor_shapes": int(updated_tensors)}
+
+
+def _run_indexed_shape_convergence_cleanup(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    graph_index = ModelIRGraphIndex(model_ir)
+    prune_stats = _prune_dead_operators(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+    first_reconcile_stats = _reconcile_static_tensor_shapes(
+        model_ir,
+        graph_index=graph_index,
+    )
+    reshape_stats = _resolve_dynamic_reshape_shapes(
+        model_ir,
+        graph_index=graph_index,
+    )
+    final_reconcile_stats = _reconcile_static_tensor_shapes(
+        model_ir,
+        graph_index=graph_index,
+    )
+    return {
+        "removed_dead_operators": int(
+            prune_stats.get("removed_dead_operators", 0)
+        ),
+        "resolved_dynamic_reshape_shapes": int(
+            reshape_stats.get("resolved_dynamic_reshape_shapes", 0)
+        ),
+        "reconciled_static_tensor_shapes": int(
+            first_reconcile_stats.get("reconciled_static_tensor_shapes", 0)
+            + final_reconcile_stats.get("reconciled_static_tensor_shapes", 0)
+        ),
+    }
 
 
 def _restore_placeholder_matmul_flattened_inputs(
@@ -51119,10 +51189,10 @@ def lower_onnx_to_ir(
         include_duplicate_fanout=True,
         include_spatial_concat_post_transpose=False,
     )
-    _prune_dead_operators(model_ir, layout_state=session.layout_state)
-    _reconcile_static_tensor_shapes(model_ir)
-    _resolve_dynamic_reshape_shapes(model_ir)
-    _reconcile_static_tensor_shapes(model_ir)
+    _run_indexed_shape_convergence_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     # Very late shape reconciliation can expose strict shuffle-residual patterns.
     # Re-run terminal transpose reducers once at absolute end.
     _run_sinet_terminal_layout_recovery_sequence()
@@ -51218,12 +51288,12 @@ def lower_onnx_to_ir(
     _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
     _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
     _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
-    _prune_dead_operators(model_ir, layout_state=session.layout_state)
-    _reconcile_static_tensor_shapes(model_ir)
     # Late transpose/layout rewrites can invalidate previously resolved
     # RESHAPE constants. Re-resolve once at absolute end.
-    _resolve_dynamic_reshape_shapes(model_ir)
-    _reconcile_static_tensor_shapes(model_ir)
+    _run_indexed_shape_convergence_cleanup(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     # Keep HARD_SWISH outputs shape-preserving at the final serialization boundary.
     _sanitize_hardswish_tensor_shapes(model_ir)
     _reconcile_static_tensor_shapes(model_ir)

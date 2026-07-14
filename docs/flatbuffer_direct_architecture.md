@@ -3748,7 +3748,7 @@ Two AST-identical 8-call SiNet terminal layout-recovery sequences are owned by
 residual, pre-Add/PReLU, fan-out, Concat/dual-Resize affine, Softmax-mask, and
 terminal constant-PReLU bridge ordering and contains only raw ModelIR
 mutators. Its first caller remains immediately after terminal clamp/unary/ReLU
-cleanup; its second remains after very-late dynamic-shape reconciliation.
+cleanup; its second remains after very-late indexed shape convergence.
 Shape reconciliation and the distinct hard-swish and repeated pre-Add
 successors remain outside and are asserted as boundaries. The extraction
 removes 4 net lowerer lines without changing runtime invocation count, order,
@@ -3790,6 +3790,19 @@ recovery boundaries remain outside. Recursive helper expansion produces an AST
 identical to the pre-extraction lowerer. Together the helpers remove 6 net
 lowerer lines without changing runtime invocation count, order, conditions, or
 the registered-runner call-site count of 118.
+
+The two repeated dead-prune/static-reconcile/dynamic-Reshape/static-reconcile
+blocks are owned by `_run_indexed_shape_convergence_cleanup`. Each invocation
+builds one `ModelIRGraphIndex`; dead pruning removes operators through the
+index's differential compaction, both reconciliation calls reuse the indexed
+producer map, and dynamic Reshape resolution enumerates only indexed
+`RESHAPE` roots. Reconciliation and Reshape resolution change tensor shape,
+signature, options, and constant data but do not change graph topology, so the
+updated index remains valid through the complete block. Standalone callers
+retain full-scan compatibility when no matching index is supplied. A focused
+characterization compares every remaining operator and tensor with the former
+four-call sequence and proves exact equality while observing exactly one index
+build. Architecture checks preserve both late-pipeline call boundaries.
 
 ## Managed-corpus SWAP exclusion policy
 
