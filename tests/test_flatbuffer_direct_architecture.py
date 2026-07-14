@@ -4798,7 +4798,11 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_fast_precanonicalize_is_nhwc_like",
         "_fast_precanonicalize_preferred_channel_count",
         "_fast_precanonicalize_resolve_alias",
+        "_has_immediate_rank4_permute_source",
         "_infer_unique_channel_count_from_rank4_shape",
+        "_repair_cf_pool_target_shape",
+        "_repair_cf_resize_target_shape",
+        "_repair_split_axis_from_consumers",
     ):
         assert function_name in policy_functions
         assert function_name not in exporter_functions

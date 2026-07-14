@@ -16,12 +16,14 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_local_response_norm_input_expr,
     _parse_rank4_shape_literal,
     _parse_simple_assignment_line,
+    _parse_tensor_split_assign,
     _parse_torch_cat_inputs_and_dim,
     _parse_torch_permute_assign,
     _split_top_level_csv_exprs,
 )
 from onnx2tf.tflite_builder.pytorch_shape_policy import (
     _fast_precanonicalize_rank4_layout_hint,
+    _normalize_cf_rank4_shape,
 )
 
 
@@ -97,6 +99,27 @@ def _fast_precanonicalize_expr_identifiers(expr: str) -> Set[str]:
         for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", str(expr))
         if token not in {"torch", "self", "True", "False"}
     }
+
+
+def _has_immediate_rank4_permute_source(
+    lines: Sequence[str],
+    index: int,
+    tensor_name: str,
+    expected_perm: Sequence[int],
+) -> bool:
+    lookback = index - 1
+    while lookback >= 0:
+        candidate_line = str(lines[lookback]).strip()
+        if candidate_line == "":
+            lookback -= 1
+            continue
+        permute_assign = _parse_torch_permute_assign(lines[lookback])
+        return (
+            permute_assign is not None
+            and permute_assign[1] == str(tensor_name)
+            and list(permute_assign[3]) == [int(v) for v in list(expected_perm)]
+        )
+    return False
 
 
 @dataclasses.dataclass(slots=True)
@@ -653,3 +676,297 @@ def _fast_precanonicalize_has_channel_last_spatial_consumer(
         ):
             return True
     return False
+
+
+def _repair_split_axis_from_consumers(
+    line: str,
+    index: int,
+    lines: Sequence[str],
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[str | None, Set[str]]:
+    split_assign = _parse_tensor_split_assign(line)
+    if split_assign is None:
+        return None, set()
+    outputs = [token.strip() for token in list(split_assign[1]) if token.strip()]
+    current_axis = int(split_assign[4])
+    cf_votes = 0
+    nhwc_votes = 0
+    for output_name in outputs:
+        for consumer_index in context.consumers.get(output_name, []):
+            if consumer_index <= index:
+                continue
+            consumer_line = str(lines[consumer_index])
+            consumer_assign = _parse_simple_assignment_line(consumer_line)
+            consumer_expr = consumer_assign[2] if consumer_assign is not None else consumer_line.strip()
+            if re.search(rf"self\.conv_block_[0-9]+\({re.escape(output_name)}\)", consumer_line):
+                cf_votes += 2
+                continue
+            resize_args = _parse_apply_resize_input_and_channel_last(consumer_expr)
+            if resize_args is not None and resize_args[0] == output_name and not resize_args[1]:
+                cf_votes += 2
+                continue
+            pool_args = _parse_apply_pool2d_input_and_channel_last(consumer_expr)
+            if pool_args is not None and pool_args[0] == output_name and not pool_args[1]:
+                cf_votes += 2
+                continue
+            concat_args = _parse_apply_concat_inputs_axis_and_shape(consumer_expr)
+            if concat_args is not None and output_name in concat_args[0]:
+                if concat_args[1] == 1:
+                    cf_votes += 2
+                elif concat_args[1] == 3:
+                    nhwc_votes += 2
+                continue
+            torch_cat_args = _parse_torch_cat_inputs_and_dim(consumer_expr)
+            if torch_cat_args is not None and output_name in torch_cat_args[0]:
+                if torch_cat_args[1] == 1:
+                    cf_votes += 2
+                elif torch_cat_args[1] == 3:
+                    nhwc_votes += 2
+                continue
+            softmax_args = _parse_apply_softmax_input_and_axis(consumer_expr)
+            if softmax_args is not None and softmax_args[0] == output_name:
+                if softmax_args[1] == 1:
+                    cf_votes += 2
+                elif softmax_args[1] == 3:
+                    nhwc_votes += 2
+    preferred_axis = current_axis
+    if cf_votes > nhwc_votes and cf_votes > 0:
+        preferred_axis = 1
+    elif nhwc_votes > cf_votes and nhwc_votes > 0:
+        preferred_axis = 3
+    elif _fast_precanonicalize_is_cf_like(
+        str(split_assign[2]),
+        dynamic_cf_like_names,
+        context,
+    ):
+        preferred_axis = 1
+    if preferred_axis == current_axis:
+        return None, set()
+    rewritten = (
+        f"{split_assign[0]}"
+        f"{', '.join(split_assign[1])} = list(torch.tensor_split("
+        f"{split_assign[2]}, "
+        f"{split_assign[3]}, "
+        f"dim=_normalize_dim({preferred_axis}, {split_assign[2]}.ndim)))"
+    )
+    return rewritten, set(outputs if preferred_axis == 1 else [])
+
+
+def _repair_cf_resize_target_shape(
+    line: str,
+    index: int,
+    lines: Sequence[str],
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[str | None, str | None]:
+    aligned_bn_const_re = re.compile(
+        r"^\s*[A-Za-z0-9_]+ = _align_tensor_to_target_shape\(torch\.(?:mul|add)\((?P<input>[A-Za-z0-9_]+), (?:self|torch\.reshape\(self)\.(?P<const_attr>[A-Za-z0-9_]+).*$"
+    )
+
+    def _parse_apply_resize_assign(
+        src_line: str,
+    ) -> Tuple[str, str, str, int, int, str, List[int], bool, bool, bool] | None:
+        assign = _parse_simple_assignment_line(src_line)
+        if assign is None:
+            return None
+        indent, lhs, rhs = assign
+        parsed = _parse_apply_resize_input_size_shape_and_channel_last(rhs)
+        if parsed is None:
+            return None
+        input_name, size_value, shape_value, channel_last = parsed
+        if size_value is None or shape_value is None:
+            return None
+        stripped = rhs.strip()
+        parts = _split_top_level_csv_exprs(stripped[len("_apply_resize(") : -1])
+        method_expr: str | None = None
+        align_expr: str | None = None
+        hpc_expr: str | None = None
+        for part in parts:
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
+                continue
+            key, value = part.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if key == "method":
+                method_expr = value
+            elif key == "align_corners":
+                align_expr = value
+            elif key == "half_pixel_centers":
+                hpc_expr = value
+        if (
+            method_expr is None
+            or align_expr not in {"True", "False"}
+            or hpc_expr not in {"True", "False"}
+            or not (method_expr.startswith("'") and method_expr.endswith("'"))
+        ):
+            return None
+        return (
+            indent,
+            lhs,
+            input_name,
+            int(size_value[0]),
+            int(size_value[1]),
+            method_expr[1:-1],
+            [int(v) for v in list(shape_value)],
+            align_expr == "True",
+            hpc_expr == "True",
+            channel_last,
+        )
+
+    apply_resize_match = _parse_apply_resize_assign(line)
+    if apply_resize_match is None:
+        return None, None
+    indent, lhs_name, input_name, out_h, out_w, method, current_shape, align_corners, half_pixel_centers, channel_last = apply_resize_match
+    consumer_layout = _fast_precanonicalize_infer_consumer_layout(
+        lhs_name,
+        index,
+        lines,
+        dynamic_cf_like_names,
+        dynamic_nhwc_like_names,
+        context,
+    )
+    should_repair = (
+        not channel_last
+        or _fast_precanonicalize_is_cf_like(input_name, dynamic_cf_like_names, context)
+        or consumer_layout == "cf"
+    )
+    if not should_repair:
+        return None, None
+    preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+        lhs_name,
+        dynamic_cf_like_names,
+        dynamic_nhwc_like_names,
+        context,
+        shape_hint=current_shape,
+    )
+    if preferred_channel_count is None:
+        preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+            input_name,
+            dynamic_cf_like_names,
+            dynamic_nhwc_like_names,
+            context,
+            shape_hint=current_shape,
+        )
+    if _fast_precanonicalize_rank4_layout_hint(
+        current_shape,
+        preferred_channel_count=preferred_channel_count,
+    ) == "cf":
+        return None, lhs_name
+    next_line = str(lines[index + 1]) if index + 1 < len(lines) else ""
+    next_bn_match = aligned_bn_const_re.match(next_line)
+    if next_bn_match is not None and str(next_bn_match.group("input")) == lhs_name:
+        const_attr = next_bn_match.groupdict().get("const_attr", None)
+        if const_attr is not None:
+            preferred_channel_count = context.const_channel_counts.get(str(const_attr), preferred_channel_count)
+    normalized_shape = _normalize_cf_rank4_shape(
+        current_shape,
+        preferred_channel_count=preferred_channel_count,
+        out_hw=(out_h, out_w),
+    )
+    rewritten = (
+        f"{indent}{lhs_name} = _apply_resize("
+        f"{input_name}, [{out_h}, {out_w}], "
+        f"method='{method}', target_shape={repr(normalized_shape)}, "
+        f"align_corners={align_corners}, "
+        f"half_pixel_centers={half_pixel_centers}, channel_last=False)"
+    )
+    if rewritten == line:
+        return None, lhs_name
+    return rewritten, lhs_name
+
+
+def _repair_cf_pool_target_shape(
+    line: str,
+    index: int,
+    lines: Sequence[str],
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[str | None, str | None]:
+    apply_pool2d_match = _parse_apply_pool2d_assign_with_shape(line)
+    if apply_pool2d_match is None:
+        return None, None
+    indent, lhs_name, input_name, rest, current_shape, is_max_pool, channel_last = apply_pool2d_match
+    input_is_immediate_nhwc_bridge = _has_immediate_rank4_permute_source(
+        lines,
+        index,
+        input_name,
+        [0, 2, 3, 1],
+    )
+    consumer_layout = _fast_precanonicalize_infer_consumer_layout(
+        lhs_name,
+        index,
+        lines,
+        dynamic_cf_like_names,
+        dynamic_nhwc_like_names,
+        context,
+    )
+    preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+        lhs_name,
+        dynamic_cf_like_names,
+        dynamic_nhwc_like_names,
+        context,
+        shape_hint=current_shape,
+    )
+    if preferred_channel_count is None:
+        preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+            input_name,
+            dynamic_cf_like_names,
+            dynamic_nhwc_like_names,
+            context,
+            shape_hint=current_shape,
+        )
+    current_layout_hint = _fast_precanonicalize_rank4_layout_hint(
+        current_shape,
+        preferred_channel_count=preferred_channel_count,
+    )
+    if (
+        channel_last
+        and _fast_precanonicalize_is_nhwc_like(
+            input_name,
+            dynamic_nhwc_like_names,
+            context,
+        )
+        and not _fast_precanonicalize_is_cf_like(
+            input_name,
+            dynamic_cf_like_names,
+            context,
+        )
+    ):
+        return None, lhs_name
+    if (
+        input_is_immediate_nhwc_bridge
+        and channel_last
+        and current_layout_hint == "nhwc"
+    ):
+        return None, lhs_name
+    should_repair = (
+        not channel_last
+        or (
+            not input_is_immediate_nhwc_bridge
+            and _fast_precanonicalize_is_cf_like(input_name, dynamic_cf_like_names, context)
+        )
+        or (not input_is_immediate_nhwc_bridge and consumer_layout == "cf")
+    )
+    if not should_repair:
+        return None, None
+    if current_layout_hint == "cf":
+        if not channel_last:
+            return None, lhs_name
+        normalized_shape = list(current_shape)
+    else:
+        normalized_shape = _normalize_cf_rank4_shape(
+            current_shape,
+            preferred_channel_count=preferred_channel_count,
+        )
+    rewritten = (
+        f"{indent}{lhs_name} = _apply_pool2d("
+        f"{input_name}, {rest}, target_shape={repr(normalized_shape)}, "
+        f"is_max_pool={is_max_pool}, channel_last=False)"
+    )
+    if rewritten == line:
+        return None, lhs_name
+    return rewritten, lhs_name

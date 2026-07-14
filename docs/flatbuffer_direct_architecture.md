@@ -2033,6 +2033,10 @@ counts, Conv block arity, module edges, and propagated alias layout evidence.
 Preferred channel selection, scored consumer-layout inference, and recursive
 channel-last spatial-consumer detection query the same context in this owner.
 They remain conservative when source evidence ties or cycles.
+Split-axis repair and channel-first Resize/Pool target-shape repair are also
+co-located with these queries. Split voting inspects only later consumers;
+Resize and Pool preserve immediate layout bridges and rewrite only when CF
+input or consumer evidence is stronger than the declared channel-last form.
 
 The direct-module dispatcher is being decomposed by operator family rather than
 moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and

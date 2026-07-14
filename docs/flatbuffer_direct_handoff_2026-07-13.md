@@ -1281,6 +1281,16 @@ architecture tests deselected), together with Ruff, syntax validation, and
 `git diff --check`; the exporter shrank by another net 239 lines. No model
 conversion or inference was run.
 
+Split-axis consumer voting, channel-first Resize/Pool target-shape repair, and
+immediate rank-four Permute-source detection now live in
+`pytorch_fast_precanonicalize_policy.py`. Later-consumer votes, alias/layout
+evidence, static channel hints, exact bridge permutations, existing CF targets,
+and genuine NHWC inputs retain their conservative no-op boundaries. All four
+moved function ASTs match checkpoint `51d851a` exactly. Nine focused policy/
+ownership tests pass (95 unrelated architecture tests deselected), together
+with Ruff, syntax validation, and `git diff --check`; the exporter shrank by
+another net 311 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
