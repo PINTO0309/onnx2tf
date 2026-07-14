@@ -3940,6 +3940,27 @@ consumer-map construction, checks public, fan-out, per-channel, and permutation
 no-ops, observes no index for a Transpose-free graph, and compares the
 maintained index with a fresh rebuild.
 
+Expanded HardSigmoid QDQ layout-bridge cleanup is owned by the same
+Torch/TensorFlow-free `passes/quantized_activation.py` module. The owner
+recognizes both `MUL->ADD->RELU_0_TO_1` and
+`MUL->ADD->MAXIMUM->MINIMUM` forms, traverses every linear edge through one
+`ModelIRGraphIndex`, updates the DQ/Q edges differentially, and removes both
+inverse Transposes in one indexed compaction. Rank-matched side constants are
+permuted only after every required constant has been validated: exclusive
+constants update in place, while shared constants are cloned and rewired
+through the index. Thus a missing late clamp constant is now a transactional
+no-op rather than leaving an earlier constant partially remapped.
+
+The owner preserves exact inverse-permutation and per-tensor quantization
+guards, source shape/signature propagation, destination dtype/quantization
+cloning, pruning, lineage, and the existing stats key. Every expanded
+HardSigmoid intermediate, including the `MAXIMUM` output in the clamp form,
+is treated as a public boundary when listed as a graph output. Focused
+characterization covers both valid forms in one graph, private and shared
+constant remapping, maintained-index equivalence, public intermediates and
+source, fan-out, per-channel quantization, non-inverse permutations,
+transactional rejection, and the no-Transpose/no-index preflight.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

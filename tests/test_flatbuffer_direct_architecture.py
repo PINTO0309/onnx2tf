@@ -1996,6 +1996,73 @@ def test_quantized_activation_bridge_cleanup_has_one_indexed_owner() -> None:
     )
 
 
+def test_quantized_hardsigmoid_bridge_cleanup_has_one_indexed_owner() -> None:
+    owner_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "quantized_activation.py"
+    )
+    lowerer_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner_name = "optimize_transpose_dequant_hardsigmoid_quantize_bridges"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    owner_segment = ast.get_source_segment(owner_source, owner)
+    assert owner_segment is not None
+    call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in owner_segment
+    assert "del model_ir.operators" not in owner_segment
+    assert "ModelIRGraphIndex" in call_names
+    assert "operator_indices" in call_names
+    assert "consumer_indices" in call_names
+    assert "remove_operators" in call_names
+    for setter_name in [
+        "_replace_operator_input_at",
+        "_set_operator_inputs",
+        "_set_operator_outputs",
+    ]:
+        setter_call = next(
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == setter_name
+        )
+        index_keyword = next(
+            keyword for keyword in setter_call.keywords if keyword.arg == "graph_index"
+        )
+        assert isinstance(index_keyword.value, ast.Name)
+        assert index_keyword.value.id == "active_index"
+
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
+    wrapper_name = "_optimize_transpose_dequant_hardsigmoid_quantize_bridges"
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    )
+    wrapper_calls = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+    assert len(wrapper_calls) == 1
+    assert "_build_tensor_consumer_map" not in ast.get_source_segment(
+        lowerer_source,
+        wrapper,
+    )
+
+
 def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
