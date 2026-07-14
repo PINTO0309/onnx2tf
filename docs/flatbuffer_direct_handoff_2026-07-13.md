@@ -1310,6 +1310,16 @@ ownership tests pass (95 unrelated architecture tests deselected), together
 with Ruff, syntax validation, and `git diff --check`; the exporter shrank by
 another net 102 lines. No model conversion or inference was run.
 
+Concat-axis repair and terminal-classifier tail repair now complete the
+standalone fast-precanonicalize layout helpers owned by the policy module. CF
+input unanimity, `_apply_concat`/`torch.cat` handling, scalar-minus-tensor tail
+recognition, singleton-channel insertion, redundant reshape removal, and all
+conservative no-op boundaries retain their order. Both moved function ASTs
+match checkpoint `4a4221f` exactly. Twelve focused policy/ownership tests pass
+(95 unrelated architecture tests deselected), together with Ruff, syntax
+validation, and `git diff --check`; the exporter shrank by another net 151
+lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

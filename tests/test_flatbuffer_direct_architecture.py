@@ -4803,8 +4803,10 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_repair_binary_alignment_layout",
         "_repair_cf_pool_target_shape",
         "_repair_cf_resize_target_shape",
+        "_repair_concat_axis_from_input_layouts",
         "_repair_nhwc_average_pool_binary_bridge",
         "_repair_split_axis_from_consumers",
+        "_repair_terminal_classifier_tail_layout",
         "_restore_channel_last_spatial_pool_chains",
     ):
         assert function_name in policy_functions

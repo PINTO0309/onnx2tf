@@ -1337,3 +1337,158 @@ def _repair_binary_alignment_layout(
     if rewritten == line:
         return None, lhs_name
     return rewritten, lhs_name
+
+
+def _repair_concat_axis_from_input_layouts(
+    line: str,
+    dynamic_cf_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[str | None, str | None]:
+    assign_match = re.match(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+) = (?P<rhs>.+)$",
+        line,
+    )
+    if assign_match is None:
+        return None, None
+    rhs_expr = str(assign_match.group("rhs")).strip()
+    apply_concat_args = _parse_apply_concat_inputs_axis_and_shape(rhs_expr)
+    if apply_concat_args is not None:
+        input_names = [name.strip() for name in apply_concat_args[0] if name.strip()]
+        if input_names and all(
+            _fast_precanonicalize_is_cf_like(input_name, dynamic_cf_like_names, context)
+            for input_name in input_names
+        ) and apply_concat_args[1] != 1:
+            return (
+                f"{assign_match.group('indent')}{assign_match.group('lhs')} = "
+                f"torch.cat([{', '.join(input_names)}], dim=1)",
+                str(assign_match.group("lhs")),
+            )
+        return None, None
+    torch_cat_args = _parse_torch_cat_inputs_and_dim(rhs_expr)
+    if torch_cat_args is not None:
+        input_names = [name.strip() for name in torch_cat_args[0] if name.strip()]
+        if input_names and all(
+            _fast_precanonicalize_is_cf_like(input_name, dynamic_cf_like_names, context)
+            for input_name in input_names
+        ) and torch_cat_args[1] != 1:
+            return (
+                f"{assign_match.group('indent')}{assign_match.group('lhs')} = "
+                f"torch.cat([{', '.join(input_names)}], dim=1)",
+                str(assign_match.group("lhs")),
+            )
+    return None, None
+
+
+def _repair_terminal_classifier_tail_layout(
+    line: str,
+    dynamic_cf_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[str | None, str | None]:
+    assign = _parse_simple_assignment_line(line)
+    if assign is not None:
+        indent, lhs_name, rhs_expr = assign
+        aligned_parts = _parse_align_tensor_target_shape_expr(rhs_expr)
+        if aligned_parts is not None:
+            input_expr, target_shape_expr = aligned_parts
+            sub_match = re.fullmatch(r"torch\.sub\((?P<args>.+)\)", input_expr.strip())
+            rank3_shape_match = re.fullmatch(
+                r"[\[\(]\s*(?P<n>\d+)\s*,\s*(?P<h>\d+)\s*,\s*(?P<w>\d+)\s*[\]\)]",
+                target_shape_expr.strip(),
+            )
+            if sub_match is not None and rank3_shape_match is not None:
+                parts = _split_top_level_csv_exprs(str(sub_match.group("args")))
+                scalar_expr: str | None = None
+                input_name: str | None = None
+                if len(parts) == 2 and all(
+                    re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None for part in parts
+                ):
+                    scalar_expr = parts[0].strip()
+                    input_name = parts[1].strip()
+                else:
+                    kwargs: Dict[str, str] = {}
+                    for part in parts:
+                        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
+                            continue
+                        key, value = part.split("=", 1)
+                        kwargs[key.strip()] = value.strip()
+                    scalar_expr = kwargs.get("input")
+                    input_name = kwargs.get("other")
+                if (
+                    scalar_expr == "torch.as_tensor(1.0, dtype=torch.float32, device=_module_device(self))"
+                    and input_name is not None
+                    and re.fullmatch(r"[A-Za-z0-9_]+", input_name) is not None
+                    and _fast_precanonicalize_is_cf_like(
+                        input_name,
+                        dynamic_cf_like_names,
+                        context,
+                    )
+                ):
+                    return (
+                        f"{indent}{lhs_name} = _align_tensor_to_target_shape("
+                        f"torch.sub(torch.as_tensor(1.0, dtype=torch.float32, device=_module_device(self)), "
+                        f"{input_name}), "
+                        f"[{rank3_shape_match.group('n')}, 1, {rank3_shape_match.group('h')}, {rank3_shape_match.group('w')}])",
+                        lhs_name,
+                    )
+        reshape_match = re.fullmatch(r"torch\.reshape\((?P<args>.+)\)", rhs_expr.strip())
+        if reshape_match is not None:
+            parts = _split_top_level_csv_exprs(str(reshape_match.group("args")))
+            input_name: str | None = None
+            shape_expr: str | None = None
+            if len(parts) == 2 and all(
+                re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None for part in parts
+            ):
+                input_name = parts[0].strip()
+                shape_expr = parts[1].strip()
+            else:
+                kwargs: Dict[str, str] = {}
+                for part in parts:
+                    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
+                        continue
+                    key, value = part.split("=", 1)
+                    kwargs[key.strip()] = value.strip()
+                input_name = kwargs.get("input")
+                shape_expr = kwargs.get("shape")
+            rank4_shape = _parse_rank4_shape_literal(shape_expr) if shape_expr is not None else None
+            if (
+                input_name is not None
+                and re.fullmatch(r"[A-Za-z0-9_]+", input_name) is not None
+                and rank4_shape is not None
+                and int(rank4_shape[3]) == 1
+                and _fast_precanonicalize_is_cf_like(
+                    input_name,
+                    dynamic_cf_like_names,
+                    context,
+                )
+            ):
+                return (f"{indent}{lhs_name} = {input_name}", lhs_name)
+    sub_from_one_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.sub\(torch\.as_tensor\(1\.0, dtype=torch\.float32, device=_module_device\(self\)\), (?P<input>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+)\]\)$"
+    )
+    reshape_singleton_tail_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.reshape\((?P<input>[A-Za-z0-9_]+), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), 1\]\)$"
+    )
+    sub_match = sub_from_one_re.match(line)
+    if sub_match is not None and _fast_precanonicalize_is_cf_like(
+        str(sub_match.group("input")),
+        dynamic_cf_like_names,
+        context,
+    ):
+        return (
+            f"{sub_match.group('indent')}{sub_match.group('lhs')} = _align_tensor_to_target_shape("
+            f"torch.sub(torch.as_tensor(1.0, dtype=torch.float32, device=_module_device(self)), "
+            f"{sub_match.group('input')}), "
+            f"[{sub_match.group('n')}, 1, {sub_match.group('h')}, {sub_match.group('w')}])",
+            str(sub_match.group("lhs")),
+        )
+    reshape_match = reshape_singleton_tail_re.match(line)
+    if reshape_match is not None and _fast_precanonicalize_is_cf_like(
+        str(reshape_match.group("input")),
+        dynamic_cf_like_names,
+        context,
+    ):
+        return (
+            f"{reshape_match.group('indent')}{reshape_match.group('lhs')} = {reshape_match.group('input')}",
+            str(reshape_match.group("lhs")),
+        )
+    return None, None

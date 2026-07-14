@@ -16,8 +16,10 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_binary_alignment_layout,
     _repair_cf_pool_target_shape,
     _repair_cf_resize_target_shape,
+    _repair_concat_axis_from_input_layouts,
     _repair_nhwc_average_pool_binary_bridge,
     _repair_split_axis_from_consumers,
+    _repair_terminal_classifier_tail_layout,
 )
 
 
@@ -199,3 +201,35 @@ def test_binary_alignment_repair_normalizes_channel_first_target() -> None:
     assert output_name == "output"
     assert rewritten is not None
     assert "torch.add(left_cf, right_cf), [1, 3, 20, 30]" in rewritten
+
+
+def test_concat_and_terminal_tail_repairs_follow_channel_first_layout() -> None:
+    concat_line = (
+        "        concat = _apply_concat([left_cf, right_cf], axis=3, "
+        "target_shape=[1, 20, 30, 6], fused='NONE')"
+    )
+    concat_context = _build_fast_precanonicalize_repair_context([concat_line])
+    rewritten_concat, concat_name = _repair_concat_axis_from_input_layouts(
+        concat_line,
+        {"left_cf", "right_cf"},
+        concat_context,
+    )
+
+    assert concat_name == "concat"
+    assert rewritten_concat == "        concat = torch.cat([left_cf, right_cf], dim=1)"
+
+    tail_line = (
+        "        score = _align_tensor_to_target_shape("
+        "torch.sub(torch.as_tensor(1.0, dtype=torch.float32, "
+        "device=_module_device(self)), input_cf), [1, 20, 30])"
+    )
+    tail_context = _build_fast_precanonicalize_repair_context([tail_line])
+    rewritten_tail, tail_name = _repair_terminal_classifier_tail_layout(
+        tail_line,
+        {"input_cf"},
+        tail_context,
+    )
+
+    assert tail_name == "score"
+    assert rewritten_tail is not None
+    assert "input_cf), [1, 1, 20, 30])" in rewritten_tail

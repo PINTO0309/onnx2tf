@@ -2046,6 +2046,11 @@ Channel-first binary alignment repair is co-located with that context as well.
 It normalizes only rank-four targets backed by CF operands or CF consumer
 evidence, preserves already normalized targets, and leaves explicit binary
 anchor chains and any NHWC operand untouched.
+Concat-axis and terminal-classifier tail repair complete the standalone layout
+helpers in this owner. Concat rewrites only when every input is CF-like; the
+tail repair adds an explicit singleton channel or removes a redundant trailing-
+singleton reshape only when its source is CF-like. The exporter retains the
+ordered precanonicalization orchestrator and imports these focused decisions.
 
 The direct-module dispatcher is being decomposed by operator family rather than
 moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and
