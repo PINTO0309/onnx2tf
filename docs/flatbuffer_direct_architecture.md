@@ -130,6 +130,13 @@ invocation remains standalone. Both runners keep optional scope arguments, and
 each production scope ends before the following legacy attention/layout
 rewriter.
 
+Two repeated duplicate-fan-out/quantized-PReLU pairs share one scope per
+occurrence. The helper receives the existing QDQ-derived
+`include_transpose` decision and forwards it unchanged to duplicate cleanup
+before the four quantized-PReLU specs. The earlier duplicate-fan-out invocation
+that is separated from PReLU by legacy QDQ rewrites remains standalone. Each
+shared scope ends before dequantize/TransposeConv/quantize cleanup.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while

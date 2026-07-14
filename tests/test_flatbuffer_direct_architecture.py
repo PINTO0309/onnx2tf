@@ -324,6 +324,75 @@ def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
     assert len(helper_invocations) == 2
 
 
+def test_lowerer_duplicate_quantized_prelu_pair_reuses_pass_state_scope() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_duplicate_quantized_prelu_pass_cluster"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "run_duplicate_fanout_cleanup",
+        "run_quantized_prelu_cleanup",
+    ]
+    calls = {
+        node.func.id: node
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in expected_order
+    }
+
+    assert [
+        call.func.id
+        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
+    ] == expected_order
+    for name in expected_order:
+        scope_keyword = next(
+            keyword
+            for keyword in calls[name].keywords
+            if keyword.arg == "state_scope"
+        )
+        assert isinstance(scope_keyword.value, ast.Name)
+        assert scope_keyword.value.id == "state_scope"
+    duplicate_include_transpose = next(
+        keyword
+        for keyword in calls["run_duplicate_fanout_cleanup"].keywords
+        if keyword.arg == "include_transpose"
+    )
+    assert isinstance(duplicate_include_transpose.value, ast.Name)
+    assert duplicate_include_transpose.value.id == "include_transpose"
+
+    helper_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+    ]
+    assert len(helper_invocations) == 2
+    for call in helper_invocations:
+        include_transpose = next(
+            keyword
+            for keyword in call.keywords
+            if keyword.arg == "include_transpose"
+        )
+        assert isinstance(include_transpose.value, ast.Name)
+        assert (
+            include_transpose.value.id
+            == "enable_duplicate_transpose_fanout_optimizations"
+        )
+
+
 def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -3279,7 +3348,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 145
+    assert len(calls) == 143
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -3368,7 +3437,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_quantized_prelu_cleanup"
     ]
-    assert len(quantized_prelu_calls) == 3
+    assert len(quantized_prelu_calls) == 2
 
     quantized_reshape_calls = [
         call

@@ -49990,6 +49990,28 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_duplicate_quantized_prelu_pass_cluster(
+        *,
+        include_transpose: bool,
+    ) -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_duplicate_fanout_cleanup(
+            model_ir,
+            include_transpose=include_transpose,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_quantized_prelu_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     def _run_gate_layout_pass_cluster(
         *,
         include_mixed_attention: bool = True,
@@ -50520,16 +50542,8 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _optimize_transpose_dequant_mul_add_prelu_quantize_bridges(model_ir)
-        run_duplicate_fanout_cleanup(
-            model_ir,
+        _run_duplicate_quantized_prelu_pass_cluster(
             include_transpose=enable_duplicate_transpose_fanout_optimizations,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_quantized_prelu_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
         )
         _optimize_dequant_transposeconv_quantize_chains(model_ir)
         run_quantized_reshape_cleanup(
@@ -50633,16 +50647,8 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _optimize_transpose_dequant_mul_add_prelu_quantize_bridges(model_ir)
-        run_duplicate_fanout_cleanup(
-            model_ir,
+        _run_duplicate_quantized_prelu_pass_cluster(
             include_transpose=enable_duplicate_transpose_fanout_optimizations,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_quantized_prelu_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
         )
         _optimize_dequant_transposeconv_quantize_chains(model_ir)
         run_quantized_reshape_cleanup(
