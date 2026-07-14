@@ -1613,6 +1613,106 @@ def test_stale_binary_layout_convergence_uses_one_graph_index() -> None:
     ]
 
 
+def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    repair_names = [
+        "_repair_singleton_nhwc_conv_input_reshapes",
+        "_repair_stale_nchw_to_nhwc_conv_input_transposes",
+    ]
+    for repair_name in repair_names:
+        repair = next(
+            node
+            for node in lowering_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == repair_name
+        )
+        call_names = {
+            node.func.attr
+            if isinstance(node.func, ast.Attribute)
+            else node.func.id
+            for node in ast.walk(repair)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, (ast.Name, ast.Attribute))
+        }
+        assert "_build_tensor_consumer_map" not in call_names
+        assert "_build_tensor_producer_map" not in call_names
+        assert "ModelIRGraphIndex" in call_names
+        assert "operator_indices" in call_names
+        assert "producer" in call_names
+        assert "consumer_indices" in call_names
+        assert "remove_operator" in call_names
+        setter_call = next(
+            node
+            for node in ast.walk(repair)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_set_operator_inputs"
+        )
+        setter_index_keyword = next(
+            keyword
+            for keyword in setter_call.keywords
+            if keyword.arg == "graph_index"
+        )
+        assert isinstance(setter_index_keyword.value, ast.Name)
+        assert setter_index_keyword.value.id == "graph_index"
+
+    helper_name = "_run_indexed_conv_input_adapter_repairs"
+    helper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    helper_calls = [
+        node
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in repair_names
+    ]
+    assert [
+        call.func.id
+        for call in sorted(helper_calls, key=lambda candidate: candidate.lineno)
+    ] == repair_names
+    for call in helper_calls:
+        index_keyword = next(
+            keyword for keyword in call.keywords if keyword.arg == "graph_index"
+        )
+        assert isinstance(index_keyword.value, ast.Name)
+        assert index_keyword.value.id == "graph_index"
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+    ]
+    assert [
+        call.args[0].id
+        for call in sorted(
+            helper_invocations,
+            key=lambda candidate: candidate.lineno,
+        )
+    ] == ["model_ir", "fallback_ir"]
+    direct_transpose_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == repair_names[1]
+    ]
+    assert len(direct_transpose_invocations) == 1
+    assert direct_transpose_invocations[0].args[0].id == "model_ir"
+
+
 def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

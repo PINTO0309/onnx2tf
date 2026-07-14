@@ -45709,7 +45709,11 @@ def _optimize_nhwc_propagation_qlinear_concat_conv(model_ir: ModelIR) -> Dict[st
     }
 
 
-def _repair_singleton_nhwc_conv_input_reshapes(model_ir: ModelIR) -> Dict[str, int]:
+def _repair_singleton_nhwc_conv_input_reshapes(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Dict[str, int]:
     """Remove stale singleton NCHW adapters in front of NHWC Conv inputs.
 
     Layout propagation can move a rank-4 tensor to NHWC after Conv lowering has
@@ -45720,23 +45724,29 @@ def _repair_singleton_nhwc_conv_input_reshapes(model_ir: ModelIR) -> Dict[str, i
     """
 
     repaired = 0
+    graph_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
     while True:
-        producers = _build_tensor_producer_map(model_ir)
-        consumers = _build_tensor_consumer_map(model_ir)
         changed = False
-        for conv_idx, conv_op in enumerate(model_ir.operators):
-            if str(conv_op.op_type) != "CONV_2D" or len(conv_op.inputs) < 2 or len(conv_op.outputs) != 1:
+        for conv_idx in graph_index.operator_indices("CONV_2D"):
+            conv_op = model_ir.operators[int(conv_idx)]
+            if len(conv_op.inputs) < 2 or len(conv_op.outputs) != 1:
                 continue
             adapter_output_name = str(conv_op.inputs[0])
-            adapter_idx = producers.get(adapter_output_name, None)
+            adapter_op = graph_index.producer(adapter_output_name)
+            if adapter_op is None:
+                continue
+            adapter_idx = graph_index.operator_index(adapter_op)
             if adapter_idx is None:
                 continue
-            adapter_op = model_ir.operators[int(adapter_idx)]
             if str(adapter_op.op_type) != "RESHAPE" or len(adapter_op.inputs) < 1 or len(adapter_op.outputs) != 1:
                 continue
             if adapter_output_name in model_ir.outputs:
                 continue
-            adapter_users = [int(v) for v in consumers.get(adapter_output_name, [])]
+            adapter_users = graph_index.consumer_indices(adapter_output_name)
             if adapter_users != [int(conv_idx)]:
                 continue
 
@@ -45771,6 +45781,7 @@ def _repair_singleton_nhwc_conv_input_reshapes(model_ir: ModelIR) -> Dict[str, i
                 model_ir=model_ir,
                 op=conv_op,
                 new_inputs=updated_inputs,
+                graph_index=graph_index,
             )
 
             source_signature = (
@@ -45790,7 +45801,7 @@ def _repair_singleton_nhwc_conv_input_reshapes(model_ir: ModelIR) -> Dict[str, i
                 int(source_signature[2]),
                 int(filter_shape[0]),
             ]
-            del model_ir.operators[int(adapter_idx)]
+            graph_index.remove_operator(int(adapter_idx))
             repaired += 1
             changed = True
             break
@@ -45803,6 +45814,8 @@ def _repair_singleton_nhwc_conv_input_reshapes(model_ir: ModelIR) -> Dict[str, i
 
 def _repair_stale_nchw_to_nhwc_conv_input_transposes(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Dict[str, int]:
     """Bypass stale Conv adapters when their source is already NHWC.
 
@@ -45816,22 +45829,24 @@ def _repair_stale_nchw_to_nhwc_conv_input_transposes(
 
     repaired = 0
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    graph_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
     while True:
-        producers = _build_tensor_producer_map(model_ir)
-        consumers = _build_tensor_consumer_map(model_ir)
         changed = False
-        for conv_idx, conv_op in enumerate(model_ir.operators):
-            if (
-                str(conv_op.op_type) != "CONV_2D"
-                or len(conv_op.inputs) < 2
-                or len(conv_op.outputs) != 1
-            ):
+        for conv_idx in graph_index.operator_indices("CONV_2D"):
+            conv_op = model_ir.operators[int(conv_idx)]
+            if len(conv_op.inputs) < 2 or len(conv_op.outputs) != 1:
                 continue
             adapter_output_name = str(conv_op.inputs[0])
-            adapter_idx = producers.get(adapter_output_name, None)
+            adapter_op = graph_index.producer(adapter_output_name)
+            if adapter_op is None:
+                continue
+            adapter_idx = graph_index.operator_index(adapter_op)
             if adapter_idx is None:
                 continue
-            adapter_op = model_ir.operators[int(adapter_idx)]
             if (
                 str(adapter_op.op_type) != "TRANSPOSE"
                 or len(adapter_op.inputs) < 2
@@ -45842,9 +45857,7 @@ def _repair_stale_nchw_to_nhwc_conv_input_transposes(
                 continue
             if adapter_output_name in model_ir.outputs:
                 continue
-            if [int(v) for v in consumers.get(adapter_output_name, [])] != [
-                int(conv_idx)
-            ]:
+            if graph_index.consumer_indices(adapter_output_name) != [int(conv_idx)]:
                 continue
 
             source_name = str(adapter_op.inputs[0])
@@ -45887,6 +45900,7 @@ def _repair_stale_nchw_to_nhwc_conv_input_transposes(
                 model_ir=model_ir,
                 op=conv_op,
                 new_inputs=updated_inputs,
+                graph_index=graph_index,
             )
 
             source_signature = (
@@ -45906,7 +45920,7 @@ def _repair_stale_nchw_to_nhwc_conv_input_transposes(
                 int(source_signature[2]),
                 int(filter_shape[0]),
             ]
-            del model_ir.operators[int(adapter_idx)]
+            graph_index.remove_operator(int(adapter_idx))
             repaired += 1
             changed = True
             break
@@ -45916,6 +45930,31 @@ def _repair_stale_nchw_to_nhwc_conv_input_transposes(
     _prune_unused_tensors(model_ir)
     return {
         "repaired_stale_nchw_to_nhwc_conv_input_transposes": int(repaired),
+    }
+
+
+def _run_indexed_conv_input_adapter_repairs(model_ir: ModelIR) -> Dict[str, int]:
+    """Run singleton-Reshape and stale-Transpose Conv repairs with one index."""
+
+    graph_index = ModelIRGraphIndex(model_ir)
+    reshape_stats = _repair_singleton_nhwc_conv_input_reshapes(
+        model_ir,
+        graph_index=graph_index,
+    )
+    transpose_stats = _repair_stale_nchw_to_nhwc_conv_input_transposes(
+        model_ir,
+        graph_index=graph_index,
+    )
+    return {
+        "repaired_singleton_nhwc_conv_input_reshapes": int(
+            reshape_stats.get("repaired_singleton_nhwc_conv_input_reshapes", 0)
+        ),
+        "repaired_stale_nchw_to_nhwc_conv_input_transposes": int(
+            transpose_stats.get(
+                "repaired_stale_nchw_to_nhwc_conv_input_transposes",
+                0,
+            )
+        ),
     }
 
 
@@ -51653,8 +51692,7 @@ def lower_onnx_to_ir(
         model_ir,
         prefer_runtime_inferable_from_onnx_raw=True,
     )
-    _repair_singleton_nhwc_conv_input_reshapes(model_ir)
-    _repair_stale_nchw_to_nhwc_conv_input_transposes(model_ir)
+    _run_indexed_conv_input_adapter_repairs(model_ir)
     run_stale_nchw_channel_shuffle_repair(
         model_ir,
         layout_state=session.layout_state,
@@ -51763,9 +51801,8 @@ def lower_onnx_to_ir(
             )
         ) > 0:
             _reconcile_static_tensor_shapes(fallback_ir)
-        _repair_singleton_nhwc_conv_input_reshapes(fallback_ir)
-        fallback_conv_input_stats = (
-            _repair_stale_nchw_to_nhwc_conv_input_transposes(fallback_ir)
+        fallback_conv_input_stats = _run_indexed_conv_input_adapter_repairs(
+            fallback_ir
         )
         if int(
             fallback_conv_input_stats.get(

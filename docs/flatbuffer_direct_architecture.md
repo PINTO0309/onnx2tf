@@ -3854,6 +3854,21 @@ one index build and complete ModelIR/stat equality with the former nine-call
 sequence while a separate multi-match case compares the maintained index with
 a fresh rebuild.
 
+The adjacent singleton-Reshape and stale NCHW-to-NHWC Transpose repairs in
+front of NHWC Conv inputs accept one shared `ModelIRGraphIndex`. Both enumerate
+only indexed `CONV_2D` candidates, obtain the adapter producer and exact
+consumer list from the index, rewrite the Conv data input through the indexed
+setter, and remove an accepted adapter through differential compaction. The
+primary and fallback pairs run through
+`_run_indexed_conv_input_adapter_repairs`, which builds one index for both
+repairs. The later standalone stale-Transpose cleanup remains outside that
+ownership boundary and builds its own compatibility index. Exact singleton
+shape, Transpose permutation, filter input-channel, single-consumer, and graph-
+output guards remain unchanged. Characterization compares the complete
+resulting ModelIR with the former explicit pair, proves one index build without
+legacy producer/consumer maps, exercises multiple matches, and preserves
+fan-out and graph-output adapters.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
