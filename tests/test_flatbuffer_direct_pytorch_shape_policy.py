@@ -22,6 +22,7 @@ from onnx2tf.tflite_builder.pytorch_shape_policy import (
     _reshape_special_layout_plan,
     _reshape_preserves_channel_last_sequence_for_codegen,
     _should_skip_align_for_shape_preserving_unary_for_codegen,
+    _topk_codegen_layout_bridge_for_codegen,
 )
 
 
@@ -66,6 +67,28 @@ def test_shape_preserving_unary_alignment_policy() -> None:
         output_name="different_layout",
         tensor_shape_list_fn=shapes.get,
     )
+
+
+def test_topk_layout_bridge_policy_handles_value_and_index_layouts() -> None:
+    shapes = {
+        "input": [1, 3, 4],
+        "values": [1, 4, 3],
+        "indices_same": [1, 4, 3],
+        "indices_original": [1, 3, 4],
+    }
+
+    assert _topk_codegen_layout_bridge_for_codegen(
+        tensor_shape_list_fn=shapes.get,
+        input_name="input",
+        value_output_name="values",
+        index_output_name="indices_same",
+    ) == ([0, 2, 1], None)
+    assert _topk_codegen_layout_bridge_for_codegen(
+        tensor_shape_list_fn=shapes.get,
+        input_name="input",
+        value_output_name="values",
+        index_output_name="indices_original",
+    ) == ([0, 2, 1], [0, 2, 1])
 
 
 @pytest.mark.parametrize(

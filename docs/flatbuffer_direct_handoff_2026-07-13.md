@@ -1080,6 +1080,13 @@ direct pattern contracts and the focused ownership gate pass, together with Ruff
 and syntax validation. The exporter shrank by another 106 lines. No model
 conversion or inference was run.
 
+TopK rank-3/4/5 layout-bridge planning now lives in the Torch-free shape-policy
+owner. Static value-output permutation search and optional inverse index-output
+permutation retain their deterministic order. The moved function AST matches
+checkpoint `79f2476` exactly; the direct value/index layout contract and focused
+ownership gates pass, together with Ruff and syntax validation. The exporter
+shrank by another 47 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

@@ -49,6 +49,54 @@ def _should_skip_align_for_shape_preserving_unary_for_codegen(
         return False
 
 
+def _topk_codegen_layout_bridge_for_codegen(
+    *,
+    tensor_shape_list_fn: Callable[[str], Optional[List[int]]],
+    input_name: str,
+    value_output_name: str,
+    index_output_name: Optional[str],
+) -> Tuple[Optional[List[int]], Optional[List[int]]]:
+    input_shape = tensor_shape_list_fn(str(input_name))
+    value_shape = tensor_shape_list_fn(str(value_output_name))
+    index_shape = (
+        tensor_shape_list_fn(str(index_output_name))
+        if index_output_name is not None and str(index_output_name) != ""
+        else None
+    )
+    if input_shape is None or value_shape is None:
+        return None, None
+    rank = len(input_shape)
+    if rank not in {3, 4, 5} or len(value_shape) != rank:
+        return None, None
+
+    candidate_perms: List[List[int]] = []
+    for axis in range(rank):
+        perm = [int(v) for v in range(rank) if int(v) != int(axis)] + [int(axis)]
+        if perm != list(range(rank)):
+            candidate_perms.append(perm)
+
+    import itertools
+
+    for generic_perm in itertools.permutations(range(rank)):
+        perm = [int(v) for v in generic_perm]
+        if perm == list(range(rank)) or perm in candidate_perms:
+            continue
+        candidate_perms.append(perm)
+
+    for pre_perm in candidate_perms:
+        permuted_input_shape = [int(input_shape[int(idx)]) for idx in pre_perm]
+        if permuted_input_shape != value_shape:
+            continue
+        inverse_perm = [0] * rank
+        for new_axis, old_axis in enumerate(pre_perm):
+            inverse_perm[int(old_axis)] = int(new_axis)
+        if index_shape is None or index_shape == value_shape:
+            return pre_perm, None
+        if [int(value_shape[int(idx)]) for idx in inverse_perm] == index_shape:
+            return pre_perm, inverse_perm
+    return None, None
+
+
 def _conv_output_spatial_shape(
     *,
     input_spatial: Sequence[int],

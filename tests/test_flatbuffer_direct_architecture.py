@@ -4745,6 +4745,7 @@ def test_generated_pytorch_shape_policy_has_single_owner() -> None:
         "_reshape_special_layout_plan",
         "_reshape_preserves_channel_last_sequence_for_codegen",
         "_should_skip_align_for_shape_preserving_unary_for_codegen",
+        "_topk_codegen_layout_bridge_for_codegen",
     ):
         assert function_name in policy_functions
         assert function_name not in exporter_functions

@@ -2289,6 +2289,10 @@ spatial dimension preservation, and each supported special Reshape form.
 Shape-preserving unary alignment elision also lives here: it requires identical
 logical layouts and either equal shapes or equal element counts before allowing
 the emitter to bypass runtime target-shape alignment.
+TopK rank-3/4/5 layout-bridge planning also uses this owner. It searches
+deterministic input permutations from static value-output shape evidence and
+returns an optional inverse permutation when the index output retains the
+original layout.
 Pure Conv2D and Conv3D output-spatial calculations share one rank-parameterized
 forward-convolution helper in the same module; transpose-Conv3D retains its
 distinct formula beside it. The exporter imports the three compatibility names
