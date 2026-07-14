@@ -4134,6 +4134,27 @@ ordered call sites remain unchanged. Extraction-time characterization compiles
 the complete prior committed function AST and confirms exact ModelIR and stats
 equality for both one and two simultaneous matches.
 
+Terminal Transpose/Dequantize sanitation is owned by the same quantization-
+cleanup module and keeps one index across both historical subphases. The first
+subphase recognizes a private, exclusively consumed per-tensor-quantized
+`Transpose->Dequantize->graph output` boundary, moves Dequantize before the
+Transpose through indexed input/output replacement, creates the same uniquely
+named intermediate tensor, updates output shape/signature, and reorders the two
+operators through indexed remove/insert. The second subphase recognizes a
+terminal `Dequantize->Transpose->graph output`, globally renames the private
+pre-Transpose tensor to the public output through the index, and removes the
+Transpose differentially. Their separate sanitation and removal counters and
+ordered restart are unchanged.
+
+The owner protects terminal-output consumers, public intermediate and
+quantized inputs, shared Transpose outputs, missing tensors, invalid
+permutations, and per-channel quantization. It performs historical pruning but
+allocates no index unless both Dequantize and Transpose are present. The
+lowerer is a thin compatibility wrapper at both established call sites.
+Extraction-time characterization compiles the complete former function AST
+and confirms exact ModelIR and both stats for each subphase with one and two
+simultaneous matches.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

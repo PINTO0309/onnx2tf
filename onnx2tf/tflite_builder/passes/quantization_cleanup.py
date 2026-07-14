@@ -13,13 +13,17 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _all_per_tensor_quantized,
+    _permute_shape,
     _prune_unused_tensors,
+    _read_transpose_perm,
     _rename_tensor_globally,
     _set_operator_inputs,
+    _set_operator_outputs,
     _shapes_equal,
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
-from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 
 
 def _quantized_tensors_share_exact_grid(
@@ -176,6 +180,227 @@ def _optimize_concat_pre_quantize_dequantize(
     _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {
         "bypassed_concat_pre_quantize_dequantize": int(bypassed),
+    }
+
+
+def _sanitize_terminal_transpose_before_dequantize(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Dict[str, int]:
+    """Normalize and remove terminal Transpose/Dequantize boundaries."""
+
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if active_index is None:
+        required_types = {"DEQUANTIZE", "TRANSPOSE"}
+        for operator in model_ir.operators:
+            required_types.discard(str(operator.op_type))
+            if len(required_types) == 0:
+                break
+        if len(required_types) > 0:
+            _prune_unused_tensors(model_ir)
+            return {
+                "sanitized_terminal_transpose_before_dequantize": 0,
+                "removed_terminal_dequantize_transpose": 0,
+            }
+        active_index = ModelIRGraphIndex(model_ir)
+    elif (
+        len(active_index.operator_indices("DEQUANTIZE")) == 0
+        or len(active_index.operator_indices("TRANSPOSE")) == 0
+    ):
+        _prune_unused_tensors(model_ir)
+        return {
+            "sanitized_terminal_transpose_before_dequantize": 0,
+            "removed_terminal_dequantize_transpose": 0,
+        }
+
+    model_outputs = {str(name) for name in model_ir.outputs}
+    sanitized = 0
+    removed_terminal_dequantize_transpose = 0
+
+    def _unique_tensor_name(base: str) -> str:
+        candidate = str(base)
+        suffix = 1
+        while candidate in model_ir.tensors:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        return candidate
+
+    while True:
+        changed = False
+        for dequantize_index in active_index.operator_indices("DEQUANTIZE"):
+            dequantize = model_ir.operators[int(dequantize_index)]
+            if len(dequantize.inputs) != 1 or len(dequantize.outputs) != 1:
+                continue
+
+            dequantize_input = str(dequantize.inputs[0])
+            dequantize_output = str(dequantize.outputs[0])
+            if dequantize_output not in model_outputs:
+                continue
+            if len(active_index.consumer_indices(dequantize_output)) > 0:
+                continue
+            if dequantize_input in model_outputs:
+                continue
+
+            transpose = active_index.producer(dequantize_input)
+            transpose_index = (
+                active_index.operator_index(transpose)
+                if transpose is not None
+                else None
+            )
+            if (
+                transpose is None
+                or transpose_index is None
+                or str(transpose.op_type) != "TRANSPOSE"
+                or len(transpose.inputs) < 2
+                or len(transpose.outputs) != 1
+                or str(transpose.outputs[0]) != dequantize_input
+            ):
+                continue
+
+            quantized_input = str(transpose.inputs[0])
+            if quantized_input in model_outputs:
+                continue
+            if active_index.consumer_indices(dequantize_input) != [
+                int(dequantize_index)
+            ]:
+                continue
+
+            quantized_tensor = model_ir.tensors.get(quantized_input)
+            transposed_tensor = model_ir.tensors.get(dequantize_input)
+            output_tensor = model_ir.tensors.get(dequantize_output)
+            if (
+                quantized_tensor is None
+                or transposed_tensor is None
+                or output_tensor is None
+            ):
+                continue
+            if not _all_per_tensor_quantized([quantized_tensor, transposed_tensor]):
+                continue
+
+            quantized_shape = [int(value) for value in quantized_tensor.shape]
+            quantized_signature = (
+                [int(value) for value in quantized_tensor.shape_signature]
+                if quantized_tensor.shape_signature is not None
+                else list(quantized_shape)
+            )
+            if len(quantized_shape) == 0:
+                continue
+            permutation = _read_transpose_perm(model_ir, transpose)
+            if permutation is None:
+                continue
+            expected_shape = _permute_shape(
+                quantized_shape,
+                permutation,
+            )
+            expected_signature = _permute_shape(
+                quantized_signature,
+                permutation,
+            )
+            if expected_shape is None or expected_signature is None:
+                continue
+
+            before_transpose = _unique_tensor_name(
+                f"{dequantize_output}_before_transpose"
+            )
+            model_ir.tensors[before_transpose] = TensorIR(
+                name=before_transpose,
+                dtype=str(output_tensor.dtype),
+                shape=list(quantized_shape),
+                shape_signature=list(quantized_signature),
+                data=None,
+            )
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=dequantize,
+                new_inputs=[quantized_input],
+                graph_index=active_index,
+            )
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=dequantize,
+                new_outputs=[before_transpose],
+                graph_index=active_index,
+            )
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=transpose,
+                new_inputs=[before_transpose, str(transpose.inputs[1])],
+                graph_index=active_index,
+            )
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=transpose,
+                new_outputs=[dequantize_output],
+                graph_index=active_index,
+            )
+            output_tensor.shape = [int(value) for value in expected_shape]
+            output_tensor.shape_signature = [int(value) for value in expected_signature]
+
+            if int(transpose_index) < int(dequantize_index):
+                moved = active_index.remove_operator(int(transpose_index))
+                active_index.insert_operator(int(dequantize_index), moved)
+
+            sanitized += 1
+            changed = True
+            break
+
+        if changed:
+            continue
+
+        for transpose_index in active_index.operator_indices("TRANSPOSE"):
+            transpose = model_ir.operators[int(transpose_index)]
+            if len(transpose.inputs) < 2 or len(transpose.outputs) != 1:
+                continue
+
+            pre_output = str(transpose.inputs[0])
+            final_output = str(transpose.outputs[0])
+            if final_output not in model_outputs:
+                continue
+            if len(active_index.consumer_indices(final_output)) > 0:
+                continue
+            if pre_output in model_outputs:
+                continue
+            if active_index.consumer_indices(pre_output) != [int(transpose_index)]:
+                continue
+
+            dequantize = active_index.producer(pre_output)
+            if (
+                dequantize is None
+                or str(dequantize.op_type) != "DEQUANTIZE"
+                or len(dequantize.inputs) != 1
+                or len(dequantize.outputs) != 1
+                or str(dequantize.outputs[0]) != pre_output
+            ):
+                continue
+
+            _rename_tensor_globally(
+                model_ir=model_ir,
+                old_name=pre_output,
+                new_name=final_output,
+                graph_index=active_index,
+            )
+            current_transpose_index = active_index.operator_index(transpose)
+            if current_transpose_index is None:
+                continue
+            active_index.remove_operator(int(current_transpose_index))
+            removed_terminal_dequantize_transpose += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {
+        "sanitized_terminal_transpose_before_dequantize": int(sanitized),
+        "removed_terminal_dequantize_transpose": int(
+            removed_terminal_dequantize_transpose
+        ),
     }
 
 

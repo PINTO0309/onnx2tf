@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 import onnx2tf.tflite_builder.passes.quantization_cleanup as cleanup_module
 
@@ -10,6 +11,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorI
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
     _optimize_concat_pre_quantize_dequantize,
     _quantized_tensors_share_exact_grid,
+    _sanitize_terminal_transpose_before_dequantize,
     run_terminal_quantize_dequantize_cleanup,
 )
 
@@ -99,6 +101,92 @@ def _concat_qdq_model(*, branches: int = 2) -> ModelIR:
                 ),
             ]
         )
+    return model_ir
+
+
+def _terminal_transpose_dequantize_model(
+    *,
+    pattern: str = "transpose_dequantize",
+    branches: int = 1,
+) -> ModelIR:
+    model_ir = ModelIR("terminal_transpose_before_dequantize")
+    for branch_index in range(int(branches)):
+        prefix = f"terminal{branch_index}"
+        quantized = f"{prefix}_quantized"
+        permutation = f"{prefix}_permutation"
+        intermediate = f"{prefix}_intermediate"
+        output = f"{prefix}_output"
+        model_ir.inputs.append(quantized)
+        model_ir.outputs.append(output)
+        model_ir.tensors[quantized] = TensorIR(
+            name=quantized,
+            dtype="INT8",
+            shape=[1, 3],
+            shape_signature=[-1, 3],
+            quantization=_grid(),
+        )
+        model_ir.tensors[permutation] = TensorIR(
+            name=permutation,
+            dtype="INT32",
+            shape=[2],
+            shape_signature=[2],
+            data=np.asarray([1, 0], dtype=np.int32),
+        )
+        if pattern == "transpose_dequantize":
+            model_ir.tensors[intermediate] = TensorIR(
+                name=intermediate,
+                dtype="INT8",
+                shape=[3, 1],
+                shape_signature=[3, -1],
+                quantization=_grid(),
+            )
+            model_ir.tensors[output] = TensorIR(
+                name=output,
+                dtype="FLOAT32",
+                shape=[3, 1],
+                shape_signature=[3, -1],
+            )
+            model_ir.operators.extend(
+                [
+                    OperatorIR(
+                        "TRANSPOSE",
+                        [quantized, permutation],
+                        [intermediate],
+                    ),
+                    OperatorIR(
+                        "DEQUANTIZE",
+                        [intermediate],
+                        [output],
+                    ),
+                ]
+            )
+        else:
+            model_ir.tensors[intermediate] = TensorIR(
+                name=intermediate,
+                dtype="FLOAT32",
+                shape=[1, 3],
+                shape_signature=[-1, 3],
+            )
+            model_ir.tensors[output] = TensorIR(
+                name=output,
+                dtype="FLOAT32",
+                shape=[3, 1],
+                shape_signature=[3, -1],
+            )
+            model_ir.operators.extend(
+                [
+                    OperatorIR(
+                        "DEQUANTIZE",
+                        [quantized],
+                        [intermediate],
+                    ),
+                    OperatorIR(
+                        "TRANSPOSE",
+                        [intermediate, permutation],
+                        [output],
+                    ),
+                ]
+            )
     return model_ir
 
 
@@ -267,6 +355,166 @@ def test_concat_qdq_cleanup_skips_index_without_concat_and_still_prunes(
     stats = _optimize_concat_pre_quantize_dequantize(model_ir)
 
     assert stats == {"bypassed_concat_pre_quantize_dequantize": 0}
+    assert set(model_ir.tensors) == {"x", "y"}
+
+
+def test_terminal_transpose_dequantize_sanitizer_handles_multiple_matches_once(
+    monkeypatch,
+) -> None:
+    model_ir = _terminal_transpose_dequantize_model(branches=2)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = _sanitize_terminal_transpose_before_dequantize(model_ir)
+
+    assert stats == {
+        "sanitized_terminal_transpose_before_dequantize": 2,
+        "removed_terminal_dequantize_transpose": 2,
+    }
+    assert refresh_count == 1
+    assert [str(operator.op_type) for operator in model_ir.operators] == [
+        "DEQUANTIZE",
+        "DEQUANTIZE",
+    ]
+    assert [
+        (
+            [str(name) for name in operator.inputs],
+            [str(name) for name in operator.outputs],
+        )
+        for operator in model_ir.operators
+    ] == [
+        (["terminal0_quantized"], ["terminal0_output"]),
+        (["terminal1_quantized"], ["terminal1_output"]),
+    ]
+
+
+def test_terminal_dequantize_transpose_removal_keeps_index_and_output_name() -> None:
+    model_ir = _terminal_transpose_dequantize_model(pattern="dequantize_transpose")
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _sanitize_terminal_transpose_before_dequantize(
+        model_ir,
+        graph_index=graph_index,
+    )
+
+    assert stats == {
+        "sanitized_terminal_transpose_before_dequantize": 0,
+        "removed_terminal_dequantize_transpose": 1,
+    }
+    assert len(model_ir.operators) == 1
+    assert [str(name) for name in model_ir.operators[0].inputs] == [
+        "terminal0_quantized"
+    ]
+    assert [str(name) for name in model_ir.operators[0].outputs] == ["terminal0_output"]
+    assert model_ir.tensors["terminal0_output"].shape == [1, 3]
+    fresh_index = ModelIRGraphIndex(model_ir)
+    assert graph_index.producers == fresh_index.producers
+    assert graph_index.consumers == fresh_index.consumers
+    assert graph_index.duplicate_producers == fresh_index.duplicate_producers
+    assert graph_index._operator_indices_by_id == fresh_index._operator_indices_by_id
+    assert (
+        graph_index._operator_indices_by_type == fresh_index._operator_indices_by_type
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "nonterminal_output",
+        "consumed_output",
+        "public_quantized_input",
+        "shared_transposed_input",
+        "per_channel_quantization",
+        "invalid_permutation",
+        "missing_output_tensor",
+    ],
+)
+def test_terminal_transpose_dequantize_sanitizer_preserves_guards(
+    case: str,
+) -> None:
+    model_ir = _terminal_transpose_dequantize_model()
+    if case == "nonterminal_output":
+        model_ir.outputs = []
+    elif case == "consumed_output":
+        model_ir.tensors["side"] = _tensor("side", "FLOAT32")
+        model_ir.outputs.append("side")
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", ["terminal0_output"], ["side"])
+        )
+    elif case == "public_quantized_input":
+        model_ir.outputs.append("terminal0_quantized")
+    elif case == "shared_transposed_input":
+        model_ir.tensors["side"] = _tensor("side", "FLOAT32")
+        model_ir.outputs.append("side")
+        model_ir.operators.append(
+            OperatorIR("DEQUANTIZE", ["terminal0_intermediate"], ["side"])
+        )
+    elif case == "per_channel_quantization":
+        per_channel = QuantParamIR(
+            scale=[0.1, 0.2, 0.3],
+            zero_point=[0, 0, 0],
+            quantized_dimension=1,
+        )
+        model_ir.tensors["terminal0_quantized"].quantization = per_channel
+        model_ir.tensors["terminal0_intermediate"].quantization = per_channel
+    elif case == "invalid_permutation":
+        model_ir.tensors["terminal0_permutation"].data = np.asarray(
+            [0, 0],
+            dtype=np.int32,
+        )
+    elif case == "missing_output_tensor":
+        del model_ir.tensors["terminal0_output"]
+
+    stats = _sanitize_terminal_transpose_before_dequantize(model_ir)
+
+    assert stats == {
+        "sanitized_terminal_transpose_before_dequantize": 0,
+        "removed_terminal_dequantize_transpose": 0,
+    }
+    assert [str(operator.op_type) for operator in model_ir.operators[:2]] == [
+        "TRANSPOSE",
+        "DEQUANTIZE",
+    ]
+    assert [str(name) for name in model_ir.operators[0].inputs] == [
+        "terminal0_quantized",
+        "terminal0_permutation",
+    ]
+    assert [str(name) for name in model_ir.operators[1].inputs] == [
+        "terminal0_intermediate"
+    ]
+
+
+def test_terminal_transpose_dequantize_sanitizer_skips_index_without_pair(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("terminal_without_transpose")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": _tensor("x", "INT8", quantization=_grid()),
+        "y": _tensor("y", "FLOAT32"),
+        "unused": _tensor("unused", "FLOAT32"),
+    }
+    model_ir.operators = [OperatorIR("DEQUANTIZE", ["x"], ["y"])]
+
+    def unexpected_index(*args, **kwargs):
+        raise AssertionError("unexpected graph index allocation")
+
+    monkeypatch.setattr(cleanup_module, "ModelIRGraphIndex", unexpected_index)
+
+    stats = _sanitize_terminal_transpose_before_dequantize(model_ir)
+
+    assert stats == {
+        "sanitized_terminal_transpose_before_dequantize": 0,
+        "removed_terminal_dequantize_transpose": 0,
+    }
     assert set(model_ir.tensors) == {"x", "y"}
 
 
