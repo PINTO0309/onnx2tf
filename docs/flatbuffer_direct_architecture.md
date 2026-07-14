@@ -2319,6 +2319,10 @@ expressions, native direct-codegen validation, and the typed fallback-error
 classifier use the same owner. This keeps runtime-kernel support distinct from
 the smaller native source-emitter set without duplicating the registry. All six
 functions are AST-identical to their former exporter definitions.
+Native package preparation combines root-CUSTOM rejection and recursive
+supported-op validation in one traversal. The compatibility validators remain
+available independently, while production and debug export paths use only the
+combined validator and preserve the established error precedence.
 
 Generated PyTorch identifiers have a Torch-free single owner in
 `pytorch_naming.py`. Tensor variables, constant-buffer attributes, serialized

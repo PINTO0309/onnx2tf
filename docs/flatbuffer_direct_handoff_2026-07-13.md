@@ -850,6 +850,18 @@ control-flow, and architecture selection passes 99 tests. On a synthetic
 from 0.000315s to 0.000044s (7.19x); end-to-end preparation remains dominated
 by deep copy and layout work. No model conversion or inference was run.
 
+Native package capability validation now combines explicit root-CUSTOM
+rejection and recursive supported-op validation. Production and debug exports
+therefore scan the prepared root operator list once instead of calling two
+validators, while the individual validators remain compatibility imports. The
+combined path preserves root-CUSTOM error precedence and the established
+generic unsupported-op diagnostic for CUSTOM operators found only in a
+subgraph. Five hundred fixed-seed root/subgraph capability combinations match
+the former two-validator outcome, exception type, and message exactly. The
+focused capability and architecture selection passes 90 tests, and a 101-run
+synthetic 2,000-op median improved from 0.000070605s to 0.000035143s (2.01x).
+No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

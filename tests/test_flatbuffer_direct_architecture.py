@@ -4377,6 +4377,7 @@ def test_pytorch_capability_registry_has_single_owner() -> None:
 
     for function_name in (
         "_ensure_direct_codegen_supported",
+        "_ensure_native_export_supported_ops",
         "_ensure_no_custom_ops",
         "_ensure_supported_ops",
         "_is_direct_codegen_unsupported_error",
@@ -4386,6 +4387,14 @@ def test_pytorch_capability_registry_has_single_owner() -> None:
         assert function_name in capability_functions
         assert function_name not in exporter_functions
         assert f"{function_name}," in exporter_source
+    exporter_calls = [
+        node.func.id
+        for node in ast.walk(ast.parse(exporter_source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    ]
+    assert exporter_calls.count("_ensure_native_export_supported_ops") == 2
+    assert "_ensure_no_custom_ops" not in exporter_calls
+    assert "_ensure_supported_ops" not in exporter_calls
     assert "_DIRECT_CODEGEN_SUPPORTED_OP_TYPES: Set[str] =" in capability_source
     assert "_DIRECT_CODEGEN_SUPPORTED_OP_TYPES: Set[str] =" not in exporter_source
     assert "_DIRECT_CODEGEN_SUPPORTED_OP_TYPES," in exporter_source

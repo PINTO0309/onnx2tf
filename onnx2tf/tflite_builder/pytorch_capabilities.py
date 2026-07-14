@@ -80,11 +80,11 @@ def get_supported_pytorch_kernel_op_types() -> Set[str]:
     return set(SUPPORTED_TORCH_KERNEL_OP_TYPES)
 
 
-def _ensure_supported_ops(model_ir: ModelIR) -> None:
+def _raise_for_unsupported_ops(op_types: Set[str]) -> None:
     unsupported = sorted(
         {
             op_type
-            for op_type in _collect_model_op_types(model_ir)
+            for op_type in op_types
             if op_type not in SUPPORTED_TORCH_KERNEL_OP_TYPES
             and op_type not in _DIRECT_CODEGEN_SUPPORTED_OP_TYPES
             and op_type not in {"MODEL"}
@@ -95,6 +95,23 @@ def _ensure_supported_ops(model_ir: ModelIR) -> None:
             "ModelIR->PyTorch exporter does not support some op types in this model. "
             f"unsupported_op_types={unsupported}"
         )
+
+
+def _ensure_supported_ops(model_ir: ModelIR) -> None:
+    _raise_for_unsupported_ops(_collect_model_op_types(model_ir))
+
+
+def _ensure_native_export_supported_ops(model_ir: ModelIR) -> None:
+    root_op_types = {str(op.op_type) for op in model_ir.operators}
+    if "CUSTOM" in root_op_types:
+        raise ModelIRPyTorchExportError(
+            "ModelIR->PyTorch exporter does not support CUSTOM ops."
+        )
+
+    all_op_types = set(root_op_types)
+    for subgraph in model_ir.subgraphs:
+        all_op_types.update(_collect_model_op_types(subgraph))
+    _raise_for_unsupported_ops(all_op_types)
 
 
 def _ensure_direct_codegen_supported(model_ir: ModelIR) -> None:

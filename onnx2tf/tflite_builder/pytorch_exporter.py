@@ -50,6 +50,7 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.pytorch_capabilities import (
     _DIRECT_CODEGEN_SUPPORTED_OP_TYPES,
     _ensure_direct_codegen_supported,
+    _ensure_native_export_supported_ops,
     _ensure_no_custom_ops,
     _ensure_supported_ops,
     _is_direct_codegen_unsupported_error,
@@ -26970,8 +26971,7 @@ def _export_pytorch_package_from_model_ir_impl(
             if needs_same_avg_pool_restore:
                 _restore_same_average_pool_exclude_pad_correction_for_native_runtime(native_model_ir)
             normalized = prepare_model_ir_for_native_pytorch(native_model_ir)
-            _ensure_no_custom_ops(normalized)
-            _ensure_supported_ops(normalized)
+            _ensure_native_export_supported_ops(normalized)
         except Exception as ex:
             normalized = None
             native_prep_error = ex
@@ -27199,8 +27199,7 @@ def debug_export_native_codegen_intermediates_from_model_ir(
         )
 
     normalized = prepare_model_ir_for_native_pytorch(model_ir)
-    _ensure_no_custom_ops(normalized)
-    _ensure_supported_ops(normalized)
+    _ensure_native_export_supported_ops(normalized)
 
     tensor_storage_name_map = _make_tensor_storage_name_map(normalized)
     os.makedirs(output_folder_path, exist_ok=True)

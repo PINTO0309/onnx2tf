@@ -6,6 +6,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
 from onnx2tf.tflite_builder.pytorch_capabilities import (
     _DIRECT_CODEGEN_SUPPORTED_OP_TYPES,
     _ensure_direct_codegen_supported,
+    _ensure_native_export_supported_ops,
     _ensure_no_custom_ops,
     _ensure_supported_ops,
     _is_direct_codegen_unsupported_error,
@@ -71,6 +72,45 @@ def test_custom_op_validation_is_explicit() -> None:
         match="does not support CUSTOM ops",
     ):
         _ensure_no_custom_ops(_model_with_op("CUSTOM"))
+
+
+def test_native_export_capability_validation_preserves_error_precedence() -> None:
+    root_custom = _model_with_op("CUSTOM")
+    root_custom.operators.append(
+        OperatorIR(op_type="NOT_REAL", inputs=[], outputs=[], options={})
+    )
+    with pytest.raises(
+        ModelIRPyTorchExportError,
+        match="does not support CUSTOM ops",
+    ):
+        _ensure_native_export_supported_ops(root_custom)
+
+    subgraph_custom = _model_with_op("ADD")
+    subgraph_custom.subgraphs.append(_model_with_op("CUSTOM"))
+    with pytest.raises(
+        ModelIRPyTorchExportError,
+        match=r"unsupported_op_types=\['CUSTOM'\]",
+    ):
+        _ensure_native_export_supported_ops(subgraph_custom)
+
+
+def test_native_export_capability_validation_scans_root_operators_once() -> None:
+    class CountingOperators(list[OperatorIR]):
+        def __init__(self, values: list[OperatorIR]) -> None:
+            super().__init__(values)
+            self.iteration_count = 0
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            self.iteration_count += 1
+            return super().__iter__()
+
+    model_ir = _model_with_op("ADD")
+    counting_operators = CountingOperators(model_ir.operators)
+    model_ir.operators = counting_operators
+
+    _ensure_native_export_supported_ops(model_ir)
+
+    assert counting_operators.iteration_count == 1
 
 
 def test_runtime_wrapper_capability_allows_runtime_ops_and_onnx_slice_custom() -> None:
