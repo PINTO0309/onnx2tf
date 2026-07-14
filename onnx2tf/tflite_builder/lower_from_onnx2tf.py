@@ -49972,6 +49972,24 @@ def lower_onnx_to_ir(
                 state_scope=state_scope,
             )
 
+    def _run_qkv_attention_layout_pass_cluster() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_qkv_attention_prefix_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_qkv_attention_bridge_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     def _run_gate_layout_pass_cluster(
         *,
         include_mixed_attention: bool = True,
@@ -50968,16 +50986,7 @@ def lower_onnx_to_ir(
         _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
         _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
         _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
-        run_qkv_attention_prefix_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_qkv_attention_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_qkv_attention_layout_pass_cluster()
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
         # Run the multi-branch gate rewrite at terminal stage so earlier
         # generic passes do not re-wrap rewritten NHWC tensors.
@@ -51070,16 +51079,7 @@ def lower_onnx_to_ir(
     _optimize_batchmatmul_affine_transpose_input_chains(model_ir)
     _optimize_batchmatmul_reshape_se_nhwc_chains(model_ir)
     _optimize_batchmatmul_transpose_input_to_adj_flags(model_ir)
-    run_qkv_attention_prefix_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_qkv_attention_bridge_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_qkv_attention_layout_pass_cluster()
     _optimize_transpose_relu_split_all_outputs_to_nhwc_chains(model_ir)
     _optimize_transpose_relu_split_conv_relu_concat_posttranspose_to_nhwc_chains(model_ir)
     _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)

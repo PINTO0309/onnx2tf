@@ -8,15 +8,12 @@ currently tracks this branch. The Goal is active again; subsequent work uses
 coherent commits and pushes without opening an additional pull request.
 
 The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-two long singleton/Reshape cleanup sequences and three shorter singleton-
-channel/duplicate-fan-out/consecutive-Reshape triplets. The long helper uses
-explicit flags to retain the two former variants; the short helper accepts the
-target ModelIR and LayoutState so fallback relowering receives its own scope.
-Synthetic preflight-only fixtures prove that as many as 13 registered groups
-construct one graph index, while AST ownership checks fix exact runner order,
-flags, three short-helper invocations, and every surrounding scope boundary.
-The lowerer's registered-runner call characterization is reduced from 160 to
-147 without changing runtime invocation order.
+each of two repeated QKV attention prefix/bridge pairs. The existing four
+prefix specs remain before the two bridge specs; their six diagnostic events
+construct one graph index per occurrence. The later bridge-only invocation
+remains standalone, and both production scopes end before their following
+legacy mutator. The lowerer's registered-runner call characterization is now
+145, down from 160 before the singleton/Reshape and QKV helper extractions.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -38,7 +35,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains twenty coherent continuations:
+The current `fb-refactor5` work contains twenty-one coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -81,9 +78,11 @@ The current `fb-refactor5` work contains twenty coherent continuations:
   unary runner pairs;
 - `543d7cc3` shares state across three repeated channel-slice-merge/Pad-Mul
   pairs;
-- the current checkpoint shares state across the repeated long singleton/
+- `93a0295a` shares state across the repeated long singleton/
   Reshape sequences and all three terminal singleton-channel/duplicate-fan-
-  out/consecutive-Reshape triplets.
+  out/consecutive-Reshape triplets;
+- the current checkpoint shares state across two repeated QKV attention
+  prefix/bridge pairs.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -102,10 +101,7 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/graph_cleanup.py`;
-- `onnx2tf/tflite_builder/passes/multi_branch_gate_layout.py`;
-- `onnx2tf/tflite_builder/passes/singleton_maxpool_layout.py`;
-- `onnx2tf/tflite_builder/passes/singleton_reshape_layout.py`;
+- `onnx2tf/tflite_builder/passes/attention_layout.py`;
 - `tests/test_flatbuffer_direct_pass_efficiency.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
@@ -248,6 +244,10 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   and no LayoutState, preventing state identity from crossing conversion
   instances. The standalone singleton-MaxPool/consecutive-Reshape pair is not
   included in this checkpoint.
+- Two repeated QKV attention prefix/bridge pairs use a two-runner helper-owned
+  scope. The four prefix specs and two bridge specs retain exact order and
+  diagnostic grouping. Both runners expose optional standalone-compatible
+  scope arguments; the separate later bridge-only call remains independent.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -557,10 +557,30 @@ The long synthetic fixture makes all ten runner preflights match and records
 `[true, false, false]`. Architecture checks fix both long variants, all three
 short-helper target/layout combinations, the shared scope keyword, and the
 147-call global runner characterization.
+A focused QKV attention checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  <seven focused QKV rewrite tests from test_tflite_builder_direct.py> \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_qkv_attention_pair_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope \
+  tests/test_flatbuffer_direct_architecture.py::test_ordered_model_ir_runner_calls_record_session_diagnostics
+
+10 passed
+```
+
+The preflight-only fixture records one graph-index refresh and build flags
+`[true, true, true, true, false, false]`: the four prefix events belong to the
+state-building group, and both bridge events reuse it. The seven existing
+functional cases cover Gather/Reshape/Transpose hoisting, Gather-to-Slice,
+Slice-to-Split, Split/Reshape collapse, shared pre-Transpose, weighted-sum
+bridging, and the KV pipeline.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`153 passed` after adding the singleton/Reshape checks.
+`155 passed` after adding the QKV pair checks.
 
 The changed pass modules and tests pass Ruff normally. The lowerer passes with
 its pre-existing `F401` and `F841` findings scoped out. Every changed Python
@@ -602,10 +622,11 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the remaining adjacent registered-pass pairs, beginning with the
-   standalone singleton-MaxPool/consecutive-Reshape pair, while treating every
-   surrounding legacy helper as a hard boundary. Prefer repeated sequences
-   with measurable index-rebuild savings over one-off grouping.
+2. Audit the two repeated duplicate-fan-out/quantized-PReLU pairs, then the
+   repeated constant-fold/redundant-Cast pair, while treating every surrounding
+   legacy helper as a hard boundary. Prefer repeated sequences with measurable
+   index-rebuild savings over the standalone singleton-MaxPool/consecutive-
+   Reshape pair.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.

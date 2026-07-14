@@ -122,6 +122,14 @@ primary Session layout state. No scope crosses the legacy rewrites around
 these sequences. The separate singleton-MaxPool/consecutive-Reshape pair
 remains outside this checkpoint.
 
+Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
+The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
+and Split/Reshape collapse) retain their order before the two bridge specs
+(shared pre-Transpose and weighted-sum bridge). The separate later bridge-only
+invocation remains standalone. Both runners keep optional scope arguments, and
+each production scope ends before the following legacy attention/layout
+rewriter.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while
