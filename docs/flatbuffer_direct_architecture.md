@@ -3766,6 +3766,17 @@ gate suffix. The extraction removes 3 net lowerer lines without changing
 runtime invocation count, order, or the registered-runner call-site count of
 118.
 
+Four AST-identical 6-call SiNet pre-Add/Resize recovery sequences are owned by
+`_run_sinet_preadd_resize_recovery_sequence`, including the copy nested in the
+broader 8-call SiNet terminal helper. The helper preserves pre-Add/PReLU,
+fan-out, Concat/dual-Resize affine, and Softmax-mask recovery and contains only
+raw ModelIR mutators. The four callers retain their distinct shuffle and
+terminal constant-PReLU, QDQ and singleton-Reshape, repeated pre-Add, and shape-
+reconciliation/CSP-attention boundaries. Recursively expanding the two SiNet
+helpers produces an AST identical to the pre-extraction lowerer. The extraction
+removes 12 net lowerer lines without changing runtime invocation count, order,
+or the registered-runner call-site count of 118.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

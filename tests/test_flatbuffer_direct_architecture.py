@@ -1029,6 +1029,104 @@ def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
     ]
 
 
+def test_lowerer_sinet_preadd_resize_recovery_has_one_ordered_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_sinet_preadd_resize_recovery_sequence"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
+        "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains",
+        "_optimize_sinet_concat_resize_affine_transpose_chains",
+        "_optimize_sinet_dual_resize_affine_transpose_chains",
+        "_optimize_sinet_concat_resize_affine_tail_concat_transpose_chains",
+        "_optimize_sinet_softmax_mask_residual_nhwc_tail_chains",
+    ]
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert [call.func.id for call in helper_calls] == expected_order
+
+    terminal_helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_run_sinet_terminal_layout_recovery_sequence"
+    )
+    nested_index = next(
+        index
+        for index, statement in enumerate(terminal_helper.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == helper_name
+    )
+    assert terminal_helper.body[nested_index - 1].value.func.id == (
+        "_optimize_sinet_shuffle_residual_transpose_chains"
+    )
+    assert terminal_helper.body[nested_index + 1].value.func.id == (
+        "_optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains"
+    )
+
+    invocation_indexes = [
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == helper_name
+    ]
+    assert len(invocation_indexes) == 3
+    previous_call_names = []
+    next_call_names = []
+    for index in invocation_indexes:
+        invocation = lowerer.body[index].value
+        assert invocation.args == []
+        assert invocation.keywords == []
+        previous = lowerer.body[index - 1]
+        following = lowerer.body[index + 1]
+        for boundary in (previous, following):
+            assert isinstance(boundary, ast.Expr)
+            assert isinstance(boundary.value, ast.Call)
+            assert isinstance(boundary.value.func, ast.Name)
+        previous_call_names.append(previous.value.func.id)
+        next_call_names.append(following.value.func.id)
+    assert previous_call_names == [
+        "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
+        "_run_sinet_terminal_layout_recovery_sequence",
+        "_reconcile_static_tensor_shapes",
+    ]
+    assert next_call_names == [
+        "_run_singleton_reshape_layout_pass_cluster",
+        "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
+        "_optimize_transpose_csp_attention_nhwc_chains",
+    ]
+
+    all_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+    ]
+    assert len(all_invocations) == 4
+
+
 def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -1047,12 +1145,7 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     )
     expected_order = [
         "_optimize_sinet_shuffle_residual_transpose_chains",
-        "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
-        "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains",
-        "_optimize_sinet_concat_resize_affine_transpose_chains",
-        "_optimize_sinet_dual_resize_affine_transpose_chains",
-        "_optimize_sinet_concat_resize_affine_tail_concat_transpose_chains",
-        "_optimize_sinet_softmax_mask_residual_nhwc_tail_chains",
+        "_run_sinet_preadd_resize_recovery_sequence",
         "_optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains",
     ]
     helper_calls = [
@@ -1093,7 +1186,7 @@ def test_lowerer_sinet_terminal_layout_recovery_has_one_ordered_owner() -> None:
     ]
     assert next_call_names == [
         "_optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains",
-        "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
+        "_run_sinet_preadd_resize_recovery_sequence",
     ]
 
 
