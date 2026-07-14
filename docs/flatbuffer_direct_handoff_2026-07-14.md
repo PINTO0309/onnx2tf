@@ -8,15 +8,15 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit centralizes report and quantized-artifact
-validation and completion logging across the two full direct-result
-finalization paths. OP coverage, tensor correspondence, dynamic-range, INT8,
-and both int16-activation variants now have one owner for required keys, skip
-semantics, and failure messages. Tensor correspondence remains a default
-compatibility artifact, and explicit call-site messages preserve the two
-pre-existing dynamic-range log spellings. Split, SavedModel/PyTorch,
-custom-op, and evaluation processing remain outside this helper because their
-contexts are not identical.
+The latest implementation unit proves that the early direct fast path is
+terminal and removes two historical direct conversion implementations that
+could no longer be reached. Backend normalization occurs once; direct success
+returns immediately after full artifact finalization, and direct failure
+propagates through cleanup. A post-boundary assertion restricts the remaining
+legacy graph/SavedModel/TFLite-converter pipeline to `tf_converter`. The
+compatibility layer consequently has one direct builder invocation, one result
+finalizer, and one evaluation-artifact selection site, with 431 lines of dead
+retry, logging, report, evaluation, and serialization code removed.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -38,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains forty coherent continuations:
+The current `fb-refactor5` work contains forty-one coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -122,9 +122,12 @@ The current `fb-refactor5` work contains forty coherent continuations:
   and progress planning;
 - `5e4e14d5` centralizes TFLite evaluation-path selection from returned direct
   artifacts;
-- the current checkpoint centralizes direct report and quantized-artifact
+- `d7fb5969` centralizes direct report and quantized-artifact
   validation and completion logging without changing messages or skip
-  behavior.
+  behavior;
+- the current checkpoint makes the direct fast path the sole direct conversion
+  owner and removes the unreachable TensorFlow-failure fallback and duplicate
+  post-SavedModel direct serialization path.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -1073,6 +1076,14 @@ direct-backend smokes passed with `3 passed`. The combined artifact-metadata,
 artifact-policy, core, pass-efficiency, and architecture selection passed with
 `211 passed`.
 
+The terminal direct-boundary checkpoint passed the three focused evaluation-
+selection, report/quantized-finalization, and fast-path control-flow contracts
+with `3 passed`. TensorFlow-import-blocked direct and `-cotof`, followed by the
+sequential integration quantization/evaluation/coverage, strict integer/int16,
+and split-manifest smokes, passed with `5 passed`. The combined artifact-
+metadata, artifact-policy, core, pass-efficiency, and architecture selection
+passed with `212 passed`.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1118,11 +1129,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the third, reduced direct-result path separately. It intentionally
-   performs only a subset of full finalization today; do not add report or
-   quantization validation unless characterization proves that path should own
-   those artifacts. Extract only behavior proven identical and preserve every
-   legacy return key, message, and skip condition.
+2. Audit the remaining live direct compatibility helpers now that builder
+   invocation and finalization each have one call site. Keep the terminal
+   backend boundary explicit; do not reintroduce fallback into the legacy
+   TensorFlow pipeline or broaden optional artifact execution.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.

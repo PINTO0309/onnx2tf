@@ -2005,7 +2005,7 @@ def test_tflite_evaluation_artifact_selection_has_single_owner() -> None:
     helper_name = "select_tflite_evaluation_artifact_paths"
     assert f"def {helper_name}(" in metadata_source
     assert f"def {helper_name}(" not in compatibility_source
-    assert compatibility_source.count(f"{helper_name}(") == 3
+    assert compatibility_source.count(f"{helper_name}(") == 1
     assert "direct_eval_paths = {}" not in compatibility_source
     assert "direct_eval_paths['" not in compatibility_source
 
@@ -2028,31 +2028,15 @@ def test_direct_report_and_quantization_finalization_has_single_owner() -> None:
         for node in convert_function.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    helper_calls = sorted(
-        (
-            node
-            for node in ast.walk(convert_function)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == helper_name
-        ),
-        key=lambda node: node.lineno,
-    )
-
-    assert len(helper_calls) == 2
-    completion_messages = []
-    for call in helper_calls:
-        keyword = next(
-            keyword
-            for keyword in call.keywords
-            if keyword.arg == "dynamic_range_completion_message"
-        )
-        assert isinstance(keyword.value, ast.Constant)
-        completion_messages.append(keyword.value.value)
-    assert completion_messages == [
-        "Dynamic Range Quantization tflite output complete!",
-        "Dynamic range quantized tflite output complete!",
+    helper_calls = [
+        node
+        for node in ast.walk(convert_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
     ]
+    assert len(helper_calls) == 1
+    assert helper_calls[0].keywords == []
 
     helper_names = {
         node.id
@@ -2079,6 +2063,7 @@ def test_direct_report_and_quantization_finalization_has_single_owner() -> None:
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
     assert required_artifact_keys <= helper_strings
+    assert "Dynamic Range Quantization tflite output complete! (" in helper_strings
     for error_message in (
         "flatbuffer_direct OP coverage report was requested but no report was generated.",
         "flatbuffer_direct dynamic-range quantization was requested but no output was generated.",
@@ -2089,6 +2074,85 @@ def test_direct_report_and_quantization_finalization_has_single_owner() -> None:
     ):
         assert error_message in helper_strings
         assert compatibility_source.count(error_message) == 1
+
+
+def test_direct_backend_exits_before_legacy_tensorflow_pipeline() -> None:
+    compatibility_source = (
+        REPO_ROOT / "onnx2tf" / "onnx2tf.py"
+    ).read_text(encoding="utf-8")
+    compatibility_tree = ast.parse(compatibility_source)
+    convert_function = next(
+        node
+        for node in compatibility_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "convert"
+    )
+    direct_fast_path = next(
+        node
+        for node in convert_function.body
+        if isinstance(node, ast.If)
+        and any(
+            isinstance(descendant, ast.Call)
+            and isinstance(descendant.func, ast.Name)
+            and descendant.func.id == "_finalize_flatbuffer_direct_export"
+            for descendant in ast.walk(node)
+        )
+    )
+    fast_path_index = convert_function.body.index(direct_fast_path)
+    boundary_assert = convert_function.body[fast_path_index + 1]
+
+    assert isinstance(boundary_assert, ast.Assert)
+    assert isinstance(boundary_assert.test, ast.Compare)
+    assert isinstance(boundary_assert.test.left, ast.Name)
+    assert boundary_assert.test.left.id == "tflite_backend"
+    assert len(boundary_assert.test.ops) == 1
+    assert isinstance(boundary_assert.test.ops[0], ast.Eq)
+    assert len(boundary_assert.test.comparators) == 1
+    assert isinstance(boundary_assert.test.comparators[0], ast.Constant)
+    assert boundary_assert.test.comparators[0].value == "tf_converter"
+
+    fast_path_returns = [
+        node for node in ast.walk(direct_fast_path) if isinstance(node, ast.Return)
+    ]
+    assert len(fast_path_returns) == 1
+    assert isinstance(fast_path_returns[0].value, ast.Constant)
+    assert fast_path_returns[0].value.value is None
+
+    direct_export_calls = [
+        node
+        for node in ast.walk(convert_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "export_tflite_model_flatbuffer_direct"
+    ]
+    assert len(direct_export_calls) == 1
+    assert direct_export_calls[0].lineno < direct_fast_path.lineno
+
+    legacy_tail = ast.Module(
+        body=convert_function.body[fast_path_index + 2 :],
+        type_ignores=[],
+    )
+    direct_backend_comparisons = [
+        node
+        for node in ast.walk(legacy_tail)
+        if isinstance(node, ast.Compare)
+        and any(
+            isinstance(descendant, ast.Name)
+            and descendant.id == "tflite_backend"
+            for descendant in ast.walk(node)
+        )
+        and any(
+            isinstance(descendant, ast.Constant)
+            and descendant.value == "flatbuffer_direct"
+            for descendant in ast.walk(node)
+        )
+    ]
+    assert direct_backend_comparisons == []
+    assert "TF conversion path failed. " not in compatibility_source
+    assert "flatbuffer_direct conversion failed." not in compatibility_source
+    assert (
+        "Skipping saved_model export and continuing with flatbuffer_direct flow."
+        not in compatibility_source
+    )
 
 
 def test_direct_export_reads_options_only_from_normalized_request() -> None:

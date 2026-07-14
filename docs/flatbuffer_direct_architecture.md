@@ -64,20 +64,28 @@ to guard execution.
 The compatibility layer treats the direct builder's returned artifact mapping
 as the only source of TFLite paths for accuracy evaluation. The seven legacy
 variant keys and their stable evaluation order live in
-`artifact_metadata.select_tflite_evaluation_artifact_paths`; all three direct
-conversion exit paths call that owner. Missing optional variants remain absent
-instead of being reconstructed from output-directory conventions, so report
-execution follows the actual `ConversionResult` artifacts.
+`artifact_metadata.select_tflite_evaluation_artifact_paths`; the terminal
+direct conversion path calls that owner once. Missing optional variants remain
+absent instead of being reconstructed from output-directory conventions, so
+report execution follows the actual `ConversionResult` artifacts.
 
 The same compatibility boundary has one validation and completion-log owner
 for OP coverage, tensor correspondence, dynamic-range quantization, integer
-quantization, and both int16-activation variants. Both full direct-result
-finalization paths call that owner, so required artifact keys, int16 skip
-semantics, and the six established failure messages cannot drift between the
-paths. Tensor correspondence remains a compatibility-default artifact and is
-logged whenever the builder returns it. The two pre-existing dynamic-range
-completion-message spellings are explicit call-site inputs and remain
-unchanged; centralization does not silently alter observable console output.
+quantization, and both int16-activation variants. The sole direct-result
+finalizer calls that owner, preserving required artifact keys, int16 skip
+semantics, and the six established failure messages. Tensor correspondence
+remains a compatibility-default artifact and is logged whenever the builder
+returns it.
+
+The direct fast path is terminal: successful finalization returns from
+`convert`, while every failure propagates through its cleanup `finally` block.
+The backend is normalized once, and an explicit post-boundary assertion limits
+the remaining legacy graph, SavedModel, and TFLite-converter pipeline to
+`tf_converter`. Historical direct retries after TensorFlow node-conversion or
+SavedModel failure and the duplicate direct TFLite serialization block were
+therefore unreachable and have been removed. Direct builder invocation,
+artifact evaluation selection, and direct-result finalization now each have
+one live compatibility-layer call site.
 
 A pass has a stable ID, phase, priority, maximum iteration count, and explicit
 `changed` result. Repeating passes must use a graph fingerprint so a cycle
