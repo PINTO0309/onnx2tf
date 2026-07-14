@@ -132,6 +132,12 @@ remains current after changing `MAXIMUM`/`MINIMUM` operators to their RELU
 forms. Both runners retain standalone behavior through optional scope
 arguments.
 
+The late Mean/Mul/Add/Conv, generic SPP, and Gather-axis sequence shares one
+scope after the conditional generic-transpose cleanup and before the
+constant-fold/Cast helper. Generic SPP cleanup now accepts an optional scope;
+its existing differential input and operator-removal updates allow the three
+runners to reuse one index without a blanket refresh.
+
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
 and Split/Reshape collapse) retain their order before the two bridge specs

@@ -50297,6 +50297,30 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_late_mean_spp_gather_pass_cluster() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_mean_mul_add_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_spp_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_transpose_gather_axis_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> None:
         state_scope = ModelIRPassStateScope(
             model_ir,
@@ -51537,21 +51561,7 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-    run_mean_mul_add_conv_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_spp_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_transpose_gather_axis_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_late_mean_spp_gather_pass_cluster()
     _run_constant_fold_cast_cleanup_pass_cluster()
     _replace_expand_dims_and_squeeze_with_reshape(
         model_ir,
