@@ -151,6 +151,13 @@ main ModelIR and Session layout state. Both runners share one identity-bound
 scope for their respective target, and each scope ends before static-shape
 reconciliation.
 
+The terminal dual-Mul/Concat, boundary-input adapter, Pad-layout, generic
+transpose, and Gather-channel-fan-out sequence shares one scope. Its five
+runners retain their exact order and seven-spec diagnostic grouping. The
+scope begins after the final raw InstanceNorm residual/resize rewrite and ends
+before the conditional terminal Mean/attention stage. Boundary-input cleanup
+now accepts an optional scope while remaining standalone-compatible.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while

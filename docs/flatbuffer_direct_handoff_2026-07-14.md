@@ -8,12 +8,13 @@ currently tracks this branch. The Goal is active again; subsequent work uses
 coherent commits and pushes without opening an additional pull request.
 
 The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-the fallback and primary absolute-final SE-FC/Gather-channel-fan-out pairs. A
-target-parameterized helper binds fallback work to `fallback_ir` with no
-Session LayoutState and primary work to the main ModelIR and Session layout
-state. Both scopes end before static-shape reconciliation. The lowerer's
-registered-runner call characterization is now 139, down from 160 before the
-recent helper extractions.
+the five-runner terminal dual-Mul/Concat, boundary-input, Pad, generic
+transpose, and Gather-channel-fan-out sequence. The seven diagnostic events
+construct one graph index instead of up to five. The scope starts after the
+raw InstanceNorm residual/resize rewrite and ends before the conditional
+Mean/attention stage. The lowerer's registered-runner call characterization
+remains 139 because this is one production occurrence; runtime index
+construction is the optimized dimension.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -35,7 +36,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains twenty-four coherent continuations:
+The current `fb-refactor5` work contains twenty-five coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -87,8 +88,10 @@ The current `fb-refactor5` work contains twenty-four coherent continuations:
   pairs;
 - `0c76774e` shares state across two repeated constant-input-fold/redundant-
   Cast pairs;
-- the current checkpoint shares state across the fallback and primary
-  absolute-final SE-FC/Gather-channel-fan-out pairs.
+- `f0dac050` shares state across the fallback and primary absolute-final SE-FC/
+  Gather-channel-fan-out pairs;
+- the current checkpoint shares state across the five-runner terminal
+  boundary/layout sequence.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -107,7 +110,7 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/layout_transpose.py`;
+- `onnx2tf/tflite_builder/passes/boundary_input_layout.py`;
 - `tests/test_flatbuffer_direct_pass_efficiency.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
@@ -270,6 +273,11 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   LayoutState; primary receives the main ModelIR and Session state. Gather
   channel fan-out now exposes an optional standalone-compatible scope, and
   neither target's scope crosses shape reconciliation.
+- The five-runner terminal dual-Mul/Concat, boundary-input, Pad, generic
+  transpose, and Gather-channel-fan-out sequence uses one helper-owned scope.
+  Boundary-input cleanup now exposes an optional standalone-compatible scope.
+  Architecture checks fix the raw InstanceNorm predecessor and conditional
+  Mean/attention successor as hard boundaries.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -657,15 +665,37 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH \
 The preflight-only fixture records one graph-index refresh and build flags
 `[true, false]`. Architecture checks fix both target/LayoutState combinations,
 runner order, shared scope keywords, and the 139-call global characterization.
+A focused terminal-boundary checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_boundary_input_layout.py \
+  tests/test_flatbuffer_direct_dual_mul_concat_layout.py \
+  tests/test_flatbuffer_direct_layout_transpose.py \
+  tests/test_flatbuffer_direct_pad_layout.py \
+  tests/test_flatbuffer_direct_transpose_gather_channel_fanout.py \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_terminal_boundary_layout_cluster_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_terminal_boundary_layout_cluster_reuses_pass_state_scope \
+  tests/test_flatbuffer_direct_architecture.py::test_ordered_model_ir_runner_calls_record_session_diagnostics
+
+38 passed
+```
+
+The preflight-only fixture records one graph-index refresh across seven events;
+only the first reports `state_built: true`. Architecture checks fix all five
+runner calls, their shared scope, the preceding raw InstanceNorm rewrite, and
+the following conditional stage.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`161 passed` after adding the SE-FC/Gather checks.
+`163 passed` after adding the terminal-boundary checks.
 
-The changed tests pass Ruff normally. `layout_transpose.py` passes with its
-pre-existing line-623 `F841` finding scoped out, and the lowerer passes with
-its pre-existing `F401` and `F841` findings scoped out. Every changed Python
-file passes `python -m py_compile`, and `git diff --check` passes. The
+The changed boundary-input pass and tests pass Ruff normally. The lowerer
+passes with its pre-existing `F401` and `F841` findings scoped out. Every
+changed Python file passes `python -m py_compile`, and `git diff --check`
+passes. The
 immediately preceding DepthToSpace, Pool, dynamic-Pool, simple-alias, and
 aligned-scalar checkpoints passed their focused synthetic and ownership
 selections.
@@ -703,10 +733,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the five-runner terminal boundary/layout sequence from dual-Mul/
-   Concat through Gather-channel-fan-out while treating the surrounding legacy
-   helpers as hard boundaries. Its one occurrence can still eliminate up to
-   four repeated index constructions and has higher value than the standalone
+2. Audit the late Dequantize/Concat/Quantize, unary-passthrough, and unary-
+   fan-out sequence while treating the preceding raw QDQ bridge and following
+   swish rewrite as hard boundaries. Its one occurrence can eliminate two
+   repeated index constructions and still has higher value than the standalone
    singleton-MaxPool/consecutive-Reshape pair.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope

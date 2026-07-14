@@ -50051,6 +50051,44 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_terminal_boundary_layout_pass_cluster() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_dual_mul_concat_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_boundary_input_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        # Boundary input layout recovery can recreate input-head PAD wrappers.
+        run_pad_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        # Final transpose-only sweep removes pairs introduced by the adapters.
+        run_layout_transpose_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_transpose_gather_channel_fanout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     def _run_gate_layout_pass_cluster(
         *,
         include_mixed_attention: bool = True,
@@ -50994,34 +51032,7 @@ def lower_onnx_to_ir(
     _optimize_transpose_instancenorm_residual_add_to_single_post_adapter_nhwc_chains(model_ir)
     _optimize_transpose_instancenorm_residual_mul_concat_conv_nhwc_chains(model_ir)
     _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(model_ir)
-    run_dual_mul_concat_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_boundary_input_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    # Boundary input layout recovery can recreate input-head PAD wrappers.
-    run_pad_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    # Final transpose-only sweep after boundary rewrites. This removes
-    # inverse/identity pairs introduced late by localized layout adapters.
-    run_layout_transpose_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_transpose_gather_channel_fanout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_terminal_boundary_layout_pass_cluster()
     if optimize_layout_transpose_chains:
         # Boundary/layout recovery can still recreate NCHW wrappers around MEAN.
         # Run dedicated NHWC passthrough once more in the terminal stage.
