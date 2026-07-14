@@ -7,10 +7,10 @@ The active branch is `fb-refactor5`, created from `main` after pull request
 subsequent work uses coherent commits and pushes without opening another pull
 request.
 
-The latest implementation unit centralizes the repeated post-rewrite literal
-static-shape cache update for aligned binary, Resize, and Pool statements in
-the Torch-free `pytorch_fast_precanonicalize_policy.py` owner. The orchestrator
-remains 308 lines at this checkpoint, down from 482 lines at Goal
+The latest implementation unit co-locates successful NHWC AveragePool bridge
+layout-set and static-shape state application with its existing Torch-free
+policy rewrite. The orchestrator is 294 lines at this checkpoint, down from
+482 lines at Goal
 resumption, 1,025 lines at the beginning of the previous continuation, and
 1,608 lines before the broader fast-precanonicalize extraction.
 
@@ -31,7 +31,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains five coherent continuations:
+The current `fb-refactor5` work contains six coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -44,8 +44,10 @@ The current `fb-refactor5` work contains five coherent continuations:
   preserving the different direct and already-reshaped guards;
 - `91a0a52d` centralizes LRN output evidence propagation without changing or
   broadening the generated source grammar;
-- the current checkpoint centralizes literal static-shape recording while
-  retaining each update at its original point in the ordered scan.
+- `b00774a7` centralizes literal static-shape recording while retaining each
+  update at its original point in the ordered scan;
+- the current checkpoint makes the NHWC AveragePool bridge own the CF/NHWC and
+  static-shape state resulting from its rewrite.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -111,6 +113,11 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   exact trailing aligned shape. Dynamic and unparseable expressions do not
   replace existing cache entries, and binary/Resize/Pool callers still update
   the shared context immediately after their successful rewrite.
+- The NHWC AveragePool bridge keeps its returned-name contract, but successful
+  calls now update the layout sets and all four affected static-shape entries
+  internally. To preserve behavior, the cached state shape is still recomputed
+  from the pre-rewrite Pool shape after the layout sets change; it is not
+  replaced by the rendered rewrite target.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -120,8 +127,8 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
 
 ## Tests executed
 
-The resumed downstream-binary, Resize-evidence, aligned-BatchNorm, LRN, and
-static-shape-cache checkpoints passed:
+The resumed downstream-binary, Resize-evidence, aligned-BatchNorm, LRN,
+static-shape-cache, and NHWC-bridge checkpoints passed:
 
 ```text
 env -u PYTHONPATH -u LD_LIBRARY_PATH \
@@ -146,6 +153,8 @@ and static-shape state, Pool/LRN interaction, architecture ownership, and the
 existing generated-source integration case.
 The cache checkpoint passed four focused cases covering aligned binary,
 Resize/Pool, literal recording, parse-failure no-op, and architecture ownership.
+The bridge checkpoint adds positive state-set/cache assertions and a no-op
+state-preservation case to the existing whole-chain normalization test.
 The exporter and policy pass `python -m py_compile`, and `git diff --check`
 passes. The immediately preceding DepthToSpace, Pool, dynamic-Pool,
 simple-alias, and aligned-scalar checkpoints passed their focused synthetic and
@@ -171,11 +180,9 @@ ownership selections.
 ## Unfinished work
 
 The full Goal is not complete. The fast-precanonicalize orchestrator still has
-308 lines. Its remaining body is primarily the intended ordered helper
-orchestration. Remaining state-update glue includes:
-
-- applying NHWC AveragePool bridge layout/shape results before subsequent Pool
-  decisions.
+294 lines. Its remaining body is primarily the intended ordered helper
+orchestration, source-line replacement, changed-flag handling, and the explicit
+short-circuit boundaries required by the extracted policy decisions.
 
 The broader fixed-pipeline, exporter, artifact-matrix, optional TensorFlow,
 PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier regression work also
@@ -185,12 +192,14 @@ remains subject to the original refactor plan and its verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Inspect NHWC AveragePool-to-binary bridge state application in
-   `_apply_fast_precanonicalize_repairs`.
-3. Characterize the returned-name, CF/NHWC-set, normalized-shape, and no-op
-   behavior before co-locating the state update with its policy rewrite.
-4. Preserve the immediate reparse of the rewritten Pool statement before the
-   following Pool layout decisions.
+2. Audit the remaining 294-line orchestrator for decision logic rather than
+   orchestration glue; do not move the explicit ordered sequencing merely to
+   reduce line count.
+3. If no bounded decision remains, select the next unfinished fixed-pipeline or
+   exporter contract task from the broader Goal instead of introducing a large
+   mechanical wrapper.
+4. Preserve the existing changed flags, line refreshes, and explicit
+   short-circuits while making that selection.
 5. Run only the focused synthetic/ownership/static checks unless the user asks
    for broader conversion validation. Use `uv`, run inference sequentially if
    any is explicitly requested, commit and push coherent units, and do not

@@ -700,12 +700,14 @@ def test_nhwc_average_pool_binary_bridge_normalizes_the_whole_chain() -> None:
         "        concat_out = _apply_concat([mul_out, peer], axis=3, target_shape=[1, 4, 1, 16], fused='NONE')",
     ]
     context = _build_fast_precanonicalize_repair_context(lines)
+    cf_names = {"pool_out_nhwc", "lhs", "rhs", "mul_out"}
+    nhwc_names = {"input_nhwc"}
 
     changed, updated_names = _repair_nhwc_average_pool_binary_bridge(
         0,
         lines,
-        set(),
-        {"input_nhwc"},
+        cf_names,
+        nhwc_names,
         context,
     )
 
@@ -715,6 +717,35 @@ def test_nhwc_average_pool_binary_bridge_normalizes_the_whole_chain() -> None:
     assert "channel_last=True" in lines[0]
     assert "scale.permute(0, 2, 3, 1).contiguous()" in lines[1]
     assert "target_shape(torch.mul(lhs, rhs), [1, 4, 1, 8])" in lines[2]
+    assert updated_names <= nhwc_names
+    assert updated_names.isdisjoint(cf_names)
+    assert all(
+        context.static_shapes[name] == [1, 8, 4, 1]
+        for name in updated_names
+    )
+
+    no_op_lines = [
+        "        pool_out_nhwc = _apply_pool2d("
+        "input_nhwc, filter_height=2, filter_width=2, stride_h=2, "
+        "stride_w=2, padding='VALID', target_shape=[1, 8, 4, 1], "
+        "is_max_pool=True, channel_last=False)",
+        "        return pool_out_nhwc",
+        "        unused = pool_out_nhwc",
+    ]
+    no_op_context = _build_fast_precanonicalize_repair_context(no_op_lines)
+    no_op_context.static_shapes["sentinel"] = [1, 2, 3, 4]
+    no_op_cf_names = {"sentinel"}
+    no_op_nhwc_names = {"input_nhwc"}
+    assert _repair_nhwc_average_pool_binary_bridge(
+        0,
+        no_op_lines,
+        no_op_cf_names,
+        no_op_nhwc_names,
+        no_op_context,
+    ) == (False, set())
+    assert no_op_cf_names == {"sentinel"}
+    assert no_op_nhwc_names == {"input_nhwc"}
+    assert no_op_context.static_shapes["sentinel"] == [1, 2, 3, 4]
 
 
 def test_binary_alignment_repair_normalizes_channel_first_target() -> None:

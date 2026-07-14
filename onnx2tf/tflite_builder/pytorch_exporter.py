@@ -7426,7 +7426,7 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 changed = True
         apply_pool2d_assign = _parse_apply_pool2d_assign_with_shape(line)
         if apply_pool2d_assign is not None:
-            repaired_nhwc_avg_pool_bridge, nhwc_bridge_names = _repair_nhwc_average_pool_binary_bridge(
+            repaired_nhwc_avg_pool_bridge, _nhwc_bridge_names = _repair_nhwc_average_pool_binary_bridge(
                 index,
                 lines,
                 cf_like_names,
@@ -7434,20 +7434,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 repair_context,
             )
             if repaired_nhwc_avg_pool_bridge:
-                nhwc_like_names.update(nhwc_bridge_names)
-                cf_like_names.difference_update(nhwc_bridge_names)
-                normalized_bridge_shape = _normalize_nhwc_rank4_shape(
-                    apply_pool2d_assign[4],
-                    preferred_channel_count=_fast_precanonicalize_preferred_channel_count(
-                        str(apply_pool2d_assign[1]),
-                        cf_like_names,
-                        nhwc_like_names,
-                        repair_context,
-                        shape_hint=apply_pool2d_assign[4],
-                    ),
-                )
-                for updated_name in nhwc_bridge_names:
-                    repair_context.static_shapes[updated_name] = list(normalized_bridge_shape)
                 changed = True
                 line = lines[index]
                 apply_pool2d_assign = _parse_apply_pool2d_assign_with_shape(line)

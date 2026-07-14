@@ -2118,6 +2118,13 @@ restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer
 evidence agree; otherwise the repair remains a no-op. Constant-pad axis repair
 and reshape-to-permute replacement reuse the shared parser and layout context.
+On a successful bridge rewrite, the same policy decision now publishes all
+four affected names as NHWC, removes their stale CF evidence, and records their
+legacy normalized state shape. The state shape is deliberately recomputed from
+the pre-rewrite Pool shape after the layout-set update, matching the old
+exporter-side sequence rather than silently switching the cache to the rendered
+rewrite target. The exporter retains only the changed flag and immediate Pool
+reparse required by the following ordered decisions.
 Channel-first binary alignment repair is co-located with that context as well.
 It normalizes only rank-four targets backed by CF operands or CF consumer
 evidence, preserves already normalized targets, and leaves explicit binary

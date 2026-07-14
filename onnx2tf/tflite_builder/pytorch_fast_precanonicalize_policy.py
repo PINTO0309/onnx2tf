@@ -1879,6 +1879,20 @@ def _repair_nhwc_average_pool_binary_bridge(
     updated_names: Set[str] = set()
     if changed:
         updated_names.update({str(pool_lhs_name), str(lhs0), str(lhs1), str(mul_lhs)})
+        dynamic_nhwc_like_names.update(updated_names)
+        dynamic_cf_like_names.difference_update(updated_names)
+        state_shape = _normalize_nhwc_rank4_shape(
+            pool_shape,
+            preferred_channel_count=_fast_precanonicalize_preferred_channel_count(
+                str(pool_lhs_name),
+                dynamic_cf_like_names,
+                dynamic_nhwc_like_names,
+                context,
+                shape_hint=pool_shape,
+            ),
+        )
+        for updated_name in updated_names:
+            context.static_shapes[updated_name] = list(state_shape)
     return changed, updated_names
 
 
