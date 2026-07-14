@@ -263,6 +263,22 @@ class ModelIRGraphIndex:
             }
         )
 
+    def operator_indices_for_normalized_types(
+        self,
+        op_types: Iterable[str],
+    ) -> List[int]:
+        """Return graph-order indices after case-normalizing operator types."""
+
+        normalized_types = {str(value).upper() for value in op_types}
+        return sorted(
+            {
+                int(index)
+                for op_type, indices in self._operator_indices_by_type.items()
+                if str(op_type).upper() in normalized_types
+                for index in indices
+            }
+        )
+
     def _producer_indices(self, tensor_name: str) -> List[int]:
         name = str(tensor_name)
         if name in self.duplicate_producers:
@@ -476,6 +492,7 @@ class ModelIRGraphIndex:
                 if int(value) != index
             ]
             for op_type, values in self._operator_indices_by_type.items()
+            if any(int(value) != index for value in values)
         }
         return op
 

@@ -1364,13 +1364,31 @@ def _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
     )
 
 
-def _sanitize_hardswish_tensor_shapes(model_ir: ModelIR) -> Dict[str, int]:
+def _sanitize_hardswish_tensor_shapes(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Dict[str, int]:
     """
     HARD_SWISH must preserve input shape exactly.
     Late transpose/layout rewrites can occasionally leave stale output metadata.
     """
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    candidate_operators = (
+        (
+            model_ir.operators[int(operator_index)]
+            for operator_index in active_index.operator_indices("HARD_SWISH")
+        )
+        if active_index is not None
+        else iter(model_ir.operators)
+    )
+
     fixed = 0
-    for op in model_ir.operators:
+    for op in candidate_operators:
         if str(op.op_type) != "HARD_SWISH":
             continue
         if len(op.inputs) < 1 or len(op.outputs) != 1:
@@ -4122,8 +4140,13 @@ def _run_indexed_shape_convergence_cleanup(
     model_ir: ModelIR,
     *,
     layout_state: Optional[LayoutState] = None,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Dict[str, int]:
-    graph_index = ModelIRGraphIndex(model_ir)
+    graph_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
     prune_stats = _prune_dead_operators(
         model_ir,
         graph_index=graph_index,
@@ -4152,6 +4175,68 @@ def _run_indexed_shape_convergence_cleanup(
             first_reconcile_stats.get("reconciled_static_tensor_shapes", 0)
             + final_reconcile_stats.get("reconciled_static_tensor_shapes", 0)
         ),
+    }
+
+
+def _run_indexed_final_shape_activation_convergence(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """
+    Run the terminal metadata/fusion convergence with one graph index.
+
+    Shape sanitation and reconciliation do not change graph topology. The
+    final activation fusion is the only structural mutation and updates the
+    supplied index differentially before the last reconciliation.
+    """
+
+    graph_index = ModelIRGraphIndex(model_ir)
+    convergence_stats = _run_indexed_shape_convergence_cleanup(
+        model_ir,
+        layout_state=layout_state,
+        graph_index=graph_index,
+    )
+    hardswish_stats = _sanitize_hardswish_tensor_shapes(
+        model_ir,
+        graph_index=graph_index,
+    )
+    first_reconcile_stats = _reconcile_static_tensor_shapes(
+        model_ir,
+        graph_index=graph_index,
+    )
+    reshape_stats = _resolve_dynamic_reshape_shapes(
+        model_ir,
+        graph_index=graph_index,
+    )
+    second_reconcile_stats = _reconcile_static_tensor_shapes(
+        model_ir,
+        graph_index=graph_index,
+    )
+    fusion_stats = _optimize_fuse_conv_activation_chains(
+        model_ir,
+        graph_index=graph_index,
+    )
+    final_reconcile_stats = _reconcile_static_tensor_shapes(
+        model_ir,
+        graph_index=graph_index,
+    )
+    return {
+        **convergence_stats,
+        "sanitized_hardswish_tensor_shapes": int(
+            hardswish_stats.get("sanitized_hardswish_tensor_shapes", 0)
+        ),
+        "resolved_dynamic_reshape_shapes": int(
+            convergence_stats.get("resolved_dynamic_reshape_shapes", 0)
+            + reshape_stats.get("resolved_dynamic_reshape_shapes", 0)
+        ),
+        "reconciled_static_tensor_shapes": int(
+            convergence_stats.get("reconciled_static_tensor_shapes", 0)
+            + first_reconcile_stats.get("reconciled_static_tensor_shapes", 0)
+            + second_reconcile_stats.get("reconciled_static_tensor_shapes", 0)
+            + final_reconcile_stats.get("reconciled_static_tensor_shapes", 0)
+        ),
+        **fusion_stats,
     }
 
 
@@ -43455,7 +43540,11 @@ def _optimize_terminal_quantize_dequantize(
     model_ir: ModelIR,
 ) -> Dict[str, int]:
     return _optimize_terminal_quantize_dequantize_pass(model_ir)
-def _optimize_fuse_conv_activation_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_fuse_conv_activation_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Dict[str, int]:
     """
     Fuse producer -> Activation chains into producer fusedActivationFunction in flatbuffer_direct IR.
 
@@ -43499,12 +43588,19 @@ def _optimize_fuse_conv_activation_chains(model_ir: ModelIR) -> Dict[str, int]:
         "DIV": dict(binary_activation_map),
     }
     protected_boundary_tensor_names = _get_protected_boundary_tensor_names(model_ir)
+    graph_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
 
-        for producer_idx, producer_op in enumerate(model_ir.operators):
+        for producer_idx in graph_index.operator_indices_for_normalized_types(
+            activation_map_by_producer
+        ):
+            producer_op = model_ir.operators[int(producer_idx)]
             producer_type = str(producer_op.op_type).upper()
             activation_map = activation_map_by_producer.get(producer_type, None)
             if activation_map is None:
@@ -43517,7 +43613,7 @@ def _optimize_fuse_conv_activation_chains(model_ir: ModelIR) -> Dict[str, int]:
             if fused_act != "NONE":
                 continue
             producer_out_name = str(producer_op.outputs[0])
-            producer_users = [int(v) for v in consumers.get(producer_out_name, [])]
+            producer_users = graph_index.consumer_indices(producer_out_name)
             if len(producer_users) != 1:
                 continue
 
@@ -43549,7 +43645,10 @@ def _optimize_fuse_conv_activation_chains(model_ir: ModelIR) -> Dict[str, int]:
             # Keep explicit activation node when its output is both a graph output and
             # an internal bridge tensor. Fusing in this case can relabel NHWC bridge
             # tensors to ONNX/NCHW names and later trigger wrong layout adapters.
-            if act_out_name in model_ir.outputs and len(consumers.get(act_out_name, [])) > 0:
+            if (
+                act_out_name in model_ir.outputs
+                and len(graph_index.consumer_indices(act_out_name)) > 0
+            ):
                 continue
 
             if producer_type == "ADD":
@@ -43562,6 +43661,7 @@ def _optimize_fuse_conv_activation_chains(model_ir: ModelIR) -> Dict[str, int]:
                 model_ir=model_ir,
                 op=producer_op,
                 new_outputs=[act_out_name],
+                graph_index=graph_index,
             )
             if producer_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}:
                 _append_tensor_lineage_event(
@@ -43600,7 +43700,7 @@ def _optimize_fuse_conv_activation_chains(model_ir: ModelIR) -> Dict[str, int]:
                     },
                 )
 
-            del model_ir.operators[int(act_idx)]
+            graph_index.remove_operator(int(act_idx))
             fused += 1
             if producer_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}:
                 fused_conv += 1
@@ -51290,22 +51390,10 @@ def lower_onnx_to_ir(
     _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
     # Late transpose/layout rewrites can invalidate previously resolved
     # RESHAPE constants. Re-resolve once at absolute end.
-    _run_indexed_shape_convergence_cleanup(
+    _run_indexed_final_shape_activation_convergence(
         model_ir,
         layout_state=session.layout_state,
     )
-    # Keep HARD_SWISH outputs shape-preserving at the final serialization boundary.
-    _sanitize_hardswish_tensor_shapes(model_ir)
-    _reconcile_static_tensor_shapes(model_ir)
-    # If HARD_SWISH metadata was corrected above, allow RESHAPE constants to
-    # converge one last time from the repaired input signatures.
-    _resolve_dynamic_reshape_shapes(model_ir)
-    _reconcile_static_tensor_shapes(model_ir)
-    # Late transpose/reshape rewrites can re-expose strict single-path
-    # CONV_2D/DEPTHWISE_CONV_2D -> RELU(RELU6) chains.
-    # Run activation fusion once more at absolute end.
-    _optimize_fuse_conv_activation_chains(model_ir)
-    _reconcile_static_tensor_shapes(model_ir)
     # Final boundary cleanup after all late transpose/layout rewrites.
     run_boundary_input_normalization_cleanup(
         model_ir,

@@ -8,14 +8,16 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit shares one `ModelIRGraphIndex` across each of
-the two repeated post-lowering shape-convergence blocks. Dead-operator pruning
-updates that index differentially; both shape-reconciliation calls reuse its
-producer map, and dynamic Reshape resolution enumerates only indexed Reshape
-roots. The remaining operations mutate tensor shapes, signatures, constant
-data, and options without changing graph structure, so no index rebuild is
-needed. A characterization test proves exact operator/tensor equality with the
-former four-call sequence and records one index build per block.
+The latest implementation unit extends the second indexed shape-convergence
+boundary through terminal HARD_SWISH sanitation, a second Reshape/reconcile
+cycle, activation fusion, and final reconciliation. All metadata-only steps
+reuse one producer/type index. Activation fusion now reads indexed consumers,
+uses case-normalized indexed producer dispatch, and differentially renames the
+producer output and removes the activation instead of rebuilding a full
+consumer map after every match. Exact legacy-sequence characterization records
+one index build and identical final ModelIR. The newly exercised differential
+deletion path also now removes empty op-type buckets, keeping it byte-for-byte
+consistent with a freshly rebuilt index.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +39,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains fifty-three coherent continuations:
+The current `fb-refactor5` work contains fifty-four coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -149,8 +151,11 @@ The current `fb-refactor5` work contains fifty-three coherent continuations:
   sequences while retaining all external boundaries;
 - `48dd2324` centralizes the remaining safe-binary and QLinear/Mean/Concat
   5-call families while preserving their conditions;
-- the current checkpoint shares one differential graph index through each
-  repeated prune/reconcile/Reshape-resolution convergence block.
+- `4a9bde4c` shares one differential graph index through each repeated
+  prune/reconcile/Reshape-resolution convergence block;
+- the current checkpoint extends the final indexed convergence boundary
+  through HARD_SWISH sanitation and activation fusion without rebuilding
+  consumers or the graph index.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -168,8 +173,10 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
 The current checkpoint changes:
 
+- `onnx2tf/tflite_builder/core/graph.py`;
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `tests/test_flatbuffer_direct_dynamic_reshape.py`;
+- `tests/test_flatbuffer_direct_core.py`;
+- `tests/test_flatbuffer_direct_indexed_final_convergence.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -272,13 +279,21 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   index. All six production occurrences retain the exact order
   transpose-Mean, Mean/Mul/Add/Conv, optional LayerNorm, terminal Mean, SE conv,
   SE FC, and optional Conv attention.
-- Each repeated shape-convergence block now builds one `ModelIRGraphIndex`.
-  Dead-operator pruning is the only structural mutation and updates that index
-  through `remove_operators`; the following reconciliation and dynamic-
-  Reshape steps change only metadata, options, and constant data. A supplied
-  index lets reconciliation reuse its producer map and lets Reshape resolution
-  enumerate only `RESHAPE` roots. Callers that omit an index retain the former
-  full-scan behavior, and an index for another ModelIR is ignored safely.
+- Each repeated shape-convergence block uses one `ModelIRGraphIndex`.
+  Dead-operator pruning updates that index through `remove_operators`; the
+  following reconciliation and dynamic-Reshape steps change only metadata,
+  options, and constant data. The first block builds its own index. The final
+  convergence owner supplies one index to the second block and retains it
+  through HARD_SWISH sanitation, a second Reshape/reconcile cycle, activation
+  fusion, and final reconciliation. Standalone callers retain compatibility
+  fallbacks, and an index for another ModelIR is ignored safely.
+- Indexed activation fusion preserves the former graph-order and case-
+  normalized op matching. It queries producer/activation fan-out from the
+  index, updates producer outputs through `_set_operator_outputs`, and removes
+  fused activation operators through `remove_operator`. It no longer rebuilds
+  the full consumer map for every successful match. Differential single-
+  operator removal drops empty type buckets so its type dispatch exactly
+  matches a fresh index.
 - The same scope contract covers only the five repeated gate-layout sequences
   that were audited as contiguous registered runners. Four keep the exact
   mixed-attention, elementwise-gate, Pad, dual-postconv-gate, NDHWC-gate,
@@ -1212,6 +1227,16 @@ passed separately with `85 passed`, for a combined selection total of
 `225 passed`. Its single sequential quantization, evaluation, and coverage
 integration smoke passed with `1 passed`.
 
+The final indexed shape/activation convergence checkpoint passed its focused
+legacy-equivalence, single-index-build, no-consumer-rescan, differential-index,
+shape, and ownership selection with `18 passed`. The complete architecture
+file passed with `141 passed`; artifact-metadata, artifact-policy, core, pass-
+efficiency, and the two new convergence cases passed separately with
+`87 passed`, for a combined selection total of `228 passed`. Existing Conv,
+DepthwiseConv, Add, Sub, Mul, and Div activation-fusion coverage passed with
+`20 passed`. Its single sequential quantization, evaluation, and coverage
+integration smoke passed with `1 passed`.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1257,10 +1282,11 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Use the indexed convergence boundary as the next entry point for reducing
-   redundant post-lowering graph scans. Share an index only when every
-   structural mutation updates it differentially; retain the compatibility
-   fallback for standalone callers and do not cross a fallback-IR boundary.
+2. Audit the remaining `_build_tensor_consumer_map` hotspots and select one
+   bounded post-lowering mutator whose graph changes can all use differential
+   setters/removal. Preserve graph-order matching and standalone compatibility;
+   do not carry an index across an unaudited raw mutation or fallback-IR
+   boundary.
 3. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

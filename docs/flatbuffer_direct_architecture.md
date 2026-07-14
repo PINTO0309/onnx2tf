@@ -3792,9 +3792,10 @@ lowerer lines without changing runtime invocation count, order, conditions, or
 the registered-runner call-site count of 118.
 
 The two repeated dead-prune/static-reconcile/dynamic-Reshape/static-reconcile
-blocks are owned by `_run_indexed_shape_convergence_cleanup`. Each invocation
-builds one `ModelIRGraphIndex`; dead pruning removes operators through the
-index's differential compaction, both reconciliation calls reuse the indexed
+blocks execute through `_run_indexed_shape_convergence_cleanup`. The first
+invocation builds its own `ModelIRGraphIndex`; the terminal convergence owner
+supplies its already-built index to the second. Dead pruning removes operators
+through differential compaction, both reconciliation calls reuse the indexed
 producer map, and dynamic Reshape resolution enumerates only indexed
 `RESHAPE` roots. Reconciliation and Reshape resolution change tensor shape,
 signature, options, and constant data but do not change graph topology, so the
@@ -3803,6 +3804,20 @@ retain full-scan compatibility when no matching index is supplied. A focused
 characterization compares every remaining operator and tensor with the former
 four-call sequence and proves exact equality while observing exactly one index
 build. Architecture checks preserve both late-pipeline call boundaries.
+
+`_run_indexed_final_shape_activation_convergence` extends the terminal block
+through HARD_SWISH shape sanitation, another static reconcile/dynamic Reshape/
+static reconcile cycle, activation fusion, and final reconciliation without
+constructing another index. HARD_SWISH sanitation enumerates only indexed
+roots. Activation fusion uses case-normalized indexed producer dispatch and
+indexed consumer counts, changes the producer output through the differential
+setter, and removes the explicit activation through differential compaction;
+it no longer rebuilds a complete consumer map after every match. Single-
+operator removal also drops empty op-type buckets, making the maintained type
+index identical to a fresh rebuild. The end-to-end characterization exercises
+dead pruning, dynamic metadata, HARD_SWISH repair, and Conv/RELU fusion, proves
+one index build, and compares the complete final ModelIR with the former
+ten-call sequence.
 
 ## Managed-corpus SWAP exclusion policy
 

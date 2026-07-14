@@ -426,6 +426,7 @@ def test_model_ir_index_incremental_input_output_mutation_matches_refresh() -> N
     assert index.operator_indices("ADD") == [0]
     assert index.operator_indices("MUL") == []
     assert index.operator_indices_for_types(["MUL", "ADD", "ADD"]) == [0]
+    assert index.operator_indices_for_normalized_types(["mul", "add"]) == [0]
     assert index.consumer_indices("x") == [0, 0]
     assert index.consumer_indices("y") == []
     assert index.producer("z") is None
@@ -434,6 +435,7 @@ def test_model_ir_index_incremental_input_output_mutation_matches_refresh() -> N
     assert index.operator_indices("ADD") == []
     assert index.operator_indices("DIV") == [0]
     assert index.operator_indices_for_types({"ADD", "DIV"}) == [0]
+    assert index.operator_indices_for_normalized_types({"add", "div"}) == [0]
     refreshed = ModelIRGraphIndex(model_ir)
     assert index.producers == refreshed.producers
     assert index.consumers == refreshed.consumers

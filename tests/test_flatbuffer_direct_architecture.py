@@ -1329,24 +1329,29 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
-    assignments = [
-        statement
+    calls = [
+        statement.value
         for statement in helper.body
         if isinstance(statement, (ast.Assign, ast.AnnAssign))
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
     ]
-    calls = []
-    for statement in assignments:
-        value = statement.value
-        if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
-            calls.append(value)
     assert [call.func.id for call in calls] == [
-        "ModelIRGraphIndex",
         "_prune_dead_operators",
         "_reconcile_static_tensor_shapes",
         "_resolve_dynamic_reshape_shapes",
         "_reconcile_static_tensor_shapes",
     ]
-    for call in calls[1:]:
+    assert len(
+        [
+            node
+            for node in ast.walk(helper)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "ModelIRGraphIndex"
+        ]
+    ) == 1
+    for call in calls:
         graph_index_keyword = next(
             keyword for keyword in call.keywords if keyword.arg == "graph_index"
         )
@@ -1366,39 +1371,102 @@ def test_lowerer_indexed_shape_convergence_has_one_owner() -> None:
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     ]
-    assert len(invocation_indexes) == 2
-    previous_call_names = []
-    next_call_names = []
-    for index in invocation_indexes:
-        invocation = lowerer.body[index].value
-        assert len(invocation.args) == 1
-        assert isinstance(invocation.args[0], ast.Name)
-        assert invocation.args[0].id == "model_ir"
-        layout_keyword = next(
-            keyword
-            for keyword in invocation.keywords
-            if keyword.arg == "layout_state"
-        )
-        assert isinstance(layout_keyword.value, ast.Attribute)
-        assert isinstance(layout_keyword.value.value, ast.Name)
-        assert layout_keyword.value.value.id == "session"
-        assert layout_keyword.value.attr == "layout_state"
-        previous = lowerer.body[index - 1]
-        following = lowerer.body[index + 1]
-        for boundary in (previous, following):
-            assert isinstance(boundary, ast.Expr)
-            assert isinstance(boundary.value, ast.Call)
-            assert isinstance(boundary.value.func, ast.Name)
-        previous_call_names.append(previous.value.func.id)
-        next_call_names.append(following.value.func.id)
-    assert previous_call_names == [
-        "_run_singleton_reshape_layout_pass_cluster",
-        "_optimize_window_reverse_reshape_transpose_to_depth_to_space_chains",
+    assert len(invocation_indexes) == 1
+    invocation_index = invocation_indexes[0]
+    invocation = lowerer.body[invocation_index].value
+    assert len(invocation.args) == 1
+    assert isinstance(invocation.args[0], ast.Name)
+    assert invocation.args[0].id == "model_ir"
+    layout_keyword = next(
+        keyword
+        for keyword in invocation.keywords
+        if keyword.arg == "layout_state"
+    )
+    assert isinstance(layout_keyword.value, ast.Attribute)
+    assert isinstance(layout_keyword.value.value, ast.Name)
+    assert layout_keyword.value.value.id == "session"
+    assert layout_keyword.value.attr == "layout_state"
+    previous = lowerer.body[invocation_index - 1]
+    following = lowerer.body[invocation_index + 1]
+    assert previous.value.func.id == "_run_singleton_reshape_layout_pass_cluster"
+    assert following.value.func.id == "_run_sinet_terminal_layout_recovery_sequence"
+
+
+def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    helper_name = "_run_indexed_final_shape_activation_convergence"
+    helper = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, (ast.Assign, ast.AnnAssign))
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
     ]
-    assert next_call_names == [
-        "_run_sinet_terminal_layout_recovery_sequence",
+    assert [call.func.id for call in calls] == [
+        "ModelIRGraphIndex",
+        "_run_indexed_shape_convergence_cleanup",
         "_sanitize_hardswish_tensor_shapes",
+        "_reconcile_static_tensor_shapes",
+        "_resolve_dynamic_reshape_shapes",
+        "_reconcile_static_tensor_shapes",
+        "_optimize_fuse_conv_activation_chains",
+        "_reconcile_static_tensor_shapes",
     ]
+    for call in calls[1:]:
+        graph_index_keyword = next(
+            keyword for keyword in call.keywords if keyword.arg == "graph_index"
+        )
+        assert isinstance(graph_index_keyword.value, ast.Name)
+        assert graph_index_keyword.value.id == "graph_index"
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    invocation_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == helper_name
+    )
+    invocation = lowerer.body[invocation_index].value
+    assert len(invocation.args) == 1
+    assert isinstance(invocation.args[0], ast.Name)
+    assert invocation.args[0].id == "model_ir"
+    assert lowerer.body[invocation_index - 1].value.func.id == (
+        "_optimize_window_reverse_reshape_transpose_to_depth_to_space_chains"
+    )
+    assert lowerer.body[invocation_index + 1].value.func.id == (
+        "run_boundary_input_normalization_cleanup"
+    )
+
+    fusion = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_optimize_fuse_conv_activation_chains"
+    )
+    fusion_call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(fusion)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in fusion_call_names
+    assert "operator_indices_for_normalized_types" in fusion_call_names
+    assert "consumer_indices" in fusion_call_names
+    assert "remove_operator" in fusion_call_names
 
 
 def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> None:
