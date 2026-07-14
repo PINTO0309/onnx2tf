@@ -9,14 +9,13 @@ subsequent work uses coherent commits and pushes without opening a pull
 request.
 
 The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-the absolute-final flattened-normalization Pad and mixed-attention pair. The
-two diagnostic events construct one graph index instead of up to two. The
-scope starts after the raw InstanceNorm bias-add rewrite and ends before the
-dynamic-rank Unsqueeze/Reshape shape rewrite. Normalization-Pad cleanup now
-exposes an optional scope while preserving the final invocation's exact
-include flags. The lowerer's registered-runner call characterization remains
-139 because this is one production occurrence; runtime index construction is
-the optimized dimension.
+the post-QDQ layout-transpose, unary-fan-out, and unary/binary-fan-out
+sequence. The three diagnostic events construct one graph index instead of up
+to three. The existing unary-fan-out helper now has compatible mode flags: its
+four prior invocations retain unary passthrough, while the new invocation runs
+generic transpose cleanup instead. The scope stays between raw Softmax
+canonicalization and transpose-binary rewrites. The lowerer's registered-
+runner call characterization is now 137, down from 139.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -38,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains thirty-one coherent continuations:
+The current `fb-refactor5` work contains thirty-two coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -104,8 +103,10 @@ The current `fb-refactor5` work contains thirty-one coherent continuations:
   Gather-axis sequence;
 - `887db85d` shares state across the late generic SPP and Concat/unary/Conv
   pair;
-- the current checkpoint shares state across the absolute-final normalization-
-  Pad and mixed-attention pair.
+- `9680fa33` shares state across the absolute-final normalization-Pad and mixed-
+  attention pair;
+- the current checkpoint shares state across the post-QDQ layout-transpose and
+  unary fan-out sequence.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -124,7 +125,6 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/pad_layout.py`;
 - `tests/test_flatbuffer_direct_pass_efficiency.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
@@ -324,6 +324,12 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   standalone-compatible scope. The helper preserves `include_instance=False`
   and `include_flatten=True`; architecture checks fix those flags and the raw
   InstanceNorm/dynamic-rank shape-rewrite boundaries.
+- The post-QDQ layout-transpose, unary-fan-out, and unary/binary-fan-out
+  sequence reuses the existing helper with compatible mode flags. Four prior
+  invocations keep their default unary-passthrough path; one new invocation
+  enables layout-transpose and disables unary-passthrough. Architecture checks
+  fix the unique flag combination and the raw Softmax/transpose-binary
+  boundaries.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -710,7 +716,8 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH \
 
 The preflight-only fixture records one graph-index refresh and build flags
 `[true, false]`. Architecture checks fix both target/LayoutState combinations,
-runner order, shared scope keywords, and the 139-call global characterization.
+runner order, and shared scope keywords. The global characterization was 139
+calls at that checkpoint and is 137 after the later post-QDQ consolidation.
 A focused terminal-boundary checkpoint passed:
 
 ```text
@@ -851,14 +858,34 @@ the first reports `state_built: true` and the second `false`. The focused
 selection also executes real InstanceNorm, flattened normalization-Pad, and
 mixed-attention rewrites. Architecture checks preserve both include flags and
 the exact raw boundaries.
+A focused post-QDQ unary-fan-out checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_layout_transpose.py \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_unary_fanout_cluster_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_post_qdq_layout_unary_fanout_cluster_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_post_qdq_unary_fanout_cluster_stays_between_raw_rewrites \
+  tests/test_flatbuffer_direct_architecture.py::test_ordered_model_ir_runner_calls_record_session_diagnostics
+
+9 passed
+```
+
+The preflight-only fixture records one graph-index refresh across three events;
+only the first reports `state_built: true`. Architecture checks preserve four
+default helper invocations, require exactly one alternate-mode invocation,
+fix both raw boundaries, and characterize 137 registered runner calls.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`175 passed` after adding the absolute-final normalization/attention checks.
+`177 passed` after adding the post-QDQ unary-fan-out checks.
 
-The changed Pad-layout owner and tests pass Ruff normally. The lowerer passes
-with its pre-existing `F401` and `F841` findings scoped out. Every changed
-Python file passes `python -m py_compile`, and `git diff --check` passes. The
+The changed tests pass Ruff normally. The lowerer passes with its pre-existing
+`F401` and `F841` findings scoped out. Every changed Python file passes
+`python -m py_compile`, and `git diff --check` passes. The
 immediately preceding DepthToSpace, Pool, dynamic-Pool, simple-alias, and
 aligned-scalar checkpoints passed their focused synthetic and ownership
 selections.
@@ -896,11 +923,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the iterative post-QDQ layout-transpose, unary-fan-out, and unary/
-   binary-fan-out sequence while treating the preceding raw Softmax
-   canonicalization and following raw transpose-binary rewrites as hard
-   boundaries. Each recovery iteration can eliminate up to two repeated index
-   constructions.
+2. Audit the late NCHW channel-shuffle/Gather-axis pair while treating the
+   preceding raw Reshape/Transpose rewrites and following raw attention-QKV
+   rewrites as hard boundaries. Its one occurrence can eliminate one repeated
+   index construction.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.

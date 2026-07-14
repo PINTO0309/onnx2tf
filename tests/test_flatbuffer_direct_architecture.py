@@ -1273,6 +1273,7 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
     _assert_helper(
         unary_helper_name,
         [
+            "run_layout_transpose_cleanup",
             "run_transpose_unary_passthrough_cleanup",
             "run_transpose_unary_fanout_bridge_cleanup",
             "run_transpose_unary_binary_fanout_bridge_cleanup",
@@ -1285,7 +1286,80 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == unary_helper_name
     ]
-    assert len(unary_invocations) == 4
+    assert len(unary_invocations) == 5
+    post_qdq_invocations = [
+        call
+        for call in unary_invocations
+        if any(
+            keyword.arg == "include_layout_transpose"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in call.keywords
+        )
+    ]
+    assert len(post_qdq_invocations) == 1
+    assert any(
+        keyword.arg == "include_unary_passthrough"
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value is False
+        for keyword in post_qdq_invocations[0].keywords
+    )
+
+
+def test_lowerer_post_qdq_unary_fanout_cluster_stays_between_raw_rewrites() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_transpose_unary_fanout_layout_pass_cluster"
+    layout_recovery = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If)
+        and isinstance(statement.test, ast.Name)
+        and statement.test.id == "optimize_layout_transpose_chains"
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_canonicalize_softmax_transpose_chains"
+            for node in ast.walk(statement)
+        )
+    )
+    invocation_index = next(
+        index
+        for index, statement in enumerate(layout_recovery.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == helper_name
+        and any(
+            keyword.arg == "include_layout_transpose"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in statement.value.keywords
+        )
+    )
+    previous_boundary = layout_recovery.body[invocation_index - 1]
+    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary.value, ast.Call)
+    assert isinstance(previous_boundary.value.func, ast.Name)
+    assert (
+        previous_boundary.value.func.id
+        == "_canonicalize_softmax_transpose_chains"
+    )
+    next_boundary = layout_recovery.body[invocation_index + 1]
+    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary.value, ast.Call)
+    assert isinstance(next_boundary.value.func, ast.Name)
+    assert (
+        next_boundary.value.func.id
+        == "_optimize_transpose_binary_symmetric_legacy_only_bridges_safe"
+    )
 
 
 def test_lowerer_boundary_batchmatmul_unary_pair_reuses_pass_state_scope() -> None:
@@ -3969,7 +4043,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 139
+    assert len(calls) == 137
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -4154,7 +4228,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_unary_fanout_bridge_cleanup"
     ]
-    assert len(transpose_unary_fanout_calls) == 4
+    assert len(transpose_unary_fanout_calls) == 3
 
     transpose_unary_binary_fanout_calls = [
         call
@@ -4162,7 +4236,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_unary_binary_fanout_bridge_cleanup"
     ]
-    assert len(transpose_unary_binary_fanout_calls) == 3
+    assert len(transpose_unary_binary_fanout_calls) == 2
 
     trailing_output_transpose_calls = [
         call

@@ -50199,17 +50199,29 @@ def lower_onnx_to_ir(
                 state_scope=state_scope,
             )
 
-    def _run_transpose_unary_fanout_layout_pass_cluster() -> None:
+    def _run_transpose_unary_fanout_layout_pass_cluster(
+        *,
+        include_layout_transpose: bool = False,
+        include_unary_passthrough: bool = True,
+    ) -> None:
         state_scope = ModelIRPassStateScope(
             model_ir,
             layout_state=session.layout_state,
         )
-        run_transpose_unary_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
+        if include_layout_transpose:
+            run_layout_transpose_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
+        if include_unary_passthrough:
+            run_transpose_unary_passthrough_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
         run_transpose_unary_fanout_bridge_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -50876,20 +50888,9 @@ def lower_onnx_to_ir(
         _optimize_dequant_softmax_quantize_chains(model_ir)
         _optimize_dequant_logistic_quantize_chains(model_ir)
         _canonicalize_softmax_transpose_chains(model_ir)
-        run_layout_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_unary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_unary_binary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _run_transpose_unary_fanout_layout_pass_cluster(
+            include_layout_transpose=True,
+            include_unary_passthrough=False,
         )
         _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir)
         _optimize_transpose_binary_single_post_bridges_safe(model_ir)

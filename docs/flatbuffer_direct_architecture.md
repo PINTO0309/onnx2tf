@@ -150,6 +150,14 @@ optional scope. The helper preserves `include_instance=False` and
 `include_flatten=True`, so the final invocation still runs only the intended
 flattened normalization spec before mixed attention.
 
+The post-QDQ layout-transpose, unary-fan-out, and unary/binary-fan-out
+sequence reuses the existing unary-fan-out helper in a second mode. The helper
+defaults still run unary passthrough for its four prior call sites; the new
+call enables generic transpose cleanup and disables unary passthrough. Its
+scope remains between raw Softmax canonicalization and transpose-binary
+rewrites. Consolidation reduces the lowerer's registered-runner call
+characterization from 139 to 137.
+
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
 and Split/Reshape collapse) retain their order before the two bridge specs
