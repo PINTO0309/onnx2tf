@@ -1248,6 +1248,16 @@ entrypoints. The focused native graph-index architecture test passes (94
 unrelated tests deselected), syntax validation and `git diff --check` pass, and
 the exporter shrank by 50 lines. No model conversion or inference was run.
 
+Rank-four NHWC/NCHW pad-axis conversion, unique channel-count inference, and
+fast generated-expression identifier extraction now live in the new Torch-free
+`pytorch_fast_precanonicalize_policy.py` owner. Both pad directions retain
+trimmed inner-to-outer pair semantics and invalid-input rejection; channel
+inference and runtime-name filtering retain their existing conservative rules.
+All four moved function ASTs match checkpoint `31d81a2` exactly. Four focused
+policy/ownership tests pass (95 unrelated architecture tests deselected),
+together with Ruff, syntax validation, and `git diff --check`; the exporter
+shrank by another net 71 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

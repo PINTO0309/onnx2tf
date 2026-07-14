@@ -2022,6 +2022,12 @@ wrappers. The former `_assemble_native_model_source` stub had no caller and
 self-recursed under its own name, so it is removed and guarded from
 reintroduction by the architecture test.
 
+Fast generated-source precanonicalization begins with a small Torch-free value
+policy in `pytorch_fast_precanonicalize_policy.py`. It owns reversible NHWC/NCHW
+rank-four pad-axis conversion, conservative channel-count inference, and source
+identifier extraction. The larger repair context consumes these shared values
+without maintaining local duplicates.
+
 The direct-module dispatcher is being decomposed by operator family rather than
 moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and
 bidirectional LSTM source emission now delegates to the Torch-free recurrent
