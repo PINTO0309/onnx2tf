@@ -2250,6 +2250,11 @@ decoder guard previously relied on by the repair-local copy.
 The context collector likewise uses the shared complete Softmax and constant
 Pad assignment decoders for shape and CF/NHWC evidence, instead of compiling
 narrower duplicate statement regexes.
+Each remaining generic source assignment is decoded once through the cached
+shared parser. Consumer identifiers, simple aliases, layout-name hints, and
+aligned rank-four shapes derive from that tuple, replacing three overlapping
+line regexes and accepting the same positional or keyword alignment syntax as
+the shared parser.
 Parser migration also removes its dead matching scaffold: unused module/return/
 Resize/Pool/LRN/reshape regexes and discarded terminal/Conv match results are
 not retained beside the shared decoders. An AST load check guards this boundary

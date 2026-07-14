@@ -54,6 +54,7 @@ def test_fast_precanonicalize_context_collects_module_and_alias_evidence() -> No
         "        alias = out_cf",
         "        softmax_cf = _apply_softmax(input=out_cf, axis=1, beta=1.0, target_shape=[1, 8, 4, 4])",
         "        padded_cf = F.pad(out_cf, [1, 1, 1, 1], mode='constant', value=0.0)",
+        "        aligned = _align_tensor_to_target_shape(input=out_cf, target_shape=[1, 8, 4, 4])",
     ]
     context = _build_fast_precanonicalize_repair_context(lines)
 
@@ -64,6 +65,7 @@ def test_fast_precanonicalize_context_collects_module_and_alias_evidence() -> No
     assert context.module_output_producers == {"out_cf": "conv_block_0"}
     assert context.module_input_consumers == {"input_nhwc": ["conv_block_0"]}
     assert context.static_shapes["softmax_cf"] == [1, 8, 4, 4]
+    assert context.static_shapes["aligned"] == [1, 8, 4, 4]
     assert {"softmax_cf", "padded_cf"} <= context.cf_like_names
     assert _fast_precanonicalize_resolve_alias("alias", context.aliases) == "out_cf"
     assert _fast_precanonicalize_is_cf_like("alias", set(), context)

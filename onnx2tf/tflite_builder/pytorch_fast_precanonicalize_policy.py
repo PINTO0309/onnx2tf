@@ -156,15 +156,6 @@ def _build_fast_precanonicalize_repair_context(
     module_output_assign_re = re.compile(
         r"^\s*(?P<lhs>[A-Za-z0-9_]+)\s*=\s*self\.(?P<module>conv_block_[0-9]+)\((?P<input>[A-Za-z0-9_]+)\)"
     )
-    generic_expr_assign_re = re.compile(
-        r"^\s*(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<rhs>.+)$"
-    )
-    simple_alias_re = re.compile(
-        r"^\s*(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<rhs>[A-Za-z0-9_]+)$"
-    )
-    aligned_rank4_any_re = re.compile(
-        r"^\s*(?P<lhs>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\((?P<expr>.+), \[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
-    )
     aliases: Dict[str, str] = {}
     consumers: Dict[str, List[int]] = {}
     static_shapes: Dict[str, List[int]] = {}
@@ -221,16 +212,15 @@ def _build_fast_precanonicalize_repair_context(
             module_input_name = str(module_output_assign_match.group("input"))
             module_input_consumers.setdefault(module_input_name, []).append(module_name)
             cf_like_names.add(lhs_name)
-        generic_expr_assign_match = generic_expr_assign_re.match(line)
-        if generic_expr_assign_match is not None:
-            lhs_name = str(generic_expr_assign_match.group("lhs"))
-            rhs_expr = str(generic_expr_assign_match.group("rhs"))
+        simple_assignment = _parse_simple_assignment_line(line)
+        if simple_assignment is not None:
+            lhs_name = str(simple_assignment[1])
+            rhs_expr = str(simple_assignment[2])
             for token in _fast_precanonicalize_expr_identifiers(rhs_expr):
                 consumers.setdefault(token, []).append(index)
-            simple_alias_match = simple_alias_re.match(line)
-            if simple_alias_match is not None:
-                alias_lhs = str(simple_alias_match.group("lhs"))
-                alias_rhs = str(simple_alias_match.group("rhs"))
+            if re.fullmatch(r"[A-Za-z0-9_]+", rhs_expr) is not None:
+                alias_lhs = lhs_name
+                alias_rhs = rhs_expr
                 aliases[alias_lhs] = alias_rhs
                 if (
                     alias_rhs in cf_like_names
@@ -279,14 +269,16 @@ def _build_fast_precanonicalize_repair_context(
                     cf_like_names.add(lhs_name)
                 elif torch_cat_args[1] == 3:
                     nhwc_like_names.add(lhs_name)
-        aligned_rank4_any_match = aligned_rank4_any_re.match(line)
-        if aligned_rank4_any_match is not None:
-            static_shapes[str(aligned_rank4_any_match.group("lhs"))] = [
-                int(aligned_rank4_any_match.group("n")),
-                int(aligned_rank4_any_match.group("d1")),
-                int(aligned_rank4_any_match.group("d2")),
-                int(aligned_rank4_any_match.group("d3")),
-            ]
+            align_parts = _parse_align_tensor_target_shape_expr(rhs_expr)
+            aligned_shape = (
+                _parse_rank4_shape_literal(align_parts[1])
+                if align_parts is not None
+                else None
+            )
+            if aligned_shape is not None:
+                static_shapes[lhs_name] = [
+                    int(value) for value in aligned_shape
+                ]
         apply_resize_match = _parse_apply_resize_assign(line)
         if apply_resize_match is not None:
             lhs_name = str(apply_resize_match[1])
