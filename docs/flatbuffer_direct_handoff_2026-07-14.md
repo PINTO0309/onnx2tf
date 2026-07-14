@@ -8,18 +8,18 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit gives mixed singleton NCHW-input repair for an
-NHWC Concat one semantic owner in
-`passes/mixed_singleton_concat_layout.py`. One `ModelIRGraphIndex` enumerates
-all Concat candidates, and complete adapter/name/shape/quantization plans are
-built before insertion. Valid static behavior, ModelIR, lineage, names,
-statistics, and final reconciliation retain former behavior. One dynamic
-batch or spatial dimension is now preserved with a runtime-inferable `-1`;
-contracts needing multiple inferred dimensions remain unchanged. Output-
-channel or dtype mismatches, duplicate/later/unresolved producers, inconsistent
-signatures, and failed late quantization clones are complete no-ops. Repeated
-uses of one NCHW source share one adapter rather than producing an invalid
-duplicate-output pair.
+The latest implementation unit gives Swin-style window-partition
+canonicalization one semantic owner in `passes/window_partition_layout.py`.
+One `ModelIRGraphIndex` validates every exact ordered/exclusive
+`RESHAPE -> TRANSPOSE -> RESHAPE` chain and replaces it with
+`SPACE_TO_DEPTH -> RESHAPE`; all topology, constant, shape/signature, dtype,
+quantization, option, and dynamic-shape decisions complete before mutation.
+Valid static ModelIR, lineage, options/provenance, pruning, and statistics
+retain former behavior. One runtime-inferable final-Reshape dimension is now
+preserved transactionally. Duplicate/later producers, public-input conflicts,
+floating/produced constants, missing output metadata, mixed dtypes, invalid
+grids, inconsistent signatures, and two inferred output dimensions are
+complete no-ops.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -41,7 +41,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains eighty-six coherent continuations:
+The current `fb-refactor5` work contains eighty-seven coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -225,8 +225,10 @@ The current `fb-refactor5` work contains eighty-six coherent continuations:
   owner with a complete options/metadata/buffer transaction;
 - `78ba42ae` moves NCHW Concat/Transpose/(Transpose)Conv axis repair to one
   indexed owner with a complete metadata transaction;
-- the current checkpoint moves mixed singleton NCHW-input repair for NHWC
-  Concat to one indexed owner with complete adapter transactions.
+- `bee33d8e` moves mixed singleton NCHW-input repair for NHWC Concat to one
+  indexed owner with complete adapter transactions;
+- the current checkpoint moves Swin-style window-partition canonicalization to
+  one indexed owner with complete topology/constant/metadata transactions.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -245,8 +247,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/mixed_singleton_concat_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_mixed_singleton_concat_layout.py`;
+- `onnx2tf/tflite_builder/passes/window_partition_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_window_partition_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -801,6 +803,22 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   prepared before indexed insertion and lineage-aware rewiring. This prevents
   a late clone exception from leaving the first adapter behind. The production
   call passes the Session LayoutState; graphs without Concat allocate no index.
+- Window-partition canonicalization requires exact NHWC input, six-dimensional
+  partition Reshape, `[0,1,3,2,4,5]` Transpose, and three-dimensional window
+  output Reshape equations. All internal edges are private, uniquely produced,
+  exclusively consumed, and ordered. The input is public, constant, or
+  uniquely produced earlier. Shape/permutation vectors are producer-free,
+  non-input INT32/INT64 constants with exact vector metadata.
+- All four data tensors share dtype and either no quantization or one exact
+  per-tensor grid. The existing Transpose object becomes SPACE_TO_DEPTH so its
+  version, axis semantics, and provenance survive. Static metadata remains
+  exact. A consistent dynamic batch/spatial/channel signature is propagated;
+  when the retained Reshape needs one `-1`, its private vector and both shape
+  options are changed together and marked dynamic. Two inferred dimensions,
+  shared/public shape mutation, or any incomplete contract is a complete
+  no-op. Both production calls pass the Session LayoutState; incomplete
+  operator families prune historically unused tensors without allocating an
+  index.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -2179,6 +2197,29 @@ passed with `3 passed`. Ruff on the new owner/test and architecture test,
 scoped lowerer checks, syntax compilation, and `git diff --check` passed. No
 Tier corpus conversion was run.
 
+The indexed window-partition checkpoint compiles the complete prior committed
+function and preserves exact ModelIR, lineage, operator order, Transpose
+options replacement, version/axis semantics/provenance, quantization metadata,
+unused-tensor pruning, and statistics for valid public-input, produced-input,
+and quantized multi-chain fixtures. Differential checks prove that duplicate
+first-Reshape producers, floating shape vectors, missing final-output metadata,
+mixed data dtypes, and a graph-input/producer conflict formerly changed graph
+state; all five are now complete no-ops.
+
+Focused coverage verifies one-index multi-match execution, supplied-index and
+LayoutState equivalence, exact block/spatial and three-stage shape equations,
+static and one-dynamic-dimension contracts, final dynamic-Reshape convergence,
+per-tensor quantization, in-place provenance, topology/order/arity, public and
+fan-out boundaries, duplicate/later/unresolved producers, typed producer-free
+shape/permutation vectors, dynamic shape-vector ownership, two-dynamic-output
+rejection, historical prune/no-index behavior, and unique semantic ownership
+with `52 passed`. Architecture, core, pass-efficiency, dynamic-Reshape, the new
+indexed suite, and two real ONNX SpaceToDepth chain characterizations passed
+together with `289 passed`. TensorFlow-import-blocked direct and `-cotof` plus
+the sequential quantization/evaluation/coverage smoke passed with `3 passed`.
+Ruff on the new owner/test and architecture test, scoped lowerer checks, syntax
+compilation, and `git diff --check` passed. No Tier corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -2228,12 +2269,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit `_optimize_window_partition_reshape_transpose_to_space_to_depth_chains`
-   as the next smallest bounded raw-map helper. Preserve the exact window-
-   partition shape/permutation grammar, topology and public-boundary guards,
-   tensor metadata, options/provenance, and statistics while deciding whether
-   one maintained index and a complete pre-mutation plan can replace its
-   consumer snapshot.
+3. Audit `_optimize_window_reverse_reshape_transpose_to_depth_to_space_chains`
+   as the paired next bounded raw-map helper. Reuse only the proven constant,
+   shape/signature, topology, and dynamic-Reshape contracts from the partition
+   owner while preserving the reverse grammar, retained operator identities,
+   options/provenance, pruning, and statistics.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

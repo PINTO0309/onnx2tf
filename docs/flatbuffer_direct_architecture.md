@@ -4556,6 +4556,42 @@ former-function differential execution confirms ModelIR/statistics equality
 for valid static multi-candidate, multi-adapter, quantized-metadata, and name-
 collision fixtures.
 
+Swin-style window-partition canonicalization is owned by
+`passes/window_partition_layout.py`. A two-Reshape/one-Transpose preflight
+preserves historical unused-tensor pruning without constructing an index for
+unrelated graphs. Otherwise one optional or local `ModelIRGraphIndex`
+enumerates graph-order first-Reshape candidates and proves the exact ordered,
+exclusive `RESHAPE -> TRANSPOSE -> RESHAPE` chain before replacing it with
+`SPACE_TO_DEPTH -> RESHAPE`. Both production call sites supply the Session
+LayoutState.
+
+The input is rank-four NHWC and the first Reshape is exactly
+`[N,OH,BS,OW,BS,C]`, where the square block is greater than one and reconstructs
+the input height and width. The Transpose permutation is exactly
+`[0,1,3,2,4,5]`, its output is `[N,OH,OW,BS,BS,C]`, and the retained final
+Reshape is `[N*OH*OW,BS*BS,C]`. All data tensors have identical dtypes and
+either no quantization or the same valid per-tensor grid. Shape and permutation
+vectors are producer-free INT32/INT64 constants with exact vector metadata;
+runtime graph inputs are not treated as constants.
+
+Every produced boundary has one producer, internal outputs are private and
+exclusively consumed by the next ordered operator, and the data source is a
+graph input, producer-free constant, or uniquely produced earlier value. The
+former Transpose object becomes SPACE_TO_DEPTH in place, preserving version,
+axis semantics, and ONNX provenance while receiving the exact block option and
+lineage-aware data edge. One differential index maintains its type, inputs,
+and removal of the first Reshape.
+
+Static valid graphs retain exact former ModelIR and statistics. Consistent
+dynamic batch, spatial, or channel metadata is propagated through
+SPACE_TO_DEPTH. When the retained final Reshape needs one inferred dimension,
+its private shape vector and `newShape`/`onnxRawNewShape` options are planned as
+one `-1` transaction and protected from later static cleanup. Two inferred
+output dimensions cannot be represented by this Reshape and remain unchanged.
+This also makes duplicate/later producers, public-input conflicts, floating or
+produced constants, missing output metadata, mixed dtypes, invalid grids, and
+shape/signature mismatches complete no-ops.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

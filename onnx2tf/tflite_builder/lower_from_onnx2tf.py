@@ -183,6 +183,9 @@ from onnx2tf.tflite_builder.passes.concat_transpose_conv_layout import (
 from onnx2tf.tflite_builder.passes.mixed_singleton_concat_layout import (
     _repair_mixed_singleton_nchw_inputs_for_nhwc_concat as _repair_mixed_singleton_nchw_inputs_for_nhwc_concat_pass,
 )
+from onnx2tf.tflite_builder.passes.window_partition_layout import (
+    _optimize_window_partition_reshape_transpose_to_space_to_depth_chains as _optimize_window_partition_reshape_transpose_to_space_to_depth_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.dequant_concat_quantize_layout import (
     _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains as _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains_pass,
     run_dequant_concat_quantize_layout_cleanup,
@@ -19817,132 +19820,15 @@ def _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(
 
 def _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    """
-    Replace Swin-like window-partition wrappers with SPACE_TO_DEPTH.
-
-    Target:
-      x[N,H,W,C]
-        --RESHAPE([N,OH,BS,OW,BS,C])--> r1
-        --TRANSPOSE([0,1,3,2,4,5])--> t1
-        --RESHAPE([N*OH*OW, BS*BS, C])--> y
-
-    Rewrite:
-      x --SPACE_TO_DEPTH(blockSize=BS)--> s2d [N,OH,OW,BS*BS*C]
-      s2d --RESHAPE([N*OH*OW, BS*BS, C])--> y
-    """
-    rewritten = 0
-    target_perm = [0, 1, 3, 2, 4, 5]
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for reshape1_idx, reshape1_op in enumerate(model_ir.operators):
-            if str(reshape1_op.op_type) != "RESHAPE" or len(reshape1_op.inputs) < 2 or len(reshape1_op.outputs) != 1:
-                continue
-
-            input_name = str(reshape1_op.inputs[0])
-            reshape1_out_name = str(reshape1_op.outputs[0])
-            if reshape1_out_name in model_outputs:
-                continue
-
-            input_tensor = model_ir.tensors.get(input_name, None)
-            reshape1_out_tensor = model_ir.tensors.get(reshape1_out_name, None)
-            if input_tensor is None or reshape1_out_tensor is None:
-                continue
-            if (
-                not _is_fully_known_positive_shape(input_tensor.shape)
-                or not _is_fully_known_positive_shape(reshape1_out_tensor.shape)
-            ):
-                continue
-
-            in_shape = [int(v) for v in list(input_tensor.shape)]
-            r1_shape = [int(v) for v in list(reshape1_out_tensor.shape)]
-            if len(in_shape) != 4 or len(r1_shape) != 6:
-                continue
-
-            n, h, w, c = [int(v) for v in list(in_shape)]
-            n1, oh, bs_h, ow, bs_w, c1 = [int(v) for v in list(r1_shape)]
-            if int(n1) != int(n) or int(c1) != int(c):
-                continue
-            if int(bs_h) <= 1 or int(bs_w) <= 1 or int(bs_h) != int(bs_w):
-                continue
-            bs = int(bs_h)
-            if int(oh) * int(bs) != int(h) or int(ow) * int(bs) != int(w):
-                continue
-
-            reshape1_target = _read_const_ints_from_tensor(model_ir.tensors.get(str(reshape1_op.inputs[1]), None))
-            if reshape1_target is None or [int(v) for v in list(reshape1_target)] != [int(v) for v in list(r1_shape)]:
-                continue
-
-            reshape1_users = [int(v) for v in consumers.get(reshape1_out_name, [])]
-            if len(reshape1_users) != 1:
-                continue
-            transpose_idx = int(reshape1_users[0])
-            transpose_op = model_ir.operators[int(transpose_idx)]
-            if (
-                str(transpose_op.op_type) != "TRANSPOSE"
-                or len(transpose_op.inputs) < 2
-                or len(transpose_op.outputs) != 1
-                or str(transpose_op.inputs[0]) != str(reshape1_out_name)
-                or _read_transpose_perm(model_ir, transpose_op) != target_perm
-            ):
-                continue
-
-            transpose_out_name = str(transpose_op.outputs[0])
-            if transpose_out_name in model_outputs:
-                continue
-            transpose_out_tensor = model_ir.tensors.get(transpose_out_name, None)
-            if transpose_out_tensor is None or not _is_fully_known_positive_shape(transpose_out_tensor.shape):
-                continue
-            transpose_shape = [int(v) for v in list(transpose_out_tensor.shape)]
-            expected_transpose_shape = [int(n), int(oh), int(ow), int(bs), int(bs), int(c)]
-            if transpose_shape != expected_transpose_shape:
-                continue
-
-            transpose_users = [int(v) for v in consumers.get(transpose_out_name, [])]
-            if len(transpose_users) != 1:
-                continue
-            reshape2_idx = int(transpose_users[0])
-            reshape2_op = model_ir.operators[int(reshape2_idx)]
-            if (
-                str(reshape2_op.op_type) != "RESHAPE"
-                or len(reshape2_op.inputs) < 2
-                or len(reshape2_op.outputs) != 1
-                or str(reshape2_op.inputs[0]) != str(transpose_out_name)
-            ):
-                continue
-
-            reshape2_target = _read_const_ints_from_tensor(model_ir.tensors.get(str(reshape2_op.inputs[1]), None))
-            expected_reshape2 = [int(n) * int(oh) * int(ow), int(bs) * int(bs), int(c)]
-            if reshape2_target is None or [int(v) for v in list(reshape2_target)] != expected_reshape2:
-                continue
-
-            # Convert TRANSPOSE op in-place to SPACE_TO_DEPTH and bypass first RESHAPE.
-            transpose_op.op_type = "SPACE_TO_DEPTH"
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=transpose_op,
-                new_inputs=[str(input_name)],
-            )
-            transpose_op.options = {"blockSize": int(bs)}
-
-            s2d_shape = [int(n), int(oh), int(ow), int(bs) * int(bs) * int(c)]
-            transpose_out_tensor.shape = [int(v) for v in list(s2d_shape)]
-            transpose_out_tensor.shape_signature = [int(v) for v in list(s2d_shape)]
-
-            del model_ir.operators[int(reshape1_idx)]
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"optimized_window_partition_reshape_transpose_to_space_to_depth_chains": int(rewritten)}
+    return _optimize_window_partition_reshape_transpose_to_space_to_depth_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(
@@ -46144,7 +46030,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
         _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
-        _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
+        _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
         _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir)
         run_squeeze_reshape_identity_cleanup(
@@ -46756,7 +46645,10 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
     )
     _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
-    _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
+    _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
     # Late transpose/layout rewrites can invalidate previously resolved
     # RESHAPE constants. Re-resolve once at absolute end.
