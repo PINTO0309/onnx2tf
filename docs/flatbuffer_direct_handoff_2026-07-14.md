@@ -8,11 +8,15 @@ currently tracks this branch. The Goal is active again; subsequent work uses
 coherent commits and pushes without opening an additional pull request.
 
 The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-each of three repeated strict channel-slice-merge/Pad-Mul runner pairs. The
-scope contains only the adjacent three-spec channel-slice and single-spec Pad-
-Mul groups. A synthetic fixture whose two model-only preflights match proves
-that four diagnostic events construct one graph index without changing runner
-order, diagnostic grouping, or standalone behavior.
+two long singleton/Reshape cleanup sequences and three shorter singleton-
+channel/duplicate-fan-out/consecutive-Reshape triplets. The long helper uses
+explicit flags to retain the two former variants; the short helper accepts the
+target ModelIR and LayoutState so fallback relowering receives its own scope.
+Synthetic preflight-only fixtures prove that as many as 13 registered groups
+construct one graph index, while AST ownership checks fix exact runner order,
+flags, three short-helper invocations, and every surrounding scope boundary.
+The lowerer's registered-runner call characterization is reduced from 160 to
+147 without changing runtime invocation order.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -34,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains nineteen coherent continuations:
+The current `fb-refactor5` work contains twenty coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -75,8 +79,11 @@ The current `fb-refactor5` work contains nineteen coherent continuations:
   unary fan-out runner clusters;
 - `251edc58` shares state across four repeated boundary-input BatchMatMul/input-
   unary runner pairs;
-- the current checkpoint shares state across three repeated channel-slice-
-  merge/Pad-Mul pairs.
+- `543d7cc3` shares state across three repeated channel-slice-merge/Pad-Mul
+  pairs;
+- the current checkpoint shares state across the repeated long singleton/
+  Reshape sequences and all three terminal singleton-channel/duplicate-fan-
+  out/consecutive-Reshape triplets.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -92,11 +99,13 @@ conversion was run.
 
 Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
-The final checkpoint changes:
+The current checkpoint changes:
 
-- `onnx2tf/tflite_builder/passes/channel_slice_layout.py`;
-- `onnx2tf/tflite_builder/passes/pad_layout.py`;
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
+- `onnx2tf/tflite_builder/passes/graph_cleanup.py`;
+- `onnx2tf/tflite_builder/passes/multi_branch_gate_layout.py`;
+- `onnx2tf/tflite_builder/passes/singleton_maxpool_layout.py`;
+- `onnx2tf/tflite_builder/passes/singleton_reshape_layout.py`;
 - `tests/test_flatbuffer_direct_pass_efficiency.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
@@ -226,6 +235,19 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   owned scope. Both runners retain optional standalone-compatible scope
   arguments, and the scope ends before the legacy optimizer following each
   pair.
+- Two long singleton/Reshape sequences now use one flag-controlled helper-
+  owned scope per occurrence. The first retains generic transpose cleanup and
+  terminal multi-branch gate cleanup; the second retains reshape-only
+  duplicate fan-out cleanup and disables only the former spatial post-Concat
+  variant. Four singleton-Reshape-family runners, three graph-cleanup runners,
+  singleton MaxPool, and multi-branch gate retain standalone behavior through
+  optional scope arguments.
+- The three later singleton-channel/reshape-only-duplicate/consecutive-Reshape
+  triplets use a target-parameterized helper. Two invocations use the primary
+  ModelIR and Session layout state; fallback relowering passes `fallback_ir`
+  and no LayoutState, preventing state identity from crossing conversion
+  instances. The standalone singleton-MaxPool/consecutive-Reshape pair is not
+  included in this checkpoint.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -510,10 +532,35 @@ The runtime fixture records one graph-index refresh and build flags
 `[true, true, true, false]`: the first three events belong to the one state-
 building channel-slice group, and Pad-Mul reuses that state. The architecture
 gate fixes the two-group order and all three helper invocations.
+A focused singleton/Reshape checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_singleton_channel_transpose.py \
+  tests/test_flatbuffer_direct_singleton_reshape.py \
+  tests/test_flatbuffer_direct_singleton_maxpool.py \
+  tests/test_flatbuffer_direct_flatten_concat_reshape.py \
+  tests/test_flatbuffer_direct_consecutive_reshape.py \
+  tests/test_flatbuffer_direct_singleton_spatial_reshape.py \
+  tests/test_flatbuffer_direct_graph_cleanup.py \
+  tests/test_flatbuffer_direct_osnet_gate_layout.py \
+  <two new efficiency tests and two architecture checks>
+
+41 passed
+```
+
+The long synthetic fixture makes all ten runner preflights match and records
+13 diagnostic events with one graph-index refresh and build flags
+`[true, false, ...]`. The short fixture records one refresh and flags
+`[true, false, false]`. Architecture checks fix both long variants, all three
+short-helper target/layout combinations, the shared scope keyword, and the
+147-call global runner characterization.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`150 passed` after adding the channel-slice/Pad-Mul checks.
+`153 passed` after adding the singleton/Reshape checks.
 
 The changed pass modules and tests pass Ruff normally. The lowerer passes with
 its pre-existing `F401` and `F841` findings scoped out. Every changed Python
@@ -555,9 +602,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the remaining repeated singleton/duplicate/consecutive-reshape runner
-   sequences while treating every surrounding legacy helper as a hard
-   boundary.
+2. Audit the remaining adjacent registered-pass pairs, beginning with the
+   standalone singleton-MaxPool/consecutive-Reshape pair, while treating every
+   surrounding legacy helper as a hard boundary. Prefer repeated sequences
+   with measurable index-rebuild savings over one-off grouping.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.

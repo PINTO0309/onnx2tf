@@ -9,6 +9,7 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
+    ModelIRPassStateScope,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
@@ -376,6 +377,7 @@ def run_singleton_reshape_layout_cleanup(
     include_inverse_pair: bool = True,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Run adjacent singleton-Reshape cleanups in legacy order."""
 
@@ -505,6 +507,7 @@ def run_singleton_reshape_layout_cleanup(
         layout_state=layout_state,
         default_details=default_details,
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -1455,6 +1458,7 @@ def run_flatten_concat_reshape_cleanup(
     *,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Run the fully static 2D-to-NHWC Concat rewrite."""
 
@@ -1522,6 +1526,7 @@ def run_flatten_concat_reshape_cleanup(
         layout_state=layout_state,
         default_details=default_details,
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -1534,6 +1539,7 @@ def run_singleton_spatial_reshape_cleanup(
     include_concat_post_transpose: bool = True,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Run singleton-spatial Reshape rewrites in legacy order."""
 
@@ -1646,6 +1652,7 @@ def run_singleton_spatial_reshape_cleanup(
         layout_state=layout_state,
         default_details=default_details,
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -1656,6 +1663,7 @@ def run_singleton_channel_transpose_cleanup(
     *,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Canonicalize singleton-safe rank-4 layout Transposes as Reshapes."""
 
@@ -1738,6 +1746,7 @@ def run_singleton_channel_transpose_cleanup(
         layout_state=layout_state,
         default_details=default_details,
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

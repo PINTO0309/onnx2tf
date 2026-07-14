@@ -50142,6 +50142,111 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_singleton_reshape_layout_pass_cluster(
+        *,
+        include_layout_transpose: bool = False,
+        include_duplicate_fanout: bool = False,
+        include_multi_branch_gate: bool = False,
+        include_spatial_concat_post_transpose: bool = True,
+    ) -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        if include_layout_transpose:
+            run_layout_transpose_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
+        run_singleton_channel_transpose_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        if include_duplicate_fanout:
+            run_duplicate_fanout_cleanup(
+                model_ir,
+                include_transpose=False,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
+        run_singleton_reshape_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_singleton_maxpool_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_flatten_concat_reshape_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_consecutive_reshape_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_squeeze_reshape_identity_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_singleton_spatial_reshape_cleanup(
+            model_ir,
+            include_concat_post_transpose=include_spatial_concat_post_transpose,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        if include_multi_branch_gate:
+            run_multi_branch_gate_layout_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
+
+    def _run_singleton_consecutive_reshape_pass_cluster(
+        target_model_ir: ModelIR,
+        target_layout_state: LayoutState | None,
+    ) -> None:
+        state_scope = ModelIRPassStateScope(
+            target_model_ir,
+            layout_state=target_layout_state,
+        )
+        run_singleton_channel_transpose_cleanup(
+            target_model_ir,
+            layout_state=target_layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_duplicate_fanout_cleanup(
+            target_model_ir,
+            include_transpose=False,
+            layout_state=target_layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_consecutive_reshape_cleanup(
+            target_model_ir,
+            layout_state=target_layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     _set_post_progress_desc("outputs")
 
     # Outputs
@@ -50874,52 +50979,11 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
-        run_layout_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_singleton_channel_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_singleton_reshape_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_singleton_maxpool_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_flatten_concat_reshape_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_consecutive_reshape_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_squeeze_reshape_identity_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_singleton_spatial_reshape_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        # Run the multi-branch gate rewrite at terminal stage so
-        # earlier generic passes do not re-wrap rewritten NHWC tensors.
-        run_multi_branch_gate_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        # Run the multi-branch gate rewrite at terminal stage so earlier
+        # generic passes do not re-wrap rewritten NHWC tensors.
+        _run_singleton_reshape_layout_pass_cluster(
+            include_layout_transpose=True,
+            include_multi_branch_gate=True,
         )
     run_clamp_cleanup(
         model_ir,
@@ -50960,47 +51024,9 @@ def lower_onnx_to_ir(
     # Apply singleton transpose->reshape rewrite regardless of layout-opt mode.
     # This is required for fallback relowering (optimize_layout_transpose_chains=False)
     # where channelwise [1,C,1,1] -> [1,1,1,C] adapters can remain as TRANSPOSE.
-    run_singleton_channel_transpose_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_duplicate_fanout_cleanup(
-        model_ir,
-        include_transpose=False,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_singleton_reshape_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_singleton_maxpool_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_flatten_concat_reshape_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_consecutive_reshape_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_squeeze_reshape_identity_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_singleton_spatial_reshape_cleanup(
-        model_ir,
-        include_concat_post_transpose=False,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _run_singleton_reshape_layout_pass_cluster(
+        include_duplicate_fanout=True,
+        include_spatial_concat_post_transpose=False,
     )
     _prune_dead_operators(model_ir, layout_state=session.layout_state)
     _reconcile_static_tensor_shapes(model_ir)
@@ -51280,21 +51306,9 @@ def lower_onnx_to_ir(
     # Norm-subgraph fallback rewrites can introduce channelwise
     # [1,C,1,1]->[1,1,1,C] adapters as TRANSPOSE in no-layout mode.
     # Re-canonicalize them to RESHAPE at the very end.
-    run_singleton_channel_transpose_cleanup(
+    _run_singleton_consecutive_reshape_pass_cluster(
         model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_duplicate_fanout_cleanup(
-        model_ir,
-        include_transpose=False,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_consecutive_reshape_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+        session.layout_state,
     )
     if optimize_layout_transpose_chains:
         run_layout_transpose_cleanup(
@@ -51314,21 +51328,9 @@ def lower_onnx_to_ir(
     _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir)
     _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir)
     _repair_rank4_binary_singleton_broadcast_layout_mismatch(model_ir)
-    run_singleton_channel_transpose_cleanup(
+    _run_singleton_consecutive_reshape_pass_cluster(
         model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_duplicate_fanout_cleanup(
-        model_ir,
-        include_transpose=False,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_consecutive_reshape_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+        session.layout_state,
     )
     _reconcile_static_tensor_shapes(model_ir)
     _sanitize_static_shape_signature_consistency(model_ir)
@@ -51578,18 +51580,9 @@ def lower_onnx_to_ir(
         if int(fallback_norm_stats.get("optimized_transpose_norm_subgraph_pad_prepost_nhwc_chains", 0)) > 0:
             _repair_rank4_binary_layout_mismatch_with_transpose_adapter(fallback_ir)
             _repair_rank4_binary_singleton_broadcast_layout_mismatch(fallback_ir)
-            run_singleton_channel_transpose_cleanup(
+            _run_singleton_consecutive_reshape_pass_cluster(
                 fallback_ir,
-                diagnostics=session.diagnostics,
-            )
-            run_duplicate_fanout_cleanup(
-                fallback_ir,
-                include_transpose=False,
-                diagnostics=session.diagnostics,
-            )
-            run_consecutive_reshape_cleanup(
-                fallback_ir,
-                diagnostics=session.diagnostics,
+                None,
             )
             _reconcile_static_tensor_shapes(fallback_ir)
             _topologically_sort_operators(fallback_ir)

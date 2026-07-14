@@ -649,6 +649,141 @@ def test_lowerer_channel_slice_pad_mul_pair_reuses_pass_state_scope() -> None:
     assert len(helper_invocations) == 3
 
 
+def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+
+    def _helper_calls(
+        helper_name: str,
+        expected_order: list[str],
+    ) -> ast.FunctionDef:
+        helper = next(
+            node
+            for node in lowerer.body
+            if isinstance(node, ast.FunctionDef) and node.name == helper_name
+        )
+        calls = {
+            node.func.id: node
+            for node in ast.walk(helper)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in expected_order
+        }
+        assert [
+            call.func.id
+            for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
+        ] == expected_order
+        for name in expected_order:
+            scope_keyword = next(
+                keyword
+                for keyword in calls[name].keywords
+                if keyword.arg == "state_scope"
+            )
+            assert isinstance(scope_keyword.value, ast.Name)
+            assert scope_keyword.value.id == "state_scope"
+        return helper
+
+    long_helper_name = "_run_singleton_reshape_layout_pass_cluster"
+    _helper_calls(
+        long_helper_name,
+        [
+            "run_layout_transpose_cleanup",
+            "run_singleton_channel_transpose_cleanup",
+            "run_duplicate_fanout_cleanup",
+            "run_singleton_reshape_layout_cleanup",
+            "run_singleton_maxpool_layout_cleanup",
+            "run_flatten_concat_reshape_cleanup",
+            "run_consecutive_reshape_cleanup",
+            "run_squeeze_reshape_identity_cleanup",
+            "run_singleton_spatial_reshape_cleanup",
+            "run_multi_branch_gate_layout_cleanup",
+        ],
+    )
+    long_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == long_helper_name
+    ]
+    assert len(long_invocations) == 2
+    assert sum(
+        any(
+            keyword.arg == "include_layout_transpose"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in call.keywords
+        )
+        and any(
+            keyword.arg == "include_multi_branch_gate"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in call.keywords
+        )
+        for call in long_invocations
+    ) == 1
+    assert sum(
+        any(
+            keyword.arg == "include_duplicate_fanout"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in call.keywords
+        )
+        and any(
+            keyword.arg == "include_spatial_concat_post_transpose"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is False
+            for keyword in call.keywords
+        )
+        for call in long_invocations
+    ) == 1
+
+    short_helper_name = "_run_singleton_consecutive_reshape_pass_cluster"
+    short_helper = _helper_calls(
+        short_helper_name,
+        [
+            "run_singleton_channel_transpose_cleanup",
+            "run_duplicate_fanout_cleanup",
+            "run_consecutive_reshape_cleanup",
+        ],
+    )
+    assert [argument.arg for argument in short_helper.args.args] == [
+        "target_model_ir",
+        "target_layout_state",
+    ]
+    short_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == short_helper_name
+    ]
+    assert len(short_invocations) == 3
+    assert sum(
+        len(call.args) == 2
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "model_ir"
+        and isinstance(call.args[1], ast.Attribute)
+        and call.args[1].attr == "layout_state"
+        for call in short_invocations
+    ) == 2
+    assert sum(
+        len(call.args) == 2
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "fallback_ir"
+        and isinstance(call.args[1], ast.Constant)
+        and call.args[1].value is None
+        for call in short_invocations
+    ) == 1
+
+
 def test_reporting_implementation_stays_out_of_lowering_module() -> None:
     reporting_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py"
     lowering_path = (
@@ -3093,7 +3228,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 160
+    assert len(calls) == 147
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -3142,7 +3277,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
             for keyword in call.keywords
         )
     ]
-    assert len(reshape_only_duplicate_calls) == 4
+    assert len(reshape_only_duplicate_calls) == 2
 
     boundary_batchmatmul_calls = [
         call
@@ -3198,7 +3333,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_singleton_maxpool_layout_cleanup"
     ]
-    assert len(singleton_maxpool_calls) == 3
+    assert len(singleton_maxpool_calls) == 2
 
     singleton_reshape_calls = [
         call
@@ -3206,7 +3341,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_singleton_reshape_layout_cleanup"
     ]
-    assert len(singleton_reshape_calls) == 2
+    assert len(singleton_reshape_calls) == 1
 
     consecutive_reshape_calls = [
         call
@@ -3214,7 +3349,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_consecutive_reshape_cleanup"
     ]
-    assert len(consecutive_reshape_calls) == 7
+    assert len(consecutive_reshape_calls) == 4
 
     flatten_concat_reshape_calls = [
         call
@@ -3222,7 +3357,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_flatten_concat_reshape_cleanup"
     ]
-    assert len(flatten_concat_reshape_calls) == 2
+    assert len(flatten_concat_reshape_calls) == 1
 
     singleton_spatial_reshape_calls = [
         call
@@ -3230,7 +3365,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_singleton_spatial_reshape_cleanup"
     ]
-    assert len(singleton_spatial_reshape_calls) == 2
+    assert len(singleton_spatial_reshape_calls) == 1
 
     singleton_channel_transpose_calls = [
         call
@@ -3238,7 +3373,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_singleton_channel_transpose_cleanup"
     ]
-    assert len(singleton_channel_transpose_calls) == 5
+    assert len(singleton_channel_transpose_calls) == 2
 
     layout_transpose_calls = [
         call

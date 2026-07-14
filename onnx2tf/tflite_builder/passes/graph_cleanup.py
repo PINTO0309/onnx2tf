@@ -9,6 +9,7 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
+    ModelIRPassStateScope,
     preflight_any_operator,
     preflight_required_op_types,
     run_model_ir_pass_group,
@@ -300,6 +301,7 @@ def run_duplicate_fanout_cleanup(
     include_transpose: bool = True,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run duplicate layout-adapter cleanup as one ordered transaction group."""
 
@@ -393,6 +395,7 @@ def run_duplicate_fanout_cleanup(
         layout_state=layout_state,
         default_details=default_details,
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -717,6 +720,7 @@ def run_consecutive_reshape_cleanup(
     *,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run general no-op, fan-out, and consecutive Reshape cleanup."""
 
@@ -804,6 +808,7 @@ def run_consecutive_reshape_cleanup(
         layout_state=layout_state,
         default_details=default_details,
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -1625,6 +1630,7 @@ def run_squeeze_reshape_identity_cleanup(
     include_unary_passthrough: bool = False,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run guarded Squeeze/Reshape round-trip removal transactionally."""
 
@@ -1704,6 +1710,7 @@ def run_squeeze_reshape_identity_cleanup(
         layout_state=layout_state,
         default_details=default_details,
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

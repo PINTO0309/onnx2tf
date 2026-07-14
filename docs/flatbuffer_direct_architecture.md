@@ -106,6 +106,22 @@ Three repeated strict channel-slice-merge followed by Pad/Mul cleanup pairs
 share one scope per occurrence. The three-spec channel-slice group and the
 single-spec Pad/Mul group keep their original order and diagnostic grouping.
 
+Two long terminal singleton/Reshape cleanup sequences share one scope per
+occurrence through a flag-controlled helper. The helper retains the original
+relative order of generic transpose cleanup, singleton-channel Transpose
+canonicalization, optional reshape-only duplicate fan-out cleanup, singleton
+Reshape cleanup, singleton MaxPool cleanup, flatten/Concat/Reshape cleanup,
+general consecutive Reshape cleanup, Squeeze/Reshape identity cleanup,
+singleton-spatial Reshape cleanup, and optional multi-branch gate cleanup.
+One occurrence keeps the leading generic transpose and terminal gate; the
+other keeps the duplicate-fan-out pass and disables the spatial post-Concat
+variant exactly as before. Three later singleton-channel/duplicate-fan-out/
+consecutive-Reshape triplets use a smaller target-parameterized helper, so the
+fallback ModelIR receives its own identity-bound scope without inheriting the
+primary Session layout state. No scope crosses the legacy rewrites around
+these sequences. The separate singleton-MaxPool/consecutive-Reshape pair
+remains outside this checkpoint.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while
