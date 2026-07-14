@@ -969,9 +969,11 @@ def test_split_rewrite_builder_owns_append_only_operator_stream() -> None:
     )
     crop_source = ast.get_source_segment(source, crop_node)
     assert crop_source is not None
+    assert "clone_operator_ir(" in crop_source
+    assert "options=copy.deepcopy(dict(op.options))" in crop_source
     assert "axis_semantics=" in crop_source
-    assert "onnx_node_name=" in crop_source
-    assert "onnx_op_type=" in crop_source
+    assert "onnx_node_name=" not in crop_source
+    assert "onnx_op_type=" not in crop_source
     assert "kept_output_tensors" not in crop_source
     assert "set(str(name) for name in model_ir.inputs)" not in crop_source
 

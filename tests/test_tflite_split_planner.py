@@ -62,6 +62,79 @@ def test_crop_model_ir_uses_intermediate_boundaries_without_extra_operators() ->
     assert set(cropped.tensors) == {"t1", "t2", "t3"}
 
 
+def test_crop_model_ir_skips_nested_name_scan_for_top_level_boundaries(
+    monkeypatch,
+) -> None:
+    model_ir = _make_chain_model_ir(op_count=5)
+    model_ir.subgraphs = [ModelIR(name="unused_nested_graph")]
+
+    def fail_nested_scan(_model_ir):
+        raise AssertionError("nested tensors must not be scanned")
+
+    monkeypatch.setattr(
+        split_planner_module,
+        "_collect_nested_tensor_names",
+        fail_nested_scan,
+    )
+
+    cropped = crop_model_ir_by_boundary_tensors(
+        model_ir=model_ir,
+        requested_inputs=["t1"],
+        requested_outputs=["t3"],
+    )
+
+    assert [op.outputs for op in cropped.operators] == [["t2"], ["t3"]]
+
+
+def test_crop_model_ir_scans_source_operator_stream_once() -> None:
+    class _CountingOperatorList(list):
+        def __init__(self, values):
+            super().__init__(values)
+            self.iteration_count = 0
+
+        def __iter__(self):
+            self.iteration_count += 1
+            return super().__iter__()
+
+    model_ir = _make_chain_model_ir(op_count=16)
+    operators = _CountingOperatorList(model_ir.operators)
+    model_ir.operators = operators
+
+    cropped = crop_model_ir_by_boundary_tensors(
+        model_ir=model_ir,
+        requested_inputs=["t3"],
+        requested_outputs=["t12"],
+    )
+
+    assert len(cropped.operators) == 9
+    assert operators.iteration_count == 1
+
+
+def test_crop_model_ir_uses_shared_deep_operator_clone_contract() -> None:
+    model_ir = _make_chain_model_ir(op_count=3)
+    source_op = model_ir.operators[1]
+    source_op.options = {"nested": {"value": 1}}
+    source_op.axis_semantics = {"axis": [1, 2]}
+    source_op.onnx_node_name = "node_1"
+    source_op.onnx_op_type = "Synthetic"
+
+    cropped = crop_model_ir_by_boundary_tensors(
+        model_ir=model_ir,
+        requested_inputs=["t0"],
+        requested_outputs=["t1"],
+    )
+    cloned_op = cropped.operators[0]
+
+    assert cloned_op.onnx_node_name == "node_1"
+    assert cloned_op.onnx_op_type == "Synthetic"
+    assert cloned_op.options == source_op.options
+    assert cloned_op.axis_semantics == source_op.axis_semantics
+    cloned_op.options["nested"]["value"] = 2
+    cloned_op.axis_semantics["axis"].append(3)
+    assert source_op.options == {"nested": {"value": 1}}
+    assert source_op.axis_semantics == {"axis": [1, 2]}
+
+
 def _make_chain_model_ir(op_count: int = 6) -> ModelIR:
     model = ModelIR(name="chain")
     model.inputs = ["x"]

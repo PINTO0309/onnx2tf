@@ -229,13 +229,18 @@ def clone_operator_ir(
     operator: OperatorIR,
     *,
     options: Dict[str, Any],
+    axis_semantics: Optional[Dict[str, Any]] = None,
 ) -> OperatorIR:
     return OperatorIR(
         op_type=operator.op_type,
         inputs=list(operator.inputs),
         outputs=list(operator.outputs),
         options=options,
-        axis_semantics=dict(operator.axis_semantics),
+        axis_semantics=(
+            dict(operator.axis_semantics)
+            if axis_semantics is None
+            else axis_semantics
+        ),
         version=operator.version,
         onnx_node_name=operator.onnx_node_name,
         onnx_op_type=operator.onnx_op_type,

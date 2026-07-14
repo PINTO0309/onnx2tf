@@ -743,6 +743,17 @@ for byte at the ModelIR fingerprint level. The focused split, clone, artifact
 preparation, and architecture selection passes 119 tests; Ruff, syntax, and
 diff checks pass. No model conversion or inference was run.
 
+Boundary crop preflight now defers recursive nested-subgraph tensor-name
+collection until a requested boundary is absent from the top-level graph.
+Producer discovery is fused with forward reachability, and kept-operator
+validation, required-tensor collection, and materialization share one retained
+range traversal. Cropped operators delegate the structural field copy to the
+common clone contract while retaining deep isolation for nested options and
+axis semantics. Two hundred fixed-seed crop graphs match checkpoint `433a2c6`
+byte for byte at the ModelIR fingerprint level. Focused crop/split/clone tests
+pass 32 tests. An 11-run synthetic 2,000-op median improved from 0.039883s to
+0.037330s (1.07x). No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

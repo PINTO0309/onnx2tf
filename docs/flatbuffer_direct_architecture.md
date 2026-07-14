@@ -1691,6 +1691,14 @@ newly constructed cropped ModelIR copies axis semantics and ONNX node/op
 provenance in addition to inputs, outputs, options, and version. The crop
 preflight materializes the original runtime-input set once for all requested
 boundaries, and does not collect an unused second set of kept operator outputs.
+Top-level boundary names no longer trigger recursive nested-subgraph name
+collection; that diagnostic-only traversal is deferred until a requested name
+is actually missing from the top level. Producer discovery and forward
+reachability share one operator-stream scan, while missing-input validation,
+required-tensor collection, and kept-operator materialization share a second
+scan over only the retained indices. Cropped operators use the common element
+clone contract with explicit deep-copied options and axis semantics, preserving
+the crop API's independent-mutation behavior.
 
 Dependency-safe split-point discovery uses one producer scan and one consumer
 edge scan. Backward dependencies are represented as invalid-boundary range
