@@ -160,6 +160,24 @@ def test_flatbuffer_direct_core_has_no_tensorflow_imports() -> None:
     assert offenders == []
 
 
+def test_op_builders_mutate_layout_only_through_lowering_context() -> None:
+    op_builders_root = REPO_ROOT / "onnx2tf" / "tflite_builder" / "op_builders"
+    offenders: list[str] = []
+    for path in op_builders_root.glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.ctx, ast.Store)
+                and node.attr in {"logical_layout", "physical_layout"}
+            ):
+                offenders.append(
+                    f"{path.relative_to(REPO_ROOT)}:{node.lineno}:{node.attr}"
+                )
+
+    assert offenders == []
+
+
 def test_reporting_implementation_stays_out_of_lowering_module() -> None:
     reporting_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py"
     lowering_path = (

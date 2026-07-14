@@ -5,7 +5,7 @@ import copy
 import numpy as np
 import onnx
 import pytest
-from onnx import TensorProto, helper
+from onnx import TensorProto, helper, numpy_helper
 import onnx2tf.tflite_builder.core.validation as validation_module
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
 
@@ -53,6 +53,36 @@ def _add_model_ir() -> ModelIR:
         operators=[OperatorIR(op_type="ADD", inputs=["x", "y"], outputs=["z"])],
         inputs=["x", "y"],
         outputs=["z"],
+    )
+
+
+def _rank3_resize_onnx_model() -> onnx.ModelProto:
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 2, 8])
+    roi = numpy_helper.from_array(np.asarray([], dtype=np.float32), name="roi")
+    scales = numpy_helper.from_array(
+        np.asarray([1.0, 1.0, 2.0], dtype=np.float32),
+        name="scales",
+    )
+    resize = helper.make_node(
+        "Resize",
+        ["x", "roi", "scales"],
+        ["y"],
+        name="rank3_resize",
+        mode="nearest",
+        coordinate_transformation_mode="asymmetric",
+        nearest_mode="floor",
+    )
+    graph = helper.make_graph(
+        [resize],
+        "rank3_resize_graph",
+        [x],
+        [y],
+        initializer=[roi, scales],
+    )
+    return helper.make_model(
+        graph,
+        opset_imports=[helper.make_opsetid("", 13)],
     )
 
 
@@ -162,6 +192,51 @@ def test_lowerer_context_reuses_session_consumer_counts(monkeypatch) -> None:
     lower_onnx_to_ir(model, "session_consumer_counts")
 
     assert captured_counts == {"x": 2, "y": 1}
+
+
+def test_lowerer_keeps_session_layout_current_before_first_post_pass(
+    monkeypatch,
+) -> None:
+    observed_problems: list[list[str]] = []
+    observed_layouts: dict[str, str] = {}
+    original_cleanup = lowering_module.run_layout_transpose_cleanup
+
+    def _tracking_cleanup(model_ir, *, layout_state=None, diagnostics=None):
+        assert layout_state is not None
+        if not observed_problems:
+            observed_problems.append(layout_state.validate_against_model_ir(model_ir))
+            observed_layouts.update(
+                {
+                    name: layout_state.logical_of(name)
+                    for name in (
+                        "rank3_resize_input_nwc",
+                        "rank3_resize_input_nhwc",
+                        "rank3_resize_output_nhwc",
+                        "rank3_resize_output_nwc",
+                    )
+                }
+            )
+        return original_cleanup(
+            model_ir,
+            layout_state=layout_state,
+            diagnostics=diagnostics,
+        )
+
+    monkeypatch.setattr(
+        lowering_module,
+        "run_layout_transpose_cleanup",
+        _tracking_cleanup,
+    )
+
+    lower_onnx_to_ir(_rank3_resize_onnx_model(), "session_layout_handoff")
+
+    assert observed_problems == [[]]
+    assert observed_layouts == {
+        "rank3_resize_input_nwc": "NWC",
+        "rank3_resize_input_nhwc": "NHWC",
+        "rank3_resize_output_nhwc": "NHWC",
+        "rank3_resize_output_nwc": "NWC",
+    }
 
 
 def test_layout_state_sync_rename_remove_and_validation() -> None:

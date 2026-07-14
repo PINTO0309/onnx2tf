@@ -74,6 +74,12 @@ for compatibility with external mutations that bypass these APIs.
 source passed into `LoweringContext`. This preserves the pre-session safety
 contract used by inverse-transpose elision, including repeated uses of one
 input, without rebuilding a second ONNX edge-count map.
+Lowering-time logical and physical layout changes use
+`LoweringContext.set_tensor_layout()`. The method updates the tensor metadata
+and the Session-owned `LayoutState` together, so the first post-lowering pass
+receives current layout evidence without relying on that pass to hide stale
+state through a full resynchronization. Op-family builders must not assign
+`TensorIR.logical_layout` or `TensorIR.physical_layout` directly.
 Lineage-aware graph mutation helpers accept an optional ModelIR index and
 update it atomically.
 `operator_indices_for_types()` returns a sorted, deduplicated union for

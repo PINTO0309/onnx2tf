@@ -8,7 +8,13 @@ from onnx2tf.tflite_builder.core.session import ConversionSession
 from onnx2tf.tflite_builder.core.shape_resolution import (
     shape_hint_only_adds_singleton_or_dynamic_axes,
 )
-from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR, normalize_onnx_shape
+from onnx2tf.tflite_builder.ir import (
+    ModelIR,
+    OperatorIR,
+    TensorIR,
+    normalize_logical_layout,
+    normalize_onnx_shape,
+)
 from onnx2tf.tflite_builder.tensor_buffer_builder import tflite_dtype_from_numpy
 
 
@@ -157,6 +163,27 @@ class LoweringContext:
             logical=tensor.logical_layout,
             physical=tensor.physical_layout,
         )
+
+    def set_tensor_layout(
+        self,
+        name: str,
+        *,
+        logical: Optional[str] = None,
+        physical: Optional[str] = None,
+    ) -> None:
+        """Update tensor layout metadata and the Session-owned layout state."""
+
+        tensor_name = str(name)
+        if tensor_name not in self.model_ir.tensors:
+            raise KeyError(
+                f"Tensor layout cannot be updated before creation: {tensor_name}"
+            )
+        tensor = self.model_ir.tensors[tensor_name]
+        if logical is not None:
+            tensor.logical_layout = normalize_logical_layout(logical)
+        if physical is not None:
+            tensor.physical_layout = normalize_logical_layout(physical)
+        self._record_layout(tensor_name)
 
     def ensure_tensor(
         self,
