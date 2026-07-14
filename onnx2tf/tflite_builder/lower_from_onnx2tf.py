@@ -50741,6 +50741,17 @@ def lower_onnx_to_ir(
         _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir)
         _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
 
+    def _run_sinet_terminal_layout_recovery_sequence() -> None:
+        _optimize_sinet_shuffle_residual_transpose_chains(model_ir)
+        _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
+        _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
+        # Generic rewrites can recreate SiNet concat+resize transpose adapters.
+        _optimize_sinet_concat_resize_affine_transpose_chains(model_ir)
+        _optimize_sinet_dual_resize_affine_transpose_chains(model_ir)
+        _optimize_sinet_concat_resize_affine_tail_concat_transpose_chains(model_ir)
+        _optimize_sinet_softmax_mask_residual_nhwc_tail_chains(model_ir)
+        _optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains(model_ir)
+
     _set_post_progress_desc("outputs")
 
     # Outputs
@@ -51102,15 +51113,7 @@ def lower_onnx_to_ir(
             include_multi_branch_gate=True,
         )
     _run_terminal_clamp_unary_relu_pass_cluster()
-    _optimize_sinet_shuffle_residual_transpose_chains(model_ir)
-    _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
-    _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
-    # This generic pass can recreate SiNet concat+resize transpose adapters.
-    _optimize_sinet_concat_resize_affine_transpose_chains(model_ir)
-    _optimize_sinet_dual_resize_affine_transpose_chains(model_ir)
-    _optimize_sinet_concat_resize_affine_tail_concat_transpose_chains(model_ir)
-    _optimize_sinet_softmax_mask_residual_nhwc_tail_chains(model_ir)
-    _optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains(model_ir)
+    _run_sinet_terminal_layout_recovery_sequence()
     _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(model_ir)
     _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
     # Terminal MUL/ADD/PRELU rewriting can recreate NCHW bridge wrappers.
@@ -51133,14 +51136,7 @@ def lower_onnx_to_ir(
     _reconcile_static_tensor_shapes(model_ir)
     # Very late shape reconciliation can expose strict shuffle-residual patterns.
     # Re-run terminal transpose reducers once at absolute end.
-    _optimize_sinet_shuffle_residual_transpose_chains(model_ir)
-    _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
-    _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
-    _optimize_sinet_concat_resize_affine_transpose_chains(model_ir)
-    _optimize_sinet_dual_resize_affine_transpose_chains(model_ir)
-    _optimize_sinet_concat_resize_affine_tail_concat_transpose_chains(model_ir)
-    _optimize_sinet_softmax_mask_residual_nhwc_tail_chains(model_ir)
-    _optimize_transpose_mul_add_const_prelu_prepost_nhwc_terminal_chains(model_ir)
+    _run_sinet_terminal_layout_recovery_sequence()
     _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
     _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
     _optimize_sinet_concat_resize_affine_transpose_chains(model_ir)

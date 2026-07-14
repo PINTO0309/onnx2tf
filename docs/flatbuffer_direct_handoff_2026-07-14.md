@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit replaces two AST-identical quantized-activation/
-binary-bridge recovery sequences with one ordered helper. Each caller still
-executes the same 10 raw ModelIR mutators in the same position, from quantized
-HardSigmoid, MaxPool, Softmax, and Logistic recovery through Softmax-Transpose
-canonicalization and five safe binary-bridge variants. The first conditional
-full binary-bridge call and the second Concat-recovery successor remain outside
-the helper. Runtime pass count, conditions, and registered-runner AST count are
-unchanged while the lowerer loses another 6 net lines.
+The latest implementation unit replaces two AST-identical SiNet terminal
+layout-recovery sequences with one ordered helper. Each caller still executes
+the same eight raw ModelIR mutators in the same position, from shuffle-residual
+and pre-Add/PReLU recovery through Concat/dual-Resize affine, Softmax-mask, and
+terminal constant-PReLU bridges. Terminal clamp cleanup and very-late shape
+reconciliation remain outside as distinct predecessors, as do their different
+successors. Runtime pass count and registered-runner AST count are unchanged
+while the lowerer loses another 4 net lines.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains forty-eight coherent continuations:
+The current `fb-refactor5` work contains forty-nine coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -139,8 +139,10 @@ The current `fb-refactor5` work contains forty-eight coherent continuations:
   recovery sequences between their distinct raw boundaries;
 - `04c7dc03` centralizes three identical 10-call attention/gate/QDQ recovery
   sequences while retaining their distinct successors;
-- the current checkpoint centralizes two identical 10-call quantized-
-  activation/binary-bridge sequences while preserving their conditions.
+- `1713d089` centralizes two identical 10-call quantized-activation/binary-
+  bridge sequences while preserving their conditions;
+- the current checkpoint centralizes two identical 8-call SiNet terminal
+  recovery sequences without crossing shape reconciliation.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -1150,6 +1152,15 @@ architecture file passed with `134 passed`; artifact-metadata, artifact-policy,
 core, and pass-efficiency passed separately with `85 passed`, for a combined
 selection total of `219 passed`. Its single sequential quantization,
 evaluation, and coverage integration smoke passed with `1 passed`.
+
+The SiNet terminal layout-recovery checkpoint passed focused exact-order,
+shape-boundary, terminal affine/slice, and runner-diagnostics checks with
+`4 passed`. Its adapted terminal-clamp boundary and new owner passed together
+with `2 passed`. The complete architecture file passed with `135 passed`; artifact-
+metadata, artifact-policy, core, and pass-efficiency passed separately with
+`85 passed`, for a combined selection total of `220 passed`. Its single
+sequential quantization, evaluation, and coverage integration smoke passed
+with `1 passed`.
 
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes

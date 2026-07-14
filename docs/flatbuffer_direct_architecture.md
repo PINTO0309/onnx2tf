@@ -3743,6 +3743,17 @@ Dequantize/TransposeConv and before Concat recovery. The extraction removes 6
 net lowerer lines without changing runtime invocation count, order, conditions,
 or the registered-runner call-site count of 118.
 
+Two AST-identical 8-call SiNet terminal layout-recovery sequences are owned by
+`_run_sinet_terminal_layout_recovery_sequence`. The helper preserves shuffle-
+residual, pre-Add/PReLU, fan-out, Concat/dual-Resize affine, Softmax-mask, and
+terminal constant-PReLU bridge ordering and contains only raw ModelIR
+mutators. Its first caller remains immediately after terminal clamp/unary/ReLU
+cleanup; its second remains after very-late dynamic-shape reconciliation.
+Shape reconciliation and the distinct hard-swish and repeated pre-Add
+successors remain outside and are asserted as boundaries. The extraction
+removes 4 net lowerer lines without changing runtime invocation count, order,
+or the registered-runner call-site count of 118.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
