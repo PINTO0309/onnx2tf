@@ -326,6 +326,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_apply_softmax_input_and_axis,
     _parse_binary_add_args,
     _parse_binary_mul_args,
+    _parse_binary_sub_args,
     _parse_channel_last_gather_slice_assign,
     _parse_constant_pad_assign,
     _parse_copy_call_expr,
@@ -390,6 +391,8 @@ from onnx2tf.tflite_builder.pytorch_export_support import (
     _write_generated_package_export_metadata,
 )
 from onnx2tf.tflite_builder.pytorch_layout_utils import (
+    _compose_axis_permutations,
+    _perm_cf_to_cl,
     _perm_cl_to_cf,
     _permute_shape,
     _preferred_reshape_target_values,
@@ -1947,9 +1950,19 @@ def _canonicalize_generated_model_source_for_raw_export(
         if align_parts is None:
             return None
         input_expr, shape_expr = align_parts
-        binary_args = _parse_binary_sub_args(input_expr)
-        shape = _parse_rank4_shape_literal(shape_expr)
-        if binary_args is None or shape is None or len(shape) != 4:
+        sub_match = re.fullmatch(r"torch\.sub\((?P<args>.+)\)", input_expr.strip())
+        binary_args = (
+            _parse_binary_sub_args(str(sub_match.group("args")))
+            if sub_match is not None
+            else None
+        )
+        try:
+            shape = _parse_int_list_literal(
+                _strip_outer_parentheses(shape_expr).strip().strip("[]")
+            )
+        except (TypeError, ValueError):
+            return None
+        if binary_args is None or len(shape) not in {3, 4}:
             return None
         a_expr, b_expr = binary_args
         if str(a_expr).strip() != "1.0" or re.fullmatch(r"[A-Za-z0-9_]+", str(b_expr).strip()) is None:
@@ -5934,7 +5947,18 @@ def _canonicalize_generated_model_source_for_raw_export(
                     if (
                         next_sub_assign is not None
                         and str(next_sub_assign[2]) == reduce_lhs
-                        and [int(next_sub_assign[3][0]), int(next_sub_assign[3][2]), int(next_sub_assign[3][3])] == [n, h, w]
+                        and (
+                            [int(v) for v in next_sub_assign[3]] == [n, h, w]
+                            or (
+                                len(next_sub_assign[3]) == 4
+                                and [
+                                    int(next_sub_assign[3][0]),
+                                    int(next_sub_assign[3][2]),
+                                    int(next_sub_assign[3][3]),
+                                ]
+                                == [n, h, w]
+                            )
+                        )
                     ):
                         sub_lhs = str(next_sub_assign[1])
                         lines[index + 2] = (

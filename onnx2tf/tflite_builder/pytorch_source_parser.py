@@ -97,6 +97,26 @@ def _parse_binary_mul_args(expr: str) -> Tuple[str, str] | None:
     return input_expr, other_expr
 
 
+def _parse_binary_sub_args(expr: str) -> Tuple[str, str] | None:
+    parts = _split_top_level_csv_exprs(str(expr))
+    if len(parts) == 2 and all(
+        re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None for part in parts
+    ):
+        return parts[0].strip(), parts[1].strip()
+
+    kwargs: Dict[str, str] = {}
+    for part in parts:
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
+            continue
+        key, value = part.split("=", 1)
+        kwargs[key.strip()] = value.strip()
+    input_expr = kwargs.get("input", None)
+    other_expr = kwargs.get("other", None)
+    if input_expr is None or other_expr is None:
+        return None
+    return input_expr, other_expr
+
+
 def _parse_align_tensor_target_shape_expr(expr: str) -> Tuple[str, str] | None:
     stripped = str(expr).strip()
     prefix = "_align_tensor_to_target_shape("

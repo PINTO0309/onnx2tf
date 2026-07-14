@@ -1987,9 +1987,42 @@ def _emit_native_concat_op_for_codegen(
                     f").contiguous(), {target_shape_literal_fn(outputs[0])})"
                 )
         return True
-    inputs_expr = ", ".join(
-        tensor_expr_fn(str(name)) for name in op.inputs
+    def _is_inlined_scalar_constant(tensor_name: str) -> bool:
+        tensor = model_ir.tensors.get(str(tensor_name), None)
+        return bool(
+            tensor is not None
+            and tensor.data is not None
+            and int(np.asarray(tensor.data).ndim) == 0
+        )
+
+    concat_anchor_name = next(
+        (
+            str(name)
+            for name in op.inputs
+            if not _is_inlined_scalar_constant(str(name))
+        ),
+        None,
     )
+    concat_anchor_expr = (
+        tensor_expr_fn(concat_anchor_name)
+        if concat_anchor_name is not None
+        else None
+    )
+    input_exprs: List[str] = []
+    for name in op.inputs:
+        input_name = str(name)
+        input_expr = tensor_expr_fn(input_name)
+        if _is_inlined_scalar_constant(input_name):
+            if concat_anchor_expr is None:
+                input_expr = f"torch.as_tensor({input_expr})"
+            else:
+                input_expr = (
+                    f"torch.as_tensor({input_expr}, "
+                    f"dtype={concat_anchor_expr}.dtype, "
+                    f"device={concat_anchor_expr}.device)"
+                )
+        input_exprs.append(input_expr)
+    inputs_expr = ", ".join(input_exprs)
     runtime_imports.add("_apply_concat")
     concat_expr = (
         f"_apply_concat([{inputs_expr}], axis={axis}, "

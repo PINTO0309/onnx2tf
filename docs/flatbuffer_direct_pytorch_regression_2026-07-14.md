@@ -19,8 +19,10 @@ implementations in their single owner modules:
 - `logical_layout_permutation` from `ir.py`.
 
 Architecture tests now enforce these compatibility bindings in addition to
-enforcing implementation ownership. No algorithm, public API, artifact name,
-dependency, or TensorFlow boundary was changed.
+enforcing implementation ownership. That initial compatibility-binding
+checkpoint changed no algorithm, public API, artifact name, dependency, or
+TensorFlow boundary; the bounded inherited-failure repairs performed
+afterward are documented below.
 
 The focused regression gates pass, and one lightweight real model generated
 and numerically validated the TFLite, native PyTorch package, TorchScript,
@@ -81,7 +83,55 @@ PyTorch package and state dict, TorchScript `.pt`, Dynamo `.onnx` plus external
 data, and ExportedProgram `.pt2`. Both maximum absolute errors are far below
 the required `1e-1` ceiling.
 
-## Central exporter-suite investigation
+## Follow-up repairs for inherited failures
+
+After the exact branch comparison was recorded, the inherited non-timeout
+failures were reviewed for defects that could be corrected without broad
+layout-policy or numerical changes. The following bounded repairs were made:
+
+- the source parser now owns `_parse_binary_sub_args`, and the channel-first
+  softmax-mask rewrite accepts the generated rank-three mask target as well as
+  the legacy rank-four form; non-literal shapes remain a no-op;
+- the generated-package loader obtains its runtime model class through the
+  existing lazy `_get_generated_model_cls()` factory instead of referring to
+  the undefined historical `_GeneratedModel` symbol;
+- the legacy compiled codegen environment explicitly binds
+  `_compose_axis_permutations` and `_perm_cf_to_cl` from their existing
+  `pytorch_layout_utils.py` owner;
+- the TFLite-input path imports SavedModel exporters only when a SavedModel or
+  a TensorFlow-dependent bridge is actually requested, so direct PyTorch,
+  Dynamo ONNX, ExportedProgram, and TFLite/PyTorch accuracy output no longer
+  import TensorFlow or tf-keras;
+- CONCAT code generation materializes an inlined scalar constant as a tensor
+  on the non-constant input's dtype and device before `_apply_concat` handles
+  scalar rank normalization.
+
+These changes add no dependency and do not alter public APIs or artifact
+names. Twenty distinct focused cases that had failed during this investigation
+now pass. This is a targeted confirmation, not a recomputation of the complete
+1,120-test accounting table below. A full per-test 60-second rerun was avoided
+because the seven known inherited long-running tests alone add at least seven
+minutes and the requested validation policy prioritizes minimal tests.
+
+The follow-up validation results are:
+
+- all 39 modular PyTorch policy/exporter files plus
+  `test_pytorch_layout_utils.py`: **360 passed**;
+- architecture, bulk-runner, and TensorFlow-optional boundary tests:
+  **144 passed**;
+- lazy runtime, softmax-mask parser, TFLite-input, and accuracy focused set:
+  **14 passed**;
+- three additional previously failing central cases covering TFLite-input
+  auxiliary artifacts and scalar-CONCAT generated packages: **3 passed**;
+- three compatibility-binding cases that previously stopped at missing layout
+  helpers: **3 passed**.
+
+Ten representative layout/code-shape cases reached their historical
+assertion or runtime failures after the missing helper bindings were restored.
+They require broader layout-policy work and were deliberately left unchanged
+rather than risking already passing models.
+
+## Historical central exporter-suite investigation
 
 The monolithic `test_pytorch_exporter.py` remains useful as a characterization
 suite, but it is not currently a clean fast gate.
@@ -97,7 +147,7 @@ additional compatibility bindings fixed in this checkpoint. Those partial
 numbers are retained only as discovery history; the exact post-fix comparison
 below supersedes the earlier estimate of unclassified failures.
 
-### Exact post-fix comparison with `fb-refactor3`
+### Exact post-binding comparison with `fb-refactor3`
 
 The complete `test_pytorch_exporter.py` collection contains 1,120 tests. The
 current test file and expectations were used for both branches. The comparison
@@ -139,11 +189,12 @@ The 112 inherited failures comprise:
 | `RecursionError` | 1 |
 | `TorchExportError` | 1 |
 
-The inherited undefined names are `_parse_binary_sub_args` in two tests,
+At that snapshot, the inherited undefined names were
+`_parse_binary_sub_args` in two tests,
 `_GeneratedModel` in twelve, `_compose_axis_permutations` in seven, and
 `_perm_cf_to_cl` in two. The six user-excluded `bread`/`bread_nonfm` tests also
-currently reach `_perm_cf_to_cl` `NameError`, but were deliberately not run on
-the baseline and are not counted as regression candidates.
+reached `_perm_cf_to_cl` `NameError`, but were deliberately not run on the
+baseline, have not been retested, and are not counted as regression candidates.
 
 The seven long-running tests were individually rerun on `fb-refactor3` with
 the same 60-second ceiling. All seven timed out on the baseline as well:
@@ -167,8 +218,10 @@ the long-running behavior is inherited rather than introduced by
 
 - No unresolved non-timeout regression specific to `fb-refactor4` is confirmed
   in the 1,120-test exporter collection.
-- The 112 reproduced failures remain inherited known issues; they are not
-  evidence that the current exporter is fully correct.
+- The 112 reproduced failures are the exact pre-follow-up snapshot. A focused
+  subset is now fixed, but the complete remaining count was intentionally not
+  recomputed; the historical failures are not evidence that the current
+  exporter is fully correct.
 - Six `bread` model tests remain outside comparison by explicit user exclusion.
 - The seven inherited long-running cases need bounded performance tests or
   independent optimization before routine full-suite execution.

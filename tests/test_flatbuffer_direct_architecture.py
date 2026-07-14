@@ -3711,6 +3711,34 @@ def test_native_pytorch_stage_codegen_has_single_owner() -> None:
     assert "import torch" not in stage_source
 
 
+def test_native_pytorch_legacy_codegen_compatibility_bindings_are_present() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    layout_utils_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_layout_utils.py"
+    ).read_text(encoding="utf-8")
+    runtime_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_package_runtime.py"
+    ).read_text(encoding="utf-8")
+
+    for function_name in (
+        "_compose_axis_permutations",
+        "_perm_cf_to_cl",
+    ):
+        assert f"def {function_name}(" in layout_utils_source
+        assert f"def {function_name}(" not in exporter_source
+        assert f"{function_name}," in exporter_source
+    assert "model = _get_generated_model_cls()(metadata=metadata)" in runtime_source
+    assert "model = _GeneratedModel(metadata=metadata)" not in runtime_source
+
+
 def test_torchscript_artifact_export_has_single_owner() -> None:
     exporter_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
@@ -4011,6 +4039,7 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
         "_split_top_level_csv_exprs",
         "_parse_binary_add_args",
         "_parse_binary_mul_args",
+        "_parse_binary_sub_args",
         "_parse_align_tensor_target_shape_expr",
         "_parse_simple_assignment_line_cached",
         "_parse_simple_assignment_line",

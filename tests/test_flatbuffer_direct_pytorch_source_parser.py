@@ -27,6 +27,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_apply_softmax_input_axis_and_shape,
     _parse_binary_add_args,
     _parse_binary_mul_args,
+    _parse_binary_sub_args,
     _parse_channel_last_gather_slice_assign,
     _parse_constant_pad_assign,
     _parse_copy_call_expr,
@@ -59,6 +60,12 @@ def test_source_parser_decodes_binary_and_alignment_arguments() -> None:
         "torch.relu(y)",
     )
     assert _parse_binary_mul_args("input=x, other=y") == ("x", "y")
+    assert _parse_binary_sub_args("1.0, torch.sigmoid(mask)") == (
+        "1.0",
+        "torch.sigmoid(mask)",
+    )
+    assert _parse_binary_sub_args("input=1.0, other=mask") == ("1.0", "mask")
+    assert _parse_binary_sub_args("input=1.0") is None
     assert _parse_align_tensor_target_shape_expr(
         "_align_tensor_to_target_shape(input=x, target_shape=[1, 2, 3, 4])"
     ) == ("x", "[1, 2, 3, 4]")

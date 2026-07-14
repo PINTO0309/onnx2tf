@@ -39336,9 +39336,20 @@ def test_convert_flatbuffer_direct_outputs_pytorch_package(tmp_path) -> None:
     assert torch.allclose(model(x, y), x + y)
 
 
-def test_convert_input_tflite_outputs_pytorch_package(tmp_path) -> None:
+def test_convert_input_tflite_outputs_pytorch_package(tmp_path, monkeypatch) -> None:
     tflite_path = _write_model_ir_as_tflite(str(tmp_path), "add_input", _make_add_model_ir())
     output_dir = tmp_path / "out_tflite"
+
+    real_import = builtins.__import__
+
+    def _block_tensorflow_import(name, *args, **kwargs):
+        if name == "tensorflow" or name.startswith("tensorflow."):
+            raise AssertionError("TFLite-to-PyTorch export must not import TensorFlow")
+        if name == "tf_keras" or name.startswith("tf_keras."):
+            raise AssertionError("TFLite-to-PyTorch export must not import tf-keras")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _block_tensorflow_import)
     onnx2tf.convert(
         input_tflite_file_path=str(tflite_path),
         output_folder_path=str(output_dir),

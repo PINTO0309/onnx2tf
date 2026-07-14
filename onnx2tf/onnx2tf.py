@@ -4426,9 +4426,6 @@ def convert(
             from onnx2tf.tflite_builder.model_writer import (
                 write_model_file,
             )
-            from onnx2tf.tflite_builder.saved_model_exporter import (
-                export_saved_model_from_model_ir,
-            )
             from onnx2tf.tflite_builder.schema_loader import (
                 load_schema_module,
             )
@@ -4440,9 +4437,6 @@ def convert(
                 rewrite_model_ir_unroll_recurrent_ops,
                 write_split_model_files_and_manifest,
                 write_split_plan_report,
-            )
-            from onnx2tf.tflite_builder.split_saved_model_exporter import (
-                export_split_saved_models,
             )
             from onnx2tf.tflite_builder.tflite_importer import (
                 import_model_ir_from_tflite,
@@ -4557,6 +4551,10 @@ def convert(
                 )
 
                 if flatbuffer_direct_output_saved_model:
+                    from onnx2tf.tflite_builder.split_saved_model_exporter import (
+                        export_split_saved_models,
+                    )
+
                     split_saved_model_outputs = export_split_saved_models(
                         model_ir=model_ir,
                         split_manifest_path=split_outputs['split_manifest_path'],
@@ -4633,6 +4631,10 @@ def convert(
                             'See each generated PyTorch package metadata.json for the export failure details.'
                         )
                 elif (not disable_model_save) or run_saved_model_inference_check:
+                    from onnx2tf.tflite_builder.saved_model_exporter import (
+                        export_saved_model_from_model_ir,
+                    )
+
                     model_ir_fp32 = clone_model_ir_with_float32(model_ir)
                     prune_identity_cast_operators(
                         model_ir_fp32,
@@ -4707,6 +4709,10 @@ def convert(
                 preserve_model_outputs=True,
             )
             if should_export_tflite_direct_saved_model:
+                from onnx2tf.tflite_builder.saved_model_exporter import (
+                    export_saved_model_from_model_ir,
+                )
+
                 saved_model_path = export_saved_model_from_model_ir(
                     model_ir=model_ir_fp32,
                     output_folder_path=saved_model_output_folder_path,

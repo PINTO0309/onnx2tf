@@ -653,6 +653,7 @@ def _emit_concat(
     stored_shape: list[int] | None,
     exact_shape: list[int] | None = None,
     target_shape: list[int] | None = None,
+    inline_scalar_rhs: bool = False,
 ) -> bool:
     return _emit_native_concat_op_for_codegen(
         model_ir=model_ir,
@@ -664,7 +665,11 @@ def _emit_concat(
         channel_first_tensor_expr_aliases=aliases,
         runtime_imports=runtime_imports,
         forward_lines=forward_lines,
-        tensor_expr_fn=lambda name: f"tensor_{name}",
+        tensor_expr_fn=(
+            lambda name: "1.0"
+            if inline_scalar_rhs and name == "rhs"
+            else f"tensor_{name}"
+        ),
         derived_local_var_name_fn=lambda _name, _prefix: "y_var_cf_0",
         activation_lines_fn=(
             lambda name, fused: []
@@ -776,6 +781,41 @@ def test_concat_emitter_preserves_exact_shape_fallback() -> None:
     assert forward_lines == [
         "y_var = torch.reshape(_apply_concat([tensor_lhs, tensor_rhs], "
         "axis=3, target_shape=[1, 2, 4, 6], fused='NONE'), [1, 48])"
+    ]
+    assert aliases == {}
+    assert runtime_imports == {"_apply_concat"}
+
+
+def test_concat_emitter_materializes_inlined_scalar_on_tensor_device() -> None:
+    import numpy as np
+
+    model_ir, op = _concat_model_ir(output_layout="UNKNOWN")
+    model_ir.tensors["rhs"] = TensorIR(
+        "rhs",
+        "FLOAT32",
+        [],
+        data=np.asarray(1.0, dtype=np.float32),
+    )
+    aliases: dict[str, str] = {}
+    runtime_imports: set[str] = set()
+    forward_lines: list[str] = []
+
+    emitted = _emit_concat(
+        model_ir=model_ir,
+        op=op,
+        aliases=aliases,
+        runtime_imports=runtime_imports,
+        forward_lines=forward_lines,
+        channel_first_spec=None,
+        stored_shape=None,
+        inline_scalar_rhs=True,
+    )
+
+    assert emitted is True
+    assert forward_lines == [
+        "y_var = _apply_concat([tensor_lhs, torch.as_tensor(1.0, "
+        "dtype=tensor_lhs.dtype, device=tensor_lhs.device)], axis=3, "
+        "target_shape=[1, 2, 4, 6], fused='NONE')"
     ]
     assert aliases == {}
     assert runtime_imports == {"_apply_concat"}
