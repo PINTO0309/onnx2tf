@@ -1134,6 +1134,13 @@ checkpoint `050af84` exactly; two direct policy contracts and the focused
 ownership gate pass, together with Ruff and syntax validation. The exporter
 shrank by another 85 lines. No model conversion or inference was run.
 
+Channel-first passthrough expression tracing, recursive static resolvability,
+and shape-preserving unary direct-emission eligibility now live in the Torch-
+free `pytorch_channel_first_policy.py` owner. All three moved function ASTs
+match checkpoint `bcb2d4e` exactly; two direct policy contracts and the focused
+ownership gate pass, together with Ruff and syntax validation. The exporter
+shrank by another 131 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

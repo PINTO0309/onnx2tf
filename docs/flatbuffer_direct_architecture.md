@@ -2303,6 +2303,12 @@ map to their channel-first equivalents only with unambiguous layout/shape
 evidence. Negative and duplicate axes normalize before compact direct Mean source
 selection; unsupported axes remain on the runtime path.
 
+Static channel-first expression tracing has a separate Torch-free owner in
+`pytorch_channel_first_policy.py`. It follows exact CF→CL Transpose bridges,
+direct convolution-family producers, and shape-preserving unary chains while
+honoring precomputed aliases and cycle bounds. Unary direct-emission eligibility
+uses the same trace and relaxed shape equality.
+
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter
