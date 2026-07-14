@@ -50030,6 +50030,82 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_channel_shuffle_gather_layout_pass_cluster(
+        *,
+        include_post_gather_cleanup: bool = False,
+    ) -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_two_way_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_nhwc_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_nchw_channel_shuffle_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_transpose_gather_axis_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        if include_post_gather_cleanup:
+            run_layout_transpose_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
+            run_transpose_unary_fanout_bridge_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
+            run_transpose_unary_binary_fanout_bridge_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
+
+    def _run_transpose_unary_fanout_layout_pass_cluster() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_transpose_unary_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_transpose_unary_fanout_bridge_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_transpose_unary_binary_fanout_bridge_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     _set_post_progress_desc("outputs")
 
     # Outputs
@@ -50150,26 +50226,7 @@ def lower_onnx_to_ir(
         _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
         _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
-        run_two_way_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_nhwc_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_nchw_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_gather_axis_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_channel_shuffle_gather_layout_pass_cluster()
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
@@ -50200,21 +50257,7 @@ def lower_onnx_to_ir(
         _run_gate_layout_pass_cluster()
         _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
-        run_transpose_unary_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_unary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_unary_binary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_transpose_unary_fanout_layout_pass_cluster()
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
         run_trailing_output_transpose_cleanup(
@@ -50296,26 +50339,7 @@ def lower_onnx_to_ir(
         _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
         _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
-        run_two_way_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_nhwc_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_nchw_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_gather_axis_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_channel_shuffle_gather_layout_pass_cluster()
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
@@ -50346,21 +50370,7 @@ def lower_onnx_to_ir(
         _run_gate_layout_pass_cluster()
         _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
-        run_transpose_unary_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_unary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_unary_binary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_transpose_unary_fanout_layout_pass_cluster()
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
         run_trailing_output_transpose_cleanup(
@@ -50445,26 +50455,7 @@ def lower_onnx_to_ir(
         _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
         _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
-        run_two_way_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_nhwc_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_nchw_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_gather_axis_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_channel_shuffle_gather_layout_pass_cluster()
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
@@ -50501,21 +50492,7 @@ def lower_onnx_to_ir(
         _run_gate_layout_pass_cluster()
         _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
-        run_transpose_unary_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_unary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_unary_binary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_transpose_unary_fanout_layout_pass_cluster()
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
         run_trailing_output_transpose_cleanup(
@@ -50649,26 +50626,7 @@ def lower_onnx_to_ir(
         _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
         _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
-        run_two_way_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_nhwc_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_nchw_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_gather_axis_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_channel_shuffle_gather_layout_pass_cluster()
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
@@ -50681,21 +50639,7 @@ def lower_onnx_to_ir(
         _run_gate_layout_pass_cluster()
         _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
         _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
-        run_transpose_unary_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_unary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_unary_binary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_transpose_unary_fanout_layout_pass_cluster()
         _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
         _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
         run_trailing_output_transpose_cleanup(
@@ -50736,40 +50680,8 @@ def lower_onnx_to_ir(
         _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
         _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
-        run_two_way_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_nhwc_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_nchw_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_gather_axis_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_layout_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_unary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_unary_binary_fanout_bridge_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _run_channel_shuffle_gather_layout_pass_cluster(
+            include_post_gather_cleanup=True,
         )
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)

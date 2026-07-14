@@ -726,6 +726,7 @@ def run_transpose_unary_passthrough_cleanup(
     *,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Run strict NHWC/NCHW unary Transpose passthrough cleanup."""
 
@@ -810,6 +811,7 @@ def run_transpose_unary_passthrough_cleanup(
         layout_state=layout_state,
         default_details={"rewritten_transpose_unary_passthrough_chains": 0},
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -986,6 +988,7 @@ def run_transpose_unary_fanout_bridge_cleanup(
     *,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Run inverse-post Transpose cleanup around unary fan-out branches."""
 
@@ -1094,6 +1097,7 @@ def run_transpose_unary_fanout_bridge_cleanup(
             "rewritten_transpose_unary_fanout_inverse_post_bridges": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -1427,6 +1431,7 @@ def run_transpose_unary_binary_fanout_bridge_cleanup(
     *,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Run strict Transpose/unary/binary inverse-post fan-out cleanup."""
 
@@ -1658,6 +1663,7 @@ def run_transpose_unary_binary_fanout_bridge_cleanup(
             "rewritten_transpose_unary_binary_full_post_fanout_bridges": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -2482,6 +2488,7 @@ def run_transpose_gather_axis_cleanup(
     *,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Run strict NHWC Transpose/Gather axis remapping."""
 
@@ -2555,6 +2562,7 @@ def run_transpose_gather_axis_cleanup(
         layout_state=layout_state,
         default_details=default_details,
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

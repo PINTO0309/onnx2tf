@@ -7,13 +7,13 @@ The active branch is `fb-refactor5`, created from `main` after pull request
 currently tracks this branch. The Goal is active again; subsequent work uses
 coherent commits and pushes without opening an additional pull request.
 
-The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-the late axis-3 constant-Concat, Dequantize/Concat/Quantize, LayerNorm-
-statistics, and generic transpose-cleanup runners. The scope starts after the
-raw convolution-affine fold and ends before the conditional legacy
-elementwise-roundtrip optimizer. A synthetic model whose four model-only
-preflights match proves that five diagnostic events construct one graph index
-without crossing either raw boundary.
+The latest implementation unit shares lazy `ModelIRPassStateScope` instances
+across two repeated families. Five channel-shuffle/Gather-axis clusters now
+reuse one index; the final occurrence includes its contiguous generic
+transpose and two unary fan-out runners in the same scope. Four separate unary-
+passthrough/fan-out clusters also reuse one index each. Synthetic fixtures prove
+one index build across seven-runner and three-runner forms while preserving all
+model-only preflights, diagnostics, and runner order.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -35,7 +35,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains sixteen coherent continuations:
+The current `fb-refactor5` work contains seventeen coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -70,8 +70,10 @@ The current `fb-refactor5` work contains sixteen coherent continuations:
   attention through dual-Mul/Concat registered-pass cluster;
 - `9b32c680` shares state only across the separately audited late NDHWC-gate/
   cost-volume-scatter pair;
-- the current checkpoint shares state across the following four registered
-  Concat, LayerNorm, and transpose-cleanup runners.
+- `1aa636e3` shares state across the following four registered Concat,
+  LayerNorm, and transpose-cleanup runners;
+- the current checkpoint shares state across the repeated channel-shuffle/
+  Gather-axis and unary fan-out runner clusters.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -89,11 +91,9 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
 The final checkpoint changes:
 
-- `onnx2tf/tflite_builder/passes/axis3_const_concat_layout.py`;
-- `onnx2tf/tflite_builder/passes/dequant_concat_quantize_layout.py`;
+- `onnx2tf/tflite_builder/passes/channel_shuffle.py`;
 - `onnx2tf/tflite_builder/passes/layout_transpose.py`;
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `tests/test_flatbuffer_direct_core.py`;
 - `tests/test_flatbuffer_direct_pass_efficiency.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
@@ -206,6 +206,13 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   already accepted a scope or now exposes the same optional
   standalone-compatible argument; the scope ends before the conditional raw
   elementwise-roundtrip optimizer.
+- Two repeated cluster families now have explicit helper-owned scopes. The
+  channel-shuffle helper preserves two-way, NHWC, NCHW, and Gather-axis order
+  at all five call sites; only its final invocation enables the already-
+  contiguous generic transpose and unary/binary fan-out suffix. The separate
+  unary helper preserves passthrough, unary fan-out, and unary/binary fan-out
+  order at four call sites. Every runner remains callable standalone through
+  an optional scope argument.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -425,16 +432,42 @@ The synthetic runtime fixture records one graph-index refresh and build flags
 runner order and both raw boundaries. The core layout-handoff monkeypatch now
 accepts and forwards the runner's optional scope without changing its original
 pre-pass layout assertions.
+A focused shuffle/unary cluster checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_shuffle_gather_cluster_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_unary_fanout_cluster_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes \
+  tests/test_flatbuffer_direct_architecture.py::test_ordered_model_ir_runner_calls_record_session_diagnostics \
+  tests/test_flatbuffer_direct_nhwc_channel_shuffle.py \
+  tests/test_flatbuffer_direct_nchw_channel_shuffle.py \
+  tests/test_flatbuffer_direct_layout_transpose.py \
+  tests/test_flatbuffer_direct_transpose_unary.py \
+  tests/test_flatbuffer_direct_transpose_unary_fanout.py \
+  tests/test_flatbuffer_direct_transpose_unary_binary_fanout.py \
+  tests/test_tflite_builder_direct.py::test_flatbuffer_direct_shufflenet_transpose_shuffle_chain_optimized
+
+29 passed
+```
+
+Both synthetic fixtures observe exactly one graph-index refresh. The seven-
+runner fixture records one `state_built: true` followed by six `false` events;
+the three-runner fixture records one `true` followed by two `false` events.
+The architecture gate fixes the two helper orders, five and four invocations,
+and the single extended channel-shuffle invocation.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`143 passed` after adding the late-Concat cluster checks.
+`146 passed` after adding the shuffle/unary cluster checks.
 
-The changed axis-3/dequant pass modules and tests pass Ruff normally.
-`layout_transpose.py` passes with its one pre-existing `F841` finding scoped
-out, and the lowerer passes with its pre-existing `F401` and `F841` findings
-scoped out. Every changed Python file passes `python -m py_compile`, and
-`git diff --check` passes. The immediately preceding DepthToSpace, Pool,
+The changed tests pass Ruff normally. `channel_shuffle.py` and
+`layout_transpose.py` pass with their two and one pre-existing `F841` findings
+scoped out, and the lowerer passes with its pre-existing `F401` and `F841`
+findings scoped out. Every changed Python file passes `python -m py_compile`,
+and `git diff --check` passes. The immediately preceding DepthToSpace, Pool,
 dynamic-Pool, simple-alias, and aligned-scalar checkpoints passed their focused
 synthetic and ownership selections.
 
@@ -471,9 +504,9 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the remaining post-lowering runner calls for another adjacent pair or
-   cluster. Treat every legacy helper between registered runners as a hard
-   boundary, even when the surrounding runner families are related.
+2. Audit the repeated boundary-input BatchMatMul/input-unary pairs as the next
+   small candidate. Treat every legacy helper before and after each pair as a
+   hard boundary.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.

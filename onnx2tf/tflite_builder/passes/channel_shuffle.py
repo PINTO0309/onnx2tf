@@ -21,6 +21,7 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
+    ModelIRPassStateScope,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
@@ -684,6 +685,7 @@ def run_two_way_channel_shuffle_cleanup(
     *,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Canonicalize guarded two-way channel-shuffle branch/Concat graphs."""
 
@@ -810,6 +812,7 @@ def run_two_way_channel_shuffle_cleanup(
         layout_state=layout_state,
         default_details={"optimized_shufflenet_transpose_shuffle_chains": 0},
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -1086,6 +1089,7 @@ def run_nhwc_channel_shuffle_cleanup(
     *,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Canonicalize strict ShuffleNet NHWC channel shuffle to Gather."""
 
@@ -1271,6 +1275,7 @@ def run_nhwc_channel_shuffle_cleanup(
             "optimized_shufflenet_reshape_transpose_shuffle_nhwc_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -1612,6 +1617,7 @@ def run_nchw_channel_shuffle_cleanup(
     *,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Canonicalize strict static NCHW channel shuffle to Gather."""
 
@@ -1745,6 +1751,7 @@ def run_nchw_channel_shuffle_cleanup(
             "optimized_nchw_channel_shuffle_reshape_transpose_reshape_to_gather": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

@@ -90,6 +90,13 @@ third late scope. All four implementations mutate through the differential
 index. The scope ends before the conditional legacy elementwise-roundtrip
 optimizer.
 
+Five repeated two-way/NHWC/NCHW channel-shuffle plus Gather-axis sequences
+share one scope per occurrence. The final occurrence preserves its contiguous
+generic transpose and unary fan-out suffix inside the same scope, while the
+other four scopes end before their next legacy mutator. Four separate repeated
+unary-passthrough/unary-fan-out/binary-fan-out sequences likewise share one
+scope per occurrence.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while

@@ -457,6 +457,96 @@ def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> Non
     )
 
 
+def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+
+    def _assert_helper(
+        helper_name: str,
+        expected_order: list[str],
+    ) -> None:
+        helper = next(
+            node
+            for node in lowerer.body
+            if isinstance(node, ast.FunctionDef) and node.name == helper_name
+        )
+        calls = {
+            node.func.id: node
+            for node in ast.walk(helper)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in expected_order
+        }
+        assert [
+            call.func.id
+            for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
+        ] == expected_order
+        for name in expected_order:
+            scope_keyword = next(
+                keyword
+                for keyword in calls[name].keywords
+                if keyword.arg == "state_scope"
+            )
+            assert isinstance(scope_keyword.value, ast.Name)
+            assert scope_keyword.value.id == "state_scope"
+
+    channel_helper_name = "_run_channel_shuffle_gather_layout_pass_cluster"
+    _assert_helper(
+        channel_helper_name,
+        [
+            "run_two_way_channel_shuffle_cleanup",
+            "run_nhwc_channel_shuffle_cleanup",
+            "run_nchw_channel_shuffle_cleanup",
+            "run_transpose_gather_axis_cleanup",
+            "run_layout_transpose_cleanup",
+            "run_transpose_unary_fanout_bridge_cleanup",
+            "run_transpose_unary_binary_fanout_bridge_cleanup",
+        ],
+    )
+    channel_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == channel_helper_name
+    ]
+    assert len(channel_invocations) == 5
+    assert sum(
+        any(
+            keyword.arg == "include_post_gather_cleanup"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in call.keywords
+        )
+        for call in channel_invocations
+    ) == 1
+
+    unary_helper_name = "_run_transpose_unary_fanout_layout_pass_cluster"
+    _assert_helper(
+        unary_helper_name,
+        [
+            "run_transpose_unary_passthrough_cleanup",
+            "run_transpose_unary_fanout_bridge_cleanup",
+            "run_transpose_unary_binary_fanout_bridge_cleanup",
+        ],
+    )
+    unary_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == unary_helper_name
+    ]
+    assert len(unary_invocations) == 4
+
+
 def test_reporting_implementation_stays_out_of_lowering_module() -> None:
     reporting_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py"
     lowering_path = (
@@ -2901,7 +2991,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 195
+    assert len(calls) == 170
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -3062,7 +3152,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_gather_axis_cleanup"
     ]
-    assert len(transpose_gather_axis_calls) == 8
+    assert len(transpose_gather_axis_calls) == 4
 
     transpose_gather_channel_fanout_calls = [
         call
@@ -3078,7 +3168,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_unary_passthrough_cleanup"
     ]
-    assert len(transpose_unary_calls) == 6
+    assert len(transpose_unary_calls) == 3
 
     transpose_unary_fanout_calls = [
         call
@@ -3086,7 +3176,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_unary_fanout_bridge_cleanup"
     ]
-    assert len(transpose_unary_fanout_calls) == 7
+    assert len(transpose_unary_fanout_calls) == 4
 
     transpose_unary_binary_fanout_calls = [
         call
@@ -3094,7 +3184,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_unary_binary_fanout_bridge_cleanup"
     ]
-    assert len(transpose_unary_binary_fanout_calls) == 6
+    assert len(transpose_unary_binary_fanout_calls) == 3
 
     trailing_output_transpose_calls = [
         call
@@ -3110,7 +3200,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_nchw_channel_shuffle_cleanup"
     ]
-    assert len(nchw_channel_shuffle_calls) == 6
+    assert len(nchw_channel_shuffle_calls) == 2
 
     nhwc_channel_shuffle_calls = [
         call
@@ -3118,7 +3208,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_nhwc_channel_shuffle_cleanup"
     ]
-    assert len(nhwc_channel_shuffle_calls) == 5
+    assert len(nhwc_channel_shuffle_calls) == 1
 
     two_way_channel_shuffle_calls = [
         call
@@ -3126,7 +3216,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_two_way_channel_shuffle_cleanup"
     ]
-    assert len(two_way_channel_shuffle_calls) == 5
+    assert len(two_way_channel_shuffle_calls) == 1
 
     stale_nchw_channel_shuffle_calls = [
         call
