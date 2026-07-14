@@ -1,3 +1,4 @@
+import inspect
 import random
 
 import numpy as np
@@ -5,7 +6,7 @@ import pytest
 
 import onnx2tf.tflite_builder.split_planner as split_planner_module
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
-from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
 from onnx2tf.tflite_builder.split_planner import (
     _collect_inputs,
     _collect_outputs,
@@ -457,6 +458,44 @@ def test_build_partition_reuses_boundary_scan_when_all_ops_are_required(
 
     assert len(part_model.operators) == 16
     assert call_counts == {"inputs": 1, "outputs": 1}
+
+
+def test_partition_builder_uses_shared_operator_clone_contract() -> None:
+    source = inspect.getsource(split_planner_module.build_partition_model_ir)
+
+    assert "clone_operator_ir(op, options=dict(op.options))" in source
+    assert "clone_tensor_ir(" in source
+    assert "copy_data=copy_tensor_data" in source
+    assert "clone_quantization=False" in source
+    assert "onnx_node_name=op.onnx_node_name" not in source
+
+
+def test_partition_tensor_clone_preserves_buffer_and_quantization_policies() -> None:
+    model_ir = _make_chain_model_ir(op_count=1)
+    data = np.asarray([1.0], dtype=np.float32)
+    quantization = QuantParamIR(scale=[0.5], zero_point=[0])
+    model_ir.tensors["t0"].data = data
+    model_ir.tensors["t0"].quantization = quantization
+
+    borrowed = build_partition_model_ir(
+        model_ir=model_ir,
+        start_op_index=0,
+        end_op_index=1,
+        partition_id=1,
+        copy_tensor_data=False,
+    )
+    copied = build_partition_model_ir(
+        model_ir=model_ir,
+        start_op_index=0,
+        end_op_index=1,
+        partition_id=1,
+        copy_tensor_data=True,
+    )
+
+    assert borrowed.tensors["t0"].data is data
+    assert copied.tensors["t0"].data is not data
+    assert borrowed.tensors["t0"].quantization is quantization
+    assert copied.tensors["t0"].quantization is quantization
 
 
 def test_build_partition_model_ir_excludes_embedded_constants_from_partition_inputs() -> None:

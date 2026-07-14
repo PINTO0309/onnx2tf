@@ -14,6 +14,8 @@ from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
     TensorIR,
+    clone_operator_ir,
+    clone_tensor_ir,
     normalize_onnx_shape,
 )
 from onnx2tf.tflite_builder.model_writer import serialize_model, write_model_file
@@ -285,16 +287,7 @@ def build_partition_model_ir(
         description=f"{model_ir.description} (partition {partition_id})",
     )
     part_model.operators = [
-        OperatorIR(
-            op_type=op.op_type,
-            inputs=list(op.inputs),
-            outputs=list(op.outputs),
-            options=dict(op.options),
-            axis_semantics=dict(op.axis_semantics),
-            version=op.version,
-            onnx_node_name=op.onnx_node_name,
-            onnx_op_type=op.onnx_op_type,
-        )
+        clone_operator_ir(op, options=dict(op.options))
         for op in range_ops
     ]
     part_model.inputs = partition_inputs
@@ -303,23 +296,13 @@ def build_partition_model_ir(
         if tensor_name not in model_ir.tensors:
             continue
         tensor = model_ir.tensors[tensor_name]
-        part_model.tensors[tensor_name] = TensorIR(
-            name=tensor.name,
+        part_model.tensors[tensor_name] = clone_tensor_ir(
+            tensor,
             dtype=tensor.dtype,
-            shape=list(tensor.shape),
-            shape_signature=list(tensor.shape_signature)
-            if tensor.shape_signature is not None
-            else None,
-            data=(
-                tensor.data.copy()
-                if copy_tensor_data and isinstance(tensor.data, np.ndarray)
-                else tensor.data
-            ),
-            is_variable=bool(tensor.is_variable),
-            quantization=tensor.quantization,
-            logical_layout=tensor.logical_layout,
-            physical_layout=tensor.physical_layout,
-            onnx_tensor_name=tensor.onnx_tensor_name,
+            data=tensor.data,
+            normalize_layouts=False,
+            copy_data=copy_tensor_data,
+            clone_quantization=False,
         )
     return part_model
 

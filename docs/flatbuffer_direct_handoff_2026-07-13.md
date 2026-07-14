@@ -732,6 +732,17 @@ selection pass 23 tests; the related split/core selection passes 26 tests. The
 15-run median changed from 0.119641s to 0.114021s (1.05x). No model conversion
 or inference was run.
 
+Split partition construction now delegates both operator and tensor element
+copies to the common `ir.py` clone contract. It explicitly selects copied or
+borrowed NumPy buffers according to the existing `copy_tensor_data` policy,
+preserves raw layouts, and retains the established shared immutable
+quantization object. This removes another duplicated field list without
+changing split planning or artifact ownership. One hundred fixed-seed random
+partition graphs under both buffer policies match checkpoint `61b19be` byte
+for byte at the ModelIR fingerprint level. The focused split, clone, artifact
+preparation, and architecture selection passes 119 tests; Ruff, syntax, and
+diff checks pass. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

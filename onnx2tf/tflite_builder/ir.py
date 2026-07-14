@@ -248,7 +248,29 @@ def clone_tensor_ir(
     dtype: str,
     data: Any,
     normalize_layouts: bool,
+    copy_data: bool = True,
+    clone_quantization: bool = True,
 ) -> TensorIR:
+    quantization = tensor.quantization
+    if clone_quantization:
+        if isinstance(quantization, dict):
+            quantization = dict(quantization)
+        elif isinstance(quantization, QuantParamIR):
+            quantization = QuantParamIR(
+                scale=list(quantization.scale),
+                zero_point=list(quantization.zero_point),
+                quantized_dimension=int(quantization.quantized_dimension),
+                min=(
+                    list(quantization.min)
+                    if quantization.min is not None
+                    else None
+                ),
+                max=(
+                    list(quantization.max)
+                    if quantization.max is not None
+                    else None
+                ),
+            )
     return TensorIR(
         name=tensor.name,
         dtype=dtype,
@@ -258,29 +280,13 @@ def clone_tensor_ir(
             if tensor.shape_signature is not None
             else None
         ),
-        data=data.copy() if isinstance(data, np.ndarray) else data,
-        is_variable=tensor.is_variable,
-        quantization=(
-            dict(tensor.quantization)
-            if isinstance(tensor.quantization, dict)
-            else QuantParamIR(
-                scale=list(tensor.quantization.scale),
-                zero_point=list(tensor.quantization.zero_point),
-                quantized_dimension=int(tensor.quantization.quantized_dimension),
-                min=(
-                    list(tensor.quantization.min)
-                    if tensor.quantization.min is not None
-                    else None
-                ),
-                max=(
-                    list(tensor.quantization.max)
-                    if tensor.quantization.max is not None
-                    else None
-                ),
-            )
-            if isinstance(tensor.quantization, QuantParamIR)
-            else tensor.quantization
+        data=(
+            data.copy()
+            if copy_data and isinstance(data, np.ndarray)
+            else data
         ),
+        is_variable=tensor.is_variable,
+        quantization=quantization,
         logical_layout=(
             normalize_logical_layout(tensor.logical_layout)
             if normalize_layouts

@@ -1529,6 +1529,12 @@ subgraph/metadata behavior; the quantization root clone deliberately retains
 its legacy raw-layout, root-only, empty-metadata behavior. Quantization chooses
 that policy but no longer duplicates the complete field list, so adding ModelIR
 provenance cannot silently diverge across precision and quantized artifacts.
+Split partition construction uses the same element helpers while making its
+ownership policy explicit: final artifacts copy NumPy buffers, binary-search
+size probes may borrow them, quantization metadata remains shared and immutable,
+and raw logical/physical layout strings are preserved. The partition builder
+therefore cannot omit a newly added common tensor or operator provenance field,
+without changing the established buffer and quantization alias behavior.
 
 Strict-integer report construction is request-scoped. A small internal
 reporter owns the existing `tensor_ranges`, `quantized_tensors`, and
