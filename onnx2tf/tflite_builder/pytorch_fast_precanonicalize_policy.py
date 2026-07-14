@@ -18,6 +18,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_binary_add_args,
     _parse_binary_mul_args,
     _parse_constant_pad_assign,
+    _parse_dynamic_binary_align_assign,
     _parse_int_list_literal,
     _parse_local_response_norm_input_expr,
     _parse_rank4_shape_literal,
@@ -1381,3 +1382,79 @@ def _repair_terminal_classifier_tail_layout(
             str(reshape_match.group("lhs")),
         )
     return None, None
+
+
+def _repair_dynamic_cf_binary_anchor_at(
+    index: int,
+    lines: List[str],
+    dynamic_cf_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> bool:
+    if index < 0 or index + 1 >= len(lines):
+        return False
+    binary_anchor_assign = _parse_align_binary_inputs_to_anchor_assign_with_shape(
+        lines[index]
+    )
+    next_dynamic_cf_binary_target = _parse_dynamic_binary_align_assign(
+        lines[index + 1]
+    )
+    if (
+        binary_anchor_assign is None
+        or next_dynamic_cf_binary_target is None
+        or {
+            str(next_dynamic_cf_binary_target[3]),
+            str(next_dynamic_cf_binary_target[4]),
+        }
+        != {str(binary_anchor_assign[1]), str(binary_anchor_assign[2])}
+    ):
+        return False
+    indent, lhs0, lhs1, input_a, input_b, current_shape = binary_anchor_assign
+    preferred_channel_count = int(next_dynamic_cf_binary_target[5])
+    if (
+        preferred_channel_count not in current_shape[1:]
+        or not (
+            _fast_precanonicalize_is_cf_like(
+                input_a,
+                dynamic_cf_like_names,
+                context,
+            )
+            or _fast_precanonicalize_is_cf_like(
+                input_b,
+                dynamic_cf_like_names,
+                context,
+            )
+        )
+    ):
+        return False
+    normalized_anchor_shape = _normalize_cf_rank4_shape(
+        current_shape,
+        preferred_channel_count=preferred_channel_count,
+    )
+    rewritten_binary_anchor_line = (
+        f"{indent}{lhs0}, {lhs1} = _align_binary_inputs_to_anchor("
+        f"{input_a}, {input_b}, {repr(normalized_anchor_shape)})"
+    )
+    if rewritten_binary_anchor_line == lines[index]:
+        return False
+    lines[index] = rewritten_binary_anchor_line
+    dynamic_cf_like_names.update({lhs0, lhs1})
+    context.static_shapes[lhs0] = list(normalized_anchor_shape)
+    context.static_shapes[lhs1] = list(normalized_anchor_shape)
+    return True
+
+
+def _repair_dynamic_cf_binary_anchor_shapes(
+    lines: List[str],
+    dynamic_cf_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> bool:
+    changed = False
+    for index in range(len(lines) - 1):
+        if _repair_dynamic_cf_binary_anchor_at(
+            index,
+            lines,
+            dynamic_cf_like_names,
+            context,
+        ):
+            changed = True
+    return changed

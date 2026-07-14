@@ -4046,6 +4046,9 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
     assert "_SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN," in exporter_source
     assert "import torch" not in parser_source
     assert "_parse_apply_resize_assign," in fast_policy_source
+    assert "_parse_dynamic_binary_align_assign," in fast_policy_source
+    assert "_parse_dynamic_binary_align_assign" in parser_functions
+    assert "_parse_dynamic_binary_align_assign" not in exporter_functions
     assert not any(
         isinstance(node, ast.FunctionDef)
         and node.name == "_parse_apply_resize_assign"
@@ -4841,6 +4844,8 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_repair_cf_pool_target_shape",
         "_repair_cf_resize_target_shape",
         "_repair_concat_axis_from_input_layouts",
+        "_repair_dynamic_cf_binary_anchor_at",
+        "_repair_dynamic_cf_binary_anchor_shapes",
         "_repair_nhwc_average_pool_binary_bridge",
         "_repair_split_axis_from_consumers",
         "_repair_terminal_classifier_tail_layout",

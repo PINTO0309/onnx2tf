@@ -30,6 +30,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_constant_pad_assign,
     _parse_copy_call_expr,
     _parse_dynamic_binary_add_align_assign,
+    _parse_dynamic_binary_align_assign,
     _parse_local_response_norm_input_expr,
     _parse_rank4_shape_expr,
     _parse_rank4_shape_literal,
@@ -184,6 +185,10 @@ def test_source_parser_decodes_constant_pad_and_binary_alignment() -> None:
         "y = _align_tensor_to_target_shape(torch.add(a, b), "
         "[int(ref.shape[0]), 8, int(ref.shape[2]), int(ref.shape[3])])"
     ) == ("", "y", "a", "b", 8)
+    assert _parse_dynamic_binary_align_assign(
+        "y = _align_tensor_to_target_shape(torch.mul(a, b), "
+        "[int(ref.shape[0]), 8, int(ref.shape[2]), int(ref.shape[3])])"
+    ) == ("", "y", "mul", "a", "b", 8)
     assert _parse_static_binary_add_align_assign(
         "y = _align_tensor_to_target_shape(torch.add(a, b), [1, 8, 4, 4])"
     ) == ("", "y", "a", "b", [1, 8, 4, 4])

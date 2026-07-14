@@ -1390,6 +1390,19 @@ policy/ownership tests pass (95 unrelated architecture tests deselected),
 together with Ruff, syntax validation, and `git diff --check`; the orchestrator
 shrunk from 1,258 to 1,254 lines. No model conversion or inference was run.
 
+Dynamic CF binary-anchor normalization now has one shared statement decoder,
+one single-index policy repair, and one post-scan phase. The generic decoder
+supports Add, Mul, Sub, Div, Minimum, and Maximum; the existing Add-specific
+parser delegates to it without changing its return contract. The exporter uses
+the same repair during its main scan and final evidence revisit, eliminating
+the duplicated rewrite body, private regex, and second top-level loop. A
+synthetic Mul chain proves `[N,H,W,C]` to `[N,C,H,W]` normalization, CF evidence,
+and static-shape updates. Twenty-six focused parser/policy/ownership tests pass
+(94 unrelated architecture tests deselected), together with Ruff, syntax
+validation, and `git diff --check`; the orchestrator shrank from 1,254 to 1,186
+lines and the exporter by net 66 lines. No model conversion or inference was
+run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

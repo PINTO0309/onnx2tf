@@ -128,6 +128,8 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_cf_pool_target_shape,
     _repair_cf_resize_target_shape,
     _repair_concat_axis_from_input_layouts,
+    _repair_dynamic_cf_binary_anchor_at,
+    _repair_dynamic_cf_binary_anchor_shapes,
     _repair_nhwc_average_pool_binary_bridge,
     _repair_split_axis_from_consumers,
     _repair_terminal_classifier_tail_layout,
@@ -7308,11 +7310,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
         r"(?P<scalar>[-+]?(?:[0-9]*\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?\d+)?)\), "
         r"\[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
     )
-    dynamic_cf_binary_target_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\("
-        r"torch\.(?P<op>add|mul|sub|div|minimum|maximum)\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), "
-        r"\[int\((?P<ref>[A-Za-z0-9_]+)\.shape\[0\]\), (?P<c>\d+), int\((?P=ref)\.shape\[2\]\), int\((?P=ref)\.shape\[3\]\)\]\)$"
-    )
     const_pad_assign_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*F\.pad\((?P<input>[A-Za-z0-9_]+), \[(?P<pads>[0-9,\s]+)\], mode='constant', value=(?P<value>[-+0-9.eE]+)\)$"
     )
@@ -7528,45 +7525,14 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                         f"[{prev_shape[0]}, {prev_shape[1]}, {prev_shape[2]}, {prev_shape[3]}])"
                     )
                     changed = True
-        binary_anchor_assign = _parse_align_binary_inputs_to_anchor_assign_with_shape(line)
-        next_dynamic_cf_binary_target = (
-            dynamic_cf_binary_target_re.match(lines[index + 1])
-            if index + 1 < len(lines)
-            else None
-        )
-        if (
-            binary_anchor_assign is not None
-            and next_dynamic_cf_binary_target is not None
-            and {
-                str(next_dynamic_cf_binary_target.group("a")),
-                str(next_dynamic_cf_binary_target.group("b")),
-            }
-            == {str(binary_anchor_assign[1]), str(binary_anchor_assign[2])}
+        if _repair_dynamic_cf_binary_anchor_at(
+            index,
+            lines,
+            cf_like_names,
+            repair_context,
         ):
-            indent, lhs0, lhs1, input_a, input_b, current_shape = binary_anchor_assign
-            preferred_channel_count = int(next_dynamic_cf_binary_target.group("c"))
-            if (
-                preferred_channel_count in current_shape[1:]
-                and (
-                    _fast_precanonicalize_is_cf_like(input_a, cf_like_names, repair_context)
-                    or _fast_precanonicalize_is_cf_like(input_b, cf_like_names, repair_context)
-                )
-            ):
-                normalized_anchor_shape = _normalize_cf_rank4_shape(
-                    current_shape,
-                    preferred_channel_count=preferred_channel_count,
-                )
-                rewritten_binary_anchor_line = (
-                    f"{indent}{lhs0}, {lhs1} = _align_binary_inputs_to_anchor("
-                    f"{input_a}, {input_b}, {repr(normalized_anchor_shape)})"
-                )
-                if rewritten_binary_anchor_line != lines[index]:
-                    lines[index] = rewritten_binary_anchor_line
-                    cf_like_names.update({lhs0, lhs1})
-                    repair_context.static_shapes[lhs0] = list(normalized_anchor_shape)
-                    repair_context.static_shapes[lhs1] = list(normalized_anchor_shape)
-                    changed = True
-                    line = lines[index]
+            changed = True
+            line = lines[index]
         aligned_binary_match = aligned_binary_re.match(line)
         aligned_binary_assign = _parse_aligned_binary_assign_with_shape(line)
         if aligned_binary_match is not None or aligned_binary_assign is not None:
@@ -8454,43 +8420,11 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
         cf_like_names.add(lhs)
         changed = True
 
-    for index in range(len(lines) - 1):
-        binary_anchor_assign = _parse_align_binary_inputs_to_anchor_assign_with_shape(lines[index])
-        next_dynamic_cf_binary_target = dynamic_cf_binary_target_re.match(lines[index + 1])
-        if (
-            binary_anchor_assign is None
-            or next_dynamic_cf_binary_target is None
-            or {
-                str(next_dynamic_cf_binary_target.group("a")),
-                str(next_dynamic_cf_binary_target.group("b")),
-            }
-            != {str(binary_anchor_assign[1]), str(binary_anchor_assign[2])}
-        ):
-            continue
-        indent, lhs0, lhs1, input_a, input_b, current_shape = binary_anchor_assign
-        preferred_channel_count = int(next_dynamic_cf_binary_target.group("c"))
-        if (
-            preferred_channel_count not in current_shape[1:]
-            or not (
-                _fast_precanonicalize_is_cf_like(input_a, cf_like_names, repair_context)
-                or _fast_precanonicalize_is_cf_like(input_b, cf_like_names, repair_context)
-            )
-        ):
-            continue
-        normalized_anchor_shape = _normalize_cf_rank4_shape(
-            current_shape,
-            preferred_channel_count=preferred_channel_count,
-        )
-        rewritten_binary_anchor_line = (
-            f"{indent}{lhs0}, {lhs1} = _align_binary_inputs_to_anchor("
-            f"{input_a}, {input_b}, {repr(normalized_anchor_shape)})"
-        )
-        if rewritten_binary_anchor_line == lines[index]:
-            continue
-        lines[index] = rewritten_binary_anchor_line
-        cf_like_names.update({lhs0, lhs1})
-        repair_context.static_shapes[lhs0] = list(normalized_anchor_shape)
-        repair_context.static_shapes[lhs1] = list(normalized_anchor_shape)
+    if _repair_dynamic_cf_binary_anchor_shapes(
+        lines,
+        cf_like_names,
+        repair_context,
+    ):
         changed = True
     if changed:
         model_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

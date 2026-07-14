@@ -2251,6 +2251,12 @@ The repair-context collector and channel-first Resize repair also call the
 shared complete Resize decoder; neither keeps a nested statement parser. The
 shared decoder's explicit outer-call guard subsumes the lower-level Resize
 decoder guard previously relied on by the repair-local copy.
+Generic dynamic binary alignment is the 44th shared decoder and covers Add,
+Mul, Sub, Div, Minimum, and Maximum while preserving the existing Add-specific
+adapter contract. Fast precanonicalization uses one policy repair for a
+dynamic-target binary anchor both during the main scan and during the required
+post-scan revisit; the revisit is a named phase rather than duplicated rewrite
+logic in a second exporter loop.
 The context collector likewise uses the shared complete Softmax and constant
 Pad assignment decoders for shape and CF/NHWC evidence, instead of compiling
 narrower duplicate statement regexes.

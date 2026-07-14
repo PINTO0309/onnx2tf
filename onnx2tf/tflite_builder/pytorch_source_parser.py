@@ -896,16 +896,17 @@ def _parse_constant_pad_assign(
     )
 
 
-def _parse_dynamic_binary_add_align_assign(
+def _parse_dynamic_binary_align_assign(
     line: str,
-) -> Tuple[str, str, str, str, int] | None:
+) -> Tuple[str, str, str, str, str, int] | None:
     assign = _parse_simple_assignment_line(line)
     if assign is None:
         return None
     indent, lhs, rhs = assign
     match = re.fullmatch(
         r"_align_tensor_to_target_shape\("
-        r"torch\.add\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), "
+        r"torch\.(?P<op>add|mul|sub|div|minimum|maximum)\("
+        r"(?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), "
         r"\[int\((?P<ref>[A-Za-z0-9_]+)\.shape\[0\]\), (?P<c>\d+), "
         r"int\((?P=ref)\.shape\[2\]\), int\((?P=ref)\.shape\[3\]\)\]\)",
         rhs.strip(),
@@ -915,10 +916,20 @@ def _parse_dynamic_binary_add_align_assign(
     return (
         indent,
         lhs,
+        str(match.group("op")),
         str(match.group("a")),
         str(match.group("b")),
         int(match.group("c")),
     )
+
+
+def _parse_dynamic_binary_add_align_assign(
+    line: str,
+) -> Tuple[str, str, str, str, int] | None:
+    parsed = _parse_dynamic_binary_align_assign(line)
+    if parsed is None or parsed[2] != "add":
+        return None
+    return parsed[0], parsed[1], parsed[3], parsed[4], parsed[5]
 
 
 def _parse_static_binary_add_align_assign(
