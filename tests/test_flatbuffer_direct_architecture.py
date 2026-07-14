@@ -4494,6 +4494,34 @@ def test_generated_pytorch_graph_source_rewrites_have_single_owner() -> None:
     assert "import torch" not in graph_rewrite_source
 
 
+def test_generated_pytorch_graph_policy_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    policy_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_graph_policy.py"
+    ).read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    policy_functions = {
+        node.name
+        for node in ast.parse(policy_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    for function_name in (
+        "_gather_input_pre_permute_for_codegen",
+        "_infer_effective_rank4_runtime_layout_for_codegen",
+    ):
+        assert function_name in policy_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," in exporter_source
+    assert "import torch" not in policy_source
+
+
 def test_generated_pytorch_shape_policy_has_single_owner() -> None:
     exporter_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"

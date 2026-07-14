@@ -968,6 +968,15 @@ the focused policy and architecture suites pass 126 tests, and Ruff and syntax
 validation pass. The exporter shrank by another 296 lines. No model conversion
 or inference was run.
 
+Gather boundary pre-permutation and effective rank-4 runtime-layout tracing now
+live in the Torch-free `pytorch_graph_policy.py` owner. Both are read-only
+ModelIR queries: the former compares static output signatures and the latter
+follows the writer's shared producer/consumer maps through a bounded
+passthrough family. Three thousand fixed-seed outcomes match checkpoint
+`ac931ec` exactly; two direct contracts and the focused ownership test pass,
+together with Ruff and syntax validation. The exporter shrank by another 154
+lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

@@ -2209,6 +2209,13 @@ source-rewrite boundary. It lives in the Torch-free
 query. This keeps graph/layout inspection explicit while removing both
 implementations from the exporter.
 
+Read-only ModelIR codegen queries have a separate Torch-free owner in
+`pytorch_graph_policy.py`. Gather boundary pre-permutation compares static
+output signatures, while effective rank-4 runtime layout follows indexed
+producer/consumer edges through a fixed passthrough family to a Conv boundary.
+Neither query mutates ModelIR or emits source, keeping graph inspection out of
+both the monolithic exporter and the source-rewrite module.
+
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter
