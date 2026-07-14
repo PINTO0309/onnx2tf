@@ -69,6 +69,7 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_values.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_capabilities.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_layout_utils.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_indexing_codegen.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_naming.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_layout_passes.py",
@@ -3892,6 +3893,42 @@ def test_generated_pytorch_codegen_values_have_single_owner() -> None:
         assert function_name not in exporter_functions
         assert f"{function_name}," in exporter_source
     assert "import torch" not in values_source
+
+
+def test_generated_pytorch_indexing_codegen_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    indexing_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_indexing_codegen.py"
+    ).read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    indexing_functions = {
+        node.name
+        for node in ast.parse(indexing_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    moved_functions = (
+        "_direct_dynamic_gather_expr",
+        "_direct_gather_expr",
+        "_direct_gather_reshape_expr",
+        "_direct_slice_expr",
+        "_direct_strided_slice_expr",
+        "_direct_symbolic_strided_slice_expr",
+        "_is_suffix_flatten_gather_reshape",
+        "_reshape_is_plain_singleton_axis_drop",
+        "_should_elide_crd_to_dcr_gather_for_depth_to_space",
+    )
+    for function_name in moved_functions:
+        assert function_name in indexing_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," in exporter_source
+    assert "import torch" not in indexing_source
 
 
 def test_pytorch_capability_registry_has_single_owner() -> None:

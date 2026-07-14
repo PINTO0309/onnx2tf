@@ -435,6 +435,17 @@ behavior. Shape-policy and architecture validation passes 90 tests; Ruff,
 diff, and AST-equivalence checks pass. No model conversion or inference was
 run.
 
+Native indexing expression generation now lives in the Torch-free
+`pytorch_indexing_codegen.py`. Slice, static and symbolic StridedSlice, static
+and dynamic Gather, fused Gather-plus-Reshape, suffix-flatten recognition,
+singleton-axis-drop recognition, and guarded CRD-to-DCR Gather elision share
+one owner. All nine function ASTs match the prior exporter checkpoint. Nine
+direct tests fix masks, bounds, dynamic shape selection, scalar/multidimensional
+indices, invalid configurations, dynamic batch preservation, and exclusive
+DepthToSpace consumer guards. Indexing and architecture validation passes 79
+tests; Ruff, diff, and AST-equivalence checks pass. No model conversion or
+inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

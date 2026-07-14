@@ -2180,6 +2180,13 @@ Conv-block fused-activation selection no longer live in the monolithic
 exporter. All seven function ASTs are identical to their former exporter
 definitions, including non-finite float handling and unsupported-dtype errors.
 
+Native Slice, StridedSlice, Gather, and Gather-plus-Reshape code generation has
+a Torch-free single owner in `pytorch_indexing_codegen.py`. It owns the direct
+index expression builders, suffix-flatten recognition, singleton-axis-drop
+recognition, and the guarded CRD-to-DCR Gather elision before DepthToSpace. All
+nine function ASTs are identical to their former exporter definitions; emitted
+source strings and ModelIR layout/consumer guards therefore remain unchanged.
+
 ## Runtime-check memory boundary
 
 The direct backend releases the legacy GraphSurgeon graph before ModelIR
