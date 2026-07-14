@@ -3700,6 +3700,39 @@ def test_dynamo_onnx_artifact_export_has_focused_owners() -> None:
         assert f"def {helper_name}(" not in exporter_source
 
 
+def test_pytorch_onnx_boundary_inference_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    support_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_onnx_artifact_support.py"
+    ).read_text(encoding="utf-8")
+
+    def _functions(source: str) -> set[str]:
+        return {
+            node.name
+            for node in ast.parse(source).body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+    exporter_functions = _functions(exporter_source)
+    support_functions = _functions(support_source)
+    for function_name in (
+        "_infer_batchless_rank3_image_boundaries_from_onnx_graph",
+        "_infer_public_layouts_from_onnx_graph",
+        "_is_onnx_boundary_layout_passthrough_node",
+        "_read_onnx_transpose_perm",
+    ):
+        assert function_name in support_functions
+        assert function_name not in exporter_functions
+    for function_name in (
+        "_infer_batchless_rank3_image_boundaries_from_onnx_graph",
+        "_infer_public_layouts_from_onnx_graph",
+    ):
+        assert f"{function_name}," in exporter_source
 def test_exported_program_child_script_has_single_owner() -> None:
     exporter_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"

@@ -2232,6 +2232,14 @@ large-graph structural thresholds are evaluated independently from artifact
 writing. TFLite-backed and SavedModel-backed selection share this single policy;
 both function ASTs are identical to their former exporter definitions.
 
+Reference ONNX public-boundary inference lives in
+`pytorch_onnx_artifact_support.py`. Transpose permutation decoding, short
+layout-preserving boundary walks, input/output layout inference, and batchless
+rank-three Squeeze/Unsqueeze detection share the ONNX artifact boundary rather
+than fallback orchestration. All four function ASTs are identical to their
+former exporter definitions and build their producer/consumer views once per
+reference graph.
+
 ## Runtime-check memory boundary
 
 The direct backend releases the legacy GraphSurgeon graph before ModelIR

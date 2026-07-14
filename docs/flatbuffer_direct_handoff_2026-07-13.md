@@ -509,6 +509,16 @@ Fourteen direct cases characterize every guard and threshold family. Selection
 and architecture validation passes 89 tests; Ruff, diff, and AST-equivalence
 checks pass. No model conversion or inference was run.
 
+Reference ONNX public-boundary inference now lives in
+`pytorch_onnx_artifact_support.py`. Transpose permutation decoding,
+layout-preserving passthrough walks, public input/output layout inference, and
+batchless rank-three Squeeze/Unsqueeze detection share one owner. All four
+function ASTs match the prior exporter checkpoint. Six direct ONNX-helper cases
+fix input/output chains, fan-out rejection, batchless boundaries, unsupported
+nodes, and missing graphs. Boundary inference and architecture validation
+passes 83 tests; Ruff, diff, and AST-equivalence checks pass. No model conversion
+or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted
