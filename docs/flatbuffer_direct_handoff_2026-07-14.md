@@ -9,13 +9,13 @@ subsequent work uses coherent commits and pushes without opening a pull
 request.
 
 The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-the late NCHW channel-shuffle and Gather-axis pair. The two diagnostic events
-construct one graph index instead of up to two. The existing channel-shuffle
-helper now has compatible mode flags: its five prior invocations retain
-two-way and NHWC shuffle, while the new invocation disables both. NHWC and
-NCHW shuffle rewrites now maintain operator-type dispatch through the
-differential graph API. The lowerer's registered-runner call characterization
-is now 135, down from 137.
+the conditional late generic-transpose and QKV-bridge pair. The three
+diagnostic events construct one graph index instead of up to two groups. The
+existing QKV helper now has compatible mode flags: its two prior invocations
+retain prefix-plus-bridge behavior, while the new invocation forwards the
+runtime layout flag, disables the prefix, and always runs the bridge. The
+scope stays between raw shape-extract and split/Conv/Concat rewrites. The
+lowerer's registered-runner call characterization is now 134, down from 135.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains thirty-three coherent continuations:
+The current `fb-refactor5` work contains thirty-four coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -107,8 +107,10 @@ The current `fb-refactor5` work contains thirty-three coherent continuations:
   attention pair;
 - `a8baec98` shares state across the post-QDQ layout-transpose and unary fan-out
   sequence;
-- the current checkpoint shares state across the late NCHW channel-shuffle and
-  Gather-axis pair.
+- `916419d9` shares state across the late NCHW channel-shuffle and Gather-axis
+  pair;
+- the current checkpoint shares state across the conditional late generic-
+  transpose and QKV-bridge pair.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -127,9 +129,6 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/channel_shuffle.py`;
-- `tests/test_flatbuffer_direct_nhwc_channel_shuffle.py`;
-- `tests/test_flatbuffer_direct_nchw_channel_shuffle.py`;
 - `tests/test_flatbuffer_direct_pass_efficiency.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
@@ -341,6 +340,11 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   `replace_operator_type()`; real rewrite tests assert the reused type index.
   Architecture checks fix the unique flag combination and raw Reshape/QKV
   boundaries.
+- The conditional late generic-transpose/QKV-bridge pair reuses the QKV helper
+  with prefix disabled. Two prior invocations retain the default prefix-plus-
+  bridge path. The new invocation forwards `optimize_layout_transpose_chains`
+  to the layout mode while always running bridge cleanup. Architecture checks
+  fix the runtime flag and raw shape-extract/split-Conv boundaries.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -729,7 +733,8 @@ The preflight-only fixture records one graph-index refresh and build flags
 `[true, false]`. Architecture checks fix both target/LayoutState combinations,
 runner order, and shared scope keywords. The global characterization was 139
 calls at that checkpoint, 137 after the later post-QDQ consolidation, and 135
-after the subsequent NCHW channel-shuffle consolidation.
+after the subsequent NCHW channel-shuffle consolidation, then 134 after the
+conditional QKV-bridge consolidation.
 A focused terminal-boundary checkpoint passed:
 
 ```text
@@ -915,15 +920,37 @@ surviving `GATHER` entry has its correct shifted index without refreshing.
 Architecture checks preserve five default helper invocations, require one
 NCHW-only invocation, fix both raw boundaries, and characterize 135 runner
 calls.
+A focused conditional layout/QKV-bridge checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_layout_transpose.py \
+  tests/test_tflite_builder_direct.py::test_flatbuffer_direct_attention_qkv_shared_pretranspose_slice_nchw \
+  tests/test_tflite_builder_direct.py::test_flatbuffer_direct_attention_qkv_weighted_sum_bridge_to_nhwc \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_qkv_attention_pair_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_late_layout_qkv_bridge_pair_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites \
+  tests/test_flatbuffer_direct_architecture.py::test_ordered_model_ir_runner_calls_record_session_diagnostics
+
+11 passed
+```
+
+The preflight-only fixture records one graph-index refresh across three events;
+only the generic-transpose event reports `state_built: true`. Architecture
+checks preserve two default helper invocations, require one bridge-only
+invocation with the runtime layout flag, fix both raw boundaries, and
+characterize 134 runner calls.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`179 passed` after adding the late NCHW channel-shuffle/Gather checks.
+`181 passed` after adding the conditional layout/QKV-bridge checks.
 
-The changed tests pass Ruff normally. `channel_shuffle.py` passes with its two
-pre-existing `F841` findings scoped out, and the lowerer passes with its
-pre-existing `F401` and `F841` findings scoped out. Every changed Python file
-passes `python -m py_compile`, and `git diff --check` passes. The
+The changed tests pass Ruff normally. The lowerer passes with its pre-existing
+`F401` and `F841` findings scoped out. Every changed Python file passes
+`python -m py_compile`, and `git diff --check` passes. The
 immediately preceding DepthToSpace, Pool, dynamic-Pool, simple-alias, and
 aligned-scalar checkpoints passed their focused synthetic and ownership
 selections.
@@ -961,10 +988,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the conditional late layout-transpose/QKV-bridge pair while treating
-   the preceding raw shape-extract rewrite and following raw split/Conv/Concat
-   rewrite as hard boundaries. Its one occurrence can eliminate one repeated
-   index construction when layout optimization is enabled.
+2. Audit the very-late Gather-axis, constant-fold/Cast, and normalization-Pad
+   sequence while treating the preceding raw unbound-input/transpose repair
+   and following raw dynamic-Reshape resolution as hard boundaries. Its one
+   occurrence can eliminate up to two repeated index constructions.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.

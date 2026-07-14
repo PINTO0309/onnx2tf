@@ -165,6 +165,13 @@ rewrites now use `replace_operator_type()` when converting the surviving
 operator to `GATHER`, keeping the shared type index current. This consolidation
 reduces the registered-runner call characterization from 137 to 135.
 
+The conditional late generic-transpose and QKV-bridge pair reuses the QKV
+helper in a bridge-only mode. Two prior invocations retain the default
+prefix-plus-bridge path. The new invocation forwards the runtime layout flag,
+disables the prefix, and always runs the bridge. Its scope stays between the
+raw shape-extract and split/Conv/Concat rewrites, reducing the registered-
+runner call characterization from 135 to 134.
+
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
 and Split/Reshape collapse) retain their order before the two bridge specs

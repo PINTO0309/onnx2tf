@@ -49972,17 +49972,29 @@ def lower_onnx_to_ir(
                 state_scope=state_scope,
             )
 
-    def _run_qkv_attention_layout_pass_cluster() -> None:
+    def _run_qkv_attention_layout_pass_cluster(
+        *,
+        include_layout_transpose: bool = False,
+        include_prefix: bool = True,
+    ) -> None:
         state_scope = ModelIRPassStateScope(
             model_ir,
             layout_state=session.layout_state,
         )
-        run_qkv_attention_prefix_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
+        if include_layout_transpose:
+            run_layout_transpose_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
+        if include_prefix:
+            run_qkv_attention_prefix_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
         run_qkv_attention_bridge_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -51544,18 +51556,11 @@ def lower_onnx_to_ir(
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
     _run_late_spp_concat_unary_conv_pass_pair()
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
-    if optimize_layout_transpose_chains:
-        run_layout_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
     # Keep QKV bridge reductions at the terminal stage: some late strict
     # transpose/add/slice rewrites above can recreate this exact motif.
-    run_qkv_attention_bridge_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _run_qkv_attention_layout_pass_cluster(
+        include_layout_transpose=optimize_layout_transpose_chains,
+        include_prefix=False,
     )
     _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw(model_ir)
     _optimize_transpose_hardswish_se_conv_hardsigmoid_mul_prepost_nhwc_chains(model_ir)

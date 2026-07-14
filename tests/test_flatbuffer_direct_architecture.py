@@ -290,6 +290,7 @@ def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
     expected_order = [
+        "run_layout_transpose_cleanup",
         "run_qkv_attention_prefix_cleanup",
         "run_qkv_attention_bridge_cleanup",
     ]
@@ -321,7 +322,68 @@ def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 2
+    assert len(helper_invocations) == 3
+    late_bridge_invocations = [
+        call
+        for call in helper_invocations
+        if any(
+            keyword.arg == "include_prefix"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is False
+            for keyword in call.keywords
+        )
+    ]
+    assert len(late_bridge_invocations) == 1
+    layout_keyword = next(
+        keyword
+        for keyword in late_bridge_invocations[0].keywords
+        if keyword.arg == "include_layout_transpose"
+    )
+    assert isinstance(layout_keyword.value, ast.Name)
+    assert layout_keyword.value.id == "optimize_layout_transpose_chains"
+
+
+def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_qkv_attention_layout_pass_cluster"
+    invocation_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == helper_name
+        and any(
+            keyword.arg == "include_prefix"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is False
+            for keyword in statement.value.keywords
+        )
+    )
+    previous_boundary = lowerer.body[invocation_index - 1]
+    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary.value, ast.Call)
+    assert isinstance(previous_boundary.value.func, ast.Name)
+    assert (
+        previous_boundary.value.func.id
+        == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
+    )
+    next_boundary = lowerer.body[invocation_index + 1]
+    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary.value, ast.Call)
+    assert isinstance(next_boundary.value.func, ast.Name)
+    assert (
+        next_boundary.value.func.id
+        == "_optimize_split_conv_concat_transpose_bridge_to_single_post_nchw"
+    )
 
 
 def test_lowerer_duplicate_quantized_prelu_pair_reuses_pass_state_scope() -> None:
@@ -4103,7 +4165,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 135
+    assert len(calls) == 134
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
