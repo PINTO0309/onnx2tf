@@ -4746,6 +4746,39 @@ def test_generated_pytorch_constant_alias_policy_has_single_owner() -> None:
     assert "import torch" not in policy_source
 
 
+def test_generated_pytorch_expression_policy_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    policy_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_expression_policy.py"
+    ).read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    policy_functions = {
+        node.name
+        for node in ast.parse(policy_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    for function_name in (
+        "_channel_first_constant_expr_for_buffer_attr_for_codegen",
+        "_derived_local_var_name_for_codegen",
+        "_permuted_constant_expr_for_tensor_name_for_codegen",
+        "_tensor_dtype_name_for_codegen",
+        "_tensor_expr_for_channel_first_bridge_for_codegen",
+        "_tensor_expr_for_codegen",
+        "_transposed_constant_expr_for_tensor_name_for_codegen",
+    ):
+        assert function_name in policy_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," in exporter_source
+    assert "import torch" not in policy_source
+
+
 def test_generated_pytorch_shape_policy_has_single_owner() -> None:
     exporter_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"

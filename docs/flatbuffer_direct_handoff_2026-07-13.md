@@ -1118,6 +1118,15 @@ ASTs match checkpoint `0e829d2` exactly; two direct policy contracts and the
 focused ownership gate pass, together with Ruff and syntax validation. The
 exporter shrank by another 162 lines. No model conversion or inference was run.
 
+Tensor dtype/expression selection, derived local names, channel-first constant
+buffer expressions, permuted/transposed constant aliases, and channel-first
+bridge lookup now live in the Torch-free `pytorch_expression_policy.py` owner.
+All seven moved function ASTs match checkpoint `6b9390c` exactly; three direct
+policy contracts and the focused ownership gate pass, together with Ruff and
+syntax validation. One initial test expectation was corrected to the existing
+slash-compaction naming rule. The exporter shrank by another 153 lines. No model
+conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

@@ -2290,6 +2290,13 @@ axis vectors, rank-four singleton channel constants, public/produced/inlined
 exclusions, and declared NCW/NCHW/NCDHW permutation preference. Constants that
 already express an intentional singleton broadcast remain unpermuted.
 
+Generated tensor-expression selection has a separate Torch-free owner in
+`pytorch_expression_policy.py`. Explicit aliases, channel-first aliases,
+registered buffers, inline constants, and tensor variables retain one ordered
+resolution contract. The same owner resolves channel-first/permuted/transposed
+constant alias expressions and collision-free cached local names; it emits only
+Python source strings and runtime-helper requirements.
+
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter
