@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import onnx2tf.tflite_builder.passes.pytorch_normalization as normalization_module
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_normalization import (
     _collect_model_op_types,
     normalize_model_ir_for_pytorch_channel_first,
     prepare_model_ir_for_native_pytorch,
+)
+from onnx2tf.tflite_builder.pytorch_export_errors import (
+    ModelIRPyTorchExportError,
 )
 
 
@@ -103,7 +107,7 @@ def test_native_preparation_is_torch_free_and_reuses_boundary_index(
 
     prepared = prepare_model_ir_for_native_pytorch(model_ir)
 
-    assert refresh_count == 2
+    assert refresh_count == 1
     assert prepared is not model_ir
     assert prepared.metadata["onnx_public_layout_map"] == {
         "x": "NCHW",
@@ -115,6 +119,42 @@ def test_native_preparation_is_torch_free_and_reuses_boundary_index(
     }
     assert prepared.tensors["x"].shape_signature == [-1, 3, 2, 4]
     assert model_ir.metadata == {}
+
+
+def test_native_preparation_fallback_indexes_its_distinct_graph_once(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(name="layout_agnostic_fallback")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1, 4], [1, 4], logical_layout="NC"),
+        "y": TensorIR("y", "FLOAT32", [1, 4], [1, 4], logical_layout="NC"),
+    }
+    model_ir.operators = [OperatorIR("RELU", ["x"], ["y"])]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def reject_channel_first_normalization(_model_ir):
+        raise ModelIRPyTorchExportError("forced layout-agnostic fallback")
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(
+        normalization_module,
+        "_normalize_model_ir_for_pytorch_channel_first_with_index",
+        reject_channel_first_normalization,
+    )
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    prepared = prepare_model_ir_for_native_pytorch(model_ir)
+
+    assert refresh_count == 1
+    assert prepared is not model_ir
+    assert prepared.operators[0].op_type == "RELU"
 
 
 def test_model_op_type_collection_includes_subgraphs() -> None:

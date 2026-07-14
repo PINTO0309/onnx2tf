@@ -813,6 +813,20 @@ Torch-dependent exporter test remains uncollectable in this environment
 because Python 3.12 resolves the incompatible Python 3.10 libtorch; no model
 conversion or inference was run.
 
+Successful Torch-free native preparation now carries the channel-first
+normalizer's current graph index into public-boundary bridge insertion and
+shape alignment. This removes the second index build over the same prepared
+graph while the public normalizer still returns only ModelIR; the
+layout-agnostic fallback retains its independent index because it constructs a
+different graph. One hundred fixed-seed preparation graphs match checkpoint
+`1429e10` byte for byte at the ModelIR fingerprint level. The focused
+normalization/architecture selection passes 85 tests, including the distinct
+layout-agnostic fallback index path, and a seven-run
+synthetic 2,000-op median improved from 0.045557s to 0.043769s (1.04x). The
+known Python 3.12/Python 3.10 libtorch ABI mismatch still prevents collection
+of the full Torch-dependent exporter suite. No model conversion or inference
+was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

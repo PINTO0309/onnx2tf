@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 from typing import Dict, List
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
@@ -52,7 +53,15 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
 )
 
 
-def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
+@dataclass(frozen=True)
+class _PyTorchNormalizationResult:
+    model_ir: ModelIR
+    graph_index: ModelIRGraphIndex
+
+
+def _normalize_model_ir_for_pytorch_channel_first_with_index(
+    model_ir: ModelIR,
+) -> _PyTorchNormalizationResult:
     normalized = copy.deepcopy(model_ir)
     original_public_boundary_shapes: Dict[str, List[int]] = {}
     original_public_boundary_layouts: Dict[str, str] = {}
@@ -258,7 +267,16 @@ def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
         preserve_channel_last_tensor_names,
         graph_index=layout_graph_index,
     )
-    return normalized
+    return _PyTorchNormalizationResult(
+        model_ir=normalized,
+        graph_index=layout_graph_index,
+    )
+
+
+def normalize_model_ir_for_pytorch_channel_first(model_ir: ModelIR) -> ModelIR:
+    return _normalize_model_ir_for_pytorch_channel_first_with_index(
+        model_ir
+    ).model_ir
 
 
 def _collect_model_op_types(model_ir: ModelIR) -> set[str]:
@@ -327,15 +345,18 @@ def prepare_model_ir_for_native_pytorch(model_ir: ModelIR) -> ModelIR:
         )
     )
     try:
-        prepared = normalize_model_ir_for_pytorch_channel_first(
+        normalization_result = _normalize_model_ir_for_pytorch_channel_first_with_index(
             rewritten_model_ir
         )
+        prepared = normalization_result.model_ir
+        boundary_graph_index = normalization_result.graph_index
     except ModelIRPyTorchExportError:
         if not _is_layout_agnostic_native_model_ir(rewritten_model_ir):
             raise
         prepared = copy.deepcopy(rewritten_model_ir)
         infer_model_ir_logical_layouts(prepared)
         prepared.metadata["assume_channel_last_layout_tensor_names"] = []
+        boundary_graph_index = ModelIRGraphIndex(prepared)
     prepared_public_layout_map = {
         str(name): str(layout)
         for name, layout in original_public_boundary_layouts.items()
@@ -348,7 +369,6 @@ def prepare_model_ir_for_native_pytorch(model_ir: ModelIR) -> ModelIR:
         if str(name) in prepared_public_layout_map
         or str(name) in original_public_layout_map
     }
-    boundary_graph_index = ModelIRGraphIndex(prepared)
     _ensure_public_boundary_layout_bridges(
         model_ir=prepared,
         desired_public_shape_map=original_public_boundary_shapes,

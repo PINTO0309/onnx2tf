@@ -662,6 +662,7 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert {
         "_collect_model_op_types",
         "_is_layout_agnostic_native_model_ir",
+        "_normalize_model_ir_for_pytorch_channel_first_with_index",
         "normalize_model_ir_for_pytorch_channel_first",
         "prepare_model_ir_for_native_pytorch",
     } <= set(normalization_functions)
@@ -678,13 +679,24 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "operator_indices_for_types(" in validator_source
     assert "graph_index=graph_index" in validator_source
     assert "for op in model_ir.operators" not in validator_source
-    normalizer_source = ast.get_source_segment(
+    normalizer_wrapper_source = ast.get_source_segment(
         normalization_source,
         normalization_functions["normalize_model_ir_for_pytorch_channel_first"],
     )
+    normalizer_source = ast.get_source_segment(
+        normalization_source,
+        normalization_functions[
+            "_normalize_model_ir_for_pytorch_channel_first_with_index"
+        ],
+    )
+    assert normalizer_wrapper_source is not None
     assert normalizer_source is not None
     assert "def normalize_model_ir_for_pytorch_channel_first(" not in exporter_source
     assert "normalize_model_ir_for_pytorch_channel_first," in exporter_source
+    assert (
+        "_normalize_model_ir_for_pytorch_channel_first_with_index("
+        in normalizer_wrapper_source
+    )
     assert normalizer_source.count("ModelIRGraphIndex(normalized)") == 1
     assert "_build_model_ir_producer_consumer_index(normalized)" not in normalizer_source
     assert normalizer_source.count("graph_index=layout_graph_index") >= 7
@@ -699,7 +711,12 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "_rewrite_static_while_ops_for_native_export(model_ir)" in prepare_source
     assert "_rewrite_counter_bounded_while_ops_for_native_export(" in prepare_source
     assert "_rewrite_recurrent_ops_for_native_export(" in prepare_source
-    assert "boundary_graph_index = ModelIRGraphIndex(prepared)" in prepare_source
+    assert (
+        "_normalize_model_ir_for_pytorch_channel_first_with_index("
+        in prepare_source
+    )
+    assert "boundary_graph_index = normalization_result.graph_index" in prepare_source
+    assert prepare_source.count("ModelIRGraphIndex(prepared)") == 1
     assert "graph_index=boundary_graph_index" in prepare_source
     collector_source = ast.get_source_segment(
         pass_source,

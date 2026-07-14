@@ -1874,6 +1874,12 @@ the index mutation API, so the final residual-Transpose check consumes the
 still-current consumer table instead of rebuilding an ad hoc map. The ATAN2
 ones-like rewrite is owned by `passes/pytorch_compat.py`; irrelevant graphs
 return before index construction when it is called independently.
+An internal normalization result carries this current index into native
+preparation's public-boundary bridge and shape-alignment stage, removing the
+former second index over the same prepared graph. The public
+`normalize_model_ir_for_pytorch_channel_first()` compatibility function still
+returns only ModelIR, and the layout-agnostic error fallback creates its own
+index after constructing a different fallback graph.
 
 PyTorch convolution-filter physicalization is also owned by the Torch-free
 layout module. It queries only Conv2D, depthwise Conv2D, transpose-Conv2D,
