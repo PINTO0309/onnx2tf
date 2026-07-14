@@ -8,18 +8,16 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit gives quantized TransposeConv QDQ cleanup one
-semantic owner in `passes/quantized_transpose_conv.py`. One maintained
-`ModelIRGraphIndex` supplies graph-order chain traversal, exact consumers and
-producers, indexed edge rewrites, and differential wrapper removal. Filter
-ownership, quantized data, deterministic clone name, output metadata, and the
-output quantization clone are planned before mutation. Independent valid INT8
-activation grids, exact output-shape/filter/data roles, shape/signature,
-operator identity, provenance, statistics, and pruning retain valid former
-behavior. Missing bridge tensors, public bridges, duplicate producers,
-invalid grids or metadata, produced/malformed filters, and failed clone
-planning are complete no-ops; shared and public float filters are cloned
-instead of mutated.
+The latest implementation unit gives decomposed InstanceNormalization layout
+repair one semantic owner in `passes/instance_normalization_layout.py`. One
+read-only `ModelIRGraphIndex` validates the complete statistics, normalization,
+scale, optional post-Transpose, and bias chain. Mean axes, all reduced/full
+shape metadata, and scale/bias buffer reshapes are planned before mutation.
+NCW/NCHW/NCDHW and NWC/NHWC/NDHWC channel-axis behavior, valid ModelIR,
+statistics, and final reconciliation retain former behavior. Wrong operator
+semantics or order, public/fan-out/duplicate intermediates, invalid metadata,
+unsafe axes/scale/bias ownership, incomplete constants, and failed planning
+are complete no-ops.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -41,7 +39,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains eighty-two coherent continuations:
+The current `fb-refactor5` work contains eighty-three coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -217,8 +215,10 @@ The current `fb-refactor5` work contains eighty-two coherent continuations:
   owner with transactional option, grid, and metadata guards;
 - `163f9875` moves expanded HardSigmoid QDQ cleanup to one indexed owner with
   a complete four-constant transaction;
-- the current checkpoint moves quantized TransposeConv QDQ cleanup to one
-  indexed owner with a complete filter/output transaction.
+- `cc699155` moves quantized TransposeConv QDQ cleanup to one indexed owner
+  with a complete filter/output transaction;
+- the current checkpoint moves decomposed InstanceNormalization layout repair
+  to one indexed owner with a complete tensor-metadata transaction.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -237,8 +237,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/quantized_transpose_conv.py`;
-- `tests/test_flatbuffer_direct_indexed_quantized_transpose_conv.py`;
+- `onnx2tf/tflite_builder/passes/instance_normalization_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_instance_normalization_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -734,6 +734,22 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   former helper had already converted a private float filter before raising.
   Missing families retain historical pruning without index allocation; all
   three production call sites pass the Session LayoutState.
+- Decomposed InstanceNormalization repair requires the exact marked chain from
+  the first Mean through bias Add, including correct Sub and reciprocal-Div
+  operand roles, keep-dim reductions, graph order, unique producers, exclusive
+  internal consumers, a finite epsilon, and a producer-free scalar one. The
+  input logical layout chooses channel axis one or the final axis for ranks
+  three through five; an optional post-Transpose must be a complete
+  permutation before the bias broadcast axis is derived.
+- Both Mean axes, nine intermediate shape/signature records, and scale/bias
+  data plus metadata are planned before mutation. Changing a constant requires
+  integer axes or a channel-count-sized buffer, no producer/public boundary,
+  and exactly the expected Mean/Mul/Add consumers. This preserves the shared
+  two-Mean axes tensor while rejecting external sharing. A malformed final
+  bias shape is now a complete no-op instead of raising after earlier axes,
+  shapes, and scale data were already changed. The final production call passes
+  the Session LayoutState; graphs without the marked first Mean allocate no
+  index.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -2023,6 +2039,28 @@ coverage smoke passed with `3 passed`. Ruff on the new owner/test, scoped
 architecture/lowerer checks, syntax compilation, and `git diff --check`
 passed. No Tier corpus conversion was run.
 
+The indexed decomposed-InstanceNormalization checkpoint compiles the complete
+prior committed function and preserves exact ModelIR/statistics for valid
+NHWC, NCHW, post-Transpose, and rank-five fixtures. Differential checks prove
+that reversed Sub operands, a non-Add epsilon node, a public Mean intermediate,
+a shared scale, a wrong-sized scale, and floating axes formerly mutated graph
+state. A malformed late bias shape additionally proves that the former helper
+changed axes, intermediate shapes, and scale data before raising, while the
+new owner returns a complete no-op. Focused coverage verifies one-index
+multi-layout execution, maintained-index and LayoutState equivalence, ranks
+three/four/five, separate/shared Mean axes, optional post-Transpose bias-axis
+mapping, already-correct idempotence, plan-failure transaction, all operator
+types/roles/arity/order, public/fan-out/duplicate boundaries, finite epsilon
+and reciprocal-one constants, axes dtype/ownership, complete intermediate
+metadata, scale/bias cardinality and ownership, missing-marker/no-index
+behavior, and unique semantic ownership with `38 passed`. Four existing real
+ONNX builder/serialization characterizations passed. Architecture, core,
+pass-efficiency, the new indexed suite, and those real characterizations passed
+together with `264 passed`. TensorFlow-import-blocked direct and `-cotof` plus
+the sequential quantization/evaluation/coverage smoke passed with `3 passed`.
+Ruff on the new owner/test, scoped architecture/lowerer checks, syntax
+compilation, and `git diff --check` passed. No Tier corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -2072,11 +2110,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit `_repair_decomposed_instance_normalization_layouts` as the next
-   bounded raw-map helper. Preserve its decomposed-statistics grammar, layout
-   evidence, public/fan-out boundaries, metadata, statistics, and pruning while
-   deciding whether one maintained index can replace its compatibility map
-   without broadening model-specific behavior.
+3. Audit `_repair_nchw_concat_global_pool_conv_axes` as the next bounded raw-
+   map helper. Preserve the generic Concat/global-Mean/Reshape/Conv grammar,
+   filter/channel equation, shape-constant ownership, public boundaries,
+   metadata, and statistics while replacing its producer snapshot with one
+   maintained index and a complete pre-mutation plan.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

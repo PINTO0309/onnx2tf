@@ -4440,6 +4440,37 @@ grids, produced constants, and malformed buffers transactionally. Exact
 former-function differential execution confirms complete ModelIR/statistics
 equality for valid one/two-chain and shared-filter fixtures.
 
+Decomposed InstanceNormalization layout repair is owned by
+`passes/instance_normalization_layout.py`. It performs a marker-only preflight,
+then uses one optional or local `ModelIRGraphIndex` for every rank-three,
+rank-four, and rank-five candidate. The index proves the exact ordered
+`MEAN -> SUB -> square -> MEAN -> epsilon ADD -> SQRT -> reciprocal DIV ->
+normalize MUL -> scale MUL -> optional TRANSPOSE -> bias ADD` grammar, unique
+producers, exclusive internal consumers, and private intermediate boundaries.
+The final production call supplies the Session LayoutState. Graphs without a
+marked first Mean allocate no index.
+
+Logical layout selects channel axis one for NCW/NCHW/NCDHW and the final axis
+for NWC/NHWC/NDHWC. Both Mean axes, reduced/full intermediate shapes, and
+scale/bias broadcast buffers are immutable plans constructed before mutation.
+An axes constant that must change may be shared only by the two Mean operators;
+changing axes, scale, or bias constants requires producer-free, non-public
+ownership and the exact expected consumers. Epsilon must be a finite singleton
+and the reciprocal numerator must be the producer-free scalar one. Scale and bias
+buffers must contain exactly the positive static channel count, and an
+optional post-Transpose must contain a complete rank permutation before its
+bias axis is derived.
+
+Every tensor record, integer axis buffer, shape/signature, constant reshape,
+operator type/arity/order, and ownership decision is validated before any
+state is changed. This deliberately rejects the former acceptance of reversed
+SUB, non-ADD epsilon nodes, public intermediate shape mutation, shared scale
+mutation, floating axis buffers, incomplete channel constants, and malformed
+post permutations. It also prevents a late malformed bias shape from raising
+after axes, intermediate metadata, and scale data were already changed. Exact
+former-function differential execution confirms complete ModelIR/statistics
+equality for valid multi-layout and rank-five fixtures.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
