@@ -7263,11 +7263,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     register_buffer_re = re.compile(
         r"^\s*self\.register_buffer\('(?P<name>[A-Za-z0-9_]+)', torch\.zeros\(\[(?P<shape>[0-9, ]+)\], dtype=torch\.[A-Za-z0-9_]+\), persistent=(?:True|False)\)$"
     )
-    conv_block_decl_re = re.compile(r"^\s*self\.(?P<module>conv_block_[0-9]+) = _Conv2dBlock\($")
-    out_channels_re = re.compile(r"^\s*out_channels=(?P<channels>\d+),$")
-    module_output_assign_re = re.compile(
-        r"^\s*(?P<lhs>[A-Za-z0-9_]+)\s*=\s*self\.(?P<module>conv_block_[0-9]+)\("
-    )
     singleton_reshape_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.reshape\((?P<expr>.+), \[(?P<n>\d+), 1, (?P<h>\d+), (?P<w>\d+)\]\)$"
     )
@@ -7325,35 +7320,14 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
         r"torch\.(?P<op>add|mul|sub|div|minimum|maximum)\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), "
         r"\[int\((?P<ref>[A-Za-z0-9_]+)\.shape\[0\]\), (?P<c>\d+), int\((?P=ref)\.shape\[2\]\), int\((?P=ref)\.shape\[3\]\)\]\)$"
     )
-    return_value_re = re.compile(
-        r"^(?P<indent>\s*)return (?P<value>[A-Za-z0-9_]+)$"
-    )
-    apply_resize_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_apply_resize\((?:input=)?(?P<input>[A-Za-z0-9_]+), (?:size=)?[\[\(](?P<out_h>\d+), (?P<out_w>\d+)[\]\)], method='(?P<method>[^']+)', target_shape=[\[\(](?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)[\]\)], align_corners=(?P<align>True|False), half_pixel_centers=(?P<hpc>True|False), channel_last=(?P<channel_last>True|False)\)$"
-    )
-    apply_pool2d_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_apply_pool2d\((?:input=)?(?P<input>[A-Za-z0-9_]+), (?P<rest>.+), target_shape=[\[\(](?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)[\]\)], is_max_pool=(?P<is_max>True|False), channel_last=(?P<channel_last>True|False)\)$"
-    )
-    dynamic_apply_pool2d_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_apply_pool2d\((?:input=)?(?P<input>[A-Za-z0-9_]+), (?P<rest>.+), target_shape=_tensor_shape_list\((?P<shape_input>[A-Za-z0-9_]+)\), is_max_pool=(?P<is_max>True|False), channel_last=False\)$"
-    )
     const_pad_assign_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*F\.pad\((?P<input>[A-Za-z0-9_]+), \[(?P<pads>[0-9,\s]+)\], mode='constant', value=(?P<value>[-+0-9.eE]+)\)$"
     )
     apply_softmax_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_apply_softmax\((?:input=)?(?P<input>[A-Za-z0-9_]+), axis=(?P<axis>-?\d+), beta=(?P<beta>[-0-9.eE]+), target_shape=[\[\(](?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)[\]\)]\)$"
     )
-    local_response_norm_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*F\.local_response_norm\((?P<input>[A-Za-z0-9_]+), size=(?P<size>\d+), alpha=(?P<alpha>[-+0-9.eE]+), beta=(?P<beta>[-+0-9.eE]+), k=(?P<k>[-+0-9.eE]+)\)$"
-    )
     reduce_max_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_reduce_max\((?P<input>[A-Za-z0-9_]+), _normalize_axes\(\[(?P<axis>-?\d+)\], (?P=input)\.ndim\), (?P<keepdims>True|False)\)$"
-    )
-    sub_from_one_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.sub\(torch\.as_tensor\(1\.0, dtype=torch\.float32, device=_module_device\(self\)\), (?P<input>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+)\]\)$"
-    )
-    reshape_singleton_tail_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.reshape\((?P<input>[A-Za-z0-9_]+), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), 1\]\)$"
     )
     tensor786_align_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs0>[A-Za-z0-9_]+)\s*,\s*(?P<lhs1>[A-Za-z0-9_]+)\s*=\s*_align_binary_inputs\("
@@ -8318,7 +8292,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 )
                 cf_like_names.add(lhs_name)
                 changed = True
-        sub_from_one_match = sub_from_one_re.match(line)
         rewritten_terminal_line, terminal_lhs = _repair_terminal_classifier_tail_layout(
             line,
             cf_like_names,
@@ -8352,7 +8325,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 or input_name.endswith("_out_cf")
             ):
                 cf_like_names.add(str(prelu_match.group("lhs")))
-        permuted_conv_input_match = permuted_conv_input_re.match(line)
         depth_to_space_nhwc_gather_match = depth_to_space_nhwc_gather_re.match(line)
         if depth_to_space_nhwc_gather_match is not None:
             input_name = str(depth_to_space_nhwc_gather_match.group("input"))

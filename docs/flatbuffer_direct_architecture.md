@@ -2240,6 +2240,11 @@ are unchanged. The orchestrator's local binary-anchor decoder was identical to
 the existing shared decoder apart from its parameter name, so it now uses the
 shared implementation. The fast-precanonicalize orchestrator contains no nested
 function definitions; graph-aware ordering and mutation remain in the exporter.
+Parser migration also removes its dead matching scaffold: unused module/return/
+Resize/Pool/LRN/reshape regexes and discarded terminal/Conv match results are
+not retained beside the shared decoders. An AST load check guards this boundary
+by requiring every remaining simple local assignment in the orchestrator to be
+referenced.
 
 Pure generated-source rewrites now live in the Torch-free
 `pytorch_source_rewrites.py`. Channel-first GAP-to-Conv bridge folding, explicit

@@ -1331,6 +1331,16 @@ ownership tests pass (95 unrelated architecture tests deselected), together
 with Ruff, syntax validation, and `git diff --check`; the exporter shrank by
 another net 307 lines. No model conversion or inference was run.
 
+Twelve dead fast-precanonicalize assignments left behind by earlier parser and
+repair migrations have been removed. Nine obsolete declaration/call regexes,
+the terminal-tail regex exposed after its discarded match was removed, and two
+discarded match results had zero AST loads and side-effect-free initializers.
+The orchestrator now has zero unused simple assignments and shrank from 1,294
+to 1,266 lines. Twenty-five focused parser/fast-policy/ownership tests pass (94
+unrelated architecture tests deselected), together with syntax validation and
+`git diff --check`; the exporter shrank by another 28 lines. No model conversion
+or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

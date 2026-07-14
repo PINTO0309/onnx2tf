@@ -4040,6 +4040,24 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
     assert "_SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN," in exporter_source
     assert "import torch" not in parser_source
 
+    exporter_module = ast.parse(exporter_source)
+    orchestrator = next(
+        node
+        for node in exporter_module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_apply_fast_precanonicalize_repairs"
+    )
+    loaded_names = {
+        node.id
+        for node in ast.walk(orchestrator)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    }
+    for node in ast.walk(orchestrator):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    assert target.id in loaded_names
+
 
 def test_generated_pytorch_naming_policy_has_single_owner() -> None:
     exporter_source = (
