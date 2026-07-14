@@ -1208,6 +1208,17 @@ tests pass (92 unrelated architecture tests deselected), together with Ruff,
 syntax validation, and `git diff --check`; the exporter shrank by another net
 82 lines. No model conversion or inference was run.
 
+Shape-tensor length inspection and mutually recursive scalar/list expression
+reconstruction now live in the new Torch-free
+`pytorch_shape_expression_policy.py` owner. Constant values, Shape,
+Slice/StridedSlice, Gather, Concat, reshape-like chains, comparisons, arithmetic,
+ReduceProd, exact static dimensions, cycle guards, and runtime helper-import
+tracking retain their established resolution order. All three moved function
+ASTs match checkpoint `bd96490` exactly. Four focused policy/ownership tests
+pass (93 unrelated architecture tests deselected), together with Ruff, syntax
+validation, and `git diff --check`; the exporter shrank by another net 424
+lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

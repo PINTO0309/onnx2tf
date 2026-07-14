@@ -2339,6 +2339,13 @@ its bridge marker, public source, single consumer, and valid permutation all
 agree. Downstream bridge matching likewise requires one consumer, distinct
 known logical layouts, and an exact permutation derived from those layouts.
 
+Generated shape-expression reconstruction has a separate Torch-free owner in
+`pytorch_shape_expression_policy.py`. It rebuilds constant and runtime shape
+lists/scalars through Shape, Slice, StridedSlice, Gather, Concat, reshape-like,
+comparison, arithmetic, and ReduceProd producers with explicit cycle guards.
+Runtime shape-list helper imports are recorded only when static reconstruction
+is unavailable.
+
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter
