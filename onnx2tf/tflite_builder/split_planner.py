@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.validation import run_model_ir_validation_pipeline
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
@@ -28,6 +29,29 @@ class PartitionRange:
     start_op_index: int
     end_op_index: int
     estimated_bytes: int
+
+
+def _resolve_split_graph_index(
+    *,
+    model_ir: ModelIR,
+    graph_index: Optional[ModelIRGraphIndex],
+) -> ModelIRGraphIndex:
+    if graph_index is None:
+        return ModelIRGraphIndex(model_ir)
+    if graph_index.model_ir is not model_ir:
+        raise ValueError("Split graph index belongs to a different ModelIR instance.")
+    return graph_index
+
+
+def _first_producer_indices(
+    graph_index: ModelIRGraphIndex,
+) -> Dict[str, int]:
+    return {
+        str(tensor_name): int(
+            graph_index.duplicate_producers.get(tensor_name, [producer_index])[0]
+        )
+        for tensor_name, producer_index in graph_index.producers.items()
+    }
 
 
 def _dtype_nbytes(dtype: str) -> int:
@@ -1972,24 +1996,28 @@ def rewrite_model_ir_unroll_recurrent_ops(
     return builder.model_ir, int(rewritten_count)
 
 
-def find_dependency_safe_split_points(model_ir: ModelIR) -> List[Dict[str, Any]]:
+def find_dependency_safe_split_points(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> List[Dict[str, Any]]:
     op_count = len(model_ir.operators)
     if op_count <= 1:
         return []
-    producer_index: Dict[str, int] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        for out_name in op.outputs:
-            if out_name and out_name not in producer_index:
-                producer_index[out_name] = op_idx
+    graph_index = _resolve_split_graph_index(
+        model_ir=model_ir,
+        graph_index=graph_index,
+    )
+    producer_index = _first_producer_indices(graph_index)
 
     invalid_boundary_delta = [0] * (op_count + 1)
     last_forward_consumer: Dict[str, int] = {}
-    for consumer_idx, op in enumerate(model_ir.operators):
-        for input_name in op.inputs:
-            if not input_name:
-                continue
-            producer_idx = producer_index.get(input_name)
-            if producer_idx is None or producer_idx == consumer_idx:
+    for input_name, consumer_indices in graph_index.consumers.items():
+        producer_idx = producer_index.get(input_name)
+        if producer_idx is None:
+            continue
+        for consumer_idx in consumer_indices:
+            if producer_idx == consumer_idx:
                 continue
             if consumer_idx < producer_idx:
                 invalid_boundary_delta[consumer_idx + 1] += 1
@@ -2034,16 +2062,17 @@ def validate_partition_ranges(
     *,
     model_ir: ModelIR,
     partition_ranges: Sequence[Tuple[int, int]],
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> None:
     op_count = len(model_ir.operators)
     if len(partition_ranges) == 0:
         raise ValueError("partition_ranges must not be empty.")
     expected_start = 0
-    producer_index: Dict[str, int] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        for out_name in op.outputs:
-            if out_name and out_name not in producer_index:
-                producer_index[out_name] = op_idx
+    graph_index = _resolve_split_graph_index(
+        model_ir=model_ir,
+        graph_index=graph_index,
+    )
+    producer_index = _first_producer_indices(graph_index)
 
     for part_idx, (start_op_index, end_op_index) in enumerate(partition_ranges):
         _validate_range(
@@ -2088,25 +2117,27 @@ def _build_partition_edges(
     *,
     model_ir: ModelIR,
     partition_ranges: Sequence[PartitionRange],
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> List[Dict[str, Any]]:
+    graph_index = _resolve_split_graph_index(
+        model_ir=model_ir,
+        graph_index=graph_index,
+    )
+    producer_index = _first_producer_indices(graph_index)
     op_to_part: Dict[int, int] = {}
     for part_idx, partition in enumerate(partition_ranges):
         for op_idx in range(partition.start_op_index, partition.end_op_index):
             op_to_part[op_idx] = part_idx
 
-    producer_to_part: Dict[str, int] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        part_idx = op_to_part[op_idx]
-        for out_name in op.outputs:
-            if out_name and out_name not in producer_to_part:
-                producer_to_part[out_name] = part_idx
-
     edge_map: Dict[Tuple[int, int], Set[str]] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        dst_part = op_to_part[op_idx]
-        for input_name in op.inputs:
-            src_part = producer_to_part.get(input_name)
-            if src_part is None or src_part >= dst_part:
+    for input_name, consumer_indices in graph_index.consumers.items():
+        producer_op_index = producer_index.get(input_name)
+        if producer_op_index is None:
+            continue
+        src_part = op_to_part[producer_op_index]
+        for consumer_op_index in consumer_indices:
+            dst_part = op_to_part[consumer_op_index]
+            if src_part >= dst_part:
                 continue
             key = (src_part, dst_part)
             if key not in edge_map:
@@ -2169,7 +2200,11 @@ def plan_contiguous_partitions_by_size(
         schema_tflite=schema_tflite,
         size_estimator=size_estimator,
     )
-    candidate_split_points = find_dependency_safe_split_points(model_ir)
+    graph_index = ModelIRGraphIndex(model_ir)
+    candidate_split_points = find_dependency_safe_split_points(
+        model_ir,
+        graph_index=graph_index,
+    )
 
     op_count = len(model_ir.operators)
     if op_count == 0:
@@ -2255,6 +2290,7 @@ def plan_contiguous_partitions_by_size(
             (part.start_op_index, part.end_op_index)
             for part in partition_ranges
         ],
+        graph_index=graph_index,
     )
     for part in partition_ranges:
         if part.estimated_bytes > hard_max_bytes:
@@ -2267,6 +2303,7 @@ def plan_contiguous_partitions_by_size(
     edges = _build_partition_edges(
         model_ir=model_ir,
         partition_ranges=partition_ranges,
+        graph_index=graph_index,
     )
     return {
         "schema_version": 1,

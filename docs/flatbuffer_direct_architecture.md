@@ -1634,7 +1634,10 @@ boundary and preserves the exact ordered report, including first-producer
 selection, non-topological invalid boundaries, fan-out, external inputs, and
 duplicate tensor names. Runtime is proportional to operators, edges, and the
 crossing tensors that must be written to the report rather than
-`boundary_count * edge_count`.
+`boundary_count * edge_count`. The complete split plan constructs this
+`ModelIRGraphIndex` once and reuses it for candidate discovery, partition-range
+validation, and manifest edge construction. Standalone helpers accept an
+optional caller-owned index and retain their existing call signatures.
 
 PyTorch layout-only Transpose cleanup is owned by the Torch-free
 `passes/pytorch_compat.py` boundary. It indexes initial `TRANSPOSE` objects and

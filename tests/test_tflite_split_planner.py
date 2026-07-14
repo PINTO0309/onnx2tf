@@ -3,6 +3,7 @@ import random
 import numpy as np
 import pytest
 
+import onnx2tf.tflite_builder.split_planner as split_planner_module
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.split_planner import (
     build_partition_model_ir,
@@ -49,6 +50,33 @@ def test_split_planner_converges_to_target() -> None:
     assert ranges == [(0, 2), (2, 4), (4, 6)]
     assert all(part["estimated_bytes"] <= 250 for part in report["partitions"])
     assert len(report["edges"]) == 2
+
+
+def test_split_planner_reuses_one_model_ir_graph_index(monkeypatch) -> None:
+    index_build_count = 0
+    original_graph_index = split_planner_module.ModelIRGraphIndex
+
+    class _CountingGraphIndex(original_graph_index):
+        def __post_init__(self) -> None:
+            nonlocal index_build_count
+            index_build_count += 1
+            super().__post_init__()
+
+    monkeypatch.setattr(
+        split_planner_module,
+        "ModelIRGraphIndex",
+        _CountingGraphIndex,
+    )
+
+    report = plan_contiguous_partitions_by_size(
+        model_ir=_make_chain_model_ir(op_count=6),
+        target_max_bytes=250,
+        hard_max_bytes=350,
+        size_estimator=lambda part: len(part.operators) * 100,
+    )
+
+    assert report["plan_valid"] is True
+    assert index_build_count == 1
 
 
 def test_validate_partition_ranges_rejects_gap() -> None:
@@ -145,6 +173,7 @@ def test_dependency_safe_split_points_reads_each_operator_edge_list_once() -> No
     class _CountingOperator:
         def __init__(self, index: int) -> None:
             self.index = int(index)
+            self.op_type = "DUMMY"
 
         @property
         def inputs(self):

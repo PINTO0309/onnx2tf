@@ -570,6 +570,13 @@ All eight focused split-planner tests pass. A local synthetic 2,000-op chain
 microbenchmark improved from 0.405299s to 0.010556s (38.4x) on this host. No
 model conversion or inference was run.
 
+The split planner now keeps that topology in one shared `ModelIRGraphIndex`
+through candidate discovery, range validation, and manifest-edge construction
+instead of rebuilding producer maps three times. Standalone helper calls still
+construct their own index unless a caller supplies one. A focused constructor
+instrumentation test proves one index build for the complete planner; all nine
+split-planner tests pass. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted
