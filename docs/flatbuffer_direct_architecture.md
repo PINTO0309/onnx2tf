@@ -143,6 +143,13 @@ raw StridedSlice/Pad/Concat and shape-extract rewrites. Concat/unary/Conv
 cleanup now accepts an optional scope, and its existing differential input and
 operator-removal updates keep the shared index current.
 
+The absolute-final flattened-normalization Pad and mixed-attention pair shares
+one scope between the raw InstanceNorm bias-add rewrite and dynamic-rank
+Unsqueeze/Reshape shape rewrite. Normalization-Pad cleanup now accepts an
+optional scope. The helper preserves `include_instance=False` and
+`include_flatten=True`, so the final invocation still runs only the intended
+flattened normalization spec before mixed attention.
+
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
 and Split/Reshape collapse) retain their order before the two bridge specs

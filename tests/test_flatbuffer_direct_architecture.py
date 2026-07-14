@@ -932,6 +932,88 @@ def test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope() -> None:
     )
 
 
+def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_absolute_final_normalization_attention_pass_pair"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "run_normalization_pad_layout_cleanup",
+        "run_mixed_attention_layout_cleanup",
+    ]
+    calls = {
+        node.func.id: node
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in expected_order
+    }
+
+    assert [
+        call.func.id
+        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
+    ] == expected_order
+    for name in expected_order:
+        scope_keyword = next(
+            keyword
+            for keyword in calls[name].keywords
+            if keyword.arg == "state_scope"
+        )
+        assert isinstance(scope_keyword.value, ast.Name)
+        assert scope_keyword.value.id == "state_scope"
+    normalization_call = calls["run_normalization_pad_layout_cleanup"]
+    include_instance = next(
+        keyword
+        for keyword in normalization_call.keywords
+        if keyword.arg == "include_instance"
+    )
+    include_flatten = next(
+        keyword
+        for keyword in normalization_call.keywords
+        if keyword.arg == "include_flatten"
+    )
+    assert isinstance(include_instance.value, ast.Constant)
+    assert include_instance.value.value is False
+    assert isinstance(include_flatten.value, ast.Constant)
+    assert include_flatten.value.value is True
+
+    invocation_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == helper_name
+    )
+    previous_boundary = lowerer.body[invocation_index - 1]
+    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary.value, ast.Call)
+    assert isinstance(previous_boundary.value.func, ast.Name)
+    assert (
+        previous_boundary.value.func.id
+        == "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+    )
+    next_boundary = lowerer.body[invocation_index + 1]
+    assert isinstance(next_boundary, ast.Expr)
+    assert isinstance(next_boundary.value, ast.Call)
+    assert isinstance(next_boundary.value.func, ast.Name)
+    assert (
+        next_boundary.value.func.id
+        == "_rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs"
+    )
+
+
 def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

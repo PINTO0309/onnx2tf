@@ -50339,6 +50339,28 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_absolute_final_normalization_attention_pass_pair() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_normalization_pad_layout_cleanup(
+            model_ir,
+            include_instance=False,
+            include_flatten=True,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        # Some late boundary/layout repairs can still recreate the DEA/SiNet
+        # mixed NHWC/NCHW SA branch around REDUCE_MAX->CONCAT->MIRROR_PAD.
+        run_mixed_attention_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> None:
         state_scope = ModelIRPassStateScope(
             model_ir,
@@ -51822,20 +51844,7 @@ def lower_onnx_to_ir(
     # one more strict TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const) fragment.
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
     _optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains(model_ir)
-    run_normalization_pad_layout_cleanup(
-        model_ir,
-        include_instance=False,
-        include_flatten=True,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    # Some late boundary/layout repairs can still recreate the DEA/SiNet
-    # mixed NHWC/NCHW SA branch around REDUCE_MAX->CONCAT->MIRROR_PAD.
-    run_mixed_attention_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_absolute_final_normalization_attention_pass_pair()
     _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs(
         model_ir,
         layout_state=session.layout_state,

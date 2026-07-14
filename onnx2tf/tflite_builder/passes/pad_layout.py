@@ -3433,6 +3433,7 @@ def run_normalization_pad_layout_cleanup(
     include_flatten: bool = True,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run decomposed InstanceNorm and flattened global-norm Pad propagation."""
 
@@ -3575,6 +3576,7 @@ def run_normalization_pad_layout_cleanup(
             "optimized_transpose_flatten_globalnorm_pad_prepost_nhwc_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
