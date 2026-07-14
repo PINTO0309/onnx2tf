@@ -2255,6 +2255,15 @@ indices and requires every indexed consumer to be the matching selected-index
 Gather. Alias, producer/consumer, and scalar-literal evidence are explicit
 inputs; unrelated RANGE or Gather chains remain ordinary generated ops.
 
+Generated constant and shape-tensor evaluation has a focused Torch-free owner
+in `pytorch_constant_policy.py`. It resolves direct integer constants and the
+bounded SHAPE, CAST/identity, GATHER/GATHER_ND, SLICE/STRIDED_SLICE,
+CONCATENATION/PACK, and MINIMUM/MAXIMUM forms used by native code generation.
+The same owner tracks whether a Reshape shape expression contains runtime
+dimensions, including SPLIT and UNPACK propagation, while rejecting cycles and
+unsupported expressions conservatively. It reads the shared producer index but
+does not mutate ModelIR or emit generated statements.
+
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter

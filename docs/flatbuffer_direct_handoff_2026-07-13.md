@@ -1041,6 +1041,15 @@ checkpoint `5574362` exactly; two direct emitter contracts and the focused
 single-owner test pass, together with Ruff and syntax validation. The exporter
 shrank by another 53 lines. No model conversion or inference was run.
 
+Recursive generated constant and shape-tensor evaluation now lives in the
+Torch-free `pytorch_constant_policy.py` owner. Direct constants, static SHAPE
+values, indexed GATHER/GATHER_ND, SLICE/STRIDED_SLICE, CONCATENATION/PACK,
+MINIMUM/MAXIMUM, and runtime-dimension provenance retain their previous
+conservative behavior. Four thousand fixed-seed outcomes match checkpoint
+`17e291a` exactly; three direct contracts and the focused single-owner test
+pass, together with Ruff and syntax validation. The exporter shrank by another
+262 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
