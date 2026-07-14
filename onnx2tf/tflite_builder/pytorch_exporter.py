@@ -136,6 +136,9 @@ from onnx2tf.tflite_builder.pytorch_source_graph_rewrites import (
 from onnx2tf.tflite_builder.pytorch_state_dict_support import (
     _build_native_generated_state_dict,
 )
+from onnx2tf.tflite_builder.pytorch_runtime_wrapper_exporter import (
+    _export_runtime_wrapper_package_from_model_ir,
+)
 from onnx2tf.tflite_builder.pytorch_source_parser import (
     _SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN,
     _any_line_matches,
@@ -26838,36 +26841,6 @@ def _ensure_direct_codegen_supported(model_ir: ModelIR) -> None:
 
 def _is_direct_codegen_unsupported_error(ex: BaseException) -> bool:
     return "Native PyTorch-like model.py codegen does not support some op types in this model." in str(ex)
-
-
-def _export_runtime_wrapper_package_from_model_ir(
-    *,
-    model_ir: ModelIR,
-    output_folder_path: str,
-) -> str:
-    if not _supports_runtime_wrapper_model_ir(model_ir):
-        raise ModelIRPyTorchExportError(
-            "PyTorch runtime wrapper export does not support some op types in this model."
-        )
-    os.makedirs(output_folder_path, exist_ok=True)
-    tensor_storage_name_map = _make_tensor_storage_name_map(model_ir)
-    metadata = _build_metadata_payload(model_ir)
-    metadata["execution_backend"] = "runtime_wrapper"
-    metadata["tensor_storage_names"] = dict(tensor_storage_name_map)
-    _write_generated_package_common_files(output_folder_path)
-    _write_wrapper_model_file(output_folder_path)
-    metadata_path = os.path.join(output_folder_path, "metadata.json")
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
-    import torch
-    state_dict: Dict[str, Any] = {}
-    for tensor_name, tensor in model_ir.tensors.items():
-        if not isinstance(tensor.data, np.ndarray):
-            continue
-        storage_name = tensor_storage_name_map.get(str(tensor_name), str(tensor_name))
-        state_dict[storage_name] = torch.as_tensor(np.asarray(tensor.data))
-    torch.save(state_dict, os.path.join(output_folder_path, "state_dict.pth"))
-    return str(output_folder_path)
 
 
 def _write_native_model_file(

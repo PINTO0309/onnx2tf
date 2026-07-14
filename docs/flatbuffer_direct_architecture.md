@@ -2211,6 +2211,13 @@ SavedModel-backed packages. All four function ASTs are identical to their
 former exporter definitions; Torch references exist only in generated source
 strings and do not import Torch while the conversion modules are loaded.
 
+Runtime-wrapper artifact generation lives in
+`pytorch_runtime_wrapper_exporter.py`. It consumes the shared capability,
+metadata, naming, and package-source contracts, writes only the requested
+wrapper package, and imports Torch locally only when serializing the state dict.
+Its function AST is identical to the former exporter definition, while an
+unsupported ModelIR is rejected before any artifact directory is created.
+
 ## Runtime-check memory boundary
 
 The direct backend releases the legacy GraphSurgeon graph before ModelIR

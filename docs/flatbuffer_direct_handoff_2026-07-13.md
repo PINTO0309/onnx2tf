@@ -481,6 +481,15 @@ runtime/custom rejection and established/future attribute spelling. Capability,
 naming, and architecture validation passes 85 tests; Ruff, diff, and
 AST-equivalence checks pass. No model conversion or inference was run.
 
+Runtime-wrapper artifact generation now lives in
+`pytorch_runtime_wrapper_exporter.py`. It uses the shared capability, metadata,
+naming, and package-source owners and retains a function-local Torch import for
+state serialization. Its function AST matches the prior exporter checkpoint.
+Two direct tests use a fake Torch module to fix package files, metadata, storage
+names, state serialization, and rejection before output creation. Wrapper and
+architecture validation passes 76 tests; Ruff, diff, and AST-equivalence checks
+pass. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

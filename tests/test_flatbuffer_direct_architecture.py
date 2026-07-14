@@ -72,6 +72,10 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_indexing_codegen.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_naming.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_package_sources.py",
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
+    / "pytorch_runtime_wrapper_exporter.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_layout_passes.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_bridge_passes.py",
@@ -115,6 +119,7 @@ PYTORCH_PURE_UTILITY_FILES = [
         "pytorch_artifact_exporters.py",
         "pytorch_export_support.py",
         "pytorch_exported_program_archive.py",
+        "pytorch_runtime_wrapper_exporter.py",
         "pytorch_state_dict_support.py",
     }
 ]
@@ -4044,6 +4049,47 @@ def test_generated_pytorch_package_sources_have_single_owner() -> None:
         assert function_name in package_functions
         assert function_name not in exporter_functions
         assert f"{function_name}," in exporter_source
+
+
+def test_pytorch_runtime_wrapper_export_has_single_owner_and_lazy_torch() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    wrapper_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_runtime_wrapper_exporter.py"
+    ).read_text(encoding="utf-8")
+    exporter_tree = ast.parse(exporter_source)
+    wrapper_tree = ast.parse(wrapper_source)
+    exporter_functions = {
+        node.name
+        for node in exporter_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    wrapper_functions = {
+        node.name: node
+        for node in wrapper_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    function_name = "_export_runtime_wrapper_package_from_model_ir"
+    assert function_name in wrapper_functions
+    assert function_name not in exporter_functions
+    assert f"{function_name}," in exporter_source
+    assert not any(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        and any(alias.name == "torch" for alias in node.names)
+        for node in wrapper_tree.body
+    )
+    lazy_imports = [
+        node
+        for node in ast.walk(wrapper_functions[function_name])
+        if isinstance(node, ast.Import)
+        and any(alias.name == "torch" for alias in node.names)
+    ]
+    assert len(lazy_imports) == 1
 
 
 def test_pytorch_capability_registry_has_single_owner() -> None:
