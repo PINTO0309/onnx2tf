@@ -1789,6 +1789,11 @@ Both matchers build one `ModelIRGraphIndex` per candidate body and reuse it for
 all producer and Reshape-alias queries. Required edges with duplicate producers
 are rejected before cloning, making the rewrite deterministic while replacing
 the former repeated linear scans of the body operator list.
+Each root operator is matched exactly once into an immutable-by-convention
+rewrite-plan map before copy-on-write construction begins. The static and
+counter-bounded emit loops consume those plans instead of invoking the matcher
+again against the cloned graph, so candidate body indexes and structural guards
+are not rebuilt during emission.
 The exporter architecture gate detects attribute assignments through the AST,
 so alternate local names cannot silently reintroduce complete operator-list
 replacement.

@@ -304,17 +304,20 @@ def _ensure_tensor_shape_literal(
 
 
 def _rewrite_static_while_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
-    if not any(
-        _match_static_unrollable_while_op(model_ir, op) is not None
-        for op in model_ir.operators
-    ):
+    rewrite_plans = {
+        int(op_index): match
+        for op_index, op in enumerate(model_ir.operators)
+        for match in [_match_static_unrollable_while_op(model_ir, op)]
+        if match is not None
+    }
+    if len(rewrite_plans) == 0:
         return model_ir
     rewritten = _clone_model_ir_without_root_operators(model_ir)
     used_names: Set[str] = set(str(name) for name in rewritten.tensors.keys())
 
     for op_index, source_op in enumerate(model_ir.operators):
         op = copy.deepcopy(source_op)
-        match = _match_static_unrollable_while_op(rewritten, op)
+        match = rewrite_plans.get(int(op_index), None)
         if match is None:
             rewritten.operators.append(op)
             continue
@@ -410,17 +413,20 @@ def _rewrite_static_while_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
 
 
 def _rewrite_counter_bounded_while_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
-    if not any(
-        _match_counter_bounded_unrollable_while_op(model_ir, op) is not None
-        for op in model_ir.operators
-    ):
+    rewrite_plans = {
+        int(op_index): match
+        for op_index, op in enumerate(model_ir.operators)
+        for match in [_match_counter_bounded_unrollable_while_op(model_ir, op)]
+        if match is not None
+    }
+    if len(rewrite_plans) == 0:
         return model_ir
     rewritten = _clone_model_ir_without_root_operators(model_ir)
     used_names: Set[str] = set(str(name) for name in rewritten.tensors.keys())
 
     for op_index, source_op in enumerate(model_ir.operators):
         op = copy.deepcopy(source_op)
-        match = _match_counter_bounded_unrollable_while_op(rewritten, op)
+        match = rewrite_plans.get(int(op_index), None)
         if match is None:
             rewritten.operators.append(op)
             continue

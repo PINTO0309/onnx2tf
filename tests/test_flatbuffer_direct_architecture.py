@@ -511,6 +511,14 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
         "_rewrite_static_while_ops_for_native_export",
         "_rewrite_counter_bounded_while_ops_for_native_export",
     }
+    matcher_by_rewriter = {
+        "_rewrite_static_while_ops_for_native_export": (
+            "_match_static_unrollable_while_op"
+        ),
+        "_rewrite_counter_bounded_while_ops_for_native_export": (
+            "_match_counter_bounded_unrollable_while_op"
+        ),
+    }
     for function_name in copy_on_write_functions:
         function_source = ast.get_source_segment(
             control_flow_source,
@@ -519,6 +527,8 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
         assert function_source is not None
         assert "return copy.deepcopy(model_ir)" not in function_source
         assert "return model_ir" in function_source
+        assert function_source.count(matcher_by_rewriter[function_name]) == 1
+        assert "rewrite_plans.get(int(op_index), None)" in function_source
     recurrent_functions = {
         node.name: node
         for node in recurrent_tree.body

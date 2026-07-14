@@ -4,6 +4,7 @@ from typing import Optional
 
 import numpy as np
 
+import onnx2tf.tflite_builder.passes.pytorch_control_flow as control_flow_module
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_control_flow import (
     _rewrite_counter_bounded_while_ops_for_native_export,
@@ -311,3 +312,41 @@ def test_counter_bounded_while_rewrite_streams_masked_outputs() -> None:
     assert all(op.version == 2 for op in logistic_ops)
     assert all(op.onnx_node_name == "bounded_sigmoid" for op in logistic_ops)
     assert "y" in {name for op in rewritten.operators for name in op.outputs}
+
+
+def test_control_flow_rewriters_match_each_root_operator_once(monkeypatch) -> None:
+    static_source = _static_while_model_ir()
+    counter_source = _counter_bounded_while_model_ir()
+    static_match_count = 0
+    counter_match_count = 0
+    original_static_match = control_flow_module._match_static_unrollable_while_op
+    original_counter_match = (
+        control_flow_module._match_counter_bounded_unrollable_while_op
+    )
+
+    def counted_static_match(model_ir, op):
+        nonlocal static_match_count
+        static_match_count += 1
+        return original_static_match(model_ir, op)
+
+    def counted_counter_match(model_ir, op):
+        nonlocal counter_match_count
+        counter_match_count += 1
+        return original_counter_match(model_ir, op)
+
+    monkeypatch.setattr(
+        control_flow_module,
+        "_match_static_unrollable_while_op",
+        counted_static_match,
+    )
+    monkeypatch.setattr(
+        control_flow_module,
+        "_match_counter_bounded_unrollable_while_op",
+        counted_counter_match,
+    )
+
+    _rewrite_static_while_ops_for_native_export(static_source)
+    _rewrite_counter_bounded_while_ops_for_native_export(counter_source)
+
+    assert static_match_count == len(static_source.operators)
+    assert counter_match_count == len(counter_source.operators)

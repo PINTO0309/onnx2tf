@@ -36,6 +36,16 @@ counter-bounded expansion fixtures and a duplicate-producer rejection, passed
 63 tests. No ONNX conversion, inference,
 dependency change, TensorFlow import, or parallel process was involved.
 
+Static and counter-bounded WHILE entry points now match every root operator
+once and retain successful matches as rewrite plans. Their copy-on-write emit
+loops consume those plans rather than rerunning the complete body-subgraph
+matcher against the cloned graph, eliminating a second body index and guard
+evaluation for every expanded WHILE. Both canonical fixtures match checkpoint
+`cfa47da` byte for byte at the ModelIR fingerprint level. A seven-run synthetic
+64-WHILE median improved from 0.010825s to 0.010082s (1.07x). Focused
+control-flow and architecture gates pass 86 tests, including exact
+one-match-per-root instrumentation. No model conversion or inference was run.
+
 The recurrent-sequence companion is now isolated in the Torch-free
 `passes/pytorch_recurrent.py` module. It is the single owner of legacy
 unidirectional/bidirectional LSTM input-index contracts, constant/optional
