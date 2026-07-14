@@ -2026,7 +2026,10 @@ Fast generated-source precanonicalization begins with a small Torch-free value
 policy in `pytorch_fast_precanonicalize_policy.py`. It owns reversible NHWC/NCHW
 rank-four pad-axis conversion, conservative channel-count inference, and source
 identifier extraction. The larger repair context consumes these shared values
-without maintaining local duplicates.
+without maintaining local duplicates. Its dataclass, one-pass source-line
+collector, alias resolver, and CF/NHWC classification helpers are co-located in
+the same owner. The collector records static shapes, consumers, buffer channel
+counts, Conv block arity, module edges, and propagated alias layout evidence.
 
 The direct-module dispatcher is being decomposed by operator family rather than
 moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and

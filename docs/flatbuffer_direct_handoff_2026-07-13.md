@@ -1258,6 +1258,18 @@ policy/ownership tests pass (95 unrelated architecture tests deselected),
 together with Ruff, syntax validation, and `git diff --check`; the exporter
 shrank by another net 71 lines. No model conversion or inference was run.
 
+The fast-precanonicalize repair-context dataclass, source-line context builder,
+alias resolver, and CF/NHWC classification helpers now also live in
+`pytorch_fast_precanonicalize_policy.py`. Static shapes, expression consumers,
+buffer channel counts, Conv block channels, module producer/consumer edges,
+alias propagation, layout suffixes, and dynamic evidence retain their existing
+collection order. The moved class and four function ASTs match checkpoint
+`ac7b266` exactly. Five focused policy/ownership tests pass (95 unrelated
+architecture tests deselected), together with Ruff, syntax validation, and
+`git diff --check`; the exporter shrank by another net 310 lines. The existing
+unused pool regex remains with a local Ruff annotation so the mechanical move
+does not alter behavior. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

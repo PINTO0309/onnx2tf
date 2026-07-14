@@ -4776,16 +4776,33 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         for node in ast.parse(policy_source).body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+    exporter_classes = {
+        node.name
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, ast.ClassDef)
+    }
+    policy_classes = {
+        node.name
+        for node in ast.parse(policy_source).body
+        if isinstance(node, ast.ClassDef)
+    }
 
     for function_name in (
+        "_build_fast_precanonicalize_repair_context",
         "_convert_nchw_pad_to_nhwc_pad_values",
         "_convert_nhwc_pad_to_nchw_pad_values",
         "_fast_precanonicalize_expr_identifiers",
+        "_fast_precanonicalize_is_cf_like",
+        "_fast_precanonicalize_is_nhwc_like",
+        "_fast_precanonicalize_resolve_alias",
         "_infer_unique_channel_count_from_rank4_shape",
     ):
         assert function_name in policy_functions
         assert function_name not in exporter_functions
         assert f"{function_name}," in exporter_source
+    assert "_FastPrecanonicalizeRepairContext" in policy_classes
+    assert "_FastPrecanonicalizeRepairContext" not in exporter_classes
+    assert "_FastPrecanonicalizeRepairContext," in exporter_source
     assert "import torch" not in policy_source
 
 
