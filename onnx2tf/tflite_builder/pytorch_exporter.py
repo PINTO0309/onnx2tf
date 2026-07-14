@@ -101,6 +101,9 @@ from onnx2tf.tflite_builder.pytorch_codegen_values import (
     _torch_pad_literal_for_constant_tensor,
 )
 from onnx2tf.tflite_builder.pytorch_shape_policy import (
+    _conv2d_output_spatial_shape_for_codegen,
+    _conv3d_output_spatial_shape_for_codegen,
+    _conv3d_transpose_output_spatial_shape_for_codegen,
     _fast_precanonicalize_rank4_layout_hint,
     _normalize_cf_rank4_shape,
     _normalize_nhwc_rank4_shape,
@@ -1405,121 +1408,6 @@ def _range_only_feeds_identity_nms_postprocess_gathers_for_codegen(
         if not is_identity_nms_postprocess_gather_fn(str(consumer_op.inputs[0]), str(output_name)):
             return False
     return True
-
-
-def _conv2d_output_spatial_shape_for_codegen(
-    *,
-    input_hw: Sequence[int],
-    kernel_hw: Sequence[int],
-    stride_hw: Sequence[int],
-    dilation_hw: Sequence[int],
-    padding_mode: str,
-) -> Optional[List[int]]:
-    input_items = [int(v) for v in list(input_hw)]
-    kernel_items = [int(v) for v in list(kernel_hw)]
-    stride_items = [max(1, int(v)) for v in list(stride_hw)]
-    dilation_items = [max(1, int(v)) for v in list(dilation_hw)]
-    if len(input_items) != 2 or len(kernel_items) != 2:
-        return None
-    if len(stride_items) != 2 or len(dilation_items) != 2:
-        return None
-    if any(int(v) <= 0 for v in input_items + kernel_items):
-        return None
-    padding_key = str(padding_mode).upper()
-    output_hw: List[int] = []
-    for input_dim, kernel_dim, stride_dim, dilation_dim in zip(
-        input_items,
-        kernel_items,
-        stride_items,
-        dilation_items,
-    ):
-        effective_kernel = (int(kernel_dim) - 1) * int(dilation_dim) + 1
-        if padding_key == "SAME":
-            output_dim = int(math.ceil(float(input_dim) / float(stride_dim)))
-        elif padding_key == "VALID":
-            output_dim = int(math.floor((float(input_dim) - float(effective_kernel)) / float(stride_dim))) + 1
-        else:
-            return None
-        if int(output_dim) <= 0:
-            return None
-        output_hw.append(int(output_dim))
-    return output_hw
-
-
-def _conv3d_output_spatial_shape_for_codegen(
-    *,
-    input_dhw: Sequence[int],
-    kernel_dhw: Sequence[int],
-    stride_dhw: Sequence[int],
-    dilation_dhw: Sequence[int],
-    padding_mode: str,
-) -> Optional[List[int]]:
-    input_items = [int(v) for v in list(input_dhw)]
-    kernel_items = [int(v) for v in list(kernel_dhw)]
-    stride_items = [max(1, int(v)) for v in list(stride_dhw)]
-    dilation_items = [max(1, int(v)) for v in list(dilation_dhw)]
-    if len(input_items) != 3 or len(kernel_items) != 3:
-        return None
-    if len(stride_items) != 3 or len(dilation_items) != 3:
-        return None
-    if any(int(v) <= 0 for v in input_items + kernel_items):
-        return None
-    padding_key = str(padding_mode).upper()
-    output_dhw: List[int] = []
-    for input_dim, kernel_dim, stride_dim, dilation_dim in zip(
-        input_items,
-        kernel_items,
-        stride_items,
-        dilation_items,
-    ):
-        effective_kernel = (int(kernel_dim) - 1) * int(dilation_dim) + 1
-        if padding_key == "SAME":
-            output_dim = int(math.ceil(float(input_dim) / float(stride_dim)))
-        elif padding_key == "VALID":
-            output_dim = int(math.floor((float(input_dim) - float(effective_kernel)) / float(stride_dim))) + 1
-        else:
-            return None
-        if int(output_dim) <= 0:
-            return None
-        output_dhw.append(int(output_dim))
-    return output_dhw
-
-
-def _conv3d_transpose_output_spatial_shape_for_codegen(
-    *,
-    input_dhw: Sequence[int],
-    kernel_dhw: Sequence[int],
-    stride_dhw: Sequence[int],
-    dilation_dhw: Sequence[int],
-    padding_mode: str,
-) -> Optional[List[int]]:
-    input_items = [int(v) for v in list(input_dhw)]
-    kernel_items = [int(v) for v in list(kernel_dhw)]
-    stride_items = [max(1, int(v)) for v in list(stride_dhw)]
-    dilation_items = [max(1, int(v)) for v in list(dilation_dhw)]
-    if len(input_items) != 3 or len(kernel_items) != 3 or len(stride_items) != 3 or len(dilation_items) != 3:
-        return None
-    if any(int(v) <= 0 for v in input_items + kernel_items):
-        return None
-    padding_key = str(padding_mode).upper()
-    output_dhw: List[int] = []
-    for input_dim, kernel_dim, stride_dim, dilation_dim in zip(
-        input_items,
-        kernel_items,
-        stride_items,
-        dilation_items,
-    ):
-        effective_kernel = (int(kernel_dim) - 1) * int(dilation_dim) + 1
-        if padding_key == "SAME":
-            output_dim = int(input_dim) * int(stride_dim)
-        elif padding_key == "VALID":
-            output_dim = (int(input_dim) - 1) * int(stride_dim) + int(effective_kernel)
-        else:
-            return None
-        if int(output_dim) <= 0:
-            return None
-        output_dhw.append(int(output_dim))
-    return output_dhw
 
 
 def _conv2d_same_pad_arg_for_codegen(

@@ -913,6 +913,16 @@ argument and passes 81 tests. A 101-run synthetic 2,000-op writer-preflight
 median improved from 0.003089471s to 0.001504030s (2.05x), with an identical
 feature-last closure. No model conversion or inference was run.
 
+Conv2D, Conv3D, and transpose-Conv3D output-spatial shape calculation moved
+from the monolithic exporter to the Torch-free `pytorch_shape_policy.py`
+owner. Forward 2-D and 3-D formulas now share one rank-parameterized helper,
+while all three compatibility function signatures and `None` rejection
+contracts remain unchanged. Direct policy, architecture, randomized
+differential, Ruff, and syntax validation pass: 3,000 fixed-seed outcomes match
+checkpoint `fcb2a36` exactly, and the focused policy and architecture suites
+pass 110 tests. The monolithic exporter shrank by 112 lines. No model
+conversion or inference was run for this pure calculation move.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

@@ -4480,6 +4480,9 @@ def test_generated_pytorch_rank4_shape_policy_has_single_owner() -> None:
     }
 
     for function_name in (
+        "_conv2d_output_spatial_shape_for_codegen",
+        "_conv3d_output_spatial_shape_for_codegen",
+        "_conv3d_transpose_output_spatial_shape_for_codegen",
         "_fast_precanonicalize_rank4_layout_hint",
         "_normalize_cf_rank4_shape",
         "_normalize_nhwc_rank4_shape",
@@ -4488,6 +4491,7 @@ def test_generated_pytorch_rank4_shape_policy_has_single_owner() -> None:
         assert function_name in policy_functions
         assert function_name not in exporter_functions
         assert f"{function_name}," in exporter_source
+    assert "_conv_output_spatial_shape" in policy_functions
     assert "import torch" not in policy_source
 
 

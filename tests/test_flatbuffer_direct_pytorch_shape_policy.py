@@ -3,11 +3,83 @@ from __future__ import annotations
 import pytest
 
 from onnx2tf.tflite_builder.pytorch_shape_policy import (
+    _conv2d_output_spatial_shape_for_codegen,
+    _conv3d_output_spatial_shape_for_codegen,
+    _conv3d_transpose_output_spatial_shape_for_codegen,
     _fast_precanonicalize_rank4_layout_hint,
     _normalize_cf_rank4_shape,
     _normalize_nhwc_rank4_shape,
     _reshape_special_layout_plan,
 )
+
+
+@pytest.mark.parametrize(
+    ("padding_mode", "expected"),
+    [
+        ("SAME", [4, 4]),
+        ("VALID", [3, 3]),
+        ("unsupported", None),
+    ],
+)
+def test_conv2d_output_spatial_shape_policy(
+    padding_mode: str,
+    expected: list[int] | None,
+) -> None:
+    assert _conv2d_output_spatial_shape_for_codegen(
+        input_hw=[7, 8],
+        kernel_hw=[3, 3],
+        stride_hw=[2, 2],
+        dilation_hw=[1, 1],
+        padding_mode=padding_mode,
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    ("function", "padding_mode", "expected"),
+    [
+        (_conv3d_output_spatial_shape_for_codegen, "SAME", [2, 2, 3]),
+        (_conv3d_output_spatial_shape_for_codegen, "VALID", [1, 1, 2]),
+        (
+            _conv3d_transpose_output_spatial_shape_for_codegen,
+            "SAME",
+            [6, 8, 10],
+        ),
+        (
+            _conv3d_transpose_output_spatial_shape_for_codegen,
+            "VALID",
+            [7, 9, 11],
+        ),
+    ],
+)
+def test_conv3d_output_spatial_shape_policy(
+    function,
+    padding_mode: str,
+    expected: list[int],
+) -> None:
+    assert function(
+        input_dhw=[3, 4, 5],
+        kernel_dhw=[3, 3, 3],
+        stride_dhw=[2, 2, 2],
+        dilation_dhw=[1, 1, 1],
+        padding_mode=padding_mode,
+    ) == expected
+
+
+def test_conv_output_spatial_shape_policy_rejects_invalid_rank_and_extent() -> None:
+    assert _conv2d_output_spatial_shape_for_codegen(
+        input_hw=[7],
+        kernel_hw=[3, 3],
+        stride_hw=[1, 1],
+        dilation_hw=[1, 1],
+        padding_mode="SAME",
+    ) is None
+    assert _conv3d_transpose_output_spatial_shape_for_codegen(
+        input_dhw=[0, 4, 5],
+        kernel_dhw=[3, 3, 3],
+        stride_dhw=[1, 1, 1],
+        dilation_dhw=[1, 1, 1],
+        padding_mode="VALID",
+    ) is None
 
 
 @pytest.mark.parametrize(

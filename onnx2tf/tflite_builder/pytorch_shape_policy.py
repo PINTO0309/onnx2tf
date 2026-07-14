@@ -1,6 +1,132 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+
+def _conv_output_spatial_shape(
+    *,
+    input_spatial: Sequence[int],
+    kernel_spatial: Sequence[int],
+    stride_spatial: Sequence[int],
+    dilation_spatial: Sequence[int],
+    padding_mode: str,
+    spatial_rank: int,
+) -> Optional[List[int]]:
+    input_items = [int(value) for value in list(input_spatial)]
+    kernel_items = [int(value) for value in list(kernel_spatial)]
+    stride_items = [max(1, int(value)) for value in list(stride_spatial)]
+    dilation_items = [max(1, int(value)) for value in list(dilation_spatial)]
+    if any(
+        len(items) != int(spatial_rank)
+        for items in (input_items, kernel_items, stride_items, dilation_items)
+    ):
+        return None
+    if any(int(value) <= 0 for value in input_items + kernel_items):
+        return None
+    padding_key = str(padding_mode).upper()
+    output_spatial: List[int] = []
+    for input_dim, kernel_dim, stride_dim, dilation_dim in zip(
+        input_items,
+        kernel_items,
+        stride_items,
+        dilation_items,
+    ):
+        effective_kernel = (int(kernel_dim) - 1) * int(dilation_dim) + 1
+        if padding_key == "SAME":
+            output_dim = int(math.ceil(float(input_dim) / float(stride_dim)))
+        elif padding_key == "VALID":
+            output_dim = int(
+                math.floor(
+                    (float(input_dim) - float(effective_kernel))
+                    / float(stride_dim)
+                )
+            ) + 1
+        else:
+            return None
+        if int(output_dim) <= 0:
+            return None
+        output_spatial.append(int(output_dim))
+    return output_spatial
+
+
+def _conv2d_output_spatial_shape_for_codegen(
+    *,
+    input_hw: Sequence[int],
+    kernel_hw: Sequence[int],
+    stride_hw: Sequence[int],
+    dilation_hw: Sequence[int],
+    padding_mode: str,
+) -> Optional[List[int]]:
+    return _conv_output_spatial_shape(
+        input_spatial=input_hw,
+        kernel_spatial=kernel_hw,
+        stride_spatial=stride_hw,
+        dilation_spatial=dilation_hw,
+        padding_mode=padding_mode,
+        spatial_rank=2,
+    )
+
+
+def _conv3d_output_spatial_shape_for_codegen(
+    *,
+    input_dhw: Sequence[int],
+    kernel_dhw: Sequence[int],
+    stride_dhw: Sequence[int],
+    dilation_dhw: Sequence[int],
+    padding_mode: str,
+) -> Optional[List[int]]:
+    return _conv_output_spatial_shape(
+        input_spatial=input_dhw,
+        kernel_spatial=kernel_dhw,
+        stride_spatial=stride_dhw,
+        dilation_spatial=dilation_dhw,
+        padding_mode=padding_mode,
+        spatial_rank=3,
+    )
+
+
+def _conv3d_transpose_output_spatial_shape_for_codegen(
+    *,
+    input_dhw: Sequence[int],
+    kernel_dhw: Sequence[int],
+    stride_dhw: Sequence[int],
+    dilation_dhw: Sequence[int],
+    padding_mode: str,
+) -> Optional[List[int]]:
+    input_items = [int(value) for value in list(input_dhw)]
+    kernel_items = [int(value) for value in list(kernel_dhw)]
+    stride_items = [max(1, int(value)) for value in list(stride_dhw)]
+    dilation_items = [max(1, int(value)) for value in list(dilation_dhw)]
+    if any(
+        len(items) != 3
+        for items in (input_items, kernel_items, stride_items, dilation_items)
+    ):
+        return None
+    if any(int(value) <= 0 for value in input_items + kernel_items):
+        return None
+    padding_key = str(padding_mode).upper()
+    output_dhw: List[int] = []
+    for input_dim, kernel_dim, stride_dim, dilation_dim in zip(
+        input_items,
+        kernel_items,
+        stride_items,
+        dilation_items,
+    ):
+        effective_kernel = (int(kernel_dim) - 1) * int(dilation_dim) + 1
+        if padding_key == "SAME":
+            output_dim = int(input_dim) * int(stride_dim)
+        elif padding_key == "VALID":
+            output_dim = (
+                (int(input_dim) - 1) * int(stride_dim)
+                + int(effective_kernel)
+            )
+        else:
+            return None
+        if int(output_dim) <= 0:
+            return None
+        output_dhw.append(int(output_dim))
+    return output_dhw
 
 
 def _fast_precanonicalize_rank4_layout_hint(
