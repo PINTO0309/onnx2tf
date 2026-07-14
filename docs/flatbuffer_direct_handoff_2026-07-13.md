@@ -1072,6 +1072,14 @@ contract and focused ownership gate pass, together with Ruff and syntax
 validation. The exporter shrank by another 28 lines. No model conversion or
 inference was run.
 
+Affine LayerNorm and expanded Swish recognition now live in the Torch-free
+`pytorch_fusion_policy.py` owner. The former retains named gamma/beta constants
+and module-spec construction; the latter retains its exclusive Logistic-output
+fan-out guard. Both moved function ASTs match checkpoint `d59cd57` exactly; two
+direct pattern contracts and the focused ownership gate pass, together with Ruff
+and syntax validation. The exporter shrank by another 106 lines. No model
+conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

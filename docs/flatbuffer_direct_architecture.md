@@ -2255,6 +2255,14 @@ indices and requires every indexed consumer to be the matching selected-index
 Gather. Alias, producer/consumer, and scalar-literal evidence are explicit
 inputs; unrelated RANGE or Gather chains remain ordinary generated ops.
 
+Native Affine LayerNorm and expanded Swish recognition have a focused Torch-
+free owner in `pytorch_fusion_policy.py`. The LayerNorm matcher requires the
+named constant gamma/beta Mul→Add form and returns a module specification without
+mutating the graph. The Swish matcher requires an exclusive
+`Logistic(x) * x` diamond and rejects additional Logistic consumers. Producer,
+consumer, constant, canonical-name, and attribute-allocation collaborators stay
+explicit at this boundary.
+
 Generated constant and shape-tensor evaluation has a focused Torch-free owner
 in `pytorch_constant_policy.py`. It resolves direct integer constants and the
 bounded SHAPE, CAST/identity, GATHER/GATHER_ND, SLICE/STRIDED_SLICE,
