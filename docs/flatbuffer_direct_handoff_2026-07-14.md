@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit extracts terminal Transpose/Dequantize
-sanitation into `passes/quantization_cleanup.py`. One maintained
-`ModelIRGraphIndex` now spans both historical subphases: indexed edge/output
-replacement and operator reordering for terminal Transpose-to-Dequantize, then
-indexed public-output rename and Transpose removal for terminal Dequantize-to-
-Transpose. Separate statistics, ordered restart, output metadata, unique
-intermediate naming, public/fan-out guards, per-tensor quantization, and pruning
-retain the former contract.
+The latest implementation unit extracts the Transpose-Dequantize-keepdims-
+Mean-Quantize bridge into `passes/quantization_cleanup.py`. One maintained
+`ModelIRGraphIndex` owns graph-order candidates, all exclusive edges, Q input
+rewiring, preserving-Transpose insertion, and old pre-Transpose removal. Axes,
+shape/signature, unique tensor naming, public/fan-out guards, fixed-point order,
+and pruning retain the former valid behavior. Match planning now validates the
+output permutation before any mutation, eliminating a former partial-metadata
+rewrite on invalid permutations.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains seventy-one coherent continuations:
+The current `fb-refactor5` work contains seventy-two coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -189,9 +189,11 @@ The current `fb-refactor5` work contains seventy-one coherent continuations:
 - `03742a6a` moves Concat pre-Q/DQ exact-grid bypass to its
   quantization owner and replaces repeated whole-graph maps with one
   differential index;
-- the current checkpoint moves both terminal Transpose/Dequantize sanitation
+- `55ad5c88` moves both terminal Transpose/Dequantize sanitation
   subphases to the same owner and maintains one index through edge rewrites,
-  operator movement, rename, and removal.
+  operator movement, rename, and removal;
+- the current checkpoint moves the Transpose-DQ-Mean-Q bridge to one indexed,
+  fully planned quantization-cleanup transaction.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -554,6 +556,13 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   differential Transpose removal so the Dequantize remains the sole producer.
   Graphs missing either required operator type still receive historical tensor
   pruning without paying for an index.
+- The Transpose-DQ-Mean-Q bridge commits only after the mapped axes, reduced
+  metadata, bridge permutation, and both unique tensor names are valid. The new
+  preserving Transpose is inserted immediately before the current Quantize,
+  then the old pre-Transpose is resolved by object identity and removed from
+  the same index. This preserves valid ordering while making invalid-
+  permutation rejection a complete no-op instead of retaining the former
+  partial DQ/Mean metadata mutation.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -1633,6 +1642,21 @@ characterizations passed together with `249 passed`. TensorFlow-import-blocked
 direct and `-cotof` plus the sequential quantization/evaluation/coverage smoke
 passed with `3 passed`. No Tier corpus conversion was run.
 
+The indexed Transpose-DQ-Mean-Q checkpoint compiles the complete prior
+committed function AST and preserves exact valid ModelIR and statistics for one
+and two simultaneous matches. A separate differential check proves that an
+invalid permutation, which formerly left partially rewritten DQ/Mean metadata
+despite returning zero, is now a complete ModelIR no-op. Focused coverage
+includes one-index multi-match execution, maintained-index equivalence,
+negative-axis remapping, edge and operator order, shape/signature propagation,
+public and fan-out boundaries at every intermediate, `keepDims`, shared axes,
+invalid axes/permutation, missing tensors, missing-required-type/no-index
+pruning, and ownership with `48 passed`. Architecture, core, pass-efficiency,
+and the complete quantization-cleanup suite passed with `260 passed`.
+TensorFlow-import-blocked direct and `-cotof` plus the sequential quantization/
+evaluation/coverage smoke passed with `3 passed`. No Tier corpus conversion was
+run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1682,12 +1706,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent
-   `_optimize_transpose_dequantize_mean_quantize_bridges` as the next bounded
-   quantization-layout candidate. Preserve reduction-axis remapping, unique
-   intermediate naming, operator order, public/fan-out guards, metadata, and
-   pruning; extract it only if its edge and operator movement can be expressed
-   through one maintained index without broadening the match.
+3. Audit `_optimize_fuse_pseudo_leakyrelu_chains` as the next bounded graph-
+   cleanup candidate. Preserve exact NEG/RELU/MUL/SUB branch ordering, singleton
+   alpha selection, float/public/fan-out guards, output identity, statistics,
+   and pruning while replacing repeated producer/consumer maps and indexed
+   four-operator removal without broadening accepted pseudo-op grammar.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

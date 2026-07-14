@@ -7060,6 +7060,7 @@ def test_quantization_cleanup_rewrites_have_single_owner() -> None:
     function_names = {
         "_optimize_concat_pre_quantize_dequantize",
         "_optimize_terminal_quantize_dequantize",
+        "_optimize_transpose_dequantize_mean_quantize_bridges",
         "_quantized_tensors_share_exact_grid",
         "_sanitize_terminal_transpose_before_dequantize",
     }
@@ -7119,6 +7120,25 @@ def test_quantization_cleanup_rewrites_have_single_owner() -> None:
     assert "_rename_tensor_globally" in terminal_calls
     assert "remove_operator" in terminal_calls
     assert "insert_operator" in terminal_calls
+
+    mean_bridge_owner = pass_functions[
+        "_optimize_transpose_dequantize_mean_quantize_bridges"
+    ]
+    mean_bridge_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(mean_bridge_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in mean_bridge_calls
+    assert "_build_tensor_producer_map" not in mean_bridge_calls
+    assert "ModelIRGraphIndex" in mean_bridge_calls
+    assert "operator_indices" in mean_bridge_calls
+    assert "consumer_indices" in mean_bridge_calls
+    assert "_set_operator_inputs" in mean_bridge_calls
+    assert "insert_operator" in mean_bridge_calls
+    assert "remove_operator" in mean_bridge_calls
+    assert "_prune_unused_tensors" in mean_bridge_calls
 def test_attention_layout_rewrites_have_single_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

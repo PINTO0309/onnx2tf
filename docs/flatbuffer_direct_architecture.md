@@ -4155,6 +4155,25 @@ Extraction-time characterization compiles the complete former function AST
 and confirms exact ModelIR and both stats for each subphase with one and two
 simultaneous matches.
 
+The adjacent Transpose-Dequantize-keepdims-Mean-Quantize bridge is also owned
+by `passes/quantization_cleanup.py`. One index supplies graph-order pre-
+Transpose candidates and every exclusive linear-edge guard. A complete rewrite
+plan normalizes negative reduction axes, maps them through the permutation,
+computes Dequantize/Mean/bridge shapes and signatures, validates the
+permutation, and reserves unique bridge/perm tensor names before mutation.
+Commit then bypasses the pre-Transpose, rewrites axes and metadata, updates the
+Quantize edge, inserts the preserving Transpose immediately before Quantize,
+and removes the former pre-Transpose through the same maintained index.
+
+Valid one- and two-match fixtures retain complete former ModelIR and stats.
+Public/fan-out intermediates, shared axes, `keepDims=False`, invalid axes,
+missing tensors, and missing required operator families remain no-ops. The
+transactional preflight deliberately fixes one former rough edge: an invalid
+permutation used to mutate Dequantize/Mean metadata and axes before discovering
+that the output bridge could not be formed; it now leaves the complete ModelIR
+unchanged. A graph without all four required operator types still performs
+historical pruning without allocating an index.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
