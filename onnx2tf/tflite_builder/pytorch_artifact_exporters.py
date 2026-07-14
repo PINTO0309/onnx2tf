@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 from typing import Any, Callable, List, Optional
 
+from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.pytorch_export_errors import (
     ModelIRPyTorchExportError,
 )
@@ -15,6 +18,8 @@ from onnx2tf.tflite_builder.pytorch_exported_program_archive import (
     _strip_stack_traces_from_exported_program_archive,
 )
 from onnx2tf.tflite_builder.pytorch_export_support import (
+    _build_saved_model_backed_metadata_payload,
+    _build_tflite_backed_metadata_payload,
     _build_pytorch_export_example_inputs,
     _generated_package_non_native_skip_reason,
     _generated_package_torch_export_skip_reason,
@@ -25,9 +30,72 @@ from onnx2tf.tflite_builder.pytorch_export_support import (
     _sanitize_torchscript_file_stem,
     _write_generated_package_export_metadata,
 )
+from onnx2tf.tflite_builder.pytorch_package_sources import (
+    _write_generated_package_common_files,
+    _write_wrapper_model_file,
+)
 from onnx2tf.tflite_builder.pytorch_onnx_artifact_support import (
     _sanitize_dynamo_exported_onnx_metadata,
 )
+
+
+def export_pytorch_package_from_tflite_artifact(
+    *,
+    model_ir: ModelIR,
+    output_folder_path: str,
+    tflite_file_path: str,
+) -> str:
+    if not os.path.exists(tflite_file_path):
+        raise ModelIRPyTorchExportError(
+            f"TFLite-backed PyTorch package export requires an existing float32 TFLite file. path={tflite_file_path}"
+        )
+
+    os.makedirs(output_folder_path, exist_ok=True)
+    _write_generated_package_common_files(output_folder_path)
+    _write_wrapper_model_file(output_folder_path)
+
+    package_tflite_name = "model_float32.tflite"
+    shutil.copyfile(
+        str(tflite_file_path),
+        os.path.join(output_folder_path, package_tflite_name),
+    )
+    metadata = _build_tflite_backed_metadata_payload(
+        model_ir=model_ir,
+        tflite_file_name=package_tflite_name,
+    )
+    metadata_path = os.path.join(output_folder_path, "metadata.json")
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    return str(output_folder_path)
+
+
+def export_pytorch_package_from_saved_model_artifact(
+    *,
+    model_ir: ModelIR,
+    output_folder_path: str,
+    saved_model_path: str,
+) -> str:
+    if not os.path.exists(saved_model_path):
+        raise ModelIRPyTorchExportError(
+            f"SavedModel-backed PyTorch package export requires an existing SavedModel directory. path={saved_model_path}"
+        )
+
+    os.makedirs(output_folder_path, exist_ok=True)
+    _write_generated_package_common_files(output_folder_path)
+    _write_wrapper_model_file(output_folder_path)
+
+    package_saved_model_dir = os.path.join(output_folder_path, "saved_model")
+    if os.path.exists(package_saved_model_dir):
+        shutil.rmtree(package_saved_model_dir)
+    shutil.copytree(str(saved_model_path), package_saved_model_dir)
+    metadata = _build_saved_model_backed_metadata_payload(
+        model_ir=model_ir,
+        saved_model_dir_name="saved_model",
+    )
+    metadata_path = os.path.join(output_folder_path, "metadata.json")
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    return str(output_folder_path)
 
 
 def export_torchscript_from_generated_package(

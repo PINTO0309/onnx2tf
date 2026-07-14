@@ -14,14 +14,19 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_artifact_exporters import (
     _export_dynamo_onnx_from_generated_package,
     _export_exported_program_from_generated_package,
+    export_pytorch_package_from_saved_model_artifact,
+    export_pytorch_package_from_tflite_artifact,
     export_torchscript_from_generated_package,
 )
 from onnx2tf.tflite_builder.pytorch_export_support import (
     _build_metadata_payload,
+    _build_saved_model_backed_metadata_payload,
+    _build_tflite_backed_metadata_payload,
     _generated_package_non_native_skip_reason,
     _metadata_has_dynamic_public_inputs,
     _serializable_value,
 )
+from onnx2tf.tflite_builder.pytorch_export_errors import ModelIRPyTorchExportError
 from onnx2tf.tflite_builder.pytorch_exported_program_child import (
     _EXPORTED_PROGRAM_CHILD_SCRIPT,
 )
@@ -295,3 +300,127 @@ def test_metadata_payload_restores_public_boundary_contract() -> None:
             "version": 2,
         }
     ]
+
+
+def _backed_artifact_model_ir() -> ModelIR:
+    model_ir = ModelIR(name="backed_artifact", description="fixture")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": TensorIR(
+            name="x",
+            dtype="FLOAT32",
+            shape=[1, 3, 8, 8],
+            shape_signature=[1, 3, 8, 8],
+            logical_layout="NCHW",
+        ),
+        "constant": TensorIR(
+            name="constant",
+            dtype="FLOAT32",
+            shape=[1],
+            data=np.asarray([1.0], dtype=np.float32),
+        ),
+        "y": TensorIR(
+            name="y",
+            dtype="FLOAT32",
+            shape=[1, 4, 8, 8],
+            shape_signature=[1, 4, 8, 8],
+            logical_layout="NCHW",
+        ),
+    }
+    model_ir.metadata = {
+        "onnx_boundary_shape_signature_map": {
+            "x": [-1, 3, 8, 8],
+            "y": [-1, 4, 8, 8],
+        },
+        "onnx_public_layout_map": {"x": "NCHW", "y": "NCHW"},
+    }
+    return model_ir
+
+
+def test_backed_metadata_payloads_preserve_only_public_boundary_contract() -> None:
+    model_ir = _backed_artifact_model_ir()
+
+    tflite_metadata = _build_tflite_backed_metadata_payload(
+        model_ir=model_ir,
+        tflite_file_name="model_float32.tflite",
+    )
+    saved_model_metadata = _build_saved_model_backed_metadata_payload(
+        model_ir=model_ir,
+        saved_model_dir_name="saved_model",
+    )
+
+    assert tflite_metadata["execution_backend"] == "tflite"
+    assert tflite_metadata["tflite_file_name"] == "model_float32.tflite"
+    assert set(tflite_metadata["tensors"]) == {"x", "y"}
+    assert tflite_metadata["tensors"]["x"]["shape"] == [1, 3, 8, 8]
+    assert tflite_metadata["tensors"]["x"]["shape_signature"] == [-1, 3, 8, 8]
+    assert not tflite_metadata["tensors"]["x"]["has_data"]
+    assert saved_model_metadata["execution_backend"] == "saved_model"
+    assert saved_model_metadata["saved_model_dir_name"] == "saved_model"
+    assert "tflite_file_name" not in saved_model_metadata
+
+
+def test_tflite_backed_package_copies_only_requested_artifact(tmp_path) -> None:
+    source_path = tmp_path / "source.tflite"
+    source_path.write_bytes(b"tflite-flatbuffer")
+    output_path = tmp_path / "package"
+
+    result = export_pytorch_package_from_tflite_artifact(
+        model_ir=_backed_artifact_model_ir(),
+        output_folder_path=str(output_path),
+        tflite_file_path=str(source_path),
+    )
+
+    assert result == str(output_path)
+    assert (output_path / "model_float32.tflite").read_bytes() == b"tflite-flatbuffer"
+    assert not (output_path / "saved_model").exists()
+    metadata = json.loads((output_path / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["execution_backend"] == "tflite"
+
+
+def test_saved_model_backed_package_replaces_only_requested_artifact(tmp_path) -> None:
+    source_path = tmp_path / "source_saved_model"
+    source_path.mkdir()
+    (source_path / "saved_model.pb").write_bytes(b"saved-model")
+    output_path = tmp_path / "package"
+    stale_path = output_path / "saved_model"
+    stale_path.mkdir(parents=True)
+    (stale_path / "stale").write_text("remove", encoding="utf-8")
+
+    result = export_pytorch_package_from_saved_model_artifact(
+        model_ir=_backed_artifact_model_ir(),
+        output_folder_path=str(output_path),
+        saved_model_path=str(source_path),
+    )
+
+    assert result == str(output_path)
+    assert (
+        output_path / "saved_model" / "saved_model.pb"
+    ).read_bytes() == b"saved-model"
+    assert not (output_path / "saved_model" / "stale").exists()
+    assert not (output_path / "model_float32.tflite").exists()
+    metadata = json.loads((output_path / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["execution_backend"] == "saved_model"
+
+
+@pytest.mark.parametrize("artifact_kind", ["tflite", "saved_model"])
+def test_backed_package_export_rejects_missing_source_before_writing(
+    tmp_path,
+    artifact_kind: str,
+) -> None:
+    output_path = tmp_path / "missing_output"
+    with pytest.raises(ModelIRPyTorchExportError, match="requires an existing"):
+        if artifact_kind == "tflite":
+            export_pytorch_package_from_tflite_artifact(
+                model_ir=_backed_artifact_model_ir(),
+                output_folder_path=str(output_path),
+                tflite_file_path=str(tmp_path / "missing.tflite"),
+            )
+        else:
+            export_pytorch_package_from_saved_model_artifact(
+                model_ir=_backed_artifact_model_ir(),
+                output_folder_path=str(output_path),
+                saved_model_path=str(tmp_path / "missing_saved_model"),
+            )
+    assert not output_path.exists()

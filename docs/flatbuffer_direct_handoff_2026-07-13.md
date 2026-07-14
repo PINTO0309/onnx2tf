@@ -490,6 +490,16 @@ names, state serialization, and rejection before output creation. Wrapper and
 architecture validation passes 76 tests; Ruff, diff, and AST-equivalence checks
 pass. No model conversion or inference was run.
 
+TFLite-backed and SavedModel-backed PyTorch package exports now live in
+`pytorch_artifact_exporters.py`; their public-boundary-only metadata builders
+live in `pytorch_export_support.py`. The paths copy only the requested backing
+artifact and reject missing inputs before creating output. All four function
+ASTs match the prior exporter checkpoint. Five new direct cases fix dynamic
+boundary metadata, constant exclusion, TFLite-only and SavedModel-only output,
+stale SavedModel replacement, and missing-source no-op behavior. Artifact and
+architecture validation passes 90 tests; Ruff, diff, and AST-equivalence checks
+pass. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

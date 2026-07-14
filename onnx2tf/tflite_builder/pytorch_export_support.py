@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -14,10 +15,80 @@ import numpy as np
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     TensorIR,
+    infer_model_ir_logical_layouts,
     logical_layout_rank,
     normalize_logical_layout,
 )
 from onnx2tf.tflite_builder.pytorch_export_errors import ModelIRPyTorchExportError
+
+
+def _build_tflite_backed_metadata_payload(
+    *,
+    model_ir: ModelIR,
+    tflite_file_name: str,
+) -> Dict[str, Any]:
+    inferred = copy.deepcopy(model_ir)
+    infer_model_ir_logical_layouts(inferred)
+    boundary_shape_map = inferred.metadata.get("onnx_boundary_shape_signature_map", {})
+    if not isinstance(boundary_shape_map, dict):
+        boundary_shape_map = {}
+
+    public_tensor_names = {
+        str(name) for name in list(inferred.inputs) + list(inferred.outputs)
+    }
+    tensors: Dict[str, Dict[str, Any]] = {}
+    for tensor_name in sorted(public_tensor_names):
+        tensor = inferred.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            continue
+        tensor_meta = _serializable_tensor_meta(tensor)
+        boundary_shape = boundary_shape_map.get(str(tensor_name), None)
+        if isinstance(boundary_shape, list) and len(boundary_shape) == len(
+            tensor_meta["shape"]
+        ):
+            tensor_meta["shape"] = [
+                max(1, int(v)) if int(v) >= 0 else 1 for v in boundary_shape
+            ]
+            tensor_meta["shape_signature"] = [int(v) for v in boundary_shape]
+        tensor_meta["has_data"] = False
+        tensors[str(tensor_name)] = tensor_meta
+
+    current_public_layouts = {
+        str(name): normalize_logical_layout(inferred.tensors[str(name)].logical_layout)
+        for name in public_tensor_names
+        if str(name) in inferred.tensors
+    }
+    return {
+        "schema_version": 1,
+        "execution_backend": "tflite",
+        "name": str(inferred.name),
+        "description": str(inferred.description),
+        "inputs": [str(v) for v in inferred.inputs],
+        "outputs": [str(v) for v in inferred.outputs],
+        "tensors": tensors,
+        "operators": [],
+        "public_layouts": _serializable_value(
+            dict(inferred.metadata.get("onnx_public_layout_map", {}))
+        ),
+        "current_public_layouts": _serializable_value(current_public_layouts),
+        "boundary_shape_signatures": _serializable_value(boundary_shape_map),
+        "tflite_file_name": str(tflite_file_name),
+    }
+
+
+def _build_saved_model_backed_metadata_payload(
+    *,
+    model_ir: ModelIR,
+    saved_model_dir_name: str,
+) -> Dict[str, Any]:
+    metadata = _build_tflite_backed_metadata_payload(
+        model_ir=model_ir,
+        tflite_file_name="",
+    )
+    metadata["execution_backend"] = "saved_model"
+    metadata["saved_model_dir_name"] = str(saved_model_dir_name)
+    metadata.pop("tflite_file_name", None)
+    return metadata
 
 
 _NUMPY_DTYPE_BY_TENSOR_DTYPE: Dict[str, np.dtype] = {

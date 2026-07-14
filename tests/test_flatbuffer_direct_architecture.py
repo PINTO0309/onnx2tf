@@ -3613,6 +3613,42 @@ def test_torchscript_artifact_export_has_single_owner() -> None:
         assert "torch" not in top_level_imports
 
 
+def test_backed_pytorch_package_exports_and_metadata_have_single_owners() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    artifact_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_artifact_exporters.py"
+    ).read_text(encoding="utf-8")
+    support_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_export_support.py"
+    ).read_text(encoding="utf-8")
+
+    def _functions(source: str) -> set[str]:
+        return {
+            node.name
+            for node in ast.parse(source).body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+    exporter_functions = _functions(exporter_source)
+    artifact_functions = _functions(artifact_source)
+    support_functions = _functions(support_source)
+    for function_name in (
+        "export_pytorch_package_from_saved_model_artifact",
+        "export_pytorch_package_from_tflite_artifact",
+    ):
+        assert function_name in artifact_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," in exporter_source
+    for function_name in (
+        "_build_saved_model_backed_metadata_payload",
+        "_build_tflite_backed_metadata_payload",
+    ):
+        assert function_name in support_functions
+        assert function_name not in exporter_functions
+
+
 def test_dynamo_onnx_artifact_export_has_focused_owners() -> None:
     exporter_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"

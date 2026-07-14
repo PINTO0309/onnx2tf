@@ -197,6 +197,8 @@ from onnx2tf.tflite_builder.pytorch_source_rewrites import (
 from onnx2tf.tflite_builder.pytorch_artifact_exporters import (
     _export_dynamo_onnx_from_generated_package,
     _export_exported_program_from_generated_package,
+    export_pytorch_package_from_saved_model_artifact,
+    export_pytorch_package_from_tflite_artifact,
     export_torchscript_from_generated_package,
 )
 from onnx2tf.tflite_builder.pytorch_exported_program_archive import (
@@ -26665,71 +26667,6 @@ def _repair_exported_program_direct_conv_cf_add_targets(lines: List[str]) -> Lis
     return rewritten
 
 
-def _build_tflite_backed_metadata_payload(
-    *,
-    model_ir: ModelIR,
-    tflite_file_name: str,
-) -> Dict[str, Any]:
-    inferred = copy.deepcopy(model_ir)
-    infer_model_ir_logical_layouts(inferred)
-    boundary_shape_map = inferred.metadata.get("onnx_boundary_shape_signature_map", {})
-    if not isinstance(boundary_shape_map, dict):
-        boundary_shape_map = {}
-
-    public_tensor_names = {
-        str(name) for name in list(inferred.inputs) + list(inferred.outputs)
-    }
-    tensors: Dict[str, Dict[str, Any]] = {}
-    for tensor_name in sorted(public_tensor_names):
-        tensor = inferred.tensors.get(str(tensor_name), None)
-        if tensor is None:
-            continue
-        tensor_meta = _serializable_tensor_meta(tensor)
-        boundary_shape = boundary_shape_map.get(str(tensor_name), None)
-        if isinstance(boundary_shape, list) and len(boundary_shape) == len(tensor_meta["shape"]):
-            tensor_meta["shape"] = [max(1, int(v)) if int(v) >= 0 else 1 for v in boundary_shape]
-            tensor_meta["shape_signature"] = [int(v) for v in boundary_shape]
-        tensor_meta["has_data"] = False
-        tensors[str(tensor_name)] = tensor_meta
-
-    current_public_layouts = {
-        str(name): normalize_logical_layout(inferred.tensors[str(name)].logical_layout)
-        for name in public_tensor_names
-        if str(name) in inferred.tensors
-    }
-    return {
-        "schema_version": 1,
-        "execution_backend": "tflite",
-        "name": str(inferred.name),
-        "description": str(inferred.description),
-        "inputs": [str(v) for v in inferred.inputs],
-        "outputs": [str(v) for v in inferred.outputs],
-        "tensors": tensors,
-        "operators": [],
-        "public_layouts": _serializable_value(
-            dict(inferred.metadata.get("onnx_public_layout_map", {}))
-        ),
-        "current_public_layouts": _serializable_value(current_public_layouts),
-        "boundary_shape_signatures": _serializable_value(boundary_shape_map),
-        "tflite_file_name": str(tflite_file_name),
-    }
-
-
-def _build_saved_model_backed_metadata_payload(
-    *,
-    model_ir: ModelIR,
-    saved_model_dir_name: str,
-) -> Dict[str, Any]:
-    metadata = _build_tflite_backed_metadata_payload(
-        model_ir=model_ir,
-        tflite_file_name="",
-    )
-    metadata["execution_backend"] = "saved_model"
-    metadata["saved_model_dir_name"] = str(saved_model_dir_name)
-    metadata.pop("tflite_file_name", None)
-    return metadata
-
-
 def _extract_string_normalizer_config_from_onnx_graph(
     onnx_graph: Any,
 ) -> Optional[Dict[str, Any]]:
@@ -26910,65 +26847,6 @@ def _write_native_model_file_codegen_core_body_main_inner_impl(
     _build_native_constant_aliases(state, bindings)
     _emit_native_forward_lines(state, bindings)
     return _finalize_native_codegen(state, bindings)
-
-
-def export_pytorch_package_from_tflite_artifact(
-    *,
-    model_ir: ModelIR,
-    output_folder_path: str,
-    tflite_file_path: str,
-) -> str:
-    if not os.path.exists(tflite_file_path):
-        raise ModelIRPyTorchExportError(
-            f"TFLite-backed PyTorch package export requires an existing float32 TFLite file. path={tflite_file_path}"
-        )
-
-    os.makedirs(output_folder_path, exist_ok=True)
-    _write_generated_package_common_files(output_folder_path)
-    _write_wrapper_model_file(output_folder_path)
-
-    package_tflite_name = "model_float32.tflite"
-    shutil.copyfile(
-        str(tflite_file_path),
-        os.path.join(output_folder_path, package_tflite_name),
-    )
-    metadata = _build_tflite_backed_metadata_payload(
-        model_ir=model_ir,
-        tflite_file_name=package_tflite_name,
-    )
-    metadata_path = os.path.join(output_folder_path, "metadata.json")
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
-    return str(output_folder_path)
-
-
-def export_pytorch_package_from_saved_model_artifact(
-    *,
-    model_ir: ModelIR,
-    output_folder_path: str,
-    saved_model_path: str,
-) -> str:
-    if not os.path.exists(saved_model_path):
-        raise ModelIRPyTorchExportError(
-            f"SavedModel-backed PyTorch package export requires an existing SavedModel directory. path={saved_model_path}"
-        )
-
-    os.makedirs(output_folder_path, exist_ok=True)
-    _write_generated_package_common_files(output_folder_path)
-    _write_wrapper_model_file(output_folder_path)
-
-    package_saved_model_dir = os.path.join(output_folder_path, "saved_model")
-    if os.path.exists(package_saved_model_dir):
-        shutil.rmtree(package_saved_model_dir)
-    shutil.copytree(str(saved_model_path), package_saved_model_dir)
-    metadata = _build_saved_model_backed_metadata_payload(
-        model_ir=model_ir,
-        saved_model_dir_name="saved_model",
-    )
-    metadata_path = os.path.join(output_folder_path, "metadata.json")
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
-    return str(output_folder_path)
 
 
 def _should_prefer_tflite_backed_package(model_ir: ModelIR) -> bool:

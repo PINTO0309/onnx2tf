@@ -2218,6 +2218,13 @@ wrapper package, and imports Torch locally only when serializing the state dict.
 Its function AST is identical to the former exporter definition, while an
 unsupported ModelIR is rejected before any artifact directory is created.
 
+TFLite-backed and SavedModel-backed PyTorch package exports live with the other
+artifact writers in `pytorch_artifact_exporters.py`. Their public-boundary-only
+metadata builders live in `pytorch_export_support.py`. Both paths reuse the
+shared package scaffolding, copy only the explicitly requested backing artifact,
+and reject missing sources before creating output. All four function ASTs are
+identical to their former exporter definitions; neither path imports TensorFlow.
+
 ## Runtime-check memory boundary
 
 The direct backend releases the legacy GraphSurgeon graph before ModelIR
