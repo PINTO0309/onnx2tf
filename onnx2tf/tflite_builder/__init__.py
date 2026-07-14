@@ -535,10 +535,11 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 onnx_graph=onnx_graph,
             )
         except Exception as ex:
-            try:
-                _write_coverage_report(str(ex))
-            except Exception:
-                pass
+            if report_op_coverage:
+                try:
+                    _write_coverage_report(str(ex))
+                except Exception:
+                    pass
             raise
     finally:
         configure_pseudo_ops_wave1_targets(None)
@@ -626,10 +627,11 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             )
         run_model_ir_validation_pipeline(model_ir)
     except Exception as ex:
-        try:
-            _write_coverage_report(str(ex))
-        except Exception:
-            pass
+        if report_op_coverage:
+            try:
+                _write_coverage_report(str(ex))
+            except Exception:
+                pass
         raise
 
     export_progress_labels = _build_export_progress_labels(
@@ -686,8 +688,6 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             _set_export_progress_desc("op coverage report")
             _write_coverage_report(None)
             _advance_export_progress()
-        else:
-            _write_coverage_report(None)
 
         custom_ops_used, custom_op_nodes = collect_custom_op_artifact_metadata(
             model_ir

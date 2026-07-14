@@ -216,6 +216,42 @@ def test_custom_op_artifact_metadata_has_single_scan_owner() -> None:
     assert "custom_op_nodes_seen" not in builder_source
 
 
+def test_op_coverage_writer_is_called_only_when_requested() -> None:
+    builder_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py"
+    ).read_text(encoding="utf-8")
+    builder_tree = ast.parse(builder_source)
+    export_function = next(
+        node
+        for node in builder_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "export_tflite_model_flatbuffer_direct"
+    )
+    parent_by_id = {
+        id(child): parent
+        for parent in ast.walk(export_function)
+        for child in ast.iter_child_nodes(parent)
+    }
+    report_calls = [
+        node
+        for node in ast.walk(export_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_write_coverage_report"
+    ]
+    assert len(report_calls) == 3
+    for report_call in report_calls:
+        ancestor = parent_by_id.get(id(report_call))
+        guarded = False
+        while ancestor is not None and ancestor is not export_function:
+            if isinstance(ancestor, ast.If) and isinstance(ancestor.test, ast.Name):
+                if ancestor.test.id == "report_op_coverage":
+                    guarded = True
+                    break
+            ancestor = parent_by_id.get(id(ancestor))
+        assert guarded
+
+
 def test_high_rank_matmul_pass_and_prune_utility_have_single_owners() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

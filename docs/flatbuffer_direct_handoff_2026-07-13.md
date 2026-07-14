@@ -611,6 +611,12 @@ independent buffers. Identity and independence fixtures bring the focused
 split-planner suite to 13 passing tests. No model conversion or inference was
 run.
 
+All three op-coverage write call sites—preprocess failure, lowering failure,
+and successful export—now sit under the explicit request guard. An unrequested
+report no longer calls even the no-op wrapper. An AST ownership/gating test
+checks every call ancestor; architecture validation passes 80 tests. No model
+conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

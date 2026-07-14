@@ -18,6 +18,11 @@ The required stage order is:
 7. invoke only exporters selected by `ArtifactPlan`;
 8. adapt `ConversionResult` back to the legacy return dictionary.
 
+Optional artifact work is guarded at the call site as well as inside each
+exporter. In particular, op-coverage report writing is invoked only when
+`ArtifactPlan.op_coverage_report` is true on success and both failure paths;
+an unrequested report does not enter even the no-op wrapper.
+
 A pass has a stable ID, phase, priority, maximum iteration count, and explicit
 `changed` result. Repeating passes must use a graph fingerprint so a cycle
 terminates deterministically. Risky rewrites use the transactional mode and
