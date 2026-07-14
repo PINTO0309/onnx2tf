@@ -15,6 +15,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _infer_unique_channel_count_from_rank4_shape,
     _repair_binary_alignment_layout,
     _repair_cf_pool_target_shape,
+    _repair_cf_gather_slice_at,
     _repair_cf_reduce_max_axis,
     _repair_cf_resize_target_shape,
     _repair_cf_softmax_axis,
@@ -24,6 +25,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_split_axis_from_consumers,
     _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
+    _propagate_cf_prelu_output,
 )
 
 
@@ -312,3 +314,17 @@ def test_softmax_and_reduce_max_repairs_use_channel_first_axis() -> None:
     assert reduce_lhs == "maximum"
     assert rewritten_reduce is not None
     assert "_normalize_axes([1], input_cf.ndim)" in rewritten_reduce
+
+
+def test_prelu_and_gather_slice_propagate_channel_first_layout() -> None:
+    cf_like_names = {"input_cf"}
+
+    assert _propagate_cf_prelu_output(
+        "        prelu_out = self.prelu_0(input_cf)",
+        cf_like_names,
+    )
+    lines = ["        gathered = prelu_out[:, :, :, [0, 2]]"]
+    assert _repair_cf_gather_slice_at(0, lines, cf_like_names)
+
+    assert {"prelu_out", "gathered"} <= cf_like_names
+    assert lines == ["        gathered = prelu_out[:, [0, 2], :, :]"]

@@ -1434,6 +1434,16 @@ tests (95 unrelated architecture tests deselected), syntax validation and
 `git diff --check` pass, and the orchestrator shrank from 1,088 to 1,065 lines.
 No model conversion or inference was run.
 
+PReLU channel-first evidence propagation and channel-last Gather-slice axis
+repair now live in focused fast-precanonicalize policy helpers. PReLU owns its
+single module-call pattern; Gather reuses the existing shared decoder and
+preserves indentation/index expressions while moving the slice from axis 3 to
+axis 1. A synthetic PReLU→Gather chain proves both evidence updates and the
+rewrite. Sixteen focused policy/ownership tests pass (95 unrelated architecture
+tests deselected), together with Ruff, syntax validation, and `git diff --check`;
+the orchestrator shrank from 1,065 to 1,039 lines and the exporter by net 24
+lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

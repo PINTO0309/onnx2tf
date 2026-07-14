@@ -132,10 +132,12 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_concat_axis_from_input_layouts,
     _repair_dynamic_cf_binary_anchor_at,
     _repair_dynamic_cf_binary_anchor_shapes,
+    _repair_cf_gather_slice_at,
     _repair_nhwc_average_pool_binary_bridge,
     _repair_split_axis_from_consumers,
     _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
+    _propagate_cf_prelu_output,
     _restore_channel_last_spatial_pool_chains,
 )
 from onnx2tf.tflite_builder.pytorch_fusion_policy import (
@@ -7271,17 +7273,11 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.reshape\((?P<input>[A-Za-z0-9_]+), "
         r"(?:_resolve_reshape_shape\(\[(?P<resolved_shape>[0-9,\- ]+)\], (?P=input), allow_zero=False\)|\[(?P<shape>[0-9,\- ]+)\])\)$"
     )
-    prelu_assign_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*self\.prelu_[0-9]+\((?P<input>[A-Za-z0-9_]+)\)$"
-    )
     channel_last_prelu_consumer_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*self\.prelu_[0-9]+\((?P<input>[A-Za-z0-9_]+)\.permute\(0, 3, 1, 2\)\.contiguous\(\)\)\.permute\(0, 2, 3, 1\)\.contiguous\(\)$"
     )
     permuted_conv_input_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*self\.(?P<module>conv_block_[0-9]+)\((?P<input>[A-Za-z0-9_]+)\.permute\(0, 3, 1, 2\)\.contiguous\(\)\)$"
-    )
-    gather_slice_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<input>[A-Za-z0-9_]+)\[:, :, :, \[(?P<indices>[0-9,\s-]+)\]\]$"
     )
     depth_to_space_nhwc_gather_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<input>[A-Za-z0-9_]+)\[:, \[(?P<indices>[0-9,\s-]+)\], :, :\]$"
@@ -8174,15 +8170,7 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                     f"[1, 2, {target_height}, {target_width}])"
                 )
                 changed = True
-        prelu_match = prelu_assign_re.match(line)
-        if prelu_match is not None:
-            input_name = str(prelu_match.group("input"))
-            if (
-                input_name in cf_like_names
-                or input_name.endswith("_cf")
-                or input_name.endswith("_out_cf")
-            ):
-                cf_like_names.add(str(prelu_match.group("lhs")))
+        _propagate_cf_prelu_output(line, cf_like_names)
         depth_to_space_nhwc_gather_match = depth_to_space_nhwc_gather_re.match(line)
         if depth_to_space_nhwc_gather_match is not None:
             input_name = str(depth_to_space_nhwc_gather_match.group("input"))
@@ -8281,20 +8269,8 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                     f"[{depth_to_space_nhwc_gather_match.group('indices')}]]"
                 )
                 changed = True
-        gather_slice_match = gather_slice_re.match(line)
-        if gather_slice_match is not None:
-            input_name = str(gather_slice_match.group("input"))
-            if (
-                input_name in cf_like_names
-                or input_name.endswith("_cf")
-                or input_name.endswith("_out_cf")
-            ):
-                lines[index] = (
-                    f"{gather_slice_match.group('indent')}{gather_slice_match.group('lhs')} = "
-                    f"{input_name}[:, [{gather_slice_match.group('indices')}], :, :]"
-                )
-                cf_like_names.add(str(gather_slice_match.group("lhs")))
-                changed = True
+        if _repair_cf_gather_slice_at(index, lines, cf_like_names):
+            changed = True
         if _repair_singleton_reshape_cf_binary_at(
             index,
             lines,

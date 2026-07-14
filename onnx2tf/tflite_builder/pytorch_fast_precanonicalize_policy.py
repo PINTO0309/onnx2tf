@@ -17,6 +17,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_align_tensor_target_shape_expr,
     _parse_binary_add_args,
     _parse_binary_mul_args,
+    _parse_channel_last_gather_slice_assign,
     _parse_constant_pad_assign,
     _parse_dynamic_binary_align_assign,
     _parse_int_list_literal,
@@ -43,6 +44,10 @@ _SINGLETON_RESHAPE_CF_BINARY_RE = re.compile(
 _SIMPLE_CF_BINARY_EXPR_RE = re.compile(
     r"^torch\.(?P<op>mul|add|sub|div|minimum|maximum)\("
     r"(?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\)$"
+)
+_PRELU_ASSIGN_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*"
+    r"self\.prelu_[0-9]+\((?P<input>[A-Za-z0-9_]+)\)$"
 )
 
 
@@ -1552,3 +1557,49 @@ def _repair_cf_reduce_max_axis(
         f"{keepdims_expr})"
     )
     return rewritten, lhs_name
+
+
+def _propagate_cf_prelu_output(
+    line: str,
+    dynamic_cf_like_names: Set[str],
+) -> bool:
+    prelu_match = _PRELU_ASSIGN_RE.match(line)
+    if prelu_match is None:
+        return False
+    input_name = str(prelu_match.group("input"))
+    if not (
+        input_name in dynamic_cf_like_names
+        or input_name.endswith("_cf")
+        or input_name.endswith("_out_cf")
+    ):
+        return False
+    lhs_name = str(prelu_match.group("lhs"))
+    was_present = lhs_name in dynamic_cf_like_names
+    dynamic_cf_like_names.add(lhs_name)
+    return not was_present
+
+
+def _repair_cf_gather_slice_at(
+    index: int,
+    lines: List[str],
+    dynamic_cf_like_names: Set[str],
+) -> bool:
+    if index < 0 or index >= len(lines):
+        return False
+    gather_assign = _parse_channel_last_gather_slice_assign(lines[index])
+    simple_assign = _parse_simple_assignment_line(lines[index])
+    if gather_assign is None or simple_assign is None:
+        return False
+    lhs_name, input_name, indices_expr = gather_assign
+    if not (
+        input_name in dynamic_cf_like_names
+        or input_name.endswith("_cf")
+        or input_name.endswith("_out_cf")
+    ):
+        return False
+    lines[index] = (
+        f"{simple_assign[0]}{lhs_name} = "
+        f"{input_name}[:, [{indices_expr}], :, :]"
+    )
+    dynamic_cf_like_names.add(lhs_name)
+    return True

@@ -2065,6 +2065,10 @@ The singleton-reshape-to-CF-binary repair is another focused rule in this
 owner. Its local patterns, feature-axis guard, following binary relationship,
 rewrite, and CF evidence update are applied atomically through one indexed
 helper; the orchestrator retains only its ordered call.
+PReLU output evidence propagation and channel-last Gather-slice repair are also
+focused rules in this owner. PReLU retains one rule-local module-call pattern;
+Gather reuses the shared assignment decoder and rewrites only CF-like inputs
+from axis 3 to axis 1 while recording the output as CF-like.
 Channel-first Softmax and ReduceMax axis repair also use focused parser-backed
 helpers in this owner. Softmax preserves beta and moves the rank-four target
 channel; ReduceMax preserves keepdims and changes only axis 3 to axis 1. Pool
