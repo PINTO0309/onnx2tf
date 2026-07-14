@@ -4678,6 +4678,37 @@ but now remain complete no-ops. Consistent dynamic batch, spatial, and channel
 signatures are preserved without introducing a Reshape. The sole production
 call supplies the Session LayoutState.
 
+The adjacent rank-four Conv1D-shim variant is owned by the same module. Its
+exact chain is an NHWC rank-four source, Transpose `[0,3,1,2]`, a supported
+unary, Transpose `[0,2,1,3]`, Reshape from `[1,H,C,W]` to `[H,C,W]`,
+ExpandDims at axis two, and Transpose `[0,2,3,1]`. The indexed rewrite removes
+the three Transposes, runs the unary directly on NHWC, changes the Reshape
+target to `[H,W,C]`, and changes ExpandDims to axis one. The original unary,
+Reshape, and ExpandDims objects retain their options, version, axis semantics,
+and ONNX provenance.
+
+All data tensors satisfy exact shape/signature permutation equations, strict
+producer and consumer ordering, compatible dtypes, and valid per-tensor
+quantization. CAST may transition dtype; other supported unary operators may
+not. Permutation, shape, and axis tensors are typed producer-free integer
+vectors and are not public inputs or outputs. At most one retained Reshape
+dimension may be dynamic. Shared Reshape-shape or ExpandDims-axis constants
+are cloned before their consumer edge changes; private constants update in
+place. Quantization and constant clones are prepared before graph mutation, so
+clone failure leaves ModelIR unchanged.
+
+When the rank-three Reshape output has side consumers, the owner inserts one
+`[0,2,1]` compatibility Transpose immediately before the earliest side
+consumer and rewires only those consumers. The primary ExpandDims branch stays
+in HWC order. This preserves the former side-branch values while fixing the
+legacy helper's locally non-topological append order. Without fan-out, static
+public-input, produced-input, quantized, and CAST fixtures retain exact former
+ModelIR and statistics. Floating or produced constants, inconsistent metadata,
+mixed dtypes, duplicate producers, backward consumers, and public
+intermediates are complete no-ops. One supplied or locally constructed
+`ModelIRGraphIndex` is maintained across all matches, and the sole production
+call supplies the Session LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
