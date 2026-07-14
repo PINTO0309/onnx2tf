@@ -7259,9 +7259,8 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     const_channel_counts: Dict[str, int] = dict(repair_context.const_channel_counts)
     conv_block_out_channels: Dict[str, int] = dict(repair_context.conv_block_out_channels)
     module_output_producers: Dict[str, str] = dict(repair_context.module_output_producers)
-    registered_buffer_shapes: Dict[str, List[int]] = {}
-    register_buffer_re = re.compile(
-        r"^\s*self\.register_buffer\('(?P<name>[A-Za-z0-9_]+)', torch\.zeros\(\[(?P<shape>[0-9, ]+)\], dtype=torch\.[A-Za-z0-9_]+\), persistent=(?:True|False)\)$"
+    registered_buffer_shapes: Dict[str, List[int]] = dict(
+        repair_context.registered_buffer_shapes
     )
     singleton_reshape_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.reshape\((?P<expr>.+), \[(?P<n>\d+), 1, (?P<h>\d+), (?P<w>\d+)\]\)$"
@@ -7333,13 +7332,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
         r"^(?P<indent>\s*)(?P<lhs0>[A-Za-z0-9_]+)\s*,\s*(?P<lhs1>[A-Za-z0-9_]+)\s*=\s*_align_binary_inputs\("
         r"(?P<input>[A-Za-z0-9_]+), self\.(?P<const_attr>[A-Za-z0-9_]+), \[1, 2, (?P<h>\d+), (?P<w>\d+)\]\)$"
     )
-    for line in lines:
-        register_buffer_match = register_buffer_re.match(line)
-        if register_buffer_match is None:
-            continue
-        shape_values = _parse_int_list_literal(str(register_buffer_match.group("shape")))
-        if len(shape_values) == 4:
-            registered_buffer_shapes[str(register_buffer_match.group("name"))] = shape_values
     for index, line in enumerate(lines[:-1]):
         simple_alias_match = simple_alias_re.match(line)
         if simple_alias_match is not None:

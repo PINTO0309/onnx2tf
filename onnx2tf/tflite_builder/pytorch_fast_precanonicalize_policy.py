@@ -136,6 +136,7 @@ class _FastPrecanonicalizeRepairContext:
     cf_like_names: Set[str]
     nhwc_like_names: Set[str]
     const_channel_counts: Dict[str, int]
+    registered_buffer_shapes: Dict[str, List[int]]
     conv_block_in_channels: Dict[str, int]
     conv_block_out_channels: Dict[str, int]
     module_output_producers: Dict[str, str]
@@ -178,6 +179,7 @@ def _build_fast_precanonicalize_repair_context(
     cf_like_names: Set[str] = set()
     nhwc_like_names: Set[str] = set()
     const_channel_counts: Dict[str, int] = {}
+    registered_buffer_shapes: Dict[str, List[int]] = {}
     conv_block_in_channels: Dict[str, int] = {}
     conv_block_out_channels: Dict[str, int] = {}
     module_output_producers: Dict[str, str] = {}
@@ -262,9 +264,14 @@ def _build_fast_precanonicalize_repair_context(
         register_buffer_match = register_buffer_re.match(line)
         if register_buffer_match is not None:
             shape_values = _parse_int_list_literal(str(register_buffer_match.group("shape")))
+            buffer_name = str(register_buffer_match.group("name"))
+            if len(shape_values) == 4:
+                registered_buffer_shapes[buffer_name] = [
+                    int(value) for value in shape_values
+                ]
             non_singleton_dims = [value for value in shape_values if value != 1]
             if len(non_singleton_dims) == 1:
-                const_channel_counts[str(register_buffer_match.group("name"))] = int(non_singleton_dims[0])
+                const_channel_counts[buffer_name] = int(non_singleton_dims[0])
         module_output_assign_match = module_output_assign_re.match(line)
         if module_output_assign_match is not None:
             lhs_name = str(module_output_assign_match.group("lhs"))
@@ -396,6 +403,7 @@ def _build_fast_precanonicalize_repair_context(
         cf_like_names=cf_like_names,
         nhwc_like_names=nhwc_like_names,
         const_channel_counts=const_channel_counts,
+        registered_buffer_shapes=registered_buffer_shapes,
         conv_block_in_channels=conv_block_in_channels,
         conv_block_out_channels=conv_block_out_channels,
         module_output_producers=module_output_producers,

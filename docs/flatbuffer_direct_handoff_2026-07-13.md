@@ -1341,6 +1341,16 @@ unrelated architecture tests deselected), together with syntax validation and
 `git diff --check`; the exporter shrank by another 28 lines. No model conversion
 or inference was run.
 
+Rank-four registered-buffer shapes are now part of
+`_FastPrecanonicalizeRepairContext` and are collected beside existing buffer
+channel evidence in its single source scan. The fast-precanonicalize
+orchestrator consumes a copy of that map, removing its duplicate buffer regex
+and independent full-line pass while preserving the tensor-786 constant
+alignment lookup. Twelve focused policy/ownership tests pass (95 unrelated
+architecture tests deselected), together with Ruff, syntax validation, an AST
+loop-boundary check, and `git diff --check`. The orchestrator shrank from 1,266
+to 1,258 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

@@ -56,6 +56,7 @@ def test_fast_precanonicalize_context_collects_module_and_alias_evidence() -> No
     context = _build_fast_precanonicalize_repair_context(lines)
 
     assert context.const_channel_counts == {"scale": 3}
+    assert context.registered_buffer_shapes == {"scale": [1, 3, 1, 1]}
     assert context.conv_block_in_channels == {"conv_block_0": 3}
     assert context.conv_block_out_channels == {"conv_block_0": 8}
     assert context.module_output_producers == {"out_cf": "conv_block_0"}

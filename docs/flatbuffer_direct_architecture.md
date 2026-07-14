@@ -2030,6 +2030,9 @@ without maintaining local duplicates. Its dataclass, one-pass source-line
 collector, alias resolver, and CF/NHWC classification helpers are co-located in
 the same owner. The collector records static shapes, consumers, buffer channel
 counts, Conv block arity, module edges, and propagated alias layout evidence.
+It also records complete rank-four registered-buffer shapes during that same
+source scan. The orchestrator reuses this map for constant-alignment repair and
+does not compile another buffer regex or rescan every generated source line.
 Preferred channel selection, scored consumer-layout inference, and recursive
 channel-last spatial-consumer detection query the same context in this owner.
 They remain conservative when source evidence ties or cycles.
