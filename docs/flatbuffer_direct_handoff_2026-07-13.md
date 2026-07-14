@@ -462,6 +462,17 @@ key-mismatch, and missing-data behavior. State-dict and architecture validation
 passes 78 tests; Ruff, diff, and AST-equivalence checks pass. No model conversion
 or inference was run.
 
+Generated package scaffolding now lives in the Torch-free
+`pytorch_package_sources.py`. Common initializer/runtime files, wrapper model
+source, native runtime assembly, and the idempotent Pool2D channel-last recovery
+patch share one owner across native, TFLite-backed, and SavedModel-backed
+packages. All four function ASTs match the prior exporter checkpoint. Six
+direct filesystem/source tests fix default and explicit runtime content, public
+wrapper methods, ordered/idempotent patching, no-op boundaries, and annotation
+normalization. Package-source and architecture validation passes 79 tests;
+Ruff, diff, and AST-equivalence checks pass. No model conversion or inference
+was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

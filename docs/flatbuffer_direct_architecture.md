@@ -2200,6 +2200,14 @@ mapping have one owner. The module has no eager Torch import: Torch is loaded
 only inside tensor materialization after a PyTorch artifact has been requested.
 All three function ASTs are identical to their former exporter definitions.
 
+Generated package scaffolding lives in the Torch-free
+`pytorch_package_sources.py`. The common package initializer/runtime bridge,
+wrapper model source, native runtime source assembly, and idempotent Pool2D
+channel-last recovery patch are shared by native, TFLite-backed, and
+SavedModel-backed packages. All four function ASTs are identical to their
+former exporter definitions; Torch references exist only in generated source
+strings and do not import Torch while the conversion modules are loaded.
+
 ## Runtime-check memory boundary
 
 The direct backend releases the legacy GraphSurgeon graph before ModelIR

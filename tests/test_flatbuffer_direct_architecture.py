@@ -71,6 +71,7 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_layout_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_indexing_codegen.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_naming.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_package_sources.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_layout_passes.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_onnx_bridge_passes.py",
@@ -4011,6 +4012,36 @@ def test_native_pytorch_state_dict_support_has_single_owner_and_lazy_torch() -> 
         and any(alias.name == "torch" for alias in node.names)
     ]
     assert len(prepare_imports) == 1
+
+
+def test_generated_pytorch_package_sources_have_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    package_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_package_sources.py"
+    ).read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    package_functions = {
+        node.name
+        for node in ast.parse(package_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    moved_functions = (
+        "_build_native_runtime_source",
+        "_patch_generated_runtime_pool2d_channel_last_recovery",
+        "_write_generated_package_common_files",
+        "_write_wrapper_model_file",
+    )
+    for function_name in moved_functions:
+        assert function_name in package_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," in exporter_source
 
 
 def test_pytorch_capability_registry_has_single_owner() -> None:
