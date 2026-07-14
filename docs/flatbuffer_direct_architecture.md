@@ -4254,8 +4254,8 @@ historical tensor and optional LayoutState pruning without index construction.
 
 All marker, permutation, arity, producer, consumer, public-input/output, and
 operator-order guards complete before mutation. A terminal output cannot also
-be a graph input. Rank-four source
-shape/signature and a destination tensor are also required, and source
+be a graph input. Rank-four source shape/signature and a destination tensor are
+also required, and source
 quantization is cloned before commit. The existing public tensor object and
 its provenance remain stable while dtype, quantization, shape, and signature
 take the retained Softmax output metadata; every other Softmax option,
@@ -4265,6 +4265,31 @@ Softmax output is also public, and deleting the adapter when its source tensor
 metadata is absent. Exact former-function AST comparison confirms complete
 ModelIR, lineage, and statistics equality for valid one- and two-output
 fixtures.
+
+Pre-ArgMax channel-layout cleanup is owned by
+`passes/terminal_argmax_layout.py`. One optional or local
+`ModelIRGraphIndex` enumerates graph-order Transposes, proves each private
+adapter's sole topologically later ArgMax consumer, tracks axis-constant
+ownership, applies lineage-aware data/axis rewiring, and removes the adapter
+differentially. Independent matches and changes from shared to private axis
+ownership therefore reuse the same current index. Graphs missing either
+required operator family retain historical tensor and optional LayoutState
+pruning without index construction; successful calls synchronize LayoutState
+after registering any cloned constant and pruning dead tensors.
+
+The accepted adapter is exactly rank-four `[0,3,1,2]`. A singleton signed
+INT32/INT64 axis must normalize to NCHW channel axis one and maps to NHWC axis
+three. Source and adapter shape/signature must be the exact permutation, the
+ArgMax output metadata must equal the rank-reduced NHWC prefix, and source and
+adapter dtypes must agree. The adapter output cannot cross either public
+boundary or fan out. Private axis constants retain in-place update semantics;
+shared constants and constants at either public boundary receive a uniquely
+named clone with preserved NumPy dtype and cloned quantization. All metadata,
+clone, topology, and public-boundary decisions finish before mutation. This
+deliberately prevents the former rule from changing a public axis output from
+one to three or removing the producer of a public-input adapter tensor. Exact
+former-function AST comparison confirms complete ModelIR, lineage, and
+statistics equality for valid private, shared, and negative-axis fixtures.
 
 ## Managed-corpus SWAP exclusion policy
 

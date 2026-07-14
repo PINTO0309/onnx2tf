@@ -270,6 +270,9 @@ from onnx2tf.tflite_builder.passes.terminal_softmax_layout import (
     _SOFTMAX_NHWC_PROPAGATED_MARKER,
     _optimize_terminal_softmax_transpose_after_nhwc_propagation as _optimize_terminal_softmax_transpose_after_nhwc_propagation_pass,
 )
+from onnx2tf.tflite_builder.passes.terminal_argmax_layout import (
+    _optimize_transpose_pre_argmax_nhwc_terminal_chains as _optimize_transpose_pre_argmax_nhwc_terminal_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.split_fallback import (
     replace_unsupported_split_with_slice as _replace_unsupported_split_with_slice_pass,
 )
@@ -44094,112 +44097,13 @@ def _optimize_terminal_softmax_transpose_after_nhwc_propagation(
 
 def _optimize_transpose_pre_argmax_nhwc_terminal_chains(
     model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    """
-    Remove redundant NHWC->NCHW transpose immediately before ARG_MAX by remapping axis.
-
-    Target:
-      x_nhwc --TRANSPOSE(0,3,1,2)--> x_nchw --ARG_MAX(axis=1)--> y
-
-    Rewrite:
-      x_nhwc --ARG_MAX(axis=3)--> y
-
-    Safety:
-    - Transpose output has single consumer (ARG_MAX).
-    - ARG_MAX axis is constant and resolves to channel axis=1 in NCHW.
-    - Rank-4 transpose permutation is exactly [0,3,1,2].
-    """
-    rewritten = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-
-    def _unique_tensor_name(base: str) -> str:
-        name = str(base)
-        suffix = 1
-        while name in model_ir.tensors:
-            name = f"{base}_{suffix}"
-            suffix += 1
-        return name
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
-                continue
-
-            pre_input_name = str(pre_op.inputs[0])
-            pre_output_name = str(pre_op.outputs[0])
-            if pre_input_name in model_ir.outputs or pre_output_name in model_ir.outputs:
-                continue
-
-            pre_users = [int(v) for v in consumers.get(pre_output_name, [])]
-            if len(pre_users) != 1:
-                continue
-            argmax_idx = int(pre_users[0])
-            argmax_op = model_ir.operators[int(argmax_idx)]
-            if str(argmax_op.op_type) != "ARG_MAX" or len(argmax_op.inputs) < 2 or len(argmax_op.outputs) != 1:
-                continue
-            if str(argmax_op.inputs[0]) != pre_output_name:
-                continue
-
-            axis_name = str(argmax_op.inputs[1])
-            axis_tensor = model_ir.tensors.get(axis_name, None)
-            axis_vals = _read_const_ints_from_tensor(axis_tensor)
-            if axis_vals is None or len(axis_vals) != 1:
-                continue
-
-            axis_old = int(axis_vals[0])
-            if axis_old < 0:
-                axis_old += 4
-            # Restrict to channel-axis argmax in NCHW to preserve output ordering.
-            if int(axis_old) != 1:
-                continue
-            axis_new = int(perm_nhwc_to_nchw[int(axis_old)])
-
-            axis_users = [int(v) for v in consumers.get(axis_name, [])]
-            axis_input_name = str(axis_name)
-            if axis_users == [int(argmax_idx)]:
-                if not _write_const_ints_to_tensor(axis_tensor, [int(axis_new)]):
-                    # value may already be rewritten in prior sweep
-                    pass
-            else:
-                axis_input_name = _unique_tensor_name(f"{axis_name}_nhwc")
-                np_dtype = np.int32
-                if axis_tensor is not None and axis_tensor.data is not None:
-                    try:
-                        np_dtype = np.asarray(axis_tensor.data).dtype
-                    except Exception:
-                        np_dtype = np.int32
-                axis_data = np.asarray([int(axis_new)], dtype=np_dtype)
-                model_ir.tensors[axis_input_name] = TensorIR(
-                    name=axis_input_name,
-                    dtype=str(axis_tensor.dtype) if axis_tensor is not None else "INT32",
-                    shape=[1],
-                    shape_signature=[1],
-                    data=axis_data,
-                    is_variable=False,
-                    quantization=_clone_quantization(axis_tensor.quantization if axis_tensor is not None else None),
-                )
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=argmax_op,
-                new_inputs=[str(pre_input_name), str(axis_input_name)],
-            )
-
-            del model_ir.operators[int(pre_idx)]
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"optimized_transpose_pre_argmax_nhwc_terminal_chains": int(rewritten)}
+    return _optimize_transpose_pre_argmax_nhwc_terminal_chains_pass(
+        model_ir,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_transpose_gather_transpose_nhwc_channel_chains(
@@ -48062,7 +47966,10 @@ def lower_onnx_to_ir(
         enable_conv_add_only_fold=True,
     )
     _optimize_fuse_conv_activation_chains(model_ir)
-    _optimize_transpose_pre_argmax_nhwc_terminal_chains(model_ir)
+    _optimize_transpose_pre_argmax_nhwc_terminal_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     run_transpose_gather_channel_fanout_cleanup(
         model_ir,
         layout_state=session.layout_state,
