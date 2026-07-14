@@ -2225,6 +2225,13 @@ shared package scaffolding, copy only the explicitly requested backing artifact,
 and reject missing sources before creating output. All four function ASTs are
 identical to their former exporter definitions; neither path imports TensorFlow.
 
+Fallback package preference lives in the Torch-free
+`pytorch_package_selection.py`. Recurrent/control and length-input exclusions,
+transpose-convolution and channel-first Softmax signals, and the established
+large-graph structural thresholds are evaluated independently from artifact
+writing. TFLite-backed and SavedModel-backed selection share this single policy;
+both function ASTs are identical to their former exporter definitions.
+
 ## Runtime-check memory boundary
 
 The direct backend releases the legacy GraphSurgeon graph before ModelIR

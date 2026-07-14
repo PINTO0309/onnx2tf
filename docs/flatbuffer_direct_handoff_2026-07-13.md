@@ -500,6 +500,15 @@ stale SavedModel replacement, and missing-source no-op behavior. Artifact and
 architecture validation passes 90 tests; Ruff, diff, and AST-equivalence checks
 pass. No model conversion or inference was run.
 
+Fallback package preference now lives in the Torch-free
+`pytorch_package_selection.py`. Recurrent/control and length-input guards,
+transpose-convolution and channel-first Softmax signals, rank-three detection
+counts, and all large NHWC thresholds have one owner shared by TFLite and
+SavedModel fallback. Both function ASTs match the prior exporter checkpoint.
+Fourteen direct cases characterize every guard and threshold family. Selection
+and architecture validation passes 89 tests; Ruff, diff, and AST-equivalence
+checks pass. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

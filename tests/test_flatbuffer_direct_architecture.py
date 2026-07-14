@@ -72,6 +72,7 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_indexing_codegen.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_naming.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_package_sources.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_package_selection.py",
     REPO_ROOT
     / "onnx2tf"
     / "tflite_builder"
@@ -4085,6 +4086,34 @@ def test_generated_pytorch_package_sources_have_single_owner() -> None:
         assert function_name in package_functions
         assert function_name not in exporter_functions
         assert f"{function_name}," in exporter_source
+
+
+def test_pytorch_backed_package_selection_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    selection_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_package_selection.py"
+    ).read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    selection_functions = {
+        node.name
+        for node in ast.parse(selection_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    for function_name in (
+        "_should_prefer_saved_model_backed_package",
+        "_should_prefer_tflite_backed_package",
+    ):
+        assert function_name in selection_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," in exporter_source
+    assert "import torch" not in selection_source
 
 
 def test_pytorch_runtime_wrapper_export_has_single_owner_and_lazy_torch() -> None:
