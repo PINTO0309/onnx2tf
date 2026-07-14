@@ -384,6 +384,112 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
     ]
 
 
+def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_attention_gate_qdq_recovery_sequence"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains",
+        "_optimize_sinet_mix_attention_double_logistic_nhwc_chains",
+        "_run_gate_layout_pass_cluster",
+        "_optimize_transposeconv_output_nhwc_passthrough_chains",
+        "_optimize_transposeconv_output_channel1_terminal_transpose_chains",
+        "_run_transpose_unary_fanout_layout_pass_cluster",
+        "_optimize_transpose_dequant_relu_quantize_bridges",
+        "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
+        "run_trailing_output_transpose_cleanup",
+        "_optimize_transpose_dequant_mul_add_prelu_quantize_bridges",
+    ]
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert [call.func.id for call in helper_calls] == expected_order
+    trailing_call = helper_calls[-2]
+    assert all(keyword.arg != "state_scope" for keyword in trailing_call.keywords)
+
+    helper_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+    ]
+    assert len(helper_invocations) == 3
+
+    outer_helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_run_layout_attention_quantized_recovery_suffix"
+    )
+    outer_index = next(
+        index
+        for index, statement in enumerate(outer_helper.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == helper_name
+    )
+    assert outer_helper.body[outer_index - 1].value.func.id == (
+        "_run_mean_attention_layout_pass_cluster"
+    )
+    assert outer_helper.body[outer_index + 1].value.func.id == (
+        "_run_duplicate_quantized_prelu_pass_cluster"
+    )
+
+    direct_boundaries = []
+    for statement in lowerer.body:
+        if not (
+            isinstance(statement, ast.If)
+            and isinstance(statement.test, ast.Name)
+            and statement.test.id == "optimize_layout_transpose_chains"
+        ):
+            continue
+        for index, candidate in enumerate(statement.body):
+            if not (
+                isinstance(candidate, ast.Expr)
+                and isinstance(candidate.value, ast.Call)
+                and isinstance(candidate.value.func, ast.Name)
+                and candidate.value.func.id == helper_name
+            ):
+                continue
+            direct_boundaries.append(
+                (statement.body[index - 1].value, statement.body[index + 1].value)
+            )
+    assert len(direct_boundaries) == 2
+    assert [previous.func.id for previous, _ in direct_boundaries] == [
+        "_run_mean_attention_layout_pass_cluster",
+        "_run_mean_attention_layout_pass_cluster",
+    ]
+    assert [following.func.id for _, following in direct_boundaries] == [
+        "run_quantized_prelu_cleanup",
+        "_optimize_dequant_transposeconv_quantize_chains",
+    ]
+    assert any(
+        keyword.arg == "include_layernorm"
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value is True
+        for keyword in direct_boundaries[0][0].keywords
+    )
+    assert direct_boundaries[1][0].keywords == []
+
+
 def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -405,16 +511,7 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
         "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains",
         "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains",
         "_run_mean_attention_layout_pass_cluster",
-        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains",
-        "_optimize_sinet_mix_attention_double_logistic_nhwc_chains",
-        "_run_gate_layout_pass_cluster",
-        "_optimize_transposeconv_output_nhwc_passthrough_chains",
-        "_optimize_transposeconv_output_channel1_terminal_transpose_chains",
-        "_run_transpose_unary_fanout_layout_pass_cluster",
-        "_optimize_transpose_dequant_relu_quantize_bridges",
-        "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
-        "run_trailing_output_transpose_cleanup",
-        "_optimize_transpose_dequant_mul_add_prelu_quantize_bridges",
+        "_run_attention_gate_qdq_recovery_sequence",
         "_run_duplicate_quantized_prelu_pass_cluster",
         "_optimize_dequant_transposeconv_quantize_chains",
         "run_quantized_reshape_cleanup",
@@ -434,10 +531,7 @@ def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> No
     assert [call.func.id for call in helper_calls] == expected_order
 
     calls_by_name = {call.func.id: call for call in helper_calls}
-    for registered_name in (
-        "run_trailing_output_transpose_cleanup",
-        "run_quantized_reshape_cleanup",
-    ):
+    for registered_name in ("run_quantized_reshape_cleanup",):
         assert all(
             keyword.arg != "state_scope"
             for keyword in calls_by_name[registered_name].keywords
@@ -1770,7 +1864,7 @@ def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "_run_gate_layout_pass_cluster"
     ]
-    assert len(helper_invocations) == 4
+    assert len(helper_invocations) == 2
     omitted_mixed_attention = [
         call
         for call in helper_invocations
@@ -2005,7 +2099,7 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == unary_helper_name
     ]
-    assert len(unary_invocations) == 4
+    assert len(unary_invocations) == 2
     post_qdq_invocations = [
         call
         for call in unary_invocations
@@ -4966,7 +5060,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 120
+    assert len(calls) == 118
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -5167,7 +5261,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_trailing_output_transpose_cleanup"
     ]
-    assert len(trailing_output_transpose_calls) == 3
+    assert len(trailing_output_transpose_calls) == 1
 
     nchw_channel_shuffle_calls = [
         call

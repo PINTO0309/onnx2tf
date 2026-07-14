@@ -3719,6 +3719,18 @@ Those differing boundaries are asserted outside the helper. The extraction
 removes 7 net lowerer lines without changing runtime invocation count, order,
 or the registered-runner call-site count of 120.
 
+Three AST-identical 10-call attention/gate/QDQ recovery sequences are owned by
+`_run_attention_gate_qdq_recovery_sequence`, including the copy previously
+embedded in the broader layout-attention quantized suffix. The helper preserves
+SA/PA MirrorPad propagation, SiNet attention, gate, TransposeConv, unary-
+fanout, Q/DQ activation, trailing-output Transpose, and quantized-PReLU bridge
+order. Its registered trailing-output runner remains unscoped because raw
+ModelIR mutators separate it from the surrounding registered clusters. The
+three callers retain their distinct LayerNorm-plus-quantized-PReLU, duplicate-
+PReLU, and pass-set-2 TransposeConv successors. The extraction removes 23 net
+lowerer lines and reduces direct registered-runner call sites from 120 to 118
+without changing runtime invocation count or order.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
