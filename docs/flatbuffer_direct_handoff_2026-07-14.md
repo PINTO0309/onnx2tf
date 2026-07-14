@@ -7,10 +7,10 @@ The active branch is `fb-refactor5`, created from `main` after pull request
 subsequent work uses coherent commits and pushes without opening another pull
 request.
 
-The latest implementation unit moves SavedModel/PyTorch-specific preparation
-settings into a requested-exporter resolver. Unrequested output paths,
-persistence, PyTorch timeout, shape hints, and test data are no longer read;
-custom input data is read only for integer calibration or PyTorch artifacts.
+The latest implementation unit moves quantization type and input/output dtype
+selection into the existing requested quantization controls. A conversion
+without quantized artifacts no longer reads these options; requested outputs
+retain the legacy `per-channel`/`int8` defaults and explicit-value behavior.
 The immutable `ConversionRequest` remains the sole option source.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -33,7 +33,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains eight coherent continuations:
+The current `fb-refactor5` work contains nine coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -52,8 +52,10 @@ The current `fb-refactor5` work contains eight coherent continuations:
   state resulting from its rewrite;
 - `907c91fa` routes all direct-export option reads through the normalized
   request and adds a structural boundary test;
-- the current checkpoint adds request-aware optional exporter controls and
-  removes eager parsing of unrequested PyTorch settings.
+- `5848cc28` adds request-aware optional exporter controls and removes eager
+  parsing of unrequested PyTorch settings;
+- the current checkpoint makes quant type and input/output quant dtype part of
+  the guarded immutable quantization controls.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -134,6 +136,10 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   calibration are all unrequested. Requested output paths, persistence,
   timeout conversion, shape/test data, and custom-input values preserve their
   existing defaults and dependencies.
+- Requested quantization controls now also own `quant_type`,
+  `input_quant_dtype`, and `output_quant_dtype`. The builder reads these values
+  only from the resolved immutable mapping; when quantization is unrequested it
+  uses the legacy local defaults without touching the corresponding options.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -201,6 +207,10 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH \
 Dedicated resolver tests use a mapping that raises on every `get` to prove
 unrequested settings are untouched, then verify requested and calibration-only
 values and timeout coercion.
+The same 145-test selection passed after adding requested-only quant type/dtype
+resolution. Focused assertions cover explicit values, the three legacy
+defaults, immutable mapping behavior, and absence of direct `request.get`
+calls for those keys.
 The exporter and policy pass `python -m py_compile`, and `git diff --check`
 passes. The immediately preceding DepthToSpace, Pool, dynamic-Pool,
 simple-alias, and aligned-scalar checkpoints passed their focused synthetic and

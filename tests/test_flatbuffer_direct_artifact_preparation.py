@@ -107,6 +107,9 @@ def test_unrequested_artifact_controls_do_not_read_related_options(
 def test_requested_artifact_controls_preserve_existing_option_values() -> None:
     controls = resolve_requested_artifact_controls(
         {
+            "quant_type": "per-tensor",
+            "input_quant_dtype": "uint8",
+            "output_quant_dtype": "int16",
             "tflite_split_max_bytes": "2048",
             "tflite_split_target_bytes": 1536,
             "flatbuffer_direct_calibration_method": "percentile",
@@ -124,6 +127,9 @@ def test_requested_artifact_controls_preserve_existing_option_values() -> None:
     assert controls.split_max_bytes == 2048
     assert controls.split_target_bytes == 1536
     assert dict(controls.quantization or {}) == {
+        "quant_type": "per-tensor",
+        "input_quant_dtype": "uint8",
+        "output_quant_dtype": "int16",
         "calibration_method": "percentile",
         "calibration_percentile": 98.5,
         "min_numel": 17,
@@ -216,6 +222,9 @@ def test_artifact_control_resolution_has_one_policy_owner() -> None:
     assert "ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL" not in builder_source
     assert "ONNX2TF_FLATBUFFER_DIRECT_SPLIT_MAX_BYTES" not in builder_source
     assert '"native_pytorch_generation_timeout_sec"' not in builder_source
+    assert 'request.get("quant_type"' not in builder_source
+    assert 'request.get("input_quant_dtype"' not in builder_source
+    assert 'request.get("output_quant_dtype"' not in builder_source
 
 
 @pytest.mark.parametrize(

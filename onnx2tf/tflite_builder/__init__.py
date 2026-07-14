@@ -250,9 +250,6 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     output_file_name = request.output_file_name
     onnx_graph = request.onnx_graph
     output_weights = request.artifacts.weights
-    quant_type = request.get("quant_type", "per-channel")
-    input_quant_dtype = request.get("input_quant_dtype", "int8")
-    output_quant_dtype = request.get("output_quant_dtype", "int8")
     output_dynamic_range_quantized_tflite = request.artifacts.dynamic_range_quantized_tflite
     output_integer_quantized_tflite = request.artifacts.integer_quantized_tflite
     output_saved_model_from_model_ir = request.artifacts.saved_model
@@ -371,6 +368,21 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         or output_integer_quantized_tflite
     ) and quant_controls is None:
         raise RuntimeError("quantization artifact controls were not resolved")
+    quant_type = (
+        quant_controls["quant_type"]
+        if quant_controls is not None
+        else "per-channel"
+    )
+    input_quant_dtype = (
+        quant_controls["input_quant_dtype"]
+        if quant_controls is not None
+        else "int8"
+    )
+    output_quant_dtype = (
+        quant_controls["output_quant_dtype"]
+        if quant_controls is not None
+        else "int8"
+    )
     flatbuffer_direct_show_progress = bool(
         request.get("flatbuffer_direct_show_progress", True)
     )

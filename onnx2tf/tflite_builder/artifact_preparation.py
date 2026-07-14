@@ -108,7 +108,12 @@ def resolve_requested_artifact_controls(
 
     quantization: Optional[Mapping[str, Any]] = None
     if quantization_requested:
-        quantization = MappingProxyType(
+        quantization_values = {
+            "quant_type": options.get("quant_type", "per-channel"),
+            "input_quant_dtype": options.get("input_quant_dtype", "int8"),
+            "output_quant_dtype": options.get("output_quant_dtype", "int8"),
+        }
+        quantization_values.update(
             {
                 key: cast(
                     _option_or_environment(
@@ -123,6 +128,7 @@ def resolve_requested_artifact_controls(
                 )
             }
         )
+        quantization = MappingProxyType(quantization_values)
 
     return ArtifactExecutionControls(
         split_max_bytes=split_max_bytes,

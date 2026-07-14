@@ -30,6 +30,10 @@ TensorFlow- and Torch-free artifact policy only when the corresponding
 CLI values or environment variables, while requested values retain the legacy
 conversion and default semantics. The resolved quantization mapping is
 immutable and raw option dictionaries do not propagate into builders.
+The same guarded quantization mapping owns `quant_type`, input quant dtype, and
+output quant dtype. Their legacy `per-channel`/`int8` defaults are materialized
+without reading the request when no quantized output is selected; requested
+dynamic-range or integer artifacts receive the original explicit values.
 The direct export boundary constructs `ConversionRequest` once. Every option
 read after that boundary, including unsupported-quantization validation, uses
 the request's immutable mapping or typed `ArtifactPlan`; the original `kwargs`
