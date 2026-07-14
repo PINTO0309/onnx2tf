@@ -711,6 +711,16 @@ constant-Dequantize ModelIR fingerprints match checkpoint `dca871b` exactly.
 On a synthetic 2,000-FullyConnected graph, a 15-run median changed from
 0.053744s to 0.050637s (1.06x). No model conversion or inference was run.
 
+Split planning now materializes the shared index's first-producer map once and
+passes it through split-point discovery, range validation, and manifest-edge
+construction. Partition candidate dead-branch liveness still preserves the
+same pruning contract, but a range whose complete operator stream is required
+reuses its first input/output/boundary collections; only an actually pruned
+range repeats them. One-scan instrumentation and the complete focused split
+selection pass 22 tests. The full 2,000-op/20-partition plan report matches
+checkpoint `03d0177` exactly; a 15-run median changed from 0.120941s to
+0.113134s (1.07x). No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

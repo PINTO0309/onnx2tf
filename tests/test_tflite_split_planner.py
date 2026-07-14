@@ -116,6 +116,32 @@ def test_split_planner_reuses_one_model_ir_graph_index(monkeypatch) -> None:
     assert index_build_count == 1
 
 
+def test_split_planner_materializes_first_producer_map_once(monkeypatch) -> None:
+    producer_map_build_count = 0
+    original_first_producer_indices = split_planner_module._first_producer_indices
+
+    def counted_first_producer_indices(graph_index):
+        nonlocal producer_map_build_count
+        producer_map_build_count += 1
+        return original_first_producer_indices(graph_index)
+
+    monkeypatch.setattr(
+        split_planner_module,
+        "_first_producer_indices",
+        counted_first_producer_indices,
+    )
+
+    report = plan_contiguous_partitions_by_size(
+        model_ir=_make_chain_model_ir(op_count=16),
+        target_max_bytes=400,
+        hard_max_bytes=500,
+        size_estimator=lambda part: len(part.operators) * 100,
+    )
+
+    assert report["plan_valid"] is True
+    assert producer_map_build_count == 1
+
+
 def test_split_size_candidates_borrow_constant_buffers_read_only() -> None:
     constant_data = np.arange(1024, dtype=np.float32)
     model_ir = ModelIR(name="borrowed_split_constants")
@@ -391,6 +417,35 @@ def test_build_partition_model_ir_prunes_dead_branch_ops_and_inputs() -> None:
     assert first_op.version == 2
     assert first_op.onnx_node_name == "first_node"
     assert first_op.onnx_op_type == "Identity"
+
+
+def test_build_partition_reuses_boundary_scan_when_all_ops_are_required(
+    monkeypatch,
+) -> None:
+    call_counts = {"inputs": 0, "outputs": 0}
+    original_collect_inputs = split_planner_module._collect_inputs
+    original_collect_outputs = split_planner_module._collect_outputs
+
+    def counted_inputs(operators):
+        call_counts["inputs"] += 1
+        return original_collect_inputs(operators)
+
+    def counted_outputs(operators):
+        call_counts["outputs"] += 1
+        return original_collect_outputs(operators)
+
+    monkeypatch.setattr(split_planner_module, "_collect_inputs", counted_inputs)
+    monkeypatch.setattr(split_planner_module, "_collect_outputs", counted_outputs)
+
+    part_model = build_partition_model_ir(
+        model_ir=_make_chain_model_ir(op_count=16),
+        start_op_index=0,
+        end_op_index=16,
+        partition_id=1,
+    )
+
+    assert len(part_model.operators) == 16
+    assert call_counts == {"inputs": 1, "outputs": 1}
 
 
 def test_build_partition_model_ir_excludes_embedded_constants_from_partition_inputs() -> None:

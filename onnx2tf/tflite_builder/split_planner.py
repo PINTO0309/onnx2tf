@@ -256,7 +256,14 @@ def build_partition_model_ir(
         operators=range_ops,
         partition_outputs=partition_outputs,
     )
-    if len(required_op_indices) > 0:
+    all_range_ops_required = (
+        len(required_op_indices) == len(range_ops)
+        and all(
+            int(required_index) == int(op_index)
+            for op_index, required_index in enumerate(required_op_indices)
+        )
+    )
+    if len(required_op_indices) > 0 and not all_range_ops_required:
         range_ops = [range_ops[op_idx] for op_idx in required_op_indices]
         produced_in_range = _collect_outputs(range_ops)
         produced_set = set(produced_in_range)
@@ -2012,6 +2019,7 @@ def find_dependency_safe_split_points(
     model_ir: ModelIR,
     *,
     graph_index: Optional[ModelIRGraphIndex] = None,
+    producer_index: Optional[Dict[str, int]] = None,
 ) -> List[Dict[str, Any]]:
     op_count = len(model_ir.operators)
     if op_count <= 1:
@@ -2020,7 +2028,8 @@ def find_dependency_safe_split_points(
         model_ir=model_ir,
         graph_index=graph_index,
     )
-    producer_index = _first_producer_indices(graph_index)
+    if producer_index is None:
+        producer_index = _first_producer_indices(graph_index)
 
     invalid_boundary_delta = [0] * (op_count + 1)
     last_forward_consumer: Dict[str, int] = {}
@@ -2075,6 +2084,7 @@ def validate_partition_ranges(
     model_ir: ModelIR,
     partition_ranges: Sequence[Tuple[int, int]],
     graph_index: Optional[ModelIRGraphIndex] = None,
+    producer_index: Optional[Dict[str, int]] = None,
 ) -> None:
     op_count = len(model_ir.operators)
     if len(partition_ranges) == 0:
@@ -2084,7 +2094,8 @@ def validate_partition_ranges(
         model_ir=model_ir,
         graph_index=graph_index,
     )
-    producer_index = _first_producer_indices(graph_index)
+    if producer_index is None:
+        producer_index = _first_producer_indices(graph_index)
 
     for part_idx, (start_op_index, end_op_index) in enumerate(partition_ranges):
         _validate_range(
@@ -2130,12 +2141,14 @@ def _build_partition_edges(
     model_ir: ModelIR,
     partition_ranges: Sequence[PartitionRange],
     graph_index: Optional[ModelIRGraphIndex] = None,
+    producer_index: Optional[Dict[str, int]] = None,
 ) -> List[Dict[str, Any]]:
     graph_index = _resolve_split_graph_index(
         model_ir=model_ir,
         graph_index=graph_index,
     )
-    producer_index = _first_producer_indices(graph_index)
+    if producer_index is None:
+        producer_index = _first_producer_indices(graph_index)
     op_to_part: Dict[int, int] = {}
     for part_idx, partition in enumerate(partition_ranges):
         for op_idx in range(partition.start_op_index, partition.end_op_index):
@@ -2213,9 +2226,11 @@ def plan_contiguous_partitions_by_size(
         size_estimator=size_estimator,
     )
     graph_index = ModelIRGraphIndex(model_ir)
+    producer_index = _first_producer_indices(graph_index)
     candidate_split_points = find_dependency_safe_split_points(
         model_ir,
         graph_index=graph_index,
+        producer_index=producer_index,
     )
 
     op_count = len(model_ir.operators)
@@ -2307,6 +2322,7 @@ def plan_contiguous_partitions_by_size(
             for part in partition_ranges
         ],
         graph_index=graph_index,
+        producer_index=producer_index,
     )
     for part in partition_ranges:
         if part.estimated_bytes > hard_max_bytes:
@@ -2320,6 +2336,7 @@ def plan_contiguous_partitions_by_size(
         model_ir=model_ir,
         partition_ranges=partition_ranges,
         graph_index=graph_index,
+        producer_index=producer_index,
     )
     return {
         "schema_version": 1,

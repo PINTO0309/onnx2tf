@@ -1696,8 +1696,10 @@ duplicate tensor names. Runtime is proportional to operators, edges, and the
 crossing tensors that must be written to the report rather than
 `boundary_count * edge_count`. The complete split plan constructs this
 `ModelIRGraphIndex` once and reuses it for candidate discovery, partition-range
-validation, and manifest edge construction. Standalone helpers accept an
-optional caller-owned index and retain their existing call signatures.
+validation, and manifest edge construction. Its first-producer map is likewise
+materialized once and passed through all three phases instead of being rebuilt
+from the shared index. Standalone helpers accept optional caller-owned index
+and producer-map state while retaining their existing call behavior.
 Partition input/output tensor collection likewise uses insertion-ordered
 `seen` sets. It preserves first-seen ordering and duplicate suppression while
 removing the quadratic list-membership cost from every binary-search candidate
@@ -1707,7 +1709,10 @@ candidate. The final split artifact writer also constructs one index and reuses
 it across all emitted partitions. Binary-search size-estimation candidates
 borrow immutable NumPy constant buffers from the source ModelIR instead of
 copying every weight for every probe. The public partition builder and final
-artifact writer retain the established independent-buffer default.
+artifact writer retain the established independent-buffer default. Partition
+dead-branch liveness still runs for every candidate, but input/output and
+boundary collection is repeated only when that liveness result removes at
+least one operator. Fully required ranges reuse their initial collections.
 
 Custom-op result metadata has a single TensorFlow- and Torch-free owner in
 `artifact_metadata.py`. One operator-stream pass produces both the legacy raw
