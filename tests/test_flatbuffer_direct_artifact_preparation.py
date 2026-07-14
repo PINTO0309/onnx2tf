@@ -161,3 +161,73 @@ def test_float16_tflite_write_reuses_its_terminal_precision_ir() -> None:
     assert len(assignments) == 1
     assert isinstance(assignments[0].value, ast.Name)
     assert assignments[0].value.id == "model_ir_fp16"
+
+
+def test_terminal_artifact_state_is_released_after_its_last_use() -> None:
+    builder_tree = ast.parse(
+        (REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py").read_text(
+            encoding="utf-8"
+        )
+    )
+    export_function = next(
+        node
+        for node in builder_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "export_tflite_model_flatbuffer_direct"
+    )
+
+    terminal_names = {
+        "fp32_write_graph_index",
+        "model_ir_fp32_tflite",
+        "model_ir_fp32",
+        "fp16_write_graph_index",
+        "model_ir_fp16_tflite",
+        "model_ir_fp16",
+        "dynamic_model_ir",
+        "integer_model_ir",
+        "integer_result",
+        "full_integer_model_ir",
+        "full_integer_result",
+        "integer_quant_with_int16_act_model_ir",
+        "full_integer_quant_with_int16_act_model_ir",
+        "calibration_samples",
+        "calibration_ranges",
+        "calibration_report",
+    }
+    release_lines = {
+        name: [
+            node.lineno
+            for node in ast.walk(export_function)
+            if isinstance(node, ast.Delete)
+            for target in node.targets
+            if isinstance(target, ast.Name) and target.id == name
+        ]
+        for name in terminal_names
+    }
+    for name in terminal_names:
+        release_lines[name].extend(
+            node.lineno
+            for node in ast.walk(export_function)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and node.value.value is None
+            for target in node.targets
+            if isinstance(target, ast.Name) and target.id == name
+        )
+    released_at = {
+        name: max(lines)
+        for name, lines in release_lines.items()
+        if lines
+    }
+
+    assert set(released_at) == terminal_names
+    for name in sorted(terminal_names):
+        load_lines = [
+            node.lineno
+            for node in ast.walk(export_function)
+            if isinstance(node, ast.Name)
+            and node.id == name
+            and isinstance(node.ctx, ast.Load)
+        ]
+        assert load_lines
+        assert max(load_lines) < released_at[name]

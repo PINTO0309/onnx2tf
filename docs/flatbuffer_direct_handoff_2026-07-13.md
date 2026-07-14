@@ -637,6 +637,18 @@ seven-run medians changed from 0.071958s to 0.034205s for float32 (2.10x) and
 from 0.068364s to 0.035449s for float16 (1.93x); traced clone-stage peak memory
 dropped 50% in both cases. No model conversion or inference was run.
 
+Precision and quantization artifact lifetimes are now bounded at their actual
+last consumers. Float32/float16 write indices and serialization IRs, the
+pre-export float32 source, dynamic-range IR, all four strict-integer variant
+IRs/results, and calibration samples are explicitly released before the next
+large artifact is built. Calibration ranges and report state are retained only
+until the strict-integer JSON report is written. An AST lifecycle gate covers
+all sixteen large local objects and rejects any release before a later load.
+Artifact-preparation, writer, and architecture validation passes 94 tests. A
+seven-run synthetic 2,000-op/six-artifact lifetime benchmark reduced traced
+peak memory from 21.21 MiB to 3.72 MiB (82.4%) when applying the new sequential
+release boundary. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

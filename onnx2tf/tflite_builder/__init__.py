@@ -800,6 +800,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             enabled=bool(flatbuffer_direct_show_progress),
         )
         _advance_export_progress()
+        del fp32_write_graph_index
+        del model_ir_fp32_tflite
 
         calibration_ranges = None
         calibration_report: Dict[str, Any] = {}
@@ -824,6 +826,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 },
                 "variants": {},
             }
+            del calibration_samples
 
         def _write_validated_quantized_model_file(
             *,
@@ -1001,6 +1004,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     )
             _advance_export_progress()
 
+        model_ir_fp32 = None
+
         _set_export_progress_desc("write float16 tflite")
         model_ir_fp16 = clone_model_ir_with_float16(model_ir)
         optimize_redundant_transpose_operators(
@@ -1039,6 +1044,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             enabled=bool(flatbuffer_direct_show_progress),
         )
         _advance_export_progress()
+        del fp16_write_graph_index
+        del model_ir_fp16_tflite
+        del model_ir_fp16
 
         dynamic_range_path = None
         if output_dynamic_range_quantized_tflite:
@@ -1073,6 +1081,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 enabled=bool(flatbuffer_direct_show_progress),
             )
             _advance_export_progress()
+            del dynamic_model_ir
 
         integer_quant_path = None
         full_integer_quant_path = None
@@ -1113,6 +1122,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 enabled=bool(flatbuffer_direct_show_progress),
             )
             _advance_export_progress()
+            del integer_model_ir
+            del integer_result
 
             _set_export_progress_desc("write full integer quant tflite")
             full_integer_result = build_full_integer_quantized_model_ir(
@@ -1149,6 +1160,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 enabled=bool(flatbuffer_direct_show_progress),
             )
             _advance_export_progress()
+            del full_integer_model_ir
+            del full_integer_result
 
             int16_activation_skip_reasons = strict_int16_activation_skip_reasons(model_ir)
             if len(int16_activation_skip_reasons) > 0:
@@ -1207,6 +1220,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     enabled=bool(flatbuffer_direct_show_progress),
                 )
                 _advance_export_progress()
+                del integer_quant_with_int16_act_model_ir
 
                 _set_export_progress_desc("write full integer quant int16-act tflite")
                 full_integer_quant_with_int16_act_model_ir = build_full_integer_quantized_with_int16_act_model_ir(
@@ -1238,12 +1252,15 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     enabled=bool(flatbuffer_direct_show_progress),
                 )
                 _advance_export_progress()
+                del full_integer_quant_with_int16_act_model_ir
             calibration_report_path = os.path.join(
                 output_folder_path,
                 f"{output_file_name}_strict_integer_quant_calibration_report.json",
             )
             with open(calibration_report_path, "w", encoding="utf-8") as f:
                 json.dump(calibration_report, f, indent=2)
+            del calibration_ranges
+            del calibration_report
 
         if output_weights:
             _set_export_progress_desc("export float32 weights")

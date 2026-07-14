@@ -1509,6 +1509,18 @@ partition source instead. This removes one complete tensor, operator, subgraph,
 metadata, and constant-buffer clone from the normal direct path while retaining
 copy isolation at the only later mutation boundary.
 
+Serialization artifact lifetime is sequential as well as construction order.
+Each write-only GraphIndex and precision/quantized ModelIR reference is released
+immediately after its final writer or exporter consumer, before the next
+precision or quantization variant is built. Strict-integer calibration sample
+arrays are released as soon as their range report has captured the sample
+count; calibration ranges and the in-memory report remain only through the four
+variant builders and JSON write. Paths, timing records, and copied report
+dictionaries are the only state retained for later weight export and result
+assembly. This prevents otherwise sequential float32, float16, dynamic-range,
+integer, full-integer, and INT16-activation graphs from accumulating in one
+function frame.
+
 Late precision conversion in `passes/precision.py` is differential as well.
 Constant floating DIV roots are captured from one operator-type index and each
 eligible DIV is replaced in graph order by an optional Cast, reciprocal Mul,
