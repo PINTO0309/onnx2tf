@@ -148,6 +148,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_split_axis_from_consumers,
     _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
+    _propagate_cf_local_response_norm_output,
     _propagate_cf_prelu_output,
     _restore_channel_last_spatial_pool_chains,
 )
@@ -7538,20 +7539,12 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
             if bn_lhs is not None:
                 cf_like_names.add(bn_lhs)
             changed = True
-        local_response_norm_assign = _parse_local_response_norm_assign(line)
-        if local_response_norm_assign is not None:
-            input_name = str(local_response_norm_assign[2])
-            if (
-                input_name in cf_like_names
-                or input_name.endswith("_cf")
-                or input_name.endswith("_out_cf")
-            ):
-                lhs_name = str(local_response_norm_assign[1])
-                cf_like_names.add(lhs_name)
-                static_input_shape = repair_context.static_shapes.get(input_name, None)
-                if static_input_shape is not None and len(static_input_shape) == 4:
-                    repair_context.static_shapes[lhs_name] = [int(v) for v in list(static_input_shape)]
-                nhwc_like_names.discard(lhs_name)
+        _propagate_cf_local_response_norm_output(
+            line,
+            cf_like_names,
+            nhwc_like_names,
+            repair_context,
+        )
         rewritten_softmax_line, softmax_lhs = _repair_cf_softmax_axis(
             line,
             cf_like_names,

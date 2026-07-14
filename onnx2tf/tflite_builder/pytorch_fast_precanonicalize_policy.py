@@ -2385,6 +2385,33 @@ def _repair_cf_reduce_max_axis(
     return rewritten, lhs_name
 
 
+def _propagate_cf_local_response_norm_output(
+    line: str,
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> bool:
+    local_response_norm_assign = _parse_local_response_norm_assign(line)
+    if local_response_norm_assign is None:
+        return False
+    input_name = str(local_response_norm_assign[2])
+    input_is_cf_like = (
+        input_name in dynamic_cf_like_names
+        or input_name.endswith("_cf")
+        or input_name.endswith("_out_cf")
+    )
+    if not input_is_cf_like:
+        return False
+
+    lhs_name = str(local_response_norm_assign[1])
+    dynamic_cf_like_names.add(lhs_name)
+    static_input_shape = context.static_shapes.get(input_name, None)
+    if static_input_shape is not None and len(static_input_shape) == 4:
+        context.static_shapes[lhs_name] = [int(v) for v in list(static_input_shape)]
+    dynamic_nhwc_like_names.discard(lhs_name)
+    return True
+
+
 def _propagate_cf_prelu_output(
     line: str,
     dynamic_cf_like_names: Set[str],

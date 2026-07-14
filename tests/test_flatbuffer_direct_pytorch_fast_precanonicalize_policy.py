@@ -35,6 +35,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_split_axis_from_consumers,
     _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
+    _propagate_cf_local_response_norm_output,
     _propagate_cf_prelu_output,
 )
 from onnx2tf.tflite_builder.pytorch_source_parser import (
@@ -821,6 +822,60 @@ def test_prelu_and_gather_slice_propagate_channel_first_layout() -> None:
 
     assert {"prelu_out", "gathered"} <= cf_like_names
     assert lines == ["        gathered = prelu_out[:, [0, 2], :, :]"]
+
+
+def test_local_response_norm_propagates_only_channel_first_layout_and_shape() -> None:
+    cf_line = (
+        "        normalized_nhwc = F.local_response_norm("
+        "input_cf, size=5, alpha=0.0001, beta=0.75, k=1.0)"
+    )
+    cf_context = _build_fast_precanonicalize_repair_context([cf_line])
+    cf_context.static_shapes["input_cf"] = [1, 8, 5, 7]
+    cf_names = {"input_cf"}
+    nhwc_names = {"normalized_nhwc"}
+
+    assert _propagate_cf_local_response_norm_output(
+        cf_line,
+        cf_names,
+        nhwc_names,
+        cf_context,
+    )
+    assert "normalized_nhwc" in cf_names
+    assert "normalized_nhwc" not in nhwc_names
+    assert cf_context.static_shapes["normalized_nhwc"] == [1, 8, 5, 7]
+
+    suffix_line = (
+        "        suffix_out = F.local_response_norm("
+        "source_out_cf, size=3, alpha=0.1, beta=0.5, k=2.0)"
+    )
+    suffix_context = _build_fast_precanonicalize_repair_context([suffix_line])
+    suffix_names: set[str] = set()
+    assert _propagate_cf_local_response_norm_output(
+        suffix_line,
+        suffix_names,
+        set(),
+        suffix_context,
+    )
+    assert "suffix_out" in suffix_names
+    assert "suffix_out" not in suffix_context.static_shapes
+
+    nhwc_line = (
+        "        unchanged = F.local_response_norm("
+        "input_nhwc, size=5, alpha=0.0001, beta=0.75, k=1.0)"
+    )
+    nhwc_context = _build_fast_precanonicalize_repair_context([nhwc_line])
+    nhwc_context.static_shapes["input_nhwc"] = [1, 5, 7, 8]
+    negative_cf_names: set[str] = set()
+    negative_nhwc_names = {"input_nhwc", "unchanged"}
+    assert not _propagate_cf_local_response_norm_output(
+        nhwc_line,
+        negative_cf_names,
+        negative_nhwc_names,
+        nhwc_context,
+    )
+    assert negative_cf_names == set()
+    assert negative_nhwc_names == {"input_nhwc", "unchanged"}
+    assert "unchanged" not in nhwc_context.static_shapes
 
 
 def test_depth_to_space_gather_uses_indexed_layout_evidence() -> None:

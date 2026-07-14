@@ -2100,6 +2100,13 @@ explicit reshape channel. Both forms require a CF-like input and a generated
 BatchNorm attribute name. Their exact direct/reshaped statement grammars are
 shared with the preceding Resize evidence rule, and the repaired output is
 published as CF evidence for later normalization decisions.
+Local-response-normalization output propagation is policy-owned as a state-only
+decision. It preserves the generated parser grammar, marks an output CF only
+when the input has exact dynamic or suffix evidence, copies only rank-four
+static shapes, and removes stale NHWC evidence for that output. The source line
+is not rewritten, so the exporter does not mark the file changed solely for
+this propagation; the updated evidence is consumed by the subsequent
+Softmax/ReduceMax and Pool decisions.
 The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
 restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer

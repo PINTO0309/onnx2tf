@@ -4923,6 +4923,7 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_repair_singleton_reshape_cf_binary_at",
         "_repair_split_axis_from_consumers",
         "_repair_terminal_classifier_tail_layout",
+        "_propagate_cf_local_response_norm_output",
         "_propagate_cf_prelu_output",
         "_restore_channel_last_spatial_pool_chains",
     ):
