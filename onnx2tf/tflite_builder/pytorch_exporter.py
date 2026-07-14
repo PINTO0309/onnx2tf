@@ -151,12 +151,15 @@ from onnx2tf.tflite_builder.pytorch_indexing_codegen import (
     _should_elide_crd_to_dcr_gather_for_depth_to_space,
 )
 from onnx2tf.tflite_builder.pytorch_graph_policy import (
-    _expected_channel_dim_for_channel_last_named_tensor_for_codegen,
+    _base_target_shape_values_for_model_ir,
+    _channel_first_shape_values_for_model_ir,
     _expected_channel_dim_for_tensor_for_codegen,
     _gather_input_pre_permute_for_codegen,
     _infer_effective_rank4_runtime_layout_for_codegen,
     _native_codegen_cache_bucket_for_model_ir,
     _producer_op_for_model_ir,
+    _resolve_channel_first_named_tensor_shape_for_codegen,
+    _target_shape_values_for_model_ir,
 )
 from onnx2tf.tflite_builder.pytorch_source_graph_rewrites import (
     _bridge_boundary_metadata_gather_nd_inputs,
@@ -569,226 +572,6 @@ def _match_single_consumer_layout_bridge_transpose_for_codegen(
     return output_name, bridge_op_idx
 
 
-def _target_shape_values_for_model_ir(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-) -> Optional[List[int]]:
-    tensor = model_ir.tensors.get(str(tensor_name), None)
-    if tensor is None:
-        return None
-    public_tensor_names = {
-        str(name) for name in list(model_ir.inputs) + list(model_ir.outputs)
-    }
-    if str(tensor_name) not in public_tensor_names:
-        return [int(v) for v in list(tensor.shape)]
-    resolved = _base_target_shape_values_for_model_ir(
-        model_ir=model_ir,
-        tensor_name=str(tensor_name),
-    )
-    inferred_channel_first = _channel_first_shape_values_for_model_ir(
-        model_ir=model_ir,
-        tensor_name=str(tensor_name),
-    )
-    if inferred_channel_first is None:
-        return resolved
-    layout = normalize_logical_layout(tensor.logical_layout)
-    rank = len(inferred_channel_first)
-    if is_channel_last_logical_layout(layout):
-        perm_to_layout = logical_layout_permutation(
-            source_layout=channel_first_logical_layout(rank),
-            target_layout=layout,
-        )
-        permuted = _permute_shape(inferred_channel_first, perm_to_layout or [])
-        if permuted is not None:
-            return [int(v) for v in list(permuted)]
-    if is_channel_first_logical_layout(layout):
-        return [int(v) for v in list(inferred_channel_first)]
-    return resolved
-
-
-def _base_target_shape_values_for_model_ir(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-) -> Optional[List[int]]:
-    tensor = model_ir.tensors.get(str(tensor_name), None)
-    if tensor is None:
-        return None
-    if tensor.shape_signature is not None:
-        signature = [int(v) for v in list(tensor.shape_signature)]
-        if len(signature) == len(list(tensor.shape)):
-            preferred = signature
-        else:
-            preferred = [int(v) for v in list(tensor.shape)]
-    else:
-        preferred = [int(v) for v in list(tensor.shape)]
-    return _resolve_channel_first_named_tensor_shape_for_codegen(
-        model_ir=model_ir,
-        tensor_name=str(tensor_name),
-        preferred=preferred,
-        logical_layout=str(tensor.logical_layout),
-    )
-
-
-def _channel_first_shape_values_for_model_ir(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-    _seen: Optional[Set[str]] = None,
-) -> Optional[List[int]]:
-    current_name = str(tensor_name)
-    if _seen is None:
-        _seen = set()
-    bucket = _native_codegen_cache_bucket_for_model_ir(model_ir=model_ir)
-    cached_shapes = bucket.setdefault("channel_first_shapes", {})
-    in_progress = bucket.setdefault("channel_first_shapes_in_progress", set())
-    if not isinstance(cached_shapes, dict):
-        cached_shapes = {}
-        bucket["channel_first_shapes"] = cached_shapes
-    if not isinstance(in_progress, set):
-        in_progress = set()
-        bucket["channel_first_shapes_in_progress"] = in_progress
-    if current_name in cached_shapes:
-        cached_value = cached_shapes.get(current_name, None)
-        return None if cached_value is None else [int(v) for v in list(cached_value)]
-    if current_name in _seen:
-        base_shape = _base_target_shape_values_for_model_ir(
-            model_ir=model_ir,
-            tensor_name=current_name,
-        )
-        return _to_channel_first_shape_for_model_ir(
-            model_ir=model_ir,
-            tensor_name=current_name,
-            shape_values=base_shape,
-        )
-    if current_name in in_progress:
-        base_shape = _base_target_shape_values_for_model_ir(
-            model_ir=model_ir,
-            tensor_name=current_name,
-        )
-        return _to_channel_first_shape_for_model_ir(
-            model_ir=model_ir,
-            tensor_name=current_name,
-            shape_values=base_shape,
-        )
-    in_progress.add(current_name)
-    base_shape = _base_target_shape_values_for_model_ir(
-        model_ir=model_ir,
-        tensor_name=current_name,
-    )
-    channel_first_shape = _to_channel_first_shape_for_model_ir(
-        model_ir=model_ir,
-        tensor_name=current_name,
-        shape_values=base_shape,
-    )
-    if channel_first_shape is None:
-        cached_shapes[current_name] = None
-        in_progress.discard(current_name)
-        return None
-    tensor = model_ir.tensors.get(current_name, None)
-    if tensor is None:
-        cached_shapes[current_name] = tuple(int(v) for v in list(channel_first_shape))
-        in_progress.discard(current_name)
-        return channel_first_shape
-    rank = len(channel_first_shape)
-    if rank not in {3, 4, 5}:
-        cached_shapes[current_name] = tuple(int(v) for v in list(channel_first_shape))
-        in_progress.discard(current_name)
-        return channel_first_shape
-    producer_op = _producer_op_for_model_ir(
-        model_ir=model_ir,
-        tensor_name=current_name,
-    )
-    if producer_op is None or str(producer_op.op_type) not in {"ADD", "DIV", "MAXIMUM", "MINIMUM", "MUL", "SUB"}:
-        cached_shapes[current_name] = tuple(int(v) for v in list(channel_first_shape))
-        in_progress.discard(current_name)
-        return channel_first_shape
-    next_seen = set(_seen)
-    next_seen.add(current_name)
-    broadcast_shape: Optional[List[int]] = None
-    for input_name in list(producer_op.inputs)[:2]:
-        input_tensor = model_ir.tensors.get(str(input_name), None)
-        if input_tensor is None:
-            cached_shapes[current_name] = tuple(int(v) for v in list(channel_first_shape))
-            in_progress.discard(current_name)
-            return channel_first_shape
-        if isinstance(input_tensor.data, np.ndarray) and int(np.asarray(input_tensor.data).size) == 1:
-            continue
-        input_shape = _channel_first_shape_values_for_model_ir(
-            model_ir=model_ir,
-            tensor_name=str(input_name),
-            _seen=next_seen,
-        )
-        if input_shape is None or len(input_shape) != rank:
-            cached_shapes[current_name] = tuple(int(v) for v in list(channel_first_shape))
-            in_progress.discard(current_name)
-            return channel_first_shape
-        broadcast_shape = (
-            [int(v) for v in list(input_shape)]
-            if broadcast_shape is None
-            else _broadcast_shapes_relaxed(broadcast_shape, input_shape)
-        )
-        if broadcast_shape is None:
-            cached_shapes[current_name] = tuple(int(v) for v in list(channel_first_shape))
-            in_progress.discard(current_name)
-            return channel_first_shape
-    if broadcast_shape is not None:
-        cached_shapes[current_name] = tuple(int(v) for v in list(broadcast_shape))
-        in_progress.discard(current_name)
-        return [int(v) for v in list(broadcast_shape)]
-    cached_shapes[current_name] = tuple(int(v) for v in list(channel_first_shape))
-    in_progress.discard(current_name)
-    return channel_first_shape
-
-
-def _to_channel_first_shape_for_model_ir(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-    shape_values: Optional[Sequence[int]],
-) -> Optional[List[int]]:
-    if shape_values is None:
-        return None
-    values = [int(v) for v in list(shape_values)]
-    rank = len(values)
-    if rank not in {3, 4, 5}:
-        return values
-    tensor = model_ir.tensors.get(str(tensor_name), None)
-    layout = (
-        normalize_logical_layout(tensor.logical_layout)
-        if tensor is not None
-        else LOGICAL_LAYOUT_UNKNOWN
-    )
-    perm_to_cf = _perm_cl_to_cf(rank)
-    if is_channel_last_logical_layout(layout) and perm_to_cf is not None:
-        expected_channels = _expected_channel_dim_for_tensor_for_codegen(
-            model_ir=model_ir,
-            tensor_name=str(tensor_name),
-        )
-        if expected_channels is not None and len(values) >= 3:
-            second_axis_matches = int(values[1]) == int(expected_channels)
-            last_axis_matches = int(values[-1]) == int(expected_channels)
-            if second_axis_matches and not last_axis_matches:
-                return values
-            if last_axis_matches and not second_axis_matches:
-                permuted = _permute_shape(values, perm_to_cf)
-                if permuted is not None:
-                    return [int(v) for v in list(permuted)]
-                return values
-        if (
-            rank in {4, 5}
-            and int(values[1]) > 0
-            and int(values[1]) <= 4
-            and int(values[-1]) > 4
-        ):
-            return values
-        permuted = _permute_shape(values, perm_to_cf)
-        if permuted is not None:
-            return [int(v) for v in list(permuted)]
-    return values
-
-
 def _target_shape_literal_for_model_ir(
     *,
     model_ir: ModelIR,
@@ -843,44 +626,6 @@ def _tensor_shape_list_for_model_ir(
     if tensor is None:
         return None
     return [int(v) for v in list(tensor.shape)]
-
-
-def _resolve_channel_first_named_tensor_shape_for_codegen(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-    preferred: Sequence[int],
-    logical_layout: str,
-) -> List[int]:
-    resolved = [int(v) for v in list(preferred)]
-    rank = len(list(resolved))
-    perm_to_cf = _perm_cl_to_cf(rank)
-    if (
-        perm_to_cf is None
-        or not is_channel_first_logical_layout(normalize_logical_layout(logical_layout))
-        or not _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor_name))
-    ):
-        return resolved
-    expected_channels = _expected_channel_dim_for_channel_last_named_tensor_for_codegen(
-        model_ir=model_ir,
-        tensor_name=str(tensor_name),
-    )
-    if expected_channels is None and rank == 4:
-        return resolved
-    if expected_channels is not None and len(resolved) >= 3:
-        second_axis_matches = int(resolved[1]) == int(expected_channels)
-        last_axis_matches = int(resolved[-1]) == int(expected_channels)
-        if second_axis_matches and not last_axis_matches:
-            return resolved
-        if last_axis_matches and not second_axis_matches:
-            permuted = _permute_shape(resolved, perm_to_cf)
-            if permuted is not None:
-                return [int(v) for v in list(permuted)]
-            return resolved
-    permuted = _permute_shape(resolved, perm_to_cf)
-    if permuted is not None:
-        return [int(v) for v in list(permuted)]
-    return resolved
 
 
 def _rank4_channel_first_shape_for_tensor_for_codegen(

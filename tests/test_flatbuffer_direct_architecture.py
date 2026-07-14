@@ -4513,18 +4513,26 @@ def test_generated_pytorch_graph_policy_has_single_owner() -> None:
     }
 
     for function_name in (
-        "_expected_channel_dim_for_channel_last_named_tensor_for_codegen",
+        "_base_target_shape_values_for_model_ir",
+        "_channel_first_shape_values_for_model_ir",
         "_expected_channel_dim_for_tensor_for_codegen",
         "_gather_input_pre_permute_for_codegen",
         "_infer_effective_rank4_runtime_layout_for_codegen",
         "_native_codegen_cache_bucket_for_model_ir",
         "_producer_op_for_model_ir",
+        "_resolve_channel_first_named_tensor_shape_for_codegen",
+        "_target_shape_values_for_model_ir",
     ):
         assert function_name in policy_functions
         assert function_name not in exporter_functions
         assert f"{function_name}," in exporter_source
     assert "_native_codegen_graph_index_for_model_ir" in policy_functions
     assert "_native_codegen_expected_channel_dim_cache_for_model_ir" in policy_functions
+    assert "_to_channel_first_shape_for_model_ir" in policy_functions
+    assert (
+        "_expected_channel_dim_for_channel_last_named_tensor_for_codegen"
+        in policy_functions
+    )
     assert "_native_codegen_producer_lookup_for_model_ir" not in exporter_functions
     assert "_native_codegen_producer_lookup_for_model_ir" not in policy_functions
     assert 'cache_bucket["graph_index"] = context.graph_index' in exporter_source

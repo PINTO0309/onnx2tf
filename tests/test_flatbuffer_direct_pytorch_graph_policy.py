@@ -1,12 +1,16 @@
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_graph_policy import (
+    _base_target_shape_values_for_model_ir,
+    _channel_first_shape_values_for_model_ir,
     _expected_channel_dim_for_tensor_for_codegen,
     _gather_input_pre_permute_for_codegen,
     _infer_effective_rank4_runtime_layout_for_codegen,
     _native_codegen_cache_bucket_for_model_ir,
     _native_codegen_graph_index_for_model_ir,
     _producer_op_for_model_ir,
+    _target_shape_values_for_model_ir,
+    _to_channel_first_shape_for_model_ir,
 )
 
 
@@ -115,3 +119,32 @@ def test_codegen_graph_cache_reuses_index_for_channel_and_producer_queries() -> 
         model_ir=model_ir,
         tensor_name="output",
     ) is model_ir.operators[0]
+
+
+def test_graph_shape_policy_preserves_public_layout_contract() -> None:
+    model_ir = ModelIR(
+        name="public_shape",
+        tensors={
+            "input": _tensor("input", [1, 8, 8, 3], layout="NHWC"),
+        },
+        inputs=["input"],
+        outputs=["input"],
+    )
+
+    assert _base_target_shape_values_for_model_ir(
+        model_ir=model_ir,
+        tensor_name="input",
+    ) == [1, 8, 8, 3]
+    assert _to_channel_first_shape_for_model_ir(
+        model_ir=model_ir,
+        tensor_name="input",
+        shape_values=[1, 8, 8, 3],
+    ) == [1, 3, 8, 8]
+    assert _channel_first_shape_values_for_model_ir(
+        model_ir=model_ir,
+        tensor_name="input",
+    ) == [1, 3, 8, 8]
+    assert _target_shape_values_for_model_ir(
+        model_ir=model_ir,
+        tensor_name="input",
+    ) == [1, 8, 8, 3]

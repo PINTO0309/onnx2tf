@@ -2220,6 +2220,11 @@ codegen cache. Producer queries use `ModelIRGraphIndex.producer()` directly,
 and expected Conv2D channel discovery enumerates only the indexed Conv2D
 family. No detached producer-to-operator table or repeated all-operator scan is
 created during writer preparation.
+Public target-shape, base-signature, channel-first shape, and named-tensor
+resolution form one mutually recursive family in this owner. It uses the same
+graph/cache queries for binary broadcast and Conv channel evidence, while
+returning public tensors in their declared logical layout. Source literals and
+statement emission remain outside this read-only graph-policy boundary.
 
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are

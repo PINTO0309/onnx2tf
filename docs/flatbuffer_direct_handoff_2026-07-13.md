@@ -988,6 +988,16 @@ the warm 201-run expected-channel median improved from 0.000043977s to
 0.000004757s (9.24x). The exporter shrank by another 105 lines. No model
 conversion or inference was run.
 
+Public target shape, base signature, recursive channel-first shape, stored-
+shape conversion, and channel-last-named tensor resolution now form one closed
+family in `pytorch_graph_policy.py`. Binary broadcast recursion and Conv
+channel evidence consume the same indexed cache, while public tensors retain
+their declared layout at the target boundary. Five thousand fixed-seed
+outcomes match checkpoint `b97a1c8` exactly; four direct graph-policy contracts
+and the focused ownership test pass, together with Ruff and syntax validation.
+The exporter shrank by another 255 lines. No model conversion or inference was
+run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
