@@ -107,6 +107,26 @@ def test_direct_recurrent_capabilities_accept_complete_constant_contracts() -> N
     assert _rewrite_recurrent_ops_for_native_export(lstm_model) is lstm_model
 
 
+def test_direct_recurrent_preflight_scans_root_once() -> None:
+    class _CountingOperatorList(list):
+        def __init__(self, values):
+            super().__init__(values)
+            self.iteration_count = 0
+
+        def __iter__(self):
+            self.iteration_count += 1
+            return super().__iter__()
+
+    model_ir, _ = _direct_rnn_model_ir()
+    operators = _CountingOperatorList(model_ir.operators)
+    model_ir.operators = operators
+
+    rewritten = _rewrite_recurrent_ops_for_native_export(model_ir)
+
+    assert rewritten is model_ir
+    assert operators.iteration_count == 1
+
+
 def test_direct_rnn_capability_rejects_dynamic_weight_and_non_time_major() -> None:
     model_ir, op = _direct_rnn_model_ir()
     model_ir.tensors["weight"].data = None

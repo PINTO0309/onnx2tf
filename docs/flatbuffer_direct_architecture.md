@@ -1935,12 +1935,16 @@ directly testable without importing Torch.
 
 Native PyTorch preparation is owned by the same module. Static-WHILE,
 counter-bounded-WHILE, and recurrent compatibility rewrites execute in their
-established order before the channel-first normalizer. A second preparation-
-boundary graph index is then shared by public bridge insertion and final public
-shape/layout alignment. Recursive root/subgraph op-type collection and the
-layout-agnostic fallback capability policy are also centralized here; the
-exporter retains compatibility imports for the public internal entry points and
-artifact generation only.
+established order before the channel-first normalizer. One root op-family scan
+dispatches only the rewrite entry points that can apply; after WHILE expansion,
+the root types are recomputed so recurrent operators introduced from a body are
+still handled. Direct recurrent capability selection itself is a single scan
+that stops at the first operator requiring unroll. The normalizer's current
+index then continues through public bridge insertion and final public
+shape/layout alignment; only the distinct layout-agnostic fallback constructs
+its own index. Recursive root/subgraph op-type collection and the fallback
+capability policy are also centralized here; the exporter retains compatibility
+imports for the public internal entry points and artifact generation only.
 
 Native PyTorch operation emission is being separated behind a Torch-free,
 callback-driven boundary in `pytorch_emitters.py`. The unary operator family is

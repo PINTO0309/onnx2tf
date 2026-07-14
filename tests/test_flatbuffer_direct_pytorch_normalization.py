@@ -5,6 +5,7 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pytorch_normalization import (
     _collect_model_op_types,
+    _rewrite_native_pytorch_compatibility_ops,
     normalize_model_ir_for_pytorch_channel_first,
     prepare_model_ir_for_native_pytorch,
 )
@@ -155,6 +156,68 @@ def test_native_preparation_fallback_indexes_its_distinct_graph_once(
     assert refresh_count == 1
     assert prepared is not model_ir
     assert prepared.operators[0].op_type == "RELU"
+
+
+def test_native_compatibility_preflight_scans_irrelevant_root_once() -> None:
+    class _CountingOperatorList(list):
+        def __init__(self, values):
+            super().__init__(values)
+            self.iteration_count = 0
+
+        def __iter__(self):
+            self.iteration_count += 1
+            return super().__iter__()
+
+    model_ir = ModelIR(name="native_compatibility_no_op")
+    operators = _CountingOperatorList(
+        OperatorIR("RELU", [f"t{index}"], [f"t{index + 1}"])
+        for index in range(64)
+    )
+    model_ir.operators = operators
+
+    rewritten = _rewrite_native_pytorch_compatibility_ops(model_ir)
+
+    assert rewritten is model_ir
+    assert operators.iteration_count == 1
+
+
+def test_native_compatibility_preflight_dispatches_only_present_families(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(name="native_compatibility_dispatch")
+    model_ir.operators = [
+        OperatorIR("WHILE", [], []),
+        OperatorIR("UNIDIRECTIONAL_SEQUENCE_RNN", [], []),
+    ]
+    calls = []
+
+    def record(name):
+        def rewrite(candidate):
+            calls.append(name)
+            return candidate
+
+        return rewrite
+
+    monkeypatch.setattr(
+        normalization_module,
+        "_rewrite_static_while_ops_for_native_export",
+        record("static_while"),
+    )
+    monkeypatch.setattr(
+        normalization_module,
+        "_rewrite_counter_bounded_while_ops_for_native_export",
+        record("counter_while"),
+    )
+    monkeypatch.setattr(
+        normalization_module,
+        "_rewrite_recurrent_ops_for_native_export",
+        record("recurrent"),
+    )
+
+    rewritten = _rewrite_native_pytorch_compatibility_ops(model_ir)
+
+    assert rewritten is model_ir
+    assert calls == ["static_while", "counter_while", "recurrent"]
 
 
 def test_model_op_type_collection_includes_subgraphs() -> None:

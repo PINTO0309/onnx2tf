@@ -837,6 +837,19 @@ known Python 3.12/Python 3.10 libtorch ABI mismatch still prevents collection
 of the full Torch-dependent exporter suite. No model conversion or inference
 was run.
 
+Native compatibility canonicalization now classifies root op families once and
+invokes static-WHILE, counter-WHILE, and recurrent rewrites only when their
+families are present. WHILE expansion is followed by one reclassification so
+recurrent operators introduced from a body remain visible. Direct recurrent
+capability selection likewise replaces its former `any` plus `all` scans with
+one short-circuiting traversal. One hundred ordinary graphs plus the canonical
+static and counter-bounded fixtures match checkpoint `0a9ce0f` byte for byte at
+the prepared ModelIR fingerprint level. The focused normalization, recurrent,
+control-flow, and architecture selection passes 99 tests. On a synthetic
+2,000-op irrelevant graph, the compatibility-only preflight median improved
+from 0.000315s to 0.000044s (7.19x); end-to-end preparation remains dominated
+by deep copy and layout work. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

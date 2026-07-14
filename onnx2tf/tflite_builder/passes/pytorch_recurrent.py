@@ -15,6 +15,15 @@ from onnx2tf.tflite_builder.split_planner import (
 )
 
 
+_NATIVE_PYTORCH_RECURRENT_OP_TYPES = frozenset(
+    {
+        "UNIDIRECTIONAL_SEQUENCE_RNN",
+        "UNIDIRECTIONAL_SEQUENCE_LSTM",
+        "BIDIRECTIONAL_SEQUENCE_LSTM",
+    }
+)
+
+
 def _repair_orphan_recurrent_step_tensors(
     model_ir: ModelIR,
     *,
@@ -242,25 +251,23 @@ def _can_direct_codegen_sequence_rnn_op(
 
 
 def _rewrite_recurrent_ops_for_native_export(model_ir: ModelIR) -> ModelIR:
-    recurrent_op_types = {
-        "UNIDIRECTIONAL_SEQUENCE_RNN",
-        "UNIDIRECTIONAL_SEQUENCE_LSTM",
-        "BIDIRECTIONAL_SEQUENCE_LSTM",
-    }
-    if not any(str(op.op_type) in recurrent_op_types for op in model_ir.operators):
-        return model_ir
-    if all(
-        (
-            str(op.op_type) == "UNIDIRECTIONAL_SEQUENCE_RNN"
+    requires_unroll = False
+    for op in model_ir.operators:
+        op_type = str(op.op_type)
+        if op_type not in _NATIVE_PYTORCH_RECURRENT_OP_TYPES:
+            continue
+        if (
+            op_type == "UNIDIRECTIONAL_SEQUENCE_RNN"
             and _can_direct_codegen_sequence_rnn_op(model_ir, op)
-        )
-        or (
-            str(op.op_type) in {"UNIDIRECTIONAL_SEQUENCE_LSTM", "BIDIRECTIONAL_SEQUENCE_LSTM"}
+        ) or (
+            op_type
+            in {"UNIDIRECTIONAL_SEQUENCE_LSTM", "BIDIRECTIONAL_SEQUENCE_LSTM"}
             and _can_direct_codegen_sequence_lstm_op(model_ir, op)
-        )
-        or str(op.op_type) not in recurrent_op_types
-        for op in model_ir.operators
-    ):
+        ):
+            continue
+        requires_unroll = True
+        break
+    if not requires_unroll:
         return model_ir
     try:
         rewritten_model_ir, _ = rewrite_model_ir_unroll_recurrent_ops(

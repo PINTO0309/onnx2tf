@@ -39,6 +39,7 @@ from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     validate_channel_first_exportability,
 )
 from onnx2tf.tflite_builder.passes.pytorch_recurrent import (
+    _NATIVE_PYTORCH_RECURRENT_OP_TYPES,
     _repair_orphan_recurrent_step_tensors,
     _rewrite_recurrent_ops_for_native_export,
 )
@@ -302,6 +303,26 @@ def _is_layout_agnostic_native_model_ir(model_ir: ModelIR) -> bool:
     return len(_collect_model_op_types(model_ir) & channel_sensitive_ops) == 0
 
 
+def _rewrite_native_pytorch_compatibility_ops(model_ir: ModelIR) -> ModelIR:
+    rewritten_model_ir = model_ir
+    root_op_types = {str(op.op_type) for op in model_ir.operators}
+    if "WHILE" in root_op_types:
+        rewritten_model_ir = _rewrite_static_while_ops_for_native_export(
+            rewritten_model_ir
+        )
+        rewritten_model_ir = _rewrite_counter_bounded_while_ops_for_native_export(
+            rewritten_model_ir
+        )
+        root_op_types = {
+            str(op.op_type) for op in rewritten_model_ir.operators
+        }
+    if root_op_types & _NATIVE_PYTORCH_RECURRENT_OP_TYPES:
+        rewritten_model_ir = _rewrite_recurrent_ops_for_native_export(
+            rewritten_model_ir
+        )
+    return rewritten_model_ir
+
+
 def prepare_model_ir_for_native_pytorch(model_ir: ModelIR) -> ModelIR:
     original_boundary_shape_map = model_ir.metadata.get(
         "onnx_boundary_shape_signature_map",
@@ -339,11 +360,7 @@ def prepare_model_ir_for_native_pytorch(model_ir: ModelIR) -> ModelIR:
                 else tensor.logical_layout
             )
         )
-    rewritten_model_ir = _rewrite_recurrent_ops_for_native_export(
-        _rewrite_counter_bounded_while_ops_for_native_export(
-            _rewrite_static_while_ops_for_native_export(model_ir)
-        )
-    )
+    rewritten_model_ir = _rewrite_native_pytorch_compatibility_ops(model_ir)
     try:
         normalization_result = _normalize_model_ir_for_pytorch_channel_first_with_index(
             rewritten_model_ir

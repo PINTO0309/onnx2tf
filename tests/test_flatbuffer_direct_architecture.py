@@ -553,6 +553,9 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
     assert recurrent_rewrite_source is not None
     assert "return copy.deepcopy(model_ir)" not in recurrent_rewrite_source
     assert "return model_ir" in recurrent_rewrite_source
+    assert recurrent_rewrite_source.count("for op in model_ir.operators") == 1
+    assert "if not any(" not in recurrent_rewrite_source
+    assert "if all(" not in recurrent_rewrite_source
     orphan_repair_source = ast.get_source_segment(
         recurrent_source,
         recurrent_functions["_repair_orphan_recurrent_step_tensors"],
@@ -672,6 +675,7 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert {
         "_collect_model_op_types",
         "_is_layout_agnostic_native_model_ir",
+        "_rewrite_native_pytorch_compatibility_ops",
         "_normalize_model_ir_for_pytorch_channel_first_with_index",
         "normalize_model_ir_for_pytorch_channel_first",
         "prepare_model_ir_for_native_pytorch",
@@ -718,9 +722,19 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert prepare_source is not None
     assert "def prepare_model_ir_for_native_pytorch(" not in exporter_source
     assert "prepare_model_ir_for_native_pytorch," in exporter_source
-    assert "_rewrite_static_while_ops_for_native_export(model_ir)" in prepare_source
-    assert "_rewrite_counter_bounded_while_ops_for_native_export(" in prepare_source
-    assert "_rewrite_recurrent_ops_for_native_export(" in prepare_source
+    assert "_rewrite_native_pytorch_compatibility_ops(model_ir)" in prepare_source
+    compatibility_source = ast.get_source_segment(
+        normalization_source,
+        normalization_functions["_rewrite_native_pytorch_compatibility_ops"],
+    )
+    assert compatibility_source is not None
+    assert "_rewrite_static_while_ops_for_native_export(" in compatibility_source
+    assert (
+        "_rewrite_counter_bounded_while_ops_for_native_export("
+        in compatibility_source
+    )
+    assert "_rewrite_recurrent_ops_for_native_export(" in compatibility_source
+    assert "root_op_types" in compatibility_source
     assert (
         "_normalize_model_ir_for_pytorch_channel_first_with_index("
         in prepare_source
