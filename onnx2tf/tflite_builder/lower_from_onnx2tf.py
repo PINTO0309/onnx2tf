@@ -50633,6 +50633,29 @@ def lower_onnx_to_ir(
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _run_channel_shuffle_gather_layout_pass_cluster()
 
+    def _run_layout_reshape_attention_recovery_prefix() -> None:
+        _run_layout_recovery_prefix_pass_sequence()
+        _optimize_transpose_pre_add_nhwc_chains(model_ir)
+        _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
+        _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
+        _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains(model_ir)
+        _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(model_ir)
+        _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(model_ir)
+        _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
+        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(model_ir)
+        _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
+        _optimize_gather_axis0_singleton_to_reshape_input_chains(model_ir)
+        _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
+        _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
+        _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
+        _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir)
+        run_squeeze_reshape_identity_cleanup(
+            model_ir,
+            include_unary_passthrough=True,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+
     def _run_layout_attention_quantized_recovery_suffix(
         *,
         include_duplicate_transpose: bool,
@@ -50747,27 +50770,7 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _run_layout_recovery_prefix_pass_sequence()
-        _optimize_transpose_pre_add_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
-        _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains(model_ir)
-        _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(model_ir)
-        _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(model_ir)
-        _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
-        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(model_ir)
-        _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
-        _optimize_gather_axis0_singleton_to_reshape_input_chains(model_ir)
-        _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
-        _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
-        _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
-        _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir)
-        run_squeeze_reshape_identity_cleanup(
-            model_ir,
-            include_unary_passthrough=True,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_layout_reshape_attention_recovery_prefix()
         _optimize_fold_mul_add_mul_affine_chains(model_ir)
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
@@ -50817,27 +50820,7 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
-        _run_layout_recovery_prefix_pass_sequence()
-        _optimize_transpose_pre_add_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
-        _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains(model_ir)
-        _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(model_ir)
-        _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(model_ir)
-        _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
-        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(model_ir)
-        _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
-        _optimize_gather_axis0_singleton_to_reshape_input_chains(model_ir)
-        _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
-        _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
-        _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
-        _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir)
-        run_squeeze_reshape_identity_cleanup(
-            model_ir,
-            include_unary_passthrough=True,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_layout_reshape_attention_recovery_prefix()
         _optimize_fold_mul_add_mul_affine_chains(model_ir)
         _run_layout_attention_quantized_recovery_suffix(
             include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
@@ -50853,27 +50836,7 @@ def lower_onnx_to_ir(
         _optimize_nhwc_propagation_qlinear_concat_conv(model_ir)
         _optimize_concat_pre_quantize_dequantize(model_ir)
         _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
-        _run_layout_recovery_prefix_pass_sequence()
-        _optimize_transpose_pre_add_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
-        _optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains(model_ir)
-        _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(model_ir)
-        _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(model_ir)
-        _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
-        _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(model_ir)
-        _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
-        _optimize_gather_axis0_singleton_to_reshape_input_chains(model_ir)
-        _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
-        _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
-        _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
-        _optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains(model_ir)
-        run_squeeze_reshape_identity_cleanup(
-            model_ir,
-            include_unary_passthrough=True,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_layout_reshape_attention_recovery_prefix()
         _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir)
         run_squeeze_reshape_identity_cleanup(
             model_ir,

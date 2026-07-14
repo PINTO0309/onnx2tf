@@ -288,7 +288,100 @@ def test_lowerer_layout_recovery_prefix_has_one_ordered_owner() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 4
+    assert len(helper_invocations) == 2
+
+
+def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_layout_reshape_attention_recovery_prefix"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "_run_layout_recovery_prefix_pass_sequence",
+        "_optimize_transpose_pre_add_nhwc_chains",
+        "_optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains",
+        "_optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains",
+        "_optimize_transpose_pre_unary_reshape_transpose_suffix_nhwc_chains",
+        "_optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains",
+        "_optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains",
+        "_optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains",
+        "_optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains",
+        "_optimize_attention_gather_transpose_reshape_cleanup_chains",
+        "_optimize_gather_axis0_singleton_to_reshape_input_chains",
+        "_optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains",
+        "_optimize_window_partition_reshape_transpose_to_space_to_depth_chains",
+        "_optimize_window_reverse_reshape_transpose_to_depth_to_space_chains",
+        "_optimize_transpose_pre_unary_squeeze_transpose_suffix_nhwc_chains",
+        "run_squeeze_reshape_identity_cleanup",
+    ]
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert [call.func.id for call in helper_calls] == expected_order
+
+    squeeze_call = helper_calls[-1]
+    assert all(keyword.arg != "state_scope" for keyword in squeeze_call.keywords)
+    include_unary = next(
+        keyword
+        for keyword in squeeze_call.keywords
+        if keyword.arg == "include_unary_passthrough"
+    )
+    assert isinstance(include_unary.value, ast.Constant)
+    assert include_unary.value.value is True
+
+    layout_recovery = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If)
+        and isinstance(statement.test, ast.Name)
+        and statement.test.id == "optimize_layout_transpose_chains"
+        and sum(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == helper_name
+            for node in ast.walk(statement)
+        )
+        == 3
+    )
+    invocation_indexes = [
+        index
+        for index, statement in enumerate(layout_recovery.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == helper_name
+    ]
+    assert len(invocation_indexes) == 3
+    next_call_names = []
+    for index in invocation_indexes:
+        invocation = layout_recovery.body[index].value
+        assert invocation.args == []
+        assert invocation.keywords == []
+        following = layout_recovery.body[index + 1]
+        assert isinstance(following, ast.Expr)
+        assert isinstance(following.value, ast.Call)
+        assert isinstance(following.value.func, ast.Name)
+        next_call_names.append(following.value.func.id)
+    assert next_call_names == [
+        "_optimize_fold_mul_add_mul_affine_chains",
+        "_optimize_fold_mul_add_mul_affine_chains",
+        "_optimize_transpose_instancenorm_prepost_nhwc_chains",
+    ]
 
 
 def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> None:
@@ -4720,7 +4813,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 123
+    assert len(calls) == 121
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"

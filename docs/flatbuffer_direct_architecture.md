@@ -3683,6 +3683,18 @@ separate `include_layernorm=True` behavior and is deliberately not merged.
 The extraction removes 21 net lowerer lines and reduces direct registered-
 runner call sites from 125 to 123 without changing the runtime pass sequence.
 
+Three AST-identical 16-call layout/reshape/attention recovery prefixes are
+owned by `_run_layout_reshape_attention_recovery_prefix`. The helper begins
+with the established 19-call layout-recovery sequence and preserves the
+following pre-Add, reshape/attention, window partition/reverse, unary-Squeeze,
+and Squeeze/Reshape cleanup order. The registered Squeeze/Reshape runner is not
+given a shared state scope because raw ModelIR mutators precede it. Two call
+sites retain their immediately following affine fold, while the third retains
+its distinct InstanceNorm recovery; those variant successors remain outside
+the helper and are asserted structurally. The extraction removes 37 net
+lowerer lines and reduces direct registered-runner call sites from 123 to 121
+without changing runtime invocation count or order.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
