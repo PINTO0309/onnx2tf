@@ -1,8 +1,37 @@
 from __future__ import annotations
 
-from typing import Dict, List, Set, Tuple
+from typing import Any, Dict, List, Mapping, Set, Tuple
 
 from onnx2tf.tflite_builder.ir import ModelIR
+
+
+_TFLITE_EVALUATION_ARTIFACT_PATH_KEYS: Tuple[Tuple[str, str], ...] = (
+    ("float32", "float32_tflite_path"),
+    ("float16", "float16_tflite_path"),
+    ("dynamic_range_quant", "dynamic_range_quant_tflite_path"),
+    ("integer_quant", "integer_quant_tflite_path"),
+    ("full_integer_quant", "full_integer_quant_tflite_path"),
+    (
+        "integer_quant_with_int16_act",
+        "integer_quant_with_int16_act_tflite_path",
+    ),
+    (
+        "full_integer_quant_with_int16_act",
+        "full_integer_quant_with_int16_act_tflite_path",
+    ),
+)
+
+
+def select_tflite_evaluation_artifact_paths(
+    artifacts: Mapping[str, Any],
+) -> Dict[str, str]:
+    """Select generated TFLite variants in the legacy evaluation order."""
+
+    return {
+        variant: artifacts[path_key]
+        for variant, path_key in _TFLITE_EVALUATION_ARTIFACT_PATH_KEYS
+        if path_key in artifacts
+    }
 
 
 def collect_custom_op_artifact_metadata(

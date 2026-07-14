@@ -66,6 +66,9 @@ from onnx2tf.tflite_builder.preprocess.rules.cleanup_unused_initializers import 
 from onnx2tf.tflite_builder.preprocess import (
     get_supported_pseudo_ops_wave1_aliases,
 )
+from onnx2tf.tflite_builder.artifact_metadata import (
+    select_tflite_evaluation_artifact_paths,
+)
 from onnx2tf.utils.logging import *
 from sng4onnx import generate as op_name_auto_generate
 
@@ -6339,21 +6342,9 @@ def convert(
             ),
             contains_custom_ops=direct_contains_custom_ops,
         )
-        direct_eval_paths = {}
-        if 'float32_tflite_path' in direct_outputs:
-            direct_eval_paths['float32'] = direct_outputs['float32_tflite_path']
-        if 'float16_tflite_path' in direct_outputs:
-            direct_eval_paths['float16'] = direct_outputs['float16_tflite_path']
-        if 'dynamic_range_quant_tflite_path' in direct_outputs:
-            direct_eval_paths['dynamic_range_quant'] = direct_outputs['dynamic_range_quant_tflite_path']
-        if 'integer_quant_tflite_path' in direct_outputs:
-            direct_eval_paths['integer_quant'] = direct_outputs['integer_quant_tflite_path']
-        if 'full_integer_quant_tflite_path' in direct_outputs:
-            direct_eval_paths['full_integer_quant'] = direct_outputs['full_integer_quant_tflite_path']
-        if 'integer_quant_with_int16_act_tflite_path' in direct_outputs:
-            direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
-        if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
-            direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
+        direct_eval_paths = select_tflite_evaluation_artifact_paths(
+            direct_outputs
+        )
         tflite_eval_result = _run_onnx_tflite_output_check(
             tflite_paths=direct_eval_paths,
             source_label=source_label,
@@ -7015,21 +7006,9 @@ def convert(
                             ),
                             contains_custom_ops=direct_contains_custom_ops,
                         )
-                        direct_eval_paths = {}
-                        if 'float32_tflite_path' in direct_outputs:
-                            direct_eval_paths['float32'] = direct_outputs['float32_tflite_path']
-                        if 'float16_tflite_path' in direct_outputs:
-                            direct_eval_paths['float16'] = direct_outputs['float16_tflite_path']
-                        if 'dynamic_range_quant_tflite_path' in direct_outputs:
-                            direct_eval_paths['dynamic_range_quant'] = direct_outputs['dynamic_range_quant_tflite_path']
-                        if 'integer_quant_tflite_path' in direct_outputs:
-                            direct_eval_paths['integer_quant'] = direct_outputs['integer_quant_tflite_path']
-                        if 'full_integer_quant_tflite_path' in direct_outputs:
-                            direct_eval_paths['full_integer_quant'] = direct_outputs['full_integer_quant_tflite_path']
-                        if 'integer_quant_with_int16_act_tflite_path' in direct_outputs:
-                            direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
-                        if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
-                            direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
+                        direct_eval_paths = select_tflite_evaluation_artifact_paths(
+                            direct_outputs
+                        )
                         tflite_eval_result = _run_onnx_tflite_output_check(
                             tflite_paths=direct_eval_paths,
                             source_label='flatbuffer_direct',
@@ -7588,21 +7567,9 @@ def convert(
                     ),
                     contains_custom_ops=direct_contains_custom_ops,
                 )
-                direct_eval_paths = {}
-                if 'float32_tflite_path' in direct_outputs:
-                    direct_eval_paths['float32'] = direct_outputs['float32_tflite_path']
-                if 'float16_tflite_path' in direct_outputs:
-                    direct_eval_paths['float16'] = direct_outputs['float16_tflite_path']
-                if 'dynamic_range_quant_tflite_path' in direct_outputs:
-                    direct_eval_paths['dynamic_range_quant'] = direct_outputs['dynamic_range_quant_tflite_path']
-                if 'integer_quant_tflite_path' in direct_outputs:
-                    direct_eval_paths['integer_quant'] = direct_outputs['integer_quant_tflite_path']
-                if 'full_integer_quant_tflite_path' in direct_outputs:
-                    direct_eval_paths['full_integer_quant'] = direct_outputs['full_integer_quant_tflite_path']
-                if 'integer_quant_with_int16_act_tflite_path' in direct_outputs:
-                    direct_eval_paths['integer_quant_with_int16_act'] = direct_outputs['integer_quant_with_int16_act_tflite_path']
-                if 'full_integer_quant_with_int16_act_tflite_path' in direct_outputs:
-                    direct_eval_paths['full_integer_quant_with_int16_act'] = direct_outputs['full_integer_quant_with_int16_act_tflite_path']
+                direct_eval_paths = select_tflite_evaluation_artifact_paths(
+                    direct_outputs
+                )
                 tflite_eval_result = _run_onnx_tflite_output_check(
                     tflite_paths=direct_eval_paths,
                     source_label='flatbuffer_direct',

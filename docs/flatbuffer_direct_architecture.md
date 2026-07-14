@@ -61,6 +61,14 @@ correspondence report and float32/float16 outputs retain their compatibility
 order, and all optional progress labels come directly from the same plan used
 to guard execution.
 
+The compatibility layer treats the direct builder's returned artifact mapping
+as the only source of TFLite paths for accuracy evaluation. The seven legacy
+variant keys and their stable evaluation order live in
+`artifact_metadata.select_tflite_evaluation_artifact_paths`; all three direct
+conversion exit paths call that owner. Missing optional variants remain absent
+instead of being reconstructed from output-directory conventions, so report
+execution follows the actual `ConversionResult` artifacts.
+
 A pass has a stable ID, phase, priority, maximum iteration count, and explicit
 `changed` result. Repeating passes must use a graph fingerprint so a cycle
 terminates deterministically. Risky rewrites use the transactional mode and

@@ -1994,6 +1994,22 @@ def test_custom_op_artifact_metadata_has_single_scan_owner() -> None:
     assert "custom_op_nodes_seen" not in builder_source
 
 
+def test_tflite_evaluation_artifact_selection_has_single_owner() -> None:
+    compatibility_source = (
+        REPO_ROOT / "onnx2tf" / "onnx2tf.py"
+    ).read_text(encoding="utf-8")
+    metadata_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "artifact_metadata.py"
+    ).read_text(encoding="utf-8")
+
+    helper_name = "select_tflite_evaluation_artifact_paths"
+    assert f"def {helper_name}(" in metadata_source
+    assert f"def {helper_name}(" not in compatibility_source
+    assert compatibility_source.count(f"{helper_name}(") == 3
+    assert "direct_eval_paths = {}" not in compatibility_source
+    assert "direct_eval_paths['" not in compatibility_source
+
+
 def test_direct_export_reads_options_only_from_normalized_request() -> None:
     builder_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py"
