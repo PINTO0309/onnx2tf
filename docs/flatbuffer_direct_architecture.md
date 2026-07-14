@@ -3922,6 +3922,24 @@ separate checks prove nearest DEQUANTIZE fallback, strict exact-source
 preference, no index allocation for clean graphs, and equality with a fresh
 index rebuild.
 
+Inverse layout Transposes around linear
+DEQUANTIZE-(RELU/RELU6)-QUANTIZE chains are owned by the Torch/TensorFlow-free
+`passes/quantized_activation.py` module. A no-Transpose preflight avoids index
+allocation; otherwise one `ModelIRGraphIndex` supplies graph-order Transpose
+candidates and every single-consumer edge. The DQ input and Q output change
+through indexed setters, then both wrapper Transposes are removed in one
+differential compaction. The ordered restart remains so a candidate made
+linear by a later removal can still be reconsidered without rebuilding maps.
+
+Intermediate and source public-boundary guards, exact inverse permutations,
+per-tensor quantization eligibility, source shape/signature propagation,
+destination dtype and quantization cloning, tensor pruning, lineage events,
+and the existing stats key are unchanged. Characterization compares the full
+two-chain RELU/RELU6 ModelIR with the former mutation sequence, blocks legacy
+consumer-map construction, checks public, fan-out, per-channel, and permutation
+no-ops, observes no index for a Transpose-free graph, and compares the
+maintained index with a fresh rebuild.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

@@ -226,6 +226,9 @@ from onnx2tf.tflite_builder.passes.pad_layout import (
 from onnx2tf.tflite_builder.passes.quantized_layout import (
     repair_channel_last_convinteger_input_transposes,
 )
+from onnx2tf.tflite_builder.passes.quantized_activation import (
+    optimize_transpose_dequant_relu_quantize_bridges,
+)
 from onnx2tf.tflite_builder.passes.quantized_prelu import (
     _optimize_dequant_prelu_depthwise_quantize_chains as _optimize_dequant_prelu_depthwise_quantize_chains_pass,
     _optimize_dequant_prelu_quantize_chains as _optimize_dequant_prelu_quantize_chains_pass,
@@ -4900,7 +4903,11 @@ def _optimize_transpose_dequant_prelu_quantize_bridges(model_ir: ModelIR) -> Dic
     return _optimize_transpose_dequant_prelu_quantize_bridges_pass(model_ir)
 
 
-def _optimize_transpose_dequant_relu_quantize_bridges(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_dequant_relu_quantize_bridges(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Dict[str, int]:
     """
     Fold transpose wrappers around DEQUANTIZE->(RELU|RELU6)->QUANTIZE chains.
 
@@ -4915,143 +4922,10 @@ def _optimize_transpose_dequant_relu_quantize_bridges(model_ir: ModelIR) -> Dict
     - Pre/Post transpose permutations are exact inverses
     - Quantized tensors use per-tensor quantization only
     """
-    removed_relu_bridges = 0
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
-                continue
-
-            perm_pre = _read_transpose_perm(model_ir, pre_op)
-            if perm_pre is None:
-                continue
-
-            bridge_q_in = str(pre_op.outputs[0])
-            dq_users = consumers.get(bridge_q_in, [])
-            if len(dq_users) != 1:
-                continue
-            dq_idx = int(dq_users[0])
-            dq_op = model_ir.operators[dq_idx]
-            if str(dq_op.op_type) != "DEQUANTIZE" or len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
-                continue
-            if str(dq_op.inputs[0]) != bridge_q_in:
-                continue
-
-            bridge_f_in = str(dq_op.outputs[0])
-            relu_users = consumers.get(bridge_f_in, [])
-            if len(relu_users) != 1:
-                continue
-            relu_idx = int(relu_users[0])
-            relu_op = model_ir.operators[relu_idx]
-            if str(relu_op.op_type) not in {"RELU", "RELU6"} or len(relu_op.inputs) != 1 or len(relu_op.outputs) != 1:
-                continue
-            if str(relu_op.inputs[0]) != bridge_f_in:
-                continue
-
-            bridge_f_out = str(relu_op.outputs[0])
-            q_users = consumers.get(bridge_f_out, [])
-            if len(q_users) != 1:
-                continue
-            q_idx = int(q_users[0])
-            q_op = model_ir.operators[q_idx]
-            if str(q_op.op_type) != "QUANTIZE" or len(q_op.inputs) != 1 or len(q_op.outputs) != 1:
-                continue
-            if str(q_op.inputs[0]) != bridge_f_out:
-                continue
-
-            bridge_q_out = str(q_op.outputs[0])
-            post_users = consumers.get(bridge_q_out, [])
-            if len(post_users) != 1:
-                continue
-            post_idx = int(post_users[0])
-            post_op = model_ir.operators[post_idx]
-            if str(post_op.op_type) != "TRANSPOSE" or len(post_op.inputs) < 2 or len(post_op.outputs) != 1:
-                continue
-            if str(post_op.inputs[0]) != bridge_q_out:
-                continue
-
-            perm_post = _read_transpose_perm(model_ir, post_op)
-            if perm_post is None or not _is_inverse_perm(perm_pre, perm_post):
-                continue
-
-            # Keep user-visible output names stable and avoid breaking observable intermediates.
-            if (
-                bridge_q_in in model_ir.outputs
-                or bridge_f_in in model_ir.outputs
-                or bridge_f_out in model_ir.outputs
-                or bridge_q_out in model_ir.outputs
-            ):
-                continue
-
-            q_src_name = str(pre_op.inputs[0])
-            q_dst_name = str(post_op.outputs[0])
-            if q_src_name in model_ir.outputs:
-                continue
-
-            q_src_tensor = model_ir.tensors.get(q_src_name, None)
-            q_mid_in_tensor = model_ir.tensors.get(bridge_q_in, None)
-            q_mid_out_tensor = model_ir.tensors.get(bridge_q_out, None)
-            q_dst_tensor = model_ir.tensors.get(q_dst_name, None)
-            if not _all_per_tensor_quantized([q_src_tensor, q_mid_in_tensor, q_mid_out_tensor, q_dst_tensor]):
-                continue
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=dq_op,
-                new_inputs=[q_src_name],
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=q_op,
-                new_outputs=[q_dst_name],
-            )
-
-            # Update bridge tensor metadata to the non-transposed layout.
-            q_src_shape = list(q_src_tensor.shape) if q_src_tensor is not None else None
-            q_src_signature = (
-                list(q_src_tensor.shape_signature)
-                if q_src_tensor is not None and q_src_tensor.shape_signature is not None
-                else q_src_shape
-            )
-            if q_src_shape is not None:
-                dq_out_tensor = model_ir.tensors.get(bridge_f_in, None)
-                relu_out_tensor = model_ir.tensors.get(bridge_f_out, None)
-                if dq_out_tensor is not None:
-                    dq_out_tensor.shape = [int(v) for v in q_src_shape]
-                    dq_out_tensor.shape_signature = (
-                        [int(v) for v in q_src_signature]
-                        if q_src_signature is not None
-                        else [int(v) for v in q_src_shape]
-                    )
-                if relu_out_tensor is not None:
-                    relu_out_tensor.shape = [int(v) for v in q_src_shape]
-                    relu_out_tensor.shape_signature = (
-                        [int(v) for v in q_src_signature]
-                        if q_src_signature is not None
-                        else [int(v) for v in q_src_shape]
-                    )
-
-            if q_dst_tensor is not None and q_mid_out_tensor is not None:
-                q_dst_tensor.dtype = str(q_mid_out_tensor.dtype)
-                q_dst_tensor.quantization = _clone_quantization(q_mid_out_tensor.quantization)
-
-            for remove_idx in sorted([pre_idx, post_idx], reverse=True):
-                del model_ir.operators[remove_idx]
-            removed_relu_bridges += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {
-        "removed_transpose_dequant_relu_quantize_bridges": int(removed_relu_bridges),
-    }
-
+    return optimize_transpose_dequant_relu_quantize_bridges(
+        model_ir,
+        graph_index=graph_index,
+    )
 
 def _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir: ModelIR) -> Dict[str, int]:
     """

@@ -8,16 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves unbound-input layout repair out of the
-lowerer into one Torch/TensorFlow-free `unbound_input_layout` owner. Its
-DEQUANTIZE, RESHAPE/SHAPE/SPLIT, and MUL-alias families share one differential
-`ModelIRGraphIndex`; a graph without an issue builds no index. One candidate
-snapshot retains consumer identity while indexed insertions shift graph
-positions, and later source selection observes the updated producer index. The
-lowerer preserves its report dictionary and performs shape reconciliation with
-the maintained index. Five sequential repairs, MUL fan-out, nearest-source
-selection, protected mixed fan-out, and complete former behavior are
-characterized exactly.
+The latest implementation unit moves inverse-Transpose cleanup around
+DEQUANTIZE-(RELU/RELU6)-QUANTIZE chains out of the lowerer into one Torch/
+TensorFlow-free `quantized_activation` owner. One differential
+`ModelIRGraphIndex` supplies candidate and linear-consumer lookup, indexed edge
+updates, and batch removal of both Transposes without rebuilding consumers
+after a match. Graphs without Transposes build no index. Exact inverse-perm,
+public boundary, per-tensor quantization, shape/signature, dtype/quantization,
+and lineage behavior are preserved across multiple RELU and RELU6 matches.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -39,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains sixty coherent continuations:
+The current `fb-refactor5` work contains sixty-one coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -166,8 +164,10 @@ The current `fb-refactor5` work contains sixty coherent continuations:
   sanitizer and removes its per-match consumer-map rebuild;
 - `1ad30cbc` centralizes direct and PyTorch recurrent orphan-step alias repair
   in one Torch-free differential-index owner;
-- the current checkpoint extracts all unbound-input layout repair families to
-  one differential-index owner and removes their repeated graph rescans.
+- `2574ae1f` extracts all unbound-input layout repair families to one
+  differential-index owner and removes their repeated graph rescans;
+- the current checkpoint extracts quantized RELU/RELU6 Transpose bridge cleanup
+  to one differential-index activation owner.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -186,8 +186,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/unbound_input_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_unbound_input_layout.py`;
+- `onnx2tf/tflite_builder/passes/quantized_activation.py`;
+- `tests/test_flatbuffer_direct_indexed_quantized_activation.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -490,6 +490,15 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   unique perm naming, and insertion-before-consumer order remain unchanged.
   The lowerer wrapper reconciles shapes with the maintained index and preserves
   the existing stats key for both primary and fallback callers.
+- Quantized RELU/RELU6 layout-bridge cleanup has one Torch/TensorFlow-free
+  owner in `passes/quantized_activation.py`. It skips index allocation when no
+  Transpose exists, otherwise uses one current index for exact chain traversal,
+  DQ input and Q output rewrites, and batch removal of the inverse Transposes.
+  The restart loop remains intentional: removing a later bridge may make an
+  earlier graph-order candidate linear, while current indexed candidates avoid
+  every compatibility-map rebuild. Public intermediate/source guards, exact
+  inverse permutations, per-tensor-only quantization, source-shape propagation,
+  destination dtype/quantization cloning, pruning, and stats are unchanged.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -1364,6 +1373,15 @@ An actual GRU lowering/unbound-input check passed with `1 passed`, and the
 single sequential direct quantization, evaluation, and coverage integration
 smoke passed with `1 passed`.
 
+The indexed quantized-activation checkpoint passed complete former-mutation
+equivalence for two RELU/RELU6 chains, one-index-build, no-consumer-rescan,
+maintained-index, public intermediate/source, fan-out, per-channel
+quantization, non-inverse permutation, no-Transpose/no-index, ownership, and
+real ONNX lowering coverage with `10 passed`. The complete architecture file
+passed with `148 passed`; the lightweight core/indexed selection passed with
+`125 passed`. Its single sequential direct quantization, evaluation, and
+coverage integration smoke passed with `1 passed`.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1409,11 +1427,11 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the bounded DEQUANTIZE-(RELU/RELU6)-QUANTIZE Transpose bridge cleanup
-   next. It rebuilds a complete consumer map after each match; preserve exact
-   inverse permutations, linear-chain guards, per-tensor quantization, public
-   outputs, operator order, and tensor metadata if moving candidate discovery,
-   rewrites, and removals to a differential index.
+2. Audit the adjacent expanded-HardSigmoid DEQUANTIZE/QUANTIZE Transpose bridge
+   cleanup as a staged checkpoint. Characterize both RELU_0_TO_1 and
+   MAXIMUM/MINIMUM forms, constant remapping, public boundaries, quantization,
+   fan-out, and rollback-sensitive ordering before replacing its repeated
+   consumer maps and raw structural mutations.
 3. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
