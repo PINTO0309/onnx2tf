@@ -8,17 +8,15 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit completes the paired Swin-style window reverse
-canonicalization in `passes/window_partition_layout.py`. One
-`ModelIRGraphIndex` replaces each exact ordered/exclusive
-`RESHAPE -> TRANSPOSE -> RESHAPE` chain with
-`RESHAPE -> DEPTH_TO_SPACE` without rebuilding consumer maps. Static ModelIR,
-lineage, shared-constant clone naming, options/provenance, pruning, and
-statistics retain former behavior. One runtime-inferable first-Reshape
-dimension is now preserved transactionally. Invalid constants, topology,
-metadata, dtypes, quantization grids, or multi-dynamic targets are complete
-no-ops. Both window partition and reverse production calls now share this
-indexed semantic owner and Session LayoutState boundary.
+The latest implementation unit moves the Conv1D-shim
+`TRANSPOSE -> SQUEEZE -> UNARY -> EXPAND_DIMS -> TRANSPOSE` canonicalization to
+`passes/conv1d_unary_layout.py`. One `ModelIRGraphIndex` validates and removes
+each exact wrapper chain without rebuilding consumer maps. Static ModelIR,
+lineage, unary identity/options/provenance, output metadata repair, pruning,
+and statistics retain former behavior. Consistent dynamic signatures are now
+preserved explicitly. Invalid constants, topology, shape equations, dtypes,
+quantization grids, or ordering are complete no-ops, and quantization clone
+failure can no longer leave a partially rewired unary.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -40,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains eighty-eight coherent continuations:
+The current `fb-refactor5` work contains eighty-nine coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -228,9 +226,12 @@ The current `fb-refactor5` work contains eighty-eight coherent continuations:
   indexed owner with complete adapter transactions;
 - `84ac0fae` moves Swin-style window-partition canonicalization to one indexed
   owner with complete topology/constant/metadata transactions;
-- the current checkpoint moves the paired Swin-style window-reverse
+- `b134767b` moves the paired Swin-style window-reverse
   canonicalization to that owner with deterministic shared-shape cloning and
-  complete topology/constant/metadata transactions.
+  complete topology/constant/metadata transactions;
+- the current checkpoint moves the Conv1D-shim Squeeze/Unary/ExpandDims
+  canonicalization to one indexed owner with complete shape, topology,
+  constant, dtype, and quantization transactions.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -249,8 +250,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/window_partition_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_window_reverse_layout.py`;
+- `onnx2tf/tflite_builder/passes/conv1d_unary_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_conv1d_unary_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -2249,6 +2250,34 @@ quantization/evaluation/coverage smoke passed with `3 passed`. Ruff on the
 owner/test and architecture test, syntax compilation, and `git diff --check`
 passed. No Tier corpus conversion was run.
 
+The indexed Conv1D-shim unary checkpoint compiles the complete prior committed
+function and preserves exact ModelIR, lineage, operator order, unary identity,
+options/version/axis semantics/provenance, output dtype and quantization repair,
+unused-tensor pruning, and statistics for a five-chain public-input,
+produced-input, quantized, CAST, inferred-axis, and alternate-axis fixture.
+Differential checks prove that a floating permutation, produced ExpandDims
+axis, inconsistent internal shape metadata, mixed input dtype, and duplicate
+final producer formerly changed graph state; all five are now complete no-ops.
+A faulting quantization clone additionally proves that the former helper
+rewired the unary before raising, while the indexed owner leaves ModelIR
+unchanged.
+
+Focused coverage verifies one-index multi-match execution, supplied-index and
+LayoutState equivalence, all sixteen supported unary types, explicit/negative
+and uniquely inferred axes, CAST dtype transition, output metadata repair,
+consistent multi-dynamic signatures, exact NHWC/NCHW permutation and
+drop/insert equations, every operator role/order/arity, public and fan-out
+boundaries, duplicate/later/unresolved producers, typed producer-free
+permutation and axis vectors, per-tensor quantization, per-axis rejection,
+clone-failure transaction, historical prune/no-index behavior, and unique
+semantic ownership with `75 passed`. Architecture, core, pass-efficiency,
+three established transpose-unary suites, five adjacent Conv1D-shim
+characterizations, and the new indexed suite passed together with `321
+passed`. TensorFlow-import-blocked direct and `-cotof` plus the sequential
+quantization/evaluation/coverage smoke passed with `3 passed`. Ruff on the
+owner/test and architecture test, syntax compilation, and `git diff --check`
+passed. No Tier corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -2298,10 +2327,12 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit `_optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains`
-   as the next adjacent bounded raw-map helper. Preserve its exact unary-family
-   grammar, axis handling, retained operator identity, metadata, pruning, and
-   statistics before considering an indexed owner.
+3. Audit
+   `_optimize_transpose_unary_transpose_reshape_expanddims_transpose_nhwc_chains`
+   as the next adjacent bounded Conv1D-shim variant. Preserve its intermediate
+   rank-four permutation, Reshape/ExpandDims axis rewrite, fan-out bridge,
+   operator identities, metadata, pruning, and statistics before extending the
+   shared owner.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

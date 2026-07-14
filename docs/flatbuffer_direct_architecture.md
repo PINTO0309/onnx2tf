@@ -4634,6 +4634,50 @@ inconsistent signatures formerly matched but now remain transactionally
 unchanged. Both production call sites supply the Session LayoutState, and a
 real ONNX Reshape/Transpose/Reshape graph characterizes the production owner.
 
+Conv1D-shim unary canonicalization is owned by
+`passes/conv1d_unary_layout.py`. A two-Transpose, Squeeze, ExpandDims, and
+supported-Unary preflight preserves historical unused-tensor pruning without
+constructing an index for unrelated graphs. Otherwise one optional or local
+`ModelIRGraphIndex` captures graph-order first-Transpose objects and resolves
+each against the current graph after earlier chains are removed. The former
+per-rewrite full consumer-map rebuild is eliminated.
+
+The exact chain is NHWC rank-four input, Transpose `[0,3,1,2]`, one-axis
+Squeeze to rank three, one shape-preserving unary, ExpandDims at the same axis,
+and Transpose `[0,2,3,1]` back to the original NHWC shape. Concrete shapes are
+positive and every shape signature is either its concrete dimension or `-1`.
+The pre-Transpose, squeezed, unary, expanded, and final signatures must satisfy
+the complete permutation/drop/insert/inverse-permutation equations. A squeezed
+axis must be statically one in both shape and signature. When `squeezeDims` is
+absent, exactly one axis must produce the recorded rank-three shape.
+
+Both permutation vectors and the ExpandDims axis are producer-free INT32 or
+INT64 constants with exact vector metadata; runtime graph inputs are not
+treated as constants. The data source is a public input, producer-free
+constant, or uniquely produced earlier value. Every intermediate has one
+producer, is private, and is exclusively consumed by the next strictly later
+operator. The final output has one producer, is not a graph input, and any
+downstream consumers occur after the removed post-Transpose.
+
+Transpose and Squeeze preserve one dtype and valid per-tensor quantization
+grid; unary output and ExpandDims preserve another. Non-CAST unary operators
+require those groups to be the same. CAST retains the former ability to change
+dtype. The final output's dtype and cloned quantization continue to be repaired
+from the unary output. That clone is prepared before mutation, so an
+unclonable quantization object leaves the complete graph unchanged instead of
+rewiring the unary and then raising.
+
+The same unary object is retained with its options, version, axis semantics,
+and ONNX provenance. Its input becomes the original NHWC source and its output
+becomes the former post-Transpose output; four wrapper operators are removed
+with one differential-index compaction. Static public-input, produced-input,
+quantized, CAST, inferred-axis, and alternate-spatial-axis fixtures retain
+exact former ModelIR and statistics. Floating/produced constants, inconsistent
+internal shapes, mixed dtypes, and duplicate final producers formerly matched
+but now remain complete no-ops. Consistent dynamic batch, spatial, and channel
+signatures are preserved without introducing a Reshape. The sole production
+call supplies the Session LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
