@@ -13,6 +13,7 @@ from onnx2tf.tflite_builder.pytorch_source_rewrites import (
     _inline_trivial_public_layout_bridge_aliases,
     _prune_dead_forward_lines,
     _repair_channel_last_gap_conv_inputs,
+    _repair_exported_program_direct_conv_cf_add_targets,
     _rewrite_channel_first_gap_outputs_to_explicit_channel_last,
     _rewrite_channel_first_se_scale_binary_bridges,
     _rewrite_channel_last_binary_bridge_chains,
@@ -210,6 +211,54 @@ def test_channel_last_gap_conv_repair_ignores_scalar_dim_mean() -> None:
     ]
 
     assert _repair_channel_last_gap_conv_inputs(lines) == lines
+
+
+def test_exported_program_direct_conv_repair_restores_channel_first_target() -> None:
+    lines = [
+        "        self.conv_block_0 = _Conv2dBlock(",
+        "            in_channels=32,",
+        "            out_channels=64,",
+        "        )",
+        "        out = _align_tensor_to_target_shape(torch.add(lhs_cf, rhs_cf), [1, 80, 32, 48])",
+        "        out = torch.relu(out)",
+        "        y_cf = self.conv_block_0(out)",
+    ]
+
+    assert _repair_exported_program_direct_conv_cf_add_targets(lines) == [
+        *lines[:4],
+        "        out = _align_tensor_to_target_shape(torch.add(lhs_cf, rhs_cf), [1, 32, 48, 80])",
+        *lines[5:],
+    ]
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        [
+            "        self.conv_block_0 = _Conv2dBlock(",
+            "            in_channels=32,",
+            "        out = _align_tensor_to_target_shape(torch.add(lhs_cf, rhs_cf), [1, 32, 48, 80])",
+            "        out = torch.relu(out)",
+            "        y_cf = self.conv_block_0(out)",
+        ],
+        [
+            "        self.conv_block_0 = _Conv2dBlock(",
+            "            in_channels=32,",
+            "        out = _align_tensor_to_target_shape(torch.add(lhs_cf, rhs_cf), [1, 80, 32, 48])",
+            "        out = torch.sigmoid(out)",
+            "        y_cf = self.conv_block_0(out)",
+        ],
+        [
+            "        out = _align_tensor_to_target_shape(torch.add(lhs_cf, rhs_cf), [1, 80, 32, 48])",
+            "        out = torch.relu(out)",
+            "        y_cf = self.conv_block_0(out)",
+        ],
+    ],
+)
+def test_exported_program_direct_conv_repair_preserves_unsafe_source(
+    lines,
+) -> None:
+    assert _repair_exported_program_direct_conv_cf_add_targets(lines) == lines
 
 
 def test_dead_forward_line_pruning_removes_unreachable_assignment() -> None:

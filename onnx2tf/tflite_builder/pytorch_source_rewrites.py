@@ -2635,6 +2635,78 @@ def _repair_channel_last_gap_conv_inputs(
     return rewritten
 
 
+def _repair_exported_program_direct_conv_cf_add_targets(
+    lines: List[str],
+) -> List[str]:
+    rewritten = list(lines)
+    conv_block_decl_re = re.compile(
+        r"^\s*self\.(?P<module>[A-Za-z0-9_]+) = _Conv2dBlock\($"
+    )
+    in_channels_re = re.compile(r"^\s*in_channels=(?P<channels>\d+),$")
+    aligned_add_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.add\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
+    )
+    relu_same_lhs_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.relu\((?P=lhs)\)$"
+    )
+    module_call_re = re.compile(
+        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*self\.(?P<module>[A-Za-z0-9_]+)\((?P<input>[A-Za-z0-9_]+)\)$"
+    )
+
+    conv_block_in_channels: Dict[str, int] = {}
+    for index, line in enumerate(rewritten):
+        conv_block_decl_match = conv_block_decl_re.match(line)
+        if conv_block_decl_match is None:
+            continue
+        module_name = str(conv_block_decl_match.group("module"))
+        for lookahead in range(index + 1, min(len(rewritten), index + 12)):
+            in_channels_match = in_channels_re.match(rewritten[lookahead])
+            if in_channels_match is not None:
+                conv_block_in_channels[module_name] = int(
+                    in_channels_match.group("channels")
+                )
+                break
+
+    for index, line in enumerate(rewritten):
+        aligned_add_match = aligned_add_re.match(line)
+        if aligned_add_match is None:
+            continue
+        lhs = str(aligned_add_match.group("lhs"))
+        relu_index = index + 1
+        if relu_index >= len(rewritten):
+            continue
+        relu_match = relu_same_lhs_re.match(rewritten[relu_index])
+        if relu_match is None or str(relu_match.group("lhs")) != lhs:
+            continue
+        consumer_match = None
+        for lookahead in range(relu_index + 1, min(len(rewritten), relu_index + 4)):
+            candidate_match = module_call_re.match(rewritten[lookahead])
+            if candidate_match is not None and str(
+                candidate_match.group("input")
+            ) == lhs:
+                consumer_match = candidate_match
+                break
+        if consumer_match is None:
+            continue
+        in_channels = conv_block_in_channels.get(
+            str(consumer_match.group("module")), None
+        )
+        if in_channels is None:
+            continue
+        n = int(aligned_add_match.group("n"))
+        d1 = int(aligned_add_match.group("d1"))
+        d2 = int(aligned_add_match.group("d2"))
+        d3 = int(aligned_add_match.group("d3"))
+        if d2 != int(in_channels) or d1 == int(in_channels):
+            continue
+        rewritten[index] = (
+            f"{aligned_add_match.group('indent')}{lhs} = _align_tensor_to_target_shape("
+            f"torch.add({aligned_add_match.group('a')}, {aligned_add_match.group('b')}), "
+            f"[{n}, {d2}, {d3}, {d1}])"
+        )
+    return rewritten
+
+
 def _prune_dead_forward_lines(
     lines: Sequence[str],
     *,

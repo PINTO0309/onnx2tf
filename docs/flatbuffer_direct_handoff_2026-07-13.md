@@ -536,6 +536,15 @@ Both function ASTs match checkpoint `12535c1` exactly. Five direct ONNX-helper
 and filesystem cases plus architecture validation pass 83 tests; Ruff, diff,
 and AST-equivalence checks pass. No model conversion or inference was run.
 
+ExportedProgram's pure direct-Conv channel-first Add-target repair now lives
+with the other Torch-free transforms in `pytorch_source_rewrites.py`. It still
+requires a declared Conv block, recorded input channels, the exact Add/ReLU
+chain, and a nearby direct Conv consumer before changing a static target. Its
+function AST matches checkpoint `14dfd85` exactly. A positive rewrite and three
+unsafe no-op cases plus source-rewrite and architecture validation pass 110
+tests; Ruff, diff, and AST-equivalence checks pass. No model conversion or
+inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

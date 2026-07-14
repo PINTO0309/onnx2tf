@@ -4356,6 +4356,7 @@ def test_generated_pytorch_gap_se_rewrites_have_single_owner() -> None:
         "_inline_trivial_public_layout_bridge_aliases",
         "_prune_dead_forward_lines",
         "_repair_channel_last_gap_conv_inputs",
+        "_repair_exported_program_direct_conv_cf_add_targets",
         "_rewrite_channel_first_gap_outputs_to_explicit_channel_last",
         "_rewrite_channel_first_se_scale_binary_bridges",
         "_rewrite_channel_last_binary_bridge_chains",

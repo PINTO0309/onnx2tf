@@ -2041,8 +2041,11 @@ identical to their former exporter definitions. Channel-last GAP/Conv input
 repair now uses the shared rank-4 shape policy and is the thirteenth pure
 rewrite owned here; its AST is likewise unchanged. Backward liveness pruning of
 generated forward lines is also owned here and accepts explicit public input and
-output variable names instead of consulting graph state.
-Direct fixtures fix each
+output variable names instead of consulting graph state. ExportedProgram's
+direct-Conv channel-first Add-target repair is also owned here; it recognizes
+only a declared Conv block, its input-channel count, the exact Add/ReLU chain,
+and a nearby direct consumer before changing the static target. Its AST is
+unchanged from the exporter implementation. Direct fixtures fix each
 rewrite's representative success form and unmatched-source no-op behavior.
 Graph-aware GatherND boundary repair is deliberately not mixed into this pure
 source-rewrite boundary. It lives in the Torch-free
