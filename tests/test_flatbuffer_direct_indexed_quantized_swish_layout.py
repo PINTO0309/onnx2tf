@@ -10,9 +10,11 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.quantized_swish_layout import (
     copy_swish_qdq_shape_signature,
+    normalize_late_swish_qdq_concat_inputs,
     propagate_swish_qdq_nhwc_metadata,
     remove_inverse_post_transposes_for_swish_qdq,
     rewrite_transpose_swish_qdq_nhwc_branches,
+    run_swish_qdq_late_concat_and_post_cleanup,
     run_swish_qdq_nhwc_primary_phases,
 )
 
@@ -388,6 +390,75 @@ def _make_post_transpose_cleanup_model_ir() -> ModelIR:
         "wrong_tap",
         "untracked_tap",
     ]
+    return model_ir
+
+
+def _make_late_concat_model_ir(*, direct_fanout: bool = False) -> ModelIR:
+    model_ir = ModelIR("indexed_quantized_swish_late_concat")
+    nhwc_shape = [1, 4, 4, 2]
+    nchw_shape = [1, 2, 4, 4]
+    model_ir.inputs = ["source_direct", "source_dq", "peer"]
+    model_ir.outputs = ["y1", "y2"]
+    for source_name in ["source_direct", "source_dq"]:
+        model_ir.tensors[source_name] = _tensor(source_name, nhwc_shape)
+    model_ir.tensors["peer"] = _tensor("peer", [1, 4, 4, 1])
+    model_ir.tensors["perm_pre"] = _tensor(
+        "perm_pre",
+        [4],
+        dtype="INT32",
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+    )
+    model_ir.tensors["perm_post"] = _tensor(
+        "perm_post",
+        [4],
+        dtype="INT32",
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    model_ir.tensors["direct_nchw"] = _tensor("direct_nchw", nchw_shape)
+    model_ir.tensors["dq_nchw"] = _tensor("dq_nchw", nchw_shape)
+    model_ir.tensors["dq_output"] = _tensor("dq_output", nchw_shape)
+    model_ir.tensors["concat"] = _tensor("concat", [1, 5, 4, 4])
+    model_ir.tensors["concat_q"] = _tensor(
+        "concat_q",
+        [1, 5, 4, 4],
+        dtype="INT8",
+    )
+    for name in ["post1", "post2", "y1", "y2"]:
+        model_ir.tensors[name] = _tensor(
+            name,
+            [1, 4, 4, 5],
+            dtype="INT8",
+        )
+    model_ir.operators = [
+        OperatorIR(
+            "TRANSPOSE",
+            ["source_direct", "perm_pre"],
+            ["direct_nchw"],
+        ),
+        OperatorIR("TRANSPOSE", ["source_dq", "perm_pre"], ["dq_nchw"]),
+        OperatorIR("DEQUANTIZE", ["dq_nchw"], ["dq_output"]),
+        OperatorIR(
+            "CONCATENATION",
+            ["direct_nchw", "dq_output", "peer"],
+            ["concat"],
+            options={"axis": 1},
+        ),
+        OperatorIR("QUANTIZE", ["concat"], ["concat_q"]),
+        OperatorIR("TRANSPOSE", ["concat_q", "perm_post"], ["post1"]),
+        OperatorIR("RELU", ["post1"], ["y1"]),
+        OperatorIR("TRANSPOSE", ["concat_q", "perm_post"], ["post2"]),
+        OperatorIR("RELU", ["post2"], ["y2"]),
+    ]
+    if direct_fanout:
+        model_ir.tensors["direct_tap"] = _tensor(
+            "direct_tap",
+            nchw_shape,
+        )
+        model_ir.operators.insert(
+            1,
+            OperatorIR("RELU", ["direct_nchw"], ["direct_tap"]),
+        )
+        model_ir.outputs.append("direct_tap")
     return model_ir
 
 
@@ -797,3 +868,212 @@ def test_indexed_swish_post_cleanup_skips_index_without_rewritten_seed(
         sum(str(operator.op_type) == "TRANSPOSE" for operator in model_ir.operators)
         == 6
     )
+
+
+def test_indexed_swish_late_concat_normalizes_mixed_inputs_and_keeps_index() -> None:
+    model_ir = _make_late_concat_model_ir()
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    result = normalize_late_swish_qdq_concat_inputs(
+        model_ir,
+        {"seed"},
+        graph_index=graph_index,
+    )
+
+    assert result.rewritten_concat_axes == 1
+    assert result.removed_input_transposes == 2
+    assert result.rewritten_tensors == frozenset(
+        {
+            "seed",
+            "source_direct",
+            "dq_output",
+            "peer",
+            "concat",
+            "concat_q",
+        }
+    )
+    concat = next(
+        operator
+        for operator in model_ir.operators
+        if str(operator.op_type) == "CONCATENATION"
+    )
+    dequantize = next(
+        operator
+        for operator in model_ir.operators
+        if str(operator.op_type) == "DEQUANTIZE"
+    )
+    assert concat.options["axis"] == 3
+    assert [str(name) for name in concat.inputs] == [
+        "source_direct",
+        "dq_output",
+        "peer",
+    ]
+    assert [str(name) for name in dequantize.inputs] == ["source_dq"]
+    assert model_ir.tensors["dq_output"].shape == [1, 4, 4, 2]
+    assert model_ir.tensors["concat"].shape == [1, 4, 4, 5]
+    assert model_ir.tensors["concat_q"].shape_signature == [1, 4, 4, 5]
+    assert (
+        sum(str(operator.op_type) == "TRANSPOSE" for operator in model_ir.operators)
+        == 2
+    )
+    _assert_index_matches_fresh(model_ir, graph_index)
+
+
+def test_indexed_swish_late_runner_shares_index_with_post_cleanup(
+    monkeypatch,
+) -> None:
+    model_ir = _make_late_concat_model_ir()
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    result = run_swish_qdq_late_concat_and_post_cleanup(
+        model_ir,
+        {"seed"},
+    )
+
+    assert refresh_count == 1
+    assert result.rewritten_concat_axes == 1
+    assert result.removed_transposes == 4
+    assert not any(
+        str(operator.op_type) == "TRANSPOSE" for operator in model_ir.operators
+    )
+    relu_inputs = {
+        str(operator.outputs[0]): [str(name) for name in operator.inputs]
+        for operator in model_ir.operators
+        if str(operator.op_type) == "RELU"
+    }
+    assert relu_inputs == {"y1": ["concat_q"], "y2": ["concat_q"]}
+
+
+def test_indexed_swish_late_concat_preserves_fanout_and_transaction_guards() -> None:
+    fanout_model = _make_late_concat_model_ir(direct_fanout=True)
+    fanout_result = run_swish_qdq_late_concat_and_post_cleanup(
+        fanout_model,
+        set(),
+    )
+    assert fanout_result.rewritten_concat_axes == 1
+    assert fanout_result.removed_transposes == 3
+    direct_transpose = next(
+        operator
+        for operator in fanout_model.operators
+        if str(operator.op_type) == "TRANSPOSE"
+    )
+    assert [str(name) for name in direct_transpose.outputs] == ["direct_nchw"]
+    direct_tap = next(
+        operator
+        for operator in fanout_model.operators
+        if str(operator.outputs[0]) == "direct_tap"
+    )
+    assert [str(name) for name in direct_tap.inputs] == ["direct_nchw"]
+
+    public_source_model = _make_late_concat_model_ir()
+    public_source_model.outputs.append("source_direct")
+    public_result = normalize_late_swish_qdq_concat_inputs(
+        public_source_model,
+        set(),
+    )
+    public_concat = next(
+        operator
+        for operator in public_source_model.operators
+        if str(operator.op_type) == "CONCATENATION"
+    )
+    assert public_result.rewritten_concat_axes == 0
+    assert public_result.removed_input_transposes == 0
+    assert public_concat.options["axis"] == 1
+    assert [str(name) for name in public_concat.inputs] == [
+        "direct_nchw",
+        "dq_output",
+        "peer",
+    ]
+
+    missing_peer_model = _make_late_concat_model_ir()
+    del missing_peer_model.tensors["peer"]
+    missing_result = normalize_late_swish_qdq_concat_inputs(
+        missing_peer_model,
+        set(),
+    )
+    missing_concat = next(
+        operator
+        for operator in missing_peer_model.operators
+        if str(operator.op_type) == "CONCATENATION"
+    )
+    missing_dequantize = next(
+        operator
+        for operator in missing_peer_model.operators
+        if str(operator.op_type) == "DEQUANTIZE"
+    )
+    assert missing_result.rewritten_concat_axes == 0
+    assert missing_concat.options["axis"] == 1
+    assert [str(name) for name in missing_concat.inputs] == [
+        "direct_nchw",
+        "dq_output",
+        "peer",
+    ]
+    assert [str(name) for name in missing_dequantize.inputs] == ["dq_nchw"]
+
+
+def test_indexed_swish_late_concat_preserves_tail_and_shape_guards() -> None:
+    wrong_tail_model = _make_late_concat_model_ir()
+    wrong_tail_model.tensors["perm_post"].data = np.asarray(
+        [0, 3, 1, 2],
+        dtype=np.int32,
+    )
+    wrong_tail_result = normalize_late_swish_qdq_concat_inputs(
+        wrong_tail_model,
+        set(),
+    )
+    assert wrong_tail_result.rewritten_concat_axes == 0
+
+    mismatched_shape_model = _make_late_concat_model_ir()
+    mismatched_shape_model.tensors["peer"].shape = [1, 5, 4, 1]
+    mismatch_result = normalize_late_swish_qdq_concat_inputs(
+        mismatched_shape_model,
+        set(),
+    )
+    assert mismatch_result.rewritten_concat_axes == 0
+
+    public_concat_model = _make_late_concat_model_ir()
+    public_concat_model.outputs.append("concat")
+    public_concat_result = normalize_late_swish_qdq_concat_inputs(
+        public_concat_model,
+        set(),
+    )
+    assert public_concat_result.rewritten_concat_axes == 0
+
+
+def test_indexed_swish_late_concat_skips_index_without_required_types(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("late_concat_without_transpose")
+    model_ir.tensors["x"] = _tensor("x", [1, 4, 4, 1])
+    model_ir.tensors["y"] = _tensor("y", [1, 4, 4, 1])
+    model_ir.tensors["z"] = _tensor("z", [1, 4, 4, 2])
+    model_ir.operators = [
+        OperatorIR(
+            "CONCATENATION",
+            ["x", "y"],
+            ["z"],
+            options={"axis": 3},
+        )
+    ]
+
+    def unexpected_index(*args, **kwargs):
+        raise AssertionError("unexpected graph index allocation")
+
+    monkeypatch.setattr(swish_module, "ModelIRGraphIndex", unexpected_index)
+
+    result = normalize_late_swish_qdq_concat_inputs(
+        model_ir,
+        {"seed"},
+    )
+
+    assert result.rewritten_concat_axes == 0
+    assert result.removed_input_transposes == 0
+    assert result.rewritten_tensors == frozenset({"seed"})

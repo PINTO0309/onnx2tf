@@ -1931,16 +1931,6 @@ def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
     assert len(runner_invocations) == 1
     assert isinstance(runner_invocations[0].args[0], ast.Name)
     assert runner_invocations[0].args[0].id == "model_ir"
-    late_shape_invocations = [
-        node
-        for node in ast.walk(swish_orchestrator)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == shape_owner_name
-    ]
-    assert len(late_shape_invocations) == 1
-    assert isinstance(late_shape_invocations[0].args[0], ast.Name)
-    assert late_shape_invocations[0].args[0].id == "model_ir"
     post_owner_name = "remove_inverse_post_transposes_for_swish_qdq"
     post_owner = next(
         node
@@ -1959,6 +1949,65 @@ def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
     assert "operator_indices" in post_calls
     assert "_replace_tensor_inputs" in post_calls
     assert "remove_operator" in post_calls
+
+    late_concat_owner_name = "normalize_late_swish_qdq_concat_inputs"
+    late_concat_owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == late_concat_owner_name
+    )
+    late_concat_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(late_concat_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in late_concat_calls
+    assert "_build_tensor_producer_map" not in late_concat_calls
+    assert "ModelIRGraphIndex" in late_concat_calls
+    assert "operator_indices" in late_concat_calls
+    assert "producer" in late_concat_calls
+    assert "consumer_indices" in late_concat_calls
+    assert "_set_operator_inputs" in late_concat_calls
+    assert "remove_operators" in late_concat_calls
+    assert shape_owner_name in late_concat_calls
+
+    late_runner_name = "run_swish_qdq_late_concat_and_post_cleanup"
+    late_runner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == late_runner_name
+    )
+    late_runner_index_builds = [
+        node
+        for node in ast.walk(late_runner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "ModelIRGraphIndex"
+    ]
+    assert len(late_runner_index_builds) == 1
+    late_phase_calls = [
+        node
+        for node in ast.walk(late_runner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {late_concat_owner_name, post_owner_name}
+    ]
+    assert [call.func.id for call in late_phase_calls] == [
+        late_concat_owner_name,
+        post_owner_name,
+    ]
+    assert all(
+        any(
+            keyword.arg == "graph_index"
+            and isinstance(keyword.value, ast.Name)
+            and keyword.value.id == "graph_index"
+            for keyword in call.keywords
+        )
+        for call in late_phase_calls
+    )
+
     post_invocations = sorted(
         [
             node
@@ -1969,7 +2018,7 @@ def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
         ],
         key=lambda node: node.lineno,
     )
-    assert len(post_invocations) == 2
+    assert len(post_invocations) == 1
     assert all(
         len(call.args) == 2
         and isinstance(call.args[0], ast.Name)
@@ -1978,15 +2027,25 @@ def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
         and call.args[1].id == "rewritten_tensors"
         for call in post_invocations
     )
-    late_concat_loop = next(
+    late_runner_invocations = [
         node
-        for node in swish_orchestrator.body
-        if isinstance(node, ast.While)
+        for node in ast.walk(swish_orchestrator)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == late_runner_name
+    ]
+    assert len(late_runner_invocations) == 1
+    assert isinstance(late_runner_invocations[0].args[0], ast.Name)
+    assert late_runner_invocations[0].args[0].id == "model_ir"
+    assert post_invocations[0].lineno < late_runner_invocations[0].lineno
+    assert not any(
+        isinstance(node, ast.While) for node in swish_orchestrator.body
     )
-    assert (
-        post_invocations[0].lineno
-        < late_concat_loop.lineno
-        < post_invocations[1].lineno
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == shape_owner_name
+        for node in ast.walk(swish_orchestrator)
     )
     nested_names = {
         node.name

@@ -12,7 +12,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _replace_tensor_inputs,
     _set_operator_inputs,
 )
-from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
 
 
 _NHWC_TO_NCHW = [0, 3, 1, 2]
@@ -43,6 +43,20 @@ class SwishQDQPrimaryPhasesResult:
 @dataclass(frozen=True)
 class SwishQDQPostTransposeCleanupResult:
     removed_post_transposes: int
+
+
+@dataclass(frozen=True)
+class SwishQDQLateConcatNormalizationResult:
+    rewritten_concat_axes: int
+    removed_input_transposes: int
+    rewritten_tensors: frozenset[str]
+
+
+@dataclass(frozen=True)
+class SwishQDQLatePhasesResult:
+    rewritten_concat_axes: int
+    removed_transposes: int
+    rewritten_tensors: frozenset[str]
 
 
 def copy_swish_qdq_shape_signature(
@@ -957,4 +971,262 @@ def remove_inverse_post_transposes_for_swish_qdq(
 
     return SwishQDQPostTransposeCleanupResult(
         removed_post_transposes=int(removed_post_transposes),
+    )
+
+
+def normalize_late_swish_qdq_concat_inputs(
+    model_ir: ModelIR,
+    rewritten_tensors: Iterable[str],
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> SwishQDQLateConcatNormalizationResult:
+    """Normalize mixed direct/DQ Transpose inputs for a strict Concat tail."""
+
+    rewritten = {str(name) for name in rewritten_tensors}
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if active_index is None:
+        required_types = {"CONCATENATION", "TRANSPOSE"}
+        for operator in model_ir.operators:
+            required_types.discard(str(operator.op_type))
+            if len(required_types) == 0:
+                break
+        if len(required_types) > 0:
+            return SwishQDQLateConcatNormalizationResult(
+                0,
+                0,
+                frozenset(rewritten),
+            )
+        active_index = ModelIRGraphIndex(model_ir)
+    elif (
+        len(active_index.operator_indices("CONCATENATION")) == 0
+        or len(active_index.operator_indices("TRANSPOSE")) == 0
+    ):
+        return SwishQDQLateConcatNormalizationResult(
+            0,
+            0,
+            frozenset(rewritten),
+        )
+
+    model_outputs = {str(name) for name in model_ir.outputs}
+    rewritten_concat_axes = 0
+    removed_input_transposes = 0
+
+    while True:
+        changed = False
+        for concat_index in active_index.operator_indices("CONCATENATION"):
+            concat = model_ir.operators[int(concat_index)]
+            if len(concat.inputs) < 2 or len(concat.outputs) != 1:
+                continue
+            concat_output = str(concat.outputs[0])
+            if concat_output in model_outputs:
+                continue
+
+            axis = int(concat.options.get("axis", 1))
+            if axis < 0:
+                axis += 4
+            if axis != 1:
+                continue
+
+            normalized_inputs: List[str] = []
+            normalized_shapes: List[List[int]] = []
+            bypass_transposes: List[OperatorIR] = []
+            dequantize_rewrites: List[Tuple[OperatorIR, str, str]] = []
+
+            for input_name in [str(name) for name in concat.inputs]:
+                input_tensor = model_ir.tensors.get(input_name)
+                if input_tensor is None:
+                    normalized_inputs = []
+                    break
+                input_shape = [int(value) for value in input_tensor.shape]
+                if len(input_shape) != 4:
+                    normalized_inputs = []
+                    break
+
+                producer = active_index.producer(input_name)
+                if (
+                    producer is not None
+                    and str(producer.op_type) == "DEQUANTIZE"
+                    and len(producer.inputs) == 1
+                    and len(producer.outputs) == 1
+                    and str(producer.outputs[0]) == input_name
+                ):
+                    dequantize_input = str(producer.inputs[0])
+                    pre_transpose = active_index.producer(dequantize_input)
+                    if (
+                        pre_transpose is not None
+                        and str(pre_transpose.op_type) == "TRANSPOSE"
+                        and len(pre_transpose.inputs) >= 2
+                        and len(pre_transpose.outputs) == 1
+                        and str(pre_transpose.outputs[0]) == dequantize_input
+                        and _read_transpose_perm(model_ir, pre_transpose)
+                        == _NHWC_TO_NCHW
+                    ):
+                        source_name = str(pre_transpose.inputs[0])
+                        if source_name in model_outputs:
+                            normalized_inputs = []
+                            break
+                        source_tensor = model_ir.tensors.get(source_name)
+                        if source_tensor is None:
+                            normalized_inputs = []
+                            break
+                        source_shape = [int(value) for value in source_tensor.shape]
+                        if len(source_shape) != 4:
+                            normalized_inputs = []
+                            break
+                        normalized_inputs.append(input_name)
+                        normalized_shapes.append(source_shape)
+                        dequantize_rewrites.append((producer, source_name, input_name))
+                        bypass_transposes.append(pre_transpose)
+                        continue
+
+                if (
+                    producer is not None
+                    and str(producer.op_type) == "TRANSPOSE"
+                    and len(producer.inputs) >= 2
+                    and len(producer.outputs) == 1
+                    and str(producer.outputs[0]) == input_name
+                    and _read_transpose_perm(model_ir, producer) == _NHWC_TO_NCHW
+                ):
+                    source_name = str(producer.inputs[0])
+                    if source_name in model_outputs:
+                        normalized_inputs = []
+                        break
+                    source_tensor = model_ir.tensors.get(source_name)
+                    if source_tensor is None:
+                        normalized_inputs = []
+                        break
+                    source_shape = [int(value) for value in source_tensor.shape]
+                    if len(source_shape) != 4:
+                        normalized_inputs = []
+                        break
+                    normalized_inputs.append(source_name)
+                    normalized_shapes.append(source_shape)
+                    bypass_transposes.append(producer)
+                    continue
+
+                normalized_inputs.append(input_name)
+                normalized_shapes.append(input_shape)
+
+            if len(normalized_inputs) != len(concat.inputs):
+                continue
+            if len(bypass_transposes) == 0:
+                continue
+            if not all(
+                int(shape[0]) == int(normalized_shapes[0][0])
+                and int(shape[1]) == int(normalized_shapes[0][1])
+                and int(shape[2]) == int(normalized_shapes[0][2])
+                for shape in normalized_shapes[1:]
+            ):
+                continue
+            if not _concat_has_quantize_transpose_tail(
+                model_ir,
+                concat_output,
+                consumers=active_index.consumers,
+            ):
+                continue
+
+            # The complete match is validated before any graph or metadata
+            # mutation. Apply all accepted edge changes through one index.
+            concat.options["axis"] = 3
+            rewritten_concat_axes += 1
+            quantize_index = int(active_index.consumer_indices(concat_output)[0])
+            quantize = model_ir.operators[quantize_index]
+            quantized_output = str(quantize.outputs[0])
+            concat_tensor = model_ir.tensors.get(concat_output)
+            quantized_tensor = model_ir.tensors.get(quantized_output)
+            if concat_tensor is not None:
+                concat_shape = list(normalized_shapes[0])
+                concat_shape[3] = int(sum(int(shape[3]) for shape in normalized_shapes))
+                concat_tensor.shape = list(concat_shape)
+                concat_tensor.shape_signature = list(concat_shape)
+                rewritten.add(concat_output)
+            if quantized_tensor is not None and concat_tensor is not None:
+                quantized_tensor.shape = [int(value) for value in concat_tensor.shape]
+                quantized_tensor.shape_signature = (
+                    [int(value) for value in concat_tensor.shape_signature]
+                    if concat_tensor.shape_signature is not None
+                    else [int(value) for value in concat_tensor.shape]
+                )
+                rewritten.add(quantized_output)
+
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=concat,
+                new_inputs=list(normalized_inputs),
+                graph_index=active_index,
+            )
+            for dequantize, source_name, output_name in dequantize_rewrites:
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=dequantize,
+                    new_inputs=[source_name],
+                    graph_index=active_index,
+                )
+                copy_swish_qdq_shape_signature(
+                    model_ir,
+                    output_name,
+                    source_name,
+                )
+            rewritten.update(normalized_inputs)
+
+            removable_indices: List[int] = []
+            seen_transposes: set[int] = set()
+            for transpose in bypass_transposes:
+                if id(transpose) in seen_transposes:
+                    continue
+                seen_transposes.add(id(transpose))
+                current_index = active_index.operator_index(transpose)
+                if current_index is None or len(transpose.outputs) != 1:
+                    continue
+                transpose_output = str(transpose.outputs[0])
+                if len(active_index.consumer_indices(transpose_output)) == 0:
+                    removable_indices.append(int(current_index))
+            if len(removable_indices) > 0:
+                active_index.remove_operators(removable_indices)
+                removed_input_transposes += len(removable_indices)
+
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    return SwishQDQLateConcatNormalizationResult(
+        rewritten_concat_axes=int(rewritten_concat_axes),
+        removed_input_transposes=int(removed_input_transposes),
+        rewritten_tensors=frozenset(rewritten),
+    )
+
+
+def run_swish_qdq_late_concat_and_post_cleanup(
+    model_ir: ModelIR,
+    rewritten_tensors: Iterable[str],
+) -> SwishQDQLatePhasesResult:
+    """Run late Concat normalization and its post cleanup with one index."""
+
+    rewritten = frozenset(str(name) for name in rewritten_tensors)
+    if not any(str(operator.op_type) == "TRANSPOSE" for operator in model_ir.operators):
+        return SwishQDQLatePhasesResult(0, 0, rewritten)
+
+    graph_index = ModelIRGraphIndex(model_ir)
+    concat_result = normalize_late_swish_qdq_concat_inputs(
+        model_ir,
+        rewritten,
+        graph_index=graph_index,
+    )
+    post_result = remove_inverse_post_transposes_for_swish_qdq(
+        model_ir,
+        concat_result.rewritten_tensors,
+        graph_index=graph_index,
+    )
+    return SwishQDQLatePhasesResult(
+        rewritten_concat_axes=int(concat_result.rewritten_concat_axes),
+        removed_transposes=int(
+            concat_result.removed_input_transposes + post_result.removed_post_transposes
+        ),
+        rewritten_tensors=concat_result.rewritten_tensors,
     )

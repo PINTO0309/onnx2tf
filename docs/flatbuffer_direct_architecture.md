@@ -4088,9 +4088,30 @@ The two former lowerer loops have identical ASTs. Differential
 characterization applies the prior committed loop and the indexed owner to a
 fixture containing chained aliases, multi-consumer fan-out, a public alias,
 wrong permutation, and untracked input; complete ModelIR and the three-removal
-count match. A supplied index remains equal to a fresh rebuild. Late Concat
-normalization intentionally remains between the two calls and is the only raw
-mutation loop left in the Swish compatibility orchestrator.
+count match. A supplied index remains equal to a fresh rebuild.
+
+Late mixed-input Concat normalization is now owned by
+`normalize_late_swish_qdq_concat_inputs` in the same module. A complete match
+plan is validated before mutation: every input must be rank four; at least one
+direct or Dequantize-wrapped NHWC-to-NCHW adapter must be bypassable; normalized
+batch and spatial dimensions must agree; the Concat output must be private;
+and the tail must be exactly one Quantize whose users are all inverse
+Transposes. Accepted Concat and Dequantize edges are updated through one
+`ModelIRGraphIndex`, axis and tensor metadata are committed together, and only
+input Transposes made unused by those rewires are removed. Processing restarts
+after each transaction so a compaction cannot leave a stale candidate index.
+Public source boundaries, mixed fan-out, missing tensors, mismatched shapes,
+and invalid tail permutations remain no-ops.
+
+`run_swish_qdq_late_concat_and_post_cleanup` shares that maintained index with
+the immediately following inverse-post cleanup. The first historical post
+cleanup remains before late normalization; the second is represented inside
+the runner, preserving ordered behavior and cumulative statistics while
+avoiding another full index build. An extraction-time check compiles the exact
+prior committed late-loop AST and confirms complete ModelIR, rewritten-state,
+axis-count, and two-input-adapter-removal equality on the mixed direct/DQ
+fixture. The Swish compatibility orchestrator is now 69 lines with no raw
+top-level mutation loop.
 
 ## Managed-corpus SWAP exclusion policy
 
