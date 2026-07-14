@@ -3869,19 +3869,25 @@ resulting ModelIR with the former explicit pair, proves one index build without
 legacy producer/consumer maps, exercises multiple matches, and preserves
 fan-out and graph-output adapters.
 
-The wrong-way NCHW-to-NHWC Transpose-before-Conv sanitizer constructs one
-`ModelIRGraphIndex` per standalone invocation. Candidate order comes from the
-indexed `TRANSPOSE` type bucket and every adapter consumer comes from the
-current consumer index. An adapter remains protected unless all consumers are
-Conv data-input users whose filters expect the already-NHWC source channel and
-reject the adapter's output channel. Accepted global input replacement updates
-every affected consumer through the index before differential operator
-removal. Public adapter outputs, non-Conv fan-out, missing users, mismatched
-filters, ranks, and permutations retain the former no-op behavior. A complete
-legacy-reference comparison covers two removals and multi-Conv fan-out,
-observes one index build and no compatibility consumer-map call, and confirms
-that the maintained producer, consumer, duplicate-producer, identity, and type
-indexes equal a fresh rebuild.
+Wrong-way NCHW-to-NHWC Transpose-before-Conv sanitation is owned by the Torch/
+TensorFlow-free `passes/conv_input_layout.py` module. A graph containing a
+Transpose constructs or reuses one `ModelIRGraphIndex`; a Transpose-free graph
+retains the former unused-tensor pruning but allocates no index. Candidate
+order comes from the indexed `TRANSPOSE` type bucket and every adapter consumer
+comes from the current consumer index. An adapter remains protected unless all
+consumers are Conv data-input users whose filters expect the already-NHWC
+source channel and reject the adapter's output channel. Accepted global input
+replacement updates every affected consumer through the index before
+differential operator removal. The lowerer's private API is a compatibility
+wrapper, and the formerly duplicated safety valve inside the Swish-QDQ NHWC-
+island optimizer delegates to the same owner at its unchanged execution point
+and maps removals back to the existing Swish statistic. Public adapter outputs,
+non-Conv fan-out, missing users, mismatched filters, ranks, and permutations
+retain the former no-op behavior. Complete legacy-reference comparison covers
+two removals and multi-Conv fan-out, observes one index build and no
+compatibility consumer-map call, confirms the maintained producer, consumer,
+duplicate-producer, identity, and type indexes equal a fresh rebuild, and
+proves identical Swish-only safety-valve output and statistics.
 
 Recurrent orphan-step alias repair is shared by direct lowering and PyTorch
 normalization through the Torch-free

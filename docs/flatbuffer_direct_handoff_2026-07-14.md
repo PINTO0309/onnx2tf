@@ -8,16 +8,17 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves quantized logistic-gated MUL
-inverse-Transpose cleanup out of the lowerer into a dedicated Torch/
-TensorFlow-free `quantized_gate` owner. One differential `ModelIRGraphIndex`
-supplies post candidates, producer traversal, strict branch consumers, both DQ
-rewires, canonical Q-output selection, alias-consumer replacement, and batch
-removal of the pre/post Transposes. Single and multi-post forms share the same
-owner without rebuilding producer or consumer maps. Graphs without
-Transposes build no index. Public protection now covers all internal data and
-gate tensors while fixed permutations, per-tensor quantization, metadata,
-lineage, pruning, and stats behavior remain protected.
+The latest implementation unit audits the six mutation loops in the adjacent
+Swish-QDQ NHWC-island optimizer and isolates its independent wrong-way
+Transpose-before-Conv safety valve. The duplicated loop and the former
+standalone sanitizer now share one Torch/TensorFlow-free
+`passes/conv_input_layout.py` owner. The lowerer keeps its private compatibility
+wrapper, and the Swish optimizer delegates at the same historical point while
+adding the owner's removals to the unchanged Swish statistics key. One
+differential `ModelIRGraphIndex` owns all candidate and consumer access; a
+Transpose-free graph retains tensor pruning but allocates no index. Exact
+legacy ModelIR output, public-output, mixed-fan-out, rank, permutation, and
+filter-channel behavior remains protected.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -39,7 +40,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains sixty-four coherent continuations:
+The current `fb-refactor5` work contains sixty-five coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -175,8 +176,10 @@ The current `fb-refactor5` work contains sixty-four coherent continuations:
   protects every clamp intermediate at the public boundary;
 - `515bc99b` extracts expanded MUL/ADD/PRELU QDQ Transpose bridge cleanup and
   shares only the identical constant plan/apply mechanism;
-- the current checkpoint extracts quantized logistic-gated MUL bridge cleanup
-  to a dedicated indexed owner with differential alias consolidation.
+- `49f53b1a` extracts quantized logistic-gated MUL bridge cleanup to a
+  dedicated indexed owner with differential alias consolidation;
+- the current checkpoint gives the wrong-way Transpose-before-Conv sanitizer
+  one dedicated owner and removes its duplicate Swish-local implementation.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -195,8 +198,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/quantized_gate.py`;
-- `tests/test_flatbuffer_direct_indexed_quantized_logistic_gate.py`;
+- `onnx2tf/tflite_builder/passes/conv_input_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_wrong_way_conv_transpose.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -471,14 +474,18 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   tensor-shape, and Transpose-permutation guards are unchanged. The later
   standalone stale-Transpose cleanup remains a separate compatibility call
   because intervening raw mutations form an ownership boundary.
-- The wrong-way NCHW-to-NHWC Transpose-before-Conv sanitizer owns one
-  `ModelIRGraphIndex` for its complete invocation. It enumerates indexed
-  Transpose roots, validates every indexed consumer before changing a shared
+- The wrong-way NCHW-to-NHWC Transpose-before-Conv sanitizer has one Torch/
+  TensorFlow-free semantic owner in `passes/conv_input_layout.py`. It owns one
+  `ModelIRGraphIndex` for an invocation with Transpose candidates, enumerates
+  indexed roots, validates every indexed consumer before changing a shared
   adapter, rewrites all accepted Conv inputs through the indexed global-input
-  replacement helper, and removes the adapter differentially. The index is
-  deliberately not shared across either neighboring raw sanitizer. Exact
-  permutation, rank-four metadata, all-consumers-are-Conv, filter-channel,
-  graph-output, and nonempty-consumer guards are unchanged.
+  replacement helper, and removes the adapter differentially. A graph without
+  any Transpose skips index construction while preserving the former tensor-
+  pruning side effect. The lowerer compatibility wrapper and the independent
+  safety-valve phase inside the Swish-QDQ optimizer both delegate to this same
+  owner; the latter preserves its historical execution point and removal
+  statistics. Exact permutation, rank-four metadata, all-consumers-are-Conv,
+  filter-channel, graph-output, and nonempty-consumer guards are unchanged.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -1462,6 +1469,18 @@ related quantized-PReLU, legacy logistic-gate characterization selection
 passed with `145 passed`. TensorFlow-import-blocked direct and `-cotof` plus
 the sequential direct integration selection passed with `7 passed`.
 
+The single-owner wrong-way Conv-input safety-valve checkpoint preserves the
+pre-extraction Swish-only ModelIR digest
+`9b47e7f2e879895af600f66c6ac6929acc25580cfea8d5620fca9a6319ee4343` and
+its two-removal Swish statistics. Focused exact legacy, multi-Conv, maintained-
+index, public-output, mixed-fan-out, filter-channel, no-Transpose/no-index,
+Swish-delegation, both existing Swish variants, and ownership coverage passed
+with `7 passed`. The complete architecture, lightweight core/pass-efficiency,
+focused sanitizer, and both Swish characterizations passed together with
+`218 passed`. TensorFlow-import-blocked direct and `-cotof` plus the sequential
+quantization/evaluation/coverage integration smoke passed with `3 passed`.
+No Tier corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1507,11 +1526,13 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Inventory the adjacent `_optimize_transpose_swish_qdq_nhwc_islands` body
-   before editing it. It spans multiple input/output, fan-out, alias, and
-   metadata cases; partition those semantic variants and their existing
-   coverage first, then choose one complete independently testable variant for
-   the next checkpoint rather than moving the whole large body mechanically.
+2. Continue the now-inventoried `_optimize_transpose_swish_qdq_nhwc_islands`
+   body from its primary Swish branch match. Characterize its shared-input
+   multi-branch ordering, optional MUL quantization, concat-closure mode,
+   public intermediates, and fan-out guards before extracting the match/
+   rewrite phase. Keep metadata propagation, late Concat normalization, and
+   post-Transpose cleanup as explicit later units rather than moving the
+   remaining body mechanically.
 3. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

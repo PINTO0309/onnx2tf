@@ -6,11 +6,13 @@ from typing import Any
 
 import numpy as np
 import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
+import onnx2tf.tflite_builder.passes.conv_input_layout as owner_module
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv,
+    _optimize_transpose_swish_qdq_nhwc_islands,
 )
 
 
@@ -193,9 +195,7 @@ def _run_legacy_wrong_way_sanitizer(model_ir: ModelIR) -> dict[str, int]:
                 or len(list(output_tensor.shape)) != 4
             ):
                 continue
-            user_indices = [
-                int(value) for value in consumers.get(output_name, [])
-            ]
+            user_indices = [int(value) for value in consumers.get(output_name, [])]
             if not user_indices:
                 continue
             input_channels = int(input_tensor.shape[3])
@@ -264,9 +264,7 @@ def test_indexed_wrong_way_conv_transpose_sanitizer_matches_legacy(
         unexpected_consumer_rescan,
     )
 
-    indexed_stats = _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(
-        model_ir
-    )
+    indexed_stats = _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir)
 
     assert refresh_count == 1
     assert indexed_stats == legacy_stats
@@ -276,8 +274,7 @@ def test_indexed_wrong_way_conv_transpose_sanitizer_matches_legacy(
     assert _normalize(model_ir) == _normalize(legacy_model_ir)
 
 
-def test_indexed_wrong_way_conv_transpose_sanitizer_preserves_guards_and_index(
-) -> None:
+def test_indexed_wrong_way_conv_transpose_preserves_guards_and_index() -> None:
     model_ir = _make_wrong_way_conv_transpose_model_ir()
     graph_index = ModelIRGraphIndex(model_ir)
 
@@ -304,8 +301,7 @@ def test_indexed_wrong_way_conv_transpose_sanitizer_preserves_guards_and_index(
     removable_inputs = {
         str(op.outputs[0]): str(op.inputs[0])
         for op in model_ir.operators
-        if str(op.op_type) == "CONV_2D"
-        and str(op.outputs[0]).startswith("removable_")
+        if str(op.op_type) == "CONV_2D" and str(op.outputs[0]).startswith("removable_")
     }
     assert removable_inputs == {
         "removable_multi_conv0_out": "removable_multi_source",
@@ -318,3 +314,47 @@ def test_indexed_wrong_way_conv_transpose_sanitizer_preserves_guards_and_index(
     assert graph_index.duplicate_producers == refreshed.duplicate_producers
     assert graph_index._operator_indices_by_id == refreshed._operator_indices_by_id
     assert graph_index._operator_indices_by_type == refreshed._operator_indices_by_type
+
+
+def test_wrong_way_conv_transpose_owner_skips_index_without_transpose(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("wrong_way_conv_transpose_no_candidate")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["x"] = _tensor("x", [1, 4])
+    model_ir.tensors["y"] = _tensor("y", [1, 4])
+    model_ir.tensors["dead"] = _tensor("dead", [1])
+    model_ir.operators = [OperatorIR("RELU", ["x"], ["y"])]
+
+    def unexpected_index(*args, **kwargs):
+        raise AssertionError("unexpected graph index allocation")
+
+    monkeypatch.setattr(owner_module, "ModelIRGraphIndex", unexpected_index)
+
+    stats = owner_module.sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir)
+
+    assert stats == {
+        "sanitized_wrong_way_nchw_to_nhwc_transpose_before_conv": 0,
+    }
+    assert "dead" not in model_ir.tensors
+
+
+def test_swish_qdq_owner_delegates_independent_wrong_way_conv_safety_valve() -> None:
+    model_ir = _make_wrong_way_conv_transpose_model_ir()
+    legacy_model_ir = copy.deepcopy(model_ir)
+    legacy_stats = _run_legacy_wrong_way_sanitizer(legacy_model_ir)
+
+    stats = _optimize_transpose_swish_qdq_nhwc_islands(model_ir)
+
+    assert legacy_stats == {
+        "sanitized_wrong_way_nchw_to_nhwc_transpose_before_conv": 2,
+    }
+    assert stats == {
+        "rewritten_transpose_swish_branches_to_nhwc": 0,
+        "removed_transpose_swish_pre": 0,
+        "propagated_nhwc_tensor_metadata": 0,
+        "rewritten_concat_axis_to_nhwc": 0,
+        "removed_transpose_swish_post": 2,
+    }
+    assert _normalize(model_ir) == _normalize(legacy_model_ir)

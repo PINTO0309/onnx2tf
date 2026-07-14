@@ -1713,21 +1713,36 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
     assert direct_transpose_invocations[0].args[0].id == "model_ir"
 
 
-def test_wrong_way_conv_transpose_sanitizer_uses_one_graph_index() -> None:
+def test_wrong_way_conv_transpose_sanitizer_has_one_indexed_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "conv_input_layout.py"
+    )
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
     lowering_source = lowering_path.read_text(encoding="utf-8")
     lowering_tree = ast.parse(lowering_source)
-    sanitizer_name = "_sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv"
-    sanitizer = next(
+    owner_name = "sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    wrapper_name = "_sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv"
+    wrapper = next(
         node
         for node in lowering_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == sanitizer_name
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
     )
     call_names = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
-        for node in ast.walk(sanitizer)
+        for node in ast.walk(owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, (ast.Name, ast.Attribute))
     }
@@ -1739,7 +1754,7 @@ def test_wrong_way_conv_transpose_sanitizer_uses_one_graph_index() -> None:
     assert "remove_operator" in call_names
     replacement_call = next(
         node
-        for node in ast.walk(sanitizer)
+        for node in ast.walk(owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_replace_tensor_inputs"
@@ -1750,7 +1765,19 @@ def test_wrong_way_conv_transpose_sanitizer_uses_one_graph_index() -> None:
         if keyword.arg == "graph_index"
     )
     assert isinstance(index_keyword.value, ast.Name)
-    assert index_keyword.value.id == "graph_index"
+    assert index_keyword.value.id == "active_index"
+
+    wrapper_calls = [
+        node
+        for node in ast.walk(wrapper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        == "_sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv_pass"
+    ]
+    assert len(wrapper_calls) == 1
+    assert isinstance(wrapper_calls[0].args[0], ast.Name)
+    assert wrapper_calls[0].args[0].id == "model_ir"
 
     lowerer = next(
         node
@@ -1762,11 +1789,26 @@ def test_wrong_way_conv_transpose_sanitizer_uses_one_graph_index() -> None:
         for node in ast.walk(lowerer)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == sanitizer_name
+        and node.func.id == wrapper_name
     ]
     assert len(invocations) == 1
     assert isinstance(invocations[0].args[0], ast.Name)
     assert invocations[0].args[0].id == "model_ir"
+
+    swish_owner = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_optimize_transpose_swish_qdq_nhwc_islands"
+    )
+    swish_invocations = [
+        node
+        for node in ast.walk(swish_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert len(swish_invocations) == 1
 
 
 def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:

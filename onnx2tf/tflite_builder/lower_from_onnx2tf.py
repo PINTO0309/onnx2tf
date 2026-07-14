@@ -234,6 +234,9 @@ from onnx2tf.tflite_builder.passes.quantized_activation import (
 from onnx2tf.tflite_builder.passes.quantized_gate import (
     optimize_transpose_dequant_logistic_mul_quantize_bridges,
 )
+from onnx2tf.tflite_builder.passes.conv_input_layout import (
+    sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv as _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv_pass,
+)
 from onnx2tf.tflite_builder.passes.quantized_prelu import (
     _optimize_dequant_prelu_depthwise_quantize_chains as _optimize_dequant_prelu_depthwise_quantize_chains_pass,
     _optimize_dequant_prelu_quantize_chains as _optimize_dequant_prelu_quantize_chains_pass,
@@ -1626,87 +1629,12 @@ def _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(
     *,
     graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Dict[str, int]:
-    """
-    Remove invalid NCHW->NHWC transposes that are applied to already-NHWC tensors
-    and break downstream CONV_2D channel alignment.
-    """
-    removed = 0
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-    model_outputs = set(str(v) for v in model_ir.outputs)
-    graph_index = (
-        graph_index
-        if graph_index is not None and graph_index.model_ir is model_ir
-        else ModelIRGraphIndex(model_ir)
+    """Compatibility wrapper for the dedicated Conv-input layout owner."""
+
+    return _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv_pass(
+        model_ir,
+        graph_index=graph_index,
     )
-
-    while True:
-        changed = False
-        for op_idx in graph_index.operator_indices("TRANSPOSE"):
-            op = model_ir.operators[int(op_idx)]
-            if len(op.inputs) < 2 or len(op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, op) != perm_nchw_to_nhwc:
-                continue
-
-            in_name = str(op.inputs[0])
-            out_name = str(op.outputs[0])
-            if out_name in model_outputs:
-                continue
-
-            in_tensor = model_ir.tensors.get(in_name, None)
-            out_tensor = model_ir.tensors.get(out_name, None)
-            if (
-                in_tensor is None
-                or out_tensor is None
-                or len(list(in_tensor.shape)) != 4
-                or len(list(out_tensor.shape)) != 4
-            ):
-                continue
-
-            user_indices = graph_index.consumer_indices(out_name)
-            if len(user_indices) == 0:
-                continue
-
-            remove_this = True
-            in_c = int(in_tensor.shape[3])
-            out_c = int(out_tensor.shape[3])
-            for user_idx in user_indices:
-                user_op = model_ir.operators[int(user_idx)]
-                if (
-                    str(user_op.op_type) != "CONV_2D"
-                    or len(user_op.inputs) < 2
-                    or str(user_op.inputs[0]) != out_name
-                ):
-                    remove_this = False
-                    break
-                filter_tensor = model_ir.tensors.get(str(user_op.inputs[1]), None)
-                if filter_tensor is None or len(list(filter_tensor.shape)) != 4:
-                    remove_this = False
-                    break
-                expected_c = int(filter_tensor.shape[3])
-                if not (in_c == expected_c and out_c != expected_c):
-                    remove_this = False
-                    break
-
-            if not remove_this:
-                continue
-
-            _replace_tensor_inputs(
-                model_ir,
-                out_name,
-                in_name,
-                graph_index=graph_index,
-            )
-            graph_index.remove_operator(int(op_idx))
-            removed += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"sanitized_wrong_way_nchw_to_nhwc_transpose_before_conv": int(removed)}
 
 
 def _repair_rank4_binary_layout_mismatch_with_transpose_adapter(model_ir: ModelIR) -> Dict[str, int]:
@@ -5858,67 +5786,17 @@ def _optimize_transpose_swish_qdq_nhwc_islands(
         if not changed:
             break
 
-    # 4) Safety valve: remove wrong-way NCHW->NHWC transposes that would break
-    # CONV_2D channel alignment after NHWC propagation.
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        for op_idx, op in enumerate(model_ir.operators):
-            if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 2 or len(op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, op) != perm_nchw_to_nhwc:
-                continue
-            in_name = str(op.inputs[0])
-            out_name = str(op.outputs[0])
-            if out_name in model_outputs:
-                continue
-
-            in_tensor = model_ir.tensors.get(in_name, None)
-            out_tensor = model_ir.tensors.get(out_name, None)
-            if (
-                in_tensor is None
-                or out_tensor is None
-                or len(list(in_tensor.shape)) != 4
-                or len(list(out_tensor.shape)) != 4
-            ):
-                continue
-
-            user_indices = [int(v) for v in consumers.get(out_name, [])]
-            if len(user_indices) == 0:
-                continue
-            all_conv_users = True
-            should_bypass = True
-            for user_idx in user_indices:
-                user_op = model_ir.operators[int(user_idx)]
-                if (
-                    str(user_op.op_type) != "CONV_2D"
-                    or len(user_op.inputs) < 2
-                    or str(user_op.inputs[0]) != out_name
-                ):
-                    all_conv_users = False
-                    break
-                filter_tensor = model_ir.tensors.get(str(user_op.inputs[1]), None)
-                if filter_tensor is None or len(list(filter_tensor.shape)) != 4:
-                    should_bypass = False
-                    break
-                expected_c = int(filter_tensor.shape[3])
-                in_c = int(in_tensor.shape[3])
-                out_c = int(out_tensor.shape[3])
-                if not (in_c == expected_c and out_c != expected_c):
-                    should_bypass = False
-                    break
-
-            if not all_conv_users or not should_bypass:
-                continue
-
-            _replace_tensor_inputs(model_ir, out_name, in_name)
-            del model_ir.operators[int(op_idx)]
-            removed_post += 1
-            changed = True
-            break
-
-        if not changed:
-            break
+    # 4) Keep the historical Swish-pass timing while delegating this independent
+    # Conv-input safety valve to its single indexed semantic owner.
+    wrong_way_stats = _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(
+        model_ir
+    )
+    removed_post += int(
+        wrong_way_stats.get(
+            "sanitized_wrong_way_nchw_to_nhwc_transpose_before_conv",
+            0,
+        )
+    )
 
     propagated_tensors = int(len(rewritten_tensors))
     _prune_unused_tensors(model_ir)
