@@ -593,11 +593,7 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
         "_optimize_dequant_softmax_quantize_chains",
         "_optimize_dequant_logistic_quantize_chains",
         "_canonicalize_softmax_transpose_chains",
-        "_optimize_transpose_binary_symmetric_legacy_only_bridges_safe",
-        "_optimize_transpose_binary_single_post_bridges_safe",
-        "_optimize_transpose_binary_mixed_fanout_bridges_safe",
-        "_optimize_transpose_binary_asymmetric_fanout_bridges",
-        "_optimize_transpose_binary_full_post_fanout_bridges",
+        "_run_safe_binary_bridge_recovery_sequence",
     ]
     helper_calls = [
         statement.value
@@ -656,6 +652,138 @@ def test_lowerer_quantized_activation_binary_recovery_has_one_owner() -> None:
         second_following.value.func.id
         == "_optimize_transpose_elementwise_concat_conv_nhwc_groups"
     )
+
+
+def test_lowerer_safe_binary_bridge_recovery_has_one_ordered_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_safe_binary_bridge_recovery_sequence"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "_optimize_transpose_binary_symmetric_legacy_only_bridges_safe",
+        "_optimize_transpose_binary_single_post_bridges_safe",
+        "_optimize_transpose_binary_mixed_fanout_bridges_safe",
+        "_optimize_transpose_binary_asymmetric_fanout_bridges",
+        "_optimize_transpose_binary_full_post_fanout_bridges",
+    ]
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert [call.func.id for call in helper_calls] == expected_order
+
+    quantized_helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_run_quantized_activation_binary_bridge_recovery_sequence"
+    )
+    assert quantized_helper.body[-1].value.func.id == helper_name
+
+    direct_boundaries = []
+    for statement in lowerer.body:
+        if not isinstance(statement, ast.If):
+            continue
+        for index, candidate in enumerate(statement.body):
+            if not (
+                isinstance(candidate, ast.Expr)
+                and isinstance(candidate.value, ast.Call)
+                and isinstance(candidate.value.func, ast.Name)
+                and candidate.value.func.id == helper_name
+            ):
+                continue
+            direct_boundaries.append(
+                (statement.body[index - 1], statement.body[index + 1])
+            )
+    assert len(direct_boundaries) == 2
+    assert [boundary[0].value.func.id for boundary in direct_boundaries] == [
+        "_run_layout_attention_quantized_recovery_suffix",
+        "_run_transpose_unary_fanout_layout_pass_cluster",
+    ]
+    assert [boundary[1].value.func.id for boundary in direct_boundaries] == [
+        "_optimize_transpose_dequantize_mean_quantize_bridges",
+        "_advance_post_progress",
+    ]
+    all_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+    ]
+    assert len(all_invocations) == 3
+
+
+def test_lowerer_qlinear_mean_concat_recovery_has_one_ordered_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_qlinear_mean_concat_recovery_sequence"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "_optimize_transpose_mean_hardsigmoid_muladd_chains",
+        "_optimize_nhwc_prefix_qlinear_silu_chains",
+        "_optimize_nhwc_propagation_qlinear_concat_conv",
+        "_optimize_concat_pre_quantize_dequantize",
+        "_optimize_transpose_mean_maxpool_concat_conv_chains",
+    ]
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert [call.func.id for call in helper_calls] == expected_order
+
+    boundaries = []
+    for statement in lowerer.body:
+        if not isinstance(statement, ast.If):
+            continue
+        for index, candidate in enumerate(statement.body):
+            if not (
+                isinstance(candidate, ast.Expr)
+                and isinstance(candidate.value, ast.Call)
+                and isinstance(candidate.value.func, ast.Name)
+                and candidate.value.func.id == helper_name
+            ):
+                continue
+            boundaries.append(
+                (statement.body[index - 1], statement.body[index + 1])
+            )
+    assert len(boundaries) == 2
+    assert [boundary[0].value.func.id for boundary in boundaries] == [
+        "_optimize_transpose_dequantize_mean_quantize_bridges",
+        "_set_post_progress_desc",
+    ]
+    assert [boundary[1].value.func.id for boundary in boundaries] == [
+        "_run_layout_reshape_attention_recovery_prefix",
+        "_run_layout_recovery_prefix_pass_sequence",
+    ]
 
 
 def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> None:
@@ -2549,7 +2677,7 @@ def test_lowerer_post_qdq_unary_fanout_cluster_stays_after_recovery_suffix() -> 
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
         next_boundary.value.func.id
-        == "_optimize_transpose_binary_symmetric_legacy_only_bridges_safe"
+        == "_run_safe_binary_bridge_recovery_sequence"
     )
 
 

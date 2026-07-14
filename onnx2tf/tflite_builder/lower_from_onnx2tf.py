@@ -50681,17 +50681,27 @@ def lower_onnx_to_ir(
         )
         _optimize_transpose_dequant_mul_add_prelu_quantize_bridges(model_ir)
 
+    def _run_safe_binary_bridge_recovery_sequence() -> None:
+        _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir)
+        _optimize_transpose_binary_single_post_bridges_safe(model_ir)
+        _optimize_transpose_binary_mixed_fanout_bridges_safe(model_ir)
+        _optimize_transpose_binary_asymmetric_fanout_bridges(model_ir)
+        _optimize_transpose_binary_full_post_fanout_bridges(model_ir)
+
     def _run_quantized_activation_binary_bridge_recovery_sequence() -> None:
         _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
         _optimize_dequant_maxpool_quantize_chains(model_ir)
         _optimize_dequant_softmax_quantize_chains(model_ir)
         _optimize_dequant_logistic_quantize_chains(model_ir)
         _canonicalize_softmax_transpose_chains(model_ir)
-        _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir)
-        _optimize_transpose_binary_single_post_bridges_safe(model_ir)
-        _optimize_transpose_binary_mixed_fanout_bridges_safe(model_ir)
-        _optimize_transpose_binary_asymmetric_fanout_bridges(model_ir)
-        _optimize_transpose_binary_full_post_fanout_bridges(model_ir)
+        _run_safe_binary_bridge_recovery_sequence()
+
+    def _run_qlinear_mean_concat_recovery_sequence() -> None:
+        _optimize_transpose_mean_hardsigmoid_muladd_chains(model_ir)
+        _optimize_nhwc_prefix_qlinear_silu_chains(model_ir)
+        _optimize_nhwc_propagation_qlinear_concat_conv(model_ir)
+        _optimize_concat_pre_quantize_dequantize(model_ir)
+        _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
 
     def _run_layout_attention_quantized_recovery_suffix(
         *,
@@ -50874,17 +50884,9 @@ def lower_onnx_to_ir(
         _run_layout_attention_quantized_recovery_suffix(
             include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
         )
-        _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir)
-        _optimize_transpose_binary_single_post_bridges_safe(model_ir)
-        _optimize_transpose_binary_mixed_fanout_bridges_safe(model_ir)
-        _optimize_transpose_binary_asymmetric_fanout_bridges(model_ir)
-        _optimize_transpose_binary_full_post_fanout_bridges(model_ir)
+        _run_safe_binary_bridge_recovery_sequence()
         _optimize_transpose_dequantize_mean_quantize_bridges(model_ir)
-        _optimize_transpose_mean_hardsigmoid_muladd_chains(model_ir)
-        _optimize_nhwc_prefix_qlinear_silu_chains(model_ir)
-        _optimize_nhwc_propagation_qlinear_concat_conv(model_ir)
-        _optimize_concat_pre_quantize_dequantize(model_ir)
-        _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
+        _run_qlinear_mean_concat_recovery_sequence()
         _run_layout_reshape_attention_recovery_prefix()
         _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir)
         run_squeeze_reshape_identity_cleanup(
@@ -50900,11 +50902,7 @@ def lower_onnx_to_ir(
             include_layout_transpose=True,
             include_unary_passthrough=False,
         )
-        _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir)
-        _optimize_transpose_binary_single_post_bridges_safe(model_ir)
-        _optimize_transpose_binary_mixed_fanout_bridges_safe(model_ir)
-        _optimize_transpose_binary_asymmetric_fanout_bridges(model_ir)
-        _optimize_transpose_binary_full_post_fanout_bridges(model_ir)
+        _run_safe_binary_bridge_recovery_sequence()
         _advance_post_progress()
     _set_post_progress_desc("core cleanup passes")
     _optimize_fuse_pseudo_leakyrelu_chains(model_ir)
@@ -50940,11 +50938,7 @@ def lower_onnx_to_ir(
         # Final recovery sweep:
         # some transpose-binary patterns become shape-safe only after static
         # metadata reconciliation, so run bridge passes once more.
-        _optimize_transpose_mean_hardsigmoid_muladd_chains(model_ir)
-        _optimize_nhwc_prefix_qlinear_silu_chains(model_ir)
-        _optimize_nhwc_propagation_qlinear_concat_conv(model_ir)
-        _optimize_concat_pre_quantize_dequantize(model_ir)
-        _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
+        _run_qlinear_mean_concat_recovery_sequence()
         _run_layout_recovery_prefix_pass_sequence()
         _run_preadd_mean_attention_recovery_sequence()
         _run_attention_gate_qdq_recovery_sequence()

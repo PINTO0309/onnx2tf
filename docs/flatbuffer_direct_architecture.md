@@ -3777,6 +3777,20 @@ helpers produces an AST identical to the pre-extraction lowerer. The extraction
 removes 12 net lowerer lines without changing runtime invocation count, order,
 or the registered-runner call-site count of 118.
 
+Three AST-identical 5-call safe binary-bridge recovery sequences are owned by
+`_run_safe_binary_bridge_recovery_sequence`, including the copy nested in the
+quantized-activation recovery helper. The symmetric legacy-only, single-post,
+mixed-fanout, asymmetric-fanout, and full-post variants retain their exact
+order. Separately, two AST-identical 5-call QLinear/Mean/Concat sequences are
+owned by `_run_qlinear_mean_concat_recovery_sequence`, preserving Mean/
+HardSigmoid, QLinear SiLU and Concat/Conv, pre-QDQ Concat, and Mean/MaxPool/
+Concat/Conv recovery. Both helpers contain only raw ModelIR mutators. Their
+conditional binary, post-QDQ, progress-description, layout-prefix, and Concat-
+recovery boundaries remain outside. Recursive helper expansion produces an AST
+identical to the pre-extraction lowerer. Together the helpers remove 6 net
+lowerer lines without changing runtime invocation count, order, conditions, or
+the registered-runner call-site count of 118.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
