@@ -2430,6 +2430,9 @@ expressions, native direct-codegen validation, and the typed fallback-error
 classifier use the same owner. This keeps runtime-kernel support distinct from
 the smaller native source-emitter set without duplicating the registry. All six
 functions are AST-identical to their former exporter definitions.
+Model-specific direct-module eligibility is co-located here as well. Only
+channel-first Conv2D, depthwise Conv2D, and Conv3D tensors with the expected rank
+and positive static channel dimensions select direct module calls.
 Native package preparation combines root-CUSTOM rejection and recursive
 supported-op validation in one traversal. The compatibility validators remain
 available independently, while production and debug export paths use only the

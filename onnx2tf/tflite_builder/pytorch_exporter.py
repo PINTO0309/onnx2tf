@@ -49,11 +49,13 @@ from onnx2tf.tflite_builder.ir import (
 )
 from onnx2tf.tflite_builder.pytorch_capabilities import (
     _DIRECT_CODEGEN_SUPPORTED_OP_TYPES,
+    _can_emit_direct_module_call_for_codegen,
     _ensure_direct_codegen_supported,
     _ensure_native_export_supported_ops,
     _ensure_no_custom_ops,
     _ensure_supported_ops,
     _is_direct_codegen_unsupported_error,
+    _is_channel_last_layout_for_codegen,
     _supports_runtime_wrapper_model_ir,
     get_supported_pytorch_kernel_op_types,
 )
@@ -614,10 +616,6 @@ def _match_single_consumer_layout_bridge_transpose_for_codegen(
     return output_name, bridge_op_idx
 
 
-def _is_channel_last_layout_for_codegen(logical_layout: Any) -> bool:
-    return str(logical_layout).upper() in {"NWC", "NHWC", "NDHWC"}
-
-
 def _tensor_dtype_name_for_codegen(
     *,
     model_ir: ModelIR,
@@ -627,31 +625,6 @@ def _tensor_dtype_name_for_codegen(
     if tensor is None:
         return None
     return str(tensor.dtype).upper()
-
-
-def _can_emit_direct_module_call_for_codegen(
-    *,
-    model_ir: ModelIR,
-    is_channel_last_layout_fn: Callable[[Any], bool],
-    op: OperatorIR,
-) -> bool:
-    op_type = str(op.op_type)
-    if op_type not in {"CONV_2D", "DEPTHWISE_CONV_2D", "CONV_3D"}:
-        return False
-    if len(op.outputs) != 1:
-        return False
-    input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
-    output_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
-    if input_tensor is None or output_tensor is None:
-        return False
-    if is_channel_last_layout_fn(input_tensor.logical_layout) or is_channel_last_layout_fn(output_tensor.logical_layout):
-        return False
-    expected_rank = 5 if op_type == "CONV_3D" else 4
-    if len(input_tensor.shape) != expected_rank or len(output_tensor.shape) != expected_rank:
-        return False
-    if int(input_tensor.shape[1]) <= 0 or int(output_tensor.shape[1]) <= 0:
-        return False
-    return True
 
 
 def _binary_trailing_axis_constant_buffer_alias_shape_for_codegen(

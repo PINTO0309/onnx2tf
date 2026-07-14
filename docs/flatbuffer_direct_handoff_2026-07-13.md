@@ -1102,6 +1102,14 @@ side-input contract and focused ownership gate pass, together with Ruff and
 syntax validation. The exporter shrank by another 24 lines. No model conversion
 or inference was run.
 
+Channel-last layout recognition and model-specific direct-module eligibility now
+live in the Torch-free capability owner. Conv2D, depthwise Conv2D, and Conv3D
+retain their channel-first layout, rank, output-arity, and positive-channel
+guards. Both moved function ASTs match checkpoint `343a3f8` exactly; the direct
+positive/NHWC-rejection contract and focused ownership gate pass, together with
+Ruff and syntax validation. The exporter shrank by another 27 lines. No model
+conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import pytest
 
-from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_capabilities import (
     _DIRECT_CODEGEN_SUPPORTED_OP_TYPES,
+    _can_emit_direct_module_call_for_codegen,
     _ensure_direct_codegen_supported,
     _ensure_native_export_supported_ops,
     _ensure_no_custom_ops,
     _ensure_supported_ops,
     _is_direct_codegen_unsupported_error,
+    _is_channel_last_layout_for_codegen,
     _supports_runtime_wrapper_model_ir,
     get_supported_pytorch_kernel_op_types,
 )
@@ -132,3 +134,41 @@ def test_runtime_wrapper_capability_rejects_unknown_and_other_custom_ops() -> No
     model_ir = _model_with_op("CUSTOM")
     model_ir.operators[0].options["customCode"] = "other"
     assert not _supports_runtime_wrapper_model_ir(model_ir)
+
+
+def test_direct_module_capability_requires_channel_first_static_channels() -> None:
+    op = OperatorIR(
+        op_type="CONV_2D",
+        inputs=["input", "weight"],
+        outputs=["output"],
+    )
+    model_ir = ModelIR(
+        name="direct_module_capability",
+        tensors={
+            "input": TensorIR(
+                name="input",
+                dtype="FLOAT32",
+                shape=[1, 3, 8, 8],
+                logical_layout="NCHW",
+            ),
+            "output": TensorIR(
+                name="output",
+                dtype="FLOAT32",
+                shape=[1, 4, 8, 8],
+                logical_layout="NCHW",
+            ),
+        },
+        operators=[op],
+    )
+
+    assert _can_emit_direct_module_call_for_codegen(
+        model_ir=model_ir,
+        is_channel_last_layout_fn=_is_channel_last_layout_for_codegen,
+        op=op,
+    )
+    model_ir.tensors["output"].logical_layout = "NHWC"
+    assert not _can_emit_direct_module_call_for_codegen(
+        model_ir=model_ir,
+        is_channel_last_layout_fn=_is_channel_last_layout_for_codegen,
+        op=op,
+    )

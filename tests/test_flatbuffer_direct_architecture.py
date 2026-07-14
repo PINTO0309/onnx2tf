@@ -4449,11 +4449,13 @@ def test_pytorch_capability_registry_has_single_owner() -> None:
     }
 
     for function_name in (
+        "_can_emit_direct_module_call_for_codegen",
         "_ensure_direct_codegen_supported",
         "_ensure_native_export_supported_ops",
         "_ensure_no_custom_ops",
         "_ensure_supported_ops",
         "_is_direct_codegen_unsupported_error",
+        "_is_channel_last_layout_for_codegen",
         "_supports_runtime_wrapper_model_ir",
         "get_supported_pytorch_kernel_op_types",
     ):

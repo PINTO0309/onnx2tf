@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Set
+from typing import Any, Callable, Set
 
-from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
 from onnx2tf.tflite_builder.pytorch_emitters import (
     _DIRECT_CODEGEN_BINARY_FUNCTIONS,
     _DIRECT_CODEGEN_MODULE_OP_TYPES,
@@ -74,6 +74,40 @@ _DIRECT_CODEGEN_SUPPORTED_OP_TYPES: Set[str] = (
 _RUNTIME_SUPPORTED_CUSTOM_CODES: Set[str] = {
     "ONNX_SLICE",
 }
+
+
+def _is_channel_last_layout_for_codegen(logical_layout: Any) -> bool:
+    return str(logical_layout).upper() in {"NWC", "NHWC", "NDHWC"}
+
+
+def _can_emit_direct_module_call_for_codegen(
+    *,
+    model_ir: ModelIR,
+    is_channel_last_layout_fn: Callable[[Any], bool],
+    op: OperatorIR,
+) -> bool:
+    op_type = str(op.op_type)
+    if op_type not in {"CONV_2D", "DEPTHWISE_CONV_2D", "CONV_3D"}:
+        return False
+    if len(op.outputs) != 1:
+        return False
+    input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
+    output_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+    if input_tensor is None or output_tensor is None:
+        return False
+    if is_channel_last_layout_fn(
+        input_tensor.logical_layout
+    ) or is_channel_last_layout_fn(output_tensor.logical_layout):
+        return False
+    expected_rank = 5 if op_type == "CONV_3D" else 4
+    if (
+        len(input_tensor.shape) != expected_rank
+        or len(output_tensor.shape) != expected_rank
+    ):
+        return False
+    if int(input_tensor.shape[1]) <= 0 or int(output_tensor.shape[1]) <= 0:
+        return False
+    return True
 
 
 def get_supported_pytorch_kernel_op_types() -> Set[str]:
