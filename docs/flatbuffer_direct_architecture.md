@@ -102,6 +102,10 @@ passthrough pairs share one scope per occurrence. Each scope is limited to the
 two adjacent registered runners; the legacy layout transforms before and after
 each occurrence remain hard boundaries.
 
+Three repeated strict channel-slice-merge followed by Pad/Mul cleanup pairs
+share one scope per occurrence. The three-spec channel-slice group and the
+single-spec Pad/Mul group keep their original order and diagnostic grouping.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while

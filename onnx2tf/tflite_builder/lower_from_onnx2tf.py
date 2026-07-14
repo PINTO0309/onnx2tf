@@ -50124,6 +50124,24 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_channel_slice_pad_mul_layout_pass_cluster() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_channel_slice_merge_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_pad_mul_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     _set_post_progress_desc("outputs")
 
     # Outputs
@@ -50773,16 +50791,7 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    run_channel_slice_merge_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_pad_mul_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_channel_slice_pad_mul_layout_pass_cluster()
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
     _optimize_concat_mul_add_transpose_nhwc_bridge_chains(model_ir)
     _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
@@ -51150,16 +51159,7 @@ def lower_onnx_to_ir(
     )
     _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(model_ir)
     _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir)
-    run_channel_slice_merge_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_pad_mul_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_channel_slice_pad_mul_layout_pass_cluster()
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
     _optimize_concat_mul_add_transpose_nhwc_bridge_chains(model_ir)
     _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
@@ -51373,16 +51373,7 @@ def lower_onnx_to_ir(
     _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir)
     _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
     _optimize_transpose_pre_add_nhwc_chains(model_ir)
-    run_channel_slice_merge_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_pad_mul_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_channel_slice_pad_mul_layout_pass_cluster()
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
     # Strict slice/merge cleanup above can recreate simple affine bridge tails:

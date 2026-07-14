@@ -598,6 +598,57 @@ def test_lowerer_boundary_batchmatmul_unary_pair_reuses_pass_state_scope() -> No
     assert len(helper_invocations) == 4
 
 
+def test_lowerer_channel_slice_pad_mul_pair_reuses_pass_state_scope() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_channel_slice_pad_mul_layout_pass_cluster"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "run_channel_slice_merge_layout_cleanup",
+        "run_pad_mul_layout_cleanup",
+    ]
+    calls = {
+        node.func.id: node
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in expected_order
+    }
+
+    assert [
+        call.func.id
+        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
+    ] == expected_order
+    for name in expected_order:
+        scope_keyword = next(
+            keyword
+            for keyword in calls[name].keywords
+            if keyword.arg == "state_scope"
+        )
+        assert isinstance(scope_keyword.value, ast.Name)
+        assert scope_keyword.value.id == "state_scope"
+
+    helper_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+    ]
+    assert len(helper_invocations) == 3
+
+
 def test_reporting_implementation_stays_out_of_lowering_module() -> None:
     reporting_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py"
     lowering_path = (
@@ -3042,7 +3093,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 164
+    assert len(calls) == 160
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -3107,7 +3158,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_pad_mul_layout_cleanup"
     ]
-    assert len(pad_mul_calls) == 3
+    assert len(pad_mul_calls) == 1
 
     channel_slice_merge_calls = [
         call
@@ -3115,7 +3166,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_channel_slice_merge_layout_cleanup"
     ]
-    assert len(channel_slice_merge_calls) == 3
+    assert len(channel_slice_merge_calls) == 1
 
     boundary_normalization_calls = [
         call

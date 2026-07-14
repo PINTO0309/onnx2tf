@@ -1049,6 +1049,7 @@ def run_pad_mul_layout_cleanup(
     *,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run the strict Pad/Mul/PostTranspose/Add rewrite as an ordered pass."""
 
@@ -1252,6 +1253,7 @@ def run_pad_mul_layout_cleanup(
             "optimized_transpose_pad_mul_posttranspose_add_nhwc_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

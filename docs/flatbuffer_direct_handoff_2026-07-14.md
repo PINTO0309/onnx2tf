@@ -8,11 +8,11 @@ currently tracks this branch. The Goal is active again; subsequent work uses
 coherent commits and pushes without opening an additional pull request.
 
 The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-each of four repeated boundary-input BatchMatMul/input-unary runner pairs. The
-scope contains only those two adjacent registered runners and ends before the
-next legacy layout optimizer. A synthetic fixture whose two model-only
-preflights match proves that four diagnostic events construct one graph index
-without changing runner order or standalone behavior.
+each of three repeated strict channel-slice-merge/Pad-Mul runner pairs. The
+scope contains only the adjacent three-spec channel-slice and single-spec Pad-
+Mul groups. A synthetic fixture whose two model-only preflights match proves
+that four diagnostic events construct one graph index without changing runner
+order, diagnostic grouping, or standalone behavior.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -34,7 +34,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains eighteen coherent continuations:
+The current `fb-refactor5` work contains nineteen coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -73,8 +73,10 @@ The current `fb-refactor5` work contains eighteen coherent continuations:
   LayerNorm, and transpose-cleanup runners;
 - `969d5e26` shares state across the repeated channel-shuffle/Gather-axis and
   unary fan-out runner clusters;
-- the current checkpoint shares state across four repeated boundary-input
-  BatchMatMul/input-unary runner pairs.
+- `251edc58` shares state across four repeated boundary-input BatchMatMul/input-
+  unary runner pairs;
+- the current checkpoint shares state across three repeated channel-slice-
+  merge/Pad-Mul pairs.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -92,8 +94,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
 The final checkpoint changes:
 
-- `onnx2tf/tflite_builder/passes/boundary_input_chains.py`;
-- `onnx2tf/tflite_builder/passes/input_passthrough_layout.py`;
+- `onnx2tf/tflite_builder/passes/channel_slice_layout.py`;
+- `onnx2tf/tflite_builder/passes/pad_layout.py`;
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
 - `tests/test_flatbuffer_direct_pass_efficiency.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
@@ -220,6 +222,10 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   No scope crosses the legacy transformations surrounding any occurrence.
   Their two stale `_build_tensor_consumer_map` imports are removed; neither
   module constructs an ad hoc consumer map for these runners.
+- Three repeated channel-slice-merge/Pad-Mul pairs now use a two-group helper-
+  owned scope. Both runners retain optional standalone-compatible scope
+  arguments, and the scope ends before the legacy optimizer following each
+  pair.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -484,10 +490,30 @@ The runtime fixture records one graph-index refresh and build flags
 `[true, false, false, false]`; the latter three events belong to the reused
 three-spec input-unary group. The architecture gate fixes the two-runner order
 and all four helper invocations.
+A focused channel-slice/Pad-Mul checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_channel_slice_pad_mul_pair_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_channel_slice_pad_mul_pair_reuses_pass_state_scope \
+  tests/test_flatbuffer_direct_architecture.py::test_ordered_model_ir_runner_calls_record_session_diagnostics \
+  tests/test_flatbuffer_direct_pad_layout.py \
+  tests/test_tflite_builder_direct.py \
+  -k 'channel_slice or transpose_pad_mul_posttranspose or channel_slice_pad_mul_pair or ordered_model_ir_runner or lowerer_channel_slice'
+
+8 passed, 754 deselected
+```
+
+The runtime fixture records one graph-index refresh and build flags
+`[true, true, true, false]`: the first three events belong to the one state-
+building channel-slice group, and Pad-Mul reuses that state. The architecture
+gate fixes the two-group order and all three helper invocations.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`148 passed` after adding the boundary-input pair checks.
+`150 passed` after adding the channel-slice/Pad-Mul checks.
 
 The changed pass modules and tests pass Ruff normally. The lowerer passes with
 its pre-existing `F401` and `F841` findings scoped out. Every changed Python
@@ -529,9 +555,9 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the remaining small repeated registered-runner pairs, beginning with
-   channel-slice-merge/Pad-Mul, while treating every surrounding legacy helper
-   as a hard boundary.
+2. Audit the remaining repeated singleton/duplicate/consecutive-reshape runner
+   sequences while treating every surrounding legacy helper as a hard
+   boundary.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.
