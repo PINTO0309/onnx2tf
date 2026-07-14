@@ -50012,6 +50012,24 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_constant_fold_cast_cleanup_pass_cluster() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_constant_input_fold_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_redundant_cast_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     def _run_gate_layout_pass_cluster(
         *,
         include_mixed_attention: bool = True,
@@ -51473,16 +51491,7 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    run_constant_input_fold_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_redundant_cast_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_constant_fold_cast_cleanup_pass_cluster()
     _replace_expand_dims_and_squeeze_with_reshape(
         model_ir,
         layout_state=session.layout_state,
@@ -51501,16 +51510,7 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    run_constant_input_fold_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_redundant_cast_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_constant_fold_cast_cleanup_pass_cluster()
     run_normalization_pad_layout_cleanup(
         model_ir,
         include_instance=False,

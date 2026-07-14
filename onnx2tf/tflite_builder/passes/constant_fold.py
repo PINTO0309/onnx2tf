@@ -9,6 +9,7 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
+    ModelIRPassStateScope,
     preflight_any_operator,
     run_model_ir_pass_group,
 )
@@ -540,6 +541,7 @@ def run_constant_input_fold_cleanup(
     *,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Materialize constant Pad, Pool, then Cast chains in fixed order."""
 
@@ -635,6 +637,7 @@ def run_constant_input_fold_cleanup(
             "optimized_constant_input_cast_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

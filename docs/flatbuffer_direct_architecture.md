@@ -137,6 +137,13 @@ before the four quantized-PReLU specs. The earlier duplicate-fan-out invocation
 that is separated from PReLU by legacy QDQ rewrites remains standalone. Each
 shared scope ends before dequantize/TransposeConv/quantize cleanup.
 
+Two repeated constant-input-fold/redundant-Cast pairs share one scope per
+occurrence. The three constant Pad/Pool/Cast specs retain their order before
+the widening-alias and narrowing-chain Cast specs. The first scope ends before
+the legacy ExpandDims/Squeeze replacement and the second ends before
+normalization-Pad layout cleanup. Both runners remain standalone-compatible
+through optional scope arguments.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while
