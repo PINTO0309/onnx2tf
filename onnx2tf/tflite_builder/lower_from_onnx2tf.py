@@ -50106,6 +50106,24 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_boundary_input_batchmatmul_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_input_unary_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     _set_post_progress_desc("outputs")
 
     # Outputs
@@ -50184,16 +50202,7 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _optimize_transpose_quant_dequant_bridges(model_ir)
-        run_boundary_input_batchmatmul_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_input_unary_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_boundary_batchmatmul_unary_layout_pass_cluster()
         _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
         run_hard_activation_passthrough_cleanup(
@@ -50297,16 +50306,7 @@ def lower_onnx_to_ir(
         )
         # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
         _optimize_transpose_quant_dequant_bridges(model_ir)
-        run_boundary_input_batchmatmul_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_input_unary_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_boundary_batchmatmul_unary_layout_pass_cluster()
         _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
         run_hard_activation_passthrough_cleanup(
@@ -50413,16 +50413,7 @@ def lower_onnx_to_ir(
         _optimize_concat_pre_quantize_dequantize(model_ir)
         _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
         _optimize_transpose_quant_dequant_bridges(model_ir)
-        run_boundary_input_batchmatmul_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_input_unary_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_boundary_batchmatmul_unary_layout_pass_cluster()
         _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
         run_hard_activation_passthrough_cleanup(
@@ -50584,16 +50575,7 @@ def lower_onnx_to_ir(
         _optimize_concat_pre_quantize_dequantize(model_ir)
         _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
         _optimize_transpose_quant_dequant_bridges(model_ir)
-        run_boundary_input_batchmatmul_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_input_unary_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
+        _run_boundary_batchmatmul_unary_layout_pass_cluster()
         _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
         run_hard_activation_passthrough_cleanup(

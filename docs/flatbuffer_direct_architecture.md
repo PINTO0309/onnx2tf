@@ -97,6 +97,11 @@ other four scopes end before their next legacy mutator. Four separate repeated
 unary-passthrough/unary-fan-out/binary-fan-out sequences likewise share one
 scope per occurrence.
 
+Four repeated boundary-input BatchMatMul followed by leading-input unary
+passthrough pairs share one scope per occurrence. Each scope is limited to the
+two adjacent registered runners; the legacy layout transforms before and after
+each occurrence remain hard boundaries.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while
