@@ -3680,7 +3680,12 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
         / "pytorch_codegen_utils.py"
     ).read_text(encoding="utf-8")
     assert "def _constant_int_list(" in codegen_utils_source
+    assert "_constant_int_list," in emitter_source
+    # The dynamically compiled legacy codegen body resolves helpers from the
+    # exporter module globals, so its current owner must also be bound here.
     assert "_constant_int_list," in exporter_source
+    assert "logical_layout_permutation," in exporter_source
+
 
 def test_native_pytorch_stage_codegen_has_single_owner() -> None:
     exporter_source = (
@@ -3701,6 +3706,7 @@ def test_native_pytorch_stage_codegen_has_single_owner() -> None:
     assert "_build_forward_stage_methods," in exporter_source
     assert "def _fold_single_use_static_reshape_chains(" in stage_source
     assert "def _fold_single_use_static_reshape_chains(" not in exporter_source
+    assert "_fold_single_use_static_reshape_chains," in exporter_source
     assert "def _build_named_encoder_methods(" not in exporter_source
     assert "import torch" not in stage_source
 
@@ -4148,6 +4154,12 @@ def test_generated_pytorch_codegen_values_have_single_owner() -> None:
     values_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_values.py"
     ).read_text(encoding="utf-8")
+    constant_policy_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_constant_policy.py"
+    ).read_text(encoding="utf-8")
     exporter_functions = {
         node.name
         for node in ast.parse(exporter_source).body
@@ -4159,19 +4171,30 @@ def test_generated_pytorch_codegen_values_have_single_owner() -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
 
-    moved_functions = (
+    exporter_imported_functions = (
         "_conv_block_activation_config",
         "_conv_block_activation_config_from_fused_name",
         "_is_small_inline_constant_tensor",
         "_python_literal_for_constant_tensor",
-        "_scalar_literal_for_constant_tensor",
         "_torch_dtype_literal",
+    )
+    constant_policy_imported_functions = (
+        "_scalar_literal_for_constant_tensor",
         "_torch_pad_literal_for_constant_tensor",
     )
-    for function_name in moved_functions:
+    for function_name in (
+        *exporter_imported_functions,
+        *constant_policy_imported_functions,
+    ):
         assert function_name in values_functions
         assert function_name not in exporter_functions
+    for function_name in exporter_imported_functions:
         assert f"{function_name}," in exporter_source
+    for function_name in constant_policy_imported_functions:
+        assert f"{function_name}," in constant_policy_source
+    # The dynamically compiled legacy codegen body still resolves the pad
+    # literal helper from the exporter module globals.
+    assert "_torch_pad_literal_for_constant_tensor," in exporter_source
     assert "import torch" not in values_source
 
 

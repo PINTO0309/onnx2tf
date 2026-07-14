@@ -41,6 +41,7 @@ from onnx2tf.tflite_builder.ir import (
     infer_model_ir_logical_layouts,
     is_channel_first_logical_layout,
     is_channel_last_logical_layout,
+    logical_layout_permutation,
     logical_layout_rank,
     normalize_logical_layout,
     validate_model_ir_layout_annotations,
@@ -169,6 +170,7 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
 from onnx2tf.tflite_builder.pytorch_codegen_utils import (
     _add_synthetic_tensor_to_model_ir,
     _broadcast_shapes_relaxed,
+    _constant_int_list,
     _extract_statement_assignments,
     _extract_statement_loads,
     _is_all_ones_shape,
@@ -182,6 +184,7 @@ from onnx2tf.tflite_builder.pytorch_codegen_utils import (
 from onnx2tf.tflite_builder.pytorch_codegen_stages import (
     _build_forward_stage_methods,
     _build_named_encoder_methods_composite,
+    _fold_single_use_static_reshape_chains,
 )
 from onnx2tf.tflite_builder.pytorch_codegen_values import (
     _conv_block_activation_config,
@@ -189,6 +192,7 @@ from onnx2tf.tflite_builder.pytorch_codegen_values import (
     _is_small_inline_constant_tensor,
     _python_literal_for_constant_tensor,
     _torch_dtype_literal,
+    _torch_pad_literal_for_constant_tensor,
 )
 from onnx2tf.tflite_builder.pytorch_shape_policy import (
     _conv2d_input_pre_permute_for_codegen,

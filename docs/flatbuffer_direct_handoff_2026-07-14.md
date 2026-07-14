@@ -97,9 +97,11 @@ synthetic/ownership selections of 4, 2, 2, 4, and 3 tests respectively.
   compatibility re-export, unused scaffold, and undefined-name findings. It is
   not used as the scoped checkpoint gate; changed owners/tests pass Ruff and
   the exporter passes syntax compilation.
-- The optional PyTorch exporter suite cannot collect in this environment
-  because Python 3.12 resolves a Python 3.10 `libtorch_python.so`, producing the
-  known `_PyCode_GetExtra` ABI failure.
+- The optional PyTorch exporter suite runs when the host's Python 3.10
+  `LD_LIBRARY_PATH` and `PYTHONPATH` are removed from the command environment.
+  The focused results, restored native-codegen bindings, real-model artifact
+  gate, and remaining inherited failures are recorded in
+  `docs/flatbuffer_direct_pytorch_regression_2026-07-14.md`.
 - The optional TensorFlow suite was not synchronized or run.
 - Recent PyTorch source-policy checkpoints have not been followed by a Tier
   corpus conversion run. This is intentional under the current minimal-
