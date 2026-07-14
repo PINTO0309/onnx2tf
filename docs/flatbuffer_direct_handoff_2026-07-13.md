@@ -1425,6 +1425,15 @@ validation, and `git diff --check`; the orchestrator shrank from 1,158 to 1,088
 lines and the exporter by net 68 lines. No model conversion or inference was
 run.
 
+The generic `torch.cat(dim=3)` rewrite that followed the shared concat-axis
+helper has been removed. Its direct-set/suffix guard was a strict subset of the
+helper's alias/context-aware CF guard, so every eligible line had already been
+rewritten to `dim=1`; the later block and its assignment regex were unreachable.
+The existing concat fixture remains in the 15 passing focused policy/ownership
+tests (95 unrelated architecture tests deselected), syntax validation and
+`git diff --check` pass, and the orchestrator shrank from 1,088 to 1,065 lines.
+No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

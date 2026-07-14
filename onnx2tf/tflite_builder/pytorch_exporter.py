@@ -7286,9 +7286,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     depth_to_space_nhwc_gather_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<input>[A-Za-z0-9_]+)\[:, \[(?P<indices>[0-9,\s-]+)\], :, :\]$"
     )
-    generic_assign_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<rhs>.+)$"
-    )
     aligned_bn_const_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.(?P<op>mul|add)\((?P<input>[A-Za-z0-9_]+), self\.(?P<const_attr>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
     )
@@ -8059,26 +8056,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 cf_like_names.add(concat_lhs)
             changed = True
             line = rewritten_concat_line
-        generic_assign_match = generic_assign_re.match(line)
-        if generic_assign_match is not None:
-            rhs_expr = str(generic_assign_match.group("rhs")).strip()
-            torch_cat_args = _parse_torch_cat_inputs_and_dim(rhs_expr)
-            if torch_cat_args is not None and torch_cat_args[1] == 3:
-                cat_inputs = [name.strip() for name in torch_cat_args[0] if name.strip()]
-                if cat_inputs and all(
-                    (
-                        input_name in cf_like_names
-                        or input_name.endswith("_cf")
-                        or input_name.endswith("_out_cf")
-                    )
-                    for input_name in cat_inputs
-                ):
-                    lines[index] = (
-                        f"{generic_assign_match.group('indent')}{generic_assign_match.group('lhs')} = "
-                        f"torch.cat([{', '.join(cat_inputs)}], dim=1)"
-                    )
-                    cf_like_names.add(str(generic_assign_match.group("lhs")))
-                    changed = True
         aligned_bn_const_match = aligned_bn_const_re.match(line)
         if aligned_bn_const_match is not None:
             input_name = str(aligned_bn_const_match.group("input"))
