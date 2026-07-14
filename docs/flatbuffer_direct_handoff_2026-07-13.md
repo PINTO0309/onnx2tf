@@ -604,6 +604,13 @@ contracts. A direct normalization fixture and 256-op access instrumentation,
 plus architecture validation, pass 81 tests. No model conversion or inference
 was run.
 
+Split size-estimation candidates now borrow source NumPy constant buffers
+read-only instead of copying every weight at every binary-search probe. The
+public partition-builder default and final split writer still create
+independent buffers. Identity and independence fixtures bring the focused
+split-planner suite to 13 passing tests. No model conversion or inference was
+run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

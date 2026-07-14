@@ -212,6 +212,7 @@ def build_partition_model_ir(
     end_op_index: int,
     partition_id: int,
     graph_index: Optional[ModelIRGraphIndex] = None,
+    copy_tensor_data: bool = True,
 ) -> ModelIR:
     num_ops = len(model_ir.operators)
     _validate_range(
@@ -308,7 +309,11 @@ def build_partition_model_ir(
             shape_signature=list(tensor.shape_signature)
             if tensor.shape_signature is not None
             else None,
-            data=tensor.data.copy() if isinstance(tensor.data, np.ndarray) else tensor.data,
+            data=(
+                tensor.data.copy()
+                if copy_tensor_data and isinstance(tensor.data, np.ndarray)
+                else tensor.data
+            ),
             is_variable=bool(tensor.is_variable),
             quantization=tensor.quantization,
             logical_layout=tensor.logical_layout,
@@ -2244,6 +2249,7 @@ def plan_contiguous_partitions_by_size(
                 end_op_index=mid,
                 partition_id=partition_id,
                 graph_index=graph_index,
+                copy_tensor_data=False,
             )
             estimated_size = _estimate_partition_size(
                 partition_model_ir=part_model,
@@ -2265,6 +2271,7 @@ def plan_contiguous_partitions_by_size(
                 end_op_index=end_op_index,
                 partition_id=partition_id,
                 graph_index=graph_index,
+                copy_tensor_data=False,
             )
             estimated_size = _estimate_partition_size(
                 partition_model_ir=part_model,

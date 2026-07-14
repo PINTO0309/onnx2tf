@@ -116,6 +116,45 @@ def test_split_planner_reuses_one_model_ir_graph_index(monkeypatch) -> None:
     assert index_build_count == 1
 
 
+def test_split_size_candidates_borrow_constant_buffers_read_only() -> None:
+    constant_data = np.arange(1024, dtype=np.float32)
+    model_ir = ModelIR(name="borrowed_split_constants")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": TensorIR(name="x", dtype="FLOAT32", shape=[1024]),
+        "constant": TensorIR(
+            name="constant",
+            dtype="FLOAT32",
+            shape=[1024],
+            data=constant_data,
+        ),
+        "y": TensorIR(name="y", dtype="FLOAT32", shape=[1024]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            op_type="ADD",
+            inputs=["x", "constant"],
+            outputs=["y"],
+        )
+    ]
+    borrowed_flags = []
+
+    plan_contiguous_partitions_by_size(
+        model_ir=model_ir,
+        target_max_bytes=100,
+        hard_max_bytes=200,
+        size_estimator=lambda part: (
+            borrowed_flags.append(part.tensors["constant"].data is constant_data)
+            or len(part.operators)
+        ),
+    )
+
+    assert borrowed_flags
+    assert all(borrowed_flags)
+    np.testing.assert_array_equal(model_ir.tensors["constant"].data, constant_data)
+
+
 def test_split_writer_reuses_one_model_ir_graph_index(monkeypatch, tmp_path) -> None:
     index_build_count = 0
     original_graph_index = split_planner_module.ModelIRGraphIndex
@@ -405,6 +444,8 @@ def test_build_partition_model_ir_excludes_embedded_constants_from_partition_inp
     assert "bias" in part_model.tensors
     assert part_model.tensors["weight"].data is not None
     assert part_model.tensors["bias"].data is not None
+    assert part_model.tensors["weight"].data is not model_ir.tensors["weight"].data
+    assert part_model.tensors["bias"].data is not model_ir.tensors["bias"].data
 
 
 def test_split_planner_rejects_oversized_single_partition() -> None:

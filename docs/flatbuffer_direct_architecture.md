@@ -1646,7 +1646,10 @@ removing the quadratic list-membership cost from every binary-search candidate
 and final partition build. Candidate boundary-output discovery queries the
 shared consumer index instead of rescanning the complete graph suffix for every
 candidate. The final split artifact writer also constructs one index and reuses
-it across all emitted partitions.
+it across all emitted partitions. Binary-search size-estimation candidates
+borrow immutable NumPy constant buffers from the source ModelIR instead of
+copying every weight for every probe. The public partition builder and final
+artifact writer retain the established independent-buffer default.
 
 Custom-op result metadata has a single TensorFlow- and Torch-free owner in
 `artifact_metadata.py`. One operator-stream pass produces both the legacy raw
