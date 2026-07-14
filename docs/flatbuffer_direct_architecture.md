@@ -3986,6 +3986,34 @@ preflight. A simple public-output ONNX graph is intentionally not used as an
 exact owner fixture because the ordered trailing-output cleanup removes its
 post-Transpose before this later specialized owner runs.
 
+Quantized logistic-gated MUL layout recovery is isolated in the Torch/
+TensorFlow-free `passes/quantized_gate.py` module rather than being forced
+through the linear activation owner. The pass recognizes the shared
+quantized input feeding separate data and logistic DQ branches, the internal
+LOGISTIC-Q-DQ gate, MUL-Q, and one or more inverse-Transpose output aliases.
+One `ModelIRGraphIndex` owns graph-order post candidates, producer traversal,
+strict branch-consumer guards, DQ rewiring, canonical Q-output selection,
+alias-consumer replacement, and batch removal of the pre/post Transposes.
+No producer or consumer compatibility map is rebuilt after a match.
+The nested backward walk that distinguishes the MUL data input from the
+LOGISTIC-Q-DQ input is isolated in `_match_logistic_gate_branch`; incomplete
+gate-looking chains retain the former behavior of falling back to a data-
+branch candidate, while duplicate data or gate branches remain ambiguous and
+ineligible.
+
+The first post alias in graph order remains canonical. Its tensor receives
+the permuted MUL-Q shape/signature, dtype, and cloned quantization metadata;
+later alias consumers are changed through indexed `_replace_tensor_inputs`.
+All original topology, fixed rank-four permutations, per-tensor quantization,
+metadata permutation, pruning, lineage, and stats contracts remain intact.
+Public-boundary protection is strengthened to cover every data/gate
+intermediate, not only the pre input, MUL output, and post aliases. Focused
+characterization compares complete former results for simultaneous single-
+and multi-post chains, reverses MUL inputs, blocks legacy graph-map builders,
+checks maintained-index equivalence, and covers public intermediates/source/
+aliases, branch fan-out, non-Transpose post users, per-channel quantization,
+wrong permutations, and the no-Transpose/no-index preflight.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
