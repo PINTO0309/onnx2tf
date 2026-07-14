@@ -952,6 +952,15 @@ focused policy and architecture suites pass 124 tests, and Ruff and syntax
 validation pass. The exporter shrank by another 183 lines. No model conversion
 or inference was run.
 
+Conv2D layout-candidate search, input pre-permutation, and regular/depthwise
+constructor inference now form one pure family in the same shape-policy owner.
+The compatibility imports continue to serve the generated pipeline and the
+exporter's cached channel-dimension scan without exposing ModelIR state to the
+policy. Six thousand fixed-seed outcomes match checkpoint `b32c285` exactly;
+the focused policy and architecture suites pass 126 tests, and Ruff and syntax
+validation pass. The exporter shrank by another 296 lines. No model conversion
+or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

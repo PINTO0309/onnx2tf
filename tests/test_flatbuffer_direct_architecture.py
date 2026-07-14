@@ -4480,12 +4480,15 @@ def test_generated_pytorch_shape_policy_has_single_owner() -> None:
     }
 
     for function_name in (
+        "_conv2d_input_pre_permute_for_codegen",
         "_conv2d_output_spatial_shape_for_codegen",
         "_conv2d_same_pad_padding_arg_for_codegen",
         "_conv3d_output_spatial_shape_for_codegen",
         "_conv3d_transpose_output_spatial_shape_for_codegen",
         "_fast_precanonicalize_rank4_layout_hint",
         "_infer_batch_matmul_shape_for_codegen",
+        "_infer_conv2d_ctor_params_for_codegen",
+        "_infer_conv2d_layout_candidate_for_codegen",
         "_infer_conv3d_ctor_params_for_codegen",
         "_infer_conv3d_transpose_ctor_params_for_codegen",
         "_infer_reduction_shape_for_codegen",

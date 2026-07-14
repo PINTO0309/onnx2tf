@@ -3,12 +3,15 @@ from __future__ import annotations
 import pytest
 
 from onnx2tf.tflite_builder.pytorch_shape_policy import (
+    _conv2d_input_pre_permute_for_codegen,
     _conv2d_output_spatial_shape_for_codegen,
     _conv2d_same_pad_padding_arg_for_codegen,
     _conv3d_output_spatial_shape_for_codegen,
     _conv3d_transpose_output_spatial_shape_for_codegen,
     _fast_precanonicalize_rank4_layout_hint,
     _infer_batch_matmul_shape_for_codegen,
+    _infer_conv2d_ctor_params_for_codegen,
+    _infer_conv2d_layout_candidate_for_codegen,
     _infer_conv3d_ctor_params_for_codegen,
     _infer_conv3d_transpose_ctor_params_for_codegen,
     _infer_reduction_shape_for_codegen,
@@ -39,6 +42,65 @@ def test_conv2d_output_spatial_shape_policy(
         dilation_hw=[1, 1],
         padding_mode=padding_mode,
     ) == expected
+
+
+def test_conv2d_constructor_layout_policy_is_consistent() -> None:
+    common = {
+        "input_shape": [1, 3, 8, 8],
+        "output_shape": [1, 4, 8, 8],
+        "weight_shape": [4, 3, 3, 3],
+        "options": {
+            "padding": "SAME",
+            "strideH": 1,
+            "strideW": 1,
+            "dilationHFactor": 1,
+            "dilationWFactor": 1,
+        },
+    }
+    assert _infer_conv2d_layout_candidate_for_codegen(
+        **common,
+        depthwise=False,
+    ) == ([0, 1, 2, 3], 3, 1)
+    assert _infer_conv2d_ctor_params_for_codegen(
+        **common,
+        input_logical_layout="NCHW",
+        output_logical_layout="NCHW",
+        depthwise=False,
+    ) == (3, 1)
+    assert _conv2d_input_pre_permute_for_codegen(
+        input_shape=[1, 8, 8, 3],
+        output_shape=[1, 8, 8, 4],
+        weight_shape=common["weight_shape"],
+        options=common["options"],
+        input_logical_layout="NHWC",
+        output_logical_layout="NHWC",
+    ) == [0, 3, 1, 2]
+
+
+def test_conv2d_constructor_policy_preserves_depthwise_and_invalid_fallbacks() -> None:
+    assert _infer_conv2d_ctor_params_for_codegen(
+        input_shape=[1, 3, 8, 8],
+        output_shape=[1, 6, 8, 8],
+        weight_shape=[6, 1, 3, 3],
+        options={"padding": "SAME"},
+        input_logical_layout="NCHW",
+        output_logical_layout="NCHW",
+        depthwise=True,
+    ) == (3, 3)
+    assert _infer_conv2d_ctor_params_for_codegen(
+        input_shape=None,
+        output_shape=None,
+        weight_shape=[4, 3, 3, 3],
+        options=None,
+        depthwise=False,
+    ) == (1, 1)
+    assert _infer_conv2d_layout_candidate_for_codegen(
+        input_shape=[1, 3, 8],
+        output_shape=[1, 4, 8],
+        weight_shape=[4, 3, 3, 3],
+        options=None,
+        depthwise=False,
+    ) is None
 
 
 @pytest.mark.parametrize(

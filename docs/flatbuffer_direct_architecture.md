@@ -2233,6 +2233,10 @@ Conv3D and transpose-Conv3D constructor inference is co-located with the
 spatial formulas it validates. The policy owns channel/layout interpretation,
 weight-axis search, group selection, and the established conservative fallback;
 the exporter only consumes the selected constructor parameters.
+The corresponding Conv2D family is also centralized here: one layout-candidate
+search feeds both input pre-permutation and regular/depthwise constructor
+selection. Shape, option, and logical-layout inputs remain explicit, and no
+ModelIR or emitter state enters this policy boundary.
 
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
