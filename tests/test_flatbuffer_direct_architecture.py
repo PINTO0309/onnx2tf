@@ -4247,8 +4247,10 @@ def test_pytorch_capability_registry_has_single_owner() -> None:
     }
 
     for function_name in (
+        "_ensure_direct_codegen_supported",
         "_ensure_no_custom_ops",
         "_ensure_supported_ops",
+        "_is_direct_codegen_unsupported_error",
         "_supports_runtime_wrapper_model_ir",
         "get_supported_pytorch_kernel_op_types",
     ):

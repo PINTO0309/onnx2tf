@@ -545,6 +545,14 @@ unsafe no-op cases plus source-rewrite and architecture validation pass 110
 tests; Ruff, diff, and AST-equivalence checks pass. No model conversion or
 inference was run.
 
+Native direct-codegen validation and its fallback-error classifier now live
+with the Torch-free registry in `pytorch_capabilities.py`. Runtime-supported
+ops remain distinct from the smaller direct emitter set; for example `WHILE`
+continues to enter fallback instead of native source generation. Both function
+ASTs match checkpoint `0515e64` exactly. Capability and architecture validation
+pass 85 tests; Ruff, diff, and AST-equivalence checks pass. No model conversion
+or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

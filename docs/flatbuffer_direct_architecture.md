@@ -2168,8 +2168,10 @@ declarations with the existing runtime-kernel set, owns explicit CUSTOM
 rejection and unsupported-op diagnostics, and returns a defensive copy from the
 public supported-kernel query. Runtime-wrapper selection and the explicit
 `ONNX_SLICE` custom-code allowance use this same capability owner. The registry
-expressions and all four functions are AST-identical to their former exporter
-definitions.
+expressions, native direct-codegen validation, and the typed fallback-error
+classifier use the same owner. This keeps runtime-kernel support distinct from
+the smaller native source-emitter set without duplicating the registry. All six
+functions are AST-identical to their former exporter definitions.
 
 Generated PyTorch identifiers have a Torch-free single owner in
 `pytorch_naming.py`. Tensor variables, constant-buffer attributes, serialized

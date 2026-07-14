@@ -97,6 +97,28 @@ def _ensure_supported_ops(model_ir: ModelIR) -> None:
         )
 
 
+def _ensure_direct_codegen_supported(model_ir: ModelIR) -> None:
+    unsupported = sorted(
+        {
+            str(op.op_type)
+            for op in model_ir.operators
+            if str(op.op_type) not in _DIRECT_CODEGEN_SUPPORTED_OP_TYPES
+        }
+    )
+    if len(unsupported) > 0:
+        raise ModelIRPyTorchExportError(
+            "Native PyTorch-like model.py codegen does not support some op types in this model. "
+            f"unsupported_op_types={unsupported}"
+        )
+
+
+def _is_direct_codegen_unsupported_error(ex: BaseException) -> bool:
+    return (
+        "Native PyTorch-like model.py codegen does not support some op types in this model."
+        in str(ex)
+    )
+
+
 def _ensure_no_custom_ops(model_ir: ModelIR) -> None:
     custom_ops = sorted(
         {str(op.op_type) for op in model_ir.operators if str(op.op_type) == "CUSTOM"}

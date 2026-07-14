@@ -5,8 +5,10 @@ import pytest
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
 from onnx2tf.tflite_builder.pytorch_capabilities import (
     _DIRECT_CODEGEN_SUPPORTED_OP_TYPES,
+    _ensure_direct_codegen_supported,
     _ensure_no_custom_ops,
     _ensure_supported_ops,
+    _is_direct_codegen_unsupported_error,
     _supports_runtime_wrapper_model_ir,
     get_supported_pytorch_kernel_op_types,
 )
@@ -46,6 +48,21 @@ def test_capability_validation_reports_unknown_op() -> None:
         match=r"unsupported_op_types=\['NOT_REAL'\]",
     ):
         _ensure_supported_ops(_model_with_op("NOT_REAL"))
+
+
+def test_direct_codegen_validation_keeps_runtime_only_ops_out() -> None:
+    _ensure_direct_codegen_supported(_model_with_op("CONV_2D"))
+
+    with pytest.raises(
+        ModelIRPyTorchExportError,
+        match=r"unsupported_op_types=\['WHILE'\]",
+    ) as error:
+        _ensure_direct_codegen_supported(_model_with_op("WHILE"))
+
+    assert _is_direct_codegen_unsupported_error(error.value)
+    assert not _is_direct_codegen_unsupported_error(
+        ModelIRPyTorchExportError("unrelated export failure")
+    )
 
 
 def test_custom_op_validation_is_explicit() -> None:

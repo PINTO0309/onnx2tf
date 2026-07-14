@@ -49,8 +49,10 @@ from onnx2tf.tflite_builder.ir import (
 )
 from onnx2tf.tflite_builder.pytorch_capabilities import (
     _DIRECT_CODEGEN_SUPPORTED_OP_TYPES,
+    _ensure_direct_codegen_supported,
     _ensure_no_custom_ops,
     _ensure_supported_ops,
+    _is_direct_codegen_unsupported_error,
     _supports_runtime_wrapper_model_ir,
     get_supported_pytorch_kernel_op_types,
 )
@@ -26637,21 +26639,6 @@ def _repair_exported_program_channel_last_pool_targets(lines: List[str]) -> List
 def _direct_codegen_module_attr_name(op_index: int, op_type: str) -> str:
     base = _sanitize_python_identifier(f"op_{op_index}_{str(op_type).lower()}", prefix="op")
     return base
-
-
-def _ensure_direct_codegen_supported(model_ir: ModelIR) -> None:
-    unsupported = sorted(
-        {str(op.op_type) for op in model_ir.operators if str(op.op_type) not in _DIRECT_CODEGEN_SUPPORTED_OP_TYPES}
-    )
-    if len(unsupported) > 0:
-        raise ModelIRPyTorchExportError(
-            "Native PyTorch-like model.py codegen does not support some op types in this model. "
-            f"unsupported_op_types={unsupported}"
-        )
-
-
-def _is_direct_codegen_unsupported_error(ex: BaseException) -> bool:
-    return "Native PyTorch-like model.py codegen does not support some op types in this model." in str(ex)
 
 
 def _write_native_model_file(
