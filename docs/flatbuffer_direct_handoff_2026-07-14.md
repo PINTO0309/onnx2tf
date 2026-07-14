@@ -8,16 +8,16 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit gives NHWC-to-NCHW Transpose removal before
-channel ArgMax one semantic owner in `passes/terminal_argmax_layout.py`. One
-maintained `ModelIRGraphIndex` supplies graph-order Transpose candidates,
-exclusive ArgMax consumers, shared-axis ownership, indexed data/axis rewiring,
-and differential Transpose removal. Exact rank-four permutation, channel-axis
-normalization, private/shared constant behavior, ArgMax options/output,
-lineage, statistics, and pruning retain valid former behavior. Public axis
-constants are now cloned rather than mutated, and public intermediates,
-duplicate producers, invalid integer constants, operator-order violations, and
-inconsistent shape/signature metadata are complete no-ops.
+The latest implementation unit gives exact-grid
+DEQUANTIZE-to-MAX_POOL_2D-to-QUANTIZE cleanup one semantic owner in
+`passes/quantized_pool.py`. One maintained `ModelIRGraphIndex` supplies
+graph-order Dequantize candidates, exact chain consumers/producers, indexed
+Pool edge rewrites, and differential wrapper removal. INT8/UINT8 dtype, exact
+scale and zero point, rank-four shape/signature, Pool options/output identity,
+lineage, statistics, and pruning retain valid former behavior. Near-equal but
+different grids, missing float bridge tensors, public bridges, duplicate
+producers, operator-order violations, and inconsistent metadata are complete
+no-ops.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -39,7 +39,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains seventy-seven coherent continuations:
+The current `fb-refactor5` work contains seventy-eight coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -205,8 +205,10 @@ The current `fb-refactor5` work contains seventy-seven coherent continuations:
   transactional;
 - `f3da692f` moves marker-gated terminal Softmax/Transpose cleanup to one
   indexed terminal-layout owner and centralizes the propagation marker;
-- the current checkpoint moves pre-ArgMax channel-layout cleanup to one
-  indexed owner with transactional shape and constant-ownership guards.
+- `e1e8ab39` moves pre-ArgMax channel-layout cleanup to one indexed owner with
+  transactional shape and constant-ownership guards;
+- the current checkpoint moves exact-grid quantized MaxPool cleanup to one
+  indexed owner with transactional topology, grid, and metadata guards.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -225,8 +227,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/terminal_argmax_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_terminal_argmax_layout.py`;
+- `onnx2tf/tflite_builder/passes/quantized_pool.py`;
+- `tests/test_flatbuffer_direct_indexed_quantized_pool.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -632,6 +634,21 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   lineage; post-prune `LayoutState` synchronization registers any clone.
   Missing required families retain historical pruning without index
   construction.
+- Quantized MaxPool cleanup accepts only an exact linear
+  `DEQUANTIZE -> MAX_POOL_2D -> QUANTIZE` chain. Input and output grids must
+  use the same INT8 or UINT8 dtype and exactly equal positive finite scale and
+  in-range zero point; approximate equality is not sufficient because a
+  quantized MaxPool builtin preserves integer samples and therefore requires
+  identical grids. All four tensors must exist, float bridge dtypes must
+  agree, and rank-four shapes and signatures must match across each Q/DQ
+  boundary. Both bridge tensors are private, uniquely produced, exclusively
+  consumed, and topologically ordered. The output cannot also be a graph
+  input. All topology, metadata, and cloned-quantization planning completes
+  before indexed Pool edge mutation and differential wrapper removal. This
+  intentionally fixes former rewrites that accepted near-equal grids, absent
+  float metadata, or a float bridge exposed as a public input. Missing
+  required operator families retain historical pruning without allocating an
+  index, and both production call sites pass the Session `LayoutState`.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -1812,6 +1829,25 @@ Softmax coverage passed with `288 passed`. TensorFlow-import-blocked direct and
 `-cotof` plus the sequential quantization/evaluation/coverage smoke passed with
 `3 passed`. No Tier corpus conversion was run.
 
+The indexed quantized-MaxPool checkpoint compiles the complete prior committed
+function and preserves exact ModelIR and statistics for valid one- and two-
+chain fixtures across INT8 and UINT8. Differential checks separately prove
+that the former tolerant comparison folded a near-but-different scale, that
+missing float bridge tensors were accepted, and that a public-input bridge
+could lose its producer; all three are now transactional no-ops. Focused
+coverage verifies one-index multi-match execution, maintained-index and
+LayoutState equivalence, quantized input/output fan-out, dictionary grids,
+Pool options/version/provenance, cloned quantization, public boundaries,
+duplicate producers, operator order and arity, exact grid/dtype/range, float
+bridge dtype, exact rank-four shape/signature metadata, missing tensors,
+missing-family/no-index pruning, and unique semantic ownership with
+`52 passed`. Architecture, core, pass-efficiency, established quantized-Pool and
+quantization-cleanup coverage, and the new indexed suite passed together with
+`318 passed`. TensorFlow-import-blocked direct and `-cotof` plus the sequential
+quantization/evaluation/coverage smoke passed with `3 passed`. Ruff on the new
+owner/test and architecture test, syntax compilation, and `git diff --check`
+passed. No Tier corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1861,8 +1897,8 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit `_optimize_dequant_maxpool_quantize_chains` as the next bounded
-   quantized-op cleanup. Preserve exact quantization grids, MaxPool options,
+3. Audit `_optimize_dequant_logistic_quantize_chains` as the next bounded
+   quantized-op cleanup. Preserve exact quantization grids, Logistic options,
    public/fan-out, shape/signature, output identity, statistics, and pruning
    contracts while replacing its repeated producer/consumer maps with one
    maintained index and a complete pre-mutation plan.

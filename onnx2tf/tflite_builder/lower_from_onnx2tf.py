@@ -273,6 +273,9 @@ from onnx2tf.tflite_builder.passes.terminal_softmax_layout import (
 from onnx2tf.tflite_builder.passes.terminal_argmax_layout import (
     _optimize_transpose_pre_argmax_nhwc_terminal_chains as _optimize_transpose_pre_argmax_nhwc_terminal_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.quantized_pool import (
+    _optimize_dequant_maxpool_quantize_chains as _optimize_dequant_maxpool_quantize_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.split_fallback import (
     replace_unsupported_split_with_slice as _replace_unsupported_split_with_slice_pass,
 )
@@ -40512,115 +40515,15 @@ def _optimize_dequant_hardsigmoid_quantize_chains(model_ir: ModelIR) -> Dict[str
     return {"folded_dequant_hardsigmoid_quantize_chains": int(folded)}
 
 
-def _optimize_dequant_maxpool_quantize_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold DEQUANTIZE->MAX_POOL_2D->QUANTIZE into quantized MAX_POOL_2D.
-
-    Target pattern:
-      Xq --DEQUANTIZE--> Xf --MAX_POOL_2D--> Yf --QUANTIZE--> Yq
-
-    Rewritten:
-      Xq --MAX_POOL_2D--> Yq
-
-    Safety conditions:
-    - Chain is linear (single consumer at each bridge tensor)
-    - input/output quantized tensors use equivalent per-tensor quantization
-    - input/output quantized dtypes are identical INT8/UINT8
-    """
-    folded = 0
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-
-        for dq_idx, dq_op in enumerate(model_ir.operators):
-            if str(dq_op.op_type) != "DEQUANTIZE" or len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
-                continue
-            q_in_name = str(dq_op.inputs[0])
-            f_in_name = str(dq_op.outputs[0])
-
-            pool_users = consumers.get(f_in_name, [])
-            if len(pool_users) != 1:
-                continue
-            pool_idx = int(pool_users[0])
-            pool_op = model_ir.operators[pool_idx]
-            if str(pool_op.op_type) != "MAX_POOL_2D" or len(pool_op.inputs) != 1 or len(pool_op.outputs) != 1:
-                continue
-            if str(pool_op.inputs[0]) != f_in_name:
-                continue
-            f_out_name = str(pool_op.outputs[0])
-
-            q_users = consumers.get(f_out_name, [])
-            if len(q_users) != 1:
-                continue
-            q_idx = int(q_users[0])
-            q_op = model_ir.operators[q_idx]
-            if str(q_op.op_type) != "QUANTIZE" or len(q_op.inputs) != 1 or len(q_op.outputs) != 1:
-                continue
-            if str(q_op.inputs[0]) != f_out_name:
-                continue
-            q_out_name = str(q_op.outputs[0])
-
-            if f_in_name in model_ir.outputs or f_out_name in model_ir.outputs:
-                continue
-
-            q_in_tensor = model_ir.tensors.get(q_in_name, None)
-            q_out_tensor = model_ir.tensors.get(q_out_name, None)
-            f_in_tensor = model_ir.tensors.get(f_in_name, None)
-            f_out_tensor = model_ir.tensors.get(f_out_name, None)
-            if q_in_tensor is None or q_out_tensor is None:
-                continue
-            if not _all_per_tensor_quantized([q_in_tensor, q_out_tensor]):
-                continue
-            if not _is_same_per_tensor_quantization(
-                q_in_tensor.quantization,
-                q_out_tensor.quantization,
-            ):
-                continue
-
-            q_in_dtype = str(q_in_tensor.dtype).upper()
-            q_out_dtype = str(q_out_tensor.dtype).upper()
-            if q_in_dtype not in {"INT8", "UINT8"} or q_out_dtype != q_in_dtype:
-                continue
-
-            if f_in_tensor is not None and not _shapes_match_if_known(q_in_tensor.shape, f_in_tensor.shape):
-                continue
-            if f_out_tensor is not None and not _shapes_match_if_known(q_out_tensor.shape, f_out_tensor.shape):
-                continue
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=pool_op,
-                new_inputs=[q_in_name],
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=pool_op,
-                new_outputs=[q_out_name],
-            )
-
-            q_out_tensor.dtype = q_in_dtype
-            q_out_tensor.quantization = _clone_quantization(q_in_tensor.quantization)
-            if f_out_tensor is not None:
-                q_out_tensor.shape = [int(v) for v in list(f_out_tensor.shape)]
-                if f_out_tensor.shape_signature is not None:
-                    q_out_tensor.shape_signature = [
-                        int(v) for v in list(f_out_tensor.shape_signature)
-                    ]
-                else:
-                    q_out_tensor.shape_signature = [int(v) for v in list(f_out_tensor.shape)]
-
-            for remove_idx in sorted([dq_idx, q_idx], reverse=True):
-                del model_ir.operators[remove_idx]
-            folded += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"folded_dequant_maxpool_quantize_chains": int(folded)}
+def _optimize_dequant_maxpool_quantize_chains(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    return _optimize_dequant_maxpool_quantize_chains_pass(
+        model_ir,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_dequant_softmax_quantize_chains(model_ir: ModelIR) -> Dict[str, int]:
@@ -47610,7 +47513,10 @@ def lower_onnx_to_ir(
 
     def _run_quantized_activation_binary_bridge_recovery_sequence() -> None:
         _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
-        _optimize_dequant_maxpool_quantize_chains(model_ir)
+        _optimize_dequant_maxpool_quantize_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_dequant_softmax_quantize_chains(model_ir)
         _optimize_dequant_logistic_quantize_chains(model_ir)
         _canonicalize_softmax_transpose_chains(model_ir)
@@ -47642,7 +47548,10 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
-        _optimize_dequant_maxpool_quantize_chains(model_ir)
+        _optimize_dequant_maxpool_quantize_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_dequant_softmax_quantize_chains(model_ir)
         _optimize_dequant_logistic_quantize_chains(model_ir)
         _canonicalize_softmax_transpose_chains(model_ir)

@@ -4291,6 +4291,32 @@ one to three or removing the producer of a public-input adapter tensor. Exact
 former-function AST comparison confirms complete ModelIR, lineage, and
 statistics equality for valid private, shared, and negative-axis fixtures.
 
+Exact-grid quantized MaxPool cleanup is owned by
+`passes/quantized_pool.py`. One optional or local `ModelIRGraphIndex`
+enumerates graph-order Dequantize candidates, proves the exclusive and
+topologically ordered MaxPool/Quantize consumers, applies lineage-aware Pool
+input/output rewrites, and removes both wrappers differentially. Independent
+INT8 and UINT8 chains therefore share one current index. Graphs missing any
+required operator family retain historical unused-tensor and optional
+LayoutState pruning without allocating an index; both production call sites
+supply the Session-owned LayoutState.
+
+The retained builtin requires exactly equal input/output quantization grids:
+the dtype is the same INT8 or UINT8, scale is positive and finite, zero point
+is identical and within the dtype range, and scale equality is exact rather
+than tolerant. All four tensor records must exist. Both float bridges have the
+same floating dtype, and quantized/float shape plus shape-signature metadata
+must agree exactly at each rank-four boundary. The bridge tensors cannot cross
+either public boundary, fan out, or have duplicate producers; the quantized
+output cannot also be a graph input. Quantization cloning and every topology
+and metadata guard finish before mutation. Pool options, version, ONNX
+provenance, public output identity, and valid former statistics remain
+unchanged. This deliberately prevents three former invalid rewrites: folding
+near-equal but distinct grids, folding without float bridge metadata, and
+removing a producer whose bridge is exposed as a public input. Exact former-
+function differential execution confirms complete ModelIR and statistics
+equality for valid one- and two-chain fixtures.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
