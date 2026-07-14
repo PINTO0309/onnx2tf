@@ -584,6 +584,13 @@ pass. On a local synthetic 2,000-op partition, five-run median collection time
 changed from 0.013159s to 0.000176s for outputs (74.7x) and from 0.013017s to
 0.000175s for inputs (74.3x). No model conversion or inference was run.
 
+Partition candidate construction now resolves tensors consumed after the
+candidate range through the shared consumer index instead of scanning the
+complete graph suffix. The final split artifact writer likewise shares one
+index across all partitions. Planner and stubbed-writer instrumentation prove
+one index construction in each complete flow; all eleven focused split-planner
+tests pass. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

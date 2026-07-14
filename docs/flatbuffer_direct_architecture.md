@@ -1641,7 +1641,10 @@ optional caller-owned index and retain their existing call signatures.
 Partition input/output tensor collection likewise uses insertion-ordered
 `seen` sets. It preserves first-seen ordering and duplicate suppression while
 removing the quadratic list-membership cost from every binary-search candidate
-and final partition build.
+and final partition build. Candidate boundary-output discovery queries the
+shared consumer index instead of rescanning the complete graph suffix for every
+candidate. The final split artifact writer also constructs one index and reuses
+it across all emitted partitions.
 
 PyTorch layout-only Transpose cleanup is owned by the Torch-free
 `passes/pytorch_compat.py` boundary. It indexes initial `TRANSPOSE` objects and

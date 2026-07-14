@@ -12,6 +12,7 @@ from onnx2tf.tflite_builder.split_planner import (
     find_dependency_safe_split_points,
     plan_contiguous_partitions_by_size,
     validate_partition_ranges,
+    write_split_model_files_and_manifest,
 )
 
 
@@ -97,6 +98,70 @@ def test_split_planner_reuses_one_model_ir_graph_index(monkeypatch) -> None:
 
     assert report["plan_valid"] is True
     assert index_build_count == 1
+
+
+def test_split_writer_reuses_one_model_ir_graph_index(monkeypatch, tmp_path) -> None:
+    index_build_count = 0
+    original_graph_index = split_planner_module.ModelIRGraphIndex
+
+    class _CountingGraphIndex(original_graph_index):
+        def __post_init__(self) -> None:
+            nonlocal index_build_count
+            index_build_count += 1
+            super().__post_init__()
+
+    monkeypatch.setattr(
+        split_planner_module,
+        "ModelIRGraphIndex",
+        _CountingGraphIndex,
+    )
+    monkeypatch.setattr(
+        split_planner_module,
+        "run_model_ir_validation_pipeline",
+        lambda _model_ir: None,
+    )
+    monkeypatch.setattr(
+        split_planner_module,
+        "write_model_file",
+        lambda **kwargs: None,
+    )
+
+    result = write_split_model_files_and_manifest(
+        schema_tflite={},
+        model_ir=_make_chain_model_ir(op_count=4),
+        plan_report={
+            "target_max_bytes": 250,
+            "hard_max_bytes": 350,
+            "total_estimated_bytes": 400,
+            "partitions": [
+                {
+                    "partition_id": 1,
+                    "start_op_index": 0,
+                    "end_op_index": 2,
+                    "estimated_bytes": 200,
+                },
+                {
+                    "partition_id": 2,
+                    "start_op_index": 2,
+                    "end_op_index": 4,
+                    "estimated_bytes": 200,
+                },
+            ],
+            "edges": [
+                {
+                    "from_partition": 0,
+                    "to_partition": 1,
+                    "tensors": ["t1"],
+                }
+            ],
+        },
+        output_folder_path=str(tmp_path),
+        output_file_name="shared_index",
+    )
+
+    assert index_build_count == 1
+    assert result["split_partition_count"] == 2
+    assert (tmp_path / "shared_index_split_manifest.json").is_file()
 
 
 def test_validate_partition_ranges_rejects_gap() -> None:

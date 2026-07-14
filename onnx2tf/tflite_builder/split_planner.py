@@ -211,12 +211,17 @@ def build_partition_model_ir(
     start_op_index: int,
     end_op_index: int,
     partition_id: int,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> ModelIR:
     num_ops = len(model_ir.operators)
     _validate_range(
         num_ops=num_ops,
         start_op_index=start_op_index,
         end_op_index=end_op_index,
+    )
+    graph_index = _resolve_split_graph_index(
+        model_ir=model_ir,
+        graph_index=graph_index,
     )
     range_ops = model_ir.operators[start_op_index:end_op_index]
     produced_in_range = _collect_outputs(range_ops)
@@ -228,11 +233,14 @@ def build_partition_model_ir(
         consumed_tensor_names=consumed_in_range,
         produced_tensor_names=produced_set,
     )
-    consumed_after: Set[str] = set()
-    for op in model_ir.operators[end_op_index:]:
-        for input_name in op.inputs:
-            if input_name in produced_set:
-                consumed_after.add(input_name)
+    consumed_after: Set[str] = {
+        tensor_name
+        for tensor_name in produced_set
+        if any(
+            int(consumer_index) >= end_op_index
+            for consumer_index in graph_index.consumers.get(tensor_name, [])
+        )
+    }
 
     partition_outputs: List[str] = []
     for name in produced_in_range:
@@ -2242,6 +2250,7 @@ def plan_contiguous_partitions_by_size(
                 start_op_index=start_op_index,
                 end_op_index=mid,
                 partition_id=partition_id,
+                graph_index=graph_index,
             )
             estimated_size = _estimate_partition_size(
                 partition_model_ir=part_model,
@@ -2262,6 +2271,7 @@ def plan_contiguous_partitions_by_size(
                 start_op_index=start_op_index,
                 end_op_index=end_op_index,
                 partition_id=partition_id,
+                graph_index=graph_index,
             )
             estimated_size = _estimate_partition_size(
                 partition_model_ir=part_model,
@@ -2362,6 +2372,7 @@ def write_split_model_files_and_manifest(
     edges = list(plan_report.get("edges", []))
     generated_partition_paths: List[str] = []
     generated_partition_entries: List[Dict[str, Any]] = []
+    graph_index = ModelIRGraphIndex(model_ir)
 
     for part in partitions:
         partition_id = int(part["partition_id"])
@@ -2372,6 +2383,7 @@ def write_split_model_files_and_manifest(
             start_op_index=start_op_index,
             end_op_index=end_op_index,
             partition_id=partition_id,
+            graph_index=graph_index,
         )
         run_model_ir_validation_pipeline(part_model_ir)
         split_file_name = f"{output_file_name}_{partition_id:04d}.tflite"
