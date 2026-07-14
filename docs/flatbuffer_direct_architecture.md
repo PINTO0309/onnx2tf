@@ -2242,6 +2242,12 @@ follows indexed unary chains to an adjX BatchMatMul that requires feature-last
 storage. Runtime-layout and shape-plan collaborators are explicit callbacks;
 the policy owns no graph mutation or source statement emission.
 
+Native NMS postprocess recognition has a focused Torch-free owner in
+`pytorch_nms_policy.py`. It validates the unit-step RANGE that supplies Gather
+indices and requires every indexed consumer to be the matching selected-index
+Gather. Alias, producer/consumer, and scalar-literal evidence are explicit
+inputs; unrelated RANGE or Gather chains remain ordinary generated ops.
+
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter

@@ -1025,6 +1025,14 @@ and the focused ownership test pass, together with Ruff and syntax validation.
 The exporter shrank by another 202 lines. No model conversion or inference was
 run.
 
+Native NMS postprocess RANGE/GATHER recognition now lives in the Torch-free
+`pytorch_nms_policy.py` owner. Unit start/delta, selected-index alias, indexed
+producer, and all-consumer guards retain explicit callback inputs. Two thousand
+fixed-seed outcomes match checkpoint `7d3140c` exactly; positive/negative
+direct contracts and the focused ownership test pass, together with Ruff and
+syntax validation. The exporter shrank by another 40 lines. No model conversion
+or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

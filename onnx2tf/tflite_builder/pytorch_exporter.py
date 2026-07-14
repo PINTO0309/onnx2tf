@@ -135,6 +135,10 @@ from onnx2tf.tflite_builder.pytorch_naming import (
     _sanitize_python_identifier,
     _shorten_generated_python_identifier,
 )
+from onnx2tf.tflite_builder.pytorch_nms_policy import (
+    _is_identity_nms_postprocess_gather_for_codegen,
+    _range_only_feeds_identity_nms_postprocess_gathers_for_codegen,
+)
 from onnx2tf.tflite_builder.pytorch_package_sources import (
     _build_native_runtime_source,
     _patch_generated_runtime_pool2d_channel_last_recovery,
@@ -588,50 +592,6 @@ def _match_single_consumer_layout_bridge_transpose_for_codegen(
     if [int(v) for v in list(expected_perm)] != [int(v) for v in list(actual_perm)]:
         return None
     return output_name, bridge_op_idx
-
-
-def _is_identity_nms_postprocess_gather_for_codegen(
-    *,
-    model_ir: ModelIR,
-    tensor_expr_aliases: Dict[str, str],
-    producer_index: Dict[str, int],
-    scalar_literal_expr_fn: Callable[[str], Optional[str]],
-    params_name: str,
-    indices_name: str,
-) -> bool:
-    params_alias = tensor_expr_aliases.get(str(params_name), "")
-    if not str(params_alias).startswith("_nms_selected_indices_valid_"):
-        return False
-    indices_producer_index = producer_index.get(str(indices_name), None)
-    if indices_producer_index is None:
-        return False
-    indices_producer = model_ir.operators[int(indices_producer_index)]
-    if str(indices_producer.op_type) != "RANGE" or len(indices_producer.inputs) < 3:
-        return False
-    start_literal = scalar_literal_expr_fn(str(indices_producer.inputs[0]))
-    delta_literal = scalar_literal_expr_fn(str(indices_producer.inputs[2]))
-    return start_literal == "0" and delta_literal == "1"
-
-
-def _range_only_feeds_identity_nms_postprocess_gathers_for_codegen(
-    *,
-    model_ir: ModelIR,
-    consumer_index: Dict[str, List[int]],
-    is_identity_nms_postprocess_gather_fn: Callable[[str, str], bool],
-    output_name: str,
-) -> bool:
-    consumers = consumer_index.get(str(output_name), [])
-    if len(consumers) == 0:
-        return False
-    for consumer_idx in consumers:
-        consumer_op = model_ir.operators[int(consumer_idx)]
-        if str(consumer_op.op_type) != "GATHER" or len(consumer_op.inputs) < 2:
-            return False
-        if str(consumer_op.inputs[1]) != str(output_name):
-            return False
-        if not is_identity_nms_postprocess_gather_fn(str(consumer_op.inputs[0]), str(output_name)):
-            return False
-    return True
 
 
 def _emit_maybe_aligned_expr_for_codegen(
