@@ -46104,6 +46104,8 @@ def _repair_mixed_nhwc_inputs_for_nchw_concat(model_ir: ModelIR) -> Dict[str, in
 
 def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Dict[str, int]:
     """Bypass stale layout adapters before channel-last binary constants.
 
@@ -46117,23 +46119,25 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
     repaired = 0
     binary_ops = {"ADD", "MUL", "SUB", "DIV", "MAXIMUM", "MINIMUM"}
     perm_nchw_to_nhwc = [0, 2, 3, 1]
+    graph_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
     while True:
-        producers = _build_tensor_producer_map(model_ir)
-        consumers = _build_tensor_consumer_map(model_ir)
         changed = False
-        for binary_idx, binary_op in enumerate(model_ir.operators):
-            if (
-                str(binary_op.op_type) not in binary_ops
-                or len(binary_op.inputs) != 2
-                or len(binary_op.outputs) != 1
-            ):
+        for binary_idx in graph_index.operator_indices_for_types(binary_ops):
+            binary_op = model_ir.operators[int(binary_idx)]
+            if len(binary_op.inputs) != 2 or len(binary_op.outputs) != 1:
                 continue
             for data_input_idx, const_input_idx in ((0, 1), (1, 0)):
                 adapter_output_name = str(binary_op.inputs[data_input_idx])
-                adapter_idx = producers.get(adapter_output_name, None)
+                adapter_op = graph_index.producer(adapter_output_name)
+                if adapter_op is None:
+                    continue
+                adapter_idx = graph_index.operator_index(adapter_op)
                 if adapter_idx is None:
                     continue
-                adapter_op = model_ir.operators[int(adapter_idx)]
                 if (
                     str(adapter_op.op_type) != "TRANSPOSE"
                     or len(adapter_op.inputs) < 2
@@ -46141,10 +46145,7 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
                     or _read_transpose_perm(model_ir, adapter_op)
                     != perm_nchw_to_nhwc
                     or adapter_output_name in model_ir.outputs
-                    or [
-                        int(v)
-                        for v in consumers.get(adapter_output_name, [])
-                    ]
+                    or graph_index.consumer_indices(adapter_output_name)
                     != [int(binary_idx)]
                 ):
                     continue
@@ -46178,12 +46179,10 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
                     and int(source_shape[3]) == int(const_shape[3])
                     and int(adapter_shape[3]) != int(const_shape[3])
                 )
-                peer_producer_idx = producers.get(const_name, None)
+                peer_producer_op = graph_index.producer(const_name)
                 peer_producer_type = (
-                    str(
-                        model_ir.operators[int(peer_producer_idx)].op_type
-                    )
-                    if peer_producer_idx is not None
+                    str(peer_producer_op.op_type)
+                    if peer_producer_op is not None
                     else ""
                 )
                 nhwc_peer_matches = (
@@ -46208,6 +46207,7 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
                     model_ir=model_ir,
                     op=binary_op,
                     new_inputs=updated_inputs,
+                    graph_index=graph_index,
                 )
                 source_signature = (
                     [int(v) for v in list(source_tensor.shape_signature)]
@@ -46216,7 +46216,7 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
                 )
                 output_tensor.shape = list(source_shape)
                 output_tensor.shape_signature = list(source_signature)
-                del model_ir.operators[int(adapter_idx)]
+                graph_index.remove_operator(int(adapter_idx))
                 repaired += 1
                 changed = True
                 break
@@ -46230,6 +46230,56 @@ def _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
         "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": int(
             repaired
         ),
+    }
+
+
+def _run_indexed_binary_layout_convergence(model_ir: ModelIR) -> Dict[str, int]:
+    """Run three terminal binary-layout convergence rounds with one index."""
+
+    graph_index = ModelIRGraphIndex(model_ir)
+    repaired_constants = 0
+    removed_transposes = 0
+    reconciled_shapes = 0
+    for _ in range(3):
+        broadcast_stats = (
+            _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
+                model_ir,
+                graph_index=graph_index,
+            )
+        )
+        transpose_stats = (
+            _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
+                model_ir,
+                graph_index=graph_index,
+            )
+        )
+        reconcile_stats = _reconcile_static_tensor_shapes(
+            model_ir,
+            graph_index=graph_index,
+        )
+        repaired_constants += int(
+            broadcast_stats.get(
+                "repaired_rank4_channelwise_broadcast_constants",
+                0,
+            )
+        )
+        removed_transposes += int(
+            transpose_stats.get(
+                "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes",
+                0,
+            )
+        )
+        reconciled_shapes += int(
+            reconcile_stats.get("reconciled_static_tensor_shapes", 0)
+        )
+    return {
+        "repaired_rank4_channelwise_broadcast_constants": int(
+            repaired_constants
+        ),
+        "repaired_stale_nchw_to_nhwc_channelwise_binary_transposes": int(
+            removed_transposes
+        ),
+        "reconciled_static_tensor_shapes": int(reconciled_shapes),
     }
 
 
@@ -51776,14 +51826,7 @@ def lower_onnx_to_ir(
         ) > 0:
             _reconcile_static_tensor_shapes(fallback_ir)
             _topologically_sort_operators(fallback_ir)
-        for _ in range(3):
-            _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
-                fallback_ir
-            )
-            _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(
-                fallback_ir
-            )
-            _reconcile_static_tensor_shapes(fallback_ir)
+        _run_indexed_binary_layout_convergence(fallback_ir)
         _topologically_sort_operators(fallback_ir)
         return _finalize_model_ir(fallback_ir)
 
@@ -51984,12 +52027,7 @@ def lower_onnx_to_ir(
     # Layout validation infers annotations from the terminal graph and can
     # expose stale direct-NCHW fallback bridges that were not identifiable
     # before the final annotations were available.
-    for _ in range(3):
-        _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
-            model_ir
-        )
-        _repair_stale_nchw_to_nhwc_channelwise_binary_transposes(model_ir)
-        _reconcile_static_tensor_shapes(model_ir)
+    _run_indexed_binary_layout_convergence(model_ir)
     coalesce_static_high_rank_binary_operators(
         model_ir,
         layout_state=session.layout_state,

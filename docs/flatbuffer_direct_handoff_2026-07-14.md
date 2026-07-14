@@ -8,15 +8,15 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit converts repeated rank-four channelwise
-broadcast-constant repair to one `ModelIRGraphIndex`. Separate producer and
-consumer scans plus a full binary-op scan are replaced by one index build and
-indexed binary candidates. Producer layout evidence comes from the index, and
-cloned-constant input rewrites update consumers differentially. The original
-start-of-pass fan-out snapshot remains explicit, so two operators sharing one
-constant still receive two deterministically named clones instead of changing
-artifact structure as the live fan-out shrinks. The maintained index matches a
-fresh rebuild and no compatibility map builder is invoked.
+The latest implementation unit converts stale NCHW-to-NHWC channelwise-binary
+Transpose repair to differential `ModelIRGraphIndex` updates. Binary candidates,
+Transpose and peer producers, and exact single-consumer guards now come from
+one index; binary input rewrites and adapter removal update it in place. The
+primary and fallback fixed three-round broadcast/Transpose/shape convergence
+loops now share one index across every round instead of rebuilding indexes and
+producer/consumer maps per operation and again after every successful match.
+Multiple matches, reversed binary input order, fan-out preservation, and the
+complete former three-round result are characterized exactly.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -38,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains fifty-five coherent continuations:
+The current `fb-refactor5` work contains fifty-six coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -155,8 +155,10 @@ The current `fb-refactor5` work contains fifty-five coherent continuations:
 - `20290fce` extends the final indexed convergence boundary
   through HARD_SWISH sanitation and activation fusion without rebuilding
   consumers or the graph index;
-- the current checkpoint indexes repeated rank-four channelwise broadcast-
-  constant repair while preserving its start-of-pass shared-constant policy.
+- `864af4c9` indexes repeated rank-four channelwise broadcast-constant repair
+  while preserving its start-of-pass shared-constant policy;
+- the current checkpoint indexes stale channelwise-binary Transpose repair and
+  shares one index across both terminal three-round convergence loops.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -175,7 +177,7 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `tests/test_flatbuffer_direct_binary_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_binary_layout_convergence.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -300,6 +302,14 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   consumer fan-out map is intentionally snapshotted once from that index:
   clone-versus-in-place decisions therefore retain the former start-of-pass
   behavior even after earlier candidates update live consumers.
+- Stale channelwise-binary Transpose repair also accepts an optional matching
+  graph index. It retains exact graph-order binary matching, resolves adapter
+  and NHWC peer producers through the index, and requires the indexed adapter
+  consumers to equal the current binary index. Successful rewrites use the
+  differential input setter and operator removal; a fan-out adapter remains
+  untouched. `_run_indexed_binary_layout_convergence` owns the existing three
+  broadcast-repair, Transpose-repair, and reconciliation rounds and supplies
+  the same index to all nine calls in both primary and fallback finalization.
 - The same scope contract covers only the five repeated gate-layout sequences
   that were audited as contiguous registered runners. Four keep the exact
   mixed-attention, elementwise-gate, Pad, dual-postconv-gate, NDHWC-gate,
@@ -1252,6 +1262,17 @@ passed separately with `90 passed`, for a combined selection total of
 `232 passed`. Its single sequential quantization, evaluation, and coverage
 integration smoke passed with `1 passed`.
 
+The indexed binary-layout convergence checkpoint passed six focused multi-
+match, reversed-input, peer-producer, channelwise-constant, fan-out, exact-
+legacy, one-build, and ownership checks. The complete related Conv/layout and
+indexed-convergence selection passed with `15 passed`. The complete
+architecture file passed with `143 passed`; artifact-metadata, artifact-policy,
+core, pass-efficiency, indexed final-convergence, binary-layout, Conv-layout,
+and indexed binary-convergence coverage passed separately with `105 passed`,
+for a combined selection total of `248 passed`. Its single sequential
+quantization, evaluation, and coverage integration smoke passed with
+`1 passed`.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1297,11 +1318,11 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Convert the bounded stale NCHW-to-NHWC channelwise-binary Transpose repair
-   next. It repeatedly rebuilds producer/consumer maps inside a match loop and
-   is used in both primary and fallback finalization; preserve graph-order
-   matching while routing the binary input rewrite and adapter removal through
-   one differential index.
+2. Convert the adjacent stale NCHW-to-NHWC Conv-input Transpose repair next. It
+   has the same repeated producer/consumer rebuild pattern and primary/fallback
+   finalization use; preserve filter-channel, single-consumer, public-boundary,
+   and graph-order guards while making input rewrites and adapter removal
+   differential.
 3. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

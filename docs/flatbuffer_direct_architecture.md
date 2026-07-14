@@ -3833,6 +3833,27 @@ build, compare the maintained index with a fresh rebuild, and preserve the
 existing rank-three, rank-four, inverse-rotation, ambiguous-layout, and no-op
 characterizations.
 
+Stale NCHW-to-NHWC channelwise-binary Transpose repair now uses one
+`ModelIRGraphIndex` for exact binary candidate order, adapter/peer producer
+lookup, and the single-consumer locality guard. A successful match rewrites the
+binary input through the indexed setter, updates output shape metadata, and
+removes the adapter through differential compaction before restarting from
+current indexed candidates. No producer or consumer compatibility map is
+rebuilt between matches. Fan-out adapters remain unchanged, and both data-
+input positions plus channelwise-constant and Conv-peer match families retain
+their former behavior.
+
+The two terminal fixed three-round broadcast/Transpose/shape convergence loops
+are owned by `_run_indexed_binary_layout_convergence`. One index is built per
+complete loop and supplied to all three operations in all three rounds.
+Broadcast repair changes only tensor data and indexed operator inputs, stale
+Transpose repair performs differential input/removal mutations, and shape
+reconciliation changes metadata only, so the index remains valid throughout.
+Primary and fallback call the same owner. End-to-end characterization proves
+one index build and complete ModelIR/stat equality with the former nine-call
+sequence while a separate multi-match case compares the maintained index with
+a fresh rebuild.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
