@@ -1064,6 +1064,14 @@ checkpoint `cbd3369` exactly; the direct contract and focused ownership gates
 pass, together with Ruff and syntax validation. The exporter shrank by another
 28 lines. No model conversion or inference was run.
 
+Generated module-attribute canonicalization and collision resolution now live
+in the Torch-free naming owner. Direct-module counts, already planned affine
+LayerNorm attributes, and op-module attributes remain one collision domain. Both
+moved function ASTs match checkpoint `f8b24db` exactly; the direct naming
+contract and focused ownership gate pass, together with Ruff and syntax
+validation. The exporter shrank by another 28 lines. No model conversion or
+inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import keyword
 import re
-from typing import Dict, List, Sequence, Set, Tuple
+from typing import Any, Dict, List, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -234,6 +234,36 @@ def _make_unique_identifier(base_name: str, used_names: Set[str]) -> str:
         suffix += 1
     used_names.add(candidate)
     return candidate
+
+
+def _next_unique_attr_name_for_codegen(
+    *,
+    base_name: str,
+    module_attr_counts: Dict[str, int],
+    affine_layer_norm_specs: Dict[int, Dict[str, Any]],
+    op_module_attr_names: Dict[int, str],
+) -> str:
+    normalized = re.sub(r"[^0-9a-zA-Z]+", "_", str(base_name)).strip("_").lower()
+    if len(normalized) == 0:
+        normalized = "generated_module"
+    if normalized[0].isdigit():
+        normalized = f"n_{normalized}"
+    candidate = normalized
+    suffix = 1
+    existing_names = {
+        *module_attr_counts.keys(),
+        *(str(spec.get("attr_name")) for spec in affine_layer_norm_specs.values()),
+        *(str(value) for value in op_module_attr_names.values()),
+    }
+    while candidate in existing_names:
+        candidate = f"{normalized}_{suffix}"
+        suffix += 1
+    module_attr_counts[candidate] = 1
+    return candidate
+
+
+def _canonical_codegen_name_for_codegen(name: str) -> str:
+    return re.sub(r"[^0-9a-z]+", "_", str(name).lower()).strip("_")
 
 
 def _direct_codegen_module_attr_base(op_type: str) -> str:

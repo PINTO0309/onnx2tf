@@ -4052,11 +4052,13 @@ def test_generated_pytorch_naming_policy_has_single_owner() -> None:
     moved_functions = (
         "_build_buffer_attr_name_map",
         "_build_tensor_var_name_map",
+        "_canonical_codegen_name_for_codegen",
         "_collapse_generated_name_tokens",
         "_direct_codegen_module_attr_base",
         "_extract_generated_name_suffix_tokens",
         "_make_tensor_storage_name_map",
         "_make_unique_identifier",
+        "_next_unique_attr_name_for_codegen",
         "_sanitize_python_identifier",
         "_shorten_generated_python_identifier",
         "_split_generated_name_piece",
@@ -4067,9 +4069,11 @@ def test_generated_pytorch_naming_policy_has_single_owner() -> None:
     for imported_name in (
         "_build_buffer_attr_name_map",
         "_build_tensor_var_name_map",
+        "_canonical_codegen_name_for_codegen",
         "_direct_codegen_module_attr_base",
         "_make_tensor_storage_name_map",
         "_make_unique_identifier",
+        "_next_unique_attr_name_for_codegen",
         "_sanitize_python_identifier",
         "_shorten_generated_python_identifier",
     ):

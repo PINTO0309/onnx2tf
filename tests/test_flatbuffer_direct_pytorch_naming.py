@@ -6,8 +6,10 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_naming import (
     _build_buffer_attr_name_map,
     _build_tensor_var_name_map,
+    _canonical_codegen_name_for_codegen,
     _direct_codegen_module_attr_base,
     _make_tensor_storage_name_map,
+    _next_unique_attr_name_for_codegen,
     _sanitize_python_identifier,
     _shorten_generated_python_identifier,
 )
@@ -128,3 +130,20 @@ def test_direct_codegen_module_attribute_bases_are_stable() -> None:
         "sequence_lstm"
     )
     assert _direct_codegen_module_attr_base("FUTURE_OP") == "future_op"
+
+
+def test_codegen_attribute_names_are_canonical_and_collision_free() -> None:
+    module_attr_counts = {"encoder_layer_norm": 1}
+    affine_specs = {0: {"attr_name": "encoder_layer_norm_1"}}
+    op_attr_names = {1: "encoder_layer_norm_2"}
+
+    assert _canonical_codegen_name_for_codegen(
+        "Bert/FakeLayerNorm:Gamma"
+    ) == "bert_fakelayernorm_gamma"
+    assert _next_unique_attr_name_for_codegen(
+        base_name="Encoder/Layer Norm",
+        module_attr_counts=module_attr_counts,
+        affine_layer_norm_specs=affine_specs,
+        op_module_attr_names=op_attr_names,
+    ) == "encoder_layer_norm_3"
+    assert module_attr_counts["encoder_layer_norm_3"] == 1
