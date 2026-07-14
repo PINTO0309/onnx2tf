@@ -8,16 +8,16 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit gives decomposed InstanceNormalization layout
-repair one semantic owner in `passes/instance_normalization_layout.py`. One
-read-only `ModelIRGraphIndex` validates the complete statistics, normalization,
-scale, optional post-Transpose, and bias chain. Mean axes, all reduced/full
-shape metadata, and scale/bias buffer reshapes are planned before mutation.
-NCW/NCHW/NCDHW and NWC/NHWC/NDHWC channel-axis behavior, valid ModelIR,
-statistics, and final reconciliation retain former behavior. Wrong operator
-semantics or order, public/fan-out/duplicate intermediates, invalid metadata,
-unsafe axes/scale/bias ownership, incomplete constants, and failed planning
-are complete no-ops.
+The latest implementation unit gives NCHW Concat/global-pool/Conv axis repair
+one semantic owner in `passes/concat_global_pool_layout.py`. One read-only
+`ModelIRGraphIndex` validates the ordered and exclusive Concat, global Mean,
+Reshape, and Conv chain. Concat/Reshape options, three shape/signature records,
+and the Reshape shape buffer are planned before mutation. Valid positive NCHW
+input shapes, spatial axes, filter/channel equations, integer shape-buffer
+dtype, ModelIR, statistics, and final reconciliation retain former behavior.
+Non-global reductions, public/fan-out/duplicate intermediates, malformed or
+runtime filters, unsafe shape-buffer ownership, incomplete constants, and
+failed planning are complete no-ops.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -39,7 +39,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains eighty-three coherent continuations:
+The current `fb-refactor5` work contains eighty-four coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -217,8 +217,10 @@ The current `fb-refactor5` work contains eighty-three coherent continuations:
   a complete four-constant transaction;
 - `cc699155` moves quantized TransposeConv QDQ cleanup to one indexed owner
   with a complete filter/output transaction;
-- the current checkpoint moves decomposed InstanceNormalization layout repair
-  to one indexed owner with a complete tensor-metadata transaction.
+- `2b181ed7` moves decomposed InstanceNormalization layout repair to one
+  indexed owner with a complete tensor-metadata transaction;
+- the current checkpoint moves NCHW Concat/global-pool/Conv axis repair to one
+  indexed owner with a complete options/metadata/buffer transaction.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -237,8 +239,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/instance_normalization_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_instance_normalization_layout.py`;
+- `onnx2tf/tflite_builder/passes/concat_global_pool_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_concat_global_pool_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -750,6 +752,21 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   shapes, and scale data were already changed. The final production call passes
   the Session LayoutState; graphs without the marked first Mean allocate no
   index.
+- NCHW Concat/global-pool/Conv repair requires the exact ordered
+  `CONCATENATION -> MEAN -> RESHAPE -> CONV_2D` chain. Each internal tensor is
+  uniquely produced, exclusively consumed by the next operator, and private.
+  The keep-dim Mean reduces rank-four axes two and three; negative axes are
+  normalized. Fully positive NCHW Concat inputs share batch/spatial dimensions,
+  and their axis-one channel sum must equal the producer-free OHWI Conv filter
+  input channel.
+- Concat and Reshape options, Concat/Mean/Reshape metadata, and the four-value
+  integer Reshape buffer are a complete pre-mutation plan. The shape constant
+  is producer-free, private, and exclusively consumed by that Reshape. This
+  prevents a late buffer-read exception from leaving the Concat axis and three
+  tensor records changed, and rejects the former non-global, fan-out/public,
+  duplicate-producer, runtime-filter, and malformed/shared shape-buffer cases.
+  The sole production call passes the Session LayoutState; incomplete operator
+  families allocate no index.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -2061,6 +2078,27 @@ the sequential quantization/evaluation/coverage smoke passed with `3 passed`.
 Ruff on the new owner/test, scoped architecture/lowerer checks, syntax
 compilation, and `git diff --check` passed. No Tier corpus conversion was run.
 
+The indexed NCHW Concat/global-pool/Conv checkpoint compiles the complete prior
+committed function and preserves exact ModelIR/statistics for valid one- and
+two-chain fixtures, negative spatial axes, and INT64 Reshape shape buffers.
+Differential checks prove that non-global Mean axes, a fan-out or public Concat
+intermediate, a three-value or floating shape buffer, a duplicate Reshape
+producer, and a missing runtime filter buffer formerly changed graph state. A
+faulting late shape-buffer read additionally proves that the former helper
+changed the Concat axis and three tensor records before raising, while the new
+owner returns a complete no-op. Focused coverage verifies one-index multi-
+match execution, maintained-index and LayoutState equivalence, exact operator
+roles/order/arity, normalized global axes, public/fan-out/duplicate boundaries,
+positive compatible NCHW inputs, the filter/channel equation and buffer,
+private producer-free integer shape-buffer ownership, option/metadata/data
+updates, incomplete-family/no-index behavior, the existing characterization,
+and unique semantic ownership with `34 passed`. Architecture, core, pass-
+efficiency, all existing Conv-layout tests, and the new indexed suite passed
+together with `268 passed`. TensorFlow-import-blocked direct and `-cotof` plus
+the sequential quantization/evaluation/coverage smoke passed with `3 passed`.
+Ruff on the new owner/test, scoped architecture/lowerer checks, syntax
+compilation, and `git diff --check` passed. No Tier corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -2110,11 +2148,12 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit `_repair_nchw_concat_global_pool_conv_axes` as the next bounded raw-
-   map helper. Preserve the generic Concat/global-Mean/Reshape/Conv grammar,
-   filter/channel equation, shape-constant ownership, public boundaries,
-   metadata, and statistics while replacing its producer snapshot with one
-   maintained index and a complete pre-mutation plan.
+3. Audit `_repair_nchw_concat_transpose_conv_axes` as the next bounded sibling
+   repair. Preserve Concat/passthrough/Transpose/(Transpose)Conv topology,
+   filter/channel equations, public/fan-out boundaries, shape metadata,
+   statistics, and the direct versus transposed output contract while replacing
+   its producer snapshot with one maintained index and a complete pre-mutation
+   plan.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

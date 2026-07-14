@@ -4456,8 +4456,8 @@ scale/bias broadcast buffers are immutable plans constructed before mutation.
 An axes constant that must change may be shared only by the two Mean operators;
 changing axes, scale, or bias constants requires producer-free, non-public
 ownership and the exact expected consumers. Epsilon must be a finite singleton
-and the reciprocal numerator must be the producer-free scalar one. Scale and bias
-buffers must contain exactly the positive static channel count, and an
+and the reciprocal numerator must be the producer-free scalar one. Scale and
+bias buffers must contain exactly the positive static channel count, and an
 optional post-Transpose must contain a complete rank permutation before its
 bias axis is derived.
 
@@ -4470,6 +4470,32 @@ post permutations. It also prevents a late malformed bias shape from raising
 after axes, intermediate metadata, and scale data were already changed. Exact
 former-function differential execution confirms complete ModelIR/statistics
 equality for valid multi-layout and rank-five fixtures.
+
+NCHW Concat/global-pool/Conv axis repair is owned by
+`passes/concat_global_pool_layout.py`. A four-family preflight avoids index
+construction for unrelated graphs. One optional or local `ModelIRGraphIndex`
+then walks Conv candidates backward through the exact ordered and exclusive
+`CONCATENATION -> global MEAN -> RESHAPE -> CONV_2D` chain. The sole production
+call supplies the Session LayoutState.
+
+The Mean must keep dimensions and reduce exactly rank-four spatial axes two
+and three, accepting their equivalent negative representation. Every Concat
+input has a fully positive NCHW rank-four shape with common batch and spatial
+dimensions. The sum of axis-one channels must equal the constant OHWI Conv
+filter input channel. Concat, Mean, and Reshape intermediates are uniquely
+produced, exclusively consumed by the next operator, topologically ordered,
+and private. The producer-free Reshape shape tensor is a private exclusive
+integer constant with four elements.
+
+Concat axis/options, Concat/Mean/Reshape shape and signature metadata, Reshape
+options, and the shape buffer are immutable plans completed before mutation.
+This prevents the former rule from changing non-global reductions, public or
+fan-out intermediates, duplicate-producer chains, runtime/malformed filters,
+shared/public/produced or non-integer shape tensors, and incomplete shape
+buffers. It also prevents a late shape-buffer read exception from leaving the
+Concat axis and three tensor records partially changed. Exact former-function
+differential execution confirms complete ModelIR/statistics equality for valid
+one/two-chain, negative-axis, and INT64-shape fixtures.
 
 ## Managed-corpus SWAP exclusion policy
 
