@@ -4181,6 +4181,7 @@ def test_native_pytorch_codegen_uses_shared_model_ir_graph_index() -> None:
     }
 
     assert "_build_model_ir_producer_consumer_index" not in exporter_functions
+    assert "_assemble_native_model_source" not in exporter_functions
     writer = exporter_functions["_write_native_model_file"]
     constructor_calls = [
         node

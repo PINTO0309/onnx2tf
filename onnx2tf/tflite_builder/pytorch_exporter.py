@@ -483,56 +483,6 @@ def _finalize_native_codegen(
     return [] if state.load_specs_result is None else list(state.load_specs_result)
 
 
-def _assemble_native_model_source(
-    *,
-    model_ir: ModelIR,
-    runtime_import_block: str,
-    sequence_rnn_helper_source: str,
-    sequence_lstm_helper_source: str,
-    affine_layer_norm_source: str,
-    named_encoder_class_source: str,
-    buffer_annotation_block: str,
-    module_init_block: str,
-    init_constants_call: str,
-    constant_buffer_alias_init_call: str,
-    init_constants_method: str,
-    constant_buffer_alias_method_source: str,
-    constant_buffer_alias_load_state_dict_source: str,
-    nms_method_source: str,
-    stage_methods_source: str,
-    forward_signature: str,
-    forward_block: str,
-    outputs_expr: str,
-    forward_kwargs_block: str,
-    forward_args_block: str,
-    forward_named_call_args: str,
-) -> str:
-    model_source = _assemble_native_model_source(
-        model_ir=model_ir,
-        runtime_import_block=runtime_import_block,
-        sequence_rnn_helper_source=sequence_rnn_helper_source,
-        sequence_lstm_helper_source=sequence_lstm_helper_source,
-        affine_layer_norm_source=affine_layer_norm_source,
-        named_encoder_class_source=named_encoder_class_source,
-        buffer_annotation_block=buffer_annotation_block,
-        module_init_block=module_init_block,
-        init_constants_call=init_constants_call,
-        constant_buffer_alias_init_call=constant_buffer_alias_init_call,
-        init_constants_method=init_constants_method,
-        constant_buffer_alias_method_source=constant_buffer_alias_method_source,
-        constant_buffer_alias_load_state_dict_source=constant_buffer_alias_load_state_dict_source,
-        nms_method_source=nms_method_source,
-        stage_methods_source=stage_methods_source,
-        forward_signature=forward_signature,
-        forward_block=forward_block,
-        outputs_expr=outputs_expr,
-        forward_kwargs_block=forward_kwargs_block,
-        forward_args_block=forward_args_block,
-        forward_named_call_args=forward_named_call_args,
-    )
-    return model_source
-
-
 def export_dynamo_onnx_from_generated_package(
     *,
     package_dir: str,

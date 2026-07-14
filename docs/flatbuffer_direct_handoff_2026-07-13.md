@@ -1241,6 +1241,13 @@ architecture tests deselected), together with Ruff, syntax validation, and
 `git diff --check`; the exporter shrank by another net 54 lines. No model
 conversion or inference was run.
 
+The unreachable `_assemble_native_model_source` exporter stub was removed. It
+had no repository or generated-pipeline caller and recursively invoked itself,
+while the real native writer path uses the staged state/bindings/pipeline
+entrypoints. The focused native graph-index architecture test passes (94
+unrelated tests deselected), syntax validation and `git diff --check` pass, and
+the exporter shrank by 50 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

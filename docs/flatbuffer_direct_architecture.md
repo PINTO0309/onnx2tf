@@ -2017,6 +2017,11 @@ Fused activation statement generation is co-located with these emitters.
 Direct ReLU, clamp, SiLU, and Tanh forms retain their compact source, while
 unknown activation names use the shared generated-runtime fallback.
 
+The native codegen entrypoint retains only writer-reachable orchestration
+wrappers. The former `_assemble_native_model_source` stub had no caller and
+self-recursed under its own name, so it is removed and guarded from
+reintroduction by the architecture test.
+
 The direct-module dispatcher is being decomposed by operator family rather than
 moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and
 bidirectional LSTM source emission now delegates to the Torch-free recurrent
