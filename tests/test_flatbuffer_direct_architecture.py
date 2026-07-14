@@ -4514,14 +4514,19 @@ def test_generated_pytorch_graph_policy_has_single_owner() -> None:
 
     for function_name in (
         "_base_target_shape_values_for_model_ir",
+        "_channel_first_shape_for_tensor_for_codegen",
         "_channel_first_shape_values_for_model_ir",
         "_expected_channel_dim_for_tensor_for_codegen",
         "_gather_input_pre_permute_for_codegen",
         "_infer_effective_rank4_runtime_layout_for_codegen",
         "_native_codegen_cache_bucket_for_model_ir",
         "_producer_op_for_model_ir",
+        "_rank4_channel_first_shape_for_tensor_for_codegen",
+        "_resize_target_shape_literal_for_model_ir",
         "_resolve_channel_first_named_tensor_shape_for_codegen",
+        "_target_shape_literal_for_model_ir",
         "_target_shape_values_for_model_ir",
+        "_tensor_shape_list_for_model_ir",
     ):
         assert function_name in policy_functions
         assert function_name not in exporter_functions

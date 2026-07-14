@@ -2,6 +2,7 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_graph_policy import (
     _base_target_shape_values_for_model_ir,
+    _channel_first_shape_for_tensor_for_codegen,
     _channel_first_shape_values_for_model_ir,
     _expected_channel_dim_for_tensor_for_codegen,
     _gather_input_pre_permute_for_codegen,
@@ -9,7 +10,11 @@ from onnx2tf.tflite_builder.pytorch_graph_policy import (
     _native_codegen_cache_bucket_for_model_ir,
     _native_codegen_graph_index_for_model_ir,
     _producer_op_for_model_ir,
+    _rank4_channel_first_shape_for_tensor_for_codegen,
+    _resize_target_shape_literal_for_model_ir,
+    _target_shape_literal_for_model_ir,
     _target_shape_values_for_model_ir,
+    _tensor_shape_list_for_model_ir,
     _to_channel_first_shape_for_model_ir,
 )
 
@@ -148,3 +153,37 @@ def test_graph_shape_policy_preserves_public_layout_contract() -> None:
         model_ir=model_ir,
         tensor_name="input",
     ) == [1, 8, 8, 3]
+    assert _target_shape_literal_for_model_ir(
+        model_ir=model_ir,
+        tensor_name="input",
+    ) == "[1, 8, 8, 3]"
+    assert _tensor_shape_list_for_model_ir(
+        model_ir=model_ir,
+        tensor_name="input",
+    ) == [1, 8, 8, 3]
+    assert _rank4_channel_first_shape_for_tensor_for_codegen(
+        model_ir=model_ir,
+        channel_first_tensor_expr_aliases={},
+        tensor_name="input",
+    ) == [1, 8, 3, 8]
+    assert _channel_first_shape_for_tensor_for_codegen(
+        model_ir=model_ir,
+        channel_first_tensor_expr_aliases={},
+        tensor_name="input",
+    ) == [1, 8, 3, 8]
+
+
+def test_resize_target_literal_recovers_channel_first_storage() -> None:
+    model_ir = ModelIR(
+        name="resize_shape",
+        tensors={
+            "input": _tensor("input", [1, 3, 8, 8], layout="NCHW"),
+            "output": _tensor("output", [1, 16, 16, 3], layout="NCHW"),
+        },
+    )
+
+    assert _resize_target_shape_literal_for_model_ir(
+        model_ir=model_ir,
+        output_name="output",
+        input_name="input",
+    ) == "[1, 3, 16, 16]"

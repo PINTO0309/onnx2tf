@@ -152,14 +152,19 @@ from onnx2tf.tflite_builder.pytorch_indexing_codegen import (
 )
 from onnx2tf.tflite_builder.pytorch_graph_policy import (
     _base_target_shape_values_for_model_ir,
+    _channel_first_shape_for_tensor_for_codegen,
     _channel_first_shape_values_for_model_ir,
     _expected_channel_dim_for_tensor_for_codegen,
     _gather_input_pre_permute_for_codegen,
     _infer_effective_rank4_runtime_layout_for_codegen,
     _native_codegen_cache_bucket_for_model_ir,
     _producer_op_for_model_ir,
+    _rank4_channel_first_shape_for_tensor_for_codegen,
+    _resize_target_shape_literal_for_model_ir,
     _resolve_channel_first_named_tensor_shape_for_codegen,
+    _target_shape_literal_for_model_ir,
     _target_shape_values_for_model_ir,
+    _tensor_shape_list_for_model_ir,
 )
 from onnx2tf.tflite_builder.pytorch_source_graph_rewrites import (
     _bridge_boundary_metadata_gather_nd_inputs,
@@ -570,143 +575,6 @@ def _match_single_consumer_layout_bridge_transpose_for_codegen(
     if [int(v) for v in list(expected_perm)] != [int(v) for v in list(actual_perm)]:
         return None
     return output_name, bridge_op_idx
-
-
-def _target_shape_literal_for_model_ir(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-) -> str:
-    target_shape = _target_shape_values_for_model_ir(
-        model_ir=model_ir,
-        tensor_name=str(tensor_name),
-    )
-    if target_shape is None:
-        return "None"
-    return repr([int(v) for v in list(target_shape)])
-
-
-def _resize_target_shape_literal_for_model_ir(
-    *,
-    model_ir: ModelIR,
-    output_name: str,
-    input_name: str,
-) -> str:
-    output_tensor = model_ir.tensors.get(str(output_name), None)
-    input_tensor = model_ir.tensors.get(str(input_name), None)
-    if output_tensor is None:
-        return "None"
-    target_shape = [int(v) for v in list(output_tensor.shape)]
-    if input_tensor is None:
-        return repr(target_shape)
-    input_shape = [int(v) for v in list(input_tensor.shape)]
-    if target_shape == input_shape:
-        return repr(target_shape)
-    output_layout = normalize_logical_layout(output_tensor.logical_layout)
-    input_layout = normalize_logical_layout(input_tensor.logical_layout)
-    if (
-        len(input_shape) == 4
-        and len(target_shape) == 4
-        and is_channel_first_logical_layout(input_layout)
-        and is_channel_first_logical_layout(output_layout)
-    ):
-        if int(target_shape[1]) != int(input_shape[1]) and int(target_shape[-1]) == int(input_shape[1]):
-            return repr([int(input_shape[0]), int(input_shape[1]), int(target_shape[1]), int(target_shape[2])])
-        if int(target_shape[1]) != int(input_shape[-1]) and int(target_shape[-1]) == int(input_shape[-1]):
-            return repr([int(input_shape[0]), int(input_shape[-1]), int(target_shape[1]), int(target_shape[2])])
-    return repr(target_shape)
-
-
-def _tensor_shape_list_for_model_ir(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-) -> Optional[List[int]]:
-    tensor = model_ir.tensors.get(str(tensor_name), None)
-    if tensor is None:
-        return None
-    return [int(v) for v in list(tensor.shape)]
-
-
-def _rank4_channel_first_shape_for_tensor_for_codegen(
-    *,
-    model_ir: ModelIR,
-    channel_first_tensor_expr_aliases: Dict[str, str],
-    tensor_name: str,
-) -> Optional[List[int]]:
-    inferred_shape = _channel_first_shape_values_for_model_ir(
-        model_ir=model_ir,
-        tensor_name=str(tensor_name),
-    )
-    if inferred_shape is None or len(inferred_shape) != 4:
-        return None
-    tensor_shape = list(inferred_shape)
-    tensor = model_ir.tensors.get(str(tensor_name), None)
-    tensor_layout = (
-        normalize_logical_layout(tensor.logical_layout)
-        if tensor is not None
-        else LOGICAL_LAYOUT_UNKNOWN
-    )
-    if (
-        str(tensor_name) in channel_first_tensor_expr_aliases
-        and (
-            is_channel_last_logical_layout(tensor_layout)
-            or (
-                tensor_layout == LOGICAL_LAYOUT_UNKNOWN
-                and _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor_name))
-            )
-        )
-    ):
-        return [int(tensor_shape[0]), int(tensor_shape[3]), int(tensor_shape[1]), int(tensor_shape[2])]
-    if is_channel_last_logical_layout(tensor_layout):
-        return [int(tensor_shape[0]), int(tensor_shape[3]), int(tensor_shape[1]), int(tensor_shape[2])]
-    return [int(v) for v in list(tensor_shape)]
-
-
-def _channel_first_shape_for_tensor_for_codegen(
-    *,
-    model_ir: ModelIR,
-    channel_first_tensor_expr_aliases: Dict[str, str],
-    tensor_name: str,
-) -> Optional[List[int]]:
-    tensor_shape = _channel_first_shape_values_for_model_ir(
-        model_ir=model_ir,
-        tensor_name=str(tensor_name),
-    )
-    if tensor_shape is None:
-        return None
-    rank = len(list(tensor_shape))
-    if rank not in {3, 4, 5}:
-        return [int(v) for v in list(tensor_shape)]
-    tensor = model_ir.tensors.get(str(tensor_name), None)
-    perm_to_cf = _perm_cl_to_cf(rank)
-    tensor_layout = (
-        normalize_logical_layout(tensor.logical_layout)
-        if tensor is not None
-        else LOGICAL_LAYOUT_UNKNOWN
-    )
-    if (
-        str(tensor_name) in channel_first_tensor_expr_aliases
-        and (
-            is_channel_last_logical_layout(tensor_layout)
-            or (
-                tensor_layout == LOGICAL_LAYOUT_UNKNOWN
-                and _tensor_name_suggests_channel_last_layout_for_codegen(str(tensor_name))
-            )
-        )
-        and perm_to_cf is not None
-    ):
-        permuted_shape = _permute_shape(tensor_shape, perm_to_cf)
-        if permuted_shape is not None:
-            return [int(v) for v in list(permuted_shape)]
-    if (
-        is_channel_last_logical_layout(tensor_layout)
-        and perm_to_cf is not None
-    ):
-        permuted_shape = _permute_shape(tensor_shape, perm_to_cf)
-        if permuted_shape is not None:
-            return [int(v) for v in list(permuted_shape)]
-    return [int(v) for v in list(tensor_shape)]
 
 
 def _channel_first_concat_input_expr_for_codegen(

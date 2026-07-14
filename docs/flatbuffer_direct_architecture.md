@@ -2223,8 +2223,10 @@ created during writer preparation.
 Public target-shape, base-signature, channel-first shape, and named-tensor
 resolution form one mutually recursive family in this owner. It uses the same
 graph/cache queries for binary broadcast and Conv channel evidence, while
-returning public tensors in their declared logical layout. Source literals and
-statement emission remain outside this read-only graph-policy boundary.
+returning public tensors in their declared logical layout. Compact target and
+Resize shape literal rendering plus alias-aware rank-3/4/5 channel-first shape
+queries are co-located with that contract; statement emission remains outside
+this read-only graph-policy boundary.
 
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are

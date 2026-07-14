@@ -998,6 +998,15 @@ and the focused ownership test pass, together with Ruff and syntax validation.
 The exporter shrank by another 255 lines. No model conversion or inference was
 run.
 
+Target/Resize shape literals, direct tensor-shape lookup, and alias-aware
+rank-3/4/5 channel-first shape queries now terminate the same graph-policy
+family. The generated pipeline retains every compatibility name through
+exporter imports, while statement emission remains separate. Five thousand
+fixed-seed outcomes match checkpoint `b27c39e` exactly; five direct graph-
+policy contracts and the focused ownership test pass, together with Ruff and
+syntax validation. The exporter shrank by another 132 lines. No model
+conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
