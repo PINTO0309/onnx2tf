@@ -9,6 +9,7 @@ import pytest
 from onnx2tf.tflite_builder.artifact_preparation import (
     isolate_float32_model_ir_for_tflite_write,
     resolve_requested_artifact_controls,
+    resolve_requested_exporter_controls,
 )
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
 from onnx2tf.tflite_builder.ir import (
@@ -133,15 +134,88 @@ def test_requested_artifact_controls_preserve_existing_option_values() -> None:
         controls.quantization["min_numel"] = 1  # type: ignore[index]
 
 
+def test_unrequested_exporter_controls_do_not_read_related_options() -> None:
+    class _RejectingOptions(dict):
+        def get(self, key, default=None):
+            raise AssertionError(f"unrequested option was read: {key}")
+
+    controls = resolve_requested_exporter_controls(
+        _RejectingOptions(),
+        output_folder_path="artifacts",
+        output_file_name="model",
+        saved_model_requested=False,
+        pytorch_requested=False,
+        calibration_inputs_requested=False,
+    )
+
+    assert controls.saved_model_output_folder_path == "artifacts"
+    assert controls.persist_saved_model_output is False
+    assert controls.pytorch_output_folder_path == "artifacts/model_pytorch"
+    assert controls.native_pytorch_generation_timeout_sec == 0
+    assert controls.custom_input_op_name_np_data_path is None
+    assert controls.shape_hints is None
+    assert controls.test_data_nhwc_path is None
+
+
+def test_requested_exporter_controls_preserve_values_and_dependencies() -> None:
+    controls = resolve_requested_exporter_controls(
+        {
+            "saved_model_output_folder_path": "saved",
+            "persist_saved_model_output": False,
+            "pytorch_output_folder_path": "torch",
+            "native_pytorch_generation_timeout_sec": "37",
+            "custom_input_op_name_np_data_path": [["input", "sample.npy"]],
+            "shape_hints": {"input": [1, 3, 8, 8]},
+            "test_data_nhwc_path": "sample.npy",
+        },
+        output_folder_path="artifacts",
+        output_file_name="model",
+        saved_model_requested=True,
+        pytorch_requested=True,
+        calibration_inputs_requested=False,
+    )
+
+    assert controls.saved_model_output_folder_path == "saved"
+    assert controls.persist_saved_model_output is False
+    assert controls.pytorch_output_folder_path == "torch"
+    assert controls.native_pytorch_generation_timeout_sec == 37
+    assert controls.custom_input_op_name_np_data_path == [["input", "sample.npy"]]
+    assert controls.shape_hints == {"input": [1, 3, 8, 8]}
+    assert controls.test_data_nhwc_path == "sample.npy"
+
+    calibration_only = resolve_requested_exporter_controls(
+        {"custom_input_op_name_np_data_path": "calibration.npy"},
+        output_folder_path="artifacts",
+        output_file_name="model",
+        saved_model_requested=False,
+        pytorch_requested=False,
+        calibration_inputs_requested=True,
+    )
+    assert calibration_only.custom_input_op_name_np_data_path == "calibration.npy"
+    assert calibration_only.native_pytorch_generation_timeout_sec == 0
+
+    with pytest.raises(ValueError):
+        resolve_requested_exporter_controls(
+            {"native_pytorch_generation_timeout_sec": "invalid"},
+            output_folder_path="artifacts",
+            output_file_name="model",
+            saved_model_requested=False,
+            pytorch_requested=True,
+            calibration_inputs_requested=False,
+        )
+
+
 def test_artifact_control_resolution_has_one_policy_owner() -> None:
     builder_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py"
     ).read_text(encoding="utf-8")
 
     assert builder_source.count("resolve_requested_artifact_controls(") == 1
+    assert builder_source.count("resolve_requested_exporter_controls(") == 1
     assert "def _resolve_quantization_controls" not in builder_source
     assert "ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL" not in builder_source
     assert "ONNX2TF_FLATBUFFER_DIRECT_SPLIT_MAX_BYTES" not in builder_source
+    assert '"native_pytorch_generation_timeout_sec"' not in builder_source
 
 
 @pytest.mark.parametrize(

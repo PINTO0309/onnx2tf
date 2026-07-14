@@ -37,6 +37,14 @@ object is referenced only as the input to `ConversionRequest.from_kwargs`.
 This keeps legacy keys and default values intact while preventing later
 enhancements from bypassing normalization and reintroducing raw option
 propagation.
+SavedModel- and PyTorch-specific preparation options use a second requested-
+exporter control resolver in `artifact_preparation.py`. It does not read output
+paths, persistence, native PyTorch timeout, shape hints, or test data unless
+the corresponding artifact is requested. The custom input data option is read
+only for integer calibration or PyTorch-derived artifacts. Consequently, an
+invalid unused PyTorch timeout cannot fail a TFLite-only conversion, while a
+requested artifact retains the existing default paths, coercions, and error
+behavior.
 
 A pass has a stable ID, phase, priority, maximum iteration count, and explicit
 `changed` result. Repeating passes must use a graph fingerprint so a cycle

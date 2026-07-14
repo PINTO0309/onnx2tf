@@ -7,10 +7,11 @@ The active branch is `fb-refactor5`, created from `main` after pull request
 subsequent work uses coherent commits and pushes without opening another pull
 request.
 
-The latest implementation unit completes the immutable `ConversionRequest`
-read boundary inside the direct exporter. All 36 option reads now use
-`request.get`, artifact selection continues through `ArtifactPlan`, and the
-original `kwargs` object is referenced only when constructing the request.
+The latest implementation unit moves SavedModel/PyTorch-specific preparation
+settings into a requested-exporter resolver. Unrequested output paths,
+persistence, PyTorch timeout, shape hints, and test data are no longer read;
+custom input data is read only for integer calibration or PyTorch artifacts.
+The immutable `ConversionRequest` remains the sole option source.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -32,7 +33,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains seven coherent continuations:
+The current `fb-refactor5` work contains eight coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -49,8 +50,10 @@ The current `fb-refactor5` work contains seven coherent continuations:
   update at its original point in the ordered scan;
 - `95fbd0cb` makes the NHWC AveragePool bridge own the CF/NHWC and static-shape
   state resulting from its rewrite;
-- the current checkpoint routes all direct-export option reads through the
-  normalized request and adds a structural boundary test.
+- `907c91fa` routes all direct-export option reads through the normalized
+  request and adds a structural boundary test;
+- the current checkpoint adds request-aware optional exporter controls and
+  removes eager parsing of unrequested PyTorch settings.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -68,7 +71,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The final checkpoint changes:
 
 - `onnx2tf/tflite_builder/__init__.py`;
-- `tests/test_flatbuffer_direct_architecture.py`;
+- `onnx2tf/tflite_builder/artifact_preparation.py`;
+- `tests/test_flatbuffer_direct_artifact_preparation.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
 
@@ -120,11 +124,16 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   from the pre-rewrite Pool shape after the layout sets change; it is not
   replaced by the rendered rewrite target.
 - `ConversionRequest.from_kwargs` is the direct exporter's only raw-kwargs
-  boundary. Quantization validation receives `request.options`, all 36
-  remaining optional reads use `request.get`, and typed artifact decisions
-  remain on `request.artifacts`. This is a source-routing change only; keys,
-  defaults, coercions, public return values, and downstream arguments are
-  unchanged.
+  boundary. Quantization validation receives `request.options`, normal option
+  reads use `request.get`, and typed artifact decisions remain on
+  `request.artifacts`. Checkpoint `907c91fa` mechanically converted all 36
+  former raw reads without changing keys, defaults, coercions, public return
+  values, or downstream arguments.
+- `resolve_requested_exporter_controls` now owns seven artifact-specific
+  settings. It performs no option reads when SavedModel, PyTorch, and integer
+  calibration are all unrequested. Requested output paths, persistence,
+  timeout conversion, shape/test data, and custom-input values preserve their
+  existing defaults and dependencies.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -176,6 +185,22 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH \
 
 Its AST gate proves zero `kwargs.get` calls and exactly one raw `kwargs` read,
 as the argument to `ConversionRequest.from_kwargs`.
+The requested-exporter checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_artifact_preparation.py \
+  tests/test_flatbuffer_direct_core.py \
+  tests/test_flatbuffer_direct_architecture.py
+
+145 passed
+```
+
+Dedicated resolver tests use a mapping that raises on every `get` to prove
+unrequested settings are untouched, then verify requested and calibration-only
+values and timeout coercion.
 The exporter and policy pass `python -m py_compile`, and `git diff --check`
 passes. The immediately preceding DepthToSpace, Pool, dynamic-Pool,
 simple-alias, and aligned-scalar checkpoints passed their focused synthetic and
@@ -206,16 +231,17 @@ orchestration, source-line replacement, changed-flag handling, and the explicit
 short-circuit boundaries required by the extracted policy decisions.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
-optional TensorFlow,
-PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier regression work also
-remains subject to the original refactor plan and its verification gates.
+optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
+regression work also remains subject to the original refactor plan and its
+verification gates.
 
 ## Next work
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit `ArtifactPlan.from_options` and the direct exporter call sites for the
-   next bounded unrequested-artifact or compatibility-contract gap.
+2. Continue auditing `ArtifactPlan.from_options` and the remaining direct
+   exporter call sites for the next bounded unrequested-artifact or
+   compatibility-contract gap.
 3. Characterize existing defaults and legacy output keys before adding a typed
    artifact field or moving another guard; do not infer a new public option.
 4. Keep the audited 294-line PyTorch source orchestrator as explicit sequencing

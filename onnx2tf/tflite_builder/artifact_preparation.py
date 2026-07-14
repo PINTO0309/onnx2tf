@@ -67,6 +67,17 @@ class ArtifactExecutionControls:
     quantization: Optional[Mapping[str, Any]]
 
 
+@dataclass(frozen=True)
+class RequestedExporterControls:
+    saved_model_output_folder_path: str
+    persist_saved_model_output: bool
+    pytorch_output_folder_path: str
+    native_pytorch_generation_timeout_sec: int
+    custom_input_op_name_np_data_path: Any
+    shape_hints: Any
+    test_data_nhwc_path: Any
+
+
 def resolve_requested_artifact_controls(
     options: Mapping[str, Any],
     *,
@@ -117,6 +128,69 @@ def resolve_requested_artifact_controls(
         split_max_bytes=split_max_bytes,
         split_target_bytes=split_target_bytes,
         quantization=quantization,
+    )
+
+
+def resolve_requested_exporter_controls(
+    options: Mapping[str, Any],
+    *,
+    output_folder_path: str,
+    output_file_name: str,
+    saved_model_requested: bool,
+    pytorch_requested: bool,
+    calibration_inputs_requested: bool,
+) -> RequestedExporterControls:
+    saved_model_output_folder_path = str(output_folder_path)
+    pytorch_output_folder_path = os.path.join(
+        str(output_folder_path),
+        f"{output_file_name}_pytorch",
+    )
+    persist_saved_model_output = False
+    native_pytorch_generation_timeout_sec = 0
+    custom_input_op_name_np_data_path = None
+    shape_hints = None
+    test_data_nhwc_path = None
+
+    if saved_model_requested:
+        saved_model_output_option = options.get(
+            "saved_model_output_folder_path",
+            None,
+        )
+        if saved_model_output_option is not None:
+            saved_model_output_folder_path = saved_model_output_option
+    if pytorch_requested:
+        pytorch_output_option = options.get(
+            "pytorch_output_folder_path",
+            None,
+        )
+        if pytorch_output_option is not None:
+            pytorch_output_folder_path = pytorch_output_option
+    if saved_model_requested:
+        persist_saved_model_output = bool(
+            options.get("persist_saved_model_output", True)
+        )
+    if calibration_inputs_requested or pytorch_requested:
+        custom_input_op_name_np_data_path = options.get(
+            "custom_input_op_name_np_data_path",
+            None,
+        )
+    if pytorch_requested:
+        shape_hints = options.get("shape_hints", None)
+        test_data_nhwc_path = options.get("test_data_nhwc_path", None)
+        native_pytorch_generation_timeout_sec = int(
+            options.get("native_pytorch_generation_timeout_sec", 0) or 0
+        )
+
+    return RequestedExporterControls(
+        saved_model_output_folder_path=saved_model_output_folder_path,
+        persist_saved_model_output=persist_saved_model_output,
+        pytorch_output_folder_path=pytorch_output_folder_path,
+        native_pytorch_generation_timeout_sec=(
+            native_pytorch_generation_timeout_sec
+        ),
+        custom_input_op_name_np_data_path=custom_input_op_name_np_data_path,
+        shape_hints=shape_hints,
+        test_data_nhwc_path=test_data_nhwc_path,
     )
 
 

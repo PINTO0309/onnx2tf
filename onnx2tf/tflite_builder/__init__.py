@@ -10,6 +10,7 @@ from onnx2tf.tflite_builder.artifact_metadata import (
 from onnx2tf.tflite_builder.artifact_preparation import (
     isolate_float32_model_ir_for_tflite_write,
     resolve_requested_artifact_controls,
+    resolve_requested_exporter_controls,
 )
 from onnx2tf.tflite_builder.core.contracts import ConversionRequest, ConversionResult
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
@@ -276,41 +277,32 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         required_pytorch_feature = "flatbuffer_direct PyTorch package export"
     if required_pytorch_feature is not None:
         require_torch(required_pytorch_feature)
-    saved_model_output_folder_path = request.get(
-        "saved_model_output_folder_path",
-        None,
+    exporter_controls = resolve_requested_exporter_controls(
+        request.options,
+        output_folder_path=output_folder_path,
+        output_file_name=output_file_name,
+        saved_model_requested=output_saved_model_from_model_ir,
+        pytorch_requested=output_pytorch_from_model_ir,
+        calibration_inputs_requested=output_integer_quantized_tflite,
     )
-    if saved_model_output_folder_path is None:
-        saved_model_output_folder_path = output_folder_path
-    pytorch_output_folder_path = request.get(
-        "pytorch_output_folder_path",
-        None,
+    saved_model_output_folder_path = (
+        exporter_controls.saved_model_output_folder_path
     )
-    if pytorch_output_folder_path is None:
-        pytorch_output_folder_path = os.path.join(
-            output_folder_path,
-            f"{output_file_name}_pytorch",
-        )
-    persist_saved_model_output = bool(
-        request.get(
-            "persist_saved_model_output",
-            output_saved_model_from_model_ir,
-        )
-    )
+    pytorch_output_folder_path = exporter_controls.pytorch_output_folder_path
+    persist_saved_model_output = exporter_controls.persist_saved_model_output
     enable_accumulation_type_float16 = bool(
         request.get("enable_accumulation_type_float16", False)
     )
     force_split_manifest = request.artifacts.split_manifest
     split_plan_requested = bool(force_split_manifest)
     report_op_coverage = request.artifacts.op_coverage_report
-    custom_input_op_name_np_data_path = request.get(
-        "custom_input_op_name_np_data_path",
-        None,
+    custom_input_op_name_np_data_path = (
+        exporter_controls.custom_input_op_name_np_data_path
     )
-    shape_hints = request.get("shape_hints", None)
-    test_data_nhwc_path = request.get("test_data_nhwc_path", None)
-    native_pytorch_generation_timeout_sec = int(
-        request.get("native_pytorch_generation_timeout_sec", 0) or 0
+    shape_hints = exporter_controls.shape_hints
+    test_data_nhwc_path = exporter_controls.test_data_nhwc_path
+    native_pytorch_generation_timeout_sec = (
+        exporter_controls.native_pytorch_generation_timeout_sec
     )
     output_nms_with_argmax = bool(request.get("output_nms_with_argmax", False))
     switch_nms_version = str(request.get("switch_nms_version", "v4")).strip().lower()
