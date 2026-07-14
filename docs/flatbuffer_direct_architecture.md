@@ -3671,6 +3671,18 @@ validation pass 60 tests. A single sequential `superpoint.onnx` smoke retains
 `1.0`; the NDHWC pre-Concat precondition skips all five production positions
 without snapshots or fingerprints for that unrelated rank-four graph.
 
+Two AST-identical 22-call post-lowering recovery suffixes are owned by
+`_run_layout_attention_quantized_recovery_suffix`. The helper preserves the
+original ordering from NHWC Mul/Add and Mean/attention recovery through gate,
+TransposeConv, Q/DQ bridge, quantized PReLU/Reshape, and final Softmax
+canonicalization. Its duplicate-Transpose feature flag is forwarded explicitly
+from both original call sites. Registered runners inside the suffix remain
+unscoped because raw ModelIR mutators separate them, so runtime pass-state and
+mutation boundaries are unchanged. A third similar sequence retains its
+separate `include_layernorm=True` behavior and is deliberately not merged.
+The extraction removes 21 net lowerer lines and reduces direct registered-
+runner call sites from 125 to 123 without changing the runtime pass sequence.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

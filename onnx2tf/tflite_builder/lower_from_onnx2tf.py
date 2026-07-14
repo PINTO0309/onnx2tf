@@ -50633,6 +50633,43 @@ def lower_onnx_to_ir(
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _run_channel_shuffle_gather_layout_pass_cluster()
 
+    def _run_layout_attention_quantized_recovery_suffix(
+        *,
+        include_duplicate_transpose: bool,
+    ) -> None:
+        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
+        _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
+        _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
+        _run_mean_attention_layout_pass_cluster()
+        _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
+        _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
+        _run_gate_layout_pass_cluster()
+        _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
+        _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
+        _run_transpose_unary_fanout_layout_pass_cluster()
+        _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
+        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
+        run_trailing_output_transpose_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        _optimize_transpose_dequant_mul_add_prelu_quantize_bridges(model_ir)
+        _run_duplicate_quantized_prelu_pass_cluster(
+            include_transpose=include_duplicate_transpose,
+        )
+        _optimize_dequant_transposeconv_quantize_chains(model_ir)
+        run_quantized_reshape_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
+        _optimize_dequant_maxpool_quantize_chains(model_ir)
+        _optimize_dequant_softmax_quantize_chains(model_ir)
+        _optimize_dequant_logistic_quantize_chains(model_ir)
+        _canonicalize_softmax_transpose_chains(model_ir)
+
     _set_post_progress_desc("outputs")
 
     # Outputs
@@ -50802,38 +50839,9 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         _optimize_fold_mul_add_mul_affine_chains(model_ir)
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
-        _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _run_mean_attention_layout_pass_cluster()
-        _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
-        _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
-        _run_gate_layout_pass_cluster()
-        _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
-        _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
-        _run_transpose_unary_fanout_layout_pass_cluster()
-        _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
-        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
-        run_trailing_output_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _run_layout_attention_quantized_recovery_suffix(
+            include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
         )
-        _optimize_transpose_dequant_mul_add_prelu_quantize_bridges(model_ir)
-        _run_duplicate_quantized_prelu_pass_cluster(
-            include_transpose=enable_duplicate_transpose_fanout_optimizations,
-        )
-        _optimize_dequant_transposeconv_quantize_chains(model_ir)
-        run_quantized_reshape_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
-        _optimize_dequant_maxpool_quantize_chains(model_ir)
-        _optimize_dequant_softmax_quantize_chains(model_ir)
-        _optimize_dequant_logistic_quantize_chains(model_ir)
-        _canonicalize_softmax_transpose_chains(model_ir)
         _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir)
         _optimize_transpose_binary_single_post_bridges_safe(model_ir)
         _optimize_transpose_binary_mixed_fanout_bridges_safe(model_ir)
@@ -50873,38 +50881,9 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
-        _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _run_mean_attention_layout_pass_cluster()
-        _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
-        _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
-        _run_gate_layout_pass_cluster()
-        _optimize_transposeconv_output_nhwc_passthrough_chains(model_ir)
-        _optimize_transposeconv_output_channel1_terminal_transpose_chains(model_ir)
-        _run_transpose_unary_fanout_layout_pass_cluster()
-        _optimize_transpose_dequant_relu_quantize_bridges(model_ir)
-        _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
-        run_trailing_output_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
+        _run_layout_attention_quantized_recovery_suffix(
+            include_duplicate_transpose=enable_duplicate_transpose_fanout_optimizations,
         )
-        _optimize_transpose_dequant_mul_add_prelu_quantize_bridges(model_ir)
-        _run_duplicate_quantized_prelu_pass_cluster(
-            include_transpose=enable_duplicate_transpose_fanout_optimizations,
-        )
-        _optimize_dequant_transposeconv_quantize_chains(model_ir)
-        run_quantized_reshape_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
-        _optimize_dequant_maxpool_quantize_chains(model_ir)
-        _optimize_dequant_softmax_quantize_chains(model_ir)
-        _optimize_dequant_logistic_quantize_chains(model_ir)
-        _canonicalize_softmax_transpose_chains(model_ir)
         _run_transpose_unary_fanout_layout_pass_cluster(
             include_layout_transpose=True,
             include_unary_passthrough=False,

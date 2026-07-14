@@ -291,6 +291,110 @@ def test_lowerer_layout_recovery_prefix_has_one_ordered_owner() -> None:
     assert len(helper_invocations) == 4
 
 
+def test_lowerer_layout_attention_quantized_suffix_has_one_ordered_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_layout_attention_quantized_recovery_suffix"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "_optimize_transpose_mul_add_const_prepost_nhwc_chains",
+        "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains",
+        "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains",
+        "_run_mean_attention_layout_pass_cluster",
+        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains",
+        "_optimize_sinet_mix_attention_double_logistic_nhwc_chains",
+        "_run_gate_layout_pass_cluster",
+        "_optimize_transposeconv_output_nhwc_passthrough_chains",
+        "_optimize_transposeconv_output_channel1_terminal_transpose_chains",
+        "_run_transpose_unary_fanout_layout_pass_cluster",
+        "_optimize_transpose_dequant_relu_quantize_bridges",
+        "_optimize_transpose_dequant_hardsigmoid_quantize_bridges",
+        "run_trailing_output_transpose_cleanup",
+        "_optimize_transpose_dequant_mul_add_prelu_quantize_bridges",
+        "_run_duplicate_quantized_prelu_pass_cluster",
+        "_optimize_dequant_transposeconv_quantize_chains",
+        "run_quantized_reshape_cleanup",
+        "_optimize_dequant_hardsigmoid_quantize_chains",
+        "_optimize_dequant_maxpool_quantize_chains",
+        "_optimize_dequant_softmax_quantize_chains",
+        "_optimize_dequant_logistic_quantize_chains",
+        "_canonicalize_softmax_transpose_chains",
+    ]
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert [call.func.id for call in helper_calls] == expected_order
+
+    calls_by_name = {call.func.id: call for call in helper_calls}
+    for registered_name in (
+        "run_trailing_output_transpose_cleanup",
+        "run_quantized_reshape_cleanup",
+    ):
+        assert all(
+            keyword.arg != "state_scope"
+            for keyword in calls_by_name[registered_name].keywords
+        )
+    duplicate_keyword = next(
+        keyword
+        for keyword in calls_by_name[
+            "_run_duplicate_quantized_prelu_pass_cluster"
+        ].keywords
+        if keyword.arg == "include_transpose"
+    )
+    assert isinstance(duplicate_keyword.value, ast.Name)
+    assert duplicate_keyword.value.id == "include_duplicate_transpose"
+
+    helper_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+    ]
+    assert len(helper_invocations) == 2
+    for invocation in helper_invocations:
+        keyword = next(
+            keyword
+            for keyword in invocation.keywords
+            if keyword.arg == "include_duplicate_transpose"
+        )
+        assert isinstance(keyword.value, ast.Name)
+        assert (
+            keyword.value.id
+            == "enable_duplicate_transpose_fanout_optimizations"
+        )
+
+    layernorm_variant_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_run_mean_attention_layout_pass_cluster"
+        and any(
+            keyword.arg == "include_layernorm"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in node.keywords
+        )
+    ]
+    assert len(layernorm_variant_calls) == 1
+
+
 def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -344,7 +448,7 @@ def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "_run_mean_attention_layout_pass_cluster"
     ]
-    assert len(helper_invocations) == 6
+    assert len(helper_invocations) == 5
 
 
 def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
@@ -515,7 +619,7 @@ def test_lowerer_duplicate_quantized_prelu_pair_reuses_pass_state_scope() -> Non
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 2
+    assert len(helper_invocations) == 1
     for call in helper_invocations:
         include_transpose = next(
             keyword
@@ -525,7 +629,7 @@ def test_lowerer_duplicate_quantized_prelu_pair_reuses_pass_state_scope() -> Non
         assert isinstance(include_transpose.value, ast.Name)
         assert (
             include_transpose.value.id
-            == "enable_duplicate_transpose_fanout_optimizations"
+            == "include_duplicate_transpose"
         )
 
 
@@ -1420,7 +1524,7 @@ def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "_run_gate_layout_pass_cluster"
     ]
-    assert len(helper_invocations) == 5
+    assert len(helper_invocations) == 4
     omitted_mixed_attention = [
         call
         for call in helper_invocations
@@ -1655,7 +1759,7 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == unary_helper_name
     ]
-    assert len(unary_invocations) == 5
+    assert len(unary_invocations) == 4
     post_qdq_invocations = [
         call
         for call in unary_invocations
@@ -1718,7 +1822,7 @@ def test_lowerer_late_nchw_shuffle_gather_pair_stays_between_raw_rewrites() -> N
     )
 
 
-def test_lowerer_post_qdq_unary_fanout_cluster_stays_between_raw_rewrites() -> None:
+def test_lowerer_post_qdq_unary_fanout_cluster_stays_after_recovery_suffix() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -1762,7 +1866,7 @@ def test_lowerer_post_qdq_unary_fanout_cluster_stays_between_raw_rewrites() -> N
     assert isinstance(previous_boundary.value.func, ast.Name)
     assert (
         previous_boundary.value.func.id
-        == "_canonicalize_softmax_transpose_chains"
+        == "_run_layout_attention_quantized_recovery_suffix"
     )
     next_boundary = layout_recovery.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Expr)
@@ -4616,7 +4720,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 125
+    assert len(calls) == 123
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -4713,7 +4817,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_quantized_reshape_cleanup"
     ]
-    assert len(quantized_reshape_calls) == 3
+    assert len(quantized_reshape_calls) == 2
 
     singleton_maxpool_calls = [
         call
@@ -4817,7 +4921,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_trailing_output_transpose_cleanup"
     ]
-    assert len(trailing_output_transpose_calls) == 4
+    assert len(trailing_output_transpose_calls) == 3
 
     nchw_channel_shuffle_calls = [
         call
