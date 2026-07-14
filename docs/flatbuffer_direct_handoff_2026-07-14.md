@@ -8,13 +8,15 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit extracts exact pseudo-op LeakyReLU fusion into
-`passes/graph_cleanup.py`. One maintained `ModelIRGraphIndex` owns graph-order
-SUB candidates, all producer/consumer guards, retained-SUB type/input
-replacement, and batch removal of NEG, both RELUs, and MUL. Exact branch
-grammar, singleton alpha selection on either MUL side, float/public/fan-out
-guards, fresh LEAKY_RELU fields, output identity, statistics, and pruning
-retain the former behavior.
+The latest implementation unit replaces YOLO-named semantic ownership with the
+generic `_optimize_mul_square_anchor_constant_chains` owner in
+`passes/constant_fold.py`. One maintained `ModelIRGraphIndex` owns MUL
+candidates, full chain traversal, duplicate-aware square consumers, edge/output
+rewrites, and batch removal of the first/final MUL. Exact input ordering,
+singleton/finite guards, floating buffers, fused dtype/shape/quantization,
+output identity, statistics, pruning, and both constant-side orders retain
+valid former behavior. Public intermediates are newly protected as complete
+no-ops.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -36,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains seventy-three coherent continuations:
+The current `fb-refactor5` work contains seventy-four coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -193,8 +195,10 @@ The current `fb-refactor5` work contains seventy-three coherent continuations:
   operator movement, rename, and removal;
 - `f6b62363` moves the Transpose-DQ-Mean-Q bridge to one indexed, fully planned
   quantization-cleanup transaction;
-- the current checkpoint moves pseudo-op LeakyReLU fusion to one indexed graph-
-  cleanup owner with batch producer compaction.
+- `3042329e` moves pseudo-op LeakyReLU fusion to one indexed graph-cleanup
+  owner with batch producer compaction;
+- the current checkpoint moves the former YOLO MUL-square fold to a generic
+  indexed constant-fold owner and protects public intermediates.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -213,8 +217,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/graph_cleanup.py`;
-- `tests/test_flatbuffer_direct_indexed_pseudo_leakyrelu.py`;
+- `onnx2tf/tflite_builder/passes/constant_fold.py`;
+- `tests/test_flatbuffer_direct_indexed_mul_square_constant_fold.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -571,6 +575,13 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   axis semantics, version, and ONNX provenance are reset to the same defaults
   as a fresh `OperatorIR`; all four private producers are then removed in one
   batch compaction.
+- The MUL-square fold's semantic owner is model-neutral; only the compatibility
+  wrapper and historical stats key retain `yolo` naming. The self-square must
+  use the identical tensor name in both MUL slots, while constant side inputs
+  at the pre/anchor/scale MULs remain commutative. Fused data is calculated in
+  float32, checked finite, cast back to anchor dtype, and receives cloned anchor
+  quantization. All three removable intermediates are now explicitly rejected
+  when public before any tensor or edge mutation.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -1678,6 +1689,22 @@ TensorFlow-import-blocked direct and `-cotof` plus the sequential quantization/
 evaluation/coverage smoke passed with `3 passed`. No Tier corpus conversion was
 run.
 
+The generic indexed MUL-square constant-fold checkpoint compiles the complete
+prior committed YOLO-named function AST and preserves exact valid ModelIR and
+statistics for one and two simultaneous matches. A separate differential check
+proves that a public square intermediate, formerly rewritten despite losing its
+producer contract, is now a complete no-op. Focused coverage verifies one-index
+multi-match execution, all pre/anchor/scale constant-side combinations,
+maintained-index and LayoutState equivalence, float16 fused values, normalized
+metadata, quantization cloning, batch compaction, public/fan-out guards for all
+three intermediates, singleton and finite pre-scale, floating anchor/scale,
+finite result, exact self-square, missing constants, no-MUL/no-index/no-prune,
+and generic ownership with `18 passed`. Architecture, core, pass-efficiency,
+constant-fold, and indexed fold coverage passed with `234 passed`.
+TensorFlow-import-blocked direct and `-cotof` plus the sequential quantization/
+evaluation/coverage smoke passed with `3 passed`. No Tier corpus conversion was
+run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1727,12 +1754,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit `_optimize_yolo_decode_mul_square_anchor_chains` as a generic bounded
-   `MUL(const)->square->MUL(const)->MUL(const)` constant-fold candidate rather
-   than retaining model-name ownership. Preserve exact input ordering,
-   singleton and finite-value guards, all intermediate fan-out/public
-   boundaries, dtype/shape/quantization metadata, output identity, statistics,
-   and pruning; do not broaden it to unrelated MUL chains.
+3. Audit `_optimize_gather_axis0_singleton_to_reshape_input_chains` as the next
+   bounded shape/indexing cleanup. Preserve axis-zero, singleton-index,
+   constant-buffer, Reshape-input-position, public/fan-out, shape/signature,
+   output identity, statistics, and pruning contracts while eliminating its
+   repeated consumer scan through one maintained index.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

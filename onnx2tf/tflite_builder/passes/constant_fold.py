@@ -14,11 +14,23 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _clone_quantization,
     _is_fully_known_positive_shape,
+    _is_singleton_constant_tensor,
     _prune_unused_tensors,
+    _read_singleton_constant_float,
+    _set_operator_inputs,
+    _set_operator_outputs,
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
-from onnx2tf.tflite_builder.ir import ModelIR
+from onnx2tf.tflite_builder.ir import (
+    ModelIR,
+    TensorIR,
+    normalize_onnx_shape,
+)
+from onnx2tf.tflite_builder.tensor_buffer_builder import (
+    tflite_dtype_from_numpy,
+)
 
 _TFLITE_DTYPE_TO_NUMPY_DTYPE = {
     "FLOAT16": np.dtype(np.float16),
@@ -35,6 +47,250 @@ _TFLITE_DTYPE_TO_NUMPY_DTYPE = {
     "BOOL": np.dtype(np.bool_),
     "STRING": np.dtype(np.object_),
 }
+
+
+def _optimize_mul_square_anchor_constant_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Fold a guarded MUL(const)->square->MUL(const)->MUL(const) chain."""
+
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if active_index is None:
+        if not any(str(operator.op_type) == "MUL" for operator in model_ir.operators):
+            return {"optimized_yolo_decode_mul_square_anchor_chains": 0}
+        active_index = ModelIRGraphIndex(model_ir)
+    elif len(active_index.operator_indices("MUL")) == 0:
+        return {"optimized_yolo_decode_mul_square_anchor_chains": 0}
+
+    model_outputs = {str(name) for name in model_ir.outputs}
+    rewritten = 0
+
+    def _unique_tensor_name(base: str) -> str:
+        candidate = str(base)
+        suffix = 1
+        while candidate in model_ir.tensors:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        return candidate
+
+    def _consumed_only_by(tensor_name: str, operator_index: int) -> bool:
+        consumers = active_index.consumer_indices(tensor_name)
+        return bool(consumers) and {
+            int(value) for value in consumers
+        } == {int(operator_index)}
+
+    while True:
+        changed = False
+        for scale_index in active_index.operator_indices("MUL"):
+            scale_multiply = model_ir.operators[int(scale_index)]
+            if len(scale_multiply.inputs) != 2 or len(scale_multiply.outputs) != 1:
+                continue
+
+            scale_input0 = str(scale_multiply.inputs[0])
+            scale_input1 = str(scale_multiply.inputs[1])
+            scale_tensor0 = model_ir.tensors.get(scale_input0)
+            scale_tensor1 = model_ir.tensors.get(scale_input1)
+            if scale_tensor0 is not None and scale_tensor0.data is not None:
+                scale_constant_name = scale_input0
+                anchor_output = scale_input1
+            elif scale_tensor1 is not None and scale_tensor1.data is not None:
+                scale_constant_name = scale_input1
+                anchor_output = scale_input0
+            else:
+                continue
+            if anchor_output in model_outputs:
+                continue
+            if not _consumed_only_by(anchor_output, int(scale_index)):
+                continue
+
+            anchor_multiply = active_index.producer(anchor_output)
+            anchor_index = (
+                active_index.operator_index(anchor_multiply)
+                if anchor_multiply is not None
+                else None
+            )
+            if (
+                anchor_multiply is None
+                or anchor_index is None
+                or str(anchor_multiply.op_type) != "MUL"
+                or len(anchor_multiply.inputs) != 2
+                or len(anchor_multiply.outputs) != 1
+                or str(anchor_multiply.outputs[0]) != anchor_output
+            ):
+                continue
+
+            anchor_input0 = str(anchor_multiply.inputs[0])
+            anchor_input1 = str(anchor_multiply.inputs[1])
+            anchor_tensor0 = model_ir.tensors.get(anchor_input0)
+            anchor_tensor1 = model_ir.tensors.get(anchor_input1)
+            if anchor_tensor0 is not None and anchor_tensor0.data is not None:
+                anchor_constant_name = anchor_input0
+                square_output = anchor_input1
+                anchor_constant_position = 0
+            elif anchor_tensor1 is not None and anchor_tensor1.data is not None:
+                anchor_constant_name = anchor_input1
+                square_output = anchor_input0
+                anchor_constant_position = 1
+            else:
+                continue
+            if square_output in model_outputs:
+                continue
+            if not _consumed_only_by(square_output, int(anchor_index)):
+                continue
+
+            square_multiply = active_index.producer(square_output)
+            square_index = (
+                active_index.operator_index(square_multiply)
+                if square_multiply is not None
+                else None
+            )
+            if (
+                square_multiply is None
+                or square_index is None
+                or str(square_multiply.op_type) != "MUL"
+                or len(square_multiply.inputs) != 2
+                or len(square_multiply.outputs) != 1
+                or str(square_multiply.outputs[0]) != square_output
+                or str(square_multiply.inputs[0])
+                != str(square_multiply.inputs[1])
+            ):
+                continue
+
+            scaled_source = str(square_multiply.inputs[0])
+            if scaled_source in model_outputs:
+                continue
+            if not _consumed_only_by(scaled_source, int(square_index)):
+                continue
+            pre_multiply = active_index.producer(scaled_source)
+            pre_index = (
+                active_index.operator_index(pre_multiply)
+                if pre_multiply is not None
+                else None
+            )
+            if (
+                pre_multiply is None
+                or pre_index is None
+                or str(pre_multiply.op_type) != "MUL"
+                or len(pre_multiply.inputs) != 2
+                or len(pre_multiply.outputs) != 1
+                or str(pre_multiply.outputs[0]) != scaled_source
+            ):
+                continue
+
+            pre_input0 = str(pre_multiply.inputs[0])
+            pre_input1 = str(pre_multiply.inputs[1])
+            if _is_singleton_constant_tensor(model_ir, pre_input0):
+                pre_constant_name = pre_input0
+                source_name = pre_input1
+            elif _is_singleton_constant_tensor(model_ir, pre_input1):
+                pre_constant_name = pre_input1
+                source_name = pre_input0
+            else:
+                continue
+            pre_scale = _read_singleton_constant_float(
+                model_ir,
+                pre_constant_name,
+            )
+            if pre_scale is None or not np.isfinite(pre_scale):
+                continue
+
+            anchor_tensor = model_ir.tensors.get(anchor_constant_name)
+            scale_tensor = model_ir.tensors.get(scale_constant_name)
+            if (
+                anchor_tensor is None
+                or anchor_tensor.data is None
+                or scale_tensor is None
+                or scale_tensor.data is None
+            ):
+                continue
+            anchor_data = np.asarray(anchor_tensor.data)
+            scale_data = np.asarray(scale_tensor.data)
+            if not np.issubdtype(anchor_data.dtype, np.floating):
+                continue
+            if not np.issubdtype(scale_data.dtype, np.floating):
+                continue
+            try:
+                fused_data = (
+                    anchor_data.astype(np.float32, copy=False)
+                    * float(pre_scale)
+                    * float(pre_scale)
+                    * scale_data.astype(np.float32, copy=False)
+                )
+            except Exception:
+                continue
+            if not np.all(np.isfinite(fused_data)):
+                continue
+            fused_data = fused_data.astype(anchor_data.dtype, copy=False)
+
+            # All topology and numeric guards are complete before adding the
+            # fused constant or changing an edge.
+            fused_name = _unique_tensor_name(
+                f"{anchor_constant_name}_mulsq_fused"
+            )
+            fused_shape, fused_signature = normalize_onnx_shape(
+                list(fused_data.shape)
+            )
+            model_ir.tensors[fused_name] = TensorIR(
+                name=fused_name,
+                dtype=tflite_dtype_from_numpy(fused_data.dtype),
+                shape=[int(value) for value in fused_shape],
+                shape_signature=[int(value) for value in fused_signature],
+                data=fused_data,
+                is_variable=False,
+                quantization=_clone_quantization(anchor_tensor.quantization),
+            )
+            if layout_state is not None:
+                layout_state.set(
+                    fused_name,
+                    logical=model_ir.tensors[fused_name].logical_layout,
+                    physical=model_ir.tensors[fused_name].physical_layout,
+                )
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=square_multiply,
+                new_inputs=[source_name, source_name],
+                graph_index=active_index,
+            )
+            anchor_inputs = [str(name) for name in anchor_multiply.inputs]
+            anchor_inputs[int(anchor_constant_position)] = fused_name
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=anchor_multiply,
+                new_inputs=anchor_inputs,
+                graph_index=active_index,
+            )
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=anchor_multiply,
+                new_outputs=[str(scale_multiply.outputs[0])],
+                graph_index=active_index,
+            )
+            current_scale_index = active_index.operator_index(scale_multiply)
+            current_pre_index = active_index.operator_index(pre_multiply)
+            if current_scale_index is None or current_pre_index is None:
+                raise RuntimeError("MUL-square fold operator disappeared")
+            active_index.remove_operators(
+                [int(current_scale_index), int(current_pre_index)]
+            )
+            rewritten += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    if rewritten > 0:
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+    return {
+        "optimized_yolo_decode_mul_square_anchor_chains": int(rewritten),
+    }
 
 
 def _append_tensor_lineage_event(*, model_ir: ModelIR, event: Dict[str, Any]) -> None:

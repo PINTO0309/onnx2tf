@@ -4193,6 +4193,27 @@ without the complete required operator family allocates no index. Exact former
 AST comparison confirms complete ModelIR and stats equality for one and two
 matches, including both alpha input orders.
 
+The former YOLO-named MUL-square fold now has a model-neutral semantic owner,
+`_optimize_mul_square_anchor_constant_chains`, in
+`passes/constant_fold.py`. It matches only
+`MUL(x,c)->MUL(a,a)->MUL(anchor)->MUL(scale)` with an exact self-square,
+singleton finite pre-scale, floating anchor and scale buffers, finite fused
+values, and exclusive consumption of all three intermediates. Constant inputs
+retain either-side acceptance at each commutative MUL, while unrelated MUL
+chains remain ineligible. The legacy lowerer function and stats key remain as
+compatibility adapters only.
+
+One optional or local graph index supplies graph-order MUL candidates,
+producer traversal, duplicate-aware square consumption, differential input and
+output rewrites, and batch removal of the first and final MUL. The fused buffer
+retains anchor dtype, normalized shape/signature, cloned quantization metadata,
+and optional LayoutState registration; the retained square and anchor MULs keep
+their graph positions and the anchor assumes the public final output identity.
+All topology and finite-value checks complete before mutation. Public `a`,
+square, or anchor intermediates are now protected transactionally—a deliberate
+fix for the former rule, which could remove producers of graph outputs. Valid
+one- and two-match fixtures retain complete former ModelIR and statistics.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

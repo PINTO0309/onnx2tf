@@ -4488,6 +4488,56 @@ def test_constant_input_fold_rewrites_have_single_owner() -> None:
     assert function_names.isdisjoint(_functions(lowering_path))
 
 
+def test_mul_square_constant_fold_has_generic_indexed_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "constant_fold.py"
+    )
+
+    def _functions(path: Path) -> dict[str, ast.FunctionDef]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+        }
+
+    lowering_functions = _functions(lowering_path)
+    pass_functions = _functions(pass_path)
+    owner_name = "_optimize_mul_square_anchor_constant_chains"
+    wrapper_name = "_optimize_yolo_decode_mul_square_anchor_chains"
+    assert owner_name in pass_functions
+    assert "yolo" not in owner_name
+    wrapper_names = {
+        node.id
+        for node in ast.walk(lowering_functions[wrapper_name])
+        if isinstance(node, ast.Name)
+    }
+    assert f"{wrapper_name}_pass" in wrapper_names
+
+    owner_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(pass_functions[owner_name])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in owner_calls
+    assert "_build_tensor_producer_map" not in owner_calls
+    assert "ModelIRGraphIndex" in owner_calls
+    assert "operator_indices" in owner_calls
+    assert "producer" in owner_calls
+    assert "consumer_indices" in owner_calls
+    assert "_set_operator_inputs" in owner_calls
+    assert "_set_operator_outputs" in owner_calls
+    assert "remove_operators" in owner_calls
+
+
 def test_precision_rewrites_use_differential_graph_index() -> None:
     precision_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "precision.py"
