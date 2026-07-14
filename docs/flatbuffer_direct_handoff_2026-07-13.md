@@ -649,6 +649,18 @@ seven-run synthetic 2,000-op/six-artifact lifetime benchmark reduced traced
 peak memory from 21.21 MiB to 3.72 MiB (82.4%) when applying the new sequential
 release boundary. No model conversion or inference was run.
 
+Precision and quantization cloning now share the `OperatorIR`/`TensorIR`
+element-copy contract in `ir.py`. The helpers centrally preserve shape
+signatures, constant-buffer independence, variable state, both quantization
+representations, logical/physical layout, axis semantics, versions, and ONNX
+provenance. Float16/float32 wrappers keep layout normalization, metadata, and
+recursive subgraphs; the quantization root clone intentionally keeps its
+characterized raw-layout and empty metadata/subgraph behavior. Four focused
+contract tests plus quantization and precision selections pass 65 tests. A
+fixed-seed 100-graph differential check executed all three pre-checkpoint
+functions from Git and matched every new normalized ModelIR fingerprint and
+metadata payload exactly. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

@@ -1521,6 +1521,15 @@ assembly. This prevents otherwise sequential float32, float16, dynamic-range,
 integer, full-integer, and INT16-activation graphs from accumulating in one
 function frame.
 
+`ir.py` is the single owner of `OperatorIR` and `TensorIR` element cloning.
+The shared helpers copy every structural, axis-semantic, variable,
+quantization, layout, and ONNX-provenance field plus NumPy constant buffers.
+Precision wrappers retain their established normalized-layout and recursive
+subgraph/metadata behavior; the quantization root clone deliberately retains
+its legacy raw-layout, root-only, empty-metadata behavior. Quantization chooses
+that policy but no longer duplicates the complete field list, so adding ModelIR
+provenance cannot silently diverge across precision and quantized artifacts.
+
 Late precision conversion in `passes/precision.py` is differential as well.
 Constant floating DIV roots are captured from one operator-type index and each
 eligible DIV is replaced in graph order by an optional Cast, reciprocal Mul,

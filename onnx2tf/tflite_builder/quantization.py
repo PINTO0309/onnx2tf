@@ -6,7 +6,14 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, TypedDict
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
-from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
+from onnx2tf.tflite_builder.ir import (
+    ModelIR,
+    OperatorIR,
+    QuantParamIR,
+    TensorIR,
+    clone_operator_ir,
+    clone_tensor_ir,
+)
 
 
 class StrictFullIntegerQuantizationError(RuntimeError):
@@ -165,48 +172,15 @@ def _clone_model_ir(model_ir: ModelIR) -> ModelIR:
     clone.inputs = list(model_ir.inputs)
     clone.outputs = list(model_ir.outputs)
     clone.operators = [
-        OperatorIR(
-            op_type=op.op_type,
-            inputs=list(op.inputs),
-            outputs=list(op.outputs),
-            options=dict(op.options),
-            axis_semantics=dict(op.axis_semantics),
-            version=op.version,
-            onnx_node_name=op.onnx_node_name,
-            onnx_op_type=op.onnx_op_type,
-        )
+        clone_operator_ir(op, options=dict(op.options))
         for op in model_ir.operators
     ]
     for name, tensor in model_ir.tensors.items():
-        clone.tensors[name] = TensorIR(
-            name=tensor.name,
+        clone.tensors[name] = clone_tensor_ir(
+            tensor,
             dtype=tensor.dtype,
-            shape=list(tensor.shape),
-            shape_signature=list(tensor.shape_signature)
-            if tensor.shape_signature is not None
-            else None,
-            data=tensor.data.copy() if isinstance(tensor.data, np.ndarray) else tensor.data,
-            is_variable=tensor.is_variable,
-            quantization=(
-                dict(tensor.quantization)
-                if isinstance(tensor.quantization, dict)
-                else QuantParamIR(
-                    scale=list(tensor.quantization.scale),
-                    zero_point=list(tensor.quantization.zero_point),
-                    quantized_dimension=int(tensor.quantization.quantized_dimension),
-                    min=list(tensor.quantization.min)
-                    if tensor.quantization.min is not None
-                    else None,
-                    max=list(tensor.quantization.max)
-                    if tensor.quantization.max is not None
-                    else None,
-                )
-                if isinstance(tensor.quantization, QuantParamIR)
-                else tensor.quantization
-            ),
-            logical_layout=tensor.logical_layout,
-            physical_layout=tensor.physical_layout,
-            onnx_tensor_name=tensor.onnx_tensor_name,
+            data=tensor.data,
+            normalize_layouts=False,
         )
     return clone
 
