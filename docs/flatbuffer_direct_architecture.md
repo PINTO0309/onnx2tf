@@ -1530,6 +1530,15 @@ its legacy raw-layout, root-only, empty-metadata behavior. Quantization chooses
 that policy but no longer duplicates the complete field list, so adding ModelIR
 provenance cannot silently diverge across precision and quantized artifacts.
 
+Strict-integer report construction is request-scoped. A small internal
+reporter owns the existing `tensor_ranges`, `quantized_tensors`, and
+`quantized_ops` schema and serializes qparams only when the public builder was
+called with `return_report=True`. The two orchestrator variants that feed the
+calibration JSON keep full reports; default public model-only calls and both
+INT16-activation variants perform no report-range or qparam serialization.
+Quantization mutation never depends on report state, and the private builder's
+default still collects a report for compatibility with direct internal callers.
+
 Late precision conversion in `passes/precision.py` is differential as well.
 Constant floating DIV roots are captured from one operator-type index and each
 eligible DIV is replaced in graph order by an optional Cast, reciprocal Mul,

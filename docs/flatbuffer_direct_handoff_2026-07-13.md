@@ -661,6 +661,18 @@ fixed-seed 100-graph differential check executed all three pre-checkpoint
 functions from Git and matched every new normalized ModelIR fingerprint and
 metadata payload exactly. No model conversion or inference was run.
 
+Strict-integer report payload generation is now owned by
+`_StrictQuantizationReporter` and follows `return_report`. The two reported
+INT8 variants retain the exact calibration JSON schema and insertion order;
+model-only public calls and both INT16-activation variants skip tensor-range,
+qparam, and operator report serialization entirely. Two gating/equivalence
+tests plus the strict quantization suites pass 49 tests. An in-memory execution
+of the pre-checkpoint module matched ModelIR fingerprints and requested report
+payloads exactly for float/full IO crossed with INT8/INT16. On a synthetic
+2,000-op INT16 full-integer graph, seven-run median build time changed from
+0.171745s to 0.142100s (1.21x), and traced peak memory from 5.42 MiB to
+2.85 MiB (47.5%). No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

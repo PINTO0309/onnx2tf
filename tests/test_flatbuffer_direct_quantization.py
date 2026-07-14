@@ -3,12 +3,16 @@ from __future__ import annotations
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
+from onnx2tf.tflite_builder import quantization
 from onnx2tf.tflite_builder.quantization import (
     _elide_identity_operators,
     TensorCalibrationRange,
     build_dynamic_range_quantized_model_ir,
     build_integer_quantized_model_ir,
+    build_full_integer_quantized_with_int16_act_model_ir,
+    build_integer_quantized_with_int16_act_model_ir,
 )
 
 
@@ -149,3 +153,107 @@ def test_strict_integer_float_io_inserts_indexed_boundary_ops(monkeypatch) -> No
     assert quantized.outputs == quantized.operators[2].outputs
     assert model_ir.operators[0].inputs == ["x", "constant"]
     assert model_ir.operators[0].outputs == ["y"]
+
+
+def _strict_integer_add_fixture() -> tuple[
+    ModelIR,
+    dict[str, TensorCalibrationRange],
+]:
+    model_ir = ModelIR("strict_integer_report")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1, 4], [1, 4]),
+        "constant": TensorIR(
+            "constant",
+            "FLOAT32",
+            [4],
+            [4],
+            data=np.asarray([0.25, -0.5, 1.0, -2.0], dtype=np.float32),
+        ),
+        "y": TensorIR("y", "FLOAT32", [1, 4], [1, 4]),
+    }
+    model_ir.operators = [OperatorIR("ADD", ["x", "constant"], ["y"])]
+    return model_ir, {
+        "x": TensorCalibrationRange(-1.0, 1.0, 1),
+        "y": TensorCalibrationRange(-2.0, 2.0, 1),
+    }
+
+
+def test_strict_integer_report_payload_is_built_only_when_requested(
+    monkeypatch,
+) -> None:
+    model_ir, calibration_ranges = _strict_integer_add_fixture()
+    calls = {"qparams": 0, "ranges": 0}
+    original_qparams = quantization._quant_param_to_report
+    original_range = quantization._tensor_range_to_report
+
+    def counted_qparams(value):
+        calls["qparams"] += 1
+        return original_qparams(value)
+
+    def counted_range(value):
+        calls["ranges"] += 1
+        return original_range(value)
+
+    monkeypatch.setattr(quantization, "_quant_param_to_report", counted_qparams)
+    monkeypatch.setattr(quantization, "_tensor_range_to_report", counted_range)
+
+    without_report = build_integer_quantized_model_ir(
+        model_ir,
+        quant_type="per-tensor",
+        calibration_ranges=calibration_ranges,
+    )
+    assert calls == {"qparams": 0, "ranges": 0}
+
+    with_report = build_integer_quantized_model_ir(
+        model_ir,
+        quant_type="per-tensor",
+        calibration_ranges=calibration_ranges,
+        return_report=True,
+    )
+    assert calls["qparams"] > 0
+    assert calls["ranges"] == len(calibration_ranges)
+    assert with_report.report["mode"] == "integer_float_io"
+    assert set(with_report.report) == {
+        "mode",
+        "strict",
+        "supported_ops",
+        "tensor_ranges",
+        "quantized_tensors",
+        "quantized_ops",
+        "failures",
+    }
+    assert (
+        ModelIRPassState(without_report).fingerprint()
+        == ModelIRPassState(with_report.model_ir).fingerprint()
+    )
+
+
+def test_int16_variants_skip_discarded_report_serialization(monkeypatch) -> None:
+    model_ir, calibration_ranges = _strict_integer_add_fixture()
+    calls = {"qparams": 0, "ranges": 0}
+
+    def count_qparams(value):
+        calls["qparams"] += 1
+        return value
+
+    def count_range(value):
+        calls["ranges"] += 1
+        return value
+
+    monkeypatch.setattr(quantization, "_quant_param_to_report", count_qparams)
+    monkeypatch.setattr(quantization, "_tensor_range_to_report", count_range)
+
+    build_integer_quantized_with_int16_act_model_ir(
+        model_ir,
+        quant_type="per-tensor",
+        calibration_ranges=calibration_ranges,
+    )
+    build_full_integer_quantized_with_int16_act_model_ir(
+        model_ir,
+        quant_type="per-tensor",
+        calibration_ranges=calibration_ranges,
+    )
+
+    assert calls == {"qparams": 0, "ranges": 0}
