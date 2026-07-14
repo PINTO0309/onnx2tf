@@ -266,6 +266,10 @@ from onnx2tf.tflite_builder.passes.dynamic_reshape import (
 from onnx2tf.tflite_builder.passes.gather_reshape_cleanup import (
     _optimize_gather_axis0_singleton_to_reshape_input_chains as _optimize_gather_axis0_singleton_to_reshape_input_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.terminal_softmax_layout import (
+    _SOFTMAX_NHWC_PROPAGATED_MARKER,
+    _optimize_terminal_softmax_transpose_after_nhwc_propagation as _optimize_terminal_softmax_transpose_after_nhwc_propagation_pass,
+)
 from onnx2tf.tflite_builder.passes.split_fallback import (
     replace_unsupported_split_with_slice as _replace_unsupported_split_with_slice_pass,
 )
@@ -43898,7 +43902,7 @@ def _canonicalize_softmax_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
     Then T0/T1 become inverse pairs and are removed by `_optimize_layout_transpose_chains`.
     """
     rewritten = 0
-    softmax_nhwc_propagated_marker = "__softmax_nhwc_propagated__"
+    softmax_nhwc_propagated_marker = _SOFTMAX_NHWC_PROPAGATED_MARKER
     rank4_perm_nhwc_to_nchw = [0, 3, 1, 2]
     rank4_perm_nchw_to_nhwc = [0, 2, 3, 1]
     rank4_perm_nchw_to_nwhc = [0, 3, 2, 1]
@@ -44079,103 +44083,13 @@ def _canonicalize_softmax_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
 
 def _optimize_terminal_softmax_transpose_after_nhwc_propagation(
     model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    """
-    Remove terminal SOFTMAX->TRANSPOSE(NHWC->NCHW) when SOFTMAX already carries
-    NHWC-propagated semantics from `_canonicalize_softmax_transpose_chains`.
-
-    Target:
-      ... -> SOFTMAX(s) -> TRANSPOSE(0,3,1,2) -> y(graph output)
-
-    Rewrite:
-      ... -> SOFTMAX(y)
-
-    Safety:
-    - y must be a graph output with no internal consumers.
-    - SOFTMAX output is consumed only by that terminal TRANSPOSE.
-    - SOFTMAX is marked as NHWC-propagated by canonicalize pass.
-    """
-    rewritten = 0
-    rank4_perm_nhwc_to_nchw = [0, 3, 1, 2]
-    softmax_nhwc_propagated_marker = "__softmax_nhwc_propagated__"
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-
-        for output_name in list(model_ir.outputs):
-            output_name = str(output_name)
-            if len(consumers.get(output_name, [])) != 0:
-                continue
-
-            post_idx = producers.get(output_name, None)
-            if post_idx is None:
-                continue
-            post_op = model_ir.operators[int(post_idx)]
-            if (
-                str(post_op.op_type) != "TRANSPOSE"
-                or len(post_op.inputs) < 2
-                or len(post_op.outputs) != 1
-                or str(post_op.outputs[0]) != output_name
-            ):
-                continue
-            if _read_transpose_perm(model_ir, post_op) != rank4_perm_nhwc_to_nchw:
-                continue
-
-            softmax_out_name = str(post_op.inputs[0])
-            softmax_idx = producers.get(softmax_out_name, None)
-            if softmax_idx is None:
-                continue
-            softmax_op = model_ir.operators[int(softmax_idx)]
-            if (
-                str(softmax_op.op_type) != "SOFTMAX"
-                or len(softmax_op.inputs) != 1
-                or len(softmax_op.outputs) != 1
-                or str(softmax_op.outputs[0]) != softmax_out_name
-            ):
-                continue
-            softmax_users = [int(v) for v in consumers.get(softmax_out_name, [])]
-            if softmax_users != [int(post_idx)]:
-                continue
-
-            softmax_opts = (
-                dict(softmax_op.options)
-                if isinstance(softmax_op.options, dict)
-                else {}
-            )
-            if not bool(softmax_opts.get(softmax_nhwc_propagated_marker, False)):
-                continue
-            softmax_opts.pop(softmax_nhwc_propagated_marker, None)
-            softmax_op.options = softmax_opts
-
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=softmax_op,
-                new_outputs=[output_name],
-            )
-            src_tensor = model_ir.tensors.get(softmax_out_name, None)
-            dst_tensor = model_ir.tensors.get(output_name, None)
-            if src_tensor is not None and dst_tensor is not None:
-                dst_tensor.dtype = str(src_tensor.dtype)
-                dst_tensor.quantization = _clone_quantization(src_tensor.quantization)
-                dst_tensor.shape = [int(v) for v in list(src_tensor.shape)]
-                dst_tensor.shape_signature = (
-                    [int(v) for v in list(src_tensor.shape_signature)]
-                    if src_tensor.shape_signature is not None
-                    else [int(v) for v in list(src_tensor.shape)]
-                )
-
-            del model_ir.operators[int(post_idx)]
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"removed_terminal_softmax_transpose_after_nhwc_propagation": int(rewritten)}
+    return _optimize_terminal_softmax_transpose_after_nhwc_propagation_pass(
+        model_ir,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_transpose_pre_argmax_nhwc_terminal_chains(
@@ -48154,7 +48068,10 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _optimize_terminal_softmax_transpose_after_nhwc_propagation(model_ir)
+    _optimize_terminal_softmax_transpose_after_nhwc_propagation(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     run_boundary_input_normalization_cleanup(
         model_ir,
         layout_state=session.layout_state,

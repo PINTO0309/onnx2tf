@@ -4583,6 +4583,62 @@ def test_gather_reshape_cleanup_has_indexed_semantic_owner() -> None:
     assert "_prune_unused_tensors" in owner_calls
 
 
+def test_terminal_softmax_layout_has_indexed_semantic_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "terminal_softmax_layout.py"
+    )
+    function_name = (
+        "_optimize_terminal_softmax_transpose_after_nhwc_propagation"
+    )
+
+    def _functions(path: Path) -> dict[str, ast.FunctionDef]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+        }
+
+    lowerer_function = _functions(lowering_path)[function_name]
+    owner_function = _functions(pass_path)[function_name]
+    lowerer_names = {
+        node.id for node in ast.walk(lowerer_function) if isinstance(node, ast.Name)
+    }
+    assert f"{function_name}_pass" in lowerer_names
+
+    owner_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in owner_calls
+    assert "_build_tensor_producer_map" not in owner_calls
+    assert "ModelIRGraphIndex" in owner_calls
+    assert "operator_indices" in owner_calls
+    assert "consumer_indices" in owner_calls
+    assert "_set_operator_outputs" in owner_calls
+    assert "remove_operator" in owner_calls
+    assert "_prune_unused_tensors" in owner_calls
+    assert (
+        "__softmax_nhwc_propagated__"
+        not in lowering_path.read_text(encoding="utf-8")
+    )
+    assert (
+        pass_path.read_text(encoding="utf-8").count(
+            "__softmax_nhwc_propagated__"
+        )
+        == 1
+    )
+
+
 def test_precision_rewrites_use_differential_graph_index() -> None:
     precision_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "precision.py"

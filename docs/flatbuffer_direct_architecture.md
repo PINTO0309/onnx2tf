@@ -4240,6 +4240,32 @@ Exact former-function AST comparison confirms complete ModelIR, lineage, and
 statistics equality for valid independent one- and two-match fixtures and the
 nested fixed point.
 
+Marker-gated terminal Softmax/Transpose cleanup is owned by
+`passes/terminal_softmax_layout.py`. The preceding canonicalizer imports the
+same `_SOFTMAX_NHWC_PROPAGATED_MARKER`, so propagation and consumption no
+longer duplicate a private string contract. One optional or local
+`ModelIRGraphIndex` follows deterministic public-output order, rejects any
+internally consumed terminal output, proves unique Transpose and Softmax
+producers, and checks the private Softmax intermediate's exact consumer. The
+lineage-aware indexed output setter moves public producer identity to Softmax;
+the terminal Transpose is then removed differentially. Multiple public outputs
+reuse the same index, and graphs missing either required family retain
+historical tensor and optional LayoutState pruning without index construction.
+
+All marker, permutation, arity, producer, consumer, public-input/output, and
+operator-order guards complete before mutation. A terminal output cannot also
+be a graph input. Rank-four source
+shape/signature and a destination tensor are also required, and source
+quantization is cloned before commit. The existing public tensor object and
+its provenance remain stable while dtype, quantization, shape, and signature
+take the retained Softmax output metadata; every other Softmax option,
+including axis and beta, remains unchanged when the marker is removed. This
+deliberately fixes two former invalid-IR paths: rewriting when the private
+Softmax output is also public, and deleting the adapter when its source tensor
+metadata is absent. Exact former-function AST comparison confirms complete
+ModelIR, lineage, and statistics equality for valid one- and two-output
+fixtures.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

@@ -8,16 +8,17 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit gives the leading-singleton Gather-to-Reshape
-canonicalization one semantic owner in `passes/gather_reshape_cleanup.py`.
-One maintained `ModelIRGraphIndex` supplies graph-order Gather candidates,
-exclusive Reshape consumers, indexed input replacement, and differential
-Gather removal. Exact axis-zero, one-zero constant buffer, data-input position,
-shape/signature, dtype/quantization, public-boundary, output-identity,
-statistics, lineage, and pruning contracts retain valid former behavior.
-Multiple indices, a dynamic leading signature, inconsistent metadata,
-duplicate producers, and nonzero batch dimensions are newly protected as
-complete no-ops.
+The latest implementation unit gives marked terminal Softmax-to-Transpose
+cleanup one semantic owner in `passes/terminal_softmax_layout.py`. One
+maintained `ModelIRGraphIndex` supplies public-output order, terminal consumer
+checks, unique producer traversal, indexed Softmax output replacement, and
+differential Transpose removal. The canonicalizer and terminal owner now share
+one marker constant. Softmax axis/options, public output identity, copied
+dtype/quantization/shape/signature, lineage, statistics, and pruning retain
+valid former behavior. A public-input/output Softmax intermediate, a terminal
+output that is also an input, duplicate producers, reverse operator order,
+missing tensors, and malformed rank metadata are newly protected as complete
+no-ops.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -39,7 +40,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains seventy-five coherent continuations:
+The current `fb-refactor5` work contains seventy-six coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -200,9 +201,11 @@ The current `fb-refactor5` work contains seventy-five coherent continuations:
   owner with batch producer compaction;
 - `9a513d4c` moves the former YOLO MUL-square fold to a generic indexed
   constant-fold owner and protects public intermediates;
-- the current checkpoint moves leading-singleton Gather-to-Reshape cleanup to
-  one indexed shape/indexing owner and makes every unsafe metadata or topology
-  case transactional.
+- `616a6a6b` moves leading-singleton Gather-to-Reshape cleanup to one indexed
+  shape/indexing owner and makes every unsafe metadata or topology case
+  transactional;
+- the current checkpoint moves marker-gated terminal Softmax/Transpose cleanup
+  to one indexed terminal-layout owner and centralizes the propagation marker.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -221,8 +224,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/gather_reshape_cleanup.py`;
-- `tests/test_flatbuffer_direct_indexed_gather_reshape_cleanup.py`;
+- `onnx2tf/tflite_builder/passes/terminal_softmax_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_terminal_softmax_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -597,6 +600,22 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   Gather is removed. Missing Gather/Reshape families still receive historical
   unused-tensor pruning without allocating an index, and the active
   `LayoutState` receives the same pruning at both production call sites.
+- Terminal Softmax/Transpose cleanup consumes only the shared
+  `_SOFTMAX_NHWC_PROPAGATED_MARKER` produced by the preceding canonicalizer;
+  the string literal no longer has two owners. Public outputs remain the
+  deterministic candidate order. The maintained index requires the output to
+  have no internal consumer and one Transpose producer, the private Softmax
+  intermediate to have one Softmax producer and exactly that Transpose
+  consumer, and Softmax to precede Transpose. Duplicate producers and a
+  Softmax intermediate exposed at either public boundary are rejected; a
+  terminal output cannot also be an input. Rank-four source
+  shape/signature, destination existence, and cloned quantization are planned
+  before mutation. Commit removes only the marker, uses the lineage-aware
+  indexed output setter, copies the former source metadata onto the existing
+  public tensor object, and removes the Transpose differentially. Missing
+  Softmax/Transpose families retain historical pruning without index
+  construction, including optional `LayoutState` pruning at the production
+  call site.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -1738,6 +1757,25 @@ TensorFlow-import-blocked direct and `-cotof` plus the
 sequential quantization/evaluation/coverage smoke passed with `3 passed`. No
 Tier corpus conversion was run.
 
+The indexed terminal Softmax/Transpose checkpoint compiles the complete prior
+committed function AST and preserves exact valid ModelIR, lineage metadata,
+and statistics for one and two simultaneous terminal outputs. Separate
+differential checks prove that a separately public Softmax intermediate and a
+missing Softmax-output tensor, both formerly rewritten, are now complete
+no-ops. Focused coverage verifies one-index multi-output execution,
+maintained-index and LayoutState equivalence, marker removal with axis/options
+preservation, public output identity, all public input/output boundaries,
+dtype/shape/signature propagation, quantization cloning, terminal and Softmax
+fan-out, duplicate producers, operator order, marker truth, exact permutation,
+operator arity/type, missing permutation and runtime buffer, missing tensors,
+rank/signature validation, non-output exclusion, missing-family/no-index
+pruning, shared marker ownership, and unique semantic ownership with
+`30 passed`. Architecture, core, pass-efficiency, terminal Mean layout, layout
+Transpose, and indexed terminal
+Softmax coverage passed with `255 passed`. TensorFlow-import-blocked direct and
+`-cotof` plus the sequential quantization/evaluation/coverage smoke passed with
+`3 passed`. No Tier corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1787,11 +1825,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit `_optimize_terminal_softmax_transpose_after_nhwc_propagation` as the
-   next bounded terminal layout cleanup. Preserve exact Softmax axis,
-   permutation, public-output, fan-out, shape/signature, output identity,
-   statistics, and pruning behavior while replacing its repeated producer and
-   consumer maps with one maintained index.
+3. Audit `_optimize_transpose_pre_argmax_nhwc_terminal_chains` as the next
+   bounded terminal indexing/layout cleanup. Preserve its exact axis constant,
+   negative-axis normalization, rank-four permutation, public/fan-out,
+   shape/signature, output identity, statistics, and pruning contracts while
+   replacing its repeated consumer-map construction with one maintained index.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
