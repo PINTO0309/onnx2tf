@@ -774,6 +774,16 @@ tests; instrumentation proves one source index across planning and writing.
 An 11-run synthetic 2,000-op validation+planning median changed from 0.120197s
 to 0.118535s (1.01x). No model conversion or inference was run.
 
+Split thresholds and quantization calibration controls now have one
+TensorFlow- and Torch-free owner in `artifact_preparation.py`. Resolution is
+guarded by the normalized artifact plan: default direct conversion reads no
+split or quantization option/environment value, while requested artifacts keep
+the previous defaults and numeric conversions. The quantization mapping is
+immutable, and the central exporter no longer owns a duplicate resolver or
+environment-key list. Focused artifact/core/architecture validation passes
+126 tests, including rejecting option access on the unrequested path. No model
+conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

@@ -8,6 +8,7 @@ import pytest
 
 from onnx2tf.tflite_builder.artifact_preparation import (
     isolate_float32_model_ir_for_tflite_write,
+    resolve_requested_artifact_controls,
 )
 from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
 from onnx2tf.tflite_builder.ir import (
@@ -71,6 +72,76 @@ def _make_model_ir() -> ModelIR:
     )
     model_ir.subgraphs = [subgraph]
     return model_ir
+
+
+def test_unrequested_artifact_controls_do_not_read_related_options(
+    monkeypatch,
+) -> None:
+    class _RejectingOptions(dict):
+        def get(self, key, default=None):
+            raise AssertionError(f"unrequested option was read: {key}")
+
+    monkeypatch.setenv(
+        "ONNX2TF_FLATBUFFER_DIRECT_SPLIT_MAX_BYTES",
+        "invalid-unrequested-value",
+    )
+    monkeypatch.setenv(
+        "ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE",
+        "invalid-unrequested-value",
+    )
+
+    controls = resolve_requested_artifact_controls(
+        _RejectingOptions(),
+        split_plan_requested=False,
+        quantization_requested=False,
+        default_split_max_bytes=1024,
+        default_split_target_bytes=768,
+    )
+
+    assert controls.split_max_bytes is None
+    assert controls.split_target_bytes is None
+    assert controls.quantization is None
+
+
+def test_requested_artifact_controls_preserve_existing_option_values() -> None:
+    controls = resolve_requested_artifact_controls(
+        {
+            "tflite_split_max_bytes": "2048",
+            "tflite_split_target_bytes": 1536,
+            "flatbuffer_direct_calibration_method": "percentile",
+            "flatbuffer_direct_calibration_percentile": "98.5",
+            "flatbuffer_direct_quant_min_numel": "17",
+            "flatbuffer_direct_quant_min_abs_max": "0.25",
+            "flatbuffer_direct_quant_scale_floor": "1e-6",
+        },
+        split_plan_requested=True,
+        quantization_requested=True,
+        default_split_max_bytes=1024,
+        default_split_target_bytes=768,
+    )
+
+    assert controls.split_max_bytes == 2048
+    assert controls.split_target_bytes == 1536
+    assert dict(controls.quantization or {}) == {
+        "calibration_method": "percentile",
+        "calibration_percentile": 98.5,
+        "min_numel": 17,
+        "min_abs_max": 0.25,
+        "scale_floor": 1e-6,
+    }
+    with pytest.raises(TypeError):
+        controls.quantization["min_numel"] = 1  # type: ignore[index]
+
+
+def test_artifact_control_resolution_has_one_policy_owner() -> None:
+    builder_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py"
+    ).read_text(encoding="utf-8")
+
+    assert builder_source.count("resolve_requested_artifact_controls(") == 1
+    assert "def _resolve_quantization_controls" not in builder_source
+    assert "ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL" not in builder_source
+    assert "ONNX2TF_FLATBUFFER_DIRECT_SPLIT_MAX_BYTES" not in builder_source
 
 
 @pytest.mark.parametrize(

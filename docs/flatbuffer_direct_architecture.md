@@ -24,6 +24,12 @@ exporter. In particular, op-coverage report writing is invoked only when
 an unrequested report does not enter even the no-op wrapper. Export progress
 advances for SavedModel only inside the SavedModel request guard, so the runtime
 step count remains aligned with the request-derived label count.
+Split thresholds and quantization calibration controls are resolved by the
+TensorFlow- and Torch-free artifact policy only when the corresponding
+`ArtifactPlan` flag is set. An unrequested artifact does not read or parse its
+CLI values or environment variables, while requested values retain the legacy
+conversion and default semantics. The resolved quantization mapping is
+immutable and raw option dictionaries do not propagate into builders.
 
 A pass has a stable ID, phase, priority, maximum iteration count, and explicit
 `changed` result. Repeating passes must use a graph fingerprint so a cycle

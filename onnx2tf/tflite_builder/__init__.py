@@ -9,6 +9,7 @@ from onnx2tf.tflite_builder.artifact_metadata import (
 )
 from onnx2tf.tflite_builder.artifact_preparation import (
     isolate_float32_model_ir_for_tflite_write,
+    resolve_requested_artifact_controls,
 )
 from onnx2tf.tflite_builder.core.contracts import ConversionRequest, ConversionResult
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
@@ -200,36 +201,6 @@ def _reject_unsupported_quantization(**kwargs: Any) -> None:
     return
 
 
-def _resolve_quantization_controls(kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    calibration_method = kwargs.get(
-        "flatbuffer_direct_calibration_method",
-        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD", "max"),
-    )
-    calibration_percentile = kwargs.get(
-        "flatbuffer_direct_calibration_percentile",
-        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE", "99.99"),
-    )
-    quant_min_numel = kwargs.get(
-        "flatbuffer_direct_quant_min_numel",
-        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL", "1"),
-    )
-    quant_min_abs_max = kwargs.get(
-        "flatbuffer_direct_quant_min_abs_max",
-        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX", "0.0"),
-    )
-    quant_scale_floor = kwargs.get(
-        "flatbuffer_direct_quant_scale_floor",
-        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_QUANT_SCALE_FLOOR", "1e-8"),
-    )
-    return {
-        "calibration_method": str(calibration_method),
-        "calibration_percentile": float(calibration_percentile),
-        "min_numel": int(quant_min_numel),
-        "min_abs_max": float(quant_min_abs_max),
-        "scale_floor": float(quant_scale_floor),
-    }
-
-
 def _set_reduced_precision_support_metadata(
     *,
     model_ir: Any,
@@ -386,25 +357,28 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     else:
         v = str(custom_allowlist_raw).strip()
         flatbuffer_direct_custom_op_allowlist = [v] if v != "" else None
-    tflite_split_max_bytes = int(
-        kwargs.get(
-            "tflite_split_max_bytes",
-            os.environ.get(
-                "ONNX2TF_FLATBUFFER_DIRECT_SPLIT_MAX_BYTES",
-                str(DEFAULT_TFLITE_SPLIT_MAX_BYTES),
-            ),
-        )
+    artifact_execution_controls = resolve_requested_artifact_controls(
+        request.options,
+        split_plan_requested=split_plan_requested,
+        quantization_requested=(
+            output_dynamic_range_quantized_tflite
+            or output_integer_quantized_tflite
+        ),
+        default_split_max_bytes=DEFAULT_TFLITE_SPLIT_MAX_BYTES,
+        default_split_target_bytes=DEFAULT_TFLITE_SPLIT_TARGET_BYTES,
     )
-    tflite_split_target_bytes = int(
-        kwargs.get(
-            "tflite_split_target_bytes",
-            os.environ.get(
-                "ONNX2TF_FLATBUFFER_DIRECT_SPLIT_TARGET_BYTES",
-                str(DEFAULT_TFLITE_SPLIT_TARGET_BYTES),
-            ),
-        )
-    )
-    quant_controls = _resolve_quantization_controls(kwargs)
+    tflite_split_max_bytes = artifact_execution_controls.split_max_bytes
+    tflite_split_target_bytes = artifact_execution_controls.split_target_bytes
+    quant_controls = artifact_execution_controls.quantization
+    if split_plan_requested and (
+        tflite_split_max_bytes is None or tflite_split_target_bytes is None
+    ):
+        raise RuntimeError("split artifact controls were not resolved")
+    if (
+        output_dynamic_range_quantized_tflite
+        or output_integer_quantized_tflite
+    ) and quant_controls is None:
+        raise RuntimeError("quantization artifact controls were not resolved")
     flatbuffer_direct_show_progress = bool(
         kwargs.get("flatbuffer_direct_show_progress", True)
     )
