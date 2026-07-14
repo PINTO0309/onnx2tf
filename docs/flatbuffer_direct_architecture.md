@@ -79,6 +79,11 @@ Each occurrence now constructs at most one index instead of as many as eight.
 Later isolated calls remain standalone because the scope must not cross the
 legacy ModelIR mutators surrounding them.
 
+The late NDHWC-gate/cost-volume-scatter pair uses a separate two-runner scope.
+The preceding mixed-attention runner is intentionally excluded because a
+legacy dequantize/HardSigmoid/quantize mutator separates it from the pair. The
+scope ends before the following raw convolution-affine fold.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while

@@ -51161,15 +51161,21 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
+    late_ndhwc_cost_volume_state_scope = ModelIRPassStateScope(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     run_ndhwc_gate_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
+        state_scope=late_ndhwc_cost_volume_state_scope,
     )
     run_cost_volume_scatter_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
+        state_scope=late_ndhwc_cost_volume_state_scope,
     )
     _optimize_fold_conv_mul_add_affine_chains(
         model_ir,

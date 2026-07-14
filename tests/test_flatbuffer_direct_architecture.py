@@ -341,6 +341,61 @@ def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
     assert len(omitted_mixed_attention) == 1
 
 
+def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+
+    assignment_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "late_ndhwc_cost_volume_state_scope"
+    )
+    assignment = lowerer.body[assignment_index]
+    assert isinstance(assignment, ast.Assign)
+    assert isinstance(assignment.value, ast.Call)
+    assert isinstance(assignment.value.func, ast.Name)
+    assert assignment.value.func.id == "ModelIRPassStateScope"
+
+    def _statement_call(statement: ast.stmt) -> ast.Call:
+        assert isinstance(statement, ast.Expr)
+        assert isinstance(statement.value, ast.Call)
+        assert isinstance(statement.value.func, ast.Name)
+        return statement.value
+
+    mixed_call = _statement_call(lowerer.body[assignment_index - 2])
+    raw_boundary_call = _statement_call(lowerer.body[assignment_index - 1])
+    ndhwc_call = _statement_call(lowerer.body[assignment_index + 1])
+    cost_volume_call = _statement_call(lowerer.body[assignment_index + 2])
+    next_raw_boundary_call = _statement_call(lowerer.body[assignment_index + 3])
+
+    assert mixed_call.func.id == "run_mixed_attention_layout_cleanup"
+    assert all(keyword.arg != "state_scope" for keyword in mixed_call.keywords)
+    assert (
+        raw_boundary_call.func.id
+        == "_optimize_transpose_dequant_hardsigmoid_quantize_bridges"
+    )
+    assert ndhwc_call.func.id == "run_ndhwc_gate_layout_cleanup"
+    assert cost_volume_call.func.id == "run_cost_volume_scatter_layout_cleanup"
+    assert next_raw_boundary_call.func.id == "_optimize_fold_conv_mul_add_affine_chains"
+
+    for call in [ndhwc_call, cost_volume_call]:
+        scope_keyword = next(
+            keyword for keyword in call.keywords if keyword.arg == "state_scope"
+        )
+        assert isinstance(scope_keyword.value, ast.Name)
+        assert scope_keyword.value.id == "late_ndhwc_cost_volume_state_scope"
+
+
 def test_reporting_implementation_stays_out_of_lowering_module() -> None:
     reporting_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py"
     lowering_path = (

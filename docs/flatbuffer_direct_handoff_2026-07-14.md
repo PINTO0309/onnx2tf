@@ -7,15 +7,14 @@ The active branch is `fb-refactor5`, created from `main` after pull request
 currently tracks this branch. The Goal is active again; subsequent work uses
 coherent commits and pushes without opening an additional pull request.
 
-The latest implementation unit extends the lazy `ModelIRPassStateScope` to the
-next audited registered-pass sequence. Four repeated production clusters now
-share one differential index across mixed attention, elementwise gates, Pad,
-dual post-convolution gates, NDHWC gates, cost-volume ScatterND, Add/Concat
-suffixes, and dual-Mul/Concat. A fifth occurrence shares the same seven-runner
-suffix while retaining its original omission of mixed attention. All later
-isolated calls remain outside this scope. A synthetic model whose model-only
-preflights match every runner proves that 15 diagnostic events construct one
-graph index without changing runner order.
+The latest implementation unit audits the later mixed-attention/NDHWC/cost-
+volume sequence. A raw dequantize/HardSigmoid/quantize mutator separates mixed
+attention from the other runners, so mixed attention intentionally remains
+standalone. Only the contiguous NDHWC-gate and cost-volume-scatter runners now
+share a separate lazy `ModelIRPassStateScope`, which ends before the following
+raw convolution-affine fold. A synthetic model whose two model-only preflights
+match proves that three diagnostic events construct one graph index without
+crossing either raw boundary.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +36,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains fourteen coherent continuations:
+The current `fb-refactor5` work contains fifteen coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -68,8 +67,10 @@ The current `fb-refactor5` work contains fourteen coherent continuations:
   inverse-Transpose fan-out with differential consumer counts;
 - `2a2968cc` lazily shares `ModelIRPassState` across the repeated
   Mean/attention registered-pass cluster;
-- the current checkpoint applies the same bounded reuse contract to the
-  repeated mixed-attention through dual-Mul/Concat registered-pass cluster.
+- `514fc683` applies the same bounded reuse contract to the repeated mixed-
+  attention through dual-Mul/Concat registered-pass cluster;
+- the current checkpoint shares state only across the separately audited late
+  NDHWC-gate/cost-volume-scatter pair.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -87,14 +88,6 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
 The final checkpoint changes:
 
-- `onnx2tf/tflite_builder/passes/attention_layout.py`;
-- `onnx2tf/tflite_builder/passes/elementwise_gate_layout.py`;
-- `onnx2tf/tflite_builder/passes/pad_layout.py`;
-- `onnx2tf/tflite_builder/passes/dual_postconv_gate_layout.py`;
-- `onnx2tf/tflite_builder/passes/ndhwc_gate_layout.py`;
-- `onnx2tf/tflite_builder/passes/cost_volume_scatter_layout.py`;
-- `onnx2tf/tflite_builder/passes/add_concat_suffix_layout.py`;
-- `onnx2tf/tflite_builder/passes/dual_mul_concat_layout.py`;
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
 - `tests/test_flatbuffer_direct_pass_efficiency.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
@@ -197,6 +190,11 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   standalone behavior through an optional `state_scope` argument, and the
   later isolated mixed-attention, Pad, NDHWC, cost-volume, and dual-Mul calls
   intentionally do not share this scope.
+- The late mixed-attention/NDHWC/cost-volume candidate is not one valid scope:
+  the raw dequantize/HardSigmoid/quantize optimizer between mixed attention and
+  NDHWC is a hard boundary. A new scope is therefore constructed only for the
+  immediately adjacent NDHWC and cost-volume runners, and ends before the raw
+  convolution-affine optimizer. Both runners preserve standalone behavior.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -375,10 +373,30 @@ The architecture checks fix the eight-runner order, five production helper
 invocations, and the single invocation that omits mixed attention. They also
 bring the global direct-runner count characterization up to date with both
 bounded helper extractions.
+A focused late-pair checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_late_ndhwc_cost_volume_pair_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope \
+  tests/test_flatbuffer_direct_3d_gate_layout.py \
+  tests/test_flatbuffer_direct_conv3d_gate_layout.py \
+  tests/test_flatbuffer_direct_cost_volume_scatter_layout.py
+
+50 passed
+```
+
+The runtime characterization observes one graph-index refresh and diagnostic
+build flags `[true, true, false]`: both events in the first two-spec runner
+belong to the one state-building group, and the second runner reuses that
+state. The architecture test fixes both raw boundaries and proves that mixed
+attention receives no shared scope.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`139 passed`.
+`141 passed` after adding the late-pair checks.
 
 All changed pass modules and tests pass Ruff. The lowerer passes Ruff with only
 its pre-existing `F401` and `F841` findings scoped out. Every changed Python
@@ -420,12 +438,12 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the later contiguous mixed-attention/NDHWC-gate/cost-volume-scatter
-   triple as the next small reuse candidate. Confirm both surrounding legacy
-   boundaries before sharing state; leave the other isolated calls unchanged.
-3. Add a focused production-boundary characterization for that triple and
-   preserve exact diagnostics and rule order. Never carry a scope across a
-   legacy helper or introduce a blanket refresh.
+2. Audit the remaining post-lowering runner calls for another adjacent pair or
+   cluster. Treat every legacy helper between registered runners as a hard
+   boundary, even when the surrounding runner families are related.
+3. Add a focused production-boundary characterization before sharing another
+   scope, and preserve exact diagnostics and rule order. Never carry a scope
+   across a legacy helper or introduce a blanket refresh.
 4. Keep the audited 294-line PyTorch source orchestrator as explicit sequencing
    unless a new bounded decision is found.
 5. Run only the focused synthetic/ownership/static checks unless the user asks
