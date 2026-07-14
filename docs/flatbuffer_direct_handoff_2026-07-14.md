@@ -8,14 +8,13 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit converts the adjacent singleton-Reshape and
-stale NCHW-to-NHWC Transpose repairs in front of NHWC Conv inputs to
-differential `ModelIRGraphIndex` updates. Conv candidates, adapter producers,
-and exact single-consumer guards now come from one index; Conv input rewrites
-and adapter removal update it in place. The primary and fallback repair pairs
-each share one index instead of rebuilding producer and consumer maps before
-each match. Multiple matches, filter-channel guards, fan-out and graph-output
-preservation, and the complete former pair result are characterized exactly.
+The latest implementation unit converts the wrong-way NCHW-to-NHWC Transpose-
+before-Conv sanitizer to differential `ModelIRGraphIndex` updates. Indexed
+Transpose candidates and consumer lists replace the complete consumer-map
+rebuild that formerly ran after every match. All accepted Conv input rewrites
+and Transpose removals update the same function-owned index. Multiple matches,
+multi-Conv fan-out, non-Conv fan-out, filter-channel mismatch, graph-output
+preservation, and the complete former result are characterized exactly.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +36,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains fifty-seven coherent continuations:
+The current `fb-refactor5` work contains fifty-eight coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -158,9 +157,10 @@ The current `fb-refactor5` work contains fifty-seven coherent continuations:
   while preserving its start-of-pass shared-constant policy;
 - `0027ccfa` indexes stale channelwise-binary Transpose repair and shares one
   index across both terminal three-round convergence loops;
-- the current checkpoint indexes the singleton-Reshape and stale-Transpose
-  Conv-input repair pair and shares one index across its primary and fallback
-  invocations.
+- `902cab42` indexes the singleton-Reshape and stale-Transpose Conv-input
+  repair pair and shares one index across its primary and fallback invocations;
+- the current checkpoint indexes the wrong-way NCHW-to-NHWC Transpose-before-
+  Conv sanitizer and removes its per-match consumer-map rebuild.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -179,7 +179,7 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `tests/test_flatbuffer_direct_indexed_conv_input_repairs.py`;
+- `tests/test_flatbuffer_direct_indexed_wrong_way_conv_transpose.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -454,6 +454,14 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   tensor-shape, and Transpose-permutation guards are unchanged. The later
   standalone stale-Transpose cleanup remains a separate compatibility call
   because intervening raw mutations form an ownership boundary.
+- The wrong-way NCHW-to-NHWC Transpose-before-Conv sanitizer owns one
+  `ModelIRGraphIndex` for its complete invocation. It enumerates indexed
+  Transpose roots, validates every indexed consumer before changing a shared
+  adapter, rewrites all accepted Conv inputs through the indexed global-input
+  replacement helper, and removes the adapter differentially. The index is
+  deliberately not shared across either neighboring raw sanitizer. Exact
+  permutation, rank-four metadata, all-consumers-are-Conv, filter-channel,
+  graph-output, and nonempty-consumer guards are unchanged.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -1293,6 +1301,18 @@ layout, Conv-layout, indexed binary-convergence, and indexed Conv-input repair
 coverage passed with `108 passed`. Its single sequential quantization,
 evaluation, and coverage integration smoke passed with `1 passed`.
 
+The indexed wrong-way Conv-Transpose sanitizer checkpoint passed its exact
+former-implementation equivalence, two-match removal, multi-Conv consumer,
+one-index-build, no-consumer-rescan, non-Conv fan-out, filter-channel, graph-
+output, maintained-index, and ownership coverage with `3 passed`. The complete
+related Conv/layout and indexed-convergence selection passed with `20 passed`.
+The complete architecture file passed with `145 passed`; artifact-metadata,
+artifact-policy, core, pass-efficiency, indexed final-convergence, binary-
+layout, Conv-layout, indexed binary-convergence, indexed Conv-input repair, and
+wrong-way sanitizer coverage passed with `110 passed`. Its single sequential
+quantization, evaluation, and coverage integration smoke passed with
+`1 passed`.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1338,10 +1358,11 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the bounded wrong-way NCHW-to-NHWC Transpose-before-Conv sanitizer
-   next. It still rebuilds a complete consumer map after each match; preserve
-   its all-consumers-are-Conv, filter-channel, graph-output, and graph-order
-   guards if converting its rewrites and removals to a differential index.
+2. Audit the bounded recurrent orphan-step tensor repair next. It still builds
+   producer and consumer maps initially and again after every repaired alias;
+   preserve its exact step-name grammar, matching Reshape shape tensor, first-
+   match ordering, graph input/output, and tensor-pruning behavior if moving
+   its input rewrites to one differential index.
 3. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

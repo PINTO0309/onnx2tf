@@ -1926,7 +1926,11 @@ def _replace_expand_dims_and_squeeze_with_reshape(
     }
 
 
-def _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir: ModelIR) -> Dict[str, int]:
+def _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Dict[str, int]:
     """
     Remove invalid NCHW->NHWC transposes that are applied to already-NHWC tensors
     and break downstream CONV_2D channel alignment.
@@ -1934,13 +1938,17 @@ def _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir: ModelIR) ->
     removed = 0
     perm_nchw_to_nhwc = [0, 2, 3, 1]
     model_outputs = set(str(v) for v in model_ir.outputs)
+    graph_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
 
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-
-        for op_idx, op in enumerate(model_ir.operators):
-            if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 2 or len(op.outputs) != 1:
+        for op_idx in graph_index.operator_indices("TRANSPOSE"):
+            op = model_ir.operators[int(op_idx)]
+            if len(op.inputs) < 2 or len(op.outputs) != 1:
                 continue
             if _read_transpose_perm(model_ir, op) != perm_nchw_to_nhwc:
                 continue
@@ -1960,7 +1968,7 @@ def _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir: ModelIR) ->
             ):
                 continue
 
-            user_indices = [int(v) for v in consumers.get(out_name, [])]
+            user_indices = graph_index.consumer_indices(out_name)
             if len(user_indices) == 0:
                 continue
 
@@ -1988,8 +1996,13 @@ def _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv(model_ir: ModelIR) ->
             if not remove_this:
                 continue
 
-            _replace_tensor_inputs(model_ir, out_name, in_name)
-            del model_ir.operators[int(op_idx)]
+            _replace_tensor_inputs(
+                model_ir,
+                out_name,
+                in_name,
+                graph_index=graph_index,
+            )
+            graph_index.remove_operator(int(op_idx))
             removed += 1
             changed = True
             break

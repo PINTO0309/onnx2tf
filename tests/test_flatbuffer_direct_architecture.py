@@ -1713,6 +1713,62 @@ def test_conv_input_adapter_repairs_use_one_graph_index() -> None:
     assert direct_transpose_invocations[0].args[0].id == "model_ir"
 
 
+def test_wrong_way_conv_transpose_sanitizer_uses_one_graph_index() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    sanitizer_name = "_sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv"
+    sanitizer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == sanitizer_name
+    )
+    call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(sanitizer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in call_names
+    assert "ModelIRGraphIndex" in call_names
+    assert "operator_indices" in call_names
+    assert "consumer_indices" in call_names
+    assert "_replace_tensor_inputs" in call_names
+    assert "remove_operator" in call_names
+    replacement_call = next(
+        node
+        for node in ast.walk(sanitizer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_replace_tensor_inputs"
+    )
+    index_keyword = next(
+        keyword
+        for keyword in replacement_call.keywords
+        if keyword.arg == "graph_index"
+    )
+    assert isinstance(index_keyword.value, ast.Name)
+    assert index_keyword.value.id == "graph_index"
+
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == sanitizer_name
+    ]
+    assert len(invocations) == 1
+    assert isinstance(invocations[0].args[0], ast.Name)
+    assert invocations[0].args[0].id == "model_ir"
+
+
 def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
