@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import numpy as np
+
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_binary_policy import (
     _all_consumers_are_channel_first_binary_ops_for_codegen,
+    _binary_operand_expr_for_codegen,
     _binary_output_target_shape_literal_for_codegen,
     _binary_requires_runtime_alignment_for_codegen,
     _binary_runtime_shape_passthrough_operand_for_codegen,
@@ -184,3 +187,30 @@ def test_binary_output_target_shape_follows_declared_output_layout() -> None:
         output_name="output",
         fallback_literal="fallback",
     ) == "[1, 4, 5, 3]"
+
+
+def test_binary_operand_expr_reshapes_channel_vector_constant() -> None:
+    channel_scale = _tensor("channel_scale", [3])
+    channel_scale.data = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
+    activation = _tensor("activation", [1, 3, 4, 5])
+    activation.logical_layout = "NCHW"
+    model_ir = ModelIR(
+        name="binary_operand",
+        tensors={"channel_scale": channel_scale, "activation": activation},
+    )
+
+    assert _binary_operand_expr_for_codegen(
+        model_ir=model_ir,
+        binary_constant_buffer_alias_exprs={},
+        channel_first_constant_buffer_alias_exprs={},
+        channel_first_tensor_expr_aliases={},
+        tensor_expr_fn=lambda name: f"value_{name}",
+        channel_first_rank4_constant_buffer_alias_shape_fn=lambda _name: None,
+        channel_first_shape_for_tensor_fn=lambda name: list(
+            model_ir.tensors[name].shape
+        ),
+        constant_permute_for_broadcast_fn=lambda _name, _other: None,
+        permuted_constant_expr_for_tensor_name_fn=lambda _name, _perm: None,
+        tensor_name="channel_scale",
+        other_tensor_name="activation",
+    ) == "value_channel_scale.reshape([1, 3, 1, 1])"

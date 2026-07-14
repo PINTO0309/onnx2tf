@@ -2328,7 +2328,10 @@ when every dynamic input resolves through this policy and their relaxed
 broadcast exactly matches the declared output shape. Binary output target
 literals are derived by broadcasting the same channel-first input shapes and
 then mapping them to the declared output layout; unknown layouts retain the
-established expected-channel and tensor-name guards.
+established expected-channel and tensor-name guards. Operand expression policy
+also owns explicit pair aliases, channel-first constant aliases, public-input
+Transpose reuse, vector-to-channel reshape, and deterministic constant-axis
+permutation fallback while receiving all generated names through callbacks.
 
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are

@@ -1188,6 +1188,16 @@ policy/ownership tests pass (91 unrelated architecture tests deselected),
 together with Ruff, syntax validation, and `git diff --check`; the exporter
 shrank by another net 60 lines. No model conversion or inference was run.
 
+Binary operand-expression selection now lives in `pytorch_binary_policy.py`.
+Explicit pair aliases, compatible channel-first constant aliases, public-input
+Transpose reuse, lower-rank channel-vector reshaping, selected constant
+permutations, declared-layout permutations, and deterministic generic fallback
+retain their established priority. The moved function AST matches checkpoint
+`e30efb1` exactly. Nine focused binary-policy/ownership tests pass (91 unrelated
+architecture tests deselected), together with Ruff, syntax validation, and
+`git diff --check`; the exporter shrank by another net 219 lines. No model
+conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

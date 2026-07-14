@@ -4644,6 +4644,7 @@ def test_generated_pytorch_binary_policy_has_single_owner() -> None:
 
     for function_name in (
         "_all_consumers_are_channel_first_binary_ops_for_codegen",
+        "_binary_operand_expr_for_codegen",
         "_binary_output_target_shape_literal_for_codegen",
         "_binary_requires_runtime_alignment_for_codegen",
         "_binary_runtime_shape_passthrough_operand_for_codegen",

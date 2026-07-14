@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Collection, Dict, List, Optional, Set, Tuple
+from typing import Callable, Collection, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -24,9 +24,11 @@ from onnx2tf.tflite_builder.pytorch_codegen_utils import (
 from onnx2tf.tflite_builder.pytorch_graph_policy import (
     _channel_first_shape_values_for_model_ir,
     _expected_channel_dim_for_tensor_for_codegen,
+    _producer_op_for_model_ir,
 )
 from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _perm_cl_to_cf,
+    _perm_cf_to_cl,
     _permute_shape,
     _read_transpose_perm,
     _tensor_name_suggests_channel_last_layout_for_codegen,
@@ -719,3 +721,263 @@ def _binary_output_target_shape_literal_for_codegen(
     if not _tensor_name_suggests_channel_last_layout_for_codegen(str(output_name)):
         return repr([int(v) for v in list(broadcast_cf_shape)])
     return fallback_literal
+
+
+def _binary_operand_expr_for_codegen(
+    *,
+    model_ir: ModelIR,
+    binary_constant_buffer_alias_exprs: Dict[Tuple[str, str], str],
+    channel_first_constant_buffer_alias_exprs: Dict[str, str],
+    channel_first_tensor_expr_aliases: Dict[str, str],
+    tensor_expr_fn: Callable[[str], str],
+    channel_first_rank4_constant_buffer_alias_shape_fn: Callable[
+        [str], Optional[List[int]]
+    ],
+    channel_first_shape_for_tensor_fn: Callable[[str], Optional[List[int]]],
+    constant_permute_for_broadcast_fn: Callable[[str, str], Optional[List[int]]],
+    permuted_constant_expr_for_tensor_name_fn: Callable[
+        [str, Sequence[int]], Optional[str]
+    ],
+    tensor_name: str,
+    other_tensor_name: str,
+) -> str:
+    alias_expr = binary_constant_buffer_alias_exprs.get(
+        (str(tensor_name), str(other_tensor_name)), None
+    )
+    expr = tensor_expr_fn(tensor_name)
+    tensor = model_ir.tensors.get(str(tensor_name), None)
+    other_tensor = model_ir.tensors.get(str(other_tensor_name), None)
+    if tensor is None or other_tensor is None:
+        if alias_expr is not None:
+            return str(alias_expr)
+        return expr
+    tensor_layout = normalize_logical_layout(tensor.logical_layout)
+    if (
+        tensor.data is None
+        and len(list(tensor.shape)) in {3, 4, 5}
+        and is_channel_last_logical_layout(tensor_layout)
+    ):
+        producer_op = _producer_op_for_model_ir(
+            model_ir=model_ir,
+            tensor_name=str(tensor_name),
+        )
+        expected_perm = _perm_cf_to_cl(len(list(tensor.shape)))
+        if (
+            producer_op is not None
+            and str(producer_op.op_type) == "TRANSPOSE"
+            and len(producer_op.inputs) >= 1
+            and list(_read_transpose_perm(model_ir, producer_op) or [])
+            == list(expected_perm or [])
+        ):
+            source_name = str(producer_op.inputs[0])
+            if source_name in {str(name) for name in list(model_ir.inputs)}:
+                source_cf_shape = channel_first_shape_for_tensor_fn(source_name)
+                other_cf_shape = channel_first_shape_for_tensor_fn(
+                    str(other_tensor_name)
+                )
+                if (
+                    source_cf_shape is not None
+                    and other_cf_shape is not None
+                    and len(list(source_cf_shape)) == len(list(other_cf_shape))
+                    and _shape_can_broadcast_to_target_relaxed(
+                        source_cf_shape, other_cf_shape
+                    )
+                ):
+                    return tensor_expr_fn(source_name)
+    if alias_expr is not None:
+        channel_first_alias_expr = channel_first_constant_buffer_alias_exprs.get(
+            str(tensor_name), None
+        )
+        channel_first_alias_shape = (
+            channel_first_rank4_constant_buffer_alias_shape_fn(str(tensor_name))
+        )
+        other_layout = normalize_logical_layout(other_tensor.logical_layout)
+        other_prefers_channel_first = (
+            str(other_tensor_name) in channel_first_tensor_expr_aliases
+            or is_channel_first_logical_layout(other_layout)
+        )
+        if (
+            channel_first_alias_expr is not None
+            and channel_first_alias_shape is not None
+            and other_prefers_channel_first
+        ):
+            other_cf_shape = channel_first_shape_for_tensor_fn(
+                str(other_tensor_name)
+            )
+            broadcast_shape = _broadcast_shapes_relaxed(
+                channel_first_alias_shape,
+                other_cf_shape,
+            )
+            if _shape_lists_equal_relaxed(broadcast_shape, other_cf_shape):
+                return str(channel_first_alias_expr)
+        return str(alias_expr)
+    if not isinstance(tensor.data, np.ndarray):
+        return expr
+    tensor_shape = [int(v) for v in list(tensor.shape)]
+    other_shape = [int(v) for v in list(other_tensor.shape)]
+    tensor_broadcast_shape = [
+        int(v) if int(v) > 0 else 1 for v in tensor_shape
+    ]
+    other_broadcast_shape = [int(v) if int(v) > 0 else 1 for v in other_shape]
+    constant_width = max([int(dim) for dim in tensor_shape], default=0)
+    if len(tensor_shape) < len(other_shape):
+        target_axis: Optional[int] = None
+        other_layout = normalize_logical_layout(other_tensor.logical_layout)
+        if (
+            is_channel_first_logical_layout(other_layout)
+            and len(other_shape) >= 2
+            and int(other_shape[1]) == constant_width
+        ):
+            target_axis = 1
+        elif (
+            is_channel_last_logical_layout(other_layout)
+            and len(other_shape) >= 1
+            and int(other_shape[-1]) == constant_width
+        ):
+            target_axis = len(other_shape) - 1
+        else:
+            matching_axes = [
+                int(axis)
+                for axis, dim in enumerate(other_shape)
+                if int(axis) != 0 and int(dim) == constant_width
+            ]
+            if len(matching_axes) == 1:
+                target_axis = int(matching_axes[0])
+        if target_axis is not None and len(tensor_shape) >= 1:
+            batch_dim = int(tensor_shape[0])
+            if batch_dim in {1, int(other_shape[0])}:
+                non_batch_non_singleton_axes = [
+                    int(axis)
+                    for axis, dim in enumerate(tensor_shape[1:], start=1)
+                    if int(dim) > 1
+                ]
+                if len(non_batch_non_singleton_axes) == 1:
+                    source_axis = int(non_batch_non_singleton_axes[0])
+                    if int(tensor_shape[source_axis]) == constant_width:
+                        other_non_target_axes = [
+                            int(axis)
+                            for axis, dim in enumerate(other_shape)
+                            if int(axis) not in {0, int(target_axis)}
+                            and int(dim) > 1
+                        ]
+                        if len(other_non_target_axes) > 0:
+                            if (
+                                len(tensor_shape) == 1
+                                and int(target_axis) == len(other_shape) - 1
+                            ):
+                                return expr
+                            reshape_dims = [1 for _ in other_shape]
+                            reshape_dims[0] = int(batch_dim)
+                            reshape_dims[int(target_axis)] = int(constant_width)
+                            return f"{expr}.reshape({repr(reshape_dims)})"
+    if len(tensor_shape) != 1 or len(other_shape) < 2:
+        if len(tensor_shape) == len(other_shape) and len(tensor_shape) > 1:
+            selected_perm = constant_permute_for_broadcast_fn(
+                str(tensor_name), str(other_tensor_name)
+            )
+            if selected_perm is not None:
+                selected_alias_expr = permuted_constant_expr_for_tensor_name_fn(
+                    str(tensor_name),
+                    selected_perm,
+                )
+                if selected_alias_expr is not None:
+                    return str(selected_alias_expr)
+                return f"{expr}.permute(*{repr(tuple(int(v) for v in selected_perm))}).contiguous()"
+            try:
+                np.broadcast_shapes(
+                    tuple(tensor_broadcast_shape), tuple(other_broadcast_shape)
+                )
+                return expr
+            except Exception:
+                pass
+            preferred_perm: Optional[Tuple[int, ...]] = None
+            if tensor_layout == "NCHW" and len(tensor_shape) == 4:
+                preferred_perm = (0, 2, 3, 1)
+            elif tensor_layout == "NCDHW" and len(tensor_shape) == 5:
+                preferred_perm = (0, 2, 3, 4, 1)
+            elif tensor_layout == "NCW" and len(tensor_shape) == 3:
+                preferred_perm = (0, 2, 1)
+            if preferred_perm is not None:
+                preferred_shape = [
+                    int(tensor_shape[int(idx)]) for idx in preferred_perm
+                ]
+                preferred_broadcast_shape = [
+                    int(v) if int(v) > 0 else 1 for v in preferred_shape
+                ]
+                try:
+                    np.broadcast_shapes(
+                        tuple(preferred_broadcast_shape),
+                        tuple(other_broadcast_shape),
+                    )
+                    preferred_alias_expr = (
+                        permuted_constant_expr_for_tensor_name_fn(
+                            str(tensor_name),
+                            preferred_perm,
+                        )
+                    )
+                    if preferred_alias_expr is not None:
+                        return str(preferred_alias_expr)
+                    return f"{expr}.permute(*{repr(tuple(int(v) for v in preferred_perm))}).contiguous()"
+                except Exception:
+                    pass
+            import itertools
+
+            for generic_perm in itertools.permutations(range(len(tensor_shape))):
+                if list(generic_perm) == list(range(len(tensor_shape))):
+                    continue
+                permuted_shape = [
+                    int(tensor_shape[int(idx)]) for idx in generic_perm
+                ]
+                permuted_broadcast_shape = [
+                    int(v) if int(v) > 0 else 1 for v in permuted_shape
+                ]
+                try:
+                    np.broadcast_shapes(
+                        tuple(permuted_broadcast_shape),
+                        tuple(other_broadcast_shape),
+                    )
+                    generic_alias_expr = (
+                        permuted_constant_expr_for_tensor_name_fn(
+                            str(tensor_name),
+                            generic_perm,
+                        )
+                    )
+                    if generic_alias_expr is not None:
+                        return str(generic_alias_expr)
+                    return f"{expr}.permute(*{repr(tuple(int(v) for v in generic_perm))}).contiguous()"
+                except Exception:
+                    continue
+        return expr
+    constant_width = int(tensor_shape[0])
+    if constant_width <= 0:
+        return expr
+    target_axis: Optional[int] = None
+    other_layout = normalize_logical_layout(other_tensor.logical_layout)
+    if (
+        is_channel_first_logical_layout(other_layout)
+        and len(other_shape) >= 2
+        and int(other_shape[1]) == constant_width
+    ):
+        target_axis = 1
+    elif (
+        is_channel_last_logical_layout(other_layout)
+        and int(other_shape[-1]) == constant_width
+    ):
+        target_axis = len(other_shape) - 1
+    else:
+        matching_axes = [
+            int(axis)
+            for axis, dim in enumerate(other_shape)
+            if int(axis) != 0 and int(dim) == constant_width
+        ]
+        if len(matching_axes) == 1:
+            target_axis = int(matching_axes[0])
+    if target_axis is None:
+        return expr
+    if len(tensor_shape) == 1 and int(target_axis) == len(other_shape) - 1:
+        return expr
+    reshape_dims = [1 for _ in other_shape]
+    reshape_dims[int(target_axis)] = constant_width
+    if reshape_dims == tensor_shape:
+        return expr
+    return f"{expr}.reshape({repr(reshape_dims)})"
