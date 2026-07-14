@@ -20,6 +20,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_dynamic_cf_binary_anchor_shapes,
     _repair_nhwc_average_pool_binary_bridge,
     _repair_split_axis_from_consumers,
+    _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
 )
 
@@ -262,3 +263,21 @@ def test_dynamic_cf_binary_anchor_phase_normalizes_shared_shape() -> None:
     assert {"left", "right"} <= cf_like_names
     assert context.static_shapes["left"] == [1, 3, 20, 30]
     assert context.static_shapes["right"] == [1, 3, 20, 30]
+
+
+def test_singleton_reshape_cf_binary_repair_moves_feature_axis() -> None:
+    lines = [
+        "        reshaped = torch.reshape(source, [1, 1, 1, 16])",
+        "        output = torch.add(reshaped, branch_cf)",
+    ]
+    cf_like_names: set[str] = set()
+
+    changed = _repair_singleton_reshape_cf_binary_at(
+        0,
+        lines,
+        cf_like_names,
+    )
+
+    assert changed
+    assert lines[0] == "        reshaped = torch.reshape(source, [1, 16, 1, 1])"
+    assert cf_like_names == {"reshaped"}

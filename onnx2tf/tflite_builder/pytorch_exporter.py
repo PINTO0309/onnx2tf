@@ -132,6 +132,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_dynamic_cf_binary_anchor_shapes,
     _repair_nhwc_average_pool_binary_bridge,
     _repair_split_axis_from_consumers,
+    _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
     _restore_channel_last_spatial_pool_chains,
 )
@@ -7258,9 +7259,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     changed = False
     cf_like_names: set[str] = set(repair_context.cf_like_names)
     nhwc_like_names: set[str] = set(repair_context.nhwc_like_names)
-    singleton_reshape_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.reshape\((?P<expr>.+), \[(?P<n>\d+), 1, (?P<h>\d+), (?P<w>\d+)\]\)$"
-    )
     binary_assign_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<expr>torch\.(?:mul|add|sub|div|minimum|maximum)\(.+\))$"
     )
@@ -7270,9 +7268,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     rank3_reshape_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.reshape\((?P<input>[A-Za-z0-9_]+), "
         r"(?:_resolve_reshape_shape\(\[(?P<resolved_shape>[0-9,\- ]+)\], (?P=input), allow_zero=False\)|\[(?P<shape>[0-9,\- ]+)\])\)$"
-    )
-    simple_binary_expr_re = re.compile(
-        r"^torch\.(?P<op>mul|add|sub|div|minimum|maximum)\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\)$"
     )
     prelu_assign_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*self\.prelu_[0-9]+\((?P<input>[A-Za-z0-9_]+)\)$"
@@ -8391,34 +8386,12 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 )
                 cf_like_names.add(str(gather_slice_match.group("lhs")))
                 changed = True
-        reshape_match = singleton_reshape_re.match(line)
-        if reshape_match is None:
-            continue
-        if int(reshape_match.group("h")) != 1 or int(reshape_match.group("w")) <= 1:
-            continue
-        next_binary_assign_match = binary_assign_re.match(lines[index + 1])
-        if next_binary_assign_match is None:
-            continue
-        next_binary_expr_match = simple_binary_expr_re.match(
-            str(next_binary_assign_match.group("expr"))
-        )
-        if next_binary_expr_match is None:
-            continue
-        lhs = str(reshape_match.group("lhs"))
-        arg_a = str(next_binary_expr_match.group("a"))
-        arg_b = str(next_binary_expr_match.group("b"))
-        other_arg = arg_b if arg_a == lhs else arg_a if arg_b == lhs else None
-        if other_arg is None:
-            continue
-        if not (other_arg.endswith("_cf") or other_arg.endswith("_out_cf")):
-            continue
-        lines[index] = (
-            f"{reshape_match.group('indent')}{lhs} = torch.reshape("
-            f"{reshape_match.group('expr')}, "
-            f"[{reshape_match.group('n')}, {reshape_match.group('w')}, 1, 1])"
-        )
-        cf_like_names.add(lhs)
-        changed = True
+        if _repair_singleton_reshape_cf_binary_at(
+            index,
+            lines,
+            cf_like_names,
+        ):
+            changed = True
 
     if _repair_dynamic_cf_binary_anchor_shapes(
         lines,

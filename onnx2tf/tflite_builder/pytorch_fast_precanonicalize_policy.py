@@ -35,6 +35,16 @@ from onnx2tf.tflite_builder.pytorch_shape_policy import (
 )
 
 
+_SINGLETON_RESHAPE_CF_BINARY_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.reshape\("
+    r"(?P<expr>.+), \[(?P<n>\d+), 1, (?P<h>\d+), (?P<w>\d+)\]\)$"
+)
+_SIMPLE_CF_BINARY_EXPR_RE = re.compile(
+    r"^torch\.(?P<op>mul|add|sub|div|minimum|maximum)\("
+    r"(?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\)$"
+)
+
+
 def _convert_nhwc_pad_to_nchw_pad_values(pad_values: Sequence[int]) -> List[int] | None:
     values = [int(value) for value in list(pad_values)]
     if len(values) % 2 != 0 or len(values) > 8:
@@ -1458,3 +1468,40 @@ def _repair_dynamic_cf_binary_anchor_shapes(
         ):
             changed = True
     return changed
+
+
+def _repair_singleton_reshape_cf_binary_at(
+    index: int,
+    lines: List[str],
+    dynamic_cf_like_names: Set[str],
+) -> bool:
+    if index < 0 or index + 1 >= len(lines):
+        return False
+    reshape_match = _SINGLETON_RESHAPE_CF_BINARY_RE.match(lines[index])
+    if (
+        reshape_match is None
+        or int(reshape_match.group("h")) != 1
+        or int(reshape_match.group("w")) <= 1
+    ):
+        return False
+    next_assignment = _parse_simple_assignment_line(lines[index + 1])
+    if next_assignment is None:
+        return False
+    next_binary_match = _SIMPLE_CF_BINARY_EXPR_RE.match(next_assignment[2])
+    if next_binary_match is None:
+        return False
+    lhs = str(reshape_match.group("lhs"))
+    arg_a = str(next_binary_match.group("a"))
+    arg_b = str(next_binary_match.group("b"))
+    other_arg = arg_b if arg_a == lhs else arg_a if arg_b == lhs else None
+    if other_arg is None or not (
+        other_arg.endswith("_cf") or other_arg.endswith("_out_cf")
+    ):
+        return False
+    lines[index] = (
+        f"{reshape_match.group('indent')}{lhs} = torch.reshape("
+        f"{reshape_match.group('expr')}, "
+        f"[{reshape_match.group('n')}, {reshape_match.group('w')}, 1, 1])"
+    )
+    dynamic_cf_like_names.add(lhs)
+    return True

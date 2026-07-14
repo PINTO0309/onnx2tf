@@ -1403,6 +1403,16 @@ validation, and `git diff --check`; the orchestrator shrank from 1,254 to 1,186
 lines and the exporter by net 66 lines. No model conversion or inference was
 run.
 
+The trailing singleton-reshape-to-channel-first-binary rewrite now lives in one
+indexed fast-precanonicalize policy helper. Its two focused match patterns,
+`H == 1`/feature-width guard, following binary operand relationship, reshape
+rewrite, and CF evidence update no longer occupy the exporter loop. A synthetic
+reshape/Add chain proves `[N,1,1,C]` to `[N,C,1,1]` repair. Fourteen focused
+policy/ownership tests pass (95 unrelated architecture tests deselected),
+together with Ruff, syntax validation, and `git diff --check`; the orchestrator
+shrunk from 1,186 to 1,158 lines and the exporter by net 27 lines. No model
+conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

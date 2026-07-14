@@ -2058,6 +2058,10 @@ helpers in this owner. Concat rewrites only when every input is CF-like; the
 tail repair adds an explicit singleton channel or removes a redundant trailing-
 singleton reshape only when its source is CF-like. The exporter retains the
 ordered precanonicalization orchestrator and imports these focused decisions.
+The singleton-reshape-to-CF-binary repair is another focused rule in this
+owner. Its local patterns, feature-axis guard, following binary relationship,
+rewrite, and CF evidence update are applied atomically through one indexed
+helper; the orchestrator retains only its ordered call.
 
 The direct-module dispatcher is being decomposed by operator family rather than
 moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and
