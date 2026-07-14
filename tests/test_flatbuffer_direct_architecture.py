@@ -3837,6 +3837,7 @@ def test_generated_pytorch_naming_policy_has_single_owner() -> None:
         "_build_buffer_attr_name_map",
         "_build_tensor_var_name_map",
         "_collapse_generated_name_tokens",
+        "_direct_codegen_module_attr_base",
         "_extract_generated_name_suffix_tokens",
         "_make_tensor_storage_name_map",
         "_make_unique_identifier",
@@ -3850,6 +3851,7 @@ def test_generated_pytorch_naming_policy_has_single_owner() -> None:
     for imported_name in (
         "_build_buffer_attr_name_map",
         "_build_tensor_var_name_map",
+        "_direct_codegen_module_attr_base",
         "_make_tensor_storage_name_map",
         "_make_unique_identifier",
         "_sanitize_python_identifier",
@@ -4065,6 +4067,7 @@ def test_pytorch_capability_registry_has_single_owner() -> None:
     for function_name in (
         "_ensure_no_custom_ops",
         "_ensure_supported_ops",
+        "_supports_runtime_wrapper_model_ir",
         "get_supported_pytorch_kernel_op_types",
     ):
         assert function_name in capability_functions
@@ -4073,6 +4076,8 @@ def test_pytorch_capability_registry_has_single_owner() -> None:
     assert "_DIRECT_CODEGEN_SUPPORTED_OP_TYPES: Set[str] =" in capability_source
     assert "_DIRECT_CODEGEN_SUPPORTED_OP_TYPES: Set[str] =" not in exporter_source
     assert "_DIRECT_CODEGEN_SUPPORTED_OP_TYPES," in exporter_source
+    assert "_RUNTIME_SUPPORTED_CUSTOM_CODES: Set[str] =" in capability_source
+    assert "_RUNTIME_SUPPORTED_CUSTOM_CODES: Set[str] =" not in exporter_source
     assert "import torch" not in capability_source
 
 

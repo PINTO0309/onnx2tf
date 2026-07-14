@@ -2163,15 +2163,18 @@ PyTorch op capability selection lives in the Torch-free
 `pytorch_capabilities.py`. It composes direct emitter module/unary/binary
 declarations with the existing runtime-kernel set, owns explicit CUSTOM
 rejection and unsupported-op diagnostics, and returns a defensive copy from the
-public supported-kernel query. The registry expression and all three functions
-are AST-identical to their former exporter definitions.
+public supported-kernel query. Runtime-wrapper selection and the explicit
+`ONNX_SLICE` custom-code allowance use this same capability owner. The registry
+expressions and all four functions are AST-identical to their former exporter
+definitions.
 
 Generated PyTorch identifiers have a Torch-free single owner in
 `pytorch_naming.py`. Tensor variables, constant-buffer attributes, serialized
 tensor storage names, keyword/digit sanitization, long-name hashing, semantic
 suffix preservation, and deterministic collision resolution share the same
-policy. Nine function ASTs and four policy-constant ASTs are identical to their
-former exporter definitions.
+policy. Direct module-attribute base names are co-located with this generated
+identifier policy. Ten function ASTs and four policy-constant ASTs are identical
+to their former exporter definitions.
 
 Native codegen value policy has a Torch-free single owner in
 `pytorch_codegen_values.py`. Small constant eligibility, Python and scalar

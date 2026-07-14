@@ -71,6 +71,10 @@ _DIRECT_CODEGEN_SUPPORTED_OP_TYPES: Set[str] = (
     }
 )
 
+_RUNTIME_SUPPORTED_CUSTOM_CODES: Set[str] = {
+    "ONNX_SLICE",
+}
+
 
 def get_supported_pytorch_kernel_op_types() -> Set[str]:
     return set(SUPPORTED_TORCH_KERNEL_OP_TYPES)
@@ -101,3 +105,16 @@ def _ensure_no_custom_ops(model_ir: ModelIR) -> None:
         raise ModelIRPyTorchExportError(
             "ModelIR->PyTorch exporter does not support CUSTOM ops."
         )
+
+
+def _supports_runtime_wrapper_model_ir(model_ir: ModelIR) -> bool:
+    for op in model_ir.operators:
+        op_type = str(op.op_type)
+        if op_type in SUPPORTED_TORCH_KERNEL_OP_TYPES:
+            continue
+        if op_type == "CUSTOM":
+            custom_code = str(op.options.get("customCode", "")).upper()
+            if custom_code in _RUNTIME_SUPPORTED_CUSTOM_CODES:
+                continue
+        return False
+    return True

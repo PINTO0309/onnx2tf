@@ -7,6 +7,7 @@ from onnx2tf.tflite_builder.pytorch_capabilities import (
     _DIRECT_CODEGEN_SUPPORTED_OP_TYPES,
     _ensure_no_custom_ops,
     _ensure_supported_ops,
+    _supports_runtime_wrapper_model_ir,
     get_supported_pytorch_kernel_op_types,
 )
 from onnx2tf.tflite_builder.pytorch_export_errors import ModelIRPyTorchExportError
@@ -53,3 +54,24 @@ def test_custom_op_validation_is_explicit() -> None:
         match="does not support CUSTOM ops",
     ):
         _ensure_no_custom_ops(_model_with_op("CUSTOM"))
+
+
+def test_runtime_wrapper_capability_allows_runtime_ops_and_onnx_slice_custom() -> None:
+    model_ir = _model_with_op("ADD")
+    model_ir.operators.append(
+        OperatorIR(
+            op_type="CUSTOM",
+            inputs=["y"],
+            outputs=["z"],
+            options={"customCode": "onnx_slice"},
+        )
+    )
+
+    assert _supports_runtime_wrapper_model_ir(model_ir)
+
+
+def test_runtime_wrapper_capability_rejects_unknown_and_other_custom_ops() -> None:
+    assert not _supports_runtime_wrapper_model_ir(_model_with_op("UNKNOWN_RUNTIME_OP"))
+    model_ir = _model_with_op("CUSTOM")
+    model_ir.operators[0].options["customCode"] = "other"
+    assert not _supports_runtime_wrapper_model_ir(model_ir)

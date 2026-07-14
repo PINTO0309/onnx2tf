@@ -6,6 +6,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_naming import (
     _build_buffer_attr_name_map,
     _build_tensor_var_name_map,
+    _direct_codegen_module_attr_base,
     _make_tensor_storage_name_map,
     _sanitize_python_identifier,
     _shorten_generated_python_identifier,
@@ -118,3 +119,12 @@ def test_buffer_attribute_names_use_storage_names_and_exclusions() -> None:
         tensor_storage_name_map=_make_tensor_storage_name_map(model_ir),
         excluded_tensor_names={"a-b"},
     ) == {"a_b": "const_a_b_1"}
+
+
+def test_direct_codegen_module_attribute_bases_are_stable() -> None:
+    assert _direct_codegen_module_attr_base("CONV_2D") == "conv2d"
+    assert _direct_codegen_module_attr_base("TRANSPOSE_CONV") == "conv_transpose2d"
+    assert _direct_codegen_module_attr_base("UNIDIRECTIONAL_SEQUENCE_LSTM") == (
+        "sequence_lstm"
+    )
+    assert _direct_codegen_module_attr_base("FUTURE_OP") == "future_op"

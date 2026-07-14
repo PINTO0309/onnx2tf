@@ -47,13 +47,11 @@ from onnx2tf.tflite_builder.ir import (
     normalize_logical_layout,
     validate_model_ir_layout_annotations,
 )
-from onnx2tf.tflite_builder.pytorch_package_runtime import (
-    SUPPORTED_TORCH_KERNEL_OP_TYPES,
-)
 from onnx2tf.tflite_builder.pytorch_capabilities import (
     _DIRECT_CODEGEN_SUPPORTED_OP_TYPES,
     _ensure_no_custom_ops,
     _ensure_supported_ops,
+    _supports_runtime_wrapper_model_ir,
     get_supported_pytorch_kernel_op_types,
 )
 from onnx2tf.tflite_builder.pytorch_export_errors import (
@@ -108,6 +106,7 @@ from onnx2tf.tflite_builder.pytorch_shape_policy import (
 from onnx2tf.tflite_builder.pytorch_naming import (
     _build_buffer_attr_name_map,
     _build_tensor_var_name_map,
+    _direct_codegen_module_attr_base,
     _make_tensor_storage_name_map,
     _make_unique_identifier,
     _sanitize_python_identifier,
@@ -26839,40 +26838,6 @@ def _ensure_direct_codegen_supported(model_ir: ModelIR) -> None:
 
 def _is_direct_codegen_unsupported_error(ex: BaseException) -> bool:
     return "Native PyTorch-like model.py codegen does not support some op types in this model." in str(ex)
-
-
-_RUNTIME_SUPPORTED_CUSTOM_CODES: Set[str] = {
-    "ONNX_SLICE",
-}
-
-
-def _direct_codegen_module_attr_base(op_type: str) -> str:
-    names = {
-        "CONV_2D": "conv2d",
-        "DEPTHWISE_CONV_2D": "depthwise_conv2d",
-        "TRANSPOSE_CONV": "conv_transpose2d",
-        "CONV_3D": "conv3d",
-        "CONV_3D_TRANSPOSE": "conv_transpose3d",
-        "FULLY_CONNECTED": "linear",
-        "PRELU": "prelu",
-        "UNIDIRECTIONAL_SEQUENCE_RNN": "sequence_rnn",
-        "UNIDIRECTIONAL_SEQUENCE_LSTM": "sequence_lstm",
-        "BIDIRECTIONAL_SEQUENCE_LSTM": "bidirectional_sequence_lstm",
-    }
-    return str(names.get(str(op_type), str(op_type).lower()))
-
-
-def _supports_runtime_wrapper_model_ir(model_ir: ModelIR) -> bool:
-    for op in model_ir.operators:
-        op_type = str(op.op_type)
-        if op_type in SUPPORTED_TORCH_KERNEL_OP_TYPES:
-            continue
-        if op_type == "CUSTOM":
-            custom_code = str(op.options.get("customCode", "")).upper()
-            if custom_code in _RUNTIME_SUPPORTED_CUSTOM_CODES:
-                continue
-        return False
-    return True
 
 
 def _export_runtime_wrapper_package_from_model_ir(

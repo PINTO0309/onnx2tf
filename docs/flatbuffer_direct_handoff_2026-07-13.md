@@ -473,6 +473,14 @@ normalization. Package-source and architecture validation passes 79 tests;
 Ruff, diff, and AST-equivalence checks pass. No model conversion or inference
 was run.
 
+Runtime-wrapper capability selection and its explicit `ONNX_SLICE` custom-code
+allowance now live in `pytorch_capabilities.py`; direct module-attribute base
+names now live in `pytorch_naming.py`. Both function ASTs and the custom-code
+constant AST match the prior exporter checkpoint. Three new direct cases fix
+runtime/custom rejection and established/future attribute spelling. Capability,
+naming, and architecture validation passes 85 tests; Ruff, diff, and
+AST-equivalence checks pass. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

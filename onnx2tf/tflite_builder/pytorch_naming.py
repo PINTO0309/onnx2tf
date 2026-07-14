@@ -236,6 +236,22 @@ def _make_unique_identifier(base_name: str, used_names: Set[str]) -> str:
     return candidate
 
 
+def _direct_codegen_module_attr_base(op_type: str) -> str:
+    names = {
+        "CONV_2D": "conv2d",
+        "DEPTHWISE_CONV_2D": "depthwise_conv2d",
+        "TRANSPOSE_CONV": "conv_transpose2d",
+        "CONV_3D": "conv3d",
+        "CONV_3D_TRANSPOSE": "conv_transpose3d",
+        "FULLY_CONNECTED": "linear",
+        "PRELU": "prelu",
+        "UNIDIRECTIONAL_SEQUENCE_RNN": "sequence_rnn",
+        "UNIDIRECTIONAL_SEQUENCE_LSTM": "sequence_lstm",
+        "BIDIRECTIONAL_SEQUENCE_LSTM": "bidirectional_sequence_lstm",
+    }
+    return str(names.get(str(op_type), str(op_type).lower()))
+
+
 def _build_tensor_var_name_map(model_ir: ModelIR) -> Dict[str, str]:
     used_names: Set[str] = set()
     mapping: Dict[str, str] = {}
