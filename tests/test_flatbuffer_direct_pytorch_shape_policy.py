@@ -8,9 +8,13 @@ from onnx2tf.tflite_builder.pytorch_shape_policy import (
     _conv3d_output_spatial_shape_for_codegen,
     _conv3d_transpose_output_spatial_shape_for_codegen,
     _fast_precanonicalize_rank4_layout_hint,
+    _infer_batch_matmul_shape_for_codegen,
+    _infer_reduction_shape_for_codegen,
+    _matmul_broadcast_shape_for_codegen,
     _normalize_cf_rank4_shape,
     _normalize_nhwc_rank4_shape,
     _reshape_special_layout_plan,
+    _reshape_preserves_channel_last_sequence_for_codegen,
 )
 
 
@@ -74,6 +78,13 @@ def test_conv_output_spatial_shape_policy_rejects_invalid_rank_and_extent() -> N
         dilation_hw=[1, 1],
         padding_mode="SAME",
     ) is None
+    assert _conv3d_transpose_output_spatial_shape_for_codegen(
+        input_dhw=[0, 4, 5],
+        kernel_dhw=[3, 3, 3],
+        stride_dhw=[1, 1, 1],
+        dilation_dhw=[1, 1, 1],
+        padding_mode="VALID",
+    ) is None
 
 
 def test_conv2d_same_padding_policy_handles_channel_last_stored_shapes() -> None:
@@ -108,13 +119,72 @@ def test_conv2d_same_padding_policy_rejects_non_same_and_invalid_permutation() -
         options={"padding": "SAME"},
         input_pre_permute=[0, 2, 1],
     ) is None
-    assert _conv3d_transpose_output_spatial_shape_for_codegen(
-        input_dhw=[0, 4, 5],
-        kernel_dhw=[3, 3, 3],
-        stride_dhw=[1, 1, 1],
-        dilation_dhw=[1, 1, 1],
-        padding_mode="VALID",
+
+
+@pytest.mark.parametrize(
+    ("input_shape", "output_shape", "layout", "expected"),
+    [
+        ([1, 6, 2, 3], [1, 6, 6], "NCHW", [0, 2, 3, 1]),
+        ([1, 4, 2, 3, 5], [1, 30, 4], "NCDHW", [0, 2, 3, 4, 1]),
+        ([1, 4, 8], [1, 8, 4], "NCW", [0, 2, 1]),
+        ([1, 4, 8], [1, 7, 4], "NCW", None),
+    ],
+)
+def test_reshape_preserved_sequence_shape_policy(
+    input_shape: list[int],
+    output_shape: list[int],
+    layout: str,
+    expected: list[int] | None,
+) -> None:
+    assert _reshape_preserves_channel_last_sequence_for_codegen(
+        input_shape=input_shape,
+        output_shape=output_shape,
+        input_layout=layout,
+    ) == expected
+
+
+def test_matmul_shape_policy_handles_batch_broadcast_and_vectors() -> None:
+    assert _matmul_broadcast_shape_for_codegen(
+        lhs_batch=[2, 1, 4],
+        rhs_batch=[1, 3, 4],
+    ) == [2, 3, 4]
+    assert _matmul_broadcast_shape_for_codegen(
+        lhs_batch=[2],
+        rhs_batch=[3],
     ) is None
+    assert _infer_batch_matmul_shape_for_codegen(
+        lhs_shape=[2, 3, 4],
+        rhs_shape=[1, 4, 5],
+        adj_x=False,
+        adj_y=False,
+    ) == [2, 3, 5]
+    assert _infer_batch_matmul_shape_for_codegen(
+        lhs_shape=[4],
+        rhs_shape=[4],
+        adj_x=False,
+        adj_y=False,
+    ) == [1, 1]
+
+
+@pytest.mark.parametrize(
+    ("axes", "keepdims", "expected"),
+    [
+        ([1], True, [2, 1, 4]),
+        ([1], False, [2, 4]),
+        (None, True, [1, 1, 1]),
+        (None, False, []),
+    ],
+)
+def test_reduction_shape_policy(
+    axes: list[int] | None,
+    keepdims: bool,
+    expected: list[int],
+) -> None:
+    assert _infer_reduction_shape_for_codegen(
+        input_shape=[2, 3, 4],
+        axes=axes,
+        keepdims=keepdims,
+    ) == expected
 
 
 @pytest.mark.parametrize(

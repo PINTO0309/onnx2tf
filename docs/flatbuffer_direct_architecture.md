@@ -2225,6 +2225,10 @@ Asymmetric Conv2D SAME-padding planning is co-located here because it consumes
 only shapes, options, and logical layouts. The exporter retains the compatibility
 name through an import. The older symmetric-only SAME-padding helper had no
 callers and is removed instead of establishing a second padding policy.
+Feature-last sequence Reshape permutations, MatMul batch broadcasting,
+BatchMatMul result shapes, and reduction result shapes are pure policies in
+this module as well. Their compatibility names are imported by the generated
+pipeline; ModelIR-backed adjX consumer discovery remains in the exporter.
 
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor

@@ -106,8 +106,12 @@ from onnx2tf.tflite_builder.pytorch_shape_policy import (
     _conv3d_output_spatial_shape_for_codegen,
     _conv3d_transpose_output_spatial_shape_for_codegen,
     _fast_precanonicalize_rank4_layout_hint,
+    _infer_batch_matmul_shape_for_codegen,
+    _infer_reduction_shape_for_codegen,
+    _matmul_broadcast_shape_for_codegen,
     _normalize_cf_rank4_shape,
     _normalize_nhwc_rank4_shape,
+    _reshape_preserves_channel_last_sequence_for_codegen,
     _reshape_special_layout_plan,
 )
 from onnx2tf.tflite_builder.pytorch_naming import (
@@ -1411,63 +1415,6 @@ def _range_only_feeds_identity_nms_postprocess_gathers_for_codegen(
     return True
 
 
-def _reshape_preserves_channel_last_sequence_for_codegen(
-    *,
-    input_shape: Optional[Sequence[int]],
-    output_shape: Optional[Sequence[int]],
-    input_layout: Optional[str],
-) -> Optional[List[int]]:
-    if input_shape is None or output_shape is None:
-        return None
-    src = [int(v) for v in list(input_shape)]
-    dst = [int(v) for v in list(output_shape)]
-    layout = str(input_layout or "").upper()
-    if layout == "NCHW" and len(src) == 4 and len(dst) == 3:
-        flattened_spatial = int(src[2]) * int(src[3])
-        sequence_extent_matches = (
-            dst[1] == -1
-            or (dst[2] > 0 and flattened_spatial * max(1, int(src[1]) // int(dst[2])) == dst[1])
-            or flattened_spatial == dst[1]
-        )
-        if (
-            src[0] == dst[0]
-            and dst[2] > 0
-            and int(src[1]) % int(dst[2]) == 0
-            and src[2] > 0
-            and src[3] > 0
-            and sequence_extent_matches
-        ):
-            return [0, 2, 3, 1]
-    if layout == "NCDHW" and len(src) == 5 and len(dst) == 3:
-        spatial = src[2] * src[3] * src[4]
-        sequence_extent_matches = (
-            dst[1] == -1
-            or (dst[2] > 0 and spatial * max(1, int(src[1]) // int(dst[2])) == dst[1])
-            or spatial == dst[1]
-        )
-        if (
-            src[0] == dst[0]
-            and dst[2] > 0
-            and int(src[1]) % int(dst[2]) == 0
-            and sequence_extent_matches
-        ):
-            return [0, 2, 3, 4, 1]
-    if layout == "NCW" and len(src) == 3 and len(dst) == 3:
-        sequence_extent_matches = (
-            dst[1] == -1
-            or (dst[2] > 0 and int(src[2]) * max(1, int(src[1]) // int(dst[2])) == dst[1])
-            or src[2] == dst[1]
-        )
-        if (
-            src[0] == dst[0]
-            and dst[2] > 0
-            and int(src[1]) % int(dst[2]) == 0
-            and sequence_extent_matches
-        ):
-            return [0, 2, 1]
-    return None
-
-
 def _reshape_prefers_feature_last_for_adjx_batch_matmul_for_codegen(
     *,
     model_ir: ModelIR,
@@ -1566,83 +1513,6 @@ def _reshape_prefers_feature_last_for_adjx_batch_matmul_for_codegen(
                         pending_outputs.append(str(consumer_op.outputs[0]))
         return None
     return None
-
-
-def _matmul_broadcast_shape_for_codegen(
-    *,
-    lhs_batch: Sequence[int],
-    rhs_batch: Sequence[int],
-) -> Optional[List[int]]:
-    lhs_items = [int(v) for v in list(lhs_batch)]
-    rhs_items = [int(v) for v in list(rhs_batch)]
-    result: List[int] = []
-    for lhs_dim, rhs_dim in zip(reversed(lhs_items), reversed(rhs_items)):
-        if int(lhs_dim) == int(rhs_dim):
-            result.append(int(lhs_dim))
-        elif int(lhs_dim) == 1:
-            result.append(int(rhs_dim))
-        elif int(rhs_dim) == 1:
-            result.append(int(lhs_dim))
-        else:
-            return None
-    if len(lhs_items) > len(rhs_items):
-        result.extend(reversed(lhs_items[: len(lhs_items) - len(rhs_items)]))
-    elif len(rhs_items) > len(lhs_items):
-        result.extend(reversed(rhs_items[: len(rhs_items) - len(lhs_items)]))
-    return list(reversed(result))
-
-
-def _infer_batch_matmul_shape_for_codegen(
-    *,
-    lhs_shape: Optional[Sequence[int]],
-    rhs_shape: Optional[Sequence[int]],
-    adj_x: bool,
-    adj_y: bool,
-) -> Optional[List[int]]:
-    if lhs_shape is None or rhs_shape is None:
-        return None
-    lhs_items = [int(v) for v in list(lhs_shape)]
-    rhs_items = [int(v) for v in list(rhs_shape)]
-    if len(lhs_items) == 0 or len(rhs_items) == 0:
-        return None
-    if len(lhs_items) == 1:
-        lhs_items = [1, int(lhs_items[0])]
-    if len(rhs_items) == 1:
-        rhs_items = [int(rhs_items[0]), 1]
-    if len(lhs_items) < 2 or len(rhs_items) < 2:
-        return None
-    lhs_m = int(lhs_items[-1 if adj_x else -2])
-    lhs_k = int(lhs_items[-2 if adj_x else -1])
-    rhs_k = int(rhs_items[-1 if adj_y else -2])
-    rhs_n = int(rhs_items[-2 if adj_y else -1])
-    if int(lhs_k) != int(rhs_k):
-        return None
-    batch_shape = _matmul_broadcast_shape_for_codegen(
-        lhs_batch=lhs_items[:-2],
-        rhs_batch=rhs_items[:-2],
-    )
-    if batch_shape is None:
-        return None
-    return list(batch_shape) + [int(lhs_m), int(rhs_n)]
-
-
-def _infer_reduction_shape_for_codegen(
-    *,
-    input_shape: Optional[Sequence[int]],
-    axes: Optional[Sequence[int]],
-    keepdims: bool,
-) -> Optional[List[int]]:
-    if input_shape is None:
-        return None
-    dims = [int(v) for v in list(input_shape)]
-    if axes is None:
-        return [1 for _ in dims] if keepdims else []
-    normalized_axes = sorted({int(v) for v in list(axes)})
-    if keepdims:
-        return [1 if idx in normalized_axes else int(dim) for idx, dim in enumerate(dims)]
-    return [int(dim) for idx, dim in enumerate(dims) if idx not in normalized_axes]
-
-
 
 
 def _emit_maybe_aligned_expr_for_codegen(

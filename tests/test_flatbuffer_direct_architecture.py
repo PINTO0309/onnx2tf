@@ -4485,9 +4485,13 @@ def test_generated_pytorch_rank4_shape_policy_has_single_owner() -> None:
         "_conv3d_output_spatial_shape_for_codegen",
         "_conv3d_transpose_output_spatial_shape_for_codegen",
         "_fast_precanonicalize_rank4_layout_hint",
+        "_infer_batch_matmul_shape_for_codegen",
+        "_infer_reduction_shape_for_codegen",
+        "_matmul_broadcast_shape_for_codegen",
         "_normalize_cf_rank4_shape",
         "_normalize_nhwc_rank4_shape",
         "_reshape_special_layout_plan",
+        "_reshape_preserves_channel_last_sequence_for_codegen",
     ):
         assert function_name in policy_functions
         assert function_name not in exporter_functions

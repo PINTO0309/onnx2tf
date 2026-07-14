@@ -933,6 +933,16 @@ checkpoint `508b60e` exactly, and the focused policy and architecture suites
 pass 112 tests. The exporter shrank by another 157 lines. No model conversion
 or inference was run.
 
+Four additional ModelIR-independent policies moved from the exporter to
+`pytorch_shape_policy.py`: feature-last sequence Reshape permutations, MatMul
+batch broadcasting, BatchMatMul result shape inference, and reduction result
+shape inference. The graph-backed adjX consumer matcher remains in the
+exporter, keeping the boundary explicit. Fixed-seed differential tests over
+all four compatibility functions produce 4,000 exact matches against
+checkpoint `bab67cf`; the focused policy and architecture suites pass 121
+tests. The exporter shrank by another 130 lines. No model conversion or
+inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
