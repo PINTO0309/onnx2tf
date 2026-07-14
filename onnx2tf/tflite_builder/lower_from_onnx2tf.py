@@ -50672,6 +50672,18 @@ def lower_onnx_to_ir(
         )
         _optimize_transpose_dequant_mul_add_prelu_quantize_bridges(model_ir)
 
+    def _run_quantized_activation_binary_bridge_recovery_sequence() -> None:
+        _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
+        _optimize_dequant_maxpool_quantize_chains(model_ir)
+        _optimize_dequant_softmax_quantize_chains(model_ir)
+        _optimize_dequant_logistic_quantize_chains(model_ir)
+        _canonicalize_softmax_transpose_chains(model_ir)
+        _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir)
+        _optimize_transpose_binary_single_post_bridges_safe(model_ir)
+        _optimize_transpose_binary_mixed_fanout_bridges_safe(model_ir)
+        _optimize_transpose_binary_asymmetric_fanout_bridges(model_ir)
+        _optimize_transpose_binary_full_post_fanout_bridges(model_ir)
+
     def _run_layout_attention_quantized_recovery_suffix(
         *,
         include_duplicate_transpose: bool,
@@ -50824,16 +50836,7 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
-        _optimize_dequant_maxpool_quantize_chains(model_ir)
-        _optimize_dequant_softmax_quantize_chains(model_ir)
-        _optimize_dequant_logistic_quantize_chains(model_ir)
-        _canonicalize_softmax_transpose_chains(model_ir)
-        _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir)
-        _optimize_transpose_binary_single_post_bridges_safe(model_ir)
-        _optimize_transpose_binary_mixed_fanout_bridges_safe(model_ir)
-        _optimize_transpose_binary_asymmetric_fanout_bridges(model_ir)
-        _optimize_transpose_binary_full_post_fanout_bridges(model_ir)
+        _run_quantized_activation_binary_bridge_recovery_sequence()
         if enable_transpose_binary_bridge_optimizations:
             _optimize_transpose_binary_bridges(model_ir)
         run_duplicate_fanout_cleanup(
@@ -50929,16 +50932,7 @@ def lower_onnx_to_ir(
         _run_mean_attention_layout_pass_cluster()
         _run_attention_gate_qdq_recovery_sequence()
         _optimize_dequant_transposeconv_quantize_chains(model_ir)
-        _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
-        _optimize_dequant_maxpool_quantize_chains(model_ir)
-        _optimize_dequant_softmax_quantize_chains(model_ir)
-        _optimize_dequant_logistic_quantize_chains(model_ir)
-        _canonicalize_softmax_transpose_chains(model_ir)
-        _optimize_transpose_binary_symmetric_legacy_only_bridges_safe(model_ir)
-        _optimize_transpose_binary_single_post_bridges_safe(model_ir)
-        _optimize_transpose_binary_mixed_fanout_bridges_safe(model_ir)
-        _optimize_transpose_binary_asymmetric_fanout_bridges(model_ir)
-        _optimize_transpose_binary_full_post_fanout_bridges(model_ir)
+        _run_quantized_activation_binary_bridge_recovery_sequence()
         # Binary bridge recovery can recreate pre/post transpose wrappers around CONCAT.
         _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
         run_spp_layout_cleanup(

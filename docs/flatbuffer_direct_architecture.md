@@ -3731,6 +3731,18 @@ PReLU, and pass-set-2 TransposeConv successors. The extraction removes 23 net
 lowerer lines and reduces direct registered-runner call sites from 120 to 118
 without changing runtime invocation count or order.
 
+Two AST-identical 10-call quantized-activation/binary-bridge recovery sequences
+are owned by
+`_run_quantized_activation_binary_bridge_recovery_sequence`. The helper keeps
+Dequantize/HardSigmoid, MaxPool, Softmax, and Logistic recovery ahead of
+Softmax-Transpose canonicalization and the five safe binary-bridge variants.
+It contains only raw ModelIR mutators and therefore creates no pass-state
+scope. The first caller remains after quantized Reshape and before the
+conditional full binary-bridge optimization; the second remains after
+Dequantize/TransposeConv and before Concat recovery. The extraction removes 6
+net lowerer lines without changing runtime invocation count, order, conditions,
+or the registered-runner call-site count of 118.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
