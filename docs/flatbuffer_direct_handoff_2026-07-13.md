@@ -1110,6 +1110,14 @@ positive/NHWC-rejection contract and focused ownership gate pass, together with
 Ruff and syntax validation. The exporter shrank by another 27 lines. No model
 conversion or inference was run.
 
+Constant-buffer alias shape and broadcast-permutation decisions now live in the
+Torch-free `pytorch_constant_alias_policy.py` owner. Trailing-axis and rank-four
+channel aliases, declared layout preference, and intentional singleton
+broadcast preservation retain their existing behavior. All three moved function
+ASTs match checkpoint `0e829d2` exactly; two direct policy contracts and the
+focused ownership gate pass, together with Ruff and syntax validation. The
+exporter shrank by another 162 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

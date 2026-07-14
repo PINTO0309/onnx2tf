@@ -2284,6 +2284,12 @@ are explicit mutable inputs, and tensor-expression lookup remains a callback;
 the policy therefore contains no Torch import and does not own generated-model
 state.
 
+Constant-buffer alias shape and broadcast-permutation decisions have a separate
+Torch-free owner in `pytorch_constant_alias_policy.py`. It validates trailing-
+axis vectors, rank-four singleton channel constants, public/produced/inlined
+exclusions, and declared NCW/NCHW/NCDHW permutation preference. Constants that
+already express an intentional singleton broadcast remain unpermuted.
+
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter
