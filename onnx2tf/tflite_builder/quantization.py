@@ -925,22 +925,6 @@ def _require_tensor_range(
     return calibration_ranges[tensor_name]
 
 
-def _activation_dtype_for_tensor(
-    *,
-    tensor_name: str,
-    model_ir: ModelIR,
-    full_integer_io: bool,
-    input_quant_dtype: str,
-    output_quant_dtype: str,
-    internal_activation_dtype: str,
-) -> str:
-    if full_integer_io and tensor_name in set(model_ir.inputs):
-        return str(input_quant_dtype).upper()
-    if full_integer_io and tensor_name in set(model_ir.outputs):
-        return str(output_quant_dtype).upper()
-    return str(internal_activation_dtype).upper()
-
-
 def _ensure_activation_quantized(
     *,
     model_ir: ModelIR,
@@ -1368,16 +1352,16 @@ def _build_strict_full_integer_model_ir(
         full_integer_io=bool(full_integer_io),
         calibration_ranges=calibration_ranges,
     )
+    graph_input_names = set(clone.inputs) if full_integer_io else set()
+    graph_output_names = set(clone.outputs) if full_integer_io else set()
 
     def activation_dtype(tensor_name: str) -> str:
-        return _activation_dtype_for_tensor(
-            tensor_name=str(tensor_name),
-            model_ir=clone,
-            full_integer_io=bool(full_integer_io),
-            input_quant_dtype=input_dtype,
-            output_quant_dtype=output_dtype,
-            internal_activation_dtype=internal_dtype,
-        )
+        normalized_name = str(tensor_name)
+        if normalized_name in graph_input_names:
+            return input_dtype
+        if normalized_name in graph_output_names:
+            return output_dtype
+        return internal_dtype
 
     pre_ops: List[OperatorIR] = []
     post_ops: List[OperatorIR] = []

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
@@ -257,3 +259,13 @@ def test_int16_variants_skip_discarded_report_serialization(monkeypatch) -> None
     )
 
     assert calls == {"qparams": 0, "ranges": 0}
+
+
+def test_strict_activation_dtype_reuses_boundary_name_sets() -> None:
+    source = inspect.getsource(quantization._build_strict_full_integer_model_ir)
+
+    assert source.count("set(clone.inputs)") == 1
+    assert source.count("set(clone.outputs)") == 1
+    assert "set(model_ir.inputs)" not in source
+    assert "set(model_ir.outputs)" not in source
+    assert not hasattr(quantization, "_activation_dtype_for_tensor")

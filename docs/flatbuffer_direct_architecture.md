@@ -1538,6 +1538,9 @@ calibration JSON keep full reports; default public model-only calls and both
 INT16-activation variants perform no report-range or qparam serialization.
 Quantization mutation never depends on report state, and the private builder's
 default still collects a report for compatibility with direct internal callers.
+Full-integer activation dtype resolution also materializes graph-input and
+graph-output name sets once per variant. Every operator/tensor decision reuses
+those immutable boundary sets instead of rebuilding them for each lookup.
 
 Late precision conversion in `passes/precision.py` is differential as well.
 Constant floating DIV roots are captured from one operator-type index and each

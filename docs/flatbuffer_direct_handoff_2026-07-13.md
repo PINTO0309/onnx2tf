@@ -673,6 +673,14 @@ payloads exactly for float/full IO crossed with INT8/INT16. On a synthetic
 0.171745s to 0.142100s (1.21x), and traced peak memory from 5.42 MiB to
 2.85 MiB (47.5%). No model conversion or inference was run.
 
+Strict full-integer activation dtype selection now constructs input/output name
+sets once per variant and reuses them for every tensor decision. The former
+standalone helper rebuilt both sets at each call. The focused ownership gate
+fixes one construction per boundary and the strict quantization selection
+passes 50 tests. Against the immediately preceding checkpoint, an 11-run
+synthetic 2,000-op INT16 full-integer median improved from 0.013129s to
+0.011785s (1.11x). No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted
