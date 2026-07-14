@@ -3961,6 +3961,31 @@ constant remapping, maintained-index equivalence, public intermediates and
 source, fan-out, per-channel quantization, non-inverse permutations,
 transactional rejection, and the no-Transpose/no-index preflight.
 
+The adjacent expanded `MUL->ADD->PRELU` QDQ layout bridge is also owned by
+`passes/quantized_activation.py`. It uses one `ModelIRGraphIndex` for
+graph-order Transpose candidates, every linear edge, side-constant ownership,
+DQ/Q rewiring, and batch removal of both wrappers. MUL and ADD retain either
+data/constant input order; PRELU retains its strict data-input-zero and
+constant-alpha contract. Public intermediates and source outputs, exact
+inverse permutations, per-tensor quantization, source shape/signature,
+destination metadata, pruning, lineage, and the existing stats key remain
+protected.
+
+HardSigmoid and expanded PReLU now share only the identical constant-remap
+mechanism. `_plan_constant_layout_remaps` validates all inputs and snapshots
+private/shared ownership without mutation; `_apply_constant_layout_remaps`
+then updates private rank-matched tensors in place or clones and index-rewires
+shared tensors. Eligibility remains explicit: HardSigmoid accepts any
+non-`None` constant buffer, while the established expanded-PReLU rule requires
+all three buffers to be NumPy arrays. Characterization covers two valid
+PReLU chains in one graph, reversed MUL/ADD inputs, private MUL/alpha remaps,
+shared ADD cloning with quantization metadata, maintained-index equivalence,
+public boundaries, fan-out, per-channel quantization, non-inverse
+permutations, non-array/missing alpha rejection, and no-Transpose/no-index
+preflight. A simple public-output ONNX graph is intentionally not used as an
+exact owner fixture because the ordered trailing-output cleanup removes its
+post-Transpose before this later specialized owner runs.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

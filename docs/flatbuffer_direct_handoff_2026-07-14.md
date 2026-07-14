@@ -8,17 +8,16 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves inverse-Transpose cleanup around both
-expanded HardSigmoid QDQ forms out of the lowerer into the Torch/TensorFlow-
+The latest implementation unit moves inverse-Transpose cleanup around the
+expanded MUL/ADD/PRELU QDQ form out of the lowerer into the Torch/TensorFlow-
 free `quantized_activation` owner. One differential `ModelIRGraphIndex`
 supplies candidate and linear-consumer lookup, indexed side-constant and DQ/Q
 edge updates, and batch removal of both Transposes without rebuilding
-consumers after a match. Graphs without Transposes build no index. Required
-constants are preflighted before mutation, so a rejected clamp chain cannot
-leave an earlier constant partially remapped. Exact inverse-perm, public
-boundary, per-tensor quantization, shape/signature, dtype/quantization, and
-lineage behavior remain protected across RELU_0_TO_1 and MAXIMUM/MINIMUM
-forms.
+consumers after a match. HardSigmoid and expanded PReLU now share a
+mutation-free constant-remap planner and indexed applier while retaining their
+different buffer-eligibility contracts. Graphs without Transposes build no
+index. Exact inverse-perm, public boundary, per-tensor quantization,
+shape/signature, dtype/quantization, and lineage behavior remain protected.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -40,7 +39,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains sixty-two coherent continuations:
+The current `fb-refactor5` work contains sixty-three coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -171,9 +170,11 @@ The current `fb-refactor5` work contains sixty-two coherent continuations:
   differential-index owner and removes their repeated graph rescans;
 - `16bba4ea` extracts quantized RELU/RELU6 Transpose bridge cleanup to one
   differential-index activation owner;
-- the current checkpoint extracts both expanded HardSigmoid QDQ Transpose
+- `bbc9d345` extracts both expanded HardSigmoid QDQ Transpose
   bridge forms to that owner, adds transactional constant preflight, and
-  protects every clamp intermediate at the public boundary.
+  protects every clamp intermediate at the public boundary;
+- the current checkpoint extracts expanded MUL/ADD/PRELU QDQ Transpose bridge
+  cleanup and shares only the identical constant plan/apply mechanism.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -193,7 +194,7 @@ The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
 - `onnx2tf/tflite_builder/passes/quantized_activation.py`;
-- `tests/test_flatbuffer_direct_indexed_quantized_hardsigmoid.py`;
+- `tests/test_flatbuffer_direct_indexed_quantized_prelu_bridge.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -516,6 +517,14 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   MAXIMUM intermediate as well as every former boundary, while inverse-perm,
   per-tensor quantization, shape/signature, destination metadata, lineage,
   pruning, and stats contracts remain intact.
+- Expanded MUL/ADD/PRELU QDQ bridge cleanup now has the same single owner.
+  MUL/ADD input ordering and PRELU data-slot semantics are unchanged; one
+  index supplies all topology and shared-constant decisions, both DQ/Q edge
+  updates, and removal of the two wrapper Transposes. The common constant
+  planner is mutation-free and the common applier owns private updates and
+  shared clone rewires, but PReLU still requires all three buffers to be NumPy
+  arrays while HardSigmoid accepts any non-`None` buffer. This prevents a
+  convenience helper from broadening rule eligibility.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -1412,6 +1421,21 @@ TensorFlow-import-blocked direct and `-cotof`, and the sequential direct
 quantization/evaluation/coverage integration smoke passed together with
 `6 passed`.
 
+The indexed expanded-PReLU checkpoint passed exact former-result equivalence
+for two chains, one-index construction, no legacy consumer-map rebuild,
+maintained-index equivalence, reversed MUL/ADD input order, private rank-four
+MUL/alpha remapping, shared rank-four ADD cloning with quantization metadata,
+scalar preservation, public intermediate/PRELU/source boundaries, fan-out,
+per-channel quantization, non-inverse permutation, non-array and missing-alpha
+rejection, and no-Transpose/no-index coverage. Complete architecture plus all
+three indexed quantized-activation files passed with `178 passed`; the
+lightweight core/indexed and related quantized-PReLU selection passed with
+`128 passed`. Related real ONNX lowering, TensorFlow-import-blocked direct and
+`-cotof`, and the sequential quantization/evaluation/coverage integration
+smoke passed together with `7 passed`. An attempted exact public-output ONNX
+fixture was not retained because the existing ordered trailing-output cleanup
+correctly removes its post-Transpose before the specialized owner boundary.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1457,12 +1481,12 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the adjacent expanded MUL/ADD/PRELU DEQUANTIZE/QUANTIZE Transpose
-   bridge cleanup as the next staged checkpoint. Characterize private/shared
-   alpha and affine constants, public boundaries, quantization, fan-out, and
-   rollback-sensitive ordering before replacing its repeated consumer maps
-   and raw structural mutations. Reuse only a helper whose constant-remap
-   contract is genuinely identical to the HardSigmoid owner.
+2. Audit the adjacent quantized LOGISTIC-gate MUL Transpose bridge cleanup as
+   the next staged checkpoint. Its dual DQ/Q branches, inverse-Transpose
+   fan-out aliases, canonical output selection, and public-boundary behavior
+   must be characterized before replacing producer/consumer maps or raw
+   structural mutations; do not force it through the linear activation helper
+   contract.
 3. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

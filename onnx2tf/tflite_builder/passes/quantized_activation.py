@@ -23,6 +23,93 @@ def _is_inverse_perm(first: list[int], second: list[int]) -> bool:
     return inverse is not None and [int(value) for value in second] == inverse
 
 
+ConstantInput = Tuple[int, OperatorIR, int]
+ConstantRemap = Tuple[OperatorIR, int, TensorIR, np.ndarray, bool]
+
+
+def _plan_constant_layout_remaps(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex,
+    constant_inputs: List[ConstantInput],
+    permutation: List[int],
+    require_numpy_array: bool,
+) -> Optional[List[ConstantRemap]]:
+    """Validate all constants and return a mutation-free remap plan."""
+
+    remaps: List[ConstantRemap] = []
+    for operator_index, op, input_index in constant_inputs:
+        constant_name = str(op.inputs[input_index])
+        constant_tensor = model_ir.tensors.get(constant_name)
+        if constant_tensor is None:
+            return None
+        buffer_is_eligible = (
+            isinstance(constant_tensor.data, np.ndarray)
+            if require_numpy_array
+            else constant_tensor.data is not None
+        )
+        if not buffer_is_eligible:
+            return None
+        constant_data = np.asarray(constant_tensor.data)
+        if constant_data.ndim != len(permutation):
+            continue
+        remapped_data = np.transpose(constant_data, axes=permutation)
+        constant_users = graph_index.consumer_indices(constant_name)
+        update_in_place = len(constant_users) == 1 and int(
+            constant_users[0]
+        ) == int(operator_index)
+        remaps.append(
+            (
+                op,
+                input_index,
+                constant_tensor,
+                np.asarray(remapped_data),
+                update_in_place,
+            )
+        )
+    return remaps
+
+
+def _apply_constant_layout_remaps(
+    model_ir: ModelIR,
+    *,
+    graph_index: ModelIRGraphIndex,
+    remaps: List[ConstantRemap],
+) -> None:
+    """Apply a fully validated constant layout-remap plan."""
+
+    for op, input_index, constant_tensor, remapped_data, update_in_place in remaps:
+        if update_in_place:
+            constant_tensor.data = np.asarray(remapped_data)
+            constant_tensor.shape = [int(value) for value in remapped_data.shape]
+            constant_tensor.shape_signature = [
+                int(value) for value in remapped_data.shape
+            ]
+            continue
+        constant_name = str(op.inputs[input_index])
+        new_name = f"{constant_name}_nhwc"
+        suffix = 1
+        while new_name in model_ir.tensors:
+            new_name = f"{constant_name}_nhwc_{suffix}"
+            suffix += 1
+        model_ir.tensors[new_name] = TensorIR(
+            name=new_name,
+            dtype=str(constant_tensor.dtype),
+            shape=[int(value) for value in remapped_data.shape],
+            shape_signature=[int(value) for value in remapped_data.shape],
+            data=np.asarray(remapped_data),
+            is_variable=False,
+            quantization=_clone_quantization(constant_tensor.quantization),
+        )
+        _replace_operator_input_at(
+            model_ir=model_ir,
+            op=op,
+            input_index=int(input_index),
+            new_input_name=new_name,
+            graph_index=graph_index,
+        )
+
+
 def optimize_transpose_dequant_relu_quantize_bridges(
     model_ir: ModelIR,
     *,
@@ -217,14 +304,6 @@ def optimize_transpose_dequant_hardsigmoid_quantize_bridges(
             }
         active_index = ModelIRGraphIndex(model_ir)
 
-    def _unique_tensor_name(base: str) -> str:
-        name = str(base)
-        suffix = 1
-        while name in model_ir.tensors:
-            name = f"{base}_{suffix}"
-            suffix += 1
-        return name
-
     removed_bridges = 0
     while True:
         changed = False
@@ -412,75 +491,20 @@ def optimize_transpose_dequant_hardsigmoid_quantize_bridges(
             ):
                 continue
 
-            # Validate every side input before changing any tensor or edge.
-            # This makes a rejected match a true no-op instead of leaving an
-            # earlier rank-matched constant partially transposed.
-            constant_remaps: List[
-                Tuple[int, OperatorIR, int, TensorIR, np.ndarray, bool]
-            ] = []
-            constants_valid = True
-            for op_index, op, input_index in constant_inputs:
-                constant_name = str(op.inputs[input_index])
-                constant_tensor = model_ir.tensors.get(constant_name)
-                if constant_tensor is None or constant_tensor.data is None:
-                    constants_valid = False
-                    break
-                constant_data = np.asarray(constant_tensor.data)
-                if constant_data.ndim != len(post_perm):
-                    continue
-                remapped_data = np.transpose(constant_data, axes=post_perm)
-                constant_users = active_index.consumer_indices(constant_name)
-                can_update_in_place = len(constant_users) == 1 and int(
-                    constant_users[0]
-                ) == int(op_index)
-                constant_remaps.append(
-                    (
-                        op_index,
-                        op,
-                        input_index,
-                        constant_tensor,
-                        np.asarray(remapped_data),
-                        can_update_in_place,
-                    )
-                )
-            if not constants_valid:
+            constant_remaps = _plan_constant_layout_remaps(
+                model_ir,
+                graph_index=active_index,
+                constant_inputs=constant_inputs,
+                permutation=post_perm,
+                require_numpy_array=False,
+            )
+            if constant_remaps is None:
                 continue
-
-            for (
-                _op_index,
-                op,
-                input_index,
-                constant_tensor,
-                remapped_data,
-                can_update_in_place,
-            ) in constant_remaps:
-                if can_update_in_place:
-                    constant_tensor.data = np.asarray(remapped_data)
-                    constant_tensor.shape = [
-                        int(value) for value in remapped_data.shape
-                    ]
-                    constant_tensor.shape_signature = [
-                        int(value) for value in remapped_data.shape
-                    ]
-                    continue
-                constant_name = str(op.inputs[input_index])
-                new_name = _unique_tensor_name(f"{constant_name}_nhwc")
-                model_ir.tensors[new_name] = TensorIR(
-                    name=new_name,
-                    dtype=str(constant_tensor.dtype),
-                    shape=[int(value) for value in remapped_data.shape],
-                    shape_signature=[int(value) for value in remapped_data.shape],
-                    data=np.asarray(remapped_data),
-                    is_variable=False,
-                    quantization=_clone_quantization(constant_tensor.quantization),
-                )
-                _replace_operator_input_at(
-                    model_ir=model_ir,
-                    op=op,
-                    input_index=int(input_index),
-                    new_input_name=new_name,
-                    graph_index=active_index,
-                )
+            _apply_constant_layout_remaps(
+                model_ir,
+                graph_index=active_index,
+                remaps=constant_remaps,
+            )
 
             _set_operator_inputs(
                 model_ir=model_ir,
@@ -535,4 +559,255 @@ def optimize_transpose_dequant_hardsigmoid_quantize_bridges(
     _prune_unused_tensors(model_ir)
     return {
         "removed_transpose_dequant_hardsigmoid_quantize_bridges": int(removed_bridges),
+    }
+
+
+def optimize_transpose_dequant_mul_add_prelu_quantize_bridges(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Dict[str, int]:
+    """Remove inverse Transposes around a linear DQ-Mul-Add-PReLU-Q chain."""
+
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if active_index is None:
+        if not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators):
+            return {
+                "removed_transpose_dequant_mul_add_prelu_quantize_bridges": 0,
+            }
+        active_index = ModelIRGraphIndex(model_ir)
+
+    removed_bridges = 0
+    while True:
+        changed = False
+        for pre_index in active_index.operator_indices("TRANSPOSE"):
+            pre_op = model_ir.operators[int(pre_index)]
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+                continue
+            pre_perm = _read_transpose_perm(model_ir, pre_op)
+            if pre_perm is None:
+                continue
+
+            quantized_input_bridge = str(pre_op.outputs[0])
+            dequantize_users = active_index.consumer_indices(
+                quantized_input_bridge
+            )
+            if len(dequantize_users) != 1:
+                continue
+            dequantize_index = int(dequantize_users[0])
+            dequantize_op = model_ir.operators[dequantize_index]
+            if (
+                str(dequantize_op.op_type) != "DEQUANTIZE"
+                or len(dequantize_op.inputs) != 1
+                or len(dequantize_op.outputs) != 1
+                or str(dequantize_op.inputs[0]) != quantized_input_bridge
+            ):
+                continue
+
+            float_input_bridge = str(dequantize_op.outputs[0])
+            multiply_users = active_index.consumer_indices(float_input_bridge)
+            if len(multiply_users) != 1:
+                continue
+            multiply_index = int(multiply_users[0])
+            multiply_op = model_ir.operators[multiply_index]
+            if (
+                str(multiply_op.op_type) != "MUL"
+                or len(multiply_op.inputs) != 2
+                or len(multiply_op.outputs) != 1
+            ):
+                continue
+            if str(multiply_op.inputs[0]) == float_input_bridge:
+                multiply_constant_index = 1
+            elif str(multiply_op.inputs[1]) == float_input_bridge:
+                multiply_constant_index = 0
+            else:
+                continue
+
+            multiply_output_bridge = str(multiply_op.outputs[0])
+            add_users = active_index.consumer_indices(multiply_output_bridge)
+            if len(add_users) != 1:
+                continue
+            add_index = int(add_users[0])
+            add_op = model_ir.operators[add_index]
+            if (
+                str(add_op.op_type) != "ADD"
+                or len(add_op.inputs) != 2
+                or len(add_op.outputs) != 1
+            ):
+                continue
+            if str(add_op.inputs[0]) == multiply_output_bridge:
+                add_constant_index = 1
+            elif str(add_op.inputs[1]) == multiply_output_bridge:
+                add_constant_index = 0
+            else:
+                continue
+
+            add_output_bridge = str(add_op.outputs[0])
+            prelu_users = active_index.consumer_indices(add_output_bridge)
+            if len(prelu_users) != 1:
+                continue
+            prelu_index = int(prelu_users[0])
+            prelu_op = model_ir.operators[prelu_index]
+            if (
+                str(prelu_op.op_type) != "PRELU"
+                or len(prelu_op.inputs) != 2
+                or len(prelu_op.outputs) != 1
+                or str(prelu_op.inputs[0]) != add_output_bridge
+            ):
+                continue
+
+            prelu_output_bridge = str(prelu_op.outputs[0])
+            quantize_users = active_index.consumer_indices(prelu_output_bridge)
+            if len(quantize_users) != 1:
+                continue
+            quantize_index = int(quantize_users[0])
+            quantize_op = model_ir.operators[quantize_index]
+            if (
+                str(quantize_op.op_type) != "QUANTIZE"
+                or len(quantize_op.inputs) != 1
+                or len(quantize_op.outputs) != 1
+                or str(quantize_op.inputs[0]) != prelu_output_bridge
+            ):
+                continue
+
+            quantized_output_bridge = str(quantize_op.outputs[0])
+            post_users = active_index.consumer_indices(quantized_output_bridge)
+            if len(post_users) != 1:
+                continue
+            post_index = int(post_users[0])
+            post_op = model_ir.operators[post_index]
+            if (
+                str(post_op.op_type) != "TRANSPOSE"
+                or len(post_op.inputs) < 2
+                or len(post_op.outputs) != 1
+                or str(post_op.inputs[0]) != quantized_output_bridge
+            ):
+                continue
+            post_perm = _read_transpose_perm(model_ir, post_op)
+            if post_perm is None or not _is_inverse_perm(pre_perm, post_perm):
+                continue
+
+            if any(
+                name in model_ir.outputs
+                for name in {
+                    quantized_input_bridge,
+                    float_input_bridge,
+                    multiply_output_bridge,
+                    add_output_bridge,
+                    prelu_output_bridge,
+                    quantized_output_bridge,
+                }
+            ):
+                continue
+
+            source_name = str(pre_op.inputs[0])
+            destination_name = str(post_op.outputs[0])
+            if source_name in model_ir.outputs:
+                continue
+            source_tensor = model_ir.tensors.get(source_name)
+            quantized_input_tensor = model_ir.tensors.get(
+                quantized_input_bridge
+            )
+            quantized_output_tensor = model_ir.tensors.get(
+                quantized_output_bridge
+            )
+            destination_tensor = model_ir.tensors.get(destination_name)
+            if not _all_per_tensor_quantized(
+                [
+                    source_tensor,
+                    quantized_input_tensor,
+                    quantized_output_tensor,
+                    destination_tensor,
+                ]
+            ):
+                continue
+
+            constant_remaps = _plan_constant_layout_remaps(
+                model_ir,
+                graph_index=active_index,
+                constant_inputs=[
+                    (
+                        multiply_index,
+                        multiply_op,
+                        multiply_constant_index,
+                    ),
+                    (add_index, add_op, add_constant_index),
+                    (prelu_index, prelu_op, 1),
+                ],
+                permutation=post_perm,
+                require_numpy_array=True,
+            )
+            if constant_remaps is None:
+                continue
+            _apply_constant_layout_remaps(
+                model_ir,
+                graph_index=active_index,
+                remaps=constant_remaps,
+            )
+
+            _set_operator_inputs(
+                model_ir=model_ir,
+                op=dequantize_op,
+                new_inputs=[source_name],
+                graph_index=active_index,
+            )
+            _set_operator_outputs(
+                model_ir=model_ir,
+                op=quantize_op,
+                new_outputs=[destination_name],
+                graph_index=active_index,
+            )
+
+            source_shape = (
+                list(source_tensor.shape) if source_tensor is not None else None
+            )
+            source_signature = (
+                list(source_tensor.shape_signature)
+                if source_tensor is not None
+                and source_tensor.shape_signature is not None
+                else source_shape
+            )
+            if source_shape is not None:
+                for bridge_name in [
+                    float_input_bridge,
+                    multiply_output_bridge,
+                    add_output_bridge,
+                    prelu_output_bridge,
+                ]:
+                    bridge_tensor = model_ir.tensors.get(bridge_name)
+                    if bridge_tensor is None:
+                        continue
+                    bridge_tensor.shape = [
+                        int(value) for value in source_shape
+                    ]
+                    bridge_tensor.shape_signature = (
+                        [int(value) for value in source_signature]
+                        if source_signature is not None
+                        else [int(value) for value in source_shape]
+                    )
+            if (
+                destination_tensor is not None
+                and quantized_output_tensor is not None
+            ):
+                destination_tensor.dtype = str(quantized_output_tensor.dtype)
+                destination_tensor.quantization = _clone_quantization(
+                    quantized_output_tensor.quantization
+                )
+
+            active_index.remove_operators([int(pre_index), int(post_index)])
+            removed_bridges += 1
+            changed = True
+            break
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir)
+    return {
+        "removed_transpose_dequant_mul_add_prelu_quantize_bridges": int(
+            removed_bridges
+        ),
     }
