@@ -52,6 +52,8 @@ def test_fast_precanonicalize_context_collects_module_and_alias_evidence() -> No
         "        self.register_buffer('scale', torch.zeros([1, 3, 1, 1], dtype=torch.float32), persistent=True)",
         "        out_cf = self.conv_block_0(input_nhwc)",
         "        alias = out_cf",
+        "        softmax_cf = _apply_softmax(input=out_cf, axis=1, beta=1.0, target_shape=[1, 8, 4, 4])",
+        "        padded_cf = F.pad(out_cf, [1, 1, 1, 1], mode='constant', value=0.0)",
     ]
     context = _build_fast_precanonicalize_repair_context(lines)
 
@@ -61,6 +63,8 @@ def test_fast_precanonicalize_context_collects_module_and_alias_evidence() -> No
     assert context.conv_block_out_channels == {"conv_block_0": 8}
     assert context.module_output_producers == {"out_cf": "conv_block_0"}
     assert context.module_input_consumers == {"input_nhwc": ["conv_block_0"]}
+    assert context.static_shapes["softmax_cf"] == [1, 8, 4, 4]
+    assert {"softmax_cf", "padded_cf"} <= context.cf_like_names
     assert _fast_precanonicalize_resolve_alias("alias", context.aliases) == "out_cf"
     assert _fast_precanonicalize_is_cf_like("alias", set(), context)
     assert _fast_precanonicalize_is_nhwc_like(

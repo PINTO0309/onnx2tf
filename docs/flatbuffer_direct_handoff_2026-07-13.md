@@ -1362,6 +1362,15 @@ ownership tests pass (94 unrelated architecture tests deselected), together
 with Ruff, syntax validation, and `git diff --check`; the policy shrank by net
 103 lines. No model conversion or inference was run.
 
+Repair-context Softmax shape/layout collection and constant-Pad CF propagation
+now use the shared complete statement decoders. Their duplicate context-local
+regexes are removed, while the existing one-pass evidence order and
+conservative axis/input checks remain unchanged. The focused context fixture
+now covers both paths. Twelve policy/ownership tests pass (95 unrelated
+architecture tests deselected), together with Ruff, syntax validation, and
+`git diff --check`; the context builder shrank from 212 to 203 lines and the
+policy by net eight lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

@@ -2247,6 +2247,9 @@ The repair-context collector and channel-first Resize repair also call the
 shared complete Resize decoder; neither keeps a nested statement parser. The
 shared decoder's explicit outer-call guard subsumes the lower-level Resize
 decoder guard previously relied on by the repair-local copy.
+The context collector likewise uses the shared complete Softmax and constant
+Pad assignment decoders for shape and CF/NHWC evidence, instead of compiling
+narrower duplicate statement regexes.
 Parser migration also removes its dead matching scaffold: unused module/return/
 Resize/Pool/LRN/reshape regexes and discarded terminal/Conv match results are
 not retained beside the shared decoders. An AST load check guards this boundary

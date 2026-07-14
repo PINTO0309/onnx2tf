@@ -11,6 +11,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_apply_pool2d_input_and_channel_last,
     _parse_apply_resize_input_and_channel_last,
     _parse_apply_resize_assign,
+    _parse_apply_softmax_assign,
     _parse_apply_softmax_input_and_axis,
     _parse_align_binary_inputs_to_anchor_assign_with_shape,
     _parse_align_tensor_target_shape_expr,
@@ -164,12 +165,6 @@ def _build_fast_precanonicalize_repair_context(
     aligned_rank4_any_re = re.compile(
         r"^\s*(?P<lhs>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\((?P<expr>.+), \[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
     )
-    apply_softmax_re = re.compile(
-        r"^\s*(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_apply_softmax\((?:input=)?(?P<input>[A-Za-z0-9_]+), axis=(?P<axis>-?\d+), beta=(?P<beta>[-0-9.eE]+), target_shape=[\[\(](?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)[\]\)]\)$"
-    )
-    const_pad_assign_re = re.compile(
-        r"^\s*(?P<lhs>[A-Za-z0-9_]+)\s*=\s*F\.pad\((?P<input>[A-Za-z0-9_]+), \[(?P<pads>[0-9,\s]+)\], mode='constant', value=(?P<value>[-+0-9.eE]+)\)$"
-    )
     aliases: Dict[str, str] = {}
     consumers: Dict[str, List[int]] = {}
     static_shapes: Dict[str, List[int]] = {}
@@ -308,28 +303,25 @@ def _build_fast_precanonicalize_repair_context(
                 cf_like_names.add(lhs_name)
             else:
                 nhwc_like_names.add(lhs_name)
-        apply_softmax_match = apply_softmax_re.match(line)
-        if apply_softmax_match is not None:
-            lhs_name = str(apply_softmax_match.group("lhs"))
+        apply_softmax_assign = _parse_apply_softmax_assign(line)
+        if apply_softmax_assign is not None:
+            lhs_name = str(apply_softmax_assign[1])
             static_shapes[lhs_name] = [
-                int(apply_softmax_match.group("n")),
-                int(apply_softmax_match.group("h")),
-                int(apply_softmax_match.group("w")),
-                int(apply_softmax_match.group("c")),
+                int(value) for value in apply_softmax_assign[5]
             ]
-            if int(apply_softmax_match.group("axis")) == 1:
+            if int(apply_softmax_assign[3]) == 1:
                 cf_like_names.add(lhs_name)
-            elif int(apply_softmax_match.group("axis")) == 3:
+            elif int(apply_softmax_assign[3]) == 3:
                 nhwc_like_names.add(lhs_name)
-        const_pad_assign_match = const_pad_assign_re.match(line)
-        if const_pad_assign_match is not None:
-            input_name = str(const_pad_assign_match.group("input"))
+        const_pad_assign = _parse_constant_pad_assign(line)
+        if const_pad_assign is not None:
+            input_name = str(const_pad_assign[2])
             if (
                 input_name in cf_like_names
                 or input_name.endswith("_cf")
                 or input_name.endswith("_out_cf")
             ):
-                cf_like_names.add(str(const_pad_assign_match.group("lhs")))
+                cf_like_names.add(str(const_pad_assign[1]))
 
     changed = True
     while changed:
