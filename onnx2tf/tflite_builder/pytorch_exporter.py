@@ -137,6 +137,7 @@ from onnx2tf.tflite_builder.pytorch_shape_policy import (
     _normalize_nhwc_rank4_shape,
     _reshape_preserves_channel_last_sequence_for_codegen,
     _reshape_special_layout_plan,
+    _should_skip_align_for_shape_preserving_unary_for_codegen,
 )
 from onnx2tf.tflite_builder.pytorch_naming import (
     _build_buffer_attr_name_map,
@@ -602,35 +603,6 @@ def _match_single_consumer_layout_bridge_transpose_for_codegen(
     if [int(v) for v in list(expected_perm)] != [int(v) for v in list(actual_perm)]:
         return None
     return output_name, bridge_op_idx
-
-
-def _should_skip_align_for_shape_preserving_unary_for_codegen(
-    *,
-    model_ir: ModelIR,
-    input_name: str,
-    output_name: str,
-    tensor_shape_list_fn: Callable[[str], Optional[List[int]]],
-) -> bool:
-    input_tensor = model_ir.tensors.get(str(input_name), None)
-    output_tensor = model_ir.tensors.get(str(output_name), None)
-    if input_tensor is None or output_tensor is None:
-        return False
-    input_layout = normalize_logical_layout(input_tensor.logical_layout)
-    output_layout = normalize_logical_layout(output_tensor.logical_layout)
-    if input_layout != output_layout:
-        return False
-    input_shape = tensor_shape_list_fn(input_name)
-    output_shape = tensor_shape_list_fn(output_name)
-    if input_shape is None or output_shape is None:
-        return False
-    if _shape_lists_equal(input_shape, output_shape):
-        return True
-    if len(input_shape) != len(output_shape):
-        return False
-    try:
-        return int(np.prod(input_shape, dtype=np.int64)) == int(np.prod(output_shape, dtype=np.int64))
-    except Exception:
-        return False
 
 
 def _next_unique_attr_name_for_codegen(

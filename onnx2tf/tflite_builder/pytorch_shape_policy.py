@@ -1,17 +1,52 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
 
 from onnx2tf.tflite_builder.ir import (
+    ModelIR,
     is_channel_first_logical_layout,
     is_channel_last_logical_layout,
     normalize_logical_layout,
 )
+from onnx2tf.tflite_builder.pytorch_codegen_utils import _shape_lists_equal
 from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _perm_cl_to_cf,
     _permute_shape,
 )
+
+
+def _should_skip_align_for_shape_preserving_unary_for_codegen(
+    *,
+    model_ir: ModelIR,
+    input_name: str,
+    output_name: str,
+    tensor_shape_list_fn: Callable[[str], Optional[List[int]]],
+) -> bool:
+    input_tensor = model_ir.tensors.get(str(input_name), None)
+    output_tensor = model_ir.tensors.get(str(output_name), None)
+    if input_tensor is None or output_tensor is None:
+        return False
+    input_layout = normalize_logical_layout(input_tensor.logical_layout)
+    output_layout = normalize_logical_layout(output_tensor.logical_layout)
+    if input_layout != output_layout:
+        return False
+    input_shape = tensor_shape_list_fn(input_name)
+    output_shape = tensor_shape_list_fn(output_name)
+    if input_shape is None or output_shape is None:
+        return False
+    if _shape_lists_equal(input_shape, output_shape):
+        return True
+    if len(input_shape) != len(output_shape):
+        return False
+    try:
+        return int(np.prod(input_shape, dtype=np.int64)) == int(
+            np.prod(output_shape, dtype=np.int64)
+        )
+    except Exception:
+        return False
 
 
 def _conv_output_spatial_shape(

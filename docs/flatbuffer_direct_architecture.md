@@ -2278,6 +2278,9 @@ separate exporter-only branch. The four function ASTs are identical to their
 former exporter definitions, and direct tests cover non-rank-4 passthrough,
 preferred channel selection, singleton-channel hints, ambiguous layouts,
 spatial dimension preservation, and each supported special Reshape form.
+Shape-preserving unary alignment elision also lives here: it requires identical
+logical layouts and either equal shapes or equal element counts before allowing
+the emitter to bypass runtime target-shape alignment.
 Pure Conv2D and Conv3D output-spatial calculations share one rank-parameterized
 forward-convolution helper in the same module; transpose-Conv3D retains its
 distinct formula beside it. The exporter imports the three compatibility names

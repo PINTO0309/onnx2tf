@@ -1057,6 +1057,13 @@ contracts and the focused single-owner test pass, together with Ruff and syntax
 validation. The exporter shrank by another 100 lines. No model conversion or
 inference was run.
 
+Shape-preserving unary alignment elision now lives in the Torch-free shape-
+policy owner. It preserves the exact logical-layout, exact-shape, equal-element-
+count, and conservative failure contract. The moved function AST matches
+checkpoint `cbd3369` exactly; the direct contract and focused ownership gates
+pass, together with Ruff and syntax validation. The exporter shrank by another
+28 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

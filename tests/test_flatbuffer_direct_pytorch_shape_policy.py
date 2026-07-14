@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from onnx2tf.tflite_builder.ir import ModelIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_shape_policy import (
     _conv2d_input_pre_permute_for_codegen,
     _conv2d_output_spatial_shape_for_codegen,
@@ -20,7 +21,51 @@ from onnx2tf.tflite_builder.pytorch_shape_policy import (
     _normalize_nhwc_rank4_shape,
     _reshape_special_layout_plan,
     _reshape_preserves_channel_last_sequence_for_codegen,
+    _should_skip_align_for_shape_preserving_unary_for_codegen,
 )
+
+
+def test_shape_preserving_unary_alignment_policy() -> None:
+    model_ir = ModelIR(
+        name="shape_preserving_unary",
+        tensors={
+            "input": TensorIR(
+                name="input",
+                dtype="FLOAT32",
+                shape=[1, 2, 3, 4],
+                logical_layout="NCHW",
+            ),
+            "same_elements": TensorIR(
+                name="same_elements",
+                dtype="FLOAT32",
+                shape=[1, 4, 3, 2],
+                logical_layout="NCHW",
+            ),
+            "different_layout": TensorIR(
+                name="different_layout",
+                dtype="FLOAT32",
+                shape=[1, 2, 3, 4],
+                logical_layout="NHWC",
+            ),
+        },
+    )
+    shapes = {
+        name: [int(value) for value in tensor.shape]
+        for name, tensor in model_ir.tensors.items()
+    }
+
+    assert _should_skip_align_for_shape_preserving_unary_for_codegen(
+        model_ir=model_ir,
+        input_name="input",
+        output_name="same_elements",
+        tensor_shape_list_fn=shapes.get,
+    )
+    assert not _should_skip_align_for_shape_preserving_unary_for_codegen(
+        model_ir=model_ir,
+        input_name="input",
+        output_name="different_layout",
+        tensor_shape_list_fn=shapes.get,
+    )
 
 
 @pytest.mark.parametrize(
