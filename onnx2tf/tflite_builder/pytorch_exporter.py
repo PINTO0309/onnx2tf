@@ -72,6 +72,8 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
     _DIRECT_CODEGEN_BINARY_FUNCTIONS,
     _DIRECT_CODEGEN_MODULE_OP_TYPES,
     _DIRECT_CODEGEN_UNARY_EXPRESSIONS,
+    _emit_maybe_aligned_expr_for_codegen,
+    _emit_module_output_expr_for_codegen,
     _emit_native_binary_op_for_codegen,
     _emit_native_concat_op_for_codegen,
     _emit_native_direct_module_op_for_codegen,
@@ -592,61 +594,6 @@ def _match_single_consumer_layout_bridge_transpose_for_codegen(
     if [int(v) for v in list(expected_perm)] != [int(v) for v in list(actual_perm)]:
         return None
     return output_name, bridge_op_idx
-
-
-def _emit_maybe_aligned_expr_for_codegen(
-    *,
-    runtime_imports: Set[str],
-    output_name: str,
-    expr: str,
-    inferred_shape: Optional[Sequence[int]],
-    tensor_shape_list_fn: Callable[[str], Optional[List[int]]],
-    target_shape_literal_fn: Callable[[str], str],
-) -> str:
-    output_shape = tensor_shape_list_fn(output_name)
-    if _shape_lists_equal(inferred_shape, output_shape):
-        return expr
-    runtime_imports.add("_align_tensor_to_target_shape")
-    return f"_align_tensor_to_target_shape({expr}, {target_shape_literal_fn(output_name)})"
-
-
-def _emit_module_output_expr_for_codegen(
-    *,
-    model_ir: ModelIR,
-    runtime_imports: Set[str],
-    output_name: str,
-    expr: str,
-    raw_output_layout: str,
-    tensor_shape_list_fn: Callable[[str], Optional[List[int]]],
-    target_shape_literal_fn: Callable[[str], str],
-) -> str:
-    output_tensor = model_ir.tensors.get(str(output_name), None)
-    output_layout = (
-        normalize_logical_layout(output_tensor.logical_layout)
-        if output_tensor is not None
-        else LOGICAL_LAYOUT_UNKNOWN
-    )
-    normalized_raw_layout = normalize_logical_layout(raw_output_layout)
-    if (
-        output_layout != LOGICAL_LAYOUT_UNKNOWN
-        and normalized_raw_layout != LOGICAL_LAYOUT_UNKNOWN
-        and output_layout != normalized_raw_layout
-    ):
-        output_shape = tensor_shape_list_fn(output_name)
-        rank = (
-            len(list(output_shape))
-            if output_shape is not None
-            else len(list(output_tensor.shape)) if output_tensor is not None else 0
-        )
-        if rank in {3, 4, 5}:
-            perm = logical_layout_permutation(
-                source_layout=normalized_raw_layout,
-                target_layout=output_layout,
-            )
-            if perm is not None:
-                expr = f"{expr}.permute({', '.join(str(int(v)) for v in perm)}).contiguous()"
-    runtime_imports.add("_align_tensor_to_target_shape")
-    return f"_align_tensor_to_target_shape({expr}, {target_shape_literal_fn(output_name)})"
 
 
 def _is_constant_tensor_name_for_codegen(

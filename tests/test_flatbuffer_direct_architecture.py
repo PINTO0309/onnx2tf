@@ -3565,6 +3565,8 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
     emitter_functions = set(emitter_function_nodes)
 
     assert "_emit_native_unary_op_for_codegen" in emitter_functions
+    assert "_emit_maybe_aligned_expr_for_codegen" in emitter_functions
+    assert "_emit_module_output_expr_for_codegen" in emitter_functions
     assert "_emit_native_shape_transform_misc_op_for_codegen" in emitter_functions
     assert "_emit_native_binary_op_for_codegen" in emitter_functions
     assert "_emit_native_concat_op_for_codegen" in emitter_functions
@@ -3594,6 +3596,10 @@ def test_native_pytorch_emitters_have_single_owners() -> None:
     assert "_DIRECT_CODEGEN_UNARY_EXPRESSIONS:" in emitter_source
     assert "def _emit_native_unary_op_for_codegen(" not in exporter_source
     assert "_emit_native_unary_op_for_codegen," in exporter_source
+    assert "def _emit_maybe_aligned_expr_for_codegen(" not in exporter_source
+    assert "_emit_maybe_aligned_expr_for_codegen," in exporter_source
+    assert "def _emit_module_output_expr_for_codegen(" not in exporter_source
+    assert "_emit_module_output_expr_for_codegen," in exporter_source
     assert "_DIRECT_CODEGEN_UNARY_EXPRESSIONS:" not in exporter_source
     assert "_DIRECT_CODEGEN_UNARY_EXPRESSIONS," in exporter_source
     assert "_DIRECT_CODEGEN_BINARY_FUNCTIONS:" in emitter_source

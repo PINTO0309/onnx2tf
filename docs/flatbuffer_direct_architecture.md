@@ -2001,6 +2001,13 @@ owner. Gather, Split, and Unpack channel-axis consumers continue to block unsafe
 channel-first emission. The generated pipeline again resolves the unchanged
 imported emitter name directly.
 
+Generic output expression finalization is also owned by
+`pytorch_emitters.py`. Shape-preserving expressions bypass alignment, while
+shape mismatches import the runtime alignment helper; direct-module outputs
+first apply the declared rank-3/4/5 logical-layout permutation and then align
+to the shared target-shape literal. Both helpers retain callback-based shape
+access and have no exporter-local duplicate.
+
 The direct-module dispatcher is being decomposed by operator family rather than
 moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and
 bidirectional LSTM source emission now delegates to the Torch-free recurrent

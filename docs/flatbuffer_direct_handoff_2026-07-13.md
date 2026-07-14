@@ -1033,6 +1033,14 @@ direct contracts and the focused ownership test pass, together with Ruff and
 syntax validation. The exporter shrank by another 40 lines. No model conversion
 or inference was run.
 
+Generic shape-alignment and direct-module output expression finalization now
+live in `pytorch_emitters.py`. Exact-shape expressions remain untouched;
+mismatches import the alignment helper, and declared rank-3/4/5 output layout
+is applied before final alignment. Two thousand fixed-seed outcomes match
+checkpoint `5574362` exactly; two direct emitter contracts and the focused
+single-owner test pass, together with Ruff and syntax validation. The exporter
+shrank by another 53 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

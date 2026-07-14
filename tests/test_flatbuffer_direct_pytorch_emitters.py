@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_emitters import (
+    _emit_maybe_aligned_expr_for_codegen,
+    _emit_module_output_expr_for_codegen,
     _emit_native_binary_op_for_codegen,
     _emit_native_concat_op_for_codegen,
     _emit_native_conv2d_module_op_for_codegen,
@@ -1483,3 +1485,55 @@ def test_direct_module_dispatcher_routes_supported_family_and_rejects_other() ->
     assert emitted is False
     assert forward_lines == []
     assert runtime_imports == set()
+
+
+def test_output_expression_alignment_is_added_only_for_shape_mismatch() -> None:
+    runtime_imports: set[str] = set()
+    assert _emit_maybe_aligned_expr_for_codegen(
+        runtime_imports=runtime_imports,
+        output_name="output",
+        expr="value",
+        inferred_shape=[1, 4],
+        tensor_shape_list_fn=lambda _name: [1, 4],
+        target_shape_literal_fn=lambda _name: "[1, 4]",
+    ) == "value"
+    assert runtime_imports == set()
+
+    assert _emit_maybe_aligned_expr_for_codegen(
+        runtime_imports=runtime_imports,
+        output_name="output",
+        expr="value",
+        inferred_shape=[1, 3],
+        tensor_shape_list_fn=lambda _name: [1, 4],
+        target_shape_literal_fn=lambda _name: "[1, 4]",
+    ) == "_align_tensor_to_target_shape(value, [1, 4])"
+    assert runtime_imports == {"_align_tensor_to_target_shape"}
+
+
+def test_module_output_expression_applies_declared_layout_before_alignment() -> None:
+    model_ir = ModelIR(
+        name="module_output",
+        tensors={
+            "output": TensorIR(
+                name="output",
+                dtype="FLOAT32",
+                shape=[1, 2, 4, 3],
+                logical_layout="NHWC",
+            ),
+        },
+    )
+    runtime_imports: set[str] = set()
+
+    assert _emit_module_output_expr_for_codegen(
+        model_ir=model_ir,
+        runtime_imports=runtime_imports,
+        output_name="output",
+        expr="value",
+        raw_output_layout="NCHW",
+        tensor_shape_list_fn=lambda _name: [1, 2, 4, 3],
+        target_shape_literal_fn=lambda _name: "[1, 2, 4, 3]",
+    ) == (
+        "_align_tensor_to_target_shape("
+        "value.permute(0, 2, 3, 1).contiguous(), [1, 2, 4, 3])"
+    )
+    assert runtime_imports == {"_align_tensor_to_target_shape"}
