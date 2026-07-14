@@ -95,11 +95,19 @@ _DOWNSTREAM_EVIDENCE_ALIGNED_BINARY_RE = re.compile(
     r"(?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), "
     r"\[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
 )
-_DOWNSTREAM_EVIDENCE_ALIGNED_BN_RE = re.compile(
-    r"^\s*[A-Za-z0-9_]+\s*=\s*_align_tensor_to_target_shape\("
-    r"torch\.(?:mul|add)\((?P<input>[A-Za-z0-9_]+), "
-    r"self\.[A-Za-z0-9_]+\), "
-    r"\[\d+, \d+, \d+, (?P<c>\d+)\]\)$"
+_DIRECT_ALIGNED_BN_CONST_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*"
+    r"_align_tensor_to_target_shape\(torch\.(?P<op>mul|add)\("
+    r"(?P<input>[A-Za-z0-9_]+), self\.(?P<const_attr>[A-Za-z0-9_]+)\), "
+    r"\[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
+)
+_RESHAPED_ALIGNED_BN_CONST_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*"
+    r"_align_tensor_to_target_shape\(torch\.(?P<op>mul|add)\("
+    r"(?P<input>[A-Za-z0-9_]+), torch\.reshape\("
+    r"self\.(?P<const_attr>[A-Za-z0-9_]+), "
+    r"\[1, (?P<reshape_c>\d+), 1, 1\]\)\), "
+    r"\[(?P<n>\d+), (?P<c0>\d+), (?P<h>\d+), (?P<w>\d+)\]\)$"
 )
 
 
@@ -1026,6 +1034,96 @@ def _repair_cf_resize_target_shape(
     return rewritten, lhs_name
 
 
+def _repair_cf_resize_from_input_and_bn_evidence(
+    line: str,
+    index: int,
+    lines: Sequence[str],
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[str | None, str | None]:
+    apply_resize_match = _parse_apply_resize_assign(line)
+    if apply_resize_match is None:
+        return None, None
+    (
+        resize_indent,
+        resize_lhs_name,
+        input_name,
+        out_h,
+        out_w,
+        resize_method,
+        current_shape,
+        resize_align_corners,
+        resize_half_pixel_centers,
+        _,
+    ) = apply_resize_match
+
+    next_aligned_bn_match = None
+    if index + 1 < len(lines):
+        next_line = str(lines[index + 1])
+        next_aligned_bn_match = _DIRECT_ALIGNED_BN_CONST_RE.match(next_line)
+        if next_aligned_bn_match is None:
+            next_aligned_bn_match = _RESHAPED_ALIGNED_BN_CONST_RE.match(next_line)
+    next_bn_channel_count = None
+    if (
+        next_aligned_bn_match is not None
+        and str(next_aligned_bn_match.group("input")) == resize_lhs_name
+    ):
+        next_bn_channel_count = context.const_channel_counts.get(
+            str(next_aligned_bn_match.group("const_attr")),
+            None,
+        )
+
+    current_shape_hint = _fast_precanonicalize_rank4_layout_hint(
+        current_shape,
+        preferred_channel_count=_fast_precanonicalize_preferred_channel_count(
+            input_name,
+            dynamic_cf_like_names,
+            dynamic_nhwc_like_names,
+            context,
+            shape_hint=current_shape,
+        ),
+    )
+    input_is_cf_like = (
+        input_name in dynamic_cf_like_names
+        or input_name.endswith("_cf")
+        or input_name.endswith("_out_cf")
+    )
+    if current_shape_hint == "cf" or not input_is_cf_like:
+        return None, None
+
+    preferred_channel_count = next_bn_channel_count
+    if preferred_channel_count is None:
+        preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+            resize_lhs_name,
+            dynamic_cf_like_names,
+            dynamic_nhwc_like_names,
+            context,
+            shape_hint=current_shape,
+        )
+    if preferred_channel_count is None:
+        preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+            input_name,
+            dynamic_cf_like_names,
+            dynamic_nhwc_like_names,
+            context,
+            shape_hint=current_shape,
+        )
+    normalized_shape = _normalize_cf_rank4_shape(
+        current_shape,
+        preferred_channel_count=preferred_channel_count,
+        out_hw=(out_h, out_w),
+    )
+    rewritten = (
+        f"{resize_indent}{resize_lhs_name} = _apply_resize("
+        f"{input_name}, [{out_h}, {out_w}], "
+        f"method='{resize_method}', target_shape={repr(normalized_shape)}, "
+        f"align_corners={resize_align_corners}, "
+        f"half_pixel_centers={resize_half_pixel_centers}, channel_last=False)"
+    )
+    return rewritten, resize_lhs_name
+
+
 def _repair_cf_pool_target_shape(
     line: str,
     index: int,
@@ -1867,7 +1965,7 @@ def _repair_binary_alignment_from_downstream_evidence(
 
     next_line = str(lines[index + 1])
     lhs_name = str(aligned_binary_match.group("lhs"))
-    next_aligned_bn_match = _DOWNSTREAM_EVIDENCE_ALIGNED_BN_RE.match(next_line)
+    next_aligned_bn_match = _DIRECT_ALIGNED_BN_CONST_RE.match(next_line)
     next_return_value = _parse_simple_return_identifier(next_line)
     next_resize_match = _parse_apply_resize_assign(next_line)
     has_downstream_cf_evidence = (

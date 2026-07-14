@@ -7,12 +7,12 @@ The active branch is `fb-refactor5`, created from `main` after pull request
 subsequent work uses coherent commits and pushes without opening another pull
 request.
 
-The latest implementation unit moves the downstream-evidence aligned-binary
-fallback out of `_apply_fast_precanonicalize_repairs` and into the Torch-free
-`pytorch_fast_precanonicalize_policy.py` owner. The orchestrator is 421 lines at
-this checkpoint, down from 482 lines at Goal resumption, 1,025 lines at the
-beginning of the previous continuation, and 1,608 lines before the broader
-fast-precanonicalize extraction.
+The latest implementation unit moves the input/BN-evidence channel-first
+Resize fallback out of `_apply_fast_precanonicalize_repairs` and into the
+Torch-free `pytorch_fast_precanonicalize_policy.py` owner. The orchestrator is
+372 lines at this checkpoint, down from 482 lines at Goal resumption, 1,025
+lines at the beginning of the previous continuation, and 1,608 lines before
+the broader fast-precanonicalize extraction.
 
 ## Completed work
 
@@ -31,10 +31,15 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` checkpoint centralizes the ordered fallback that
-repairs aligned binary shapes only when general binary repair made no change
-and the immediate next statement supplies matching BN, direct-return, or
-channel-first Resize evidence.
+The current `fb-refactor5` work contains two coherent continuations:
+
+- `3ac19b40` centralizes the ordered fallback that repairs aligned binary
+  shapes only when general binary repair made no change and the immediate next
+  statement supplies matching BN, direct-return, or channel-first Resize
+  evidence;
+- the current checkpoint centralizes the following Resize fallback, including
+  exact direct and reshaped BN-constant parsing, preferred-channel selection,
+  input-layout guards, and CF evidence propagation.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -78,6 +83,14 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   `_in` naming evidence. It additionally requires an immediate matching BN,
   direct return, or channel-first Resize; mismatched channels and mixed-layout
   names remain no-ops.
+- General Resize repair also remains first. The input/BN-evidence fallback runs
+  only afterward, uses an immediate matching direct or reshaped BN constant as
+  the preferred channel hint when available, and otherwise retains the legacy
+  input/source channel fallback. Its returned CF evidence remains visible to
+  Pool and later aligned-constant decisions in the same ordered scan.
+- Explicit NHWC Resize inputs and already-channel-first target shapes remain
+  no-ops. BN evidence refines the preferred channel count but is not a
+  prerequisite for the legacy CF-input repair.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -87,7 +100,7 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
 
 ## Tests executed
 
-The resumed downstream-evidence checkpoint passed:
+The resumed downstream-binary and Resize-evidence checkpoints passed:
 
 ```text
 env -u PYTHONPATH -u LD_LIBRARY_PATH \
@@ -96,12 +109,14 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH \
   tests/test_flatbuffer_direct_pytorch_fast_precanonicalize_policy.py \
   tests/test_flatbuffer_direct_architecture.py
 
-120 passed
+121 passed
 ```
 
 Seven pre/post-extraction characterization cases also preserve the exact
 orchestrator output for matching BN, direct return, channel-first Resize,
 channel mismatch, channel-last Resize, mixed operands, and an already-CF shape.
+Five additional pre/post-extraction cases preserve direct BN, reshaped BN,
+no-BN fallback, NHWC-input no-op, and already-CF Resize behavior.
 The exporter and policy pass `python -m py_compile`, and `git diff --check`
 passes. The immediately preceding DepthToSpace, Pool, dynamic-Pool,
 simple-alias, and aligned-scalar checkpoints passed their focused synthetic and
@@ -127,9 +142,8 @@ ownership selections.
 ## Unfinished work
 
 The full Goal is not complete. The fast-precanonicalize orchestrator still has
-421 lines. Its largest remaining in-loop blocks are:
+372 lines. Its largest remaining in-loop blocks are:
 
-- 65 lines: Resize shape repair selected by following BN constant evidence;
 - 32 and 26 lines: reshaped and direct aligned BN-constant repair;
 - smaller Pool state-update glue and local-response-normalization shape repair.
 
@@ -141,13 +155,12 @@ remains subject to the original refactor plan and its verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Inspect the 65-line Resize repair selected by following BN constant
-   evidence in `_apply_fast_precanonicalize_repairs`.
-3. Characterize direct and reshaped BN constant evidence, channel-count
-   agreement, and no-op cases before moving the exact decision to the policy
-   owner.
-4. Preserve the current ordering after downstream binary evidence and before
-   the later aligned BN-constant repairs.
+2. Inspect the 32-line reshaped and 26-line direct aligned BN-constant repairs
+   in `_apply_fast_precanonicalize_repairs`.
+3. Characterize input/constant channel agreement, layout propagation, and
+   no-op cases before moving their exact decisions to the policy owner.
+4. Preserve their current ordering after Resize/Pool evidence and before the
+   subsequent Softmax and local-response-normalization decisions.
 5. Run only the focused synthetic/ownership/static checks unless the user asks
    for broader conversion validation. Use `uv`, run inference sequentially if
    any is explicitly requested, commit and push coherent units, and do not

@@ -2083,6 +2083,15 @@ required. Channel mismatches, channel-last Resize, mixed-layout operand names,
 and already-channel-first shapes remain no-ops. The exporter applies returned
 layout evidence before its existing Resize rule, preserving the established
 general-repair → downstream-fallback → Resize ordering.
+Channel-first Resize repair now has two explicit policy stages. The general
+`_repair_cf_resize_target_shape` decision remains first; when it does not
+rewrite the statement, the exact input/BN-evidence fallback may normalize the
+target and publish CF evidence for the following Pool and aligned-constant
+rules. Immediate direct and reshaped BN statements share policy-owned parsers,
+and a registered BN constant channel count is preferred when present but is
+not required for the legacy input-evidence fallback. Explicit NHWC input and
+already-channel-first target shapes remain no-ops, preserving the established
+Resize-to-Pool scan behavior.
 The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
 restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer

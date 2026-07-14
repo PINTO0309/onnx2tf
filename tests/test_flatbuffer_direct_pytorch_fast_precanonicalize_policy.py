@@ -20,6 +20,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_cf_pool_neighbor_layout_at,
     _repair_cf_gather_slice_at,
     _repair_cf_reduce_max_axis,
+    _repair_cf_resize_from_input_and_bn_evidence,
     _repair_cf_resize_target_shape,
     _repair_cf_softmax_axis,
     _repair_concat_axis_from_input_layouts,
@@ -165,6 +166,97 @@ def test_resize_and_pool_repairs_normalize_channel_first_targets() -> None:
     )
     assert pooled_name == "pooled"
     assert pooled is not None and "target_shape=[1, 3, 20, 30]" in pooled
+
+
+def test_resize_input_evidence_preserves_bn_and_noop_decisions() -> None:
+    positive_cases = [
+        (
+            [
+                "        self.register_buffer('scale', torch.zeros("
+                "[1, 8, 1, 1], dtype=torch.float32), persistent=True)",
+                "        resized = _apply_resize("
+                "source_cf, [5, 7], method='nearest', "
+                "target_shape=[1, 5, 7, 8], align_corners=False, "
+                "half_pixel_centers=False, channel_last=True)",
+                "        normalized = _align_tensor_to_target_shape("
+                "torch.mul(resized, self.scale), [1, 5, 7, 8])",
+            ],
+            1,
+            "target_shape=[1, 8, 5, 7]",
+        ),
+        (
+            [
+                "        self.register_buffer('scale', torch.zeros("
+                "[8], dtype=torch.float32), persistent=True)",
+                "        resized = _apply_resize("
+                "source_cf, [5, 7], method='nearest', "
+                "target_shape=[1, 5, 7, 8], align_corners=False, "
+                "half_pixel_centers=False, channel_last=True)",
+                "        normalized = _align_tensor_to_target_shape("
+                "torch.add(resized, torch.reshape("
+                "self.scale, [1, 8, 1, 1])), [1, 8, 5, 7])",
+            ],
+            1,
+            "target_shape=[1, 8, 5, 7]",
+        ),
+        (
+            [
+                "        resized = _apply_resize("
+                "source_cf, [5, 7], method='nearest', "
+                "target_shape=[1, 5, 7, 16], align_corners=False, "
+                "half_pixel_centers=False, channel_last=True)",
+                "        return resized",
+            ],
+            0,
+            "target_shape=[1, 16, 5, 7]",
+        ),
+    ]
+    for lines, resize_index, expected_shape in positive_cases:
+        rewritten, lhs_name = _repair_cf_resize_from_input_and_bn_evidence(
+            lines[resize_index],
+            resize_index,
+            lines,
+            {"source_cf"},
+            set(),
+            _build_fast_precanonicalize_repair_context(lines),
+        )
+        assert rewritten is not None and expected_shape in rewritten
+        assert "channel_last=False" in rewritten
+        assert lhs_name == "resized"
+
+    negative_cases = [
+        (
+            [
+                "        resized = _apply_resize("
+                "source_nhwc, [5, 7], method='nearest', "
+                "target_shape=[1, 5, 7, 16], align_corners=False, "
+                "half_pixel_centers=False, channel_last=True)",
+                "        return resized",
+            ],
+            set(),
+            {"source_nhwc"},
+        ),
+        (
+            [
+                "        resized = _apply_resize("
+                "source_cf, [5, 7], method='nearest', "
+                "target_shape=[1, 1, 5, 7], align_corners=False, "
+                "half_pixel_centers=False, channel_last=False)",
+                "        return resized",
+            ],
+            {"source_cf"},
+            set(),
+        ),
+    ]
+    for lines, cf_names, nhwc_names in negative_cases:
+        assert _repair_cf_resize_from_input_and_bn_evidence(
+            lines[0],
+            0,
+            lines,
+            cf_names,
+            nhwc_names,
+            _build_fast_precanonicalize_repair_context(lines),
+        ) == (None, None)
 
 
 def test_nhwc_pool_layout_uses_consumer_and_immediate_bridge_evidence() -> None:

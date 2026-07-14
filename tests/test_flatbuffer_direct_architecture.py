@@ -4905,6 +4905,7 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_repair_aligned_scalar_binary_shape_at",
         "_repair_cf_pool_target_shape",
         "_repair_cf_pool_neighbor_layout_at",
+        "_repair_cf_resize_from_input_and_bn_evidence",
         "_repair_cf_gather_slice_at",
         "_repair_cf_reduce_max_axis",
         "_repair_cf_resize_target_shape",

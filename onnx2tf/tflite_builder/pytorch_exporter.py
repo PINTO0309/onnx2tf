@@ -130,6 +130,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_aligned_scalar_binary_shape_at,
     _repair_cf_pool_target_shape,
     _repair_cf_pool_neighbor_layout_at,
+    _repair_cf_resize_from_input_and_bn_evidence,
     _repair_cf_resize_target_shape,
     _repair_cf_reduce_max_axis,
     _repair_cf_softmax_axis,
@@ -7411,69 +7412,20 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 line = rewritten_resize_line
                 apply_resize_match = _parse_apply_resize_assign(line)
         if apply_resize_match is not None:
-            resize_indent, resize_lhs_name, input_name, out_h, out_w, resize_method, current_shape, resize_align_corners, resize_half_pixel_centers, _ = apply_resize_match
-            next_aligned_bn_match = None
-            if index + 1 < len(lines):
-                next_aligned_bn_match = aligned_bn_const_re.match(lines[index + 1])
-                if next_aligned_bn_match is None:
-                    next_aligned_bn_match = aligned_bn_const_reshaped_re.match(lines[index + 1])
-            next_bn_channel_count = None
-            if (
-                next_aligned_bn_match is not None
-                and str(next_aligned_bn_match.group("input")) == resize_lhs_name
-            ):
-                next_bn_channel_count = repair_context.const_channel_counts.get(
-                    str(next_aligned_bn_match.group("const_attr")),
-                    None,
+            evidence_resize_line, evidence_resize_lhs = (
+                _repair_cf_resize_from_input_and_bn_evidence(
+                    line,
+                    index,
+                    lines,
+                    cf_like_names,
+                    nhwc_like_names,
+                    repair_context,
                 )
-            if (
-                _fast_precanonicalize_rank4_layout_hint(
-                    current_shape,
-                    preferred_channel_count=_fast_precanonicalize_preferred_channel_count(
-                        input_name,
-                        cf_like_names,
-                        nhwc_like_names,
-                        repair_context,
-                        shape_hint=current_shape,
-                    ),
-                ) != "cf"
-                and (
-                    input_name in cf_like_names
-                    or input_name.endswith("_cf")
-                    or input_name.endswith("_out_cf")
-                )
-            ):
-                preferred_channel_count = next_bn_channel_count
-                if preferred_channel_count is None:
-                    preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
-                        resize_lhs_name,
-                        cf_like_names,
-                        nhwc_like_names,
-                        repair_context,
-                        shape_hint=current_shape,
-                    )
-                if preferred_channel_count is None:
-                    preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
-                        input_name,
-                        cf_like_names,
-                        nhwc_like_names,
-                        repair_context,
-                        shape_hint=current_shape,
-                    )
-                normalized_shape = _normalize_cf_rank4_shape(
-                    current_shape,
-                    preferred_channel_count=preferred_channel_count,
-                    out_hw=(out_h, out_w),
-                )
-                lines[index] = (
-                    f"{resize_indent}{resize_lhs_name} = _apply_resize("
-                    f"{input_name}, [{out_h}, {out_w}], "
-                    f"method='{resize_method}', "
-                    f"target_shape={repr(normalized_shape)}, "
-                    f"align_corners={resize_align_corners}, "
-                    f"half_pixel_centers={resize_half_pixel_centers}, channel_last=False)"
-                )
-                cf_like_names.add(resize_lhs_name)
+            )
+            if evidence_resize_line is not None:
+                lines[index] = evidence_resize_line
+                if evidence_resize_lhs is not None:
+                    cf_like_names.add(evidence_resize_lhs)
                 changed = True
         apply_pool2d_assign = _parse_apply_pool2d_assign_with_shape(line)
         if apply_pool2d_assign is not None:
