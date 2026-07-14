@@ -4,6 +4,9 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+from onnx2tf.tflite_builder.artifact_metadata import (
+    collect_custom_op_artifact_metadata,
+)
 from onnx2tf.tflite_builder.core.contracts import ConversionRequest, ConversionResult
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.progress import (
@@ -686,43 +689,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         else:
             _write_coverage_report(None)
 
-        custom_ops_used = sorted(
-            list(
-                {
-                    str(op.options.get("customCode", "CUSTOM"))
-                    for op in model_ir.operators
-                    if str(op.op_type) == "CUSTOM"
-                }
-            )
-        )
-        custom_op_nodes: List[Dict[str, str]] = []
-        custom_op_nodes_seen = set()
-        for op in model_ir.operators:
-            if str(op.op_type) != "CUSTOM":
-                continue
-            options = op.options if isinstance(op.options, dict) else {}
-            custom_code = str(options.get("customCode", "CUSTOM")).strip()
-            if custom_code == "":
-                custom_code = "CUSTOM"
-            onnx_op = str(options.get("onnxOp", "")).strip()
-            onnx_node_name = str(options.get("onnxNodeName", "")).strip()
-            key = (custom_code, onnx_op, onnx_node_name)
-            if key in custom_op_nodes_seen:
-                continue
-            custom_op_nodes_seen.add(key)
-            custom_op_nodes.append(
-                {
-                    "custom_code": custom_code,
-                    "onnx_op": onnx_op,
-                    "onnx_node_name": onnx_node_name,
-                }
-            )
-        custom_op_nodes.sort(
-            key=lambda v: (
-                str(v.get("custom_code", "")),
-                str(v.get("onnx_op", "")),
-                str(v.get("onnx_node_name", "")),
-            )
+        custom_ops_used, custom_op_nodes = collect_custom_op_artifact_metadata(
+            model_ir
         )
 
         split_plan_report_path = None

@@ -1648,6 +1648,13 @@ shared consumer index instead of rescanning the complete graph suffix for every
 candidate. The final split artifact writer also constructs one index and reuses
 it across all emitted partitions.
 
+Custom-op result metadata has a single TensorFlow- and Torch-free owner in
+`artifact_metadata.py`. One operator-stream pass produces both the legacy raw
+custom-code list and the normalized, deduplicated node-detail list, preserving
+their intentionally different whitespace/empty-code behavior and deterministic
+sort order. Export orchestration no longer performs two consecutive ModelIR
+scans for these result fields.
+
 PyTorch layout-only Transpose cleanup is owned by the Torch-free
 `passes/pytorch_compat.py` boundary. It indexes initial `TRANSPOSE` objects and
 their live consumers once. Internal adapters rewire consumers and are removed

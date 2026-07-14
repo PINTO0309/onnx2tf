@@ -14,6 +14,7 @@ DEPENDENCY_SCOPED_ROOTS = [
     for name in ["core", "passes", "op_families"]
 ]
 DEPENDENCY_SCOPED_FILES = [
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "artifact_metadata.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py",
     REPO_ROOT
     / "onnx2tf"
@@ -199,6 +200,20 @@ def test_reporting_implementation_stays_out_of_lowering_module() -> None:
             node.id for node in ast.walk(wrapper) if isinstance(node, ast.Name)
         }
         assert delegate_name in referenced_names
+
+
+def test_custom_op_artifact_metadata_has_single_scan_owner() -> None:
+    builder_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py"
+    ).read_text(encoding="utf-8")
+    metadata_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "artifact_metadata.py"
+    ).read_text(encoding="utf-8")
+
+    assert "def collect_custom_op_artifact_metadata(" in metadata_source
+    assert "def collect_custom_op_artifact_metadata(" not in builder_source
+    assert "collect_custom_op_artifact_metadata(" in builder_source
+    assert "custom_op_nodes_seen" not in builder_source
 
 
 def test_high_rank_matmul_pass_and_prune_utility_have_single_owners() -> None:
