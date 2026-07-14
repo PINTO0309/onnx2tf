@@ -50270,6 +50270,33 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_terminal_clamp_unary_relu_pass_cluster() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_clamp_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        # MAXIMUM/MINIMUM -> RELU_0_TO_1 canonicalization can expose fresh
+        # NHWC<->NCHW unary wrappers (e.g. HardSigmoid clamp). Re-run the
+        # strict transpose-unary passthrough fold once in terminal stage.
+        run_transpose_unary_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_maximum_zero_relu_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> None:
         state_scope = ModelIRPassStateScope(
             model_ir,
@@ -51097,24 +51124,7 @@ def lower_onnx_to_ir(
             include_layout_transpose=True,
             include_multi_branch_gate=True,
         )
-    run_clamp_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    # MAXIMUM/MINIMUM -> RELU_0_TO_1 canonicalization can expose fresh
-    # NHWC<->NCHW unary wrappers (e.g. HardSigmoid clamp). Re-run the
-    # strict transpose-unary passthrough fold once in terminal stage.
-    run_transpose_unary_passthrough_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_maximum_zero_relu_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_terminal_clamp_unary_relu_pass_cluster()
     _optimize_sinet_shuffle_residual_transpose_chains(model_ir)
     _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
     _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)

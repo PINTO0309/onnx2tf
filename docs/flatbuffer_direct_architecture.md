@@ -124,6 +124,14 @@ pair uses its own scope between the conditional elementwise-roundtrip and
 Conv/Pool-output legacy rewrites. Its two runners retain their order and
 three-spec diagnostic grouping while constructing one graph index.
 
+The terminal scalar-clamp, unary-passthrough, and maximum-zero-to-ReLU
+sequence shares one scope between the conditional terminal layout-recovery
+block and the raw SiNet rewrites. Clamp and maximum-zero canonicalization use
+`ModelIRGraphIndex.replace_operator_type()` so the shared operator-type index
+remains current after changing `MAXIMUM`/`MINIMUM` operators to their RELU
+forms. Both runners retain standalone behavior through optional scope
+arguments.
+
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
 and Split/Reshape collapse) retain their order before the two bridge specs

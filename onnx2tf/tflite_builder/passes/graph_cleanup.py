@@ -890,7 +890,7 @@ def _optimize_maximum_minimum_relu0to1_chains(
             if len(max_users) != 1 or int(max_users[0]) != int(min_idx):
                 continue
 
-            min_op.op_type = "RELU_0_TO_1"
+            graph_index.replace_operator_type(min_idx, "RELU_0_TO_1")
             min_op.version = 1
             _set_operator_inputs(
                 model_ir=model_ir,
@@ -918,6 +918,7 @@ def run_clamp_cleanup(
     *,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run scalar zero-to-one clamp canonicalization transactionally."""
 
@@ -965,6 +966,7 @@ def run_clamp_cleanup(
         layout_state=layout_state,
         default_details={"rewritten_maximum_minimum_relu0to1_chains": 0},
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
@@ -982,7 +984,7 @@ def _optimize_maximum_with_zero_input2_to_relu(
     atol = 1e-6
     graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
-    for op in model_ir.operators:
+    for op_index, op in enumerate(model_ir.operators):
         if str(op.op_type) != "MAXIMUM" or len(op.inputs) != 2 or len(op.outputs) != 1:
             continue
 
@@ -1000,7 +1002,7 @@ def _optimize_maximum_with_zero_input2_to_relu(
         if str(data_tensor.dtype).upper() not in {"FLOAT16", "FLOAT32"}:
             continue
 
-        op.op_type = "RELU"
+        graph_index.replace_operator_type(op_index, "RELU")
         op.version = 1
         _set_operator_inputs(
             model_ir=model_ir,
@@ -1021,6 +1023,7 @@ def run_maximum_zero_relu_cleanup(
     *,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run guarded Maximum(data, zero) canonicalization transactionally."""
 
@@ -1063,6 +1066,7 @@ def run_maximum_zero_relu_cleanup(
         layout_state=layout_state,
         default_details={"rewritten_maximum_with_zero_input2_to_relu": 0},
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

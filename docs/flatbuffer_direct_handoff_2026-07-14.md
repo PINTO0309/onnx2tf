@@ -9,12 +9,14 @@ subsequent work uses coherent commits and pushes without opening a pull
 request.
 
 The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-the terminal singleton-MaxPool/consecutive-Reshape pair. The three diagnostic
-events construct one graph index instead of up to two. The scope starts after
-the conditional elementwise-roundtrip rewrite and ends before the conditional
-Conv/Pool-output rewrite. The lowerer's registered-runner call
-characterization remains 139 because this is one production occurrence;
-runtime index construction is the optimized dimension.
+the terminal scalar-clamp, unary-passthrough, and maximum-zero-to-ReLU
+sequence. The three diagnostic events construct one graph index instead of up
+to three. The scope starts after the conditional terminal layout-recovery
+block and ends before the raw SiNet rewrites. Clamp and maximum-zero rewrites
+now maintain the shared operator-type index through the differential graph
+API. The lowerer's registered-runner call characterization remains 139 because
+this is one production occurrence; runtime index construction is the optimized
+dimension.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -36,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains twenty-seven coherent continuations:
+The current `fb-refactor5` work contains twenty-eight coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -94,8 +96,10 @@ The current `fb-refactor5` work contains twenty-seven coherent continuations:
   sequence;
 - `ce11c27f` shares state across the late Dequantize/Concat/Quantize and unary-
   fan-out sequence;
-- the current checkpoint shares state across the terminal singleton-MaxPool/
-  consecutive-Reshape pair.
+- `d8b2b58c` shares state across the terminal singleton-MaxPool/consecutive-
+  Reshape pair;
+- the current checkpoint shares state across the terminal scalar-clamp,
+  unary-passthrough, and maximum-zero-to-ReLU sequence.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -114,6 +118,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
+- `onnx2tf/tflite_builder/passes/graph_cleanup.py`;
+- `tests/test_flatbuffer_direct_graph_cleanup.py`;
 - `tests/test_flatbuffer_direct_pass_efficiency.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
@@ -291,6 +297,13 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   general Reshape cleanup spec. Architecture checks fix the conditional
   elementwise-roundtrip predecessor and conditional Conv/Pool-output successor
   as hard boundaries.
+- The terminal scalar-clamp, unary-passthrough, and maximum-zero-to-ReLU
+  sequence uses one helper-owned scope. Clamp and maximum-zero runners now
+  expose optional standalone-compatible scopes. Their op-type rewrites use
+  `ModelIRGraphIndex.replace_operator_type()` instead of direct assignment, so
+  later passes see current type dispatch without a full refresh. Architecture
+  checks fix the conditional terminal layout-recovery predecessor and raw
+  SiNet successor as hard boundaries.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -739,14 +752,34 @@ the two singleton-MaxPool events report `state_built: true` because they share
 the first registered group, and the Reshape event reports `false`.
 Architecture checks fix both runner calls, their shared scope, and the exact
 conditional legacy-rewrite boundaries.
+A focused terminal clamp/unary/ReLU checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_graph_cleanup.py \
+  tests/test_flatbuffer_direct_layout_transpose.py \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_terminal_clamp_unary_relu_cluster_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope \
+  tests/test_flatbuffer_direct_architecture.py::test_ordered_model_ir_runner_calls_record_session_diagnostics
+
+27 passed
+```
+
+The preflight-only fixture records one graph-index refresh across three events;
+only the first reports `state_built: true`. The two real rewrite tests also
+assert that the reused graph index removes `MAXIMUM`/`MINIMUM` type entries and
+adds the correct `RELU_0_TO_1` or `RELU` entry without refreshing.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`167 passed` after adding the terminal singleton-MaxPool/Reshape checks.
+`169 passed` after adding the terminal clamp/unary/ReLU checks.
 
-The changed tests pass Ruff normally. The lowerer passes with its pre-existing
-`F401` and `F841` findings scoped out. Every changed Python file passes
-`python -m py_compile`, and `git diff --check` passes. The
+The changed graph-cleanup owner and tests pass Ruff normally. The lowerer
+passes with its pre-existing `F401` and `F841` findings scoped out. Every
+changed Python file passes `python -m py_compile`, and `git diff --check`
+passes. The
 immediately preceding DepthToSpace, Pool, dynamic-Pool, simple-alias, and
 aligned-scalar checkpoints passed their focused synthetic and ownership
 selections.
@@ -784,10 +817,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the terminal clamp, unary-passthrough, and maximum-zero-to-ReLU
-   sequence while treating the preceding conditional terminal layout-recovery
-   block and the following raw SiNet rewrite as hard boundaries. Its one
-   occurrence can eliminate up to two repeated index constructions.
+2. Audit the late Mean-Mul-Add-Conv, SPP, and Gather-axis sequence while
+   treating the preceding conditional generic-transpose cleanup and following
+   constant-fold/Cast helper as hard boundaries. Its one occurrence can
+   eliminate up to two repeated index constructions.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.
