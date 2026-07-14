@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Mapping, Optional
 
+from onnx2tf.tflite_builder.core.contracts import ArtifactPlan
 from onnx2tf.tflite_builder.ir import ModelIR, clone_model_ir_with_float32
 
 
@@ -81,14 +82,13 @@ class RequestedExporterControls:
 def resolve_requested_artifact_controls(
     options: Mapping[str, Any],
     *,
-    split_plan_requested: bool,
-    quantization_requested: bool,
+    artifact_plan: ArtifactPlan,
     default_split_max_bytes: int,
     default_split_target_bytes: int,
 ) -> ArtifactExecutionControls:
     split_max_bytes: Optional[int] = None
     split_target_bytes: Optional[int] = None
-    if split_plan_requested:
+    if artifact_plan.split_manifest:
         split_max_bytes = int(
             _option_or_environment(
                 options,
@@ -107,7 +107,10 @@ def resolve_requested_artifact_controls(
         )
 
     quantization: Optional[Mapping[str, Any]] = None
-    if quantization_requested:
+    if (
+        artifact_plan.dynamic_range_quantized_tflite
+        or artifact_plan.integer_quantized_tflite
+    ):
         quantization_values = {
             "quant_type": options.get("quant_type", "per-channel"),
             "input_quant_dtype": options.get("input_quant_dtype", "int8"),
@@ -142,9 +145,7 @@ def resolve_requested_exporter_controls(
     *,
     output_folder_path: str,
     output_file_name: str,
-    saved_model_requested: bool,
-    pytorch_requested: bool,
-    calibration_inputs_requested: bool,
+    artifact_plan: ArtifactPlan,
 ) -> RequestedExporterControls:
     saved_model_output_folder_path = str(output_folder_path)
     pytorch_output_folder_path = os.path.join(
@@ -157,30 +158,30 @@ def resolve_requested_exporter_controls(
     shape_hints = None
     test_data_nhwc_path = None
 
-    if saved_model_requested:
+    if artifact_plan.saved_model:
         saved_model_output_option = options.get(
             "saved_model_output_folder_path",
             None,
         )
         if saved_model_output_option is not None:
             saved_model_output_folder_path = saved_model_output_option
-    if pytorch_requested:
+    if artifact_plan.pytorch:
         pytorch_output_option = options.get(
             "pytorch_output_folder_path",
             None,
         )
         if pytorch_output_option is not None:
             pytorch_output_folder_path = pytorch_output_option
-    if saved_model_requested:
+    if artifact_plan.saved_model:
         persist_saved_model_output = bool(
             options.get("persist_saved_model_output", True)
         )
-    if calibration_inputs_requested or pytorch_requested:
+    if artifact_plan.integer_quantized_tflite or artifact_plan.pytorch:
         custom_input_op_name_np_data_path = options.get(
             "custom_input_op_name_np_data_path",
             None,
         )
-    if pytorch_requested:
+    if artifact_plan.pytorch:
         shape_hints = options.get("shape_hints", None)
         test_data_nhwc_path = options.get("test_data_nhwc_path", None)
         native_pytorch_generation_timeout_sec = int(

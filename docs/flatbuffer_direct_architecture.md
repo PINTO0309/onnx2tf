@@ -50,6 +50,17 @@ invalid unused PyTorch timeout cannot fail a TFLite-only conversion, while a
 requested artifact retains the existing default paths, coercions, and error
 behavior.
 
+Both artifact-control resolvers and export-progress planning receive the
+normalized `ArtifactPlan` itself rather than parallel request booleans. Split,
+quantization, SavedModel, PyTorch, and integer-calibration dependencies are
+therefore derived from one immutable object. TorchScript, Dynamo ONNX, and
+ExportedProgram continue to imply the base PyTorch artifact only in
+`ArtifactPlan.from_options`; downstream preparation cannot accidentally omit
+that dependency or read options for an unrequested artifact. The default
+correspondence report and float32/float16 outputs retain their compatibility
+order, and all optional progress labels come directly from the same plan used
+to guard execution.
+
 A pass has a stable ID, phase, priority, maximum iteration count, and explicit
 `changed` result. Repeating passes must use a graph fingerprint so a cycle
 terminates deterministically. Risky rewrites use the transactional mode and

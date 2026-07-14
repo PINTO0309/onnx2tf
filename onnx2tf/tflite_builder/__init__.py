@@ -12,7 +12,11 @@ from onnx2tf.tflite_builder.artifact_preparation import (
     resolve_requested_artifact_controls,
     resolve_requested_exporter_controls,
 )
-from onnx2tf.tflite_builder.core.contracts import ConversionRequest, ConversionResult
+from onnx2tf.tflite_builder.core.contracts import (
+    ArtifactPlan,
+    ConversionRequest,
+    ConversionResult,
+)
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.progress import (
     ProgressSpinner as _ProgressSpinner,
@@ -139,36 +143,26 @@ def _format_write_timing_line(
 
 def _build_export_progress_labels(
     *,
-    report_op_coverage: bool,
-    split_plan_requested: bool,
-    output_dynamic_range_quantized_tflite: bool,
-    output_integer_quantized_tflite: bool,
-    output_weights: bool,
-    output_saved_model_from_model_ir: bool,
-    output_pytorch_from_model_ir: bool,
+    artifact_plan: ArtifactPlan,
 ) -> List[str]:
     labels: List[str] = [
         "tensor correspondence report",
     ]
-    if report_op_coverage:
+    if artifact_plan.op_coverage_report:
         labels.append("op coverage report")
-    if split_plan_requested:
+    if artifact_plan.split_manifest:
         labels.append("split planning")
-    labels.extend(
-        [
-            "write float32 tflite",
-            "write saved_model",
-            "write pytorch",
-            "write float16 tflite",
-        ]
-    )
-    if not output_saved_model_from_model_ir:
-        labels.remove("write saved_model")
-    if not output_pytorch_from_model_ir:
-        labels.remove("write pytorch")
-    if output_dynamic_range_quantized_tflite:
+    if artifact_plan.float32_tflite:
+        labels.append("write float32 tflite")
+    if artifact_plan.saved_model:
+        labels.append("write saved_model")
+    if artifact_plan.pytorch:
+        labels.append("write pytorch")
+    if artifact_plan.float16_tflite:
+        labels.append("write float16 tflite")
+    if artifact_plan.dynamic_range_quantized_tflite:
         labels.append("write dynamic range quant tflite")
-    if output_integer_quantized_tflite:
+    if artifact_plan.integer_quantized_tflite:
         labels.extend(
             [
                 "write integer quant tflite",
@@ -177,16 +171,16 @@ def _build_export_progress_labels(
                 "write full integer quant int16-act tflite",
             ]
         )
-    if output_weights:
+    if artifact_plan.weights:
         labels.extend(
             [
                 "export float32 weights",
                 "export float16 weights",
             ]
         )
-        if output_dynamic_range_quantized_tflite:
+        if artifact_plan.dynamic_range_quantized_tflite:
             labels.append("export dynamic range quant weights")
-        if output_integer_quantized_tflite:
+        if artifact_plan.integer_quantized_tflite:
             labels.extend(
                 [
                     "export integer quant weights",
@@ -257,12 +251,6 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     output_torchscript_from_model_ir = request.artifacts.torchscript
     output_dynamo_onnx_from_model_ir = request.artifacts.dynamo_onnx
     output_exported_program_from_model_ir = request.artifacts.exported_program
-    if (
-        output_torchscript_from_model_ir
-        or output_dynamo_onnx_from_model_ir
-        or output_exported_program_from_model_ir
-    ):
-        output_pytorch_from_model_ir = True
     required_pytorch_feature: Optional[str] = None
     if output_torchscript_from_model_ir:
         required_pytorch_feature = "flatbuffer_direct TorchScript export"
@@ -278,9 +266,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         request.options,
         output_folder_path=output_folder_path,
         output_file_name=output_file_name,
-        saved_model_requested=output_saved_model_from_model_ir,
-        pytorch_requested=output_pytorch_from_model_ir,
-        calibration_inputs_requested=output_integer_quantized_tflite,
+        artifact_plan=request.artifacts,
     )
     saved_model_output_folder_path = (
         exporter_controls.saved_model_output_folder_path
@@ -348,11 +334,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         flatbuffer_direct_custom_op_allowlist = [v] if v != "" else None
     artifact_execution_controls = resolve_requested_artifact_controls(
         request.options,
-        split_plan_requested=split_plan_requested,
-        quantization_requested=(
-            output_dynamic_range_quantized_tflite
-            or output_integer_quantized_tflite
-        ),
+        artifact_plan=request.artifacts,
         default_split_max_bytes=DEFAULT_TFLITE_SPLIT_MAX_BYTES,
         default_split_target_bytes=DEFAULT_TFLITE_SPLIT_TARGET_BYTES,
     )
@@ -622,13 +604,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         raise
 
     export_progress_labels = _build_export_progress_labels(
-        report_op_coverage=report_op_coverage,
-        split_plan_requested=split_plan_requested,
-        output_dynamic_range_quantized_tflite=output_dynamic_range_quantized_tflite,
-        output_integer_quantized_tflite=output_integer_quantized_tflite,
-        output_weights=output_weights,
-        output_saved_model_from_model_ir=output_saved_model_from_model_ir,
-        output_pytorch_from_model_ir=output_pytorch_from_model_ir,
+        artifact_plan=request.artifacts,
     )
     export_progress_total = int(len(export_progress_labels))
     export_progress_step = 0

@@ -8,15 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-the conditional generic-Transpose, late Mean/Mul/Add/Conv, generic SPP,
-Gather-axis, constant-fold, and redundant-Cast sequence. Nine diagnostic
-events construct one graph index instead of up to three. Disabling layout
-optimization skips only generic Transpose and leaves the remaining order
-unchanged. The scope stays between raw shape-extract and ExpandDims/Squeeze
-replacement rewrites. The lowerer's registered-runner call characterization
-remains 134 because the optimization is runtime state reuse rather than
-another static call extraction.
+The latest implementation unit makes immutable `ArtifactPlan` the sole request
+input to split/quantization controls, SavedModel/PyTorch preparation controls,
+and export-progress planning. Five parallel request booleans and the redundant
+PyTorch-derived-artifact normalization in the exporter are removed. Optional
+settings remain unread when their artifact is absent, while TorchScript,
+Dynamo ONNX, and ExportedProgram still imply the base PyTorch package at the
+single plan-construction boundary. Default correspondence, float32, and
+float16 artifacts and their ordering are unchanged.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -38,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains thirty-seven coherent continuations:
+The current `fb-refactor5` work contains thirty-eight coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -116,8 +115,10 @@ The current `fb-refactor5` work contains thirty-seven coherent continuations:
   and normalization-Pad sequence;
 - `fa33fd67` shares state across the terminal hard-activation and optional
   generic-Transpose pair;
-- the current checkpoint shares state across the conditional generic-
-  Transpose, late Mean/SPP/Gather, and constant-fold/Cast sequence.
+- `57d79e3b` shares state across the conditional generic-Transpose, late
+  Mean/SPP/Gather, and constant-fold/Cast sequence;
+- the current checkpoint makes `ArtifactPlan` the only request input to
+  artifact controls and progress planning.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -126,8 +127,8 @@ result to the exporter. Exact generated-statement grammars remain rule-local or
 use the shared Torch-free parser owner.
 
 No dependency was added and no TensorFlow path was introduced. The latest
-checkpoint uses only synthetic ModelIR fixtures; no Tier corpus or real-model
-conversion was run.
+checkpoint includes three sequential direct-backend artifact smokes; no Tier
+corpus run was performed.
 
 ## Current branch and changed files
 
@@ -135,9 +136,9 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
 The current checkpoint changes:
 
-- `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `tests/test_flatbuffer_direct_pass_efficiency.py`;
-- `tests/test_flatbuffer_direct_architecture.py`;
+- `onnx2tf/tflite_builder/__init__.py`;
+- `onnx2tf/tflite_builder/artifact_preparation.py`;
+- `tests/test_flatbuffer_direct_artifact_preparation.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
 
@@ -203,6 +204,12 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   `input_quant_dtype`, and `output_quant_dtype`. The builder reads these values
   only from the resolved immutable mapping; when quantization is unrequested it
   uses the legacy local defaults without touching the corresponding options.
+- Artifact execution controls, exporter controls, and export-progress labels
+  now accept `ArtifactPlan` directly. They do not receive independently
+  reconstructed split, quantization, SavedModel, PyTorch, or calibration
+  booleans. Derived PyTorch artifacts are normalized once by
+  `ArtifactPlan.from_options`, and all downstream policy sees the same
+  immutable dependency decision.
 - `LoweringContext.tensor_consumer_count` is populated from
   `ConversionSession.tensor_consumer_count`, not an empty compatibility
   dictionary and not a new ONNX scan. This restores the original fan-out guard
@@ -1026,6 +1033,24 @@ A broader single-process selection of
 and the complete `test_flatbuffer_direct_architecture.py` passed with
 `186 passed` after adding the late combined-scope checks.
 
+The typed artifact-plan checkpoint passed its policy selection:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q tests/test_flatbuffer_direct_artifact_preparation.py
+
+20 passed
+```
+
+Default, dynamic-range/integer-quantized, split, SavedModel, PyTorch-derived,
+and report progress labels are characterized from `ArtifactPlan`. Rejecting
+option mappings prove that an unrequested artifact reads no related option or
+environment value. Sequential dynamic-range, strict-integer, and split-
+manifest direct-backend smokes passed with `3 passed`. The combined artifact-
+policy, core, pass-efficiency, and architecture selection passed with
+`206 passed`.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1066,10 +1091,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Do not force another scope consolidation: the latest AST audit found no
-   remaining directly adjacent unscoped registered-runner sequence. Revisit a
-   helper boundary only with explicit differential-index and raw-boundary
-   proof; otherwise resume the next fixed-pipeline or artifact-plan unit.
+2. Audit the remaining report/result boundary: tensor correspondence is an
+   intentional compatibility-default artifact, while op coverage and accuracy
+   are optional. Keep their legacy files and return keys exact while moving
+   any remaining duplicated requested-output decisions behind typed policy.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.
