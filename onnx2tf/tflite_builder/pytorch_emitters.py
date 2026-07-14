@@ -104,6 +104,25 @@ _DIRECT_CODEGEN_MODULE_OP_TYPES: Set[str] = {
 }
 
 
+def _activation_lines_for_codegen(var_name: str, fused: str) -> List[str]:
+    key = str(fused).upper()
+    if key in {"", "NONE"}:
+        return []
+    if key == "RELU":
+        return [f"{var_name} = torch.relu({var_name})"]
+    if key == "RELU6":
+        return [f"{var_name} = torch.clamp({var_name}, min=0.0, max=6.0)"]
+    if key == "RELU_N1_TO_1":
+        return [f"{var_name} = torch.clamp({var_name}, min=-1.0, max=1.0)"]
+    if key == "RELU_0_TO_1":
+        return [f"{var_name} = torch.clamp({var_name}, min=0.0, max=1.0)"]
+    if key == "SILU":
+        return [f"{var_name} = torch.mul({var_name}, torch.sigmoid({var_name}))"]
+    if key == "TANH":
+        return [f"{var_name} = torch.tanh({var_name})"]
+    return [f"{var_name} = _apply_fused_activation({var_name}, {fused!r})"]
+
+
 def _emit_maybe_aligned_expr_for_codegen(
     *,
     runtime_imports: Set[str],

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_emitters import (
+    _activation_lines_for_codegen,
     _emit_maybe_aligned_expr_for_codegen,
     _emit_module_output_expr_for_codegen,
     _emit_native_binary_op_for_codegen,
@@ -19,6 +20,19 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
     _emit_native_transpose_conv3d_module_op_for_codegen,
     _emit_native_unary_op_for_codegen,
 )
+
+
+def test_fused_activation_lines_preserve_direct_and_fallback_forms() -> None:
+    assert _activation_lines_for_codegen("value", "NONE") == []
+    assert _activation_lines_for_codegen("value", "RELU6") == [
+        "value = torch.clamp(value, min=0.0, max=6.0)"
+    ]
+    assert _activation_lines_for_codegen("value", "SILU") == [
+        "value = torch.mul(value, torch.sigmoid(value))"
+    ]
+    assert _activation_lines_for_codegen("value", "CUSTOM") == [
+        "value = _apply_fused_activation(value, 'CUSTOM')"
+    ]
 
 
 def _unary_model_ir(*, output_layout: str) -> ModelIR:

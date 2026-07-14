@@ -1087,6 +1087,13 @@ checkpoint `79f2476` exactly; the direct value/index layout contract and focused
 ownership gates pass, together with Ruff and syntax validation. The exporter
 shrank by another 47 lines. No model conversion or inference was run.
 
+Fused activation statement generation now lives beside the native op-family
+emitters. Direct ReLU/clamp/SiLU/Tanh forms and the runtime fallback retain their
+exact source strings. The moved function AST matches checkpoint `d0d6255`
+exactly; the direct activation contract and focused emitter ownership gate pass,
+together with Ruff and syntax validation. The exporter shrank by another 18
+lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

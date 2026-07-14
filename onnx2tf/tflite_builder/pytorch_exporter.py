@@ -88,6 +88,7 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
     _DIRECT_CODEGEN_BINARY_FUNCTIONS,
     _DIRECT_CODEGEN_MODULE_OP_TYPES,
     _DIRECT_CODEGEN_UNARY_EXPRESSIONS,
+    _activation_lines_for_codegen,
     _emit_maybe_aligned_expr_for_codegen,
     _emit_module_output_expr_for_codegen,
     _emit_native_binary_op_for_codegen,
@@ -610,25 +611,6 @@ def _match_single_consumer_layout_bridge_transpose_for_codegen(
     if [int(v) for v in list(expected_perm)] != [int(v) for v in list(actual_perm)]:
         return None
     return output_name, bridge_op_idx
-
-
-def _activation_lines_for_codegen(var_name: str, fused: str) -> List[str]:
-    key = str(fused).upper()
-    if key in {"", "NONE"}:
-        return []
-    if key == "RELU":
-        return [f"{var_name} = torch.relu({var_name})"]
-    if key == "RELU6":
-        return [f"{var_name} = torch.clamp({var_name}, min=0.0, max=6.0)"]
-    if key == "RELU_N1_TO_1":
-        return [f"{var_name} = torch.clamp({var_name}, min=-1.0, max=1.0)"]
-    if key == "RELU_0_TO_1":
-        return [f"{var_name} = torch.clamp({var_name}, min=0.0, max=1.0)"]
-    if key == "SILU":
-        return [f"{var_name} = torch.mul({var_name}, torch.sigmoid({var_name}))"]
-    if key == "TANH":
-        return [f"{var_name} = torch.tanh({var_name})"]
-    return [f"{var_name} = _apply_fused_activation({var_name}, {fused!r})"]
 
 
 def _is_sequential_single_input_graph_for_codegen(

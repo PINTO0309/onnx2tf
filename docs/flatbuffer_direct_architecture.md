@@ -2007,6 +2007,9 @@ shape mismatches import the runtime alignment helper; direct-module outputs
 first apply the declared rank-3/4/5 logical-layout permutation and then align
 to the shared target-shape literal. Both helpers retain callback-based shape
 access and have no exporter-local duplicate.
+Fused activation statement generation is co-located with these emitters.
+Direct ReLU, clamp, SiLU, and Tanh forms retain their compact source, while
+unknown activation names use the shared generated-runtime fallback.
 
 The direct-module dispatcher is being decomposed by operator family rather than
 moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and
