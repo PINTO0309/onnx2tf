@@ -158,6 +158,13 @@ scope begins after the final raw InstanceNorm residual/resize rewrite and ends
 before the conditional terminal Mean/attention stage. Boundary-input cleanup
 now accepts an optional scope while remaining standalone-compatible.
 
+The late Dequantize/Concat/Quantize, unary-passthrough, and unary-fan-out
+sequence also shares one scope. The scope begins after the raw Dequantize/
+HardSigmoid/Quantize bridge rewrite and ends before the raw swish rewrite, so
+no legacy ModelIR mutation can invalidate its index. The three runners retain
+their exact order and diagnostics while constructing one graph index instead
+of up to three.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while

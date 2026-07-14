@@ -3,18 +3,18 @@
 ## Status
 
 The active branch is `fb-refactor5`, created from `main` after pull request
-`#949` merged the complete `fb-refactor4` checkpoint. Pull request `#950`
-currently tracks this branch. The Goal is active again; subsequent work uses
-coherent commits and pushes without opening an additional pull request.
+`#949` merged the complete `fb-refactor4` checkpoint. Pull request `#950` is
+closed, and no open pull request tracks this branch. The Goal is active again;
+subsequent work uses coherent commits and pushes without opening a pull
+request.
 
 The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-the five-runner terminal dual-Mul/Concat, boundary-input, Pad, generic
-transpose, and Gather-channel-fan-out sequence. The seven diagnostic events
-construct one graph index instead of up to five. The scope starts after the
-raw InstanceNorm residual/resize rewrite and ends before the conditional
-Mean/attention stage. The lowerer's registered-runner call characterization
-remains 139 because this is one production occurrence; runtime index
-construction is the optimized dimension.
+the late Dequantize/Concat/Quantize, unary-passthrough, and unary-fan-out
+sequence. The three diagnostic events construct one graph index instead of up
+to three. The scope starts after the raw Dequantize/HardSigmoid/Quantize bridge
+rewrite and ends before the raw swish rewrite. The lowerer's registered-runner
+call characterization remains 139 because this is one production occurrence;
+runtime index construction is the optimized dimension.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -36,7 +36,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains twenty-five coherent continuations:
+The current `fb-refactor5` work contains twenty-six coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -90,8 +90,10 @@ The current `fb-refactor5` work contains twenty-five coherent continuations:
   Cast pairs;
 - `f0dac050` shares state across the fallback and primary absolute-final SE-FC/
   Gather-channel-fan-out pairs;
-- the current checkpoint shares state across the five-runner terminal
-  boundary/layout sequence.
+- `e177face` shares state across the five-runner terminal boundary/layout
+  sequence;
+- the current checkpoint shares state across the late Dequantize/Concat/
+  Quantize and unary-fan-out sequence.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -110,7 +112,6 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/boundary_input_layout.py`;
 - `tests/test_flatbuffer_direct_pass_efficiency.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
@@ -278,6 +279,11 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   Boundary-input cleanup now exposes an optional standalone-compatible scope.
   Architecture checks fix the raw InstanceNorm predecessor and conditional
   Mean/attention successor as hard boundaries.
+- The late Dequantize/Concat/Quantize, unary-passthrough, and unary-fan-out
+  sequence uses one helper-owned scope. All three runners already expose
+  optional standalone-compatible scopes. Architecture checks fix the raw
+  Dequantize/HardSigmoid/Quantize predecessor and raw swish successor as hard
+  boundaries, preventing shared state from crossing a legacy mutator.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -687,15 +693,33 @@ The preflight-only fixture records one graph-index refresh across seven events;
 only the first reports `state_built: true`. Architecture checks fix all five
 runner calls, their shared scope, the preceding raw InstanceNorm rewrite, and
 the following conditional stage.
+A focused late-Dequantize/unary checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_dequant_concat_quantize_layout.py \
+  tests/test_flatbuffer_direct_layout_transpose.py \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_late_dequant_unary_fanout_cluster_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_late_dequant_unary_fanout_cluster_reuses_pass_state_scope \
+  tests/test_flatbuffer_direct_architecture.py::test_ordered_model_ir_runner_calls_record_session_diagnostics
+
+41 passed
+```
+
+The preflight-only fixture records one graph-index refresh across three events;
+only the first reports `state_built: true`. Architecture checks fix all three
+runner calls, their shared scope, the preceding raw QDQ bridge, and the
+following raw swish rewrite.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`163 passed` after adding the terminal-boundary checks.
+`165 passed` after adding the late-Dequantize/unary checks.
 
-The changed boundary-input pass and tests pass Ruff normally. The lowerer
-passes with its pre-existing `F401` and `F841` findings scoped out. Every
-changed Python file passes `python -m py_compile`, and `git diff --check`
-passes. The
+The changed tests pass Ruff normally. The lowerer passes with its pre-existing
+`F401` and `F841` findings scoped out. Every changed Python file passes
+`python -m py_compile`, and `git diff --check` passes. The
 immediately preceding DepthToSpace, Pool, dynamic-Pool, simple-alias, and
 aligned-scalar checkpoints passed their focused synthetic and ownership
 selections.
@@ -733,11 +757,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the late Dequantize/Concat/Quantize, unary-passthrough, and unary-
-   fan-out sequence while treating the preceding raw QDQ bridge and following
-   swish rewrite as hard boundaries. Its one occurrence can eliminate two
-   repeated index constructions and still has higher value than the standalone
-   singleton-MaxPool/consecutive-Reshape pair.
+2. Audit the standalone terminal singleton-MaxPool/consecutive-Reshape pair
+   while treating the preceding conditional shape-extract rewrite and the
+   following conditional Conv/Pool-output rewrite as hard boundaries. Its one
+   occurrence can eliminate one repeated index construction.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.

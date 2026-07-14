@@ -702,6 +702,54 @@ def test_late_concat_layout_cluster_reuses_one_pass_state(monkeypatch) -> None:
     ]
 
 
+def test_late_dequant_unary_fanout_cluster_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "late_dequant_unary_fanout_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "DEQUANTIZE",
+                "CONCATENATION",
+                "QUANTIZE",
+                "RELU",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_dequant_concat_quantize_layout_cleanup,
+        run_transpose_unary_passthrough_cleanup,
+        run_transpose_unary_fanout_bridge_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
+    )
+
+
 def test_shuffle_gather_cluster_reuses_one_pass_state(monkeypatch) -> None:
     model_ir = ModelIR(
         "shuffle_gather_scope_preflight_only",

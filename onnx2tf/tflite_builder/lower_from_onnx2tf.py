@@ -50223,6 +50223,33 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_late_dequant_unary_fanout_pass_cluster() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_dequant_concat_quantize_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        # Some late specialized rewrites can still leave trivial
+        # NHWC->NCHW->NHWC wrappers around unary activations.
+        # Run one final strict unary transpose fold before serialization guards.
+        run_transpose_unary_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_transpose_unary_fanout_bridge_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> None:
         state_scope = ModelIRPassStateScope(
             model_ir,
@@ -51300,24 +51327,7 @@ def lower_onnx_to_ir(
         # chains are still reduced.
         _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
     _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
-    run_dequant_concat_quantize_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    # Some late specialized rewrites can still leave trivial
-    # NHWC->NCHW->NHWC wrappers around unary activations.
-    # Run one final strict unary transpose fold before serialization guards.
-    run_transpose_unary_passthrough_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_transpose_unary_fanout_bridge_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_late_dequant_unary_fanout_pass_cluster()
     # No-layout fallback relowering can still keep strict
     # TRANSPOSE->LOGISTIC->MUL->TRANSPOSE swish wrappers (e.g. MobileViT stem).
     _optimize_swish_transpose_passthrough_chains(model_ir)
