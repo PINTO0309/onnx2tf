@@ -133,7 +133,6 @@ from onnx2tf.tflite_builder.pytorch_emitters import (
 from onnx2tf.tflite_builder.pytorch_codegen_utils import (
     _add_synthetic_tensor_to_model_ir,
     _broadcast_shapes_relaxed,
-    _constant_int_list,
     _extract_statement_assignments,
     _extract_statement_loads,
     _is_all_ones_shape,
@@ -327,12 +326,24 @@ from onnx2tf.tflite_builder.pytorch_exported_program_archive import (
     _fold_inverse_permute_round_trips_in_exported_program_archive,
     _strip_stack_traces_from_exported_program_archive,
 )
+from onnx2tf.tflite_builder.pytorch_export_support import (
+    _build_metadata_payload,
+    _build_pytorch_export_example_inputs,
+    _build_torchscript_example_inputs,
+    _generated_package_non_native_skip_reason,
+    _generated_package_torch_export_skip_reason,
+    _load_generated_package_export_metadata,
+    _metadata_has_dynamic_public_inputs,
+    _remove_generated_package_artifact_if_exists,
+    _run_generated_package_export_child,
+    _sanitize_torchscript_file_stem,
+    _write_generated_package_export_metadata,
+)
 from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _perm_cl_to_cf,
     _permute_shape,
     _preferred_reshape_target_values,
     _is_layout_only_transpose_by_shape,
-    _is_standard_channel_layout_permutation,
     _clone_tensor,
     _read_transpose_perm,
     _read_onnx_squeeze_axes,
@@ -350,6 +361,8 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
 )
 from onnx2tf.tflite_builder.pytorch_layout_bridge_policy import (
     _fold_single_consumer_public_input_bridge_for_codegen,
+    _has_channel_last_consumer_hint_for_same_shape_transpose_for_codegen,
+    _is_batchless_rank3_public_output_transpose_for_codegen,
     _match_single_consumer_layout_bridge_transpose_for_codegen,
 )
 from onnx2tf.tflite_builder.pytorch_onnx_utils import (
@@ -572,308 +585,6 @@ def _sequence_lstm_bias_array_for_model_ir(
         dtype=str(dtype),
         synthetic_tensor_serial_ref=synthetic_tensor_serial_ref,
     )
-
-
-def _has_channel_last_consumer_hint_for_same_shape_transpose_for_codegen(
-    *,
-    model_ir: ModelIR,
-    consumer_index: Dict[str, List[int]],
-    op: OperatorIR,
-) -> bool:
-    if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 1 or len(op.outputs) != 1:
-        return False
-    input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
-    output_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
-    perm = _read_transpose_perm(model_ir, op)
-    if input_tensor is None or output_tensor is None or perm is None:
-        return False
-    rank = len(list(output_tensor.shape))
-    if rank not in {3, 4, 5}:
-        return False
-    input_layout = normalize_logical_layout(getattr(input_tensor, "logical_layout", None))
-    output_layout = normalize_logical_layout(getattr(output_tensor, "logical_layout", None))
-    layouts_disagree = (
-        input_layout != LOGICAL_LAYOUT_UNKNOWN
-        and output_layout != LOGICAL_LAYOUT_UNKNOWN
-        and input_layout != output_layout
-    )
-    input_shape = [int(v) for v in list(input_tensor.shape)]
-    output_shape = [int(v) for v in list(output_tensor.shape)]
-    if input_shape != output_shape:
-        return False
-    if not _is_standard_channel_layout_permutation(perm=perm, rank=rank):
-        return False
-    reduction_spatial_axes = {
-        3: [1],
-        4: [1, 2],
-        5: [1, 2, 3],
-    }.get(rank, [])
-    passthrough_ops = {
-        "ABS",
-        "CAST",
-        "IDENTITY",
-        "LEAKY_RELU",
-        "LOGISTIC",
-        "NEG",
-        "RELU",
-        "RELU6",
-        "RESHAPE",
-        "SIGMOID",
-        "SQRT",
-        "SQUARE",
-        "TANH",
-    }
-    reduction_ops = {"MEAN", "SUM", "REDUCE_MAX", "REDUCE_MIN", "REDUCE_PROD", "REDUCE_ANY"}
-    broadcast_hint_ops = {"ADD", "DIV", "MAXIMUM", "MINIMUM", "MUL", "SUB"}
-    worklist: List[str] = [str(op.outputs[0])]
-    visited: Set[str] = set()
-    while len(worklist) > 0:
-        current_name = str(worklist.pop())
-        if current_name in visited:
-            continue
-        visited.add(current_name)
-        for consumer_idx in consumer_index.get(current_name, []):
-            consumer = model_ir.operators[int(consumer_idx)]
-            consumer_type = str(consumer.op_type)
-            if consumer_type in passthrough_ops and len(consumer.outputs) == 1:
-                worklist.append(str(consumer.outputs[0]))
-                continue
-            if consumer_type in reduction_ops and len(consumer.inputs) >= 2 and str(consumer.inputs[0]) == current_name:
-                axes_values = _constant_int_list(model_ir.tensors.get(str(consumer.inputs[1]), None))
-                if axes_values == reduction_spatial_axes:
-                    return True
-                continue
-            if consumer_type in broadcast_hint_ops and current_name in {str(v) for v in consumer.inputs}:
-                if layouts_disagree:
-                    continue
-                for other_name in consumer.inputs:
-                    other_name = str(other_name)
-                    if other_name == current_name:
-                        continue
-                    other_tensor = model_ir.tensors.get(other_name, None)
-                    if other_tensor is None or not isinstance(other_tensor.data, np.ndarray):
-                        continue
-                    other_shape = [int(v) for v in list(other_tensor.shape)]
-                    if len(other_shape) != rank:
-                        continue
-                    if all(int(v) == 1 for v in other_shape[:-1]) and int(other_shape[-1]) > 1:
-                        return True
-    return False
-
-
-def _is_batchless_rank3_public_output_transpose_for_codegen(
-    *,
-    model_ir: ModelIR,
-    producer_index: Dict[str, int],
-    batchless_rank3_public_boundary_names: Set[str],
-    op: OperatorIR,
-) -> bool:
-    if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 1 or len(op.outputs) != 1:
-        return False
-    output_name = str(op.outputs[0])
-    if output_name not in {str(name) for name in list(model_ir.outputs)}:
-        return False
-    input_name = str(op.inputs[0])
-    input_tensor = model_ir.tensors.get(input_name, None)
-    output_tensor = model_ir.tensors.get(output_name, None)
-    perm = _read_transpose_perm(model_ir, op)
-    if input_tensor is None or output_tensor is None or perm != [0, 2, 1]:
-        return False
-    input_shape = [int(v) for v in list(input_tensor.shape)]
-    output_shape = [int(v) for v in list(output_tensor.shape)]
-    if len(input_shape) != 3 or input_shape != output_shape or int(input_shape[0]) != 1:
-        return False
-    if (
-        output_name in batchless_rank3_public_boundary_names
-        or input_name in batchless_rank3_public_boundary_names
-    ):
-        return True
-
-    current_names: List[str] = [input_name]
-    visited_names: Set[str] = set()
-    unary_passthrough_ops = {
-        "ABS",
-        "CAST",
-        "IDENTITY",
-        "LEAKY_RELU",
-        "LOGISTIC",
-        "NEG",
-        "RELU",
-        "RELU6",
-        "TANH",
-    }
-    for _ in range(6):
-        next_names: List[str] = []
-        for current_name in current_names:
-            if current_name in visited_names:
-                continue
-            visited_names.add(current_name)
-            producer_idx = producer_index.get(current_name, None)
-            if producer_idx is None:
-                continue
-            producer_op = model_ir.operators[int(producer_idx)]
-            producer_type = str(producer_op.op_type)
-            if producer_type == "RESHAPE" and len(producer_op.inputs) >= 1:
-                source_tensor = model_ir.tensors.get(str(producer_op.inputs[0]), None)
-                reshaped_tensor = model_ir.tensors.get(str(producer_op.outputs[0]), None)
-                if source_tensor is not None and reshaped_tensor is not None:
-                    source_shape = [int(v) for v in list(source_tensor.shape)]
-                    reshaped_shape = [int(v) for v in list(reshaped_tensor.shape)]
-                    if (
-                        len(source_shape) == 4
-                        and len(reshaped_shape) == 3
-                        and int(source_shape[0]) == 1
-                        and int(reshaped_shape[0]) == 1
-                        and (
-                            (
-                                int(source_shape[1]) == 1
-                                and int(source_shape[2]) == int(reshaped_shape[1])
-                                and int(source_shape[3]) == int(reshaped_shape[2])
-                            ) or (
-                                int(source_shape[3]) == 1
-                                and int(source_shape[1]) == int(reshaped_shape[1])
-                                and int(source_shape[2]) == int(reshaped_shape[2])
-                            )
-                        )
-                    ):
-                        return True
-                next_names.append(str(producer_op.inputs[0]))
-                continue
-            if producer_type in unary_passthrough_ops and len(producer_op.inputs) >= 1:
-                next_names.append(str(producer_op.inputs[0]))
-                continue
-            if producer_type == "BATCH_MATMUL" and len(producer_op.inputs) >= 1:
-                next_names.append(str(producer_op.inputs[0]))
-                continue
-            if producer_type == "ADD":
-                dynamic_inputs = [
-                    str(name)
-                    for name in list(producer_op.inputs)
-                    if (
-                        (input_tensor := model_ir.tensors.get(str(name), None)) is None
-                        or not isinstance(input_tensor.data, np.ndarray)
-                    )
-                ]
-                if len(dynamic_inputs) == 1:
-                    next_names.append(dynamic_inputs[0])
-                    continue
-        current_names = next_names
-    return False
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-from onnx2tf.tflite_builder.pytorch_export_support import (
-    _build_metadata_payload,
-    _build_pytorch_export_example_inputs,
-    _build_torchscript_example_inputs,
-    _generated_package_non_native_skip_reason,
-    _generated_package_torch_export_skip_reason,
-    _load_generated_package_export_metadata,
-    _metadata_has_dynamic_public_inputs,
-    _remove_generated_package_artifact_if_exists,
-    _run_generated_package_export_child,
-    _sanitize_torchscript_file_stem,
-    _write_generated_package_export_metadata,
-)
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def export_dynamo_onnx_from_generated_package(

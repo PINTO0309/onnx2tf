@@ -2338,6 +2338,9 @@ Generated-code layout bridge recognition has a separate Torch-free owner in
 its bridge marker, public source, single consumer, and valid permutation all
 agree. Downstream bridge matching likewise requires one consumer, distinct
 known logical layouts, and an exact permutation derived from those layouts.
+The same owner follows conservative consumer hints for ambiguous same-shape
+channel Transposes and bounded producer traces for batchless rank-3 public
+outputs; explicit metadata boundaries take precedence over structural hints.
 
 Generated shape-expression reconstruction has a separate Torch-free owner in
 `pytorch_shape_expression_policy.py`. It rebuilds constant and runtime shape

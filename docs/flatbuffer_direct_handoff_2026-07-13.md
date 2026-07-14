@@ -1219,6 +1219,18 @@ pass (93 unrelated architecture tests deselected), together with Ruff, syntax
 validation, and `git diff --check`; the exporter shrank by another net 424
 lines. No model conversion or inference was run.
 
+Same-shape channel-Transpose consumer hinting and batchless rank-3 public-output
+classification now also live in `pytorch_layout_bridge_policy.py`. Spatial
+reduction axes, unary passthrough traversal, channel-last broadcast constants,
+explicit public-boundary metadata, bounded Reshape/unary/BatchMatMul/Add
+producer tracing, and exact Transpose permutations retain their established
+guards. Both moved function ASTs match checkpoint `6dd970a` exactly. Five
+focused policy/ownership tests pass (93 unrelated architecture tests
+deselected), together with Ruff, syntax validation, and `git diff --check`.
+The exporter shrank by a net 289 lines, including removal of the legacy blank
+section; the displaced export-support import was restored in the normal
+top-level dependency block. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

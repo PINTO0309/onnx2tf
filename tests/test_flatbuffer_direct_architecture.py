@@ -4682,6 +4682,8 @@ def test_generated_pytorch_layout_bridge_policy_has_single_owner() -> None:
 
     for function_name in (
         "_fold_single_consumer_public_input_bridge_for_codegen",
+        "_has_channel_last_consumer_hint_for_same_shape_transpose_for_codegen",
+        "_is_batchless_rank3_public_output_transpose_for_codegen",
         "_match_single_consumer_layout_bridge_transpose_for_codegen",
     ):
         assert function_name in policy_functions
