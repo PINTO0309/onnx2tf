@@ -235,7 +235,8 @@ from onnx2tf.tflite_builder.passes.quantized_gate import (
     optimize_transpose_dequant_logistic_mul_quantize_bridges,
 )
 from onnx2tf.tflite_builder.passes.quantized_swish_layout import (
-    rewrite_transpose_swish_qdq_nhwc_branches,
+    copy_swish_qdq_shape_signature,
+    run_swish_qdq_nhwc_primary_phases,
 )
 from onnx2tf.tflite_builder.passes.conv_input_layout import (
     sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv as _sanitize_wrong_way_nchw_to_nhwc_transpose_before_conv_pass,
@@ -4928,200 +4929,15 @@ def _optimize_transpose_swish_qdq_nhwc_islands(
 
     rewritten_tensors: set[str] = set()
 
-    def _copy_shape_signature(dst_name: str, src_name: str) -> bool:
-        dst = model_ir.tensors.get(str(dst_name), None)
-        src = model_ir.tensors.get(str(src_name), None)
-        if dst is None or src is None:
-            return False
-        changed_local = False
-        src_shape = [int(v) for v in list(src.shape)]
-        src_sig = (
-            [int(v) for v in list(src.shape_signature)]
-            if src.shape_signature is not None
-            else [int(v) for v in list(src.shape)]
-        )
-        if [int(v) for v in list(dst.shape)] != src_shape:
-            dst.shape = [int(v) for v in list(src_shape)]
-            changed_local = True
-        dst_sig = (
-            [int(v) for v in list(dst.shape_signature)]
-            if dst.shape_signature is not None
-            else [int(v) for v in list(dst.shape)]
-        )
-        if dst.shape_signature is None or dst_sig != src_sig:
-            dst.shape_signature = [int(v) for v in list(src_sig)]
-            changed_local = True
-        return changed_local
-
-    branch_result = rewrite_transpose_swish_qdq_nhwc_branches(
+    primary_result = run_swish_qdq_nhwc_primary_phases(
         model_ir,
         min_spatial_stage=int(min_spatial_stage),
         require_concat_closure=bool(require_concat_closure),
     )
-    rewritten_branches = int(branch_result.rewritten_branches)
-    removed_pre = int(branch_result.removed_pre_transposes)
-    rewritten_tensors.update(branch_result.rewritten_tensors)
-
-    # 2) Propagate NHWC metadata through layout-agnostic quant/elementwise ops.
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-
-        for op in model_ir.operators:
-            op_type = str(op.op_type)
-            if len(op.outputs) != 1:
-                continue
-            out_name = str(op.outputs[0])
-            if out_name in model_outputs:
-                continue
-
-            if op_type in {"DEQUANTIZE", "QUANTIZE", "LOGISTIC"} and len(op.inputs) == 1:
-                in_name = str(op.inputs[0])
-                if in_name not in rewritten_tensors:
-                    continue
-                if _copy_shape_signature(out_name, in_name):
-                    changed = True
-                if out_name not in rewritten_tensors:
-                    rewritten_tensors.add(out_name)
-                    changed = True
-                continue
-
-            if op_type in {"ADD", "MUL", "SUB", "DIV", "MAXIMUM", "MINIMUM"} and len(op.inputs) == 2:
-                in0 = str(op.inputs[0])
-                in1 = str(op.inputs[1])
-                if in0 not in rewritten_tensors or in1 not in rewritten_tensors:
-                    continue
-                t0 = model_ir.tensors.get(in0, None)
-                t1 = model_ir.tensors.get(in1, None)
-                tout = model_ir.tensors.get(out_name, None)
-                if t0 is None or t1 is None or tout is None:
-                    continue
-
-                out_shape = _broadcast_static_shapes(t0.shape, t1.shape)
-                sig0 = (
-                    [int(v) for v in list(t0.shape_signature)]
-                    if t0.shape_signature is not None
-                    else [int(v) for v in list(t0.shape)]
-                )
-                sig1 = (
-                    [int(v) for v in list(t1.shape_signature)]
-                    if t1.shape_signature is not None
-                    else [int(v) for v in list(t1.shape)]
-                )
-                out_sig = _broadcast_shape_signatures(sig0, sig1)
-
-                if out_shape is None:
-                    out_shape = [int(v) for v in list(t0.shape)]
-                if out_sig is None:
-                    out_sig = [int(v) for v in list(sig0)]
-
-                if [int(v) for v in list(tout.shape)] != [int(v) for v in list(out_shape)]:
-                    tout.shape = [int(v) for v in list(out_shape)]
-                    changed = True
-                current_sig = (
-                    [int(v) for v in list(tout.shape_signature)]
-                    if tout.shape_signature is not None
-                    else [int(v) for v in list(tout.shape)]
-                )
-                if tout.shape_signature is None or current_sig != [int(v) for v in list(out_sig)]:
-                    tout.shape_signature = [int(v) for v in list(out_sig)]
-                    changed = True
-                if out_name not in rewritten_tensors:
-                    rewritten_tensors.add(out_name)
-                    changed = True
-                continue
-
-            if op_type in {"MAX_POOL_2D", "AVERAGE_POOL_2D", "RESIZE_NEAREST_NEIGHBOR", "RESIZE_BILINEAR"} and len(op.inputs) >= 1:
-                in_name = str(op.inputs[0])
-                if in_name not in rewritten_tensors:
-                    continue
-                in_tensor = model_ir.tensors.get(in_name, None)
-                out_tensor = model_ir.tensors.get(out_name, None)
-                if in_tensor is None or out_tensor is None:
-                    continue
-                in_shape = [int(v) for v in list(in_tensor.shape)]
-                out_shape = [int(v) for v in list(out_tensor.shape)]
-                if len(in_shape) != 4 or len(out_shape) != 4:
-                    continue
-                in_c = int(in_shape[3])
-                out_c = int(out_shape[3])
-                if in_c >= 0 and out_c >= 0 and in_c != out_c:
-                    continue
-                if out_name not in rewritten_tensors:
-                    rewritten_tensors.add(out_name)
-                    changed = True
-                continue
-
-            if op_type == "CONCATENATION" and len(op.inputs) >= 2:
-                axis = int(op.options.get("axis", 1))
-                if axis < 0:
-                    axis += 4
-                if axis != 1:
-                    continue
-                input_names = [str(v) for v in list(op.inputs)]
-                if any(name not in rewritten_tensors for name in input_names):
-                    continue
-                input_tensors = [model_ir.tensors.get(name, None) for name in input_names]
-                if any(t is None for t in input_tensors):
-                    continue
-                input_shapes = [[int(v) for v in list(t.shape)] for t in input_tensors if t is not None]
-                if any(len(shape) != 4 for shape in input_shapes):
-                    continue
-                if not all(
-                    int(shape[0]) == int(input_shapes[0][0])
-                    and int(shape[1]) == int(input_shapes[0][1])
-                    and int(shape[2]) == int(input_shapes[0][2])
-                    for shape in input_shapes[1:]
-                ):
-                    continue
-
-                # Require downstream quantize->transpose bridge to keep this strict.
-                concat_users = [int(v) for v in consumers.get(out_name, [])]
-                if len(concat_users) != 1:
-                    continue
-                q_idx = int(concat_users[0])
-                q_op = model_ir.operators[int(q_idx)]
-                if (
-                    str(q_op.op_type) != "QUANTIZE"
-                    or len(q_op.inputs) != 1
-                    or len(q_op.outputs) != 1
-                    or str(q_op.inputs[0]) != out_name
-                ):
-                    continue
-                q_out = str(q_op.outputs[0])
-                q_users = [int(v) for v in consumers.get(q_out, [])]
-                if len(q_users) == 0:
-                    continue
-                if any(
-                    str(model_ir.operators[int(user_idx)].op_type) != "TRANSPOSE"
-                    or _read_transpose_perm(model_ir, model_ir.operators[int(user_idx)]) != perm_nchw_to_nhwc
-                    for user_idx in q_users
-                ):
-                    continue
-
-                op.options["axis"] = 3
-                rewritten_concat_axis += 1
-
-                concat_tensor = model_ir.tensors.get(out_name, None)
-                q_tensor = model_ir.tensors.get(q_out, None)
-                if concat_tensor is not None:
-                    out_shape = [int(v) for v in list(input_shapes[0])]
-                    out_shape[3] = int(sum(int(shape[3]) for shape in input_shapes))
-                    concat_tensor.shape = [int(v) for v in list(out_shape)]
-                    concat_tensor.shape_signature = [int(v) for v in list(out_shape)]
-                    rewritten_tensors.add(out_name)
-                if q_tensor is not None and concat_tensor is not None:
-                    q_tensor.shape = [int(v) for v in list(concat_tensor.shape)]
-                    q_tensor.shape_signature = (
-                        [int(v) for v in list(concat_tensor.shape_signature)]
-                        if concat_tensor.shape_signature is not None
-                        else [int(v) for v in list(concat_tensor.shape)]
-                    )
-                    rewritten_tensors.add(q_out)
-                changed = True
-
-        if not changed:
-            break
+    rewritten_branches = int(primary_result.rewritten_branches)
+    removed_pre = int(primary_result.removed_pre_transposes)
+    rewritten_concat_axis = int(primary_result.rewritten_concat_axes)
+    rewritten_tensors.update(primary_result.rewritten_tensors)
 
     # 3) Remove inverse post-transposes fed by rewritten NHWC tensors.
     while True:
@@ -5321,7 +5137,11 @@ def _optimize_transpose_swish_qdq_nhwc_islands(
                     op=dequant_op,
                     new_inputs=[str(dequant_new_input)],
                 )
-                _copy_shape_signature(str(dequant_out_name), str(dequant_new_input))
+                copy_swish_qdq_shape_signature(
+                    model_ir,
+                    str(dequant_out_name),
+                    str(dequant_new_input),
+                )
             for rewritten_input in normalized_inputs:
                 rewritten_tensors.add(str(rewritten_input))
 

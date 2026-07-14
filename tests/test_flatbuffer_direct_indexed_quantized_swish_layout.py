@@ -9,7 +9,10 @@ import onnx2tf.tflite_builder.passes.quantized_swish_layout as swish_module
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.quantized_swish_layout import (
+    copy_swish_qdq_shape_signature,
+    propagate_swish_qdq_nhwc_metadata,
     rewrite_transpose_swish_qdq_nhwc_branches,
+    run_swish_qdq_nhwc_primary_phases,
 )
 
 
@@ -273,6 +276,61 @@ def _make_concat_closure_model_ir() -> ModelIR:
     return model_ir
 
 
+def _make_metadata_propagation_model_ir() -> ModelIR:
+    model_ir = ModelIR("indexed_quantized_swish_metadata_propagation")
+    nhwc_shape = [1, 4, 4, 2]
+    nchw_shape = [1, 2, 4, 4]
+    model_ir.inputs = ["seed", "peer"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors["seed"] = _tensor("seed", nhwc_shape)
+    model_ir.tensors["seed"].shape_signature = [-1, 4, 4, 2]
+    model_ir.tensors["peer"] = _tensor("peer", nhwc_shape)
+    model_ir.tensors["unary"] = _tensor("unary", nchw_shape)
+    model_ir.tensors["binary"] = _tensor("binary", nchw_shape)
+    model_ir.tensors["pool"] = _tensor("pool", nhwc_shape)
+    model_ir.tensors["resize"] = _tensor("resize", nhwc_shape)
+    model_ir.tensors["concat"] = _tensor("concat", [1, 4, 4, 4])
+    model_ir.tensors["concat_q"] = _tensor(
+        "concat_q",
+        [1, 4, 4, 4],
+        dtype="INT8",
+    )
+    model_ir.tensors["concat_post"] = _tensor(
+        "concat_post",
+        [1, 4, 4, 4],
+        dtype="INT8",
+    )
+    model_ir.tensors["y"] = _tensor("y", [1, 4, 4, 4], dtype="INT8")
+    model_ir.tensors["perm_post"] = _tensor(
+        "perm_post",
+        [4],
+        dtype="INT32",
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    # Deliberately reverse the propagation chain. The fixed-point phase must
+    # revisit earlier operators as rewritten state reaches their inputs.
+    model_ir.operators = [
+        OperatorIR(
+            "CONCATENATION",
+            ["resize", "peer"],
+            ["concat"],
+            options={"axis": 1},
+        ),
+        OperatorIR("RESIZE_BILINEAR", ["pool"], ["resize"]),
+        OperatorIR("MAX_POOL_2D", ["binary"], ["pool"]),
+        OperatorIR("ADD", ["unary", "peer"], ["binary"]),
+        OperatorIR("DEQUANTIZE", ["seed"], ["unary"]),
+        OperatorIR("QUANTIZE", ["concat"], ["concat_q"]),
+        OperatorIR(
+            "TRANSPOSE",
+            ["concat_q", "perm_post"],
+            ["concat_post"],
+        ),
+        OperatorIR("RELU", ["concat_post"], ["y"]),
+    ]
+    return model_ir
+
+
 def _assert_index_matches_fresh(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -440,3 +498,170 @@ def test_indexed_swish_primary_skips_index_without_transpose(monkeypatch) -> Non
     assert result.rewritten_branches == 0
     assert result.removed_pre_transposes == 0
     assert result.rewritten_tensors == frozenset()
+
+
+def test_indexed_swish_metadata_propagates_all_families_to_fixed_point(
+    monkeypatch,
+) -> None:
+    model_ir = _make_metadata_propagation_model_ir()
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    def unexpected_consumer_map(*args, **kwargs):
+        raise AssertionError("unexpected compatibility consumer-map rebuild")
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    monkeypatch.setattr(
+        lowering_module,
+        "_build_tensor_consumer_map",
+        unexpected_consumer_map,
+    )
+
+    result = propagate_swish_qdq_nhwc_metadata(
+        model_ir,
+        {"seed", "peer"},
+    )
+
+    assert refresh_count == 1
+    assert result.rewritten_concat_axes == 1
+    assert result.rewritten_tensors == frozenset(
+        {
+            "seed",
+            "peer",
+            "unary",
+            "binary",
+            "pool",
+            "resize",
+            "concat",
+            "concat_q",
+        }
+    )
+    assert model_ir.tensors["unary"].shape == [1, 4, 4, 2]
+    assert model_ir.tensors["unary"].shape_signature == [-1, 4, 4, 2]
+    assert model_ir.tensors["binary"].shape == [1, 4, 4, 2]
+    assert model_ir.tensors["binary"].shape_signature == [-1, 4, 4, 2]
+    concat = next(
+        operator
+        for operator in model_ir.operators
+        if str(operator.op_type) == "CONCATENATION"
+    )
+    assert concat.options["axis"] == 3
+    assert model_ir.tensors["concat"].shape == [1, 4, 4, 4]
+    assert model_ir.tensors["concat_q"].shape_signature == [1, 4, 4, 4]
+
+
+def test_indexed_swish_metadata_preserves_family_guards() -> None:
+    public_model = _make_metadata_propagation_model_ir()
+    public_model.outputs.append("unary")
+    public_result = propagate_swish_qdq_nhwc_metadata(
+        public_model,
+        {"seed", "peer"},
+    )
+    assert public_result.rewritten_tensors == frozenset({"seed", "peer"})
+
+    channel_model = _make_metadata_propagation_model_ir()
+    channel_model.tensors["pool"].shape = [1, 4, 4, 3]
+    channel_model.tensors["pool"].shape_signature = [1, 4, 4, 3]
+    channel_result = propagate_swish_qdq_nhwc_metadata(
+        channel_model,
+        {"seed", "peer"},
+    )
+    assert channel_result.rewritten_tensors == frozenset(
+        {"seed", "peer", "unary", "binary"}
+    )
+    assert channel_result.rewritten_concat_axes == 0
+
+    tail_model = _make_metadata_propagation_model_ir()
+    tail_model.tensors["perm_post"].data = np.asarray(
+        [0, 3, 1, 2],
+        dtype=np.int32,
+    )
+    tail_result = propagate_swish_qdq_nhwc_metadata(
+        tail_model,
+        {"seed", "peer"},
+    )
+    assert tail_result.rewritten_tensors == frozenset(
+        {"seed", "peer", "unary", "binary", "pool", "resize"}
+    )
+    assert tail_result.rewritten_concat_axes == 0
+    concat = next(
+        operator
+        for operator in tail_model.operators
+        if str(operator.op_type) == "CONCATENATION"
+    )
+    assert concat.options["axis"] == 1
+
+
+def test_indexed_swish_metadata_skips_index_without_seed(monkeypatch) -> None:
+    model_ir = _make_metadata_propagation_model_ir()
+
+    def unexpected_index(*args, **kwargs):
+        raise AssertionError("unexpected graph index allocation")
+
+    monkeypatch.setattr(swish_module, "ModelIRGraphIndex", unexpected_index)
+
+    result = propagate_swish_qdq_nhwc_metadata(model_ir, set())
+
+    assert result.rewritten_concat_axes == 0
+    assert result.rewritten_tensors == frozenset()
+    concat = next(
+        operator
+        for operator in model_ir.operators
+        if str(operator.op_type) == "CONCATENATION"
+    )
+    assert concat.options["axis"] == 1
+
+
+def test_indexed_swish_primary_runner_shares_one_index(monkeypatch) -> None:
+    model_ir, branch_tensors = _make_shared_multibranch_model_ir()
+    model_ir.outputs.remove("sum")
+    model_ir.tensors["y"] = _tensor("y", [1, 2, 160, 160], dtype="INT8")
+    model_ir.operators.append(OperatorIR("RELU", ["sum"], ["y"]))
+    model_ir.outputs.append("y")
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    result = run_swish_qdq_nhwc_primary_phases(model_ir)
+
+    assert refresh_count == 1
+    assert result.rewritten_branches == 3
+    assert result.removed_pre_transposes == 2
+    assert result.rewritten_concat_axes == 0
+    assert result.rewritten_tensors == frozenset({*branch_tensors, "sum"})
+    assert model_ir.tensors["sum"].shape == [1, 160, 160, 2]
+
+
+def test_swish_shape_signature_owner_is_shared_with_late_concat_phase() -> None:
+    model_ir = ModelIR("swish_shape_signature_owner")
+    model_ir.tensors["source"] = _tensor("source", [1, 4, 4, 2])
+    model_ir.tensors["source"].shape_signature = [-1, 4, 4, 2]
+    model_ir.tensors["destination"] = _tensor(
+        "destination",
+        [1, 2, 4, 4],
+    )
+
+    assert copy_swish_qdq_shape_signature(
+        model_ir,
+        "destination",
+        "source",
+    )
+    assert model_ir.tensors["destination"].shape == [1, 4, 4, 2]
+    assert model_ir.tensors["destination"].shape_signature == [-1, 4, 4, 2]
+    assert not copy_swish_qdq_shape_signature(
+        model_ir,
+        "destination",
+        "source",
+    )
+    assert not copy_swish_qdq_shape_signature(model_ir, "missing", "source")

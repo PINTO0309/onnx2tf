@@ -4046,6 +4046,32 @@ tensors. Metadata propagation, late Concat normalization, inverse-post cleanup,
 and the independently owned Conv-input safety valve remain later ordered
 phases of the compatibility orchestrator.
 
+The immediately following Swish-QDQ metadata phase is owned by
+`propagate_swish_qdq_nhwc_metadata` in the same module. It treats unary
+quantization, binary broadcast, Pool/Resize channel preservation, and strict
+Concat-Q-inverse-Transpose closure as one fixed-point contract because all four
+families mutate the same rewritten-tensor state. Candidate order is the graph-
+ordered union of relevant type buckets from one `ModelIRGraphIndex`; topology
+does not change, so the stable indexed consumer relation is reused for every
+iteration. An empty rewritten seed returns without constructing an index.
+Unary shape/signature copying, binary static/dynamic broadcast fallback,
+Pool/Resize channel guards, public outputs, negative Concat axis normalization,
+strict tail fan-out, Concat axis/shape mutation, and quantized-output metadata
+retain their former behavior. The shape/signature copier is a single module
+owner also called by the later Dequantize-input repair in late Concat
+normalization; the lowerer no longer relies on a deleted nested closure.
+
+`run_swish_qdq_nhwc_primary_phases` constructs one index when a Transpose is
+present and passes it to both the branch and metadata owners. The branch phase
+maintains that index through its two source-edge changes and differential root
+removal; the metadata phase changes no topology. Fixed-point, public-output,
+channel-mismatch, and wrong-tail fixtures match the complete prior committed
+phase AST and result. The comprehensive fixture retains post-metadata digest
+`bab34e6351ec24bc564b9f95b4550bbfaca867f15906f9d77b92f7e8adf1d804`,
+one rewritten Concat axis, and twenty-four rewritten tensors. Late Concat
+normalization and inverse-post cleanup remain outside this shared-index
+boundary because they perform additional rewires and removals.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

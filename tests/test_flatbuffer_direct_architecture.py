@@ -1824,28 +1824,28 @@ def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
     )
     owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
     lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
-    owner_name = "rewrite_transpose_swish_qdq_nhwc_branches"
-    owner = next(
+    branch_owner_name = "rewrite_transpose_swish_qdq_nhwc_branches"
+    branch_owner = next(
         node
         for node in owner_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+        if isinstance(node, ast.FunctionDef) and node.name == branch_owner_name
     )
-    owner_calls = {
+    branch_calls = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
-        for node in ast.walk(owner)
+        for node in ast.walk(branch_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, (ast.Name, ast.Attribute))
     }
-    assert "_build_tensor_consumer_map" not in owner_calls
-    assert "_build_tensor_producer_map" not in owner_calls
-    assert "ModelIRGraphIndex" in owner_calls
-    assert "operator_indices" in owner_calls
-    assert "consumer_indices" in owner_calls
-    assert "_set_operator_inputs" in owner_calls
-    assert "remove_operator" in owner_calls
+    assert "_build_tensor_consumer_map" not in branch_calls
+    assert "_build_tensor_producer_map" not in branch_calls
+    assert "ModelIRGraphIndex" in branch_calls
+    assert "operator_indices" in branch_calls
+    assert "consumer_indices" in branch_calls
+    assert "_set_operator_inputs" in branch_calls
+    assert "remove_operator" in branch_calls
     setter_calls = [
         node
-        for node in ast.walk(owner)
+        for node in ast.walk(branch_owner)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_set_operator_inputs"
@@ -1861,22 +1861,86 @@ def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
         for call in setter_calls
     )
 
+    metadata_owner_name = "propagate_swish_qdq_nhwc_metadata"
+    metadata_owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == metadata_owner_name
+    )
+    metadata_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(metadata_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in metadata_calls
+    assert "_build_tensor_producer_map" not in metadata_calls
+    assert "ModelIRGraphIndex" in metadata_calls
+    assert "operator_indices_for_types" in metadata_calls
+    shape_owner_name = "copy_swish_qdq_shape_signature"
+    assert shape_owner_name in metadata_calls
+
+    runner_name = "run_swish_qdq_nhwc_primary_phases"
+    runner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == runner_name
+    )
+    runner_index_builds = [
+        node
+        for node in ast.walk(runner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "ModelIRGraphIndex"
+    ]
+    assert len(runner_index_builds) == 1
+    runner_phase_calls = [
+        node
+        for node in ast.walk(runner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {branch_owner_name, metadata_owner_name}
+    ]
+    assert [call.func.id for call in runner_phase_calls] == [
+        branch_owner_name,
+        metadata_owner_name,
+    ]
+    assert all(
+        any(
+            keyword.arg == "graph_index"
+            and isinstance(keyword.value, ast.Name)
+            and keyword.value.id == "graph_index"
+            for keyword in call.keywords
+        )
+        for call in runner_phase_calls
+    )
+
     swish_orchestrator = next(
         node
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "_optimize_transpose_swish_qdq_nhwc_islands"
     )
-    owner_invocations = [
+    runner_invocations = [
         node
         for node in ast.walk(swish_orchestrator)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == owner_name
+        and node.func.id == runner_name
     ]
-    assert len(owner_invocations) == 1
-    assert isinstance(owner_invocations[0].args[0], ast.Name)
-    assert owner_invocations[0].args[0].id == "model_ir"
+    assert len(runner_invocations) == 1
+    assert isinstance(runner_invocations[0].args[0], ast.Name)
+    assert runner_invocations[0].args[0].id == "model_ir"
+    late_shape_invocations = [
+        node
+        for node in ast.walk(swish_orchestrator)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == shape_owner_name
+    ]
+    assert len(late_shape_invocations) == 1
+    assert isinstance(late_shape_invocations[0].args[0], ast.Name)
+    assert late_shape_invocations[0].args[0].id == "model_ir"
     nested_names = {
         node.name
         for node in swish_orchestrator.body
@@ -1885,6 +1949,7 @@ def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
     assert "_is_swish_quantized_output" not in nested_names
     assert "_concat_has_quantize_transpose_tail" not in nested_names
     assert "_has_concat_closure_from_tensor" not in nested_names
+    assert "_copy_shape_signature" not in nested_names
 
 
 def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:

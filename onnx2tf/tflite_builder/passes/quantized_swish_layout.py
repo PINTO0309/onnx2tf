@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Mapping, Optional, Sequence, Tuple
+from typing import Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.model_ir_utils import (
+    _broadcast_shape_signatures,
+    _broadcast_static_shapes,
     _permute_tensor_metadata_if_rank_matches,
     _read_transpose_perm,
     _set_operator_inputs,
@@ -21,6 +23,51 @@ class SwishQDQBranchRewriteResult:
     rewritten_branches: int
     removed_pre_transposes: int
     rewritten_tensors: frozenset[str]
+
+
+@dataclass(frozen=True)
+class SwishQDQMetadataPropagationResult:
+    rewritten_concat_axes: int
+    rewritten_tensors: frozenset[str]
+
+
+@dataclass(frozen=True)
+class SwishQDQPrimaryPhasesResult:
+    rewritten_branches: int
+    removed_pre_transposes: int
+    rewritten_concat_axes: int
+    rewritten_tensors: frozenset[str]
+
+
+def copy_swish_qdq_shape_signature(
+    model_ir: ModelIR,
+    destination_name: str,
+    source_name: str,
+) -> bool:
+    destination = model_ir.tensors.get(str(destination_name))
+    source = model_ir.tensors.get(str(source_name))
+    if destination is None or source is None:
+        return False
+
+    changed = False
+    source_shape = [int(value) for value in source.shape]
+    source_signature = (
+        [int(value) for value in source.shape_signature]
+        if source.shape_signature is not None
+        else list(source_shape)
+    )
+    if [int(value) for value in destination.shape] != source_shape:
+        destination.shape = list(source_shape)
+        changed = True
+    destination_signature = (
+        [int(value) for value in destination.shape_signature]
+        if destination.shape_signature is not None
+        else [int(value) for value in destination.shape]
+    )
+    if destination.shape_signature is None or destination_signature != source_signature:
+        destination.shape_signature = list(source_signature)
+        changed = True
+    return changed
 
 
 def _is_swish_quantized_output(
@@ -572,4 +619,275 @@ def rewrite_transpose_swish_qdq_nhwc_branches(
         rewritten_branches=int(rewritten_branches),
         removed_pre_transposes=int(removed_pre_transposes),
         rewritten_tensors=frozenset(rewritten_tensors),
+    )
+
+
+def propagate_swish_qdq_nhwc_metadata(
+    model_ir: ModelIR,
+    rewritten_tensors: Iterable[str],
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> SwishQDQMetadataPropagationResult:
+    """Propagate the primary Swish NHWC state through strict safe families."""
+
+    rewritten = {str(name) for name in rewritten_tensors}
+    if len(rewritten) == 0:
+        return SwishQDQMetadataPropagationResult(0, frozenset())
+
+    relevant_types = {
+        "DEQUANTIZE",
+        "QUANTIZE",
+        "LOGISTIC",
+        "ADD",
+        "MUL",
+        "SUB",
+        "DIV",
+        "MAXIMUM",
+        "MINIMUM",
+        "MAX_POOL_2D",
+        "AVERAGE_POOL_2D",
+        "RESIZE_NEAREST_NEIGHBOR",
+        "RESIZE_BILINEAR",
+        "CONCATENATION",
+    }
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if active_index is None:
+        if not any(
+            str(operator.op_type) in relevant_types for operator in model_ir.operators
+        ):
+            return SwishQDQMetadataPropagationResult(0, frozenset(rewritten))
+        active_index = ModelIRGraphIndex(model_ir)
+
+    candidate_indices = active_index.operator_indices_for_types(relevant_types)
+    if len(candidate_indices) == 0:
+        return SwishQDQMetadataPropagationResult(0, frozenset(rewritten))
+
+    consumers = active_index.consumers
+    model_outputs = {str(name) for name in model_ir.outputs}
+    rewritten_concat_axes = 0
+
+    while True:
+        changed = False
+        for operator_index in candidate_indices:
+            operator = model_ir.operators[int(operator_index)]
+            operator_type = str(operator.op_type)
+            if len(operator.outputs) != 1:
+                continue
+            output_name = str(operator.outputs[0])
+            if output_name in model_outputs:
+                continue
+
+            if (
+                operator_type in {"DEQUANTIZE", "QUANTIZE", "LOGISTIC"}
+                and len(operator.inputs) == 1
+            ):
+                input_name = str(operator.inputs[0])
+                if input_name not in rewritten:
+                    continue
+                if copy_swish_qdq_shape_signature(
+                    model_ir,
+                    output_name,
+                    input_name,
+                ):
+                    changed = True
+                if output_name not in rewritten:
+                    rewritten.add(output_name)
+                    changed = True
+                continue
+
+            if (
+                operator_type in {"ADD", "MUL", "SUB", "DIV", "MAXIMUM", "MINIMUM"}
+                and len(operator.inputs) == 2
+            ):
+                input0_name = str(operator.inputs[0])
+                input1_name = str(operator.inputs[1])
+                if input0_name not in rewritten or input1_name not in rewritten:
+                    continue
+                input0_tensor = model_ir.tensors.get(input0_name)
+                input1_tensor = model_ir.tensors.get(input1_name)
+                output_tensor = model_ir.tensors.get(output_name)
+                if (
+                    input0_tensor is None
+                    or input1_tensor is None
+                    or output_tensor is None
+                ):
+                    continue
+
+                output_shape = _broadcast_static_shapes(
+                    input0_tensor.shape,
+                    input1_tensor.shape,
+                )
+                signature0 = (
+                    [int(value) for value in input0_tensor.shape_signature]
+                    if input0_tensor.shape_signature is not None
+                    else [int(value) for value in input0_tensor.shape]
+                )
+                signature1 = (
+                    [int(value) for value in input1_tensor.shape_signature]
+                    if input1_tensor.shape_signature is not None
+                    else [int(value) for value in input1_tensor.shape]
+                )
+                output_signature = _broadcast_shape_signatures(
+                    signature0,
+                    signature1,
+                )
+                if output_shape is None:
+                    output_shape = [int(value) for value in input0_tensor.shape]
+                if output_signature is None:
+                    output_signature = list(signature0)
+
+                normalized_output_shape = [int(value) for value in output_shape]
+                if [
+                    int(value) for value in output_tensor.shape
+                ] != normalized_output_shape:
+                    output_tensor.shape = list(normalized_output_shape)
+                    changed = True
+                current_signature = (
+                    [int(value) for value in output_tensor.shape_signature]
+                    if output_tensor.shape_signature is not None
+                    else [int(value) for value in output_tensor.shape]
+                )
+                normalized_output_signature = [int(value) for value in output_signature]
+                if (
+                    output_tensor.shape_signature is None
+                    or current_signature != normalized_output_signature
+                ):
+                    output_tensor.shape_signature = list(normalized_output_signature)
+                    changed = True
+                if output_name not in rewritten:
+                    rewritten.add(output_name)
+                    changed = True
+                continue
+
+            if (
+                operator_type
+                in {
+                    "MAX_POOL_2D",
+                    "AVERAGE_POOL_2D",
+                    "RESIZE_NEAREST_NEIGHBOR",
+                    "RESIZE_BILINEAR",
+                }
+                and len(operator.inputs) >= 1
+            ):
+                input_name = str(operator.inputs[0])
+                if input_name not in rewritten:
+                    continue
+                input_tensor = model_ir.tensors.get(input_name)
+                output_tensor = model_ir.tensors.get(output_name)
+                if input_tensor is None or output_tensor is None:
+                    continue
+                input_shape = [int(value) for value in input_tensor.shape]
+                output_shape = [int(value) for value in output_tensor.shape]
+                if len(input_shape) != 4 or len(output_shape) != 4:
+                    continue
+                input_channels = int(input_shape[3])
+                output_channels = int(output_shape[3])
+                if (
+                    input_channels >= 0
+                    and output_channels >= 0
+                    and input_channels != output_channels
+                ):
+                    continue
+                if output_name not in rewritten:
+                    rewritten.add(output_name)
+                    changed = True
+                continue
+
+            if operator_type != "CONCATENATION" or len(operator.inputs) < 2:
+                continue
+            axis = int(operator.options.get("axis", 1))
+            if axis < 0:
+                axis += 4
+            if axis != 1:
+                continue
+            input_names = [str(name) for name in operator.inputs]
+            if any(name not in rewritten for name in input_names):
+                continue
+            input_tensors = [model_ir.tensors.get(name) for name in input_names]
+            if any(tensor is None for tensor in input_tensors):
+                continue
+            input_shapes = [
+                [int(value) for value in tensor.shape]
+                for tensor in input_tensors
+                if tensor is not None
+            ]
+            if any(len(shape) != 4 for shape in input_shapes):
+                continue
+            if not all(
+                int(shape[0]) == int(input_shapes[0][0])
+                and int(shape[1]) == int(input_shapes[0][1])
+                and int(shape[2]) == int(input_shapes[0][2])
+                for shape in input_shapes[1:]
+            ):
+                continue
+            if not _concat_has_quantize_transpose_tail(
+                model_ir,
+                output_name,
+                consumers=consumers,
+            ):
+                continue
+
+            operator.options["axis"] = 3
+            rewritten_concat_axes += 1
+            concat_tensor = model_ir.tensors.get(output_name)
+            quantize_index = int(consumers[output_name][0])
+            quantized_output = str(model_ir.operators[quantize_index].outputs[0])
+            quantized_tensor = model_ir.tensors.get(quantized_output)
+            if concat_tensor is not None:
+                concat_shape = list(input_shapes[0])
+                concat_shape[3] = int(sum(int(shape[3]) for shape in input_shapes))
+                concat_tensor.shape = list(concat_shape)
+                concat_tensor.shape_signature = list(concat_shape)
+                rewritten.add(output_name)
+            if quantized_tensor is not None and concat_tensor is not None:
+                quantized_tensor.shape = [int(value) for value in concat_tensor.shape]
+                quantized_tensor.shape_signature = (
+                    [int(value) for value in concat_tensor.shape_signature]
+                    if concat_tensor.shape_signature is not None
+                    else [int(value) for value in concat_tensor.shape]
+                )
+                rewritten.add(quantized_output)
+            changed = True
+
+        if not changed:
+            break
+
+    return SwishQDQMetadataPropagationResult(
+        rewritten_concat_axes=int(rewritten_concat_axes),
+        rewritten_tensors=frozenset(rewritten),
+    )
+
+
+def run_swish_qdq_nhwc_primary_phases(
+    model_ir: ModelIR,
+    *,
+    min_spatial_stage: int = 160,
+    require_concat_closure: bool = False,
+) -> SwishQDQPrimaryPhasesResult:
+    """Run branch rewrite and metadata propagation with one shared index."""
+
+    if not any(str(operator.op_type) == "TRANSPOSE" for operator in model_ir.operators):
+        return SwishQDQPrimaryPhasesResult(0, 0, 0, frozenset())
+
+    graph_index = ModelIRGraphIndex(model_ir)
+    branch_result = rewrite_transpose_swish_qdq_nhwc_branches(
+        model_ir,
+        min_spatial_stage=int(min_spatial_stage),
+        require_concat_closure=bool(require_concat_closure),
+        graph_index=graph_index,
+    )
+    metadata_result = propagate_swish_qdq_nhwc_metadata(
+        model_ir,
+        branch_result.rewritten_tensors,
+        graph_index=graph_index,
+    )
+    return SwishQDQPrimaryPhasesResult(
+        rewritten_branches=int(branch_result.rewritten_branches),
+        removed_pre_transposes=int(branch_result.removed_pre_transposes),
+        rewritten_concat_axes=int(metadata_result.rewritten_concat_axes),
+        rewritten_tensors=metadata_result.rewritten_tensors,
     )
