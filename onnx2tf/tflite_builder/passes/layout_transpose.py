@@ -2216,6 +2216,7 @@ def run_transpose_gather_channel_fanout_cleanup(
     *,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Run strict channel-axis Gather multi-post Transpose cleanup."""
 
@@ -2333,6 +2334,7 @@ def run_transpose_gather_channel_fanout_cleanup(
             "optimized_transpose_gather_transpose_nhwc_channel_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

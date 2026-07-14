@@ -144,6 +144,13 @@ the legacy ExpandDims/Squeeze replacement and the second ends before
 normalization-Pad layout cleanup. Both runners remain standalone-compatible
 through optional scope arguments.
 
+The fallback and primary absolute-final SE-FC/Gather-channel-fan-out pairs use
+a target-parameterized helper. The fallback invocation supplies
+`fallback_ir` with no Session LayoutState; the primary invocation supplies the
+main ModelIR and Session layout state. Both runners share one identity-bound
+scope for their respective target, and each scope ends before static-shape
+reconciliation.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while

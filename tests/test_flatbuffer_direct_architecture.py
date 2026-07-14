@@ -444,6 +444,77 @@ def test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope() -> None:
     assert len(helper_invocations) == 2
 
 
+def test_lowerer_se_fc_gather_fanout_pair_reuses_pass_state_scope() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_se_fc_gather_channel_fanout_pass_cluster"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "run_se_fc_layout_cleanup",
+        "run_transpose_gather_channel_fanout_cleanup",
+    ]
+    calls = {
+        node.func.id: node
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in expected_order
+    }
+
+    assert [
+        call.func.id
+        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
+    ] == expected_order
+    for name in expected_order:
+        scope_keyword = next(
+            keyword
+            for keyword in calls[name].keywords
+            if keyword.arg == "state_scope"
+        )
+        assert isinstance(scope_keyword.value, ast.Name)
+        assert scope_keyword.value.id == "state_scope"
+    assert [argument.arg for argument in helper.args.args] == [
+        "target_model_ir",
+        "target_layout_state",
+    ]
+
+    helper_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+    ]
+    assert len(helper_invocations) == 2
+    assert sum(
+        len(call.args) == 2
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "fallback_ir"
+        and isinstance(call.args[1], ast.Constant)
+        and call.args[1].value is None
+        for call in helper_invocations
+    ) == 1
+    assert sum(
+        len(call.args) == 2
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "model_ir"
+        and isinstance(call.args[1], ast.Attribute)
+        and call.args[1].attr == "layout_state"
+        for call in helper_invocations
+    ) == 1
+
+
 def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -3399,7 +3470,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 141
+    assert len(calls) == 139
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -3568,7 +3639,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_gather_channel_fanout_cleanup"
     ]
-    assert len(transpose_gather_channel_fanout_calls) == 4
+    assert len(transpose_gather_channel_fanout_calls) == 3
 
     transpose_unary_calls = [
         call
@@ -3680,7 +3751,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_se_fc_layout_cleanup"
     ]
-    assert len(se_fc_calls) == 4
+    assert len(se_fc_calls) == 3
 
     elementwise_gate_calls = [
         call

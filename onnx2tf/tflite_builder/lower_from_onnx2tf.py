@@ -50030,6 +50030,27 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_se_fc_gather_channel_fanout_pass_cluster(
+        target_model_ir: ModelIR,
+        target_layout_state: LayoutState | None,
+    ) -> None:
+        state_scope = ModelIRPassStateScope(
+            target_model_ir,
+            layout_state=target_layout_state,
+        )
+        run_se_fc_layout_cleanup(
+            target_model_ir,
+            layout_state=target_layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_transpose_gather_channel_fanout_cleanup(
+            target_model_ir,
+            layout_state=target_layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     def _run_gate_layout_pass_cluster(
         *,
         include_mixed_attention: bool = True,
@@ -51603,13 +51624,9 @@ def lower_onnx_to_ir(
             _topologically_sort_operators(fallback_ir)
             infer_model_ir_logical_layouts(fallback_ir)
         _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(fallback_ir)
-        run_se_fc_layout_cleanup(
+        _run_se_fc_gather_channel_fanout_pass_cluster(
             fallback_ir,
-            diagnostics=session.diagnostics,
-        )
-        run_transpose_gather_channel_fanout_cleanup(
-            fallback_ir,
-            diagnostics=session.diagnostics,
+            None,
         )
         _reconcile_static_tensor_shapes(fallback_ir)
         if int(
@@ -51809,15 +51826,9 @@ def lower_onnx_to_ir(
     # late broadcast/layout repairs can recreate SE gate and channel-shuffle
     # NHWC<->NCHW wrappers after the earlier dedicated passes have run.
     _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(model_ir)
-    run_se_fc_layout_cleanup(
+    _run_se_fc_gather_channel_fanout_pass_cluster(
         model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_transpose_gather_channel_fanout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+        session.layout_state,
     )
     _reconcile_static_tensor_shapes(model_ir)
     # Absolute-final PRELU cleanup:
