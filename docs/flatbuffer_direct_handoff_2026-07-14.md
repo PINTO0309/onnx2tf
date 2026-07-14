@@ -7,12 +7,13 @@ The active branch is `fb-refactor5`, created from `main` after pull request
 subsequent work uses coherent commits and pushes without opening another pull
 request.
 
-The latest implementation unit co-locates successful NHWC AveragePool bridge
-layout-set and static-shape state application with its existing Torch-free
-policy rewrite. The orchestrator is 294 lines at this checkpoint, down from
-482 lines at Goal
-resumption, 1,025 lines at the beginning of the previous continuation, and
-1,608 lines before the broader fast-precanonicalize extraction.
+The latest implementation unit completes the immutable `ConversionRequest`
+read boundary inside the direct exporter. All 36 option reads now use
+`request.get`, artifact selection continues through `ArtifactPlan`, and the
+original `kwargs` object is referenced only when constructing the request.
+The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
+lines at Goal resumption, 1,025 lines at the beginning of the previous
+continuation, and 1,608 lines before the broader extraction.
 
 ## Completed work
 
@@ -31,7 +32,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains six coherent continuations:
+The current `fb-refactor5` work contains seven coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -46,8 +47,10 @@ The current `fb-refactor5` work contains six coherent continuations:
   broadening the generated source grammar;
 - `b00774a7` centralizes literal static-shape recording while retaining each
   update at its original point in the ordered scan;
-- the current checkpoint makes the NHWC AveragePool bridge own the CF/NHWC and
-  static-shape state resulting from its rewrite.
+- `95fbd0cb` makes the NHWC AveragePool bridge own the CF/NHWC and static-shape
+  state resulting from its rewrite;
+- the current checkpoint routes all direct-export option reads through the
+  normalized request and adds a structural boundary test.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -64,9 +67,7 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
 The final checkpoint changes:
 
-- `onnx2tf/tflite_builder/pytorch_exporter.py`;
-- `onnx2tf/tflite_builder/pytorch_fast_precanonicalize_policy.py`;
-- `tests/test_flatbuffer_direct_pytorch_fast_precanonicalize_policy.py`;
+- `onnx2tf/tflite_builder/__init__.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -118,6 +119,12 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   internally. To preserve behavior, the cached state shape is still recomputed
   from the pre-rewrite Pool shape after the layout sets change; it is not
   replaced by the rendered rewrite target.
+- `ConversionRequest.from_kwargs` is the direct exporter's only raw-kwargs
+  boundary. Quantization validation receives `request.options`, all 36
+  remaining optional reads use `request.get`, and typed artifact decisions
+  remain on `request.artifacts`. This is a source-routing change only; keys,
+  defaults, coercions, public return values, and downstream arguments are
+  unchanged.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -155,6 +162,20 @@ The cache checkpoint passed four focused cases covering aligned binary,
 Resize/Pool, literal recording, parse-failure no-op, and architecture ownership.
 The bridge checkpoint adds positive state-set/cache assertions and a no-op
 state-preservation case to the existing whole-chain normalization test.
+The request-boundary checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_core.py \
+  tests/test_flatbuffer_direct_architecture.py
+
+126 passed
+```
+
+Its AST gate proves zero `kwargs.get` calls and exactly one raw `kwargs` read,
+as the argument to `ConversionRequest.from_kwargs`.
 The exporter and policy pass `python -m py_compile`, and `git diff --check`
 passes. The immediately preceding DepthToSpace, Pool, dynamic-Pool,
 simple-alias, and aligned-scalar checkpoints passed their focused synthetic and
@@ -184,7 +205,8 @@ The full Goal is not complete. The fast-precanonicalize orchestrator still has
 orchestration, source-line replacement, changed-flag handling, and the explicit
 short-circuit boundaries required by the extracted policy decisions.
 
-The broader fixed-pipeline, exporter, artifact-matrix, optional TensorFlow,
+The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
+optional TensorFlow,
 PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier regression work also
 remains subject to the original refactor plan and its verification gates.
 
@@ -192,14 +214,12 @@ remains subject to the original refactor plan and its verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the remaining 294-line orchestrator for decision logic rather than
-   orchestration glue; do not move the explicit ordered sequencing merely to
-   reduce line count.
-3. If no bounded decision remains, select the next unfinished fixed-pipeline or
-   exporter contract task from the broader Goal instead of introducing a large
-   mechanical wrapper.
-4. Preserve the existing changed flags, line refreshes, and explicit
-   short-circuits while making that selection.
+2. Audit `ArtifactPlan.from_options` and the direct exporter call sites for the
+   next bounded unrequested-artifact or compatibility-contract gap.
+3. Characterize existing defaults and legacy output keys before adding a typed
+   artifact field or moving another guard; do not infer a new public option.
+4. Keep the audited 294-line PyTorch source orchestrator as explicit sequencing
+   unless a new bounded decision is found.
 5. Run only the focused synthetic/ownership/static checks unless the user asks
    for broader conversion validation. Use `uv`, run inference sequentially if
    any is explicitly requested, commit and push coherent units, and do not

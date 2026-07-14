@@ -217,6 +217,58 @@ def test_custom_op_artifact_metadata_has_single_scan_owner() -> None:
     assert "custom_op_nodes_seen" not in builder_source
 
 
+def test_direct_export_reads_options_only_from_normalized_request() -> None:
+    builder_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py"
+    ).read_text(encoding="utf-8")
+    export_function = next(
+        node
+        for node in ast.parse(builder_source).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "export_tflite_model_flatbuffer_direct"
+    )
+    parent_by_id = {
+        id(child): parent
+        for parent in ast.walk(export_function)
+        for child in ast.iter_child_nodes(parent)
+    }
+    kwargs_reads = [
+        node
+        for node in ast.walk(export_function)
+        if isinstance(node, ast.Name)
+        and node.id == "kwargs"
+        and isinstance(node.ctx, ast.Load)
+    ]
+    assert len(kwargs_reads) == 1
+    boundary_call = parent_by_id[id(kwargs_reads[0])]
+    assert isinstance(boundary_call, ast.Call)
+    assert isinstance(boundary_call.func, ast.Attribute)
+    assert isinstance(boundary_call.func.value, ast.Name)
+    assert boundary_call.func.value.id == "ConversionRequest"
+    assert boundary_call.func.attr == "from_kwargs"
+
+    raw_kwargs_gets = [
+        node
+        for node in ast.walk(export_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "kwargs"
+        and node.func.attr == "get"
+    ]
+    assert raw_kwargs_gets == []
+    request_gets = [
+        node
+        for node in ast.walk(export_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "request"
+        and node.func.attr == "get"
+    ]
+    assert request_gets
+
+
 def test_op_coverage_writer_is_called_only_when_requested() -> None:
     builder_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py"
