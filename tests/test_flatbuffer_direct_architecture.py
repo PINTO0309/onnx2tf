@@ -4792,8 +4792,11 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_convert_nchw_pad_to_nhwc_pad_values",
         "_convert_nhwc_pad_to_nchw_pad_values",
         "_fast_precanonicalize_expr_identifiers",
+        "_fast_precanonicalize_has_channel_last_spatial_consumer",
+        "_fast_precanonicalize_infer_consumer_layout",
         "_fast_precanonicalize_is_cf_like",
         "_fast_precanonicalize_is_nhwc_like",
+        "_fast_precanonicalize_preferred_channel_count",
         "_fast_precanonicalize_resolve_alias",
         "_infer_unique_channel_count_from_rank4_shape",
     ):

@@ -2030,6 +2030,9 @@ without maintaining local duplicates. Its dataclass, one-pass source-line
 collector, alias resolver, and CF/NHWC classification helpers are co-located in
 the same owner. The collector records static shapes, consumers, buffer channel
 counts, Conv block arity, module edges, and propagated alias layout evidence.
+Preferred channel selection, scored consumer-layout inference, and recursive
+channel-last spatial-consumer detection query the same context in this owner.
+They remain conservative when source evidence ties or cycles.
 
 The direct-module dispatcher is being decomposed by operator family rather than
 moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and

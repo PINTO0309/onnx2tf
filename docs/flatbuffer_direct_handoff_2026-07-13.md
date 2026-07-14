@@ -1270,6 +1270,17 @@ architecture tests deselected), together with Ruff, syntax validation, and
 unused pool regex remains with a local Ruff annotation so the mechanical move
 does not alter behavior. No model conversion or inference was run.
 
+Preferred channel-count selection, scored consumer-layout inference, and
+recursive channel-last spatial-consumer detection now also live in
+`pytorch_fast_precanonicalize_policy.py`. Conv input/output channel evidence,
+static layout hints, dynamic/suffix layout evidence, future consumer scoring,
+direct rank-four slices, pool chains, aliases, and recursion guards retain
+their established priority. All three moved function ASTs match checkpoint
+`9c35bd6` exactly. Six focused policy/ownership tests pass (95 unrelated
+architecture tests deselected), together with Ruff, syntax validation, and
+`git diff --check`; the exporter shrank by another net 239 lines. No model
+conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

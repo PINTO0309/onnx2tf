@@ -7,13 +7,21 @@ from typing import Dict, List, Sequence, Set, Tuple
 from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_apply_concat_inputs_axis_and_shape,
     _parse_apply_pool2d_assign_with_shape,
+    _parse_apply_pool2d_input_and_channel_last,
+    _parse_apply_resize_input_and_channel_last,
     _parse_apply_resize_input_size_shape_and_channel_last,
+    _parse_apply_softmax_input_and_axis,
+    _parse_align_tensor_target_shape_expr,
     _parse_int_list_literal,
     _parse_local_response_norm_input_expr,
+    _parse_rank4_shape_literal,
     _parse_simple_assignment_line,
     _parse_torch_cat_inputs_and_dim,
     _parse_torch_permute_assign,
     _split_top_level_csv_exprs,
+)
+from onnx2tf.tflite_builder.pytorch_shape_policy import (
+    _fast_precanonicalize_rank4_layout_hint,
 )
 
 
@@ -403,3 +411,245 @@ def _fast_precanonicalize_is_nhwc_like(
         or resolved in context.nhwc_like_names
         or "_nhwc" in resolved
     )
+
+
+def _fast_precanonicalize_preferred_channel_count(
+    name: str,
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+    shape_hint: Sequence[int] | None = None,
+) -> int | None:
+    resolved = _fast_precanonicalize_resolve_alias(str(name), context.aliases)
+    resolved_is_cf_like = _fast_precanonicalize_is_cf_like(
+        resolved,
+        dynamic_cf_like_names,
+        context,
+    )
+    resolved_is_nhwc_like = _fast_precanonicalize_is_nhwc_like(
+        resolved,
+        dynamic_nhwc_like_names,
+        context,
+    )
+    shape_hint_values = (
+        [int(value) for value in list(shape_hint)]
+        if shape_hint is not None and len(list(shape_hint)) == 4
+        else None
+    )
+
+    def _pick_shape_hint_candidate(candidates: Sequence[int]) -> int | None:
+        if shape_hint_values is None:
+            return None
+        hinted_candidates: list[tuple[int, str]] = []
+        for candidate in candidates:
+            layout_hint = _fast_precanonicalize_rank4_layout_hint(
+                shape_hint_values,
+                preferred_channel_count=int(candidate),
+            )
+            if layout_hint is not None:
+                hinted_candidates.append((int(candidate), layout_hint))
+        if len(hinted_candidates) == 0:
+            return None
+        if resolved_is_cf_like:
+            for candidate, layout_hint in hinted_candidates:
+                if layout_hint == "cf":
+                    return int(candidate)
+        if resolved_is_nhwc_like:
+            for candidate, layout_hint in hinted_candidates:
+                if layout_hint == "nhwc":
+                    return int(candidate)
+        unique_candidates: list[int] = []
+        for candidate, _ in hinted_candidates:
+            if int(candidate) not in unique_candidates:
+                unique_candidates.append(int(candidate))
+        if len(unique_candidates) == 1:
+            return int(unique_candidates[0])
+        return None
+
+    consumer_modules = context.module_input_consumers.get(resolved, [])
+    consumer_channel_candidates: list[int] = []
+    for consumer_module in consumer_modules:
+        consumer_channels = context.conv_block_in_channels.get(consumer_module, None)
+        if consumer_channels is None:
+            continue
+        consumer_channel_value = int(consumer_channels)
+        if consumer_channel_value not in consumer_channel_candidates:
+            consumer_channel_candidates.append(consumer_channel_value)
+    hinted_consumer_channel = _pick_shape_hint_candidate(consumer_channel_candidates)
+    if hinted_consumer_channel is not None:
+        return int(hinted_consumer_channel)
+    if len(consumer_channel_candidates) > 0:
+        return int(consumer_channel_candidates[0])
+    producer_name = context.module_output_producers.get(resolved, None)
+    if producer_name is not None:
+        producer_channels = context.conv_block_out_channels.get(producer_name, None)
+        if producer_channels is not None:
+            hinted_producer_channel = _pick_shape_hint_candidate([int(producer_channels)])
+            if hinted_producer_channel is not None:
+                return int(hinted_producer_channel)
+            return int(producer_channels)
+    static_shape = context.static_shapes.get(resolved, None)
+    if static_shape is not None and len(static_shape) == 4:
+        static_layout_hint = _fast_precanonicalize_rank4_layout_hint(static_shape)
+        if (
+            resolved_is_cf_like
+            and static_layout_hint == "cf"
+        ):
+            return int(static_shape[1])
+        if (
+            resolved_is_nhwc_like
+            and static_layout_hint == "nhwc"
+        ):
+            return int(static_shape[3])
+    return None
+
+
+def _fast_precanonicalize_infer_consumer_layout(
+    name: str,
+    start_index: int,
+    lines: Sequence[str],
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> str | None:
+    consumer_indexes = context.consumers.get(
+        _fast_precanonicalize_resolve_alias(str(name), context.aliases),
+        [],
+    )
+    cf_score = 0
+    nhwc_score = 0
+    for consumer_index in consumer_indexes:
+        if consumer_index <= start_index:
+            continue
+        consumer_line = str(lines[consumer_index])
+        if re.search(rf"self\.conv_block_[0-9]+\({re.escape(name)}\)", consumer_line):
+            cf_score += 3
+        if f"{name}.permute(0, 3, 1, 2).contiguous()" in consumer_line:
+            nhwc_score += 2
+        consumer_assign = _parse_simple_assignment_line(consumer_line)
+        consumer_expr = consumer_assign[2] if consumer_assign is not None else consumer_line.strip()
+        resize_args = _parse_apply_resize_input_and_channel_last(consumer_expr)
+        if resize_args is not None and resize_args[0] == name:
+            if resize_args[1]:
+                nhwc_score += 2
+            else:
+                cf_score += 2
+        pool_args = _parse_apply_pool2d_input_and_channel_last(consumer_expr)
+        if pool_args is not None and pool_args[0] == name:
+            if pool_args[1]:
+                nhwc_score += 2
+            else:
+                cf_score += 2
+        softmax_args = _parse_apply_softmax_input_and_axis(consumer_expr)
+        if softmax_args is not None and softmax_args[0] == name:
+            if softmax_args[1] == 1:
+                cf_score += 2
+            elif softmax_args[1] == 3:
+                nhwc_score += 2
+        concat_args = _parse_apply_concat_inputs_axis_and_shape(consumer_expr)
+        if concat_args is not None and name in concat_args[0]:
+            if concat_args[1] == 1:
+                cf_score += 2
+            elif concat_args[1] == 3:
+                nhwc_score += 2
+        torch_cat_args = _parse_torch_cat_inputs_and_dim(consumer_expr)
+        if torch_cat_args is not None and name in torch_cat_args[0]:
+            if torch_cat_args[1] == 1:
+                cf_score += 2
+            elif torch_cat_args[1] == 3:
+                nhwc_score += 2
+        if f"{name}[:, :, :, [" in consumer_line:
+            nhwc_score += 1
+        if f"{name}[:, [" in consumer_line:
+            cf_score += 1
+        align_shape_args = _parse_align_tensor_target_shape_expr(consumer_expr)
+        align_rank4_shape = (
+            _parse_rank4_shape_literal(align_shape_args[1])
+            if align_shape_args is not None
+            else None
+        )
+        if align_rank4_shape is not None:
+            preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+                name,
+                dynamic_cf_like_names,
+                dynamic_nhwc_like_names,
+                context,
+                shape_hint=list(align_rank4_shape),
+            )
+            layout_hint = _fast_precanonicalize_rank4_layout_hint(
+                list(align_rank4_shape),
+                preferred_channel_count=preferred_channel_count,
+            )
+            if layout_hint == "cf":
+                cf_score += 1
+            elif layout_hint == "nhwc":
+                nhwc_score += 1
+    if cf_score > nhwc_score and cf_score > 0:
+        return "cf"
+    if nhwc_score > cf_score and nhwc_score > 0:
+        return "nhwc"
+    if _fast_precanonicalize_is_cf_like(name, dynamic_cf_like_names, context):
+        return "cf"
+    if _fast_precanonicalize_is_nhwc_like(name, dynamic_nhwc_like_names, context):
+        return "nhwc"
+    return None
+
+
+def _fast_precanonicalize_has_channel_last_spatial_consumer(
+    name: str,
+    start_index: int,
+    lines: Sequence[str],
+    context: _FastPrecanonicalizeRepairContext,
+    visited_names: Set[str] | None = None,
+) -> bool:
+    if visited_names is None:
+        visited_names = set()
+    if name in visited_names:
+        return False
+    visited_names.add(name)
+    resolved_name = _fast_precanonicalize_resolve_alias(str(name), context.aliases)
+    consumer_indexes = context.consumers.get(resolved_name, [])
+    direct_slice_re = re.compile(
+        rf"^\s*[A-Za-z0-9_]+ = {re.escape(name)}\[[^,\]]+, [^,\]]+, [^,\]]+, [^,\]]+\]$"
+    )
+    direct_alias_re = re.compile(
+        rf"^\s*(?P<lhs>[A-Za-z0-9_]+) = {re.escape(name)}$"
+    )
+    for consumer_index in consumer_indexes:
+        if consumer_index <= start_index:
+            continue
+        consumer_line = str(lines[consumer_index]).strip()
+        if consumer_line == "":
+            continue
+        if direct_slice_re.match(consumer_line) is not None:
+            return True
+        direct_alias_match = direct_alias_re.match(consumer_line)
+        if direct_alias_match is not None:
+            alias_name = str(direct_alias_match.group("lhs"))
+            if alias_name.startswith("_space_to_depth_x_") or alias_name.startswith("_depth_to_space_x_"):
+                return True
+        consumer_assign = _parse_simple_assignment_line(consumer_line)
+        pool_args = (
+            _parse_apply_pool2d_input_and_channel_last(consumer_assign[2])
+            if consumer_assign is not None
+            else None
+        )
+        direct_pool_match = (
+            (consumer_assign[1], pool_args[0], pool_args[1])
+            if consumer_assign is not None and pool_args is not None
+            else None
+        )
+        if (
+            direct_pool_match is not None
+            and str(direct_pool_match[1]) == name
+            and direct_pool_match[2]
+            and _fast_precanonicalize_has_channel_last_spatial_consumer(
+                str(direct_pool_match[0]),
+                consumer_index,
+                lines,
+                context,
+                visited_names,
+            )
+        ):
+            return True
+    return False
