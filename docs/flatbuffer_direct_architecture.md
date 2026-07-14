@@ -70,6 +70,10 @@ positions and is shifted together with all edge indices on insertion/removal,
 so bounded passes can enumerate only relevant operator families instead of
 rescanning the full ModelIR operator list. A full `refresh()` is retained only
 for compatibility with external mutations that bypass these APIs.
+`ConversionSession.tensor_consumer_count` is also the sole consumer-count
+source passed into `LoweringContext`. This preserves the pre-session safety
+contract used by inverse-transpose elision, including repeated uses of one
+input, without rebuilding a second ONNX edge-count map.
 Lineage-aware graph mutation helpers accept an optional ModelIR index and
 update it atomically.
 `operator_indices_for_types()` returns a sorted, deduplicated union for

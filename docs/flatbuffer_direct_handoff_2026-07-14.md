@@ -7,11 +7,11 @@ The active branch is `fb-refactor5`, created from `main` after pull request
 subsequent work uses coherent commits and pushes without opening another pull
 request.
 
-The latest implementation unit moves quantization type and input/output dtype
-selection into the existing requested quantization controls. A conversion
-without quantized artifacts no longer reads these options; requested outputs
-retain the legacy `per-channel`/`int8` defaults and explicit-value behavior.
-The immutable `ConversionRequest` remains the sole option source.
+The latest implementation unit reconnects `LoweringContext` consumer counts to
+the authoritative `ConversionSession.graph_index`. The Session migration had
+removed the duplicate ONNX scan but left an empty dictionary at the lowering
+boundary; shared-edge inverse-transpose safety checks now receive the same
+counts as before the migration without adding a second scan.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -33,7 +33,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains nine coherent continuations:
+The current `fb-refactor5` work contains ten coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -54,8 +54,10 @@ The current `fb-refactor5` work contains nine coherent continuations:
   request and adds a structural boundary test;
 - `5848cc28` adds request-aware optional exporter controls and removes eager
   parsing of unrequested PyTorch settings;
-- the current checkpoint makes quant type and input/output quant dtype part of
-  the guarded immutable quantization controls.
+- `e3c03e3d` makes quant type and input/output quant dtype part of the guarded
+  immutable quantization controls;
+- the current checkpoint restores Session-owned consumer counts at the
+  `LoweringContext` boundary.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -72,9 +74,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
 The final checkpoint changes:
 
-- `onnx2tf/tflite_builder/__init__.py`;
-- `onnx2tf/tflite_builder/artifact_preparation.py`;
-- `tests/test_flatbuffer_direct_artifact_preparation.py`;
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
+- `tests/test_flatbuffer_direct_core.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
 
@@ -140,6 +141,10 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   `input_quant_dtype`, and `output_quant_dtype`. The builder reads these values
   only from the resolved immutable mapping; when quantization is unrequested it
   uses the legacy local defaults without touching the corresponding options.
+- `LoweringContext.tensor_consumer_count` is populated from
+  `ConversionSession.tensor_consumer_count`, not an empty compatibility
+  dictionary and not a new ONNX scan. This restores the original fan-out guard
+  used by inverse-transpose elision and preserves duplicate input occurrences.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -211,6 +216,22 @@ The same 145-test selection passed after adding requested-only quant type/dtype
 resolution. Focused assertions cover explicit values, the three legacy
 defaults, immutable mapping behavior, and absence of direct `request.get`
 calls for those keys.
+The Session consumer-count checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_core.py \
+  tests/test_tflite_builder_direct.py::test_flatbuffer_direct_transpose_quantize_transpose_optimization \
+  tests/test_tflite_builder_direct.py::test_flatbuffer_direct_transpose_quantize_transpose_fanout_optimization \
+  tests/test_tflite_builder_direct.py::test_flatbuffer_direct_transpose_quantize_transpose_preserves_dynamic_batch_signature
+
+32 passed
+```
+
+The core spy fixture uses one input in both Add and Identity and verifies the
+context receives counts `{"x": 2, "y": 1}` from the Session index.
 The exporter and policy pass `python -m py_compile`, and `git diff --check`
 passes. The immediately preceding DepthToSpace, Pool, dynamic-Pool,
 simple-alias, and aligned-scalar checkpoints passed their focused synthetic and
@@ -249,11 +270,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Continue auditing `ArtifactPlan.from_options` and the remaining direct
-   exporter call sites for the next bounded unrequested-artifact or
-   compatibility-contract gap.
-3. Characterize existing defaults and legacy output keys before adding a typed
-   artifact field or moving another guard; do not infer a new public option.
+2. Audit remaining `ConversionSession`/`LoweringContext` state handoffs for
+   another bounded empty-copy, duplicate-scan, or stale-index gap.
+3. Characterize the pre-session behavior and a focused fan-out/no-op boundary
+   before changing another handoff; do not introduce a second graph scan.
 4. Keep the audited 294-line PyTorch source orchestrator as explicit sequencing
    unless a new bounded decision is found.
 5. Run only the focused synthetic/ownership/static checks unless the user asks

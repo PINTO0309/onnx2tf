@@ -7,6 +7,7 @@ import onnx
 import pytest
 from onnx import TensorProto, helper
 import onnx2tf.tflite_builder.core.validation as validation_module
+import onnx2tf.tflite_builder.lower_from_onnx2tf as lowering_module
 
 from onnx2tf.tflite_builder.core import (
     ConversionRequest,
@@ -134,6 +135,33 @@ def test_lowerer_private_sink_collects_internal_pass_diagnostics() -> None:
     assert all(event["stage"] == "model_ir_pass" for event in diagnostics)
     summary = summarize_model_ir_pass_diagnostics(diagnostics)
     assert summary["event_count"] == len(diagnostics)
+
+
+def test_lowerer_context_reuses_session_consumer_counts(monkeypatch) -> None:
+    captured_counts: dict[str, int] = {}
+    original_context = lowering_module.LoweringContext
+    model = _add_onnx_model()
+    model.graph.node.append(
+        helper.make_node("Identity", ["x"], ["side"], name="side")
+    )
+    model.graph.output.append(
+        helper.make_tensor_value_info("side", TensorProto.FLOAT, [1, 3])
+    )
+
+    class _TrackingLoweringContext(original_context):
+        def __init__(self, *args, **kwargs):
+            captured_counts.update(kwargs["tensor_consumer_count"])
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(
+        lowering_module,
+        "LoweringContext",
+        _TrackingLoweringContext,
+    )
+
+    lower_onnx_to_ir(model, "session_consumer_counts")
+
+    assert captured_counts == {"x": 2, "y": 1}
 
 
 def test_layout_state_sync_rename_remove_and_validation() -> None:

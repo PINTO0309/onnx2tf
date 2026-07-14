@@ -49619,7 +49619,6 @@ def lower_onnx_to_ir(
     for ini in onnx_graph.graph.initializer:
         constants[ini.name] = np.asarray(numpy_helper.to_array(ini))
     # Producer/consumer information is built once by ConversionSession below.
-    tensor_consumer_count: Dict[str, int] = {}
     graph_output_names = [str(o.name) for o in onnx_graph.graph.output]
 
     model_ir = ModelIR(name=output_file_name)
@@ -49668,7 +49667,7 @@ def lower_onnx_to_ir(
         allow_custom_ops=allow_custom_ops,
         custom_op_allowlist=custom_op_allowlist,
         disable_group_convolution=disable_group_convolution,
-        tensor_consumer_count=tensor_consumer_count,
+        tensor_consumer_count=session.tensor_consumer_count,
         graph_output_names=graph_output_names,
         output_nms_with_argmax=output_nms_with_argmax,
         switch_nms_version=switch_nms_version,
