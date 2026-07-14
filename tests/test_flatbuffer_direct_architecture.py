@@ -4800,6 +4800,7 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_fast_precanonicalize_resolve_alias",
         "_has_immediate_rank4_permute_source",
         "_infer_unique_channel_count_from_rank4_shape",
+        "_repair_binary_alignment_layout",
         "_repair_cf_pool_target_shape",
         "_repair_cf_resize_target_shape",
         "_repair_nhwc_average_pool_binary_bridge",

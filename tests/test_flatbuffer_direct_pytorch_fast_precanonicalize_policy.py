@@ -13,6 +13,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _fast_precanonicalize_resolve_alias,
     _has_immediate_rank4_permute_source,
     _infer_unique_channel_count_from_rank4_shape,
+    _repair_binary_alignment_layout,
     _repair_cf_pool_target_shape,
     _repair_cf_resize_target_shape,
     _repair_nhwc_average_pool_binary_bridge,
@@ -176,3 +177,25 @@ def test_nhwc_average_pool_binary_bridge_normalizes_the_whole_chain() -> None:
     assert "channel_last=True" in lines[0]
     assert "scale.permute(0, 2, 3, 1).contiguous()" in lines[1]
     assert "target_shape(torch.mul(lhs, rhs), [1, 4, 1, 8])" in lines[2]
+
+
+def test_binary_alignment_repair_normalizes_channel_first_target() -> None:
+    line = (
+        "        output = _align_tensor_to_target_shape("
+        "torch.add(left_cf, right_cf), [1, 20, 30, 3])"
+    )
+    lines = [line, "        used = self.conv_block_0(output)"]
+    context = _build_fast_precanonicalize_repair_context(lines)
+
+    rewritten, output_name = _repair_binary_alignment_layout(
+        line,
+        0,
+        lines,
+        {"left_cf", "right_cf"},
+        set(),
+        context,
+    )
+
+    assert output_name == "output"
+    assert rewritten is not None
+    assert "torch.add(left_cf, right_cf), [1, 3, 20, 30]" in rewritten

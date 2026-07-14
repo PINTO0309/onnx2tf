@@ -1301,6 +1301,15 @@ ASTs match checkpoint `1976523` exactly. Ten focused policy/ownership tests pass
 validation, and `git diff --check`; the exporter shrank by another net 252
 lines. No model conversion or inference was run.
 
+Channel-first binary alignment repair now also lives in the same fast
+precanonicalize policy. Operand layout classification, later-consumer evidence,
+four-line binary-anchor exclusion, preferred-channel selection, already-CF
+no-op behavior, and target-shape normalization retain their existing order. The
+moved function AST matches checkpoint `688d33c` exactly. Eleven focused policy/
+ownership tests pass (95 unrelated architecture tests deselected), together
+with Ruff, syntax validation, and `git diff --check`; the exporter shrank by
+another net 102 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

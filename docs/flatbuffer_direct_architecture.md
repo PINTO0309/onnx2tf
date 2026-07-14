@@ -2042,6 +2042,10 @@ restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer
 evidence agree; otherwise the repair remains a no-op. Constant-pad axis repair
 and reshape-to-permute replacement reuse the shared parser and layout context.
+Channel-first binary alignment repair is co-located with that context as well.
+It normalizes only rank-four targets backed by CF operands or CF consumer
+evidence, preserves already normalized targets, and leaves explicit binary
+anchor chains and any NHWC operand untouched.
 
 The direct-module dispatcher is being decomposed by operator family rather than
 moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and

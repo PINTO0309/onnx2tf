@@ -12,7 +12,10 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_apply_resize_input_and_channel_last,
     _parse_apply_resize_input_size_shape_and_channel_last,
     _parse_apply_softmax_input_and_axis,
+    _parse_align_binary_inputs_to_anchor_assign_with_shape,
     _parse_align_tensor_target_shape_expr,
+    _parse_binary_add_args,
+    _parse_binary_mul_args,
     _parse_constant_pad_assign,
     _parse_int_list_literal,
     _parse_local_response_norm_input_expr,
@@ -1229,3 +1232,108 @@ def _restore_channel_last_spatial_pool_chains(model_path: Path) -> None:
         changed = True
     if changed:
         model_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _repair_binary_alignment_layout(
+    line: str,
+    index: int,
+    lines: Sequence[str],
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[str | None, str | None]:
+    assign = _parse_simple_assignment_line(line)
+    if assign is None:
+        return None, None
+    indent, lhs_name, rhs_expr = assign
+    align_parts = _parse_align_tensor_target_shape_expr(rhs_expr)
+    if align_parts is None:
+        return None, None
+    input_expr, target_shape_expr = align_parts
+    target_shape = _parse_rank4_shape_literal(target_shape_expr)
+    if target_shape is None:
+        return None, None
+    binary_match = re.fullmatch(
+        r"torch\.(?P<op>mul|add|sub|div|minimum|maximum)\((?P<args>.+)\)",
+        input_expr.strip(),
+    )
+    if binary_match is None:
+        return None, None
+    op_name = str(binary_match.group("op"))
+    if op_name == "mul":
+        binary_args = _parse_binary_mul_args(str(binary_match.group("args")))
+    else:
+        binary_args = _parse_binary_add_args(str(binary_match.group("args")))
+    if binary_args is None:
+        return None, None
+    arg_a = str(binary_args[0]).strip()
+    arg_b = str(binary_args[1]).strip()
+    if (
+        re.fullmatch(r"[A-Za-z0-9_]+", arg_a) is None
+        or re.fullmatch(r"[A-Za-z0-9_]+", arg_b) is None
+    ):
+        return None, None
+    for lookback in range(max(0, index - 4), index):
+        binary_anchor_assign = _parse_align_binary_inputs_to_anchor_assign_with_shape(lines[lookback])
+        if (
+            binary_anchor_assign is not None
+            and {str(binary_anchor_assign[1]), str(binary_anchor_assign[2])} == {arg_a, arg_b}
+        ):
+            return None, None
+    arg_a_is_cf = _fast_precanonicalize_is_cf_like(arg_a, dynamic_cf_like_names, context)
+    arg_b_is_cf = _fast_precanonicalize_is_cf_like(arg_b, dynamic_cf_like_names, context)
+    arg_a_is_nhwc = _fast_precanonicalize_is_nhwc_like(arg_a, dynamic_nhwc_like_names, context)
+    arg_b_is_nhwc = _fast_precanonicalize_is_nhwc_like(arg_b, dynamic_nhwc_like_names, context)
+    if arg_a_is_nhwc or arg_b_is_nhwc:
+        return None, None
+    operands_are_cf_like = arg_a_is_cf and arg_b_is_cf
+    consumer_layout = _fast_precanonicalize_infer_consumer_layout(
+        lhs_name,
+        index,
+        lines,
+        dynamic_cf_like_names,
+        dynamic_nhwc_like_names,
+        context,
+    )
+    if not operands_are_cf_like and consumer_layout != "cf":
+        return None, None
+    current_shape = [int(v) for v in list(target_shape)]
+    preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+        lhs_name,
+        dynamic_cf_like_names,
+        dynamic_nhwc_like_names,
+        context,
+        shape_hint=current_shape,
+    )
+    if preferred_channel_count is None:
+        preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+            arg_a,
+            dynamic_cf_like_names,
+            dynamic_nhwc_like_names,
+            context,
+            shape_hint=current_shape,
+        )
+    if preferred_channel_count is None:
+        preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+            arg_b,
+            dynamic_cf_like_names,
+            dynamic_nhwc_like_names,
+            context,
+            shape_hint=current_shape,
+        )
+    if _fast_precanonicalize_rank4_layout_hint(
+        current_shape,
+        preferred_channel_count=preferred_channel_count,
+    ) == "cf":
+        return None, lhs_name
+    normalized_shape = _normalize_cf_rank4_shape(
+        current_shape,
+        preferred_channel_count=preferred_channel_count,
+    )
+    rewritten = (
+        f"{indent}{lhs_name} = _align_tensor_to_target_shape("
+        f"torch.{op_name}({arg_a}, {arg_b}), {repr(normalized_shape)})"
+    )
+    if rewritten == line:
+        return None, lhs_name
+    return rewritten, lhs_name
