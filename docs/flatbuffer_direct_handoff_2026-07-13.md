@@ -1505,6 +1505,15 @@ both ownership gates pass 3 tests. Scoped Ruff, syntax validation, and
 `git diff --check` pass. The orchestrator shrank from 663 to 542 lines. No
 model conversion, corpus run, or inference was performed.
 
+Aligned scalar-binary shape reconciliation now lives in one indexed policy
+helper. It repairs only an exact H/W swap when the preceding aligned assignment
+and following aligned or Softmax consumer agree on the original rank-four
+shape. The aligned-rank4 and Softmax decoders now have policy-only consumers,
+so their unused exporter imports are removed and guarded. A compact neighbor-
+consensus fixture plus both ownership gates pass 3 tests. Scoped Ruff, syntax
+validation, and `git diff --check` pass. The orchestrator shrank from 542 to
+482 lines. No model conversion, corpus run, or inference was performed.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

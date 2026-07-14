@@ -3996,7 +3996,6 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
     for function_name in (
         "_parse_aligned_binary_assign_with_shape",
         "_parse_apply_resize_assign",
-        "_parse_apply_softmax_assign",
         "_parse_dynamic_apply_pool2d_assign",
         "_parse_local_response_norm_assign",
         "_parse_reduce_max_assign",
@@ -4007,7 +4006,6 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
         "_parse_binary_add_args",
         "_parse_binary_mul_args",
         "_parse_align_tensor_target_shape_expr",
-        "_parse_aligned_rank4_assign",
         "_parse_simple_assignment_line_cached",
         "_parse_simple_assignment_line",
         "_parse_rank4_shape_literal",
@@ -4050,10 +4048,15 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
     assert "_parse_dynamic_binary_align_assign," in fast_policy_source
     assert "_parse_dynamic_binary_align_assign" in parser_functions
     assert "_parse_dynamic_binary_align_assign" not in exporter_functions
-    assert "_parse_permuted_conv_input_assign" in parser_functions
-    assert "_parse_permuted_conv_input_assign" not in exporter_functions
-    assert "_parse_permuted_conv_input_assign," not in exporter_source
-    assert "_parse_permuted_conv_input_assign," in fast_policy_source
+    for function_name in (
+        "_parse_aligned_rank4_assign",
+        "_parse_apply_softmax_assign",
+        "_parse_permuted_conv_input_assign",
+    ):
+        assert function_name in parser_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," not in exporter_source
+        assert f"{function_name}," in fast_policy_source
     assert not any(
         isinstance(node, ast.FunctionDef)
         and node.name == "_parse_apply_resize_assign"
@@ -4846,6 +4849,7 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_has_immediate_rank4_permute_source",
         "_infer_unique_channel_count_from_rank4_shape",
         "_repair_binary_alignment_layout",
+        "_repair_aligned_scalar_binary_shape_at",
         "_repair_cf_pool_target_shape",
         "_repair_cf_pool_neighbor_layout_at",
         "_repair_cf_gather_slice_at",

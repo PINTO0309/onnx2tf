@@ -14,6 +14,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _has_immediate_rank4_permute_source,
     _infer_unique_channel_count_from_rank4_shape,
     _repair_binary_alignment_layout,
+    _repair_aligned_scalar_binary_shape_at,
     _repair_cf_pool_target_shape,
     _repair_cf_pool_neighbor_layout_at,
     _repair_cf_gather_slice_at,
@@ -363,6 +364,22 @@ def test_simple_alias_layout_repairs_consumers_and_propagates_evidence() -> None
     assert not changed
     assert rewritten == alias_lines[0]
     assert "alias" in alias_cf_names
+
+
+def test_aligned_scalar_binary_shape_uses_neighbor_consensus() -> None:
+    lines = [
+        "        base = _align_tensor_to_target_shape(source, [1, 2, 3, 4])",
+        "        scaled = _align_tensor_to_target_shape("
+        "torch.mul(base, 2.0), [1, 3, 2, 4])",
+        "        output = _align_tensor_to_target_shape("
+        "torch.relu(scaled), [1, 2, 3, 4])",
+    ]
+
+    assert _repair_aligned_scalar_binary_shape_at(1, lines)
+    assert lines[1] == (
+        "        scaled = _align_tensor_to_target_shape("
+        "torch.mul(base, 2.0), [1, 2, 3, 4])"
+    )
 
 
 def test_immediate_rank4_permute_source_requires_exact_permutation() -> None:

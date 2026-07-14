@@ -79,6 +79,14 @@ _CHANNEL_LAST_PRELU_CONSUMER_RE = re.compile(
     r"(?P<input>[A-Za-z0-9_]+)\.permute\(0, 3, 1, 2\)\.contiguous\(\)\)"
     r"\.permute\(0, 2, 3, 1\)\.contiguous\(\)$"
 )
+_ALIGNED_SCALAR_BINARY_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*"
+    r"_align_tensor_to_target_shape\("
+    r"torch\.(?P<op>mul|add|sub|div)\((?P<input>[A-Za-z0-9_]+), "
+    r"(?P<scalar>[-+]?(?:[0-9]*\.[0-9]+|[0-9]+(?:\.[0-9]*)?)"
+    r"(?:[eE][-+]?\d+)?)\), "
+    r"\[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
+)
 
 
 def _convert_nhwc_pad_to_nchw_pad_values(pad_values: Sequence[int]) -> List[int] | None:
@@ -634,6 +642,72 @@ def _repair_simple_alias_layout_at(
     if rhs_name in dynamic_nhwc_like_names or "_nhwc" in rhs_name:
         dynamic_nhwc_like_names.add(lhs_name)
     return False, str(lines[index])
+
+
+def _repair_aligned_scalar_binary_shape_at(
+    index: int,
+    lines: List[str],
+) -> bool:
+    if index <= 0 or index >= len(lines):
+        return False
+    scalar_match = _ALIGNED_SCALAR_BINARY_RE.match(lines[index])
+    if scalar_match is None:
+        return False
+    prev_aligned_rank4_assign = _parse_aligned_rank4_assign(lines[index - 1])
+    next_aligned_rank4_assign = (
+        _parse_aligned_rank4_assign(lines[index + 1])
+        if index + 1 < len(lines)
+        else None
+    )
+    next_apply_softmax_assign = (
+        _parse_apply_softmax_assign(lines[index + 1])
+        if index + 1 < len(lines)
+        else None
+    )
+    if (
+        prev_aligned_rank4_assign is None
+        or str(prev_aligned_rank4_assign[1]) != str(scalar_match.group("input"))
+    ):
+        return False
+    prev_shape = [int(value) for value in prev_aligned_rank4_assign[3]]
+    current_shape = [
+        int(scalar_match.group("n")),
+        int(scalar_match.group("d1")),
+        int(scalar_match.group("d2")),
+        int(scalar_match.group("d3")),
+    ]
+    consumer_shape: List[int] | None = None
+    current_lhs = str(scalar_match.group("lhs"))
+    if (
+        next_aligned_rank4_assign is not None
+        and re.search(
+            rf"\b{re.escape(current_lhs)}\b",
+            str(next_aligned_rank4_assign[2]),
+        )
+        is not None
+    ):
+        consumer_shape = [
+            int(value) for value in next_aligned_rank4_assign[3]
+        ]
+    elif (
+        next_apply_softmax_assign is not None
+        and str(next_apply_softmax_assign[2]) == current_lhs
+    ):
+        consumer_shape = [int(value) for value in next_apply_softmax_assign[5]]
+    if not (
+        consumer_shape == prev_shape
+        and current_shape != prev_shape
+        and current_shape
+        == [prev_shape[0], prev_shape[2], prev_shape[1], prev_shape[3]]
+    ):
+        return False
+    lines[index] = (
+        f"{scalar_match.group('indent')}{current_lhs} = "
+        f"_align_tensor_to_target_shape(torch.{scalar_match.group('op')}("
+        f"{scalar_match.group('input')}, {scalar_match.group('scalar')}), "
+        f"[{prev_shape[0]}, {prev_shape[1]}, {prev_shape[2]}, {prev_shape[3]}])"
+    )
+    return True
 
 
 def _fast_precanonicalize_infer_consumer_layout(

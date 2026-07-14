@@ -2068,6 +2068,12 @@ channel-last PReLU/permuted-Conv consumer forms, including exact-shape runtime
 alignment when known. Aliases not rewritten propagate existing CF/NHWC
 evidence. All permuted-Conv statement consumers now reside in this policy
 owner, so the exporter no longer imports that decoder directly.
+Aligned scalar-binary shape reconciliation is also policy-owned. It rewrites
+only when the previous aligned assignment and the next aligned or Softmax
+consumer agree on one rank-four shape and the current shape is the exact H/W
+swap. The rule keeps its positional scalar grammar and uses the shared aligned
+and Softmax statement decoders; their remaining consumers are policy-local, so
+the exporter does not import them.
 The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
 restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer

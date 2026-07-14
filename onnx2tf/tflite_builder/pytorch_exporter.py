@@ -125,6 +125,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _has_immediate_rank4_permute_source,
     _infer_unique_channel_count_from_rank4_shape,
     _repair_binary_alignment_layout,
+    _repair_aligned_scalar_binary_shape_at,
     _repair_cf_pool_target_shape,
     _repair_cf_pool_neighbor_layout_at,
     _repair_cf_resize_target_shape,
@@ -308,7 +309,6 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_aligned_binary_assign_with_shape,
     _parse_align_binary_inputs_to_anchor_assign_with_shape,
     _parse_align_tensor_target_shape_expr,
-    _parse_aligned_rank4_assign,
     _parse_align_tensor_target_shape_assign,
     _parse_apply_concat_inputs_axis_and_shape,
     _parse_apply_pool2d_assign_with_shape,
@@ -320,7 +320,6 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_apply_resize_input_and_channel_last,
     _parse_apply_softmax_input_axis_and_shape,
     _parse_apply_softmax_input_and_axis,
-    _parse_apply_softmax_assign,
     _parse_binary_add_args,
     _parse_binary_mul_args,
     _parse_channel_last_gather_slice_assign,
@@ -7279,12 +7278,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     aligned_binary_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.(?P<op>mul|add|sub|div|minimum|maximum)\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
     )
-    aligned_scalar_binary_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\("
-        r"torch\.(?P<op>mul|add|sub|div)\((?P<input>[A-Za-z0-9_]+), "
-        r"(?P<scalar>[-+]?(?:[0-9]*\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?\d+)?)\), "
-        r"\[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
-    )
     for index, line in enumerate(lines[:-1]):
         repaired_alias_layout, repaired_alias_line = _repair_simple_alias_layout_at(
             index,
@@ -7309,62 +7302,8 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
             cf_like_names.update(split_cf_outputs)
             changed = True
             line = rewritten_split_line
-        aligned_scalar_binary_match = aligned_scalar_binary_re.match(line)
-        if aligned_scalar_binary_match is not None and index > 0:
-            prev_aligned_rank4_assign = _parse_aligned_rank4_assign(lines[index - 1])
-            next_aligned_rank4_assign = (
-                _parse_aligned_rank4_assign(lines[index + 1])
-                if index + 1 < len(lines)
-                else None
-            )
-            next_apply_softmax_assign = (
-                _parse_apply_softmax_assign(lines[index + 1])
-                if index + 1 < len(lines)
-                else None
-            )
-            if (
-                prev_aligned_rank4_assign is not None
-                and str(prev_aligned_rank4_assign[1]) == str(aligned_scalar_binary_match.group("input"))
-            ):
-                prev_shape = [int(value) for value in prev_aligned_rank4_assign[3]]
-                current_shape = [
-                    int(aligned_scalar_binary_match.group("n")),
-                    int(aligned_scalar_binary_match.group("d1")),
-                    int(aligned_scalar_binary_match.group("d2")),
-                    int(aligned_scalar_binary_match.group("d3")),
-                ]
-                consumer_shape = None
-                current_lhs = str(aligned_scalar_binary_match.group("lhs"))
-                if (
-                    next_aligned_rank4_assign is not None
-                    and re.search(
-                        rf"\b{re.escape(current_lhs)}\b",
-                        str(next_aligned_rank4_assign[2]),
-                    )
-                    is not None
-                ):
-                    consumer_shape = [
-                        int(value) for value in next_aligned_rank4_assign[3]
-                    ]
-                elif (
-                    next_apply_softmax_assign is not None
-                    and str(next_apply_softmax_assign[2]) == current_lhs
-                ):
-                    consumer_shape = [
-                        int(value) for value in next_apply_softmax_assign[5]
-                    ]
-                if (
-                    consumer_shape == prev_shape
-                    and current_shape != prev_shape
-                    and current_shape == [prev_shape[0], prev_shape[2], prev_shape[1], prev_shape[3]]
-                ):
-                    lines[index] = (
-                        f"{aligned_scalar_binary_match.group('indent')}{current_lhs} = "
-                        f"_align_tensor_to_target_shape(torch.{aligned_scalar_binary_match.group('op')}("
-                        f"{aligned_scalar_binary_match.group('input')}, {aligned_scalar_binary_match.group('scalar')}), "
-                        f"[{prev_shape[0]}, {prev_shape[1]}, {prev_shape[2]}, {prev_shape[3]}])"
-                    )
-                    changed = True
+        if _repair_aligned_scalar_binary_shape_at(index, lines):
+            changed = True
         if _repair_dynamic_cf_binary_anchor_at(
             index,
             lines,
