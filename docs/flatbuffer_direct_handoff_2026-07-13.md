@@ -977,6 +977,17 @@ passthrough family. Three thousand fixed-seed outcomes match checkpoint
 together with Ruff and syntax validation. The exporter shrank by another 154
 lines. No model conversion or inference was run.
 
+Native codegen cache and producer/channel queries now reuse the writer's shared
+`ModelIRGraphIndex` in that graph-policy owner. The detached producer-to-
+Operator dict construction is removed, producer queries call the index
+directly, and expected channel discovery enumerates only indexed Conv2D ops.
+Six thousand fixed-seed cache/query outcomes match checkpoint `fc7bf1a`
+exactly; three direct graph-policy contracts and the focused ownership test
+pass, together with Ruff and syntax validation. On a synthetic 2,000-op graph,
+the warm 201-run expected-channel median improved from 0.000043977s to
+0.000004757s (9.24x). The exporter shrank by another 105 lines. No model
+conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

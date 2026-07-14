@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Sequence, Set, cast
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
+    OperatorIR,
     is_channel_first_logical_layout,
     is_channel_last_logical_layout,
     normalize_logical_layout,
@@ -13,6 +15,137 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _perm_cl_to_cf,
     _permute_shape,
 )
+from onnx2tf.tflite_builder.pytorch_shape_policy import (
+    _infer_conv2d_ctor_params_for_codegen,
+)
+
+
+def _native_codegen_cache_bucket_for_model_ir(
+    *,
+    model_ir: ModelIR,
+) -> Dict[str, Any]:
+    metadata = model_ir.metadata
+    bucket = metadata.get("_native_codegen_cache", None)
+    if not isinstance(bucket, dict):
+        bucket = {}
+        metadata["_native_codegen_cache"] = bucket
+    return cast(Dict[str, Any], bucket)
+
+
+def _native_codegen_graph_index_for_model_ir(
+    *,
+    model_ir: ModelIR,
+) -> ModelIRGraphIndex:
+    bucket = _native_codegen_cache_bucket_for_model_ir(model_ir=model_ir)
+    cached_index = bucket.get("graph_index", None)
+    if (
+        isinstance(cached_index, ModelIRGraphIndex)
+        and cached_index.model_ir is model_ir
+    ):
+        return cached_index
+    graph_index = ModelIRGraphIndex(model_ir)
+    bucket["graph_index"] = graph_index
+    return graph_index
+
+
+def _native_codegen_expected_channel_dim_cache_for_model_ir(
+    *,
+    model_ir: ModelIR,
+) -> Dict[str, Optional[int]]:
+    bucket = _native_codegen_cache_bucket_for_model_ir(model_ir=model_ir)
+    cached_dims = bucket.get("expected_channel_dims", None)
+    if isinstance(cached_dims, dict):
+        return cast(Dict[str, Optional[int]], cached_dims)
+    graph_index = _native_codegen_graph_index_for_model_ir(model_ir=model_ir)
+    candidates_by_tensor_name: Dict[str, Set[int]] = {}
+    for op_index in graph_index.operator_indices("CONV_2D"):
+        op = model_ir.operators[int(op_index)]
+        if len(op.inputs) < 2:
+            continue
+        weight_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
+        if weight_tensor is None or len(list(weight_tensor.shape)) != 4:
+            continue
+        weight_shape = [int(v) for v in list(weight_tensor.shape)]
+        input_name = str(op.inputs[0]) if len(op.inputs) >= 1 else ""
+        output_name = str(op.outputs[0]) if len(op.outputs) >= 1 else ""
+        if input_name != "":
+            input_tensor = model_ir.tensors.get(input_name, None)
+            output_tensor = (
+                model_ir.tensors.get(output_name, None)
+                if output_name != ""
+                else None
+            )
+            inferred_input_channels, _ = _infer_conv2d_ctor_params_for_codegen(
+                input_shape=(
+                    None if input_tensor is None else list(input_tensor.shape)
+                ),
+                output_shape=(
+                    None if output_tensor is None else list(output_tensor.shape)
+                ),
+                weight_shape=weight_shape,
+                options=op.options,
+                input_logical_layout=(
+                    None
+                    if input_tensor is None
+                    else str(input_tensor.logical_layout)
+                ),
+                output_logical_layout=(
+                    None
+                    if output_tensor is None
+                    else str(output_tensor.logical_layout)
+                ),
+                depthwise=False,
+            )
+            if int(inferred_input_channels) > 0:
+                candidates_by_tensor_name.setdefault(input_name, set()).add(
+                    int(inferred_input_channels)
+                )
+        if output_name != "" and int(weight_shape[0]) > 0:
+            candidates_by_tensor_name.setdefault(output_name, set()).add(
+                int(weight_shape[0])
+            )
+    expected_channel_dims = {
+        str(tensor_name): (
+            next(iter(candidates)) if len(candidates) == 1 else None
+        )
+        for tensor_name, candidates in candidates_by_tensor_name.items()
+    }
+    bucket["expected_channel_dims"] = expected_channel_dims
+    return expected_channel_dims
+
+
+def _producer_op_for_model_ir(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> Optional[OperatorIR]:
+    return _native_codegen_graph_index_for_model_ir(
+        model_ir=model_ir,
+    ).producer(str(tensor_name))
+
+
+def _expected_channel_dim_for_tensor_for_codegen(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> Optional[int]:
+    expected_channel_dims = (
+        _native_codegen_expected_channel_dim_cache_for_model_ir(
+            model_ir=model_ir,
+        )
+    )
+    return expected_channel_dims.get(str(tensor_name), None)
+
+
+def _expected_channel_dim_for_channel_last_named_tensor_for_codegen(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> Optional[int]:
+    return _expected_channel_dim_for_tensor_for_codegen(
+        model_ir=model_ir,
+        tensor_name=tensor_name,
+    )
 
 
 def _gather_input_pre_permute_for_codegen(

@@ -151,8 +151,12 @@ from onnx2tf.tflite_builder.pytorch_indexing_codegen import (
     _should_elide_crd_to_dcr_gather_for_depth_to_space,
 )
 from onnx2tf.tflite_builder.pytorch_graph_policy import (
+    _expected_channel_dim_for_channel_last_named_tensor_for_codegen,
+    _expected_channel_dim_for_tensor_for_codegen,
     _gather_input_pre_permute_for_codegen,
     _infer_effective_rank4_runtime_layout_for_codegen,
+    _native_codegen_cache_bucket_for_model_ir,
+    _producer_op_for_model_ir,
 )
 from onnx2tf.tflite_builder.pytorch_source_graph_rewrites import (
     _bridge_boundary_metadata_gather_nd_inputs,
@@ -330,14 +334,7 @@ def _prepare_native_codegen_state(
 ) -> _NativeCodegenState:
     state = _NativeCodegenState(context=context)
     cache_bucket = _native_codegen_cache_bucket_for_model_ir(model_ir=context.model_ir)
-    cache_bucket.setdefault(
-        "producer_lookup",
-        {
-            str(output_name): context.model_ir.operators[int(op_index)]
-            for output_name, op_index in context.producer_index.items()
-            if 0 <= int(op_index) < len(context.model_ir.operators)
-        },
-    )
+    cache_bucket["graph_index"] = context.graph_index
     state.used_local_var_names = set(context.tensor_var_names.values())
     state.public_input_names = {str(name) for name in list(context.model_ir.inputs)}
     state.public_layout_bridge_tensor_names = {
@@ -634,86 +631,6 @@ def _base_target_shape_values_for_model_ir(
     )
 
 
-def _native_codegen_cache_bucket_for_model_ir(
-    *,
-    model_ir: ModelIR,
-) -> Dict[str, Any]:
-    metadata = model_ir.metadata
-    bucket = metadata.get("_native_codegen_cache", None)
-    if not isinstance(bucket, dict):
-        bucket = {}
-        metadata["_native_codegen_cache"] = bucket
-    return cast(Dict[str, Any], bucket)
-
-
-def _native_codegen_producer_lookup_for_model_ir(
-    *,
-    model_ir: ModelIR,
-) -> Dict[str, OperatorIR]:
-    bucket = _native_codegen_cache_bucket_for_model_ir(model_ir=model_ir)
-    cached_lookup = bucket.get("producer_lookup", None)
-    if isinstance(cached_lookup, dict):
-        return cast(Dict[str, OperatorIR], cached_lookup)
-    producer_lookup: Dict[str, OperatorIR] = {}
-    for op in model_ir.operators:
-        for output_name in list(op.outputs):
-            producer_lookup[str(output_name)] = op
-    bucket["producer_lookup"] = producer_lookup
-    return producer_lookup
-
-
-def _native_codegen_expected_channel_dim_cache_for_model_ir(
-    *,
-    model_ir: ModelIR,
-) -> Dict[str, Optional[int]]:
-    bucket = _native_codegen_cache_bucket_for_model_ir(model_ir=model_ir)
-    cached_dims = bucket.get("expected_channel_dims", None)
-    if isinstance(cached_dims, dict):
-        return cast(Dict[str, Optional[int]], cached_dims)
-    candidates_by_tensor_name: Dict[str, Set[int]] = {}
-    for op in model_ir.operators:
-        if str(op.op_type) != "CONV_2D" or len(op.inputs) < 2:
-            continue
-        weight_tensor = model_ir.tensors.get(str(op.inputs[1]), None)
-        if weight_tensor is None or len(list(weight_tensor.shape)) != 4:
-            continue
-        weight_shape = [int(v) for v in list(weight_tensor.shape)]
-        input_name = str(op.inputs[0]) if len(op.inputs) >= 1 else ""
-        output_name = str(op.outputs[0]) if len(op.outputs) >= 1 else ""
-        if input_name != "":
-            input_tensor = model_ir.tensors.get(input_name, None)
-            output_tensor = model_ir.tensors.get(output_name, None) if output_name != "" else None
-            inferred_input_channels, _ = _infer_conv2d_ctor_params_for_codegen(
-                input_shape=None if input_tensor is None else list(input_tensor.shape),
-                output_shape=None if output_tensor is None else list(output_tensor.shape),
-                weight_shape=weight_shape,
-                options=op.options,
-                input_logical_layout=None if input_tensor is None else str(input_tensor.logical_layout),
-                output_logical_layout=None if output_tensor is None else str(output_tensor.logical_layout),
-                depthwise=False,
-            )
-            if int(inferred_input_channels) > 0:
-                candidates_by_tensor_name.setdefault(input_name, set()).add(int(inferred_input_channels))
-        if output_name != "" and int(weight_shape[0]) > 0:
-            candidates_by_tensor_name.setdefault(output_name, set()).add(int(weight_shape[0]))
-    expected_channel_dims = {
-        str(tensor_name): (next(iter(candidates)) if len(candidates) == 1 else None)
-        for tensor_name, candidates in candidates_by_tensor_name.items()
-    }
-    bucket["expected_channel_dims"] = expected_channel_dims
-    return expected_channel_dims
-
-
-def _producer_op_for_model_ir(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-) -> Optional[OperatorIR]:
-    return _native_codegen_producer_lookup_for_model_ir(
-        model_ir=model_ir,
-    ).get(str(tensor_name), None)
-
-
 def _channel_first_shape_values_for_model_ir(
     *,
     model_ir: ModelIR,
@@ -926,28 +843,6 @@ def _tensor_shape_list_for_model_ir(
     if tensor is None:
         return None
     return [int(v) for v in list(tensor.shape)]
-
-
-def _expected_channel_dim_for_tensor_for_codegen(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-) -> Optional[int]:
-    expected_channel_dims = _native_codegen_expected_channel_dim_cache_for_model_ir(
-        model_ir=model_ir,
-    )
-    return expected_channel_dims.get(str(tensor_name), None)
-
-
-def _expected_channel_dim_for_channel_last_named_tensor_for_codegen(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-) -> Optional[int]:
-    return _expected_channel_dim_for_tensor_for_codegen(
-        model_ir=model_ir,
-        tensor_name=tensor_name,
-    )
 
 
 def _resolve_channel_first_named_tensor_shape_for_codegen(
