@@ -4659,6 +4659,37 @@ def test_generated_pytorch_binary_policy_has_single_owner() -> None:
     assert "import torch" not in policy_source
 
 
+def test_generated_pytorch_layout_bridge_policy_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    policy_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_layout_bridge_policy.py"
+    ).read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    policy_functions = {
+        node.name
+        for node in ast.parse(policy_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    for function_name in (
+        "_fold_single_consumer_public_input_bridge_for_codegen",
+        "_match_single_consumer_layout_bridge_transpose_for_codegen",
+    ):
+        assert function_name in policy_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," in exporter_source
+    assert "import torch" not in policy_source
+
+
 def test_generated_pytorch_reshape_policy_has_single_owner() -> None:
     exporter_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"

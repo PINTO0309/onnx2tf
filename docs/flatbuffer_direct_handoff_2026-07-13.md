@@ -1198,6 +1198,16 @@ architecture tests deselected), together with Ruff, syntax validation, and
 `git diff --check`; the exporter shrank by another net 219 lines. No model
 conversion or inference was run.
 
+Public-input bridge folding and single-consumer layout-bridge Transpose
+matching now live in the new Torch-free
+`pytorch_layout_bridge_policy.py` owner. Public markers, public source names,
+single-consumer ownership, valid/composable permutations, known distinct
+layouts, and exact logical-layout permutations remain mandatory. Both moved
+function ASTs match checkpoint `64aa52e` exactly. Three focused policy/ownership
+tests pass (92 unrelated architecture tests deselected), together with Ruff,
+syntax validation, and `git diff --check`; the exporter shrank by another net
+82 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

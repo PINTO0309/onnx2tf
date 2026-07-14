@@ -2333,6 +2333,12 @@ also owns explicit pair aliases, channel-first constant aliases, public-input
 Transpose reuse, vector-to-channel reshape, and deterministic constant-axis
 permutation fallback while receiving all generated names through callbacks.
 
+Generated-code layout bridge recognition has a separate Torch-free owner in
+`pytorch_layout_bridge_policy.py`. A public-input Transpose is folded only when
+its bridge marker, public source, single consumer, and valid permutation all
+agree. Downstream bridge matching likewise requires one consumer, distinct
+known logical layouts, and an exact permutation derived from those layouts.
+
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter
