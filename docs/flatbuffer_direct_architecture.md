@@ -4174,6 +4174,25 @@ that the output bridge could not be formed; it now leaves the complete ModelIR
 unchanged. A graph without all four required operator types still performs
 historical pruning without allocating an index.
 
+Pseudo-op LeakyReLU fusion is owned by `passes/graph_cleanup.py`. The accepted
+grammar remains deliberately exact: `RELU(x)` must be the first SUB input;
+`MUL(alpha, RELU(NEG(x)))` must be the second; alpha may occupy either MUL
+slot but must be a singleton constant; and all four branch intermediates must
+be private and exclusively consumed by the next expected operator. When both
+boundary tensors exist they must be floating point. Reversed SUB inputs,
+source mismatch, integer boundaries, public intermediates, and any fan-out are
+no-ops.
+
+One optional or local `ModelIRGraphIndex` provides graph-order SUB candidates,
+producer traversal, all consumer guards, in-place type/input replacement of
+the retained SUB, and one batch compaction of NEG, both RELUs, and MUL. The
+retained operator is normalized to the same fresh `LEAKY_RELU` fields as the
+former object replacement, preserving graph position and output identity.
+Tensor and optional LayoutState pruning occur after the fixed point; a graph
+without the complete required operator family allocates no index. Exact former
+AST comparison confirms complete ModelIR and stats equality for one and two
+matches, including both alpha input orders.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

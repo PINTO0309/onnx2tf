@@ -89,6 +89,194 @@ def prune_dead_operators(
     return {"removed_dead_operators": int(len(remove_indices))}
 
 
+def _optimize_fuse_pseudo_leakyrelu_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Fuse the exact pseudo-op LeakyReLU expansion transactionally."""
+
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if active_index is None:
+        required_types = {"SUB", "RELU", "MUL", "NEG"}
+        for operator in model_ir.operators:
+            required_types.discard(str(operator.op_type))
+            if len(required_types) == 0:
+                break
+        if len(required_types) > 0:
+            _prune_unused_tensors(model_ir, layout_state=layout_state)
+            return {"fused_pseudo_leakyrelu_chains": 0}
+        active_index = ModelIRGraphIndex(model_ir)
+    elif any(
+        len(active_index.operator_indices(operator_type)) == 0
+        for operator_type in ("SUB", "RELU", "MUL", "NEG")
+    ):
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        return {"fused_pseudo_leakyrelu_chains": 0}
+
+    model_outputs = {str(name) for name in model_ir.outputs}
+    fused = 0
+
+    while True:
+        changed = False
+        for subtract_index in active_index.operator_indices("SUB"):
+            subtract = model_ir.operators[int(subtract_index)]
+            if len(subtract.inputs) != 2 or len(subtract.outputs) != 1:
+                continue
+
+            positive_output = str(subtract.inputs[0])
+            multiply_output = str(subtract.inputs[1])
+            output_name = str(subtract.outputs[0])
+            positive_relu = active_index.producer(positive_output)
+            multiply = active_index.producer(multiply_output)
+            positive_relu_index = (
+                active_index.operator_index(positive_relu)
+                if positive_relu is not None
+                else None
+            )
+            multiply_index = (
+                active_index.operator_index(multiply)
+                if multiply is not None
+                else None
+            )
+            if (
+                positive_relu is None
+                or positive_relu_index is None
+                or str(positive_relu.op_type) != "RELU"
+                or len(positive_relu.inputs) != 1
+                or len(positive_relu.outputs) != 1
+                or str(positive_relu.outputs[0]) != positive_output
+            ):
+                continue
+            if (
+                multiply is None
+                or multiply_index is None
+                or str(multiply.op_type) != "MUL"
+                or len(multiply.inputs) != 2
+                or len(multiply.outputs) != 1
+                or str(multiply.outputs[0]) != multiply_output
+            ):
+                continue
+
+            source_name = str(positive_relu.inputs[0])
+            multiply_input0 = str(multiply.inputs[0])
+            multiply_input1 = str(multiply.inputs[1])
+            if _is_singleton_constant_tensor(model_ir, multiply_input0):
+                alpha_name = multiply_input0
+                negative_relu_output = multiply_input1
+            elif _is_singleton_constant_tensor(model_ir, multiply_input1):
+                alpha_name = multiply_input1
+                negative_relu_output = multiply_input0
+            else:
+                continue
+            if negative_relu_output == positive_output:
+                continue
+            alpha = _read_singleton_constant_float(model_ir, alpha_name)
+            if alpha is None:
+                continue
+
+            negative_relu = active_index.producer(negative_relu_output)
+            negative_relu_index = (
+                active_index.operator_index(negative_relu)
+                if negative_relu is not None
+                else None
+            )
+            if (
+                negative_relu is None
+                or negative_relu_index is None
+                or str(negative_relu.op_type) != "RELU"
+                or len(negative_relu.inputs) != 1
+                or len(negative_relu.outputs) != 1
+                or str(negative_relu.outputs[0]) != negative_relu_output
+            ):
+                continue
+
+            negative_output = str(negative_relu.inputs[0])
+            negate = active_index.producer(negative_output)
+            negate_index = (
+                active_index.operator_index(negate)
+                if negate is not None
+                else None
+            )
+            if (
+                negate is None
+                or negate_index is None
+                or str(negate.op_type) != "NEG"
+                or len(negate.inputs) != 1
+                or len(negate.outputs) != 1
+                or str(negate.outputs[0]) != negative_output
+                or str(negate.inputs[0]) != source_name
+            ):
+                continue
+
+            private_intermediates = [
+                positive_output,
+                multiply_output,
+                negative_relu_output,
+                negative_output,
+            ]
+            if any(name in model_outputs for name in private_intermediates):
+                continue
+            expected_consumers = {
+                positive_output: [int(subtract_index)],
+                multiply_output: [int(subtract_index)],
+                negative_relu_output: [int(multiply_index)],
+                negative_output: [int(negative_relu_index)],
+            }
+            if any(
+                active_index.consumer_indices(name) != consumers
+                for name, consumers in expected_consumers.items()
+            ):
+                continue
+
+            source_tensor = model_ir.tensors.get(source_name)
+            output_tensor = model_ir.tensors.get(output_name)
+            if source_tensor is not None and output_tensor is not None:
+                if not str(source_tensor.dtype).upper().startswith("FLOAT"):
+                    continue
+                if not str(output_tensor.dtype).upper().startswith("FLOAT"):
+                    continue
+
+            # Every guard is complete. Convert the retained SUB in place so
+            # its graph position/output identity remain stable, then compact
+            # the four private producers through the maintained index.
+            active_index.replace_operator_type(
+                int(subtract_index),
+                "LEAKY_RELU",
+            )
+            active_index.replace_operator_inputs(
+                int(subtract_index),
+                [source_name],
+            )
+            subtract.options = {"alpha": float(alpha)}
+            subtract.axis_semantics = {}
+            subtract.version = 1
+            subtract.onnx_node_name = None
+            subtract.onnx_op_type = None
+            active_index.remove_operators(
+                [
+                    int(negate_index),
+                    int(negative_relu_index),
+                    int(multiply_index),
+                    int(positive_relu_index),
+                ]
+            )
+            fused += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    return {"fused_pseudo_leakyrelu_chains": int(fused)}
+
+
 def _optimize_duplicate_transpose_fanout(
     model_ir: ModelIR,
     *,

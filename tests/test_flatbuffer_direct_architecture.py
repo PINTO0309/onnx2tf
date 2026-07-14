@@ -5305,6 +5305,7 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
     function_names = {
         "_optimize_consecutive_reshape_passthrough_chains",
         "_optimize_fold_consecutive_mul_constants_chains",
+        "_optimize_fuse_pseudo_leakyrelu_chains",
         "_optimize_squeeze_reshape_identity_chains",
         "_optimize_squeeze_unary_reshape_passthrough_chains",
         "_optimize_maximum_minimum_relu0to1_chains",
@@ -5322,7 +5323,8 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
         }
 
     lowering_functions = _functions(lowering_path)
-    assert function_names <= set(_functions(pass_path))
+    pass_functions = _functions(pass_path)
+    assert function_names <= set(pass_functions)
     for function_name in function_names:
         wrapper_names = {
             node.id
@@ -5330,6 +5332,25 @@ def test_graph_cleanup_rewrites_have_single_owner() -> None:
             if isinstance(node, ast.Name)
         }
         assert f"{function_name}_pass" in wrapper_names
+    pseudo_leakyrelu = pass_functions[
+        "_optimize_fuse_pseudo_leakyrelu_chains"
+    ]
+    pseudo_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(pseudo_leakyrelu)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in pseudo_calls
+    assert "_build_tensor_producer_map" not in pseudo_calls
+    assert "ModelIRGraphIndex" in pseudo_calls
+    assert "operator_indices" in pseudo_calls
+    assert "producer" in pseudo_calls
+    assert "consumer_indices" in pseudo_calls
+    assert "replace_operator_type" in pseudo_calls
+    assert "replace_operator_inputs" in pseudo_calls
+    assert "remove_operators" in pseudo_calls
+    assert "_prune_unused_tensors" in pseudo_calls
     lowerer_names = {
         node.id
         for node in ast.walk(

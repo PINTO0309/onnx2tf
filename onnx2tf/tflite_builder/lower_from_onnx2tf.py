@@ -269,6 +269,7 @@ from onnx2tf.tflite_builder.passes.split_fallback import (
 from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_consecutive_reshape_passthrough_chains as _optimize_consecutive_reshape_passthrough_chains_pass,
     _optimize_fold_consecutive_mul_constants_chains as _optimize_fold_consecutive_mul_constants_chains_pass,
+    _optimize_fuse_pseudo_leakyrelu_chains as _optimize_fuse_pseudo_leakyrelu_chains_pass,
     _optimize_maximum_with_zero_input2_to_relu as _optimize_maximum_with_zero_input2_to_relu_pass,
     _optimize_squeeze_unary_reshape_passthrough_chains as _optimize_squeeze_unary_reshape_passthrough_chains_pass,
     _optimize_squeeze_reshape_identity_chains as _optimize_squeeze_reshape_identity_chains_pass,
@@ -6617,136 +6618,7 @@ def _optimize_maximum_with_zero_input2_to_relu(model_ir: ModelIR) -> Dict[str, i
 
 
 def _optimize_fuse_pseudo_leakyrelu_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fuse pseudo-op-expanded LeakyReLU chain into single LEAKY_RELU op.
-
-    Target:
-      x --NEG--> n --RELU--> nr --MUL(alpha)--> m
-      x --RELU--> p
-      p --SUB(m)--> y
-    """
-    fused = 0
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for sub_idx, sub_op in enumerate(model_ir.operators):
-            if str(sub_op.op_type) != "SUB" or len(sub_op.inputs) != 2 or len(sub_op.outputs) != 1:
-                continue
-
-            relu_pos_out_name = str(sub_op.inputs[0])
-            mul_out_name = str(sub_op.inputs[1])
-            output_name = str(sub_op.outputs[0])
-
-            relu_pos_idx = producers.get(relu_pos_out_name, None)
-            mul_idx = producers.get(mul_out_name, None)
-            if relu_pos_idx is None or mul_idx is None:
-                continue
-            relu_pos_op = model_ir.operators[int(relu_pos_idx)]
-            mul_op = model_ir.operators[int(mul_idx)]
-            if str(relu_pos_op.op_type) != "RELU" or len(relu_pos_op.inputs) != 1 or len(relu_pos_op.outputs) != 1:
-                continue
-            if str(mul_op.op_type) != "MUL" or len(mul_op.inputs) != 2 or len(mul_op.outputs) != 1:
-                continue
-            if str(relu_pos_op.outputs[0]) != relu_pos_out_name:
-                continue
-            if str(mul_op.outputs[0]) != mul_out_name:
-                continue
-
-            x_name = str(relu_pos_op.inputs[0])
-            mul_input0 = str(mul_op.inputs[0])
-            mul_input1 = str(mul_op.inputs[1])
-            alpha_name: Optional[str] = None
-            relu_neg_out_name: Optional[str] = None
-            if _is_singleton_constant_tensor(model_ir, mul_input0):
-                alpha_name = mul_input0
-                relu_neg_out_name = mul_input1
-            elif _is_singleton_constant_tensor(model_ir, mul_input1):
-                alpha_name = mul_input1
-                relu_neg_out_name = mul_input0
-            if alpha_name is None or relu_neg_out_name is None:
-                continue
-            if relu_neg_out_name == relu_pos_out_name:
-                continue
-
-            alpha = _read_singleton_constant_float(model_ir, alpha_name)
-            if alpha is None:
-                continue
-
-            relu_neg_idx = producers.get(relu_neg_out_name, None)
-            if relu_neg_idx is None:
-                continue
-            relu_neg_op = model_ir.operators[int(relu_neg_idx)]
-            if str(relu_neg_op.op_type) != "RELU" or len(relu_neg_op.inputs) != 1 or len(relu_neg_op.outputs) != 1:
-                continue
-            if str(relu_neg_op.outputs[0]) != relu_neg_out_name:
-                continue
-
-            neg_out_name = str(relu_neg_op.inputs[0])
-            neg_idx = producers.get(neg_out_name, None)
-            if neg_idx is None:
-                continue
-            neg_op = model_ir.operators[int(neg_idx)]
-            if str(neg_op.op_type) != "NEG" or len(neg_op.inputs) != 1 or len(neg_op.outputs) != 1:
-                continue
-            if str(neg_op.outputs[0]) != neg_out_name:
-                continue
-            if str(neg_op.inputs[0]) != x_name:
-                continue
-
-            if any(
-                name in model_outputs
-                for name in [
-                    relu_pos_out_name,
-                    mul_out_name,
-                    relu_neg_out_name,
-                    neg_out_name,
-                ]
-            ):
-                continue
-
-            if [int(v) for v in consumers.get(relu_pos_out_name, [])] != [int(sub_idx)]:
-                continue
-            if [int(v) for v in consumers.get(mul_out_name, [])] != [int(sub_idx)]:
-                continue
-            if [int(v) for v in consumers.get(relu_neg_out_name, [])] != [int(mul_idx)]:
-                continue
-            if [int(v) for v in consumers.get(neg_out_name, [])] != [int(relu_neg_idx)]:
-                continue
-
-            x_tensor = model_ir.tensors.get(x_name, None)
-            y_tensor = model_ir.tensors.get(output_name, None)
-            if x_tensor is not None and y_tensor is not None:
-                x_dtype = str(x_tensor.dtype).upper()
-                y_dtype = str(y_tensor.dtype).upper()
-                if not x_dtype.startswith("FLOAT") or not y_dtype.startswith("FLOAT"):
-                    continue
-
-            model_ir.operators[int(sub_idx)] = OperatorIR(
-                op_type="LEAKY_RELU",
-                inputs=[x_name],
-                outputs=[output_name],
-                options={"alpha": float(alpha)},
-            )
-
-            for remove_idx in sorted(
-                [int(neg_idx), int(relu_neg_idx), int(mul_idx), int(relu_pos_idx)],
-                reverse=True,
-            ):
-                del model_ir.operators[int(remove_idx)]
-
-            fused += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"fused_pseudo_leakyrelu_chains": int(fused)}
+    return _optimize_fuse_pseudo_leakyrelu_chains_pass(model_ir)
 
 
 def _optimize_yolo_decode_mul_square_anchor_chains(model_ir: ModelIR) -> Dict[str, int]:
