@@ -588,7 +588,15 @@ def test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope() -> None:
         for call in helper_invocations
         if any(keyword.arg == "state_scope" for keyword in call.keywords)
     ]
-    assert len(external_scope_invocations) == 1
+    assert len(external_scope_invocations) == 2
+    for call in external_scope_invocations:
+        scope_keyword = next(
+            keyword
+            for keyword in call.keywords
+            if keyword.arg == "state_scope"
+        )
+        assert isinstance(scope_keyword.value, ast.Name)
+        assert scope_keyword.value.id == "state_scope"
 
 
 def test_lowerer_se_fc_gather_fanout_pair_reuses_pass_state_scope() -> None:
@@ -943,7 +951,7 @@ def test_lowerer_terminal_clamp_unary_relu_cluster_reuses_scope() -> None:
     )
 
 
-def test_lowerer_late_mean_spp_gather_cluster_reuses_scope() -> None:
+def test_lowerer_late_layout_mean_spp_gather_constant_cast_cluster_reuses_scope() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
     )
@@ -953,16 +961,18 @@ def test_lowerer_late_mean_spp_gather_cluster_reuses_scope() -> None:
         for node in lowering_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    helper_name = "_run_late_mean_spp_gather_pass_cluster"
+    helper_name = "_run_late_layout_mean_spp_gather_constant_cast_pass_cluster"
     helper = next(
         node
         for node in lowerer.body
         if isinstance(node, ast.FunctionDef) and node.name == helper_name
     )
     expected_order = [
+        "run_layout_transpose_cleanup",
         "run_mean_mul_add_conv_layout_cleanup",
         "run_spp_layout_cleanup",
         "run_transpose_gather_axis_cleanup",
+        "_run_constant_fold_cast_cleanup_pass_cluster",
     ]
     calls = {
         node.func.id: node
@@ -985,6 +995,17 @@ def test_lowerer_late_mean_spp_gather_cluster_reuses_scope() -> None:
         assert isinstance(scope_keyword.value, ast.Name)
         assert scope_keyword.value.id == "state_scope"
 
+    conditional = next(
+        statement
+        for statement in helper.body
+        if isinstance(statement, ast.If)
+    )
+    assert isinstance(conditional.test, ast.Name)
+    assert conditional.test.id == "include_layout_transpose"
+    assert calls["run_layout_transpose_cleanup"] in [
+        node for node in ast.walk(conditional)
+    ]
+
     invocation_index = next(
         index
         for index, statement in enumerate(lowerer.body)
@@ -993,22 +1014,30 @@ def test_lowerer_late_mean_spp_gather_cluster_reuses_scope() -> None:
         and isinstance(statement.value.func, ast.Name)
         and statement.value.func.id == helper_name
     )
+    invocation = lowerer.body[invocation_index].value
+    include_layout = next(
+        keyword
+        for keyword in invocation.keywords
+        if keyword.arg == "include_layout_transpose"
+    )
+    assert isinstance(include_layout.value, ast.Name)
+    assert include_layout.value.id == "optimize_layout_transpose_chains"
+
     previous_boundary = lowerer.body[invocation_index - 1]
-    assert isinstance(previous_boundary, ast.If)
-    assert isinstance(previous_boundary.test, ast.Name)
-    assert previous_boundary.test.id == "optimize_layout_transpose_chains"
-    previous_call = previous_boundary.body[0]
-    assert isinstance(previous_call, ast.Expr)
-    assert isinstance(previous_call.value, ast.Call)
-    assert isinstance(previous_call.value.func, ast.Name)
-    assert previous_call.value.func.id == "run_layout_transpose_cleanup"
+    assert isinstance(previous_boundary, ast.Expr)
+    assert isinstance(previous_boundary.value, ast.Call)
+    assert isinstance(previous_boundary.value.func, ast.Name)
+    assert (
+        previous_boundary.value.func.id
+        == "_optimize_transpose_shape_extract_nhwc_to_nchw_chains"
+    )
     next_boundary = lowerer.body[invocation_index + 1]
     assert isinstance(next_boundary, ast.Expr)
     assert isinstance(next_boundary.value, ast.Call)
     assert isinstance(next_boundary.value.func, ast.Name)
     assert (
         next_boundary.value.func.id
-        == "_run_constant_fold_cast_cleanup_pass_cluster"
+        == "_replace_expand_dims_and_squeeze_with_reshape"
     )
 
 

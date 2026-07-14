@@ -50352,11 +50352,21 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
-    def _run_late_mean_spp_gather_pass_cluster() -> None:
+    def _run_late_layout_mean_spp_gather_constant_cast_pass_cluster(
+        *,
+        include_layout_transpose: bool,
+    ) -> None:
         state_scope = ModelIRPassStateScope(
             model_ir,
             layout_state=session.layout_state,
         )
+        if include_layout_transpose:
+            run_layout_transpose_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
         run_mean_mul_add_conv_layout_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -50373,6 +50383,9 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        _run_constant_fold_cast_cleanup_pass_cluster(
             state_scope=state_scope,
         )
 
@@ -51631,14 +51644,9 @@ def lower_onnx_to_ir(
         diagnostics=session.diagnostics,
     )
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
-    if optimize_layout_transpose_chains:
-        run_layout_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-    _run_late_mean_spp_gather_pass_cluster()
-    _run_constant_fold_cast_cleanup_pass_cluster()
+    _run_late_layout_mean_spp_gather_constant_cast_pass_cluster(
+        include_layout_transpose=optimize_layout_transpose_chains,
+    )
     _replace_expand_dims_and_squeeze_with_reshape(
         model_ir,
         layout_state=session.layout_state,

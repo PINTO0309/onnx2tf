@@ -132,11 +132,14 @@ remains current after changing `MAXIMUM`/`MINIMUM` operators to their RELU
 forms. Both runners retain standalone behavior through optional scope
 arguments.
 
-The late Mean/Mul/Add/Conv, generic SPP, and Gather-axis sequence shares one
-scope after the conditional generic-transpose cleanup and before the
-constant-fold/Cast helper. Generic SPP cleanup now accepts an optional scope;
-its existing differential input and operator-removal updates allow the three
-runners to reuse one index without a blanket refresh.
+The conditional generic-Transpose, late Mean/Mul/Add/Conv, generic SPP,
+Gather-axis, constant-fold, and redundant-Cast sequence shares one scope
+between the raw shape-extract and ExpandDims/Squeeze replacement rewrites.
+When layout optimization is disabled, the same helper skips only generic
+Transpose and lets the Mean runner lazily construct the state. Generic SPP
+cleanup and the constant-fold/Cast helper accept the shared scope; their
+existing differential mutations keep the index current across all nine pass
+events without a blanket refresh.
 
 The late generic SPP and Concat/unary/Conv pair shares one scope between the
 raw StridedSlice/Pad/Concat and shape-extract rewrites. Concat/unary/Conv
@@ -175,9 +178,10 @@ runner call characterization from 135 to 134.
 The very-late Gather-axis, constant-fold/Cast, and flattened-normalization Pad
 sequence shares one scope between the raw unbound-input transpose repair and
 dynamic-Reshape resolution. The constant-fold/Cast helper accepts an optional
-external scope: its earlier call still creates an internal scope, while this
-later wrapper supplies the Gather-owned scope. Seven diagnostic events reuse
-one index without changing the registered-runner call characterization.
+external scope. Both production callers now provide their wrapper-owned scope:
+the earlier combined layout/Mean/SPP/Gather sequence and this later
+Gather/normalization sequence. Seven diagnostic events in the latter reuse one
+index without changing the registered-runner call characterization.
 
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
@@ -194,12 +198,13 @@ before the four quantized-PReLU specs. The earlier duplicate-fan-out invocation
 that is separated from PReLU by legacy QDQ rewrites remains standalone. Each
 shared scope ends before dequantize/TransposeConv/quantize cleanup.
 
-Two repeated constant-input-fold/redundant-Cast pairs share one scope per
-occurrence. The three constant Pad/Pool/Cast specs retain their order before
-the widening-alias and narrowing-chain Cast specs. The first scope ends before
-the legacy ExpandDims/Squeeze replacement and the second ends before
-normalization-Pad layout cleanup. Both runners remain standalone-compatible
-through optional scope arguments.
+Two repeated constant-input-fold/redundant-Cast pairs share the enclosing
+wrapper scope at each occurrence. The three constant Pad/Pool/Cast specs retain
+their order before the widening-alias and narrowing-chain Cast specs. The first
+scope also covers its preceding conditional layout/Mean/SPP/Gather sequence
+and ends before the legacy ExpandDims/Squeeze replacement; the second starts at
+Gather-axis and continues through normalization-Pad. Both runners remain
+standalone-compatible through optional scope arguments.
 
 The fallback and primary absolute-final SE-FC/Gather-channel-fan-out pairs use
 a target-parameterized helper. The fallback invocation supplies
