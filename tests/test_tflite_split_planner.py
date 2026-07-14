@@ -9,6 +9,7 @@ from onnx2tf.tflite_builder.split_planner import (
     _collect_inputs,
     _collect_outputs,
     build_partition_model_ir,
+    crop_model_ir_by_boundary_tensors,
     find_dependency_safe_split_points,
     plan_contiguous_partitions_by_size,
     validate_partition_ranges,
@@ -32,6 +33,21 @@ def test_partition_tensor_collection_preserves_first_seen_order() -> None:
 
     assert _collect_inputs(operators) == ["x", "shared", "a"]
     assert _collect_outputs(operators) == ["a", "shared_out", "b"]
+
+
+def test_crop_model_ir_uses_intermediate_boundaries_without_extra_operators() -> None:
+    model_ir = _make_chain_model_ir(op_count=5)
+
+    cropped = crop_model_ir_by_boundary_tensors(
+        model_ir=model_ir,
+        requested_inputs=["t1"],
+        requested_outputs=["t3"],
+    )
+
+    assert cropped.inputs == ["t1"]
+    assert cropped.outputs == ["t3"]
+    assert [op.outputs for op in cropped.operators] == [["t2"], ["t3"]]
+    assert set(cropped.tensors) == {"t1", "t2", "t3"}
 
 
 def _make_chain_model_ir(op_count: int = 6) -> ModelIR:

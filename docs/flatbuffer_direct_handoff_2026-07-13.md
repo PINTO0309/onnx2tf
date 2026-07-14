@@ -591,6 +591,12 @@ index across all partitions. Planner and stubbed-writer instrumentation prove
 one index construction in each complete flow; all eleven focused split-planner
 tests pass. No model conversion or inference was run.
 
+Boundary crop preflight now builds the original runtime-input set once instead
+of once per requested input, and removes an unused pass over every retained
+operator output. A direct intermediate-input/intermediate-output crop fixes the
+unchanged two-op result; crop ownership plus architecture validation pass 90
+tests. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

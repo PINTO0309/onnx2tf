@@ -343,11 +343,12 @@ def crop_model_ir_by_boundary_tensors(
         for name in list(model_ir.tensors.keys())
         if str(name) != ""
     }
-    top_level_tensor_names.update(
+    runtime_input_names: Set[str] = {
         str(name)
         for name in list(model_ir.inputs)
         if str(name) != ""
-    )
+    }
+    top_level_tensor_names.update(runtime_input_names)
     top_level_tensor_names.update(
         str(name)
         for name in list(model_ir.outputs)
@@ -411,7 +412,7 @@ def crop_model_ir_by_boundary_tensors(
             continue
         if tensor_name in producer_index:
             continue
-        if tensor_name in set(str(name) for name in model_ir.inputs):
+        if tensor_name in runtime_input_names:
             continue
         if tensor.data is not None:
             raise ValueError(
@@ -463,14 +464,6 @@ def crop_model_ir_by_boundary_tensors(
         if int(op_idx) in forward_reachable_ops
         and int(op_idx) in backward_required_ops
     ]
-
-    kept_output_tensors: Set[str] = set()
-    for op_idx in kept_operator_indices:
-        kept_output_tensors.update(
-            str(name)
-            for name in list(model_ir.operators[int(op_idx)].outputs)
-            if str(name) != ""
-        )
 
     missing_runtime_inputs: List[str] = []
     cropped_available_tensors: Set[str] = set(always_available_tensors)

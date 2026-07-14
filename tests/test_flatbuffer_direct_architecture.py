@@ -894,6 +894,8 @@ def test_split_rewrite_builder_owns_append_only_operator_stream() -> None:
     assert "axis_semantics=" in crop_source
     assert "onnx_node_name=" in crop_source
     assert "onnx_op_type=" in crop_source
+    assert "kept_output_tensors" not in crop_source
+    assert "set(str(name) for name in model_ir.inputs)" not in crop_source
 
 
 def test_boundary_input_layout_pass_and_graph_helpers_have_single_owners() -> None:

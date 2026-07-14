@@ -1624,7 +1624,9 @@ unrolling emit directly into that stream and no longer retain a second
 with options, version, axis semantics, and ONNX node/op provenance intact.
 Boundary-based partition cropping follows the same operator contract: its
 newly constructed cropped ModelIR copies axis semantics and ONNX node/op
-provenance in addition to inputs, outputs, options, and version.
+provenance in addition to inputs, outputs, options, and version. The crop
+preflight materializes the original runtime-input set once for all requested
+boundaries, and does not collect an unused second set of kept operator outputs.
 
 Dependency-safe split-point discovery uses one producer scan and one consumer
 edge scan. Backward dependencies are represented as invalid-boundary range
