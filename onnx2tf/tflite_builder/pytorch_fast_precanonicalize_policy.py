@@ -1124,6 +1124,80 @@ def _repair_cf_resize_from_input_and_bn_evidence(
     return rewritten, resize_lhs_name
 
 
+def _repair_aligned_bn_constant_layout(
+    line: str,
+    dynamic_cf_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[str | None, str | None]:
+    direct_match = _DIRECT_ALIGNED_BN_CONST_RE.match(line)
+    if direct_match is not None:
+        input_name = str(direct_match.group("input"))
+        const_attr = str(direct_match.group("const_attr"))
+        channel_count = context.const_channel_counts.get(const_attr)
+        input_is_cf_like = (
+            input_name in dynamic_cf_like_names
+            or input_name.endswith("_cf")
+            or input_name.endswith("_out_cf")
+        )
+        const_is_bn = (
+            "BatchNormalization" in const_attr
+            or "batch_normalization" in const_attr
+        )
+        if (
+            not input_is_cf_like
+            or not const_is_bn
+            or channel_count is None
+            or int(direct_match.group("c")) != channel_count
+        ):
+            return None, None
+        lhs_name = str(direct_match.group("lhs"))
+        rewritten = (
+            f"{direct_match.group('indent')}{lhs_name} = "
+            f"_align_tensor_to_target_shape(torch.{direct_match.group('op')}("
+            f"{input_name}, torch.reshape(self.{const_attr}, "
+            f"[1, {direct_match.group('c')}, 1, 1])), "
+            f"[{direct_match.group('n')}, {direct_match.group('c')}, "
+            f"{direct_match.group('h')}, {direct_match.group('w')}])"
+        )
+        return rewritten, lhs_name
+
+    reshaped_match = _RESHAPED_ALIGNED_BN_CONST_RE.match(line)
+    if reshaped_match is None:
+        return None, None
+    input_name = str(reshaped_match.group("input"))
+    const_attr = str(reshaped_match.group("const_attr"))
+    input_is_cf_like = (
+        input_name in dynamic_cf_like_names
+        or input_name.endswith("_cf")
+        or input_name.endswith("_out_cf")
+    )
+    const_is_bn = (
+        "BatchNormalization" in const_attr
+        or "batch_normalization" in const_attr
+    )
+    if not input_is_cf_like or not const_is_bn:
+        return None, None
+
+    reshape_channel_count = int(reshaped_match.group("reshape_c"))
+    normalized_shape = _normalize_cf_rank4_shape(
+        [
+            int(reshaped_match.group("n")),
+            int(reshaped_match.group("c0")),
+            int(reshaped_match.group("h")),
+            int(reshaped_match.group("w")),
+        ],
+        preferred_channel_count=reshape_channel_count,
+    )
+    lhs_name = str(reshaped_match.group("lhs"))
+    rewritten = (
+        f"{reshaped_match.group('indent')}{lhs_name} = "
+        f"_align_tensor_to_target_shape(torch.{reshaped_match.group('op')}("
+        f"{input_name}, torch.reshape(self.{const_attr}, "
+        f"[1, {reshape_channel_count}, 1, 1])), {repr(normalized_shape)})"
+    )
+    return rewritten, lhs_name
+
+
 def _repair_cf_pool_target_shape(
     line: str,
     index: int,

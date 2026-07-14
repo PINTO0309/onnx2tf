@@ -15,6 +15,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _infer_unique_channel_count_from_rank4_shape,
     _repair_binary_alignment_layout,
     _repair_binary_alignment_from_downstream_evidence,
+    _repair_aligned_bn_constant_layout,
     _repair_aligned_scalar_binary_shape_at,
     _repair_cf_pool_target_shape,
     _repair_cf_pool_neighbor_layout_at,
@@ -257,6 +258,89 @@ def test_resize_input_evidence_preserves_bn_and_noop_decisions() -> None:
             nhwc_names,
             _build_fast_precanonicalize_repair_context(lines),
         ) == (None, None)
+
+
+def test_aligned_bn_constant_layout_preserves_direct_and_reshaped_guards() -> None:
+    direct_positive_lines = [
+        "        self.register_buffer('BatchNormalization_scale', torch.zeros("
+        "[8], dtype=torch.float32), persistent=True)",
+        "        out = _align_tensor_to_target_shape(torch.mul("
+        "source_cf, self.BatchNormalization_scale), [1, 5, 7, 8])",
+    ]
+    direct_rewrite, direct_lhs = _repair_aligned_bn_constant_layout(
+        direct_positive_lines[1],
+        {"source_cf"},
+        _build_fast_precanonicalize_repair_context(direct_positive_lines),
+    )
+    assert direct_rewrite == (
+        "        out = _align_tensor_to_target_shape(torch.mul(source_cf, "
+        "torch.reshape(self.BatchNormalization_scale, [1, 8, 1, 1])), "
+        "[1, 8, 5, 7])"
+    )
+    assert direct_lhs == "out"
+
+    reshaped_line = (
+        "        out = _align_tensor_to_target_shape(torch.add(source_cf, "
+        "torch.reshape(self.batch_normalization_bias, [1, 8, 1, 1])), "
+        "[1, 5, 7, 8])"
+    )
+    reshaped_rewrite, reshaped_lhs = _repair_aligned_bn_constant_layout(
+        reshaped_line,
+        {"source_cf"},
+        _build_fast_precanonicalize_repair_context([reshaped_line]),
+    )
+    assert reshaped_rewrite == (
+        "        out = _align_tensor_to_target_shape(torch.add(source_cf, "
+        "torch.reshape(self.batch_normalization_bias, [1, 8, 1, 1])), "
+        "[1, 8, 5, 7])"
+    )
+    assert reshaped_lhs == "out"
+
+    direct_negative_cases = [
+        (
+            [
+                "        self.register_buffer('scale', torch.zeros("
+                "[8], dtype=torch.float32), persistent=True)",
+                "        out = _align_tensor_to_target_shape(torch.mul("
+                "source_cf, self.scale), [1, 5, 7, 8])",
+            ],
+            {"source_cf"},
+        ),
+        (
+            [
+                "        self.register_buffer('BatchNormalization_scale', "
+                "torch.zeros([4], dtype=torch.float32), persistent=True)",
+                "        out = _align_tensor_to_target_shape(torch.add("
+                "source_cf, self.BatchNormalization_scale), [1, 5, 7, 8])",
+            ],
+            {"source_cf"},
+        ),
+        (
+            [
+                "        self.register_buffer('BatchNormalization_scale', "
+                "torch.zeros([8], dtype=torch.float32), persistent=True)",
+                "        out = _align_tensor_to_target_shape(torch.add("
+                "source_nhwc, self.BatchNormalization_scale), [1, 5, 7, 8])",
+            ],
+            set(),
+        ),
+    ]
+    for case_lines, cf_names in direct_negative_cases:
+        assert _repair_aligned_bn_constant_layout(
+            case_lines[1],
+            cf_names,
+            _build_fast_precanonicalize_repair_context(case_lines),
+        ) == (None, None)
+
+    reshaped_non_bn = (
+        "        out = _align_tensor_to_target_shape(torch.add(source_cf, "
+        "torch.reshape(self.scale, [1, 8, 1, 1])), [1, 5, 7, 8])"
+    )
+    assert _repair_aligned_bn_constant_layout(
+        reshaped_non_bn,
+        {"source_cf"},
+        _build_fast_precanonicalize_repair_context([reshaped_non_bn]),
+    ) == (None, None)
 
 
 def test_nhwc_pool_layout_uses_consumer_and_immediate_bridge_evidence() -> None:

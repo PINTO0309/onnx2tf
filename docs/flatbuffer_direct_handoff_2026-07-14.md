@@ -7,12 +7,12 @@ The active branch is `fb-refactor5`, created from `main` after pull request
 subsequent work uses coherent commits and pushes without opening another pull
 request.
 
-The latest implementation unit moves the input/BN-evidence channel-first
-Resize fallback out of `_apply_fast_precanonicalize_repairs` and into the
-Torch-free `pytorch_fast_precanonicalize_policy.py` owner. The orchestrator is
-372 lines at this checkpoint, down from 482 lines at Goal resumption, 1,025
-lines at the beginning of the previous continuation, and 1,608 lines before
-the broader fast-precanonicalize extraction.
+The latest implementation unit moves the direct and reshaped aligned
+BatchNorm-constant repairs out of `_apply_fast_precanonicalize_repairs` and
+into the Torch-free `pytorch_fast_precanonicalize_policy.py` owner. The
+orchestrator is 316 lines at this checkpoint, down from 482 lines at Goal
+resumption, 1,025 lines at the beginning of the previous continuation, and
+1,608 lines before the broader fast-precanonicalize extraction.
 
 ## Completed work
 
@@ -31,15 +31,17 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains two coherent continuations:
+The current `fb-refactor5` work contains three coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
   statement supplies matching BN, direct-return, or channel-first Resize
   evidence;
-- the current checkpoint centralizes the following Resize fallback, including
+- `008e4ad0` centralizes the following Resize fallback, including
   exact direct and reshaped BN-constant parsing, preferred-channel selection,
-  input-layout guards, and CF evidence propagation.
+  input-layout guards, and CF evidence propagation;
+- the current checkpoint centralizes the aligned BatchNorm-constant rewrite
+  itself while preserving the different direct and already-reshaped guards.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -91,6 +93,12 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
 - Explicit NHWC Resize inputs and already-channel-first target shapes remain
   no-ops. BN evidence refines the preferred channel count but is not a
   prerequisite for the legacy CF-input repair.
+- Direct aligned BatchNorm constants require a registered channel count that
+  matches the generated target channel before a reshape is introduced.
+  Already-reshaped constants intentionally retain the older, narrower rule:
+  their explicit reshape channel drives normalization without requiring a
+  registered-buffer channel lookup. Both forms still require CF input and a
+  BatchNorm-derived attribute name.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -100,7 +108,8 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
 
 ## Tests executed
 
-The resumed downstream-binary and Resize-evidence checkpoints passed:
+The resumed downstream-binary, Resize-evidence, and aligned-BatchNorm
+checkpoints passed:
 
 ```text
 env -u PYTHONPATH -u LD_LIBRARY_PATH \
@@ -109,7 +118,7 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH \
   tests/test_flatbuffer_direct_pytorch_fast_precanonicalize_policy.py \
   tests/test_flatbuffer_direct_architecture.py
 
-121 passed
+122 passed
 ```
 
 Seven pre/post-extraction characterization cases also preserve the exact
@@ -117,6 +126,9 @@ orchestrator output for matching BN, direct return, channel-first Resize,
 channel mismatch, channel-last Resize, mixed operands, and an already-CF shape.
 Five additional pre/post-extraction cases preserve direct BN, reshaped BN,
 no-BN fallback, NHWC-input no-op, and already-CF Resize behavior.
+Seven aligned-BatchNorm cases preserve direct rewrite, non-BN no-op, channel
+mismatch no-op, NHWC-input no-op, reshaped rewrite, already-CF behavior, and
+reshaped non-BN no-op.
 The exporter and policy pass `python -m py_compile`, and `git diff --check`
 passes. The immediately preceding DepthToSpace, Pool, dynamic-Pool,
 simple-alias, and aligned-scalar checkpoints passed their focused synthetic and
@@ -142,9 +154,8 @@ ownership selections.
 ## Unfinished work
 
 The full Goal is not complete. The fast-precanonicalize orchestrator still has
-372 lines. Its largest remaining in-loop blocks are:
+316 lines. Its remaining in-loop logic is primarily:
 
-- 32 and 26 lines: reshaped and direct aligned BN-constant repair;
 - smaller Pool state-update glue and local-response-normalization shape repair.
 
 The broader fixed-pipeline, exporter, artifact-matrix, optional TensorFlow,
@@ -155,12 +166,12 @@ remains subject to the original refactor plan and its verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Inspect the 32-line reshaped and 26-line direct aligned BN-constant repairs
-   in `_apply_fast_precanonicalize_repairs`.
-3. Characterize input/constant channel agreement, layout propagation, and
-   no-op cases before moving their exact decisions to the policy owner.
-4. Preserve their current ordering after Resize/Pool evidence and before the
-   subsequent Softmax and local-response-normalization decisions.
+2. Inspect local-response-normalization layout propagation and the remaining
+   Pool state-update glue in `_apply_fast_precanonicalize_repairs`.
+3. Characterize exact CF/NHWC and static-shape propagation behavior before
+   moving another bounded decision to the policy owner.
+4. Preserve the current ordering after aligned BatchNorm repair and before
+   Softmax/ReduceMax normalization.
 5. Run only the focused synthetic/ownership/static checks unless the user asks
    for broader conversion validation. Use `uv`, run inference sequentially if
    any is explicitly requested, commit and push coherent units, and do not

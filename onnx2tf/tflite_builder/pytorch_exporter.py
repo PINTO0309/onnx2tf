@@ -128,6 +128,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_binary_alignment_layout,
     _repair_binary_alignment_from_downstream_evidence,
     _repair_aligned_scalar_binary_shape_at,
+    _repair_aligned_bn_constant_layout,
     _repair_cf_pool_target_shape,
     _repair_cf_pool_neighbor_layout_at,
     _repair_cf_resize_from_input_and_bn_evidence,
@@ -7312,12 +7313,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     changed = False
     cf_like_names: set[str] = set(repair_context.cf_like_names)
     nhwc_like_names: set[str] = set(repair_context.nhwc_like_names)
-    aligned_bn_const_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.(?P<op>mul|add)\((?P<input>[A-Za-z0-9_]+), self\.(?P<const_attr>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
-    )
-    aligned_bn_const_reshaped_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.(?P<op>mul|add)\((?P<input>[A-Za-z0-9_]+), torch\.reshape\(self\.(?P<const_attr>[A-Za-z0-9_]+), \[1, (?P<reshape_c>\d+), 1, 1\]\)\), \[(?P<n>\d+), (?P<c0>\d+), (?P<h>\d+), (?P<w>\d+)\]\)$"
-    )
     for index, line in enumerate(lines[:-1]):
         repaired_alias_layout, repaired_alias_line = _repair_simple_alias_layout_at(
             index,
@@ -7533,66 +7528,16 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 cf_like_names.add(concat_lhs)
             changed = True
             line = rewritten_concat_line
-        aligned_bn_const_match = aligned_bn_const_re.match(line)
-        if aligned_bn_const_match is not None:
-            input_name = str(aligned_bn_const_match.group("input"))
-            const_attr = str(aligned_bn_const_match.group("const_attr"))
-            channel_count = repair_context.const_channel_counts.get(const_attr)
-            if (
-                (
-                    input_name in cf_like_names
-                    or input_name.endswith("_cf")
-                    or input_name.endswith("_out_cf")
-                )
-                and (
-                    "BatchNormalization" in const_attr
-                    or "batch_normalization" in const_attr
-                )
-                and channel_count is not None
-                and int(aligned_bn_const_match.group("c")) == channel_count
-            ):
-                lines[index] = (
-                    f"{aligned_bn_const_match.group('indent')}{aligned_bn_const_match.group('lhs')} = "
-                    f"_align_tensor_to_target_shape(torch.{aligned_bn_const_match.group('op')}("
-                    f"{input_name}, torch.reshape(self.{const_attr}, [1, {aligned_bn_const_match.group('c')}, 1, 1])), "
-                    f"[{aligned_bn_const_match.group('n')}, {aligned_bn_const_match.group('c')}, "
-                    f"{aligned_bn_const_match.group('h')}, {aligned_bn_const_match.group('w')}])"
-                )
-                cf_like_names.add(str(aligned_bn_const_match.group("lhs")))
-                changed = True
-        aligned_bn_const_reshaped_match = aligned_bn_const_reshaped_re.match(line)
-        if aligned_bn_const_reshaped_match is not None:
-            input_name = str(aligned_bn_const_reshaped_match.group("input"))
-            const_attr = str(aligned_bn_const_reshaped_match.group("const_attr"))
-            reshape_channel_count = int(aligned_bn_const_reshaped_match.group("reshape_c"))
-            if (
-                (
-                    input_name in cf_like_names
-                    or input_name.endswith("_cf")
-                    or input_name.endswith("_out_cf")
-                )
-                and (
-                    "BatchNormalization" in const_attr
-                    or "batch_normalization" in const_attr
-                )
-            ):
-                normalized_shape = _normalize_cf_rank4_shape(
-                    [
-                        int(aligned_bn_const_reshaped_match.group("n")),
-                        int(aligned_bn_const_reshaped_match.group("c0")),
-                        int(aligned_bn_const_reshaped_match.group("h")),
-                        int(aligned_bn_const_reshaped_match.group("w")),
-                    ],
-                    preferred_channel_count=reshape_channel_count,
-                )
-                lines[index] = (
-                    f"{aligned_bn_const_reshaped_match.group('indent')}{aligned_bn_const_reshaped_match.group('lhs')} = "
-                    f"_align_tensor_to_target_shape(torch.{aligned_bn_const_reshaped_match.group('op')}("
-                    f"{input_name}, torch.reshape(self.{const_attr}, [1, {reshape_channel_count}, 1, 1])), "
-                    f"{repr(normalized_shape)})"
-                )
-                cf_like_names.add(str(aligned_bn_const_reshaped_match.group("lhs")))
-                changed = True
+        rewritten_bn_line, bn_lhs = _repair_aligned_bn_constant_layout(
+            line,
+            cf_like_names,
+            repair_context,
+        )
+        if rewritten_bn_line is not None:
+            lines[index] = rewritten_bn_line
+            if bn_lhs is not None:
+                cf_like_names.add(bn_lhs)
+            changed = True
         local_response_norm_assign = _parse_local_response_norm_assign(line)
         if local_response_norm_assign is not None:
             input_name = str(local_response_norm_assign[2])

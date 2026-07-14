@@ -4903,6 +4903,7 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_repair_binary_alignment_layout",
         "_repair_binary_alignment_from_downstream_evidence",
         "_repair_aligned_scalar_binary_shape_at",
+        "_repair_aligned_bn_constant_layout",
         "_repair_cf_pool_target_shape",
         "_repair_cf_pool_neighbor_layout_at",
         "_repair_cf_resize_from_input_and_bn_evidence",

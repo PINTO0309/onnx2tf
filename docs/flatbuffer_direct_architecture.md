@@ -2092,6 +2092,14 @@ and a registered BN constant channel count is preferred when present but is
 not required for the legacy input-evidence fallback. Explicit NHWC input and
 already-channel-first target shapes remain no-ops, preserving the established
 Resize-to-Pool scan behavior.
+The two aligned BatchNorm-constant forms are handled by one policy decision
+after Resize, Pool, and Concat evidence has been applied. A direct constant is
+reshaped only when its registered channel count matches the generated target;
+an already-reshaped constant retains the legacy normalization based on its
+explicit reshape channel. Both forms require a CF-like input and a generated
+BatchNorm attribute name. Their exact direct/reshaped statement grammars are
+shared with the preceding Resize evidence rule, and the repaired output is
+published as CF evidence for later normalization decisions.
 The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
 restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer
