@@ -426,6 +426,15 @@ supported fused activation, and LeakyReLU alpha handling. Value-policy and
 architecture validation passes 82 tests; Ruff, diff, and AST-equivalence checks
 pass. No model conversion or inference was run.
 
+Special Reshape layout planning now shares the Torch-free
+`pytorch_shape_policy.py` owner with rank-four layout hinting and CF/NHWC shape
+normalization. Its function AST matches the prior exporter checkpoint. Seven
+new direct cases fix 4D-to-3D, 3D-to-4D, singleton rank-four permutations,
+NCHW-to-NCDHW, high-rank channel expansion, unmatched input, and missing-shape
+behavior. Shape-policy and architecture validation passes 90 tests; Ruff,
+diff, and AST-equivalence checks pass. No model conversion or inference was
+run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

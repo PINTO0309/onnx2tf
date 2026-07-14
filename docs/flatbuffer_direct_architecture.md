@@ -2053,10 +2053,12 @@ implementations from the exporter.
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter
-or duplicating heuristics. The three function ASTs are identical to their former
-exporter definitions, and direct tests cover non-rank-4 passthrough, preferred
-channel selection, singleton-channel hints, ambiguous layouts, and spatial
-dimension preservation.
+or duplicating heuristics. Special Reshape layout planning is co-located with
+this policy so pre/post permutations and reshape targets are not inferred in a
+separate exporter-only branch. The four function ASTs are identical to their
+former exporter definitions, and direct tests cover non-rank-4 passthrough,
+preferred channel selection, singleton-channel hints, ambiguous layouts,
+spatial dimension preservation, and each supported special Reshape form.
 
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor

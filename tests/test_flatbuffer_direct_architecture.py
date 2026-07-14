@@ -3979,6 +3979,7 @@ def test_generated_pytorch_rank4_shape_policy_has_single_owner() -> None:
         "_fast_precanonicalize_rank4_layout_hint",
         "_normalize_cf_rank4_shape",
         "_normalize_nhwc_rank4_shape",
+        "_reshape_special_layout_plan",
     ):
         assert function_name in policy_functions
         assert function_name not in exporter_functions

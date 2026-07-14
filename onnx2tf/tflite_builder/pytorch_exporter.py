@@ -106,6 +106,7 @@ from onnx2tf.tflite_builder.pytorch_shape_policy import (
     _fast_precanonicalize_rank4_layout_hint,
     _normalize_cf_rank4_shape,
     _normalize_nhwc_rank4_shape,
+    _reshape_special_layout_plan,
 )
 from onnx2tf.tflite_builder.pytorch_naming import (
     _build_buffer_attr_name_map,
@@ -26911,102 +26912,6 @@ def _build_model_ir_producer_consumer_index(
         for input_name in op.inputs:
             consumers.setdefault(str(input_name), []).append(int(op_index))
     return producers, consumers
-
-
-def _reshape_special_layout_plan(
-    *,
-    input_shape: Optional[Sequence[int]],
-    output_shape: Optional[Sequence[int]],
-    input_layout: Optional[str],
-    output_layout: Optional[str],
-) -> Optional[Dict[str, Any]]:
-    if input_shape is None or output_shape is None:
-        return None
-    src = [int(v) for v in list(input_shape)]
-    dst = [int(v) for v in list(output_shape)]
-    in_layout = str(input_layout or "").upper()
-    out_layout = str(output_layout or "").upper()
-    if (
-        in_layout == "NCHW"
-        and len(src) == 4
-        and len(dst) == 3
-        and int(src[0]) == 1
-        and int(src[2]) == int(dst[0])
-        and int(src[3]) == int(dst[1])
-        and int(src[1]) == int(dst[2])
-    ):
-        return {
-            "pre_perm": [0, 2, 3, 1],
-            "reshape_shape": list(dst),
-            "post_perm": None,
-        }
-    if (
-        len(src) == 3
-        and len(dst) == 4
-        and int(dst[0]) == 1
-        and int(src[0]) == int(dst[2])
-        and int(src[1]) == int(dst[3])
-        and int(src[2]) == int(dst[1])
-        and out_layout == "NCHW"
-    ):
-        return {
-            "pre_perm": None,
-            "reshape_shape": [1, int(src[0]), int(src[1]), int(src[2])],
-            "post_perm": [0, 3, 1, 2],
-        }
-    if (
-        len(src) == 4
-        and len(dst) == 4
-        and int(src[0]) == int(dst[0])
-        and any(int(v) == 1 for v in src[1:])
-    ):
-        if [int(src[0]), int(src[3]), int(src[1]), int(src[2])] == dst:
-            return {
-                "pre_perm": [0, 3, 1, 2],
-                "reshape_shape": list(dst),
-                "post_perm": None,
-            }
-        if [int(src[0]), int(src[2]), int(src[3]), int(src[1])] == dst:
-            return {
-                "pre_perm": [0, 2, 3, 1],
-                "reshape_shape": list(dst),
-                "post_perm": None,
-            }
-    if (
-        in_layout == "NCHW"
-        and out_layout == "NCDHW"
-        and len(src) == 4
-        and len(dst) == 5
-        and int(src[0]) == int(dst[0])
-        and int(src[1]) == 1
-        and int(dst[2]) == 1
-        and int(dst[3]) == 1
-        and int(src[2]) == int(dst[4])
-        and int(src[3]) == int(dst[1])
-    ):
-        return {
-            "pre_perm": [0, 3, 1, 2],
-            "reshape_shape": list(dst),
-            "post_perm": None,
-        }
-    if (
-        in_layout == "NCHW"
-        and len(src) == 4
-        and len(dst) >= 5
-        and int(src[0]) == int(dst[0])
-        and int(src[2]) == int(dst[1])
-        and int(src[3]) == int(dst[2])
-    ):
-        trailing_product = 1
-        for dim in dst[3:]:
-            trailing_product *= int(dim)
-        if int(src[1]) == int(trailing_product):
-            return {
-                "pre_perm": [0, 2, 3, 1],
-                "reshape_shape": list(dst),
-                "post_perm": None,
-            }
-    return None
 
 
 def _reshape_is_plain_singleton_axis_drop(
