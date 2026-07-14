@@ -4407,6 +4407,39 @@ ModelIR/statistics equality for valid private one/two-match fixtures and a
 shared-four-constant fixture, while near-equal grids, absent float metadata,
 and public bridges are now no-ops.
 
+Quantized TransposeConv QDQ cleanup is owned by
+`passes/quantized_transpose_conv.py`. One optional or local
+`ModelIRGraphIndex` enumerates graph-order Dequantize candidates, proves the
+exclusive and topologically ordered TransposeConv/Quantize consumers, applies
+lineage-aware input/output rewrites, and removes both wrappers differentially.
+Independent chains therefore share one current index, and all three production
+call sites supply the Session-owned LayoutState. Graphs missing any required
+operator family retain historical unused-tensor and optional LayoutState
+pruning without allocating an index. A graph containing the complete family
+but no valid candidate is a complete no-op.
+
+The retained operator keeps the exact TFLite input roles `[output_shape,
+filter, data]`, its options, axis semantics, ONNX provenance, and at least
+opcode version three. Input and output activations independently require valid
+finite positive per-tensor INT8 grids with in-range zero points; they need not
+share a grid. Quantized/float shape and signature metadata must agree at each
+boundary, and both float bridges must share a floating dtype. Every bridge is
+private, uniquely produced, exclusively consumed, and ordered; the quantized
+output cannot also be a graph input.
+
+The producer-free rank-four filter is planned before mutation. A valid INT8
+filter remains unchanged. A finite FLOAT16/FLOAT32/FLOAT64 filter is quantized
+in place only when it is private and exclusively consumed by this operator;
+shared or public filters receive a deterministic `_q` clone. Filter metadata
+must exactly describe its NumPy buffer. Output-grid cloning, filter data,
+ownership, name reservation, and all topology/metadata guards finish before
+the first mutation. This prevents the former partial conversion of a private
+float filter when output-grid cloning raises, preserves public float filters,
+and rejects missing bridge metadata, public-input bridges, invalid activation
+grids, produced constants, and malformed buffers transactionally. Exact
+former-function differential execution confirms complete ModelIR/statistics
+equality for valid one/two-chain and shared-filter fixtures.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

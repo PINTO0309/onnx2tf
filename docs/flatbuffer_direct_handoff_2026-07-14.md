@@ -8,16 +8,18 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit gives expanded HardSigmoid QDQ cleanup one
-semantic owner in `passes/quantized_hardsigmoid.py`. One maintained
+The latest implementation unit gives quantized TransposeConv QDQ cleanup one
+semantic owner in `passes/quantized_transpose_conv.py`. One maintained
 `ModelIRGraphIndex` supplies graph-order chain traversal, exact consumers and
-producers, constant ownership, indexed edge rewrites, and differential wrapper
-removal. All four scalar quantizations and clone names are planned before any
-mutation. Exact INT8/UINT8 grids, scalar representability, shape/signature,
-operator/output identity, lineage, statistics, and pruning retain valid former
-behavior. Near-equal grids, missing float tensors, public bridges, duplicate
-producers, invalid metadata, and failed clone planning are complete no-ops;
-public scalar constants are cloned instead of mutated.
+producers, indexed edge rewrites, and differential wrapper removal. Filter
+ownership, quantized data, deterministic clone name, output metadata, and the
+output quantization clone are planned before mutation. Independent valid INT8
+activation grids, exact output-shape/filter/data roles, shape/signature,
+operator identity, provenance, statistics, and pruning retain valid former
+behavior. Missing bridge tensors, public bridges, duplicate producers,
+invalid grids or metadata, produced/malformed filters, and failed clone
+planning are complete no-ops; shared and public float filters are cloned
+instead of mutated.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -39,7 +41,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains eighty-one coherent continuations:
+The current `fb-refactor5` work contains eighty-two coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -213,8 +215,10 @@ The current `fb-refactor5` work contains eighty-one coherent continuations:
   with transactional topology, grid, and metadata guards;
 - `2a6178f6` moves canonical last-axis quantized Softmax cleanup to one indexed
   owner with transactional option, grid, and metadata guards;
-- the current checkpoint moves expanded HardSigmoid QDQ cleanup to one indexed
-  owner with a complete four-constant transaction.
+- `163f9875` moves expanded HardSigmoid QDQ cleanup to one indexed owner with
+  a complete four-constant transaction;
+- the current checkpoint moves quantized TransposeConv QDQ cleanup to one
+  indexed owner with a complete filter/output transaction.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -233,8 +237,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/quantized_hardsigmoid.py`;
-- `tests/test_flatbuffer_direct_indexed_quantized_hardsigmoid_fold.py`;
+- `onnx2tf/tflite_builder/passes/quantized_transpose_conv.py`;
+- `tests/test_flatbuffer_direct_indexed_quantized_transpose_conv.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -712,6 +716,24 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   required families retain historical pruning without index allocation; both
   production call sites pass LayoutState, which is synchronized after clones
   and pruning.
+- Quantized TransposeConv cleanup accepts only the exact linear
+  `DEQUANTIZE -> TRANSPOSE_CONV -> QUANTIZE` grammar with TFLite input roles
+  `[output_shape, filter, data]`. Input and output activations independently
+  require finite positive per-tensor INT8 grids and in-range zero points.
+  Their quantized/float shape and signature metadata must match at each
+  boundary, the bridges must share a floating dtype, and both bridges are
+  private, uniquely produced, exclusively consumed, and topologically ordered.
+  The quantized output cannot also be a graph input.
+- Filter conversion is a pre-mutation plan. A producer-free rank-four INT8
+  filter with matching buffer metadata and a valid grid remains unchanged. A
+  finite FLOAT16/FLOAT32/FLOAT64 filter is quantized in place only when it is
+  private and exclusive; shared or public filters receive a deterministic
+  `_q` clone. The filter data/grid/name and output quantization clone all
+  complete before indexed input/output mutation. Fault injection proves that
+  output-grid clone failure leaves the complete ModelIR unchanged, whereas the
+  former helper had already converted a private float filter before raising.
+  Missing families retain historical pruning without index allocation; all
+  three production call sites pass the Session LayoutState.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -1978,6 +2000,29 @@ sequential quantization/evaluation/coverage smoke passed with `3 passed`.
 Ruff on the new owner/test and architecture test, syntax compilation, and
 `git diff --check` passed. No Tier corpus conversion was run.
 
+The indexed quantized-TransposeConv checkpoint compiles the complete prior
+committed function and preserves exact ModelIR/statistics for valid private
+one- and two-chain fixtures and a shared-filter fixture. Differential checks
+prove that missing float input/output tensor records and a public-input bridge
+formerly folded, a public float filter was mutated in place, an invalid
+negative input scale was accepted, and output-grid clone failure changed a
+private float filter before raising. The new owner rejects or clones each case
+transactionally. Focused coverage verifies one-index multi-match execution,
+maintained-index and LayoutState equivalence, private/shared/public and
+already-INT8 filter ownership, exact output-shape/filter/data roles, operator
+options/version/provenance, every public/fan-out/duplicate/order/arity
+boundary, independent activation-grid validity, bridge dtype and metadata,
+filter rank/buffer/dtype/grid/producer constraints, clone-failure transaction,
+missing-family/no-index pruning, and unique semantic ownership with
+`61 passed`. Architecture, core, pass-efficiency, the established quantized
+Pool and quantization-cleanup suites, all prior indexed quantized folds,
+quantized activation and expanded-HardSigmoid bridge/fold suites, and the new
+TransposeConv suite passed together with `590 passed`. TensorFlow-import-
+blocked direct and `-cotof` plus the sequential quantization/evaluation/
+coverage smoke passed with `3 passed`. Ruff on the new owner/test, scoped
+architecture/lowerer checks, syntax compilation, and `git diff --check`
+passed. No Tier corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -2027,11 +2072,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit `_optimize_dequant_transposeconv_quantize_chains` as the next bounded
-   quantized-op cleanup. Preserve output-shape/filter/data input roles, weight
-   ownership and quantization, activation grids, output metadata/version,
-   public/fan-out boundaries, statistics, and pruning while replacing repeated
-   graph maps with one maintained index and a complete pre-mutation plan.
+3. Audit `_repair_decomposed_instance_normalization_layouts` as the next
+   bounded raw-map helper. Preserve its decomposed-statistics grammar, layout
+   evidence, public/fan-out boundaries, metadata, statistics, and pruning while
+   deciding whether one maintained index can replace its compatibility map
+   without broadening model-specific behavior.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

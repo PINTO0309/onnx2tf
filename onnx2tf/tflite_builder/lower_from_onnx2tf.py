@@ -285,6 +285,9 @@ from onnx2tf.tflite_builder.passes.quantized_softmax import (
 from onnx2tf.tflite_builder.passes.quantized_hardsigmoid import (
     _optimize_dequant_hardsigmoid_quantize_chains as _optimize_dequant_hardsigmoid_quantize_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.quantized_transpose_conv import (
+    _optimize_dequant_transposeconv_quantize_chains as _optimize_dequant_transposeconv_quantize_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.split_fallback import (
     replace_unsupported_split_with_slice as _replace_unsupported_split_with_slice_pass,
 )
@@ -39972,160 +39975,15 @@ def _optimize_dequant_prelu_depthwise_quantize_chains(model_ir: ModelIR) -> Dict
     return _optimize_dequant_prelu_depthwise_quantize_chains_pass(model_ir)
 
 
-def _optimize_dequant_transposeconv_quantize_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold DEQUANTIZE->TRANSPOSE_CONV->QUANTIZE into quantized TRANSPOSE_CONV.
-
-    Target pattern:
-      Xq --DEQUANTIZE--> Xf --TRANSPOSE_CONV(Wf)--> Yf --QUANTIZE--> Yq
-
-    Rewritten:
-      Xq --TRANSPOSE_CONV(Wq)--> Yq
-
-    Safety conditions:
-    - Linear chain topology.
-    - TRANSPOSE_CONV data input is the DEQUANTIZE output.
-    - INT8 per-tensor activation quantization on Xq/Yq.
-    - Weight tensor is a constant rank-4 tensor.
-    """
-    folded = 0
-
-    def _unique_tensor_name(base: str) -> str:
-        name = str(base)
-        suffix = 1
-        while name in model_ir.tensors:
-            name = f"{base}_{suffix}"
-            suffix += 1
-        return name
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-
-        for dq_idx, dq_op in enumerate(model_ir.operators):
-            if str(dq_op.op_type) != "DEQUANTIZE" or len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
-                continue
-            q_in_name = str(dq_op.inputs[0])
-            f_in_name = str(dq_op.outputs[0])
-
-            tc_users = consumers.get(f_in_name, [])
-            if len(tc_users) != 1:
-                continue
-            tc_idx = int(tc_users[0])
-            tc_op = model_ir.operators[tc_idx]
-            if str(tc_op.op_type) != "TRANSPOSE_CONV" or len(tc_op.inputs) != 3 or len(tc_op.outputs) != 1:
-                continue
-            # TRANSPOSE_CONV inputs: [output_shape, filter, input]
-            if str(tc_op.inputs[2]) != f_in_name:
-                continue
-            f_out_name = str(tc_op.outputs[0])
-
-            q_users = consumers.get(f_out_name, [])
-            if len(q_users) != 1:
-                continue
-            q_idx = int(q_users[0])
-            q_op = model_ir.operators[q_idx]
-            if str(q_op.op_type) != "QUANTIZE" or len(q_op.inputs) != 1 or len(q_op.outputs) != 1:
-                continue
-            if str(q_op.inputs[0]) != f_out_name:
-                continue
-            q_out_name = str(q_op.outputs[0])
-
-            if f_in_name in model_ir.outputs or f_out_name in model_ir.outputs:
-                continue
-
-            q_in_tensor = model_ir.tensors.get(q_in_name, None)
-            q_out_tensor = model_ir.tensors.get(q_out_name, None)
-            f_out_tensor = model_ir.tensors.get(f_out_name, None)
-            if q_in_tensor is None or q_out_tensor is None:
-                continue
-            if not _all_per_tensor_quantized([q_in_tensor, q_out_tensor]):
-                continue
-
-            q_in_dtype = str(q_in_tensor.dtype)
-            q_out_dtype = str(q_out_tensor.dtype)
-            if q_in_dtype != "INT8" or q_out_dtype != "INT8":
-                continue
-            if _get_per_tensor_scale_zero_point(q_in_tensor.quantization) is None:
-                continue
-            if _get_per_tensor_scale_zero_point(q_out_tensor.quantization) is None:
-                continue
-
-            w_name = str(tc_op.inputs[1])
-            w_tensor = model_ir.tensors.get(w_name, None)
-            if w_tensor is None or not isinstance(w_tensor.data, np.ndarray):
-                continue
-            w_data = np.asarray(w_tensor.data)
-            if w_data.ndim != 4:
-                continue
-
-            if str(w_tensor.dtype) == "INT8" and _is_per_tensor_quantization(w_tensor.quantization):
-                w_q_name = w_name
-            elif str(w_tensor.dtype) in {"FLOAT32", "FLOAT16", "FLOAT64"}:
-                try:
-                    w_q, w_qparams = _quantize_tensor_per_tensor(
-                        np.asarray(w_tensor.data, dtype=np.float32),
-                        "INT8",
-                    )
-                except Exception:
-                    continue
-
-                w_users = [int(v) for v in consumers.get(w_name, [])]
-                if len(w_users) == 1 and int(w_users[0]) == int(tc_idx):
-                    w_q_name = w_name
-                    w_tensor.data = np.asarray(w_q)
-                    w_tensor.dtype = "INT8"
-                    w_tensor.shape = [int(v) for v in list(w_q.shape)]
-                    w_tensor.shape_signature = [int(v) for v in list(w_q.shape)]
-                    w_tensor.quantization = w_qparams
-                else:
-                    w_q_name = _unique_tensor_name(f"{w_name}_q")
-                    model_ir.tensors[w_q_name] = TensorIR(
-                        name=w_q_name,
-                        dtype="INT8",
-                        shape=[int(v) for v in list(w_q.shape)],
-                        shape_signature=[int(v) for v in list(w_q.shape)],
-                        data=np.asarray(w_q),
-                        is_variable=False,
-                        quantization=w_qparams,
-                    )
-            else:
-                continue
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=tc_op,
-                new_inputs=[str(tc_op.inputs[0]), w_q_name, q_in_name],
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=tc_op,
-                new_outputs=[q_out_name],
-            )
-            # Quantized TRANSPOSE_CONV kernels are exposed with newer opcode versions.
-            tc_op.version = max(int(tc_op.version), 3)
-
-            q_out_tensor.dtype = "INT8"
-            q_out_tensor.quantization = _clone_quantization(q_out_tensor.quantization)
-            if f_out_tensor is not None:
-                q_out_tensor.shape = [int(v) for v in list(f_out_tensor.shape)]
-                q_out_tensor.shape_signature = (
-                    [int(v) for v in list(f_out_tensor.shape_signature)]
-                    if f_out_tensor.shape_signature is not None
-                    else [int(v) for v in list(f_out_tensor.shape)]
-                )
-
-            for remove_idx in sorted([dq_idx, q_idx], reverse=True):
-                del model_ir.operators[remove_idx]
-            folded += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"folded_dequant_transposeconv_quantize_chains": int(folded)}
+def _optimize_dequant_transposeconv_quantize_chains(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    return _optimize_dequant_transposeconv_quantize_chains_pass(
+        model_ir,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_dequant_reshape_quantize_chains(model_ir: ModelIR) -> Dict[str, int]:
@@ -46952,7 +46810,10 @@ def lower_onnx_to_ir(
         _run_duplicate_quantized_prelu_pass_cluster(
             include_transpose=include_duplicate_transpose,
         )
-        _optimize_dequant_transposeconv_quantize_chains(model_ir)
+        _optimize_dequant_transposeconv_quantize_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         run_quantized_reshape_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -47112,7 +46973,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_dequant_transposeconv_quantize_chains(model_ir)
+        _optimize_dequant_transposeconv_quantize_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         run_quantized_reshape_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -47191,7 +47055,10 @@ def lower_onnx_to_ir(
         _run_layout_recovery_prefix_pass_sequence()
         _run_preadd_mean_attention_recovery_sequence()
         _run_attention_gate_qdq_recovery_sequence()
-        _optimize_dequant_transposeconv_quantize_chains(model_ir)
+        _optimize_dequant_transposeconv_quantize_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _run_quantized_activation_binary_bridge_recovery_sequence()
         # Binary bridge recovery can recreate pre/post transpose wrappers around CONCAT.
         _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
