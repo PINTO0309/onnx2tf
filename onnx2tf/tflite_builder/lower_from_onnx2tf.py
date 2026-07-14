@@ -50713,6 +50713,19 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
 
+    def _run_terminal_affine_concat_split_recovery_sequence() -> None:
+        _optimize_fold_mul_add_mul_affine_chains(model_ir)
+        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
+        _optimize_concat_mul_add_transpose_nhwc_bridge_chains(model_ir)
+        _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
+        _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains(model_ir)
+        _optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains(model_ir)
+        _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir)
+        _optimize_transpose_unary_split_concat_single_post_nchw(model_ir)
+        _optimize_transpose_split_channelwise_tail_to_single_post_nchw(model_ir)
+        _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir)
+        _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
+
     _set_post_progress_desc("outputs")
 
     # Outputs
@@ -51418,36 +51431,16 @@ def lower_onnx_to_ir(
     _optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains(model_ir)
     # Late bridge rewrites above can recreate strict
     # TRANSPOSE->MUL(const)->ADD(const)->TRANSPOSE fragments.
-    _optimize_fold_mul_add_mul_affine_chains(model_ir)
-    _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
-    _optimize_concat_mul_add_transpose_nhwc_bridge_chains(model_ir)
-    _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
-    _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains(model_ir)
-    _optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains(model_ir)
-    _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir)
-    _optimize_transpose_unary_split_concat_single_post_nchw(model_ir)
-    _optimize_transpose_split_channelwise_tail_to_single_post_nchw(model_ir)
-    _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir)
-    _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
+    _run_terminal_affine_concat_split_recovery_sequence()
     _optimize_transpose_pre_add_nhwc_chains(model_ir)
     _run_channel_slice_pad_mul_layout_pass_cluster()
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
     # Strict slice/merge cleanup above can recreate simple affine bridge tails:
     # TRANSPOSE->MUL(const)->TRANSPOSE->ADD(const).
-    _optimize_fold_mul_add_mul_affine_chains(model_ir)
-    _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
     # Keep this after pre_add/slice/pad strict rewrites: those passes can
     # recreate CONCAT->MUL->TRANSPOSE->ADD NHWC bridge tails.
-    _optimize_concat_mul_add_transpose_nhwc_bridge_chains(model_ir)
-    _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
-    _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains(model_ir)
-    _optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains(model_ir)
-    _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir)
-    _optimize_transpose_unary_split_concat_single_post_nchw(model_ir)
-    _optimize_transpose_split_channelwise_tail_to_single_post_nchw(model_ir)
-    _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir)
-    _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
+    _run_terminal_affine_concat_split_recovery_sequence()
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
     _run_late_spp_concat_unary_conv_pass_pair()
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)

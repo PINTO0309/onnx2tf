@@ -8,16 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit replaces two AST-identical terminal slice/
-Concat layout-recovery sequences with one ordered helper. Each site still
-executes the same 14 calls in the same surrounding position, from channel-
-slice/Pad/Mul cleanup through Concat affine and split-tail rewrites to final
-layout-Transpose cleanup. The registered runner remains unscoped because raw
-ModelIR mutators precede it. The preceding channel-slice bridge retains its
-site-specific `layout_state` argument, and the two distinct successors remain
-outside the helper. Runtime pass count is unchanged while the lowerer loses
-another 14 net lines and its registered-runner AST count falls from 121 to
-120.
+The latest implementation unit replaces two AST-identical absolute-terminal
+affine/Concat/split recovery sequences with one ordered helper. Each site still
+executes the same 11 raw ModelIR mutators in the same surrounding position,
+from affine folding and constant Mul/Add Transpose recovery through Concat
+affine, split-tail, and NHWC-axis sanitation. The first site remains after
+InstanceNorm recovery and before pre-Add; the second remains between two
+StridedSlice/Pad recovery calls. Runtime pass count and registered-runner AST
+count are unchanged while the lowerer loses another 7 net lines.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -39,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains forty-five coherent continuations:
+The current `fb-refactor5` work contains forty-six coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -135,8 +133,10 @@ The current `fb-refactor5` work contains forty-five coherent continuations:
   recovery suffixes while preserving the separate LayerNorm variant;
 - `329306d3` centralizes three identical 16-call layout/reshape/attention
   recovery prefixes while preserving their distinct successors;
-- the current checkpoint centralizes two identical 14-call terminal slice/
-  Concat layout-recovery sequences while retaining their boundary variants.
+- `40dcd142` centralizes two identical 14-call terminal slice/Concat layout-
+  recovery sequences while retaining their boundary variants;
+- the current checkpoint centralizes two identical 11-call terminal affine/
+  Concat/split recovery sequences between their distinct raw boundaries.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -1121,6 +1121,14 @@ Transpose ownership checks with `6 passed`. The complete architecture file
 passed with `131 passed`; artifact-metadata, artifact-policy, core, and pass-
 efficiency passed separately with `85 passed`, for a combined selection total
 of `216 passed`. Its single sequential quantization, evaluation, and coverage
+integration smoke passed with `1 passed`.
+
+The terminal affine/Concat/split recovery checkpoint passed focused exact-
+order, raw-boundary, terminal slice/Concat, QKV-boundary, and runner-
+diagnostics checks with `4 passed`. The complete architecture file passed with
+`132 passed`; artifact-metadata, artifact-policy, core, and pass-efficiency
+passed separately with `85 passed`, for a combined selection total of `217 passed`.
+Its single sequential quantization, evaluation, and coverage
 integration smoke passed with `1 passed`.
 
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing

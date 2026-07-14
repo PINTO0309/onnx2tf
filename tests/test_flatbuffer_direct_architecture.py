@@ -696,6 +696,77 @@ def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
     ]
 
 
+def test_lowerer_terminal_affine_concat_split_recovery_has_one_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_terminal_affine_concat_split_recovery_sequence"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "_optimize_fold_mul_add_mul_affine_chains",
+        "_optimize_transpose_mul_add_const_prepost_nhwc_chains",
+        "_optimize_concat_mul_add_transpose_nhwc_bridge_chains",
+        "_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains",
+        "_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains",
+        "_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains",
+        "_optimize_singleton_gate_conv_concat_nhwc_bridge_blocks",
+        "_optimize_transpose_unary_split_concat_single_post_nchw",
+        "_optimize_transpose_split_channelwise_tail_to_single_post_nchw",
+        "_optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw",
+        "_sanitize_probable_nhwc_axis_sensitive_ops",
+    ]
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert [call.func.id for call in helper_calls] == expected_order
+
+    invocation_indexes = [
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == helper_name
+    ]
+    assert len(invocation_indexes) == 2
+    previous_call_names = []
+    next_call_names = []
+    for index in invocation_indexes:
+        invocation = lowerer.body[index].value
+        assert invocation.args == []
+        assert invocation.keywords == []
+        previous = lowerer.body[index - 1]
+        following = lowerer.body[index + 1]
+        for boundary in (previous, following):
+            assert isinstance(boundary, ast.Expr)
+            assert isinstance(boundary.value, ast.Call)
+            assert isinstance(boundary.value.func, ast.Name)
+        previous_call_names.append(previous.value.func.id)
+        next_call_names.append(following.value.func.id)
+    assert previous_call_names == [
+        "_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains",
+        "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains",
+    ]
+    assert next_call_names == [
+        "_optimize_transpose_pre_add_nhwc_chains",
+        "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains",
+    ]
+
+
 def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

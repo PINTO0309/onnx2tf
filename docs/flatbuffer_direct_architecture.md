@@ -3707,6 +3707,18 @@ passthrough calls also remain outside as distinct successors. The extraction
 removes 14 net lowerer lines and reduces direct registered-runner call sites
 from 121 to 120 without changing runtime invocation count or order.
 
+Two AST-identical 11-call absolute-terminal affine/Concat/split recovery
+sequences are owned by
+`_run_terminal_affine_concat_split_recovery_sequence`. The helper preserves
+affine folding, constant Mul/Add Transpose recovery, four Concat-affine
+variants, singleton-gate Concat, three split-tail variants, and NHWC-axis
+sanitation. It contains only existing raw ModelIR mutators, so it creates no
+new pass-state scope. The first site remains after InstanceNorm recovery and
+before pre-Add; the second remains between two StridedSlice/Pad recovery calls.
+Those differing boundaries are asserted outside the helper. The extraction
+removes 7 net lowerer lines without changing runtime invocation count, order,
+or the registered-runner call-site count of 120.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
