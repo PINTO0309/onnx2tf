@@ -41631,6 +41631,8 @@ def _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(
 
 def _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Dict[str, int]:
     """
     Repair channelwise constants that became layout-misaligned after
@@ -41644,8 +41646,15 @@ def _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
     """
     repaired = 0
     binary_ops = {"ADD", "SUB", "MUL", "DIV", "MAXIMUM", "MINIMUM", "POW"}
-    consumers = _build_tensor_consumer_map(model_ir)
-    producers = _build_tensor_producer_map(model_ir)
+    graph_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
+    consumer_indices_snapshot = {
+        str(tensor_name): tuple(int(index) for index in indices)
+        for tensor_name, indices in graph_index.consumers.items()
+    }
 
     def _unique_tensor_name(base_name: str) -> str:
         candidate = str(base_name)
@@ -41667,12 +41676,9 @@ def _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
             return "NHWC"
         if lower_name.endswith("_nchw"):
             return "NCHW"
-        producer_index = producers.get(name, None)
-        if producer_index is None:
+        producer_op = graph_index.producer(name)
+        if producer_op is None:
             return None
-        if int(producer_index) < 0 or int(producer_index) >= len(model_ir.operators):
-            return None
-        producer_op = model_ir.operators[int(producer_index)]
         producer_op_type = str(producer_op.op_type)
         if producer_op_type in {
             "CONV_2D",
@@ -41686,8 +41692,9 @@ def _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
             return "NHWC"
         return None
 
-    for op in list(model_ir.operators):
-        if str(op.op_type) not in binary_ops or len(op.inputs) != 2:
+    for operator_index in graph_index.operator_indices_for_types(binary_ops):
+        op = model_ir.operators[int(operator_index)]
+        if len(op.inputs) != 2:
             continue
         input_names = [str(v) for v in list(op.inputs)]
 
@@ -41789,7 +41796,9 @@ def _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
             if as_is_broadcast == data_shape and not force_rotate_even_if_ambiguous:
                 continue
 
-            const_users = set(int(v) for v in consumers.get(str(const_input_name), []))
+            const_users = set(
+                consumer_indices_snapshot.get(str(const_input_name), ())
+            )
             if len(const_users) <= 1:
                 const_tensor.data = rotated_data.astype(const_data.dtype, copy=False)
                 const_tensor.shape = [int(v) for v in list(rotated_shape)]
@@ -41812,6 +41821,7 @@ def _repair_rank4_channelwise_broadcast_constants_to_runtime_layout(
                         str(clone_name) if str(v) == str(const_input_name) else str(v)
                         for v in list(op.inputs)
                     ],
+                    graph_index=graph_index,
                 )
 
             repaired += 1

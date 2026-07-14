@@ -3819,6 +3819,20 @@ dead pruning, dynamic metadata, HARD_SWISH repair, and Conv/RELU fusion, proves
 one index build, and compares the complete final ModelIR with the former
 ten-call sequence.
 
+Rank-four channelwise broadcast-constant repair now builds one
+`ModelIRGraphIndex` instead of independently scanning the graph for producers,
+consumers, and binary candidates. Exact ADD/SUB/MUL/DIV/MAXIMUM/MINIMUM/POW
+candidates come from indexed type dispatch, producer layout evidence uses the
+indexed producer, and cloned-constant input rewrites update consumers through
+the differential setter. The consumer indices are intentionally snapshotted
+at pass entry. This preserves the former artifact policy for a shared constant:
+every candidate that was shared at entry receives its own deterministic clone,
+even after earlier rewrites reduce the live fan-out. Focused tests block both
+legacy map builders, observe no index refresh beyond the supplied initial
+build, compare the maintained index with a fresh rebuild, and preserve the
+existing rank-three, rank-four, inverse-rotation, ambiguous-layout, and no-op
+characterizations.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

@@ -1469,6 +1469,52 @@ def test_lowerer_final_shape_activation_convergence_reuses_one_index() -> None:
     assert "remove_operator" in fusion_call_names
 
 
+def test_rank4_broadcast_constant_repair_uses_one_graph_index() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_source = lowering_path.read_text(encoding="utf-8")
+    lowering_tree = ast.parse(lowering_source)
+    repair = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "_repair_rank4_channelwise_broadcast_constants_to_runtime_layout"
+    )
+    repair_source = ast.get_source_segment(lowering_source, repair)
+    assert repair_source is not None
+    call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(repair)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in call_names
+    assert "_build_tensor_producer_map" not in call_names
+    assert "ModelIRGraphIndex" in call_names
+    assert "operator_indices_for_types" in call_names
+    assert "producer" in call_names
+    assert "_set_operator_inputs" in call_names
+    assert "for tensor_name, indices in graph_index.consumers.items()" in (
+        repair_source
+    )
+    setter_call = next(
+        node
+        for node in ast.walk(repair)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_set_operator_inputs"
+    )
+    graph_index_keyword = next(
+        keyword
+        for keyword in setter_call.keywords
+        if keyword.arg == "graph_index"
+    )
+    assert isinstance(graph_index_keyword.value, ast.Name)
+    assert graph_index_keyword.value.id == "graph_index"
+
+
 def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
