@@ -8,15 +8,16 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit removes duplicate direct/PyTorch recurrent
-orphan-step repair rules. One Torch-free `recurrent_alias` owner now preflights
-the exact `*_h_step_N`/`*_c_step_N` grammar, builds at most one
-`ModelIRGraphIndex`, finds the first matching Reshape through indexed shape-
-tensor consumers, and updates every alias consumer differentially. The direct
-wrapper preserves its count dictionary and the PyTorch wrapper preserves its
-`None` return. Multiple aliases, first-match order, public input/output,
-produced and missing aliases, no-consumer cleanup, and complete former direct
-behavior are characterized exactly.
+The latest implementation unit moves unbound-input layout repair out of the
+lowerer into one Torch/TensorFlow-free `unbound_input_layout` owner. Its
+DEQUANTIZE, RESHAPE/SHAPE/SPLIT, and MUL-alias families share one differential
+`ModelIRGraphIndex`; a graph without an issue builds no index. One candidate
+snapshot retains consumer identity while indexed insertions shift graph
+positions, and later source selection observes the updated producer index. The
+lowerer preserves its report dictionary and performs shape reconciliation with
+the maintained index. Five sequential repairs, MUL fan-out, nearest-source
+selection, protected mixed fan-out, and complete former behavior are
+characterized exactly.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -38,7 +39,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains fifty-nine coherent continuations:
+The current `fb-refactor5` work contains sixty coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -163,8 +164,10 @@ The current `fb-refactor5` work contains fifty-nine coherent continuations:
   repair pair and shares one index across its primary and fallback invocations;
 - `79d30ae1` indexes the wrong-way NCHW-to-NHWC Transpose-before-Conv
   sanitizer and removes its per-match consumer-map rebuild;
-- the current checkpoint centralizes direct and PyTorch recurrent orphan-step
-  alias repair in one Torch-free differential-index owner.
+- `1ad30cbc` centralizes direct and PyTorch recurrent orphan-step alias repair
+  in one Torch-free differential-index owner;
+- the current checkpoint extracts all unbound-input layout repair families to
+  one differential-index owner and removes their repeated graph rescans.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -183,9 +186,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/recurrent_alias.py`;
-- `onnx2tf/tflite_builder/passes/pytorch_recurrent.py`;
-- `tests/test_flatbuffer_direct_indexed_recurrent_alias.py`;
+- `onnx2tf/tflite_builder/passes/unbound_input_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_unbound_input_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -477,6 +479,17 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   retain the direct implementation's behavior. The direct and PyTorch modules
   are compatibility wrappers only and do not carry parallel match/rewrite
   rules.
+- Unbound nonconstant-input discovery and layout repair have one Torch/
+  TensorFlow-free owner in `passes/unbound_input_layout.py`. Standalone issue
+  reporting retains its lightweight producer-name scan. Repair first snapshots
+  issue consumers by object identity; it constructs one `ModelIRGraphIndex`
+  only when an issue exists, resolves current positions after each insertion,
+  and skips later issues once an earlier bridge produces the same tensor.
+  DEQUANTIZE exact/fallback source policy, nearest source ordering, SPLIT data
+  slot, MUL all-consumers guard, dtype/shape checks, quantization metadata,
+  unique perm naming, and insertion-before-consumer order remain unchanged.
+  The lowerer wrapper reconciles shapes with the maintained index and preserves
+  the existing stats key for both primary and fallback callers.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -1339,6 +1352,18 @@ with `113 passed`. The real PyTorch exporter normalization regression passed
 with `1 passed`, and the single sequential direct quantization, evaluation, and
 coverage integration smoke passed with `1 passed`.
 
+The indexed unbound-input layout checkpoint passed exact issue-report and
+former-implementation equivalence across DEQUANTIZE, SHAPE, RESHAPE, SPLIT,
+and two-consumer MUL-alias repair, plus nearest-source, quantization/signature,
+mixed-fan-out guard, one-index-build, no-issue/no-index, maintained-index, and
+ownership coverage plus nearest DEQUANTIZE fallback and strict exact-source
+preference with `8 passed`. Its complete related QLinear/layout selection
+passed with `9 passed`. The complete architecture file passed with
+`147 passed`; the lightweight core/indexed selection passed with `117 passed`.
+An actual GRU lowering/unbound-input check passed with `1 passed`, and the
+single sequential direct quantization, evaluation, and coverage integration
+smoke passed with `1 passed`.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1384,12 +1409,11 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit `_repair_unbound_nonconstant_operator_inputs_with_layout_transpose`
-   next as a staged checkpoint. It is called for both primary and fallback IR
-   and still rescans unbound inputs plus complete producer/consumer maps after
-   every insertion. First characterize its DEQUANTIZE, RESHAPE/SHAPE/SPLIT,
-   and MUL-alias families separately before changing index ownership or insert
-   ordering.
+2. Audit the bounded DEQUANTIZE-(RELU/RELU6)-QUANTIZE Transpose bridge cleanup
+   next. It rebuilds a complete consumer map after each match; preserve exact
+   inverse permutations, linear-chain guards, per-tensor quantization, public
+   outputs, operator order, and tensor metadata if moving candidate discovery,
+   rewrites, and removals to a differential index.
 3. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

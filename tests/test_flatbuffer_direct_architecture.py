@@ -1837,6 +1837,96 @@ def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:
         assert index_keyword.value.id == "graph_index"
 
 
+def test_unbound_input_layout_repair_has_one_indexed_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "unbound_input_layout.py"
+    )
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner_name = "repair_unbound_nonconstant_inputs_with_layout_transpose"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    owner_call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_producer_map" not in owner_source
+    assert "_build_tensor_consumer_map" not in owner_source
+    assert "model_ir.operators.insert" not in owner_source
+    assert "while True" not in owner_source
+    assert owner_source.count("ModelIRGraphIndex(model_ir)") == 1
+    assert "producer" in owner_call_names
+    assert "operator_index" in owner_call_names
+    assert "consumer_indices" in owner_call_names
+    assert "insert_operator" in owner_source
+
+    lowerer_source = lowerer_path.read_text(encoding="utf-8")
+    lowerer_tree = ast.parse(lowerer_source)
+    wrappers = {
+        node.name: node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        in {
+            "_find_unbound_nonconstant_operator_inputs",
+            "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose",
+        }
+    }
+    assert set(wrappers) == {
+        "_find_unbound_nonconstant_operator_inputs",
+        "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose",
+    }
+    find_source = ast.get_source_segment(
+        lowerer_source,
+        wrappers["_find_unbound_nonconstant_operator_inputs"],
+    )
+    repair_source = ast.get_source_segment(
+        lowerer_source,
+        wrappers[
+            "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
+        ],
+    )
+    assert find_source is not None
+    assert repair_source is not None
+    assert "find_unbound_nonconstant_operator_inputs(" in find_source
+    assert owner_name in repair_source
+    assert "graph_index=result.graph_index" in repair_source
+    assert "_build_tensor_producer_map" not in repair_source
+    assert "_build_tensor_consumer_map" not in repair_source
+
+    lowerer = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    wrapper_name = (
+        "_repair_unbound_nonconstant_operator_inputs_with_layout_transpose"
+    )
+    invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == wrapper_name
+    ]
+    assert [
+        call.args[0].id
+        for call in sorted(invocations, key=lambda candidate: candidate.lineno)
+    ] == ["model_ir", "fallback_ir"]
+
+
 def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

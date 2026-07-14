@@ -99,6 +99,10 @@ from onnx2tf.tflite_builder.passes.precision import (
 from onnx2tf.tflite_builder.passes.recurrent_alias import (
     repair_orphan_recurrent_step_tensors,
 )
+from onnx2tf.tflite_builder.passes.unbound_input_layout import (
+    find_unbound_nonconstant_operator_inputs,
+    repair_unbound_nonconstant_inputs_with_layout_transpose,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle import (
     _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather as _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather_pass,
     _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains as _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains_pass,
@@ -396,7 +400,11 @@ def _prune_dead_operators(
     )
 
 
-def _find_unbound_nonconstant_operator_inputs(model_ir: ModelIR) -> List[Dict[str, Any]]:
+def _find_unbound_nonconstant_operator_inputs(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> List[Dict[str, Any]]:
     """
     Detect operator inputs that are neither:
     - produced by another operator,
@@ -406,31 +414,10 @@ def _find_unbound_nonconstant_operator_inputs(model_ir: ModelIR) -> List[Dict[st
     Such tensors become unexpected runtime-fed inputs in TFLite and can trigger
     errors like "Input tensor N lacks data".
     """
-    producers = _build_tensor_producer_map(model_ir)
-    model_inputs = {str(v) for v in list(model_ir.inputs)}
-    issues: List[Dict[str, Any]] = []
-
-    for op_index, op in enumerate(model_ir.operators):
-        for input_index, input_name_raw in enumerate(op.inputs):
-            input_name = str(input_name_raw)
-            if input_name == "":
-                continue
-            if input_name in model_inputs:
-                continue
-            if input_name in producers:
-                continue
-            tensor = model_ir.tensors.get(input_name, None)
-            if tensor is not None and tensor.data is not None:
-                continue
-            issues.append(
-                {
-                    "op_index": int(op_index),
-                    "op_type": str(op.op_type),
-                    "input_index": int(input_index),
-                    "tensor_name": str(input_name),
-                }
-            )
-    return issues
+    return find_unbound_nonconstant_operator_inputs(
+        model_ir,
+        graph_index=graph_index,
+    )
 
 
 def _repair_orphan_recurrent_step_tensors(
@@ -460,6 +447,8 @@ def _repair_orphan_recurrent_step_tensors(
 
 def _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Dict[str, int]:
     """
     Repair a strict subset of unbound dynamic inputs by inserting a layout transpose.
@@ -477,293 +466,20 @@ def _repair_unbound_nonconstant_operator_inputs_with_layout_transpose(
       renamed `_input_nhwc` output. Insert `TRANSPOSE(s, [0,3,1,2]) -> t`
       to reconnect dropped alias names.
     """
-    repaired = 0
-
-    def _unique_tensor_name(base: str) -> str:
-        name = str(base)
-        serial = 1
-        while name in model_ir.tensors:
-            name = f"{base}_{serial}"
-            serial += 1
-        return name
-
-    while True:
-        issues = _find_unbound_nonconstant_operator_inputs(model_ir)
-        if len(issues) <= 0:
-            break
-
-        producers = _build_tensor_producer_map(model_ir)
-        consumers = _build_tensor_consumer_map(model_ir)
-        changed = False
-
-        for issue in issues:
-            op_index = int(issue.get("op_index", -1))
-            input_index = int(issue.get("input_index", -1))
-            tensor_name = str(issue.get("tensor_name", ""))
-            if op_index < 0 or op_index >= len(model_ir.operators):
-                continue
-            consumer_op = model_ir.operators[int(op_index)]
-            consumer_op_type = str(consumer_op.op_type)
-            if consumer_op_type == "DEQUANTIZE" and int(input_index) == 0:
-                orphan_tensor = model_ir.tensors.get(tensor_name, None)
-                if (
-                    orphan_tensor is not None
-                    and orphan_tensor.data is None
-                    and _is_fully_known_positive_shape(orphan_tensor.shape)
-                    and len(orphan_tensor.shape) == 4
-                ):
-                    orphan_shape = [int(v) for v in list(orphan_tensor.shape)]
-                    expected_source_shape = [
-                        int(orphan_shape[0]),
-                        int(orphan_shape[2]),
-                        int(orphan_shape[3]),
-                        int(orphan_shape[1]),
-                    ]
-                    source_name: Optional[str] = None
-                    source_idx: Optional[int] = None
-                    exact_source_name = f"{tensor_name}_nhwc_bridge"
-                    exact_source_idx = producers.get(exact_source_name, None)
-                    if exact_source_idx is not None:
-                        source_name = str(exact_source_name)
-                        source_idx = int(exact_source_idx)
-                    else:
-                        for candidate_name, candidate_idx in producers.items():
-                            candidate_name = str(candidate_name)
-                            candidate_idx = int(candidate_idx)
-                            if candidate_idx >= int(op_index):
-                                continue
-                            if not (
-                                candidate_name.endswith("_nhwc")
-                                or candidate_name.endswith("_nhwc_bridge")
-                            ):
-                                continue
-                            candidate_op = model_ir.operators[candidate_idx]
-                            candidate_tensor = model_ir.tensors.get(
-                                candidate_name,
-                                None,
-                            )
-                            if (
-                                str(candidate_op.op_type) != "ADD"
-                                or candidate_tensor is None
-                                or candidate_tensor.data is not None
-                                or str(candidate_tensor.dtype)
-                                != str(orphan_tensor.dtype)
-                                or [int(v) for v in list(candidate_tensor.shape)]
-                                != expected_source_shape
-                            ):
-                                continue
-                            if source_idx is None or candidate_idx > source_idx:
-                                source_name = candidate_name
-                                source_idx = candidate_idx
-                    source_tensor = (
-                        model_ir.tensors.get(source_name, None)
-                        if source_name is not None
-                        else None
-                    )
-                    if (
-                        source_idx is not None
-                        and source_name is not None
-                        and int(source_idx) < int(op_index)
-                        and source_tensor is not None
-                        and source_tensor.data is None
-                        and str(source_tensor.dtype) == str(orphan_tensor.dtype)
-                        and [int(v) for v in list(source_tensor.shape)]
-                        == expected_source_shape
-                    ):
-                        perm_name = _unique_tensor_name(
-                            f"{tensor_name}_repair_perm"
-                        )
-                        model_ir.tensors[perm_name] = TensorIR(
-                            name=perm_name,
-                            dtype="INT32",
-                            shape=[4],
-                            shape_signature=[4],
-                            data=np.asarray([0, 3, 1, 2], dtype=np.int32),
-                            is_variable=False,
-                        )
-                        model_ir.operators.insert(
-                            int(op_index),
-                            OperatorIR(
-                                op_type="TRANSPOSE",
-                                inputs=[str(source_name), perm_name],
-                                outputs=[tensor_name],
-                                options={},
-                            ),
-                        )
-                        orphan_tensor.quantization = _clone_quantization(
-                            source_tensor.quantization
-                        )
-                        repaired += 1
-                        changed = True
-                        break
-
-            target_input_index = 0
-            if consumer_op_type == "SPLIT":
-                target_input_index = 1
-            if consumer_op_type in ["RESHAPE", "SHAPE", "SPLIT"] and int(input_index) == int(target_input_index):
-                if input_index >= len(consumer_op.inputs) or str(consumer_op.inputs[input_index]) != tensor_name:
-                    continue
-
-                orphan_tensor = model_ir.tensors.get(tensor_name, None)
-                if orphan_tensor is None or not _is_fully_known_positive_shape(orphan_tensor.shape):
-                    continue
-                orphan_shape = [int(v) for v in list(orphan_tensor.shape)]
-                if len(orphan_shape) != 4:
-                    continue
-
-                n, c, h, w = [int(v) for v in list(orphan_shape)]
-                expected_source_shape = [int(n), int(h), int(w), int(c)]
-
-                best_source_name: Optional[str] = None
-                best_source_op_index = -1
-                for produced_name, source_op_index in producers.items():
-                    source_idx = int(source_op_index)
-                    if source_idx >= int(op_index):
-                        continue
-                    source_tensor = model_ir.tensors.get(str(produced_name), None)
-                    if source_tensor is None:
-                        continue
-                    if source_tensor.data is not None:
-                        continue
-                    if not _is_fully_known_positive_shape(source_tensor.shape):
-                        continue
-                    source_shape = [int(v) for v in list(source_tensor.shape)]
-                    if source_shape != expected_source_shape:
-                        continue
-                    if source_idx > int(best_source_op_index):
-                        best_source_op_index = int(source_idx)
-                        best_source_name = str(produced_name)
-
-                if best_source_name is None:
-                    continue
-
-                perm_name = _unique_tensor_name(f"{tensor_name}_repair_perm")
-                model_ir.tensors[perm_name] = TensorIR(
-                    name=perm_name,
-                    dtype="INT32",
-                    shape=[4],
-                    shape_signature=[4],
-                    data=np.asarray([0, 3, 1, 2], dtype=np.int32),
-                    is_variable=False,
-                )
-
-                model_ir.operators.insert(
-                    int(op_index),
-                    OperatorIR(
-                        op_type="TRANSPOSE",
-                        inputs=[str(best_source_name), str(perm_name)],
-                        outputs=[str(tensor_name)],
-                        options={},
-                    ),
-                )
-
-                repaired += 1
-                changed = True
-                break
-
-            # Alias-repair fallback: recover dropped ONNX-style intermediate names
-            # (e.g. `input.xxx`) when a same-shape NHWC ADD output exists nearby.
-            if input_index != 0:
-                continue
-            if consumer_op_type != "MUL":
-                continue
-            if input_index >= len(consumer_op.inputs) or str(consumer_op.inputs[input_index]) != tensor_name:
-                continue
-            if not str(tensor_name).startswith("input."):
-                continue
-            tensor_consumers = [int(v) for v in consumers.get(str(tensor_name), [])]
-            if len(tensor_consumers) == 0:
-                continue
-            if not all(
-                0 <= int(idx) < len(model_ir.operators)
-                and str(model_ir.operators[int(idx)].op_type) == "MUL"
-                for idx in tensor_consumers
-            ):
-                continue
-            if not all(
-                len(model_ir.operators[int(idx)].inputs) > 0
-                and str(model_ir.operators[int(idx)].inputs[0]) == str(tensor_name)
-                for idx in tensor_consumers
-            ):
-                continue
-
-            orphan_tensor = model_ir.tensors.get(tensor_name, None)
-            if orphan_tensor is None or not _is_fully_known_positive_shape(orphan_tensor.shape):
-                continue
-            orphan_shape = [int(v) for v in list(orphan_tensor.shape)]
-            orphan_dtype = str(orphan_tensor.dtype)
-            if len(orphan_shape) != 4:
-                continue
-            n, c, h, w = [int(v) for v in list(orphan_shape)]
-            expected_source_shape = [int(n), int(h), int(w), int(c)]
-
-            best_source_name: Optional[str] = None
-            best_source_op_index = -1
-            for produced_name, source_op_index in producers.items():
-                source_idx = int(source_op_index)
-                if source_idx >= int(op_index):
-                    continue
-                source_name = str(produced_name)
-                if not source_name.endswith("_input_nhwc"):
-                    continue
-                source_op = model_ir.operators[int(source_idx)]
-                if str(source_op.op_type) != "ADD":
-                    continue
-                source_tensor = model_ir.tensors.get(source_name, None)
-                if source_tensor is None or source_tensor.data is not None:
-                    continue
-                if not _is_fully_known_positive_shape(source_tensor.shape):
-                    continue
-                if [int(v) for v in list(source_tensor.shape)] != expected_source_shape:
-                    continue
-                if str(source_tensor.dtype) != orphan_dtype:
-                    continue
-                if int(source_idx) > int(best_source_op_index):
-                    best_source_op_index = int(source_idx)
-                    best_source_name = str(source_name)
-
-            if best_source_name is None:
-                continue
-
-            perm_name = _unique_tensor_name(f"{tensor_name}_repair_perm")
-            model_ir.tensors[perm_name] = TensorIR(
-                name=perm_name,
-                dtype="INT32",
-                shape=[4],
-                shape_signature=[4],
-                data=np.asarray([0, 3, 1, 2], dtype=np.int32),
-                is_variable=False,
-            )
-
-            model_ir.operators.insert(
-                int(op_index),
-                OperatorIR(
-                    op_type="TRANSPOSE",
-                    inputs=[str(best_source_name), str(perm_name)],
-                    outputs=[str(tensor_name)],
-                    options={},
-                ),
-            )
-            source_tensor = model_ir.tensors.get(str(best_source_name), None)
-            if source_tensor is not None:
-                orphan_tensor.quantization = _clone_quantization(source_tensor.quantization)
-                orphan_tensor.shape_signature = (
-                    [int(v) for v in list(source_tensor.shape_signature)]
-                    if source_tensor.shape_signature is not None
-                    else [int(v) for v in list(orphan_shape)]
-                )
-
-            repaired += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if repaired > 0:
-        _reconcile_static_tensor_shapes(model_ir)
-    return {"repaired_unbound_nonconstant_inputs_with_layout_transpose": int(repaired)}
-
+    result = repair_unbound_nonconstant_inputs_with_layout_transpose(
+        model_ir,
+        graph_index=graph_index,
+    )
+    if result.repaired > 0:
+        _reconcile_static_tensor_shapes(
+            model_ir,
+            graph_index=result.graph_index,
+        )
+    return {
+        "repaired_unbound_nonconstant_inputs_with_layout_transpose": int(
+            result.repaired
+        )
+    }
 
 def _count_ops_by_type(model_ir: ModelIR, op_type: str) -> int:
     target = str(op_type)

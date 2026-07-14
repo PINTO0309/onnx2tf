@@ -3899,6 +3899,29 @@ multiple aliases, first-match order, public boundaries, missing and produced
 aliases, no-consumer cleanup, zero-candidate allocation, and maintained-index
 equivalence.
 
+Unbound nonconstant-input discovery and layout repair are owned by the Torch/
+TensorFlow-free `passes/unbound_input_layout.py` module. Standalone reporting
+keeps a lightweight producer-name scan and returns the existing issue schema.
+Repair snapshots consumer objects in graph/input order and builds one
+`ModelIRGraphIndex` only when an issue exists. Current operator positions are
+resolved by identity before every insertion, so one differential
+`insert_operator()` call updates all producer, consumer, identity, and type
+indexes without rescanning the graph. Later candidates observe newly inserted
+producers and skip duplicate repairs for a shared orphan.
+
+The owner keeps three explicit semantic families: DEQUANTIZE uses the exact
+`_nhwc_bridge` preference and restricted ADD fallback; RESHAPE, SHAPE, and
+SPLIT choose the nearest preceding compatible runtime tensor; ONNX-style
+`input.*` MUL aliases require every consumer to be MUL data input zero and a
+nearest compatible ADD `_input_nhwc` source. Shape, dtype, quantization,
+signature, unique permutation tensor, and insertion-order policies are
+unchanged. The lowerer wrapper preserves the stats schema and reconciles shape
+metadata using the returned current index. Exact former-implementation
+comparison covers five sequential insertions and two-consumer MUL fan-out;
+separate checks prove nearest DEQUANTIZE fallback, strict exact-source
+preference, no index allocation for clean graphs, and equality with a fresh
+index rebuild.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
