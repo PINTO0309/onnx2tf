@@ -1,3 +1,5 @@
+import random
+
 import numpy as np
 import pytest
 
@@ -62,6 +64,106 @@ def test_dependency_safe_split_points_chain() -> None:
     model_ir = _make_chain_model_ir(op_count=6)
     points = find_dependency_safe_split_points(model_ir)
     assert [point["index"] for point in points] == [1, 2, 3, 4, 5]
+    assert [point["crossing_tensors"] for point in points] == [
+        ["t0"],
+        ["t1"],
+        ["t2"],
+        ["t3"],
+        ["t4"],
+    ]
+
+
+def _reference_dependency_safe_split_points(
+    model_ir: ModelIR,
+) -> list[dict[str, object]]:
+    op_count = len(model_ir.operators)
+    if op_count <= 1:
+        return []
+    producer_index: dict[str, int] = {}
+    for op_idx, op in enumerate(model_ir.operators):
+        for output_name in op.outputs:
+            if output_name and output_name not in producer_index:
+                producer_index[output_name] = op_idx
+
+    points: list[dict[str, object]] = []
+    for boundary in range(1, op_count):
+        valid = True
+        crossing_tensors: set[str] = set()
+        for op_idx, op in enumerate(model_ir.operators):
+            for input_name in op.inputs:
+                if not input_name:
+                    continue
+                producer = producer_index.get(input_name)
+                if producer is None:
+                    continue
+                if op_idx < boundary and producer >= boundary:
+                    valid = False
+                    break
+                if op_idx >= boundary and producer < boundary:
+                    crossing_tensors.add(input_name)
+            if not valid:
+                break
+        if valid:
+            points.append(
+                {
+                    "index": boundary,
+                    "crossing_count": len(crossing_tensors),
+                    "crossing_tensors": sorted(crossing_tensors),
+                }
+            )
+    return points
+
+
+def test_dependency_safe_split_points_matches_legacy_randomized_graphs() -> None:
+    rng = random.Random(20260714)
+    for case_index in range(200):
+        op_count = rng.randint(0, 40)
+        tensor_pool = [f"t{idx}" for idx in range(max(1, op_count // 2))]
+        model_ir = ModelIR(name=f"random_split_graph_{case_index}")
+        for op_idx in range(op_count):
+            inputs = [
+                rng.choice(tensor_pool + ["external", ""])
+                for _ in range(rng.randint(0, 4))
+            ]
+            output_name = rng.choice(tensor_pool)
+            model_ir.operators.append(
+                OperatorIR(
+                    op_type="DUMMY",
+                    inputs=inputs,
+                    outputs=[output_name],
+                )
+            )
+
+        assert find_dependency_safe_split_points(
+            model_ir
+        ) == _reference_dependency_safe_split_points(model_ir)
+
+
+def test_dependency_safe_split_points_reads_each_operator_edge_list_once() -> None:
+    access_counts = {"inputs": 0, "outputs": 0}
+
+    class _CountingOperator:
+        def __init__(self, index: int) -> None:
+            self.index = int(index)
+
+        @property
+        def inputs(self):
+            access_counts["inputs"] += 1
+            return ["x" if self.index == 0 else f"t{self.index - 1}"]
+
+        @property
+        def outputs(self):
+            access_counts["outputs"] += 1
+            return [f"t{self.index}"]
+
+    op_count = 256
+    model_ir = ModelIR(name="linear_split_scan")
+    model_ir.operators = [_CountingOperator(index) for index in range(op_count)]
+
+    points = find_dependency_safe_split_points(model_ir)
+
+    assert len(points) == op_count - 1
+    assert access_counts == {"inputs": op_count, "outputs": op_count}
 
 
 def test_build_partition_model_ir_prunes_dead_branch_ops_and_inputs() -> None:

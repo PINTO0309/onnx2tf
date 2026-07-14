@@ -1626,6 +1626,16 @@ Boundary-based partition cropping follows the same operator contract: its
 newly constructed cropped ModelIR copies axis semantics and ONNX node/op
 provenance in addition to inputs, outputs, options, and version.
 
+Dependency-safe split-point discovery uses one producer scan and one consumer
+edge scan. Backward dependencies are represented as invalid-boundary range
+deltas, while forward tensors enter and leave an active crossing set through
+boundary events. This replaces the former full edge rescan for every possible
+boundary and preserves the exact ordered report, including first-producer
+selection, non-topological invalid boundaries, fan-out, external inputs, and
+duplicate tensor names. Runtime is proportional to operators, edges, and the
+crossing tensors that must be written to the report rather than
+`boundary_count * edge_count`.
+
 PyTorch layout-only Transpose cleanup is owned by the Torch-free
 `passes/pytorch_compat.py` boundary. It indexes initial `TRANSPOSE` objects and
 their live consumers once. Internal adapters rewire consumers and are removed

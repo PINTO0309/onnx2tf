@@ -1982,32 +1982,51 @@ def find_dependency_safe_split_points(model_ir: ModelIR) -> List[Dict[str, Any]]
             if out_name and out_name not in producer_index:
                 producer_index[out_name] = op_idx
 
-    points: List[Dict[str, Any]] = []
-    for boundary in range(1, op_count):
-        valid = True
-        crossing_tensors: Set[str] = set()
-        for op_idx, op in enumerate(model_ir.operators):
-            for input_name in op.inputs:
-                if not input_name:
-                    continue
-                producer = producer_index.get(input_name)
-                if producer is None:
-                    continue
-                if op_idx < boundary and producer >= boundary:
-                    valid = False
-                    break
-                if op_idx >= boundary and producer < boundary:
-                    crossing_tensors.add(input_name)
-            if not valid:
-                break
-        if valid:
-            points.append(
-                {
-                    "index": int(boundary),
-                    "crossing_count": int(len(crossing_tensors)),
-                    "crossing_tensors": sorted(list(crossing_tensors)),
-                }
+    invalid_boundary_delta = [0] * (op_count + 1)
+    last_forward_consumer: Dict[str, int] = {}
+    for consumer_idx, op in enumerate(model_ir.operators):
+        for input_name in op.inputs:
+            if not input_name:
+                continue
+            producer_idx = producer_index.get(input_name)
+            if producer_idx is None or producer_idx == consumer_idx:
+                continue
+            if consumer_idx < producer_idx:
+                invalid_boundary_delta[consumer_idx + 1] += 1
+                invalid_boundary_delta[producer_idx + 1] -= 1
+                continue
+            last_forward_consumer[input_name] = max(
+                int(last_forward_consumer.get(input_name, producer_idx)),
+                int(consumer_idx),
             )
+
+    crossing_starts: Dict[int, Set[str]] = {}
+    crossing_ends: Dict[int, Set[str]] = {}
+    for tensor_name, last_consumer_idx in last_forward_consumer.items():
+        producer_idx = int(producer_index[tensor_name])
+        crossing_starts.setdefault(producer_idx + 1, set()).add(tensor_name)
+        crossing_ends.setdefault(last_consumer_idx + 1, set()).add(tensor_name)
+
+    points: List[Dict[str, Any]] = []
+    invalid_dependency_count = 0
+    crossing_tensors: Set[str] = set()
+    for boundary in range(1, op_count):
+        invalid_dependency_count += int(invalid_boundary_delta[boundary])
+        ending_tensors = crossing_ends.get(boundary)
+        if ending_tensors is not None:
+            crossing_tensors.difference_update(ending_tensors)
+        starting_tensors = crossing_starts.get(boundary)
+        if starting_tensors is not None:
+            crossing_tensors.update(starting_tensors)
+        if invalid_dependency_count > 0:
+            continue
+        points.append(
+            {
+                "index": int(boundary),
+                "crossing_count": int(len(crossing_tensors)),
+                "crossing_tensors": sorted(list(crossing_tensors)),
+            }
+        )
     return points
 
 

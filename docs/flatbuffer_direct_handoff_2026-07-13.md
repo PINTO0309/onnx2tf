@@ -560,6 +560,16 @@ export remains inside the isolated artifact child. Architecture validation
 passes 78 tests and fixes both ownership boundaries. No model conversion or
 inference was run.
 
+Dependency-safe split-point discovery no longer rescans every operator edge
+for every candidate boundary. One producer/consumer pass builds backward-edge
+invalid ranges and forward crossing-set start/end events, preserving the exact
+legacy report. Two hundred fixed-seed random graphs, including non-topological
+edges and duplicate output names, match the former algorithm exactly; a
+256-op instrumentation fixture proves each input/output edge list is read once.
+All eight focused split-planner tests pass. A local synthetic 2,000-op chain
+microbenchmark improved from 0.405299s to 0.010556s (38.4x) on this host. No
+model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted
