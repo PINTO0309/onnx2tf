@@ -384,6 +384,87 @@ def test_lowerer_layout_reshape_attention_prefix_has_one_ordered_owner() -> None
     ]
 
 
+def test_lowerer_preadd_mean_attention_recovery_has_one_ordered_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_preadd_mean_attention_recovery_sequence"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "_optimize_transpose_pre_add_nhwc_chains",
+        "_optimize_transpose_pre_add_mul_add_prelu_nhwc_chains",
+        "_optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains",
+        "_optimize_transpose_mul_add_const_prepost_nhwc_chains",
+        "_optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains",
+        "_optimize_transpose_mean_mul_add_const_prepost_nhwc_chains",
+        "_run_mean_attention_layout_pass_cluster",
+    ]
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert [call.func.id for call in helper_calls] == expected_order
+
+    recovery_block = next(
+        statement
+        for statement in lowerer.body
+        if isinstance(statement, ast.If)
+        and isinstance(statement.test, ast.Name)
+        and statement.test.id == "optimize_layout_transpose_chains"
+        and sum(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == helper_name
+            for node in ast.walk(statement)
+        )
+        == 2
+    )
+    invocation_indexes = [
+        index
+        for index, statement in enumerate(recovery_block.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == helper_name
+    ]
+    assert len(invocation_indexes) == 2
+    previous_call_names = []
+    next_call_names = []
+    for index in invocation_indexes:
+        invocation = recovery_block.body[index].value
+        assert invocation.args == []
+        assert invocation.keywords == []
+        previous = recovery_block.body[index - 1]
+        following = recovery_block.body[index + 1]
+        for boundary in (previous, following):
+            assert isinstance(boundary, ast.Expr)
+            assert isinstance(boundary.value, ast.Call)
+            assert isinstance(boundary.value.func, ast.Name)
+        previous_call_names.append(previous.value.func.id)
+        next_call_names.append(following.value.func.id)
+    assert previous_call_names == [
+        "_run_layout_recovery_prefix_pass_sequence",
+        "_run_channel_shuffle_gather_layout_pass_cluster",
+    ]
+    assert next_call_names == [
+        "_run_attention_gate_qdq_recovery_sequence",
+        "_optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains",
+    ]
+
+
 def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -475,7 +556,7 @@ def test_lowerer_attention_gate_qdq_recovery_has_one_ordered_owner() -> None:
     assert len(direct_boundaries) == 2
     assert [previous.func.id for previous, _ in direct_boundaries] == [
         "_run_mean_attention_layout_pass_cluster",
-        "_run_mean_attention_layout_pass_cluster",
+        "_run_preadd_mean_attention_recovery_sequence",
     ]
     assert [following.func.id for _, following in direct_boundaries] == [
         "run_quantized_prelu_cleanup",
@@ -722,7 +803,7 @@ def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "_run_mean_attention_layout_pass_cluster"
     ]
-    assert len(helper_invocations) == 5
+    assert len(helper_invocations) == 4
 
 
 def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:

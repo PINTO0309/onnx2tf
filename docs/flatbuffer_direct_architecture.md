@@ -3754,6 +3754,18 @@ successors remain outside and are asserted as boundaries. The extraction
 removes 4 net lowerer lines without changing runtime invocation count, order,
 or the registered-runner call-site count of 118.
 
+Two AST-identical 7-call pre-Add/Mean attention recovery sequences are owned by
+`_run_preadd_mean_attention_recovery_sequence`. The helper preserves three
+pre-Add/PReLU/fan-out rewrites, constant Mul/Add and unary fan-out recovery,
+Mean/Mul/Add recovery, and the existing Mean/attention registered-pass cluster.
+The cluster keeps its own bounded state scope; no state is shared across the
+preceding raw ModelIR mutators. One caller remains after the broad layout-
+recovery prefix and before attention/gate/QDQ recovery, while the other remains
+after channel-shuffle/Gather recovery and before its distinct SA/PA and limited-
+gate suffix. The extraction removes 3 net lowerer lines without changing
+runtime invocation count, order, or the registered-runner call-site count of
+118.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

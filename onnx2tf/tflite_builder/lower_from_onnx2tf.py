@@ -50656,6 +50656,15 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
 
+    def _run_preadd_mean_attention_recovery_sequence() -> None:
+        _optimize_transpose_pre_add_nhwc_chains(model_ir)
+        _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
+        _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
+        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
+        _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
+        _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
+        _run_mean_attention_layout_pass_cluster()
+
     def _run_attention_gate_qdq_recovery_sequence() -> None:
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
         _optimize_sinet_mix_attention_double_logistic_nhwc_chains(model_ir)
@@ -50934,13 +50943,7 @@ def lower_onnx_to_ir(
         _optimize_concat_pre_quantize_dequantize(model_ir)
         _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
         _run_layout_recovery_prefix_pass_sequence()
-        _optimize_transpose_pre_add_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
-        _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _run_mean_attention_layout_pass_cluster()
+        _run_preadd_mean_attention_recovery_sequence()
         _run_attention_gate_qdq_recovery_sequence()
         _optimize_dequant_transposeconv_quantize_chains(model_ir)
         _run_quantized_activation_binary_bridge_recovery_sequence()
@@ -50968,13 +50971,7 @@ def lower_onnx_to_ir(
         _run_channel_shuffle_gather_layout_pass_cluster(
             include_post_gather_cleanup=True,
         )
-        _optimize_transpose_pre_add_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
-        _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
-        _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
-        _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
-        _run_mean_attention_layout_pass_cluster()
+        _run_preadd_mean_attention_recovery_sequence()
         _optimize_transpose_sa_pa_mirrorpad_nhwc_propagation_chains(model_ir)
         _run_gate_layout_pass_cluster(include_mixed_attention=False)
         for _ in range(2):
