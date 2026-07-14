@@ -1141,6 +1141,14 @@ match checkpoint `bcb2d4e` exactly; two direct policy contracts and the focused
 ownership gate pass, together with Ruff and syntax validation. The exporter
 shrank by another 131 lines. No model conversion or inference was run.
 
+Axis-0 tensor-mux Slice recognition now lives beside Affine LayerNorm and Swish
+in the Torch-free fusion-policy owner. The exact Cast/Sub condition arithmetic,
+then/else size products, merged Concat, and terminal Slice contract is preserved.
+The moved function AST matches checkpoint `cb1aaaf` exactly; the complete direct
+pattern fixture and focused ownership gate pass, together with Ruff and syntax
+validation. The exporter shrank by another 111 lines. No model conversion or
+inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

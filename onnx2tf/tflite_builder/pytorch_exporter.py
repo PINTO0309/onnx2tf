@@ -103,6 +103,7 @@ from onnx2tf.tflite_builder.pytorch_expression_policy import (
 )
 from onnx2tf.tflite_builder.pytorch_fusion_policy import (
     _match_affine_layer_norm_for_codegen,
+    _match_if_axis0_tensor_mux_slice_for_codegen,
     _match_swish_activation_pattern_for_codegen,
 )
 from onnx2tf.tflite_builder.pytorch_emitters import (
@@ -638,118 +639,6 @@ def _match_single_consumer_layout_bridge_transpose_for_codegen(
     if [int(v) for v in list(expected_perm)] != [int(v) for v in list(actual_perm)]:
         return None
     return output_name, bridge_op_idx
-
-
-def _match_if_axis0_tensor_mux_slice_for_codegen(
-    *,
-    model_ir: ModelIR,
-    producer_by_output_name: Dict[str, OperatorIR],
-    op: OperatorIR,
-) -> Optional[Dict[str, str]]:
-    if str(op.op_type) != "SLICE" or len(op.inputs) < 3:
-        return None
-
-    def _unwrap_axis0_concat_prefix(tensor_name: str) -> Optional[str]:
-        producer = producer_by_output_name.get(str(tensor_name), None)
-        if producer is None:
-            return str(tensor_name)
-        if str(producer.op_type) != "CONCATENATION" or int(producer.options.get("axis", 0)) != 0:
-            return str(tensor_name)
-        concat_inputs = [str(v) for v in list(producer.inputs)]
-        if len(concat_inputs) != 2:
-            return None
-        tail_values = _constant_int_list(model_ir.tensors.get(concat_inputs[1], None))
-        if tail_values is None:
-            return None
-        return concat_inputs[0]
-
-    merged_name = str(op.inputs[0])
-    begin_name = str(op.inputs[1])
-    size_name = str(op.inputs[2])
-
-    merged_producer = producer_by_output_name.get(merged_name, None)
-    if merged_producer is None:
-        return None
-    if str(merged_producer.op_type) != "CONCATENATION" or int(merged_producer.options.get("axis", 0)) != 0:
-        return None
-    merged_inputs = [str(v) for v in list(merged_producer.inputs)]
-    if len(merged_inputs) != 2:
-        return None
-
-    begin_axis0_name = _unwrap_axis0_concat_prefix(begin_name)
-    size_axis0_name = _unwrap_axis0_concat_prefix(size_name)
-    if begin_axis0_name is None or size_axis0_name is None:
-        return None
-
-    begin_axis0_producer = producer_by_output_name.get(begin_axis0_name, None)
-    size_axis0_producer = producer_by_output_name.get(size_axis0_name, None)
-    if begin_axis0_producer is None or size_axis0_producer is None:
-        return None
-    if str(begin_axis0_producer.op_type) != "MUL" or str(size_axis0_producer.op_type) != "ADD":
-        return None
-
-    begin_inputs = [str(v) for v in list(begin_axis0_producer.inputs)]
-    size_axis0_inputs = [str(v) for v in list(size_axis0_producer.inputs)]
-    if len(begin_inputs) != 2 or len(size_axis0_inputs) != 2:
-        return None
-
-    not_cond_i32_name = begin_inputs[0]
-    then_first_dim_name = begin_inputs[1]
-    size_then_name = size_axis0_inputs[0]
-    size_else_name = size_axis0_inputs[1]
-
-    size_then_producer = producer_by_output_name.get(size_then_name, None)
-    size_else_producer = producer_by_output_name.get(size_else_name, None)
-    if size_then_producer is None or size_else_producer is None:
-        return None
-    if str(size_then_producer.op_type) != "MUL" or str(size_else_producer.op_type) != "MUL":
-        return None
-
-    size_then_inputs = [str(v) for v in list(size_then_producer.inputs)]
-    size_else_inputs = [str(v) for v in list(size_else_producer.inputs)]
-    if len(size_then_inputs) != 2 or len(size_else_inputs) != 2:
-        return None
-
-    cond_i32_name = size_then_inputs[0]
-    size_then_first_dim_name = size_then_inputs[1]
-    size_else_not_cond_name = size_else_inputs[0]
-    else_first_dim_name = size_else_inputs[1]
-    if (
-        then_first_dim_name != size_then_first_dim_name
-        or not_cond_i32_name != size_else_not_cond_name
-    ):
-        return None
-
-    not_cond_i32_producer = producer_by_output_name.get(not_cond_i32_name, None)
-    cond_i32_producer = producer_by_output_name.get(cond_i32_name, None)
-    if not_cond_i32_producer is None or cond_i32_producer is None:
-        return None
-    if str(not_cond_i32_producer.op_type) != "SUB" or str(cond_i32_producer.op_type) != "CAST":
-        return None
-
-    not_cond_inputs = [str(v) for v in list(not_cond_i32_producer.inputs)]
-    cond_inputs = [str(v) for v in list(cond_i32_producer.inputs)]
-    if len(not_cond_inputs) != 2 or len(cond_inputs) != 1:
-        return None
-    if not_cond_inputs[1] != cond_i32_name:
-        return None
-    cond_name = cond_inputs[0]
-
-    then_first_dim_values = _constant_int_list(model_ir.tensors.get(then_first_dim_name, None))
-    else_first_dim_values = _constant_int_list(model_ir.tensors.get(else_first_dim_name, None))
-    if (
-        then_first_dim_values is None
-        or else_first_dim_values is None
-        or len(then_first_dim_values) != 1
-        or len(else_first_dim_values) != 1
-    ):
-        return None
-
-    return {
-        "cond_name": cond_name,
-        "then_name": merged_inputs[0],
-        "else_name": merged_inputs[1],
-    }
 
 
 def _binary_runtime_shape_passthrough_operand_for_codegen(

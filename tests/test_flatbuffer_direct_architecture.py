@@ -4702,6 +4702,7 @@ def test_generated_pytorch_fusion_policy_has_single_owner() -> None:
 
     for function_name in (
         "_match_affine_layer_norm_for_codegen",
+        "_match_if_axis0_tensor_mux_slice_for_codegen",
         "_match_swish_activation_pattern_for_codegen",
     ):
         assert function_name in policy_functions

@@ -2269,6 +2269,10 @@ mutating the graph. The Swish matcher requires an exclusive
 `Logistic(x) * x` diamond and rejects additional Logistic consumers. Producer,
 consumer, constant, canonical-name, and attribute-allocation collaborators stay
 explicit at this boundary.
+The axis-0 tensor-mux Slice matcher is co-located here. It recognizes the exact
+Cast/Sub condition arithmetic, then/else first-dimension products, merged size,
+axis-0 value Concat, and terminal Slice before returning the three conditional
+input names; it does not rewrite the graph.
 
 Generated constant and shape-tensor evaluation has a focused Torch-free owner
 in `pytorch_constant_policy.py`. It resolves direct integer constants and the

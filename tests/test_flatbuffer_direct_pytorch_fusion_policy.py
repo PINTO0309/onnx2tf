@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import numpy as np
+
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_fusion_policy import (
     _match_affine_layer_norm_for_codegen,
+    _match_if_axis0_tensor_mux_slice_for_codegen,
     _match_swish_activation_pattern_for_codegen,
 )
 from onnx2tf.tflite_builder.pytorch_naming import (
@@ -106,3 +109,82 @@ def test_swish_pattern_requires_exclusive_logistic_output() -> None:
         )
         is None
     )
+
+
+def test_axis0_tensor_mux_slice_pattern_recovers_conditional_inputs() -> None:
+    operators = [
+        OperatorIR(
+            op_type="CONCATENATION",
+            inputs=["then_value", "else_value"],
+            outputs=["merged"],
+            options={"axis": 0},
+        ),
+        OperatorIR(
+            op_type="CAST",
+            inputs=["condition"],
+            outputs=["cond_i32"],
+        ),
+        OperatorIR(
+            op_type="SUB",
+            inputs=["one", "cond_i32"],
+            outputs=["not_cond_i32"],
+        ),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["not_cond_i32", "then_dim"],
+            outputs=["begin"],
+        ),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["cond_i32", "then_dim"],
+            outputs=["size_then"],
+        ),
+        OperatorIR(
+            op_type="MUL",
+            inputs=["not_cond_i32", "else_dim"],
+            outputs=["size_else"],
+        ),
+        OperatorIR(
+            op_type="ADD",
+            inputs=["size_then", "size_else"],
+            outputs=["size"],
+        ),
+    ]
+    slice_op = OperatorIR(
+        op_type="SLICE",
+        inputs=["merged", "begin", "size"],
+        outputs=["output"],
+    )
+    model_ir = ModelIR(
+        name="axis0_tensor_mux",
+        tensors={
+            "then_dim": TensorIR(
+                name="then_dim",
+                dtype="INT32",
+                shape=[1],
+                data=np.asarray([2], dtype=np.int32),
+            ),
+            "else_dim": TensorIR(
+                name="else_dim",
+                dtype="INT32",
+                shape=[1],
+                data=np.asarray([3], dtype=np.int32),
+            ),
+        },
+        operators=[*operators, slice_op],
+    )
+    producers = {
+        str(output): op
+        for op in operators
+        for output in op.outputs
+    }
+
+    assert _match_if_axis0_tensor_mux_slice_for_codegen(
+        model_ir=model_ir,
+        producer_by_output_name=producers,
+        op=slice_op,
+    ) == {
+        "cond_name": "condition",
+        "then_name": "then_value",
+        "else_name": "else_value",
+    }
