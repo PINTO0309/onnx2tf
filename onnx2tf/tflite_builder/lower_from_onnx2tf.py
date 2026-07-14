@@ -282,6 +282,9 @@ from onnx2tf.tflite_builder.passes.quantized_logistic import (
 from onnx2tf.tflite_builder.passes.quantized_softmax import (
     _optimize_dequant_softmax_quantize_chains as _optimize_dequant_softmax_quantize_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.quantized_hardsigmoid import (
+    _optimize_dequant_hardsigmoid_quantize_chains as _optimize_dequant_hardsigmoid_quantize_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.split_fallback import (
     replace_unsupported_split_with_slice as _replace_unsupported_split_with_slice_pass,
 )
@@ -40129,396 +40132,15 @@ def _optimize_dequant_reshape_quantize_chains(model_ir: ModelIR) -> Dict[str, in
     return _optimize_dequant_reshape_quantize_chains_pass(model_ir)
 
 
-def _optimize_dequant_hardsigmoid_quantize_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold DEQUANTIZE->HardSigmoid(expanded)->QUANTIZE into quantized ops.
-
-    Target pattern:
-      Xq --DEQUANTIZE--> Xf
-         --MUL(alpha)--> A
-         --ADD(beta)--> B
-         --MAXIMUM(lo)--> C
-         --MINIMUM(hi)--> Yf
-      Yf --QUANTIZE--> Yq
-
-    Rewritten:
-      Xq --MUL(alpha_q)--> A_q
-         --ADD(beta_q)--> B_q
-         --MAXIMUM(lo_q)--> C_q
-         --MINIMUM(hi_q)--> Yq
-
-    Safety conditions:
-    - Strict linear chain topology (single consumer at each bridge tensor).
-    - Side inputs are singleton constants.
-    - input/output quantized tensors are per-tensor INT8/UINT8.
-    """
-    folded = 0
-
-    def _unique_tensor_name(base: str) -> str:
-        name = str(base)
-        suffix = 1
-        while name in model_ir.tensors:
-            name = f"{base}_{suffix}"
-            suffix += 1
-        return name
-
-    def _scalar_from_const_tensor(tensor_name: str) -> Optional[float]:
-        tensor = model_ir.tensors.get(str(tensor_name), None)
-        if tensor is None or tensor.data is None:
-            return None
-        try:
-            arr = np.asarray(tensor.data, dtype=np.float32).reshape(-1)
-        except Exception:
-            return None
-        if int(arr.size) != 1:
-            return None
-        return float(arr[0])
-
-    def _quantize_values_with_qparams(
-        *,
-        values: np.ndarray,
-        dtype: str,
-        quantization: Any,
-    ) -> Optional[np.ndarray]:
-        qparams = _get_per_tensor_scale_zero_point(quantization)
-        if qparams is None:
-            return None
-        scale, zero_point = qparams
-        if float(scale) <= 0.0:
-            return None
-        values_f = np.asarray(values, dtype=np.float32)
-        if str(dtype) == "INT8":
-            quantized = np.round(values_f / float(scale)) + int(zero_point)
-            quantized = np.clip(quantized, -128, 127)
-            return np.asarray(quantized, dtype=np.int8)
-        if str(dtype) == "UINT8":
-            quantized = np.round(values_f / float(scale)) + int(zero_point)
-            quantized = np.clip(quantized, 0, 255)
-            return np.asarray(quantized, dtype=np.uint8)
-        return None
-
-    def _retarget_const_input_to_quantized(
-        *,
-        op_idx: int,
-        op: OperatorIR,
-        input_index: int,
-        target_dtype: str,
-        target_qparams: Any,
-        consumers: Dict[str, List[int]],
-    ) -> bool:
-        if input_index < 0 or input_index >= len(op.inputs):
-            return False
-        old_name = str(op.inputs[input_index])
-        old_tensor = model_ir.tensors.get(old_name, None)
-        if old_tensor is None or old_tensor.data is None:
-            return False
-        old_values = np.asarray(old_tensor.data, dtype=np.float32)
-        quantized_values = _quantize_values_with_qparams(
-            values=old_values,
-            dtype=target_dtype,
-            quantization=target_qparams,
-        )
-        if quantized_values is None:
-            return False
-
-        # If the const tensor is exclusively used here, update in place.
-        const_users = [int(v) for v in consumers.get(old_name, [])]
-        if len(const_users) == 1 and int(const_users[0]) == int(op_idx):
-            old_tensor.data = quantized_values
-            old_tensor.dtype = str(target_dtype)
-            old_tensor.quantization = _clone_quantization(target_qparams)
-            return True
-
-        # Otherwise clone and bind the cloned const only for this op input.
-        new_name = _unique_tensor_name(f"{old_name}_q")
-        model_ir.tensors[new_name] = TensorIR(
-            name=new_name,
-            dtype=str(target_dtype),
-            shape=list(old_tensor.shape),
-            shape_signature=(
-                list(old_tensor.shape_signature)
-                if old_tensor.shape_signature is not None
-                else list(old_tensor.shape)
-            ),
-            data=quantized_values,
-            is_variable=False,
-            quantization=_clone_quantization(target_qparams),
-        )
-        _replace_operator_input_at(
-            model_ir=model_ir,
-            op=op,
-            input_index=int(input_index),
-            new_input_name=str(new_name),
-        )
-        return True
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-
-        for dq_idx, dq_op in enumerate(model_ir.operators):
-            if str(dq_op.op_type) != "DEQUANTIZE" or len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
-                continue
-            q_in_name = str(dq_op.inputs[0])
-            f_in_name = str(dq_op.outputs[0])
-
-            mul_users = consumers.get(f_in_name, [])
-            if len(mul_users) != 1:
-                continue
-            mul_idx = int(mul_users[0])
-            mul_op = model_ir.operators[mul_idx]
-            if str(mul_op.op_type) != "MUL" or len(mul_op.inputs) != 2 or len(mul_op.outputs) != 1:
-                continue
-
-            mul_inputs = [str(v) for v in list(mul_op.inputs)]
-            if mul_inputs[0] == f_in_name:
-                mul_data_input_index = 0
-                alpha_name = mul_inputs[1]
-                alpha_input_index = 1
-            elif mul_inputs[1] == f_in_name:
-                mul_data_input_index = 1
-                alpha_name = mul_inputs[0]
-                alpha_input_index = 0
-            else:
-                continue
-            if not _is_singleton_constant_tensor(model_ir, alpha_name):
-                continue
-            mul_out_name = str(mul_op.outputs[0])
-            if mul_out_name in model_ir.outputs:
-                continue
-
-            add_users = consumers.get(mul_out_name, [])
-            if len(add_users) != 1:
-                continue
-            add_idx = int(add_users[0])
-            add_op = model_ir.operators[add_idx]
-            if str(add_op.op_type) != "ADD" or len(add_op.inputs) != 2 or len(add_op.outputs) != 1:
-                continue
-            add_inputs = [str(v) for v in list(add_op.inputs)]
-            if add_inputs[0] == mul_out_name:
-                beta_name = add_inputs[1]
-                beta_input_index = 1
-            elif add_inputs[1] == mul_out_name:
-                beta_name = add_inputs[0]
-                beta_input_index = 0
-            else:
-                continue
-            if not _is_singleton_constant_tensor(model_ir, beta_name):
-                continue
-            add_out_name = str(add_op.outputs[0])
-            if add_out_name in model_ir.outputs:
-                continue
-
-            max_users = consumers.get(add_out_name, [])
-            if len(max_users) != 1:
-                continue
-            max_idx = int(max_users[0])
-            max_op = model_ir.operators[max_idx]
-            if str(max_op.op_type) != "MAXIMUM" or len(max_op.inputs) != 2 or len(max_op.outputs) != 1:
-                continue
-            max_inputs = [str(v) for v in list(max_op.inputs)]
-            if max_inputs[0] == add_out_name:
-                lo_name = max_inputs[1]
-                lo_input_index = 1
-            elif max_inputs[1] == add_out_name:
-                lo_name = max_inputs[0]
-                lo_input_index = 0
-            else:
-                continue
-            if not _is_singleton_constant_tensor(model_ir, lo_name):
-                continue
-            max_out_name = str(max_op.outputs[0])
-            if max_out_name in model_ir.outputs:
-                continue
-
-            min_users = consumers.get(max_out_name, [])
-            if len(min_users) != 1:
-                continue
-            min_idx = int(min_users[0])
-            min_op = model_ir.operators[min_idx]
-            if str(min_op.op_type) != "MINIMUM" or len(min_op.inputs) != 2 or len(min_op.outputs) != 1:
-                continue
-            min_inputs = [str(v) for v in list(min_op.inputs)]
-            if min_inputs[0] == max_out_name:
-                hi_name = min_inputs[1]
-                hi_input_index = 1
-            elif min_inputs[1] == max_out_name:
-                hi_name = min_inputs[0]
-                hi_input_index = 0
-            else:
-                continue
-            if not _is_singleton_constant_tensor(model_ir, hi_name):
-                continue
-            f_out_name = str(min_op.outputs[0])
-            if f_out_name in model_ir.outputs:
-                continue
-
-            q_users = consumers.get(f_out_name, [])
-            if len(q_users) != 1:
-                continue
-            q_idx = int(q_users[0])
-            q_op = model_ir.operators[q_idx]
-            if str(q_op.op_type) != "QUANTIZE" or len(q_op.inputs) != 1 or len(q_op.outputs) != 1:
-                continue
-            if str(q_op.inputs[0]) != f_out_name:
-                continue
-            q_out_name = str(q_op.outputs[0])
-
-            q_in_tensor = model_ir.tensors.get(q_in_name, None)
-            q_out_tensor = model_ir.tensors.get(q_out_name, None)
-            f_in_tensor = model_ir.tensors.get(f_in_name, None)
-            f_out_tensor = model_ir.tensors.get(f_out_name, None)
-            mul_out_tensor = model_ir.tensors.get(mul_out_name, None)
-            add_out_tensor = model_ir.tensors.get(add_out_name, None)
-            max_out_tensor = model_ir.tensors.get(max_out_name, None)
-            if (
-                q_in_tensor is None
-                or q_out_tensor is None
-                or mul_out_tensor is None
-                or add_out_tensor is None
-                or max_out_tensor is None
-            ):
-                continue
-            if not _all_per_tensor_quantized([q_in_tensor, q_out_tensor]):
-                continue
-
-            target_dtype = str(q_in_tensor.dtype).upper()
-            if target_dtype not in {"INT8", "UINT8"}:
-                continue
-            if str(q_out_tensor.dtype).upper() != target_dtype:
-                continue
-
-            q_in_qparams = _get_per_tensor_scale_zero_point(q_in_tensor.quantization)
-            q_out_qparams = _get_per_tensor_scale_zero_point(q_out_tensor.quantization)
-            if q_in_qparams is None or q_out_qparams is None:
-                continue
-            if not _is_same_per_tensor_quantization(
-                q_in_tensor.quantization,
-                q_out_tensor.quantization,
-            ):
-                continue
-            x_scale, x_zero_point = q_in_qparams
-            if float(x_scale) <= 0.0:
-                continue
-
-            alpha = _scalar_from_const_tensor(alpha_name)
-            beta = _scalar_from_const_tensor(beta_name)
-            lo = _scalar_from_const_tensor(lo_name)
-            hi = _scalar_from_const_tensor(hi_name)
-            if any(v is None for v in [alpha, beta, lo, hi]):
-                continue
-            alpha = float(alpha)
-            beta = float(beta)
-            lo = float(lo)
-            hi = float(hi)
-            base_qparams = _clone_quantization(q_in_tensor.quantization)
-            if base_qparams is None:
-                continue
-
-            # Conservative gating:
-            # apply this int8ization only when scalar constants are representable
-            # by the shared activation quantization with small error.
-            def _is_scalar_representable(value: float) -> bool:
-                q = _quantize_values_with_qparams(
-                    values=np.asarray([value], dtype=np.float32),
-                    dtype=target_dtype,
-                    quantization=base_qparams,
-                )
-                if q is None:
-                    return False
-                recon = (float(np.asarray(q).reshape(-1)[0]) - float(x_zero_point)) * float(x_scale)
-                tol = max(float(x_scale) * 0.25, 1e-3)
-                return bool(abs(float(recon) - float(value)) <= tol)
-
-            if not (
-                _is_scalar_representable(alpha)
-                and _is_scalar_representable(beta)
-                and _is_scalar_representable(lo)
-                and _is_scalar_representable(hi)
-            ):
-                continue
-
-            if f_in_tensor is not None and not _shapes_match_if_known(q_in_tensor.shape, f_in_tensor.shape):
-                continue
-            if f_out_tensor is not None and not _shapes_match_if_known(q_out_tensor.shape, f_out_tensor.shape):
-                continue
-
-            if not _retarget_const_input_to_quantized(
-                op_idx=int(mul_idx),
-                op=mul_op,
-                input_index=int(alpha_input_index),
-                target_dtype=target_dtype,
-                target_qparams=base_qparams,
-                consumers=consumers,
-            ):
-                continue
-            if not _retarget_const_input_to_quantized(
-                op_idx=int(add_idx),
-                op=add_op,
-                input_index=int(beta_input_index),
-                target_dtype=target_dtype,
-                target_qparams=base_qparams,
-                consumers=consumers,
-            ):
-                continue
-            if not _retarget_const_input_to_quantized(
-                op_idx=int(max_idx),
-                op=max_op,
-                input_index=int(lo_input_index),
-                target_dtype=target_dtype,
-                target_qparams=base_qparams,
-                consumers=consumers,
-            ):
-                continue
-            if not _retarget_const_input_to_quantized(
-                op_idx=int(min_idx),
-                op=min_op,
-                input_index=int(hi_input_index),
-                target_dtype=target_dtype,
-                target_qparams=base_qparams,
-                consumers=consumers,
-            ):
-                continue
-
-            _replace_operator_input_at(
-                model_ir=model_ir,
-                op=mul_op,
-                input_index=int(mul_data_input_index),
-                new_input_name=q_in_name,
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=min_op,
-                new_outputs=[q_out_name],
-            )
-
-            mul_out_tensor.dtype = str(target_dtype)
-            mul_out_tensor.quantization = _clone_quantization(base_qparams)
-            add_out_tensor.dtype = str(target_dtype)
-            add_out_tensor.quantization = _clone_quantization(base_qparams)
-            max_out_tensor.dtype = str(target_dtype)
-            max_out_tensor.quantization = _clone_quantization(base_qparams)
-            q_out_tensor.dtype = str(target_dtype)
-            q_out_tensor.quantization = _clone_quantization(base_qparams)
-
-            if f_out_tensor is not None:
-                q_out_tensor.shape = [int(v) for v in list(f_out_tensor.shape)]
-                if f_out_tensor.shape_signature is not None:
-                    q_out_tensor.shape_signature = [int(v) for v in list(f_out_tensor.shape_signature)]
-                else:
-                    q_out_tensor.shape_signature = [int(v) for v in list(f_out_tensor.shape)]
-
-            for remove_idx in sorted([dq_idx, q_idx], reverse=True):
-                del model_ir.operators[remove_idx]
-            folded += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"folded_dequant_hardsigmoid_quantize_chains": int(folded)}
+def _optimize_dequant_hardsigmoid_quantize_chains(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    return _optimize_dequant_hardsigmoid_quantize_chains_pass(
+        model_ir,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_dequant_maxpool_quantize_chains(
@@ -47292,7 +46914,10 @@ def lower_onnx_to_ir(
         _optimize_transpose_binary_full_post_fanout_bridges(model_ir)
 
     def _run_quantized_activation_binary_bridge_recovery_sequence() -> None:
-        _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
+        _optimize_dequant_hardsigmoid_quantize_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_dequant_maxpool_quantize_chains(
             model_ir,
             layout_state=session.layout_state,
@@ -47333,7 +46958,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_dequant_hardsigmoid_quantize_chains(model_ir)
+        _optimize_dequant_hardsigmoid_quantize_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_dequant_maxpool_quantize_chains(
             model_ir,
             layout_state=session.layout_state,

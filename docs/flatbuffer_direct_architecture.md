@@ -4373,6 +4373,40 @@ axis. Exact former-function differential execution confirms complete ModelIR
 and statistics equality for valid one- and two-chain fixtures, while a real
 QLinearSoftmax wrap inference remains bit-exact to ONNX.
 
+Expanded HardSigmoid QDQ cleanup is owned by
+`passes/quantized_hardsigmoid.py`. One optional or local
+`ModelIRGraphIndex` traverses the exact `DEQUANTIZE -> MUL -> ADD -> MAXIMUM ->
+MINIMUM -> QUANTIZE` chain, supports either scalar-input position, proves every
+exclusive producer/consumer and graph-order edge, applies lineage-aware data,
+constant, and output rewrites, and removes both wrappers differentially.
+Independent INT8/UINT8 matches share one current index. Graphs missing any
+required operator family retain historical unused-tensor and optional
+LayoutState pruning without allocating an index; both production call sites
+supply the Session-owned LayoutState.
+
+Input and output tensors require the same exact finite positive per-tensor
+INT8/UINT8 grid and an in-range zero point. All seven data tensors must exist;
+the five intermediate tensors have the same floating dtype, and every data
+shape/signature is identical. The five float bridges are private, uniquely
+produced, exclusively consumed, and topologically ordered; the quantized
+output cannot also be a graph input. Each alpha, beta, low, and high side
+tensor is a finite producer-free singleton whose quantized reconstruction is
+within the preserved quarter-scale or `1e-3` tolerance.
+
+Constant retargeting is now a four-item immutable pre-mutation plan. It owns
+the quantized value, cloned grid, source metadata, private/shared/public
+decision, and a deterministically reserved clone name. Private exclusive
+constants retain in-place conversion; shared or public constants receive `_q`
+clones. This fixes the former mutation of publicly observable scalar values.
+Only after all four plans and all intermediate grid clones succeed are edges,
+dtypes, grids, and output identity committed and wrappers removed. Injecting a
+failure into the second grid clone proves complete transactional rejection;
+the former helper had already changed the first constant's data and dtype
+before raising. Exact former-function differential execution confirms complete
+ModelIR/statistics equality for valid private one/two-match fixtures and a
+shared-four-constant fixture, while near-equal grids, absent float metadata,
+and public bridges are now no-ops.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

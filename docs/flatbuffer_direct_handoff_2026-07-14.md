@@ -8,17 +8,16 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit gives canonical last-axis
-DEQUANTIZE-to-SOFTMAX-to-QUANTIZE cleanup one semantic owner in
-`passes/quantized_softmax.py`. One maintained `ModelIRGraphIndex` supplies
-graph-order Dequantize candidates, exact chain consumers/producers, indexed
-Softmax edge rewrites, and differential wrapper removal. INT8/UINT8 input grid
-validity, exact canonical output grid, beta tolerance, last-axis semantics,
-shape/signature, options/output identity, lineage, statistics, and pruning
-retain valid former behavior. Near-canonical output scales, missing input
-quantization or float bridge tensors, public bridges, non-last axes, duplicate
-producers, operator-order violations, and inconsistent metadata are complete
-no-ops.
+The latest implementation unit gives expanded HardSigmoid QDQ cleanup one
+semantic owner in `passes/quantized_hardsigmoid.py`. One maintained
+`ModelIRGraphIndex` supplies graph-order chain traversal, exact consumers and
+producers, constant ownership, indexed edge rewrites, and differential wrapper
+removal. All four scalar quantizations and clone names are planned before any
+mutation. Exact INT8/UINT8 grids, scalar representability, shape/signature,
+operator/output identity, lineage, statistics, and pruning retain valid former
+behavior. Near-equal grids, missing float tensors, public bridges, duplicate
+producers, invalid metadata, and failed clone planning are complete no-ops;
+public scalar constants are cloned instead of mutated.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -40,7 +39,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains eighty coherent continuations:
+The current `fb-refactor5` work contains eighty-one coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -212,8 +211,10 @@ The current `fb-refactor5` work contains eighty coherent continuations:
   with transactional topology, grid, and metadata guards;
 - `e3dde5a4` moves canonical quantized Logistic cleanup to one indexed owner
   with transactional topology, grid, and metadata guards;
-- the current checkpoint moves canonical last-axis quantized Softmax cleanup
-  to one indexed owner with transactional option, grid, and metadata guards.
+- `2a6178f6` moves canonical last-axis quantized Softmax cleanup to one indexed
+  owner with transactional option, grid, and metadata guards;
+- the current checkpoint moves expanded HardSigmoid QDQ cleanup to one indexed
+  owner with a complete four-constant transaction.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -232,8 +233,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/quantized_softmax.py`;
-- `tests/test_flatbuffer_direct_indexed_quantized_softmax.py`;
+- `onnx2tf/tflite_builder/passes/quantized_hardsigmoid.py`;
+- `tests/test_flatbuffer_direct_indexed_quantized_hardsigmoid_fold.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -688,6 +689,29 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   input bridges, malformed options, or non-last axes. Missing required
   families retain historical pruning without index allocation, and both
   production call sites pass the Session `LayoutState`.
+- Expanded HardSigmoid QDQ cleanup matches the exact linear
+  `DEQUANTIZE -> MUL(alpha) -> ADD(beta) -> MAXIMUM(low) -> MINIMUM(high) ->
+  QUANTIZE` grammar with either scalar-input position at each binary operator.
+  Input and output use exactly the same finite positive per-tensor INT8/UINT8
+  grid with an in-range zero point. All seven data tensor records must exist;
+  the five float tensors have one dtype and every data tensor has identical
+  elementwise shape/signature metadata. Every bridge is private, uniquely
+  produced, exclusively consumed, and topologically ordered; the quantized
+  output cannot also be an input. Each scalar must be finite, singleton,
+  producer-free, and representable within the preserved quarter-scale/`1e-3`
+  tolerance.
+- The four constant retargets are immutable plans containing the quantized
+  value, cloned quantization, ownership choice, metadata, and reserved clone
+  name. Private exclusive constants retain in-place behavior. Shared or public
+  constants receive deterministic `_q` clones, so a public float scalar no
+  longer silently changes dtype/value. Only after all four plans and four
+  intermediate quantization clones succeed are constant and data edges
+  rewritten and DQ/Q wrappers removed. Fault injection proves that a clone
+  failure on the second scalar leaves complete ModelIR unchanged, whereas the
+  former helper changed the first scalar data/dtype before raising. Missing
+  required families retain historical pruning without index allocation; both
+  production call sites pass LayoutState, which is synchronized after clones
+  and pruning.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -1931,6 +1955,29 @@ coverage smoke passed with `3 passed`. Ruff on the new owner/test and
 architecture test, syntax compilation, and `git diff --check` passed. No Tier
 corpus conversion was run.
 
+The indexed expanded-HardSigmoid fold checkpoint compiles the complete prior
+committed function and preserves exact ModelIR/statistics for private one- and
+two-chain INT8/UINT8 fixtures and a shared-four-constant fixture. Differential
+checks prove that a near-equal output grid and missing float tensors formerly
+folded, a public-input bridge could lose its producer, and public scalar
+outputs were mutated in place. A fault-injected second quantization clone also
+proves the former helper changed the first scalar data/dtype before raising,
+while the new four-plan transaction returns a complete no-op. Focused coverage
+verifies one-index multi-match execution, maintained-index and LayoutState
+equivalence, all scalar input positions, shared/public clone ownership and
+names, operator options/version/provenance, every public/fan-out/duplicate/
+order/arity boundary, exact grid validity, all data metadata, finite singleton
+constants, producer rejection, representability, clone-failure transaction,
+missing-family/no-index pruning, and unique semantic ownership with
+`78 passed`. Architecture, core, pass-efficiency, the established quantized
+Pool and quantization-cleanup suites, all prior indexed quantized folds,
+quantized activation and
+expanded-HardSigmoid bridge suites, and the new fold suite passed together
+with `529 passed`. TensorFlow-import-blocked direct and `-cotof` plus the
+sequential quantization/evaluation/coverage smoke passed with `3 passed`.
+Ruff on the new owner/test and architecture test, syntax compilation, and
+`git diff --check` passed. No Tier corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1980,11 +2027,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit `_optimize_dequant_hardsigmoid_quantize_chains` as the next bounded
-   quantized-op cleanup. Its multi-operator scalar retargeting is larger than
-   the three preceding linear folds, so first characterize transactional
-   constant ownership and exact-grid behavior before replacing repeated graph
-   maps with one maintained index and a complete pre-mutation plan.
+3. Audit `_optimize_dequant_transposeconv_quantize_chains` as the next bounded
+   quantized-op cleanup. Preserve output-shape/filter/data input roles, weight
+   ownership and quantization, activation grids, output metadata/version,
+   public/fan-out boundaries, statistics, and pruning while replacing repeated
+   graph maps with one maintained index and a complete pre-mutation plan.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
