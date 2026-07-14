@@ -4843,6 +4843,7 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_infer_unique_channel_count_from_rank4_shape",
         "_repair_binary_alignment_layout",
         "_repair_cf_pool_target_shape",
+        "_repair_cf_pool_neighbor_layout_at",
         "_repair_cf_gather_slice_at",
         "_repair_cf_reduce_max_axis",
         "_repair_cf_resize_target_shape",

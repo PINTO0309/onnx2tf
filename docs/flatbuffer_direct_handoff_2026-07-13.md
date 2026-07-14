@@ -1475,6 +1475,15 @@ fixtures plus the single-owner gate pass 2 tests; scoped Ruff, syntax
 validation, and `git diff --check` pass. The orchestrator shrank from 931 to
 864 lines. No model conversion, corpus run, or inference was performed.
 
+The two CF Pool-neighbor corrections now live in one indexed policy helper.
+The exact constant-Pad→channel-last MaxPool→permuted-Conv path restores a CF
+target and returns an explicit short-circuit preserving the former `continue`;
+the CF Pool→local-response-normalization path repairs its static target and
+allows the ordered scan to proceed. Synthetic fixtures cover both result
+contracts, and the single-owner gate passes with 2 tests. Scoped Ruff, syntax
+validation, and `git diff --check` pass. The orchestrator shrank from 864 to
+758 lines. No model conversion, corpus run, or inference was performed.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

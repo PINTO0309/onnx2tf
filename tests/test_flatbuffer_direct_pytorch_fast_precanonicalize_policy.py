@@ -15,6 +15,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _infer_unique_channel_count_from_rank4_shape,
     _repair_binary_alignment_layout,
     _repair_cf_pool_target_shape,
+    _repair_cf_pool_neighbor_layout_at,
     _repair_cf_gather_slice_at,
     _repair_cf_reduce_max_axis,
     _repair_cf_resize_target_shape,
@@ -29,6 +30,9 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
     _propagate_cf_prelu_output,
+)
+from onnx2tf.tflite_builder.pytorch_source_parser import (
+    _parse_apply_pool2d_assign_with_shape,
 )
 
 
@@ -200,6 +204,57 @@ def test_nhwc_pool_layout_uses_consumer_and_immediate_bridge_evidence() -> None:
     assert bridge_rewrite is not None
     assert "target_shape=[1, 4, 4, 3]" in bridge_rewrite
     assert "channel_last=True" in bridge_rewrite
+
+
+def test_cf_pool_neighbor_layout_repairs_pad_conv_and_lrn_paths() -> None:
+    pad_conv_lines = [
+        "        padded = F.pad(input_cf, [1, 1, 1, 1], "
+        "mode='constant', value=0.0)",
+        "        pooled = _apply_pool2d(padded, filter_height=3, "
+        "filter_width=3, stride_h=1, stride_w=1, padding='VALID', "
+        "target_shape=[1, 4, 4, 3], is_max_pool=True, channel_last=True)",
+        "        output = self.conv_block_0("
+        "pooled.permute(0, 3, 1, 2).contiguous())",
+    ]
+    pad_conv_context = _build_fast_precanonicalize_repair_context(pad_conv_lines)
+    pad_conv_assign = _parse_apply_pool2d_assign_with_shape(pad_conv_lines[1])
+    assert pad_conv_assign is not None
+    pad_conv_cf_names = {"input_cf"}
+    changed, short_circuit = _repair_cf_pool_neighbor_layout_at(
+        1,
+        pad_conv_lines,
+        pad_conv_assign,
+        pad_conv_cf_names,
+        set(),
+        pad_conv_context,
+    )
+    assert changed and short_circuit
+    assert "target_shape=[1, 3, 4, 4]" in pad_conv_lines[1]
+    assert "channel_last=False" in pad_conv_lines[1]
+    assert "pooled" in pad_conv_cf_names
+
+    lrn_lines = [
+        "        pooled = _apply_pool2d(input_cf, filter_height=2, "
+        "filter_width=2, stride_h=2, stride_w=2, padding='VALID', "
+        "target_shape=[1, 4, 3, 8], is_max_pool=False, channel_last=False)",
+        "        normalized = F.local_response_norm("
+        "pooled, size=5, alpha=0.0001, beta=0.75, k=1.0)",
+    ]
+    lrn_context = _build_fast_precanonicalize_repair_context(lrn_lines)
+    lrn_assign = _parse_apply_pool2d_assign_with_shape(lrn_lines[0])
+    assert lrn_assign is not None
+    lrn_cf_names = {"input_cf"}
+    changed, short_circuit = _repair_cf_pool_neighbor_layout_at(
+        0,
+        lrn_lines,
+        lrn_assign,
+        lrn_cf_names,
+        set(),
+        lrn_context,
+    )
+    assert changed and not short_circuit
+    assert "target_shape=[1, 8, 4, 3]" in lrn_lines[0]
+    assert "pooled" in lrn_cf_names
 
 
 def test_immediate_rank4_permute_source_requires_exact_permutation() -> None:

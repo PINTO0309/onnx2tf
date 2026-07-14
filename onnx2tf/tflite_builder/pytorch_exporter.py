@@ -126,6 +126,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _infer_unique_channel_count_from_rank4_shape,
     _repair_binary_alignment_layout,
     _repair_cf_pool_target_shape,
+    _repair_cf_pool_neighbor_layout_at,
     _repair_cf_resize_target_shape,
     _repair_cf_reduce_max_axis,
     _repair_cf_softmax_axis,
@@ -7752,126 +7753,20 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 line = rewritten_pool_line
                 apply_pool2d_assign = _parse_apply_pool2d_assign_with_shape(line)
         if apply_pool2d_assign is not None:
-            pool_indent, pool_lhs_name, input_name, pool_rest, pool_shape, pool_is_max, pool_channel_last = apply_pool2d_assign
-            prev_const_pad_assign = (
-                _parse_constant_pad_assign(lines[index - 1])
-                if index > 0
-                else None
+            repaired_cf_pool_neighbor, stop_current_repair_scan = (
+                _repair_cf_pool_neighbor_layout_at(
+                    index,
+                    lines,
+                    apply_pool2d_assign,
+                    cf_like_names,
+                    nhwc_like_names,
+                    repair_context,
+                )
             )
-            next_nonempty_line = ""
-            for lookahead in range(index + 1, min(len(lines), index + 4)):
-                if lines[lookahead].strip() == "":
-                    continue
-                next_nonempty_line = str(lines[lookahead])
-                break
-            next_lrn_assign = _parse_local_response_norm_assign(next_nonempty_line)
-            if (
-                _fast_precanonicalize_rank4_layout_hint(
-                    pool_shape,
-                    preferred_channel_count=_fast_precanonicalize_preferred_channel_count(
-                        input_name,
-                        cf_like_names,
-                        nhwc_like_names,
-                        repair_context,
-                        shape_hint=pool_shape,
-                    ),
-                ) != "cf"
-                and
-                pool_channel_last
-                and pool_is_max
-                and prev_const_pad_assign is not None
-                and str(prev_const_pad_assign[1]) == input_name
-                and (
-                    str(prev_const_pad_assign[2]) in cf_like_names
-                    or str(prev_const_pad_assign[2]).endswith("_cf")
-                    or str(prev_const_pad_assign[2]).endswith("_out_cf")
-                )
-            ):
-                pad_values = [int(value) for value in prev_const_pad_assign[3]]
-                immediate_permuted_conv_consumers = 0
-                for lookahead in range(index + 1, min(len(lines), index + 4)):
-                    permuted_conv_assign = _parse_permuted_conv_input_assign(
-                        lines[lookahead]
-                    )
-                    if (
-                        permuted_conv_assign is not None
-                        and str(permuted_conv_assign[3]) == pool_lhs_name
-                    ):
-                        immediate_permuted_conv_consumers += 1
-                if pad_values == [1, 1, 1, 1] and immediate_permuted_conv_consumers > 0:
-                    current_shape = pool_shape
-                    preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
-                        pool_lhs_name,
-                        cf_like_names,
-                        nhwc_like_names,
-                        repair_context,
-                        shape_hint=current_shape,
-                    )
-                    if preferred_channel_count is None:
-                        preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
-                            input_name,
-                            cf_like_names,
-                            nhwc_like_names,
-                            repair_context,
-                            shape_hint=current_shape,
-                        )
-                    normalized_shape = _normalize_cf_rank4_shape(
-                        current_shape,
-                        preferred_channel_count=preferred_channel_count,
-                    )
-                    lines[index] = (
-                        f"{pool_indent}{pool_lhs_name} = _apply_pool2d("
-                        f"{input_name}, {pool_rest}, "
-                        f"target_shape={repr(normalized_shape)}, "
-                        f"is_max_pool={pool_is_max}, channel_last=False)"
-                    )
-                    cf_like_names.add(pool_lhs_name)
-                    changed = True
-                    continue
-            if (
-                not pool_channel_last
-                and (
-                    input_name in cf_like_names
-                    or input_name.endswith("_cf")
-                    or input_name.endswith("_out_cf")
-                )
-                and (
-                    next_lrn_assign is not None and str(next_lrn_assign[2]) == pool_lhs_name
-                )
-            ):
-                input_channel_count = repair_context.conv_block_out_channels.get(
-                    repair_context.module_output_producers.get(input_name, ""),
-                    None,
-                )
-                preferred_channel_count = (
-                    int(input_channel_count)
-                    if input_channel_count is not None
-                    else _fast_precanonicalize_preferred_channel_count(
-                        pool_lhs_name,
-                        cf_like_names,
-                        nhwc_like_names,
-                        repair_context,
-                        shape_hint=pool_shape,
-                    )
-                )
-                if preferred_channel_count is None:
-                    preferred_channel_count = max(
-                        pool_shape[1],
-                        pool_shape[2],
-                        pool_shape[3],
-                    )
-                normalized_shape = _normalize_cf_rank4_shape(
-                    pool_shape,
-                    preferred_channel_count=int(preferred_channel_count),
-                )
-                lines[index] = (
-                    f"{pool_indent}{pool_lhs_name} = _apply_pool2d("
-                    f"{input_name}, {pool_rest}, "
-                    f"target_shape={repr(normalized_shape)}, "
-                    f"is_max_pool={pool_is_max}, channel_last=False)"
-                )
-                cf_like_names.add(pool_lhs_name)
+            if repaired_cf_pool_neighbor:
                 changed = True
+            if stop_current_repair_scan:
+                continue
         dynamic_apply_pool2d_assign = _parse_dynamic_apply_pool2d_assign(line)
         if dynamic_apply_pool2d_assign is not None:
             dynamic_pool_indent, lhs, input_name, dynamic_pool_rest, dynamic_pool_shape_input, dynamic_pool_is_max = dynamic_apply_pool2d_assign

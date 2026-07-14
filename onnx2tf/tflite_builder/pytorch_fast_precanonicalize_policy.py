@@ -21,6 +21,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_constant_pad_assign,
     _parse_dynamic_binary_align_assign,
     _parse_int_list_literal,
+    _parse_local_response_norm_assign,
     _parse_local_response_norm_input_expr,
     _parse_permuted_conv_input_assign,
     _parse_rank4_shape_literal,
@@ -992,6 +993,143 @@ def _repair_nhwc_pool_layout(
         f"is_max_pool={pool_is_max}, channel_last=True)",
         pool_lhs_name,
     )
+
+
+def _repair_cf_pool_neighbor_layout_at(
+    index: int,
+    lines: List[str],
+    pool_assign: Tuple[str, str, str, str, List[int], bool, bool],
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[bool, bool]:
+    (
+        pool_indent,
+        pool_lhs_name,
+        input_name,
+        pool_rest,
+        pool_shape,
+        pool_is_max,
+        pool_channel_last,
+    ) = pool_assign
+    prev_const_pad_assign = (
+        _parse_constant_pad_assign(lines[index - 1]) if index > 0 else None
+    )
+    next_nonempty_line = ""
+    for lookahead in range(index + 1, min(len(lines), index + 4)):
+        if lines[lookahead].strip() == "":
+            continue
+        next_nonempty_line = str(lines[lookahead])
+        break
+    next_lrn_assign = _parse_local_response_norm_assign(next_nonempty_line)
+    if (
+        _fast_precanonicalize_rank4_layout_hint(
+            pool_shape,
+            preferred_channel_count=_fast_precanonicalize_preferred_channel_count(
+                input_name,
+                dynamic_cf_like_names,
+                dynamic_nhwc_like_names,
+                context,
+                shape_hint=pool_shape,
+            ),
+        )
+        != "cf"
+        and pool_channel_last
+        and pool_is_max
+        and prev_const_pad_assign is not None
+        and str(prev_const_pad_assign[1]) == input_name
+        and (
+            str(prev_const_pad_assign[2]) in dynamic_cf_like_names
+            or str(prev_const_pad_assign[2]).endswith("_cf")
+            or str(prev_const_pad_assign[2]).endswith("_out_cf")
+        )
+    ):
+        pad_values = [int(value) for value in prev_const_pad_assign[3]]
+        immediate_permuted_conv_consumers = 0
+        for lookahead in range(index + 1, min(len(lines), index + 4)):
+            permuted_conv_assign = _parse_permuted_conv_input_assign(
+                lines[lookahead]
+            )
+            if (
+                permuted_conv_assign is not None
+                and str(permuted_conv_assign[3]) == pool_lhs_name
+            ):
+                immediate_permuted_conv_consumers += 1
+        if pad_values == [1, 1, 1, 1] and immediate_permuted_conv_consumers > 0:
+            preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+                pool_lhs_name,
+                dynamic_cf_like_names,
+                dynamic_nhwc_like_names,
+                context,
+                shape_hint=pool_shape,
+            )
+            if preferred_channel_count is None:
+                preferred_channel_count = (
+                    _fast_precanonicalize_preferred_channel_count(
+                        input_name,
+                        dynamic_cf_like_names,
+                        dynamic_nhwc_like_names,
+                        context,
+                        shape_hint=pool_shape,
+                    )
+                )
+            normalized_shape = _normalize_cf_rank4_shape(
+                pool_shape,
+                preferred_channel_count=preferred_channel_count,
+            )
+            lines[index] = (
+                f"{pool_indent}{pool_lhs_name} = _apply_pool2d("
+                f"{input_name}, {pool_rest}, "
+                f"target_shape={repr(normalized_shape)}, "
+                f"is_max_pool={pool_is_max}, channel_last=False)"
+            )
+            dynamic_cf_like_names.add(pool_lhs_name)
+            return True, True
+
+    if (
+        not pool_channel_last
+        and (
+            input_name in dynamic_cf_like_names
+            or input_name.endswith("_cf")
+            or input_name.endswith("_out_cf")
+        )
+        and next_lrn_assign is not None
+        and str(next_lrn_assign[2]) == pool_lhs_name
+    ):
+        input_channel_count = context.conv_block_out_channels.get(
+            context.module_output_producers.get(input_name, ""),
+            None,
+        )
+        preferred_channel_count = (
+            int(input_channel_count)
+            if input_channel_count is not None
+            else _fast_precanonicalize_preferred_channel_count(
+                pool_lhs_name,
+                dynamic_cf_like_names,
+                dynamic_nhwc_like_names,
+                context,
+                shape_hint=pool_shape,
+            )
+        )
+        if preferred_channel_count is None:
+            preferred_channel_count = max(
+                pool_shape[1],
+                pool_shape[2],
+                pool_shape[3],
+            )
+        normalized_shape = _normalize_cf_rank4_shape(
+            pool_shape,
+            preferred_channel_count=int(preferred_channel_count),
+        )
+        lines[index] = (
+            f"{pool_indent}{pool_lhs_name} = _apply_pool2d("
+            f"{input_name}, {pool_rest}, "
+            f"target_shape={repr(normalized_shape)}, "
+            f"is_max_pool={pool_is_max}, channel_last=False)"
+        )
+        dynamic_cf_like_names.add(pool_lhs_name)
+        return True, False
+    return False, False
 
 
 def _repair_nhwc_average_pool_binary_bridge(

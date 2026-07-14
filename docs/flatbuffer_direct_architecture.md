@@ -2050,6 +2050,12 @@ NHWC bridge or unambiguous NHWC input evidence enables channel-last execution
 and shape normalization. An immediate CF bridge continues to block the second
 case. The exporter applies the returned statement and layout evidence before
 its existing CF repair.
+Two CF Pool-neighbor corrections are also one indexed policy decision. An
+exact CF constant-Pad→channel-last MaxPool→permuted-Conv chain restores the
+Pool to CF and returns an explicit short-circuit so later precanonicalization
+rules retain the old `continue` boundary. A CF Pool followed by local response
+normalization repairs its static target without stopping the scan. Both use the
+shared statement decoders and repair context.
 The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
 restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer
