@@ -8,15 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit proves that the early direct fast path is
-terminal and removes two historical direct conversion implementations that
-could no longer be reached. Backend normalization occurs once; direct success
-returns immediately after full artifact finalization, and direct failure
-propagates through cleanup. A post-boundary assertion restricts the remaining
-legacy graph/SavedModel/TFLite-converter pipeline to `tf_converter`. The
-compatibility layer consequently has one direct builder invocation, one result
-finalizer, and one evaluation-artifact selection site, with 431 lines of dead
-retry, logging, report, evaluation, and serialization code removed.
+The latest implementation unit replaces four AST-identical post-lowering
+layout-recovery prefixes with one ordered helper. Each call site still executes
+the same 19 calls in the same surrounding position, from Q/DQ transpose
+bridges through boundary BatchMatMul/unary cleanup, hard-activation, SPP/NDHWC
+Concat, and channel-shuffle/Gather recovery. The registered runners remain
+unscoped because raw ModelIR mutators separate them. Runtime pass count is
+unchanged while the lowerer loses 99 net lines and its registered-runner AST
+count falls from 134 to 125.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -38,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains forty-one coherent continuations:
+The current `fb-refactor5` work contains forty-two coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -125,9 +124,11 @@ The current `fb-refactor5` work contains forty-one coherent continuations:
 - `d7fb5969` centralizes direct report and quantized-artifact
   validation and completion logging without changing messages or skip
   behavior;
-- the current checkpoint makes the direct fast path the sole direct conversion
+- `603d6557` makes the direct fast path the sole direct conversion
   owner and removes the unreachable TensorFlow-failure fallback and duplicate
-  post-SavedModel direct serialization path.
+  post-SavedModel direct serialization path;
+- the current checkpoint centralizes the four identical 19-call layout-
+  recovery prefixes without sharing pass state across raw mutation boundaries.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -136,7 +137,7 @@ result to the exporter. Exact generated-statement grammars remain rule-local or
 use the shared Torch-free parser owner.
 
 No dependency was added and no TensorFlow path was introduced. The latest
-checkpoint includes three sequential direct-backend artifact smokes; no Tier
+checkpoint includes one sequential direct-backend integration smoke; no Tier
 corpus run was performed.
 
 ## Current branch and changed files
@@ -145,7 +146,7 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
 The current checkpoint changes:
 
-- `onnx2tf/onnx2tf.py`;
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -1084,6 +1085,13 @@ and split-manifest smokes, passed with `5 passed`. The combined artifact-
 metadata, artifact-policy, core, pass-efficiency, and architecture selection
 passed with `212 passed`.
 
+The ordered layout-recovery-prefix checkpoint passed its focused ordering,
+runner-ownership, SPP, NDHWC Concat, and NHWC/NCHW channel-shuffle selection
+with `68 passed`. A sequential quantization/evaluation/coverage integration
+smoke passed with `1 passed`. The complete architecture selection passed with
+`128 passed`; the combined artifact-metadata, artifact-policy, core, pass-
+efficiency, and architecture selection passed with `213 passed`.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1129,13 +1137,13 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the remaining live direct compatibility helpers now that builder
-   invocation and finalization each have one call site. Keep the terminal
-   backend boundary explicit; do not reintroduce fallback into the legacy
-   TensorFlow pipeline or broaden optional artifact execution.
-3. Add a focused production-boundary characterization before sharing another
-   scope, and preserve exact diagnostics and rule order. Never carry a scope
-   across a legacy helper or introduce a blanket refresh.
+2. Audit remaining repeated post-lowering sequences for exact structural
+   identity before extracting another ordered helper. Do not merge variant
+   sequences or share pass state across a raw ModelIR mutation, shape
+   reconciliation, topological sort, condition, or fallback-IR boundary.
+3. Keep the terminal direct backend boundary explicit; do not reintroduce
+   fallback into the legacy TensorFlow pipeline or broaden optional artifact
+   execution.
 4. Keep the audited 294-line PyTorch source orchestrator as explicit sequencing
    unless a new bounded decision is found.
 5. Run only the focused synthetic/ownership/static checks unless the user asks

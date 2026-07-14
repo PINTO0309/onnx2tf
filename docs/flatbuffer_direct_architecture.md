@@ -220,6 +220,16 @@ the earlier combined layout/Mean/SPP/Gather sequence and this later
 Gather/normalization sequence. Seven diagnostic events in the latter reuse one
 index without changing the registered-runner call characterization.
 
+Four AST-identical layout-recovery prefixes now use one ordered orchestration
+helper. The helper fixes the existing 19-call sequence from Q/DQ transpose
+bridges through boundary BatchMatMul/unary cleanup, hard-activation and generic
+SPP/NDHWC Concat recovery, and channel-shuffle/Gather cleanup. All four call
+sites retain their original surrounding rewrites and execute the sequence once.
+The hard-activation, SPP, and NDHWC runners intentionally remain unscoped
+inside this helper because raw ModelIR mutators separate them. Consolidation
+reduces the lowerer's registered-runner AST characterization from 134 to 125
+without crossing an index-validity boundary or changing runtime pass count.
+
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
 and Split/Reshape collapse) retain their order before the two bridge specs

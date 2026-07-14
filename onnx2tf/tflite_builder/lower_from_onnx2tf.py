@@ -50596,6 +50596,43 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_layout_recovery_prefix_pass_sequence() -> None:
+        _optimize_transpose_quant_dequant_bridges(model_ir)
+        _run_boundary_batchmatmul_unary_layout_pass_cluster()
+        _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
+        _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
+        run_hard_activation_passthrough_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        _optimize_swish_transpose_passthrough_chains(model_ir)
+        _optimize_gelu_tanh_transpose_passthrough_chains(model_ir)
+        _optimize_center_size_offset_terminal_transpose_chains(model_ir)
+        _optimize_leakyrelu_transpose_passthrough_chains(model_ir)
+        _optimize_prelu_transpose_passthrough_chains(model_ir)
+        _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
+        run_spp_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        _optimize_transpose_pre_concat_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        run_ndhwc_concat_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+        )
+        _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir)
+        _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
+        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
+        _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
+        _run_channel_shuffle_gather_layout_pass_cluster()
+
     _set_post_progress_desc("outputs")
 
     # Outputs
@@ -50673,41 +50710,7 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_quant_dequant_bridges(model_ir)
-        _run_boundary_batchmatmul_unary_layout_pass_cluster()
-        _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
-        _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-        run_hard_activation_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_swish_transpose_passthrough_chains(model_ir)
-        _optimize_gelu_tanh_transpose_passthrough_chains(model_ir)
-        _optimize_center_size_offset_terminal_transpose_chains(model_ir)
-        _optimize_leakyrelu_transpose_passthrough_chains(model_ir)
-        _optimize_prelu_transpose_passthrough_chains(model_ir)
-        _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
-        run_spp_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_transpose_pre_concat_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_ndhwc_concat_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir)
-        _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
-        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
-        _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
-        _run_channel_shuffle_gather_layout_pass_cluster()
+        _run_layout_recovery_prefix_pass_sequence()
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
@@ -50777,41 +50780,7 @@ def lower_onnx_to_ir(
             diagnostics=session.diagnostics,
         )
         # Binary bridge rewrites can introduce new transpose-(q|dq)-transpose patterns.
-        _optimize_transpose_quant_dequant_bridges(model_ir)
-        _run_boundary_batchmatmul_unary_layout_pass_cluster()
-        _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
-        _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-        run_hard_activation_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_swish_transpose_passthrough_chains(model_ir)
-        _optimize_gelu_tanh_transpose_passthrough_chains(model_ir)
-        _optimize_center_size_offset_terminal_transpose_chains(model_ir)
-        _optimize_leakyrelu_transpose_passthrough_chains(model_ir)
-        _optimize_prelu_transpose_passthrough_chains(model_ir)
-        _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
-        run_spp_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_transpose_pre_concat_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_ndhwc_concat_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir)
-        _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
-        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
-        _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
-        _run_channel_shuffle_gather_layout_pass_cluster()
+        _run_layout_recovery_prefix_pass_sequence()
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
@@ -50876,41 +50845,7 @@ def lower_onnx_to_ir(
         _optimize_nhwc_propagation_qlinear_concat_conv(model_ir)
         _optimize_concat_pre_quantize_dequantize(model_ir)
         _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
-        _optimize_transpose_quant_dequant_bridges(model_ir)
-        _run_boundary_batchmatmul_unary_layout_pass_cluster()
-        _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
-        _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-        run_hard_activation_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_swish_transpose_passthrough_chains(model_ir)
-        _optimize_gelu_tanh_transpose_passthrough_chains(model_ir)
-        _optimize_center_size_offset_terminal_transpose_chains(model_ir)
-        _optimize_leakyrelu_transpose_passthrough_chains(model_ir)
-        _optimize_prelu_transpose_passthrough_chains(model_ir)
-        _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
-        run_spp_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_transpose_pre_concat_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_ndhwc_concat_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir)
-        _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
-        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
-        _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
-        _run_channel_shuffle_gather_layout_pass_cluster()
+        _run_layout_recovery_prefix_pass_sequence()
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mulconst_reshape_transpose_suffix_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_reshape_transpose_suffix_nhwc_chains(model_ir)
@@ -51019,41 +50954,7 @@ def lower_onnx_to_ir(
         _optimize_nhwc_propagation_qlinear_concat_conv(model_ir)
         _optimize_concat_pre_quantize_dequantize(model_ir)
         _optimize_transpose_mean_maxpool_concat_conv_chains(model_ir)
-        _optimize_transpose_quant_dequant_bridges(model_ir)
-        _run_boundary_batchmatmul_unary_layout_pass_cluster()
-        _optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains(model_ir)
-        _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-        run_hard_activation_passthrough_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_swish_transpose_passthrough_chains(model_ir)
-        _optimize_gelu_tanh_transpose_passthrough_chains(model_ir)
-        _optimize_center_size_offset_terminal_transpose_chains(model_ir)
-        _optimize_leakyrelu_transpose_passthrough_chains(model_ir)
-        _optimize_prelu_transpose_passthrough_chains(model_ir)
-        _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
-        run_spp_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_transpose_pre_concat_nhwc_chains(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        run_ndhwc_concat_layout_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
-        _optimize_transpose_stridedslice_pre_concat_nhwc_chains(model_ir)
-        _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(model_ir)
-        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
-        _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
-        _run_channel_shuffle_gather_layout_pass_cluster()
+        _run_layout_recovery_prefix_pass_sequence()
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)

@@ -217,6 +217,80 @@ def test_op_builders_mutate_operator_list_only_through_lowering_context() -> Non
     assert offenders == []
 
 
+def test_lowerer_layout_recovery_prefix_has_one_ordered_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_layout_recovery_prefix_pass_sequence"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "_optimize_transpose_quant_dequant_bridges",
+        "_run_boundary_batchmatmul_unary_layout_pass_cluster",
+        "_optimize_transpose_elementwise_roundtrip_nchw_nhwc_chains",
+        "_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains",
+        "run_hard_activation_passthrough_cleanup",
+        "_optimize_swish_transpose_passthrough_chains",
+        "_optimize_gelu_tanh_transpose_passthrough_chains",
+        "_optimize_center_size_offset_terminal_transpose_chains",
+        "_optimize_leakyrelu_transpose_passthrough_chains",
+        "_optimize_prelu_transpose_passthrough_chains",
+        "_optimize_transpose_elementwise_concat_conv_nhwc_groups",
+        "run_spp_layout_cleanup",
+        "_optimize_transpose_pre_concat_nhwc_chains",
+        "run_ndhwc_concat_layout_cleanup",
+        "_optimize_transpose_stridedslice_pre_concat_nhwc_chains",
+        "_optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains",
+        "_optimize_transpose_input_chains_pre_concat_to_single_post_adapter",
+        "_optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains",
+        "_run_channel_shuffle_gather_layout_pass_cluster",
+    ]
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert [call.func.id for call in helper_calls] == expected_order
+
+    registered_calls = {
+        call.func.id: call
+        for call in helper_calls
+        if call.func.id
+        in {
+            "run_hard_activation_passthrough_cleanup",
+            "run_spp_layout_cleanup",
+            "run_ndhwc_concat_layout_cleanup",
+        }
+    }
+    assert set(registered_calls) == {
+        "run_hard_activation_passthrough_cleanup",
+        "run_spp_layout_cleanup",
+        "run_ndhwc_concat_layout_cleanup",
+    }
+    for call in registered_calls.values():
+        assert all(keyword.arg != "state_scope" for keyword in call.keywords)
+
+    helper_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper_name
+    ]
+    assert len(helper_invocations) == 4
+
+
 def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -1536,7 +1610,7 @@ def test_lowerer_shuffle_and_unary_clusters_reuse_pass_state_scopes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == channel_helper_name
     ]
-    assert len(channel_invocations) == 6
+    assert len(channel_invocations) == 3
     assert sum(
         any(
             keyword.arg == "include_post_gather_cleanup"
@@ -1748,7 +1822,7 @@ def test_lowerer_boundary_batchmatmul_unary_pair_reuses_pass_state_scope() -> No
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 4
+    assert len(helper_invocations) == 1
 
 
 def test_lowerer_channel_slice_pad_mul_pair_reuses_pass_state_scope() -> None:
@@ -4392,7 +4466,7 @@ def test_spp_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_spp_layout_cleanup"
     ]
-    assert len(runner_calls) == 7
+    assert len(runner_calls) == 4
 
 
 def test_ndhwc_pre_concat_layout_rewrite_has_single_owner() -> None:
@@ -4465,7 +4539,7 @@ def test_ndhwc_pre_concat_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_ndhwc_concat_layout_cleanup"
     ]
-    assert len(runner_calls) == 5
+    assert len(runner_calls) == 2
 
 
 def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
@@ -4542,7 +4616,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 134
+    assert len(calls) == 125
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -4560,7 +4634,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_hard_activation_passthrough_cleanup"
     ]
-    assert len(hard_activation_calls) == 5
+    assert len(hard_activation_calls) == 2
     reverse_calls = [
         call
         for call in hard_activation_calls
