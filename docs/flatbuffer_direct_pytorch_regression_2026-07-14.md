@@ -90,43 +90,88 @@ Before restoring any binding, a complete central/architecture/bulk run
 reported **970 passed and 282 failed** in 681.74 seconds. The dominant new
 failure was the missing `_fold_single_use_static_reshape_chains` binding.
 
-After restoring that first binding, a second run reached 1,025 of 1,252 tests
-before it was manually interrupted after about 20 minutes to honor the
-minimal-test policy and avoid further RSS growth. Its completed portion
-reported 883 passes and 142 failures. Seventy-three failures were `NameError`
-cases; 66 were the three additional `fb-refactor4` binding omissions fixed in
-this checkpoint. The other observed missing names are inherited:
+After restoring that first binding, an intermediate run reached 1,025 of 1,252
+combined tests before it was manually interrupted after about 20 minutes. Its
+completed portion reported 883 passes and 142 failures and exposed the three
+additional compatibility bindings fixed in this checkpoint. Those partial
+numbers are retained only as discovery history; the exact post-fix comparison
+below supersedes the earlier estimate of unclassified failures.
 
-- `_parse_binary_sub_args` has no definition in either `fb-refactor3` or the
-  current branch;
-- runtime-wrapper construction refers to `_GeneratedModel` outside the lazy
-  class factory in both branches.
+### Exact post-fix comparison with `fb-refactor3`
 
-Many remaining failures are exact generated-source expectations or legacy
-model-specific characterizations. A representative PIDNet canonicalization
-failure and the NHWC-Conv/rank-3-reshape source assertion were reproduced on
-`fb-refactor3`. The remainder was not exhaustively classified during this
-minimal regression check.
+The complete `test_pytorch_exporter.py` collection contains 1,120 tests. The
+current test file and expectations were used for both branches. The comparison
+ran current commit `bdb95903d330e717900a8550cff4c20071009acc` and detached
+`fb-refactor3` commit `c52bc1699b4c7a11a03a535e0b7f10315e1292bd` in separate
+processes. Root ONNX files were made visible to the baseline worktree through
+temporary symlinks so model-availability checks used the same corpus.
 
-The interrupted test was
-`test_export_pytorch_package_uses_shape_signature_for_dynamic_gather_nd_targets`,
-inside ExportedProgram inverse-permute archive cleanup. The cleanup function's
-AST differs from `fb-refactor3` only by the new local `import torch`; its pass
-algorithm is otherwise identical. The test used CPU continuously, reached
-approximately 2.6 GiB RSS, and had zero SWAP. It should be treated as a long
-test or investigated for independent performance improvement rather than used
-as a fast `fb-refactor4` gate.
+Execution was strictly sequential. A test that did not complete in 60 seconds
+was removed from the normal-result set and classified separately as a
+long-running test. The exact accounting is:
+
+| Classification | Tests |
+| --- | ---: |
+| Collected | 1,120 |
+| Current branch pass | 995 |
+| Current branch non-timeout fail | 118 |
+| Long-running, over 60 seconds | 7 |
+| Comparable non-timeout failures reproduced on `fb-refactor3` | 112 |
+| User-excluded `bread` model tests | 6 |
+| Confirmed unresolved `fb-refactor4` regressions | **0** |
+
+All 112 comparable current failures also failed on `fb-refactor3`; no baseline
+pass became a current failure. Their normalized first-line failure signatures
+matched 112 out of 112. Raw JUnit messages matched exactly for 102 tests. The
+other ten differed only in volatile temporary paths, process IDs, timestamps,
+object addresses, or assertion-detail ordering while retaining the same
+normalized failure signature.
+
+The 112 inherited failures comprise:
+
+| Failure kind | Tests |
+| --- | ---: |
+| Assertion failure | 69 |
+| `NameError` | 23 |
+| `RuntimeError` | 8 |
+| `ModelIRPyTorchExportError` | 5 |
+| `AttributeError` | 5 |
+| `RecursionError` | 1 |
+| `TorchExportError` | 1 |
+
+The inherited undefined names are `_parse_binary_sub_args` in two tests,
+`_GeneratedModel` in twelve, `_compose_axis_permutations` in seven, and
+`_perm_cf_to_cl` in two. The six user-excluded `bread`/`bread_nonfm` tests also
+currently reach `_perm_cf_to_cl` `NameError`, but were deliberately not run on
+the baseline and are not counted as regression candidates.
+
+The seven long-running tests were individually rerun on `fb-refactor3` with
+the same 60-second ceiling. All seven timed out on the baseline as well:
+
+- `test_export_pytorch_package_uses_shape_signature_for_dynamic_gather_nd_targets`;
+- `test_scatter_nd_with_constant_shape_supports_dynamo_onnx_and_exported_program`;
+- `test_scatter_nd_with_dynamic_prefix_supports_dynamo_onnx_and_exported_program`;
+- `test_export_pytorch_package_supports_dynamic_gather_nd_params_for_torch_export`;
+- `test_export_artifacts_handle_non_max_suppression_v4`;
+- `test_export_artifacts_handle_shape_derived_non_max_suppression_v4`;
+- `test_convert_flatbuffer_direct_birdnet_preserves_permute_optimizations_and_pytorch_parity_when_model_is_available`.
+
+The first six spend their time in ExportedProgram archive cleanup. That cleanup
+function differs from `fb-refactor3` only by its local `import torch`; its pass
+algorithm is otherwise identical. The current long-running discovery runs
+used CPU continuously and had no observed SWAP. These results establish that
+the long-running behavior is inherited rather than introduced by
+`fb-refactor4`.
 
 ## Remaining known issues
 
-- The full monolithic PyTorch exporter characterization suite is not green and
-  was not completed after the binding fixes.
-- The two inherited undefined-name defects above remain outside this
-  branch-specific compatibility fix.
-- Legacy exact-source expectations need a separate baseline audit before they
-  can become a reliable branch regression gate.
-- The long ExportedProgram archive-cleanup case needs a bounded performance
-  test or optimization before routine full-suite execution.
+- No unresolved non-timeout regression specific to `fb-refactor4` is confirmed
+  in the 1,120-test exporter collection.
+- The 112 reproduced failures remain inherited known issues; they are not
+  evidence that the current exporter is fully correct.
+- Six `bread` model tests remain outside comparison by explicit user exclusion.
+- The seven inherited long-running cases need bounded performance tests or
+  independent optimization before routine full-suite execution.
 
 The recommended fast regression gate is the modular 359-test selection, the
 132 architecture/bulk-runner tests, focused codegen representatives for any
