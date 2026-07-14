@@ -517,7 +517,8 @@ def test_pytorch_softmax_layout_validation_reuses_one_graph_index() -> None:
     assert "def _apply_feature_last_sequence_layouts(" not in exporter_source
     assert "_apply_feature_last_sequence_layouts," not in exporter_source
     assert "def _ensure_public_boundary_layout_bridges(" not in exporter_source
-    assert "_ensure_public_boundary_layout_bridges," in exporter_source
+    assert "_ensure_public_boundary_layout_bridges," not in exporter_source
+    assert "def _ensure_public_boundary_layout_bridges(" in pass_source
     assert "def _propagate_pytorch_friendly_layouts(" not in exporter_source
     assert "_propagate_pytorch_friendly_layouts," not in exporter_source
     assert "def _rewrite_filter_tensors_for_pytorch(" not in exporter_source
@@ -3724,15 +3725,12 @@ def test_pytorch_onnx_boundary_inference_has_single_owner() -> None:
         "_infer_batchless_rank3_image_boundaries_from_onnx_graph",
         "_infer_public_layouts_from_onnx_graph",
         "_is_onnx_boundary_layout_passthrough_node",
+        "_merge_reference_public_boundary_metadata",
         "_read_onnx_transpose_perm",
     ):
         assert function_name in support_functions
         assert function_name not in exporter_functions
-    for function_name in (
-        "_infer_batchless_rank3_image_boundaries_from_onnx_graph",
-        "_infer_public_layouts_from_onnx_graph",
-    ):
-        assert f"{function_name}," in exporter_source
+    assert "_merge_reference_public_boundary_metadata," in exporter_source
 def test_exported_program_child_script_has_single_owner() -> None:
     exporter_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"

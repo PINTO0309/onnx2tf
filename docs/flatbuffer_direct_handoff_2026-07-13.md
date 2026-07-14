@@ -519,6 +519,15 @@ nodes, and missing graphs. Boundary inference and architecture validation
 passes 83 tests; Ruff, diff, and AST-equivalence checks pass. No model conversion
 or inference was run.
 
+Reference public-boundary metadata merge now uses that same ONNX artifact
+owner. It restores public names and shape signatures, delegates layout bridge
+materialization to the shared validation pass, preserves batchless boundary
+metadata, and forces recurrent rank-three boundaries to NWC. Its function AST
+matches the prior exporter checkpoint. Two new direct ModelIR cases fix the
+basic public contract and recurrent feature-last override. Boundary and
+architecture validation passes 85 tests; Ruff, diff, and AST-equivalence checks
+pass. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

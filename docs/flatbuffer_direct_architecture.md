@@ -2238,7 +2238,11 @@ layout-preserving boundary walks, input/output layout inference, and batchless
 rank-three Squeeze/Unsqueeze detection share the ONNX artifact boundary rather
 than fallback orchestration. All four function ASTs are identical to their
 former exporter definitions and build their producer/consumer views once per
-reference graph.
+reference graph. Reference ModelIR/ONNX shape and layout reconciliation is
+co-located here as well: it restores public names/signatures, materializes any
+required public layout bridges through the shared validation pass, preserves
+batchless metadata, and forces recurrent rank-three boundaries feature-last.
+Its function AST is also identical to the former exporter definition.
 
 ## Runtime-check memory boundary
 

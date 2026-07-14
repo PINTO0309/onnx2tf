@@ -274,8 +274,7 @@ from onnx2tf.tflite_builder.pytorch_onnx_optimizer import (
     _optimize_dynamo_exported_onnx_in_place,
 )
 from onnx2tf.tflite_builder.pytorch_onnx_artifact_support import (
-    _infer_batchless_rank3_image_boundaries_from_onnx_graph,
-    _infer_public_layouts_from_onnx_graph,
+    _merge_reference_public_boundary_metadata,
     _sanitize_dynamo_exported_onnx_metadata,
 )
 from onnx2tf.tflite_builder.passes.pytorch_compat import (
@@ -283,7 +282,6 @@ from onnx2tf.tflite_builder.passes.pytorch_compat import (
 )
 from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
     _collect_feature_last_sequence_tensor_names,
-    _ensure_public_boundary_layout_bridges,
 )
 from onnx2tf.tflite_builder.passes.pytorch_normalization import (
     _collect_model_op_types,
@@ -26853,109 +26851,6 @@ def _write_native_model_file_codegen_core_body_main_inner_impl(
     _build_native_constant_aliases(state, bindings)
     _emit_native_forward_lines(state, bindings)
     return _finalize_native_codegen(state, bindings)
-
-
-def _merge_reference_public_boundary_metadata(
-    *,
-    imported_model_ir: ModelIR,
-    reference_model_ir: Optional[ModelIR],
-    reference_onnx_graph: Optional[Any] = None,
-) -> None:
-    if reference_model_ir is None:
-        return
-    boundary_shape_map = reference_model_ir.metadata.get("onnx_boundary_shape_signature_map", {})
-    if not isinstance(boundary_shape_map, dict):
-        boundary_shape_map = {}
-    public_layout_map = reference_model_ir.metadata.get("onnx_public_layout_map", {})
-    if not isinstance(public_layout_map, dict):
-        public_layout_map = {}
-    onnx_graph_public_layout_map = (
-        _infer_public_layouts_from_onnx_graph(reference_onnx_graph)
-        if reference_onnx_graph is not None
-        else {}
-    )
-    batchless_rank3_boundary_names = (
-        _infer_batchless_rank3_image_boundaries_from_onnx_graph(reference_onnx_graph)
-        if reference_onnx_graph is not None
-        else set()
-    )
-    recurrent_public_boundary_context = any(
-        token in str(op.op_type)
-        for op in reference_model_ir.operators
-        for token in ("GRU", "LSTM", "RNN")
-    )
-    if not recurrent_public_boundary_context and reference_onnx_graph is not None:
-        graph = getattr(reference_onnx_graph, "graph", None)
-        if graph is not None:
-            recurrent_public_boundary_context = any(
-                str(node.op_type) in {"GRU", "LSTM", "RNN"}
-                for node in list(graph.node)
-            )
-    imported_model_ir.inputs = [str(v) for v in list(reference_model_ir.inputs)]
-    imported_model_ir.outputs = [str(v) for v in list(reference_model_ir.outputs)]
-
-    desired_public_layout_map: Dict[str, str] = {}
-    desired_public_shape_map: Dict[str, List[int]] = {}
-    for tensor_name in list(imported_model_ir.inputs) + list(imported_model_ir.outputs):
-        ref_tensor = reference_model_ir.tensors.get(str(tensor_name), None)
-        if ref_tensor is None:
-            continue
-        desired_public_shape_map[str(tensor_name)] = [
-            int(v) for v in list(ref_tensor.shape_signature or ref_tensor.shape)
-        ]
-        desired_layout = normalize_logical_layout(
-            onnx_graph_public_layout_map.get(
-                str(tensor_name),
-                public_layout_map.get(str(tensor_name), ref_tensor.logical_layout),
-            )
-        )
-        if recurrent_public_boundary_context and len(list(ref_tensor.shape)) == 3:
-            desired_layout = "NWC"
-        desired_public_layout_map[str(tensor_name)] = desired_layout
-
-    _ensure_public_boundary_layout_bridges(
-        model_ir=imported_model_ir,
-        desired_public_shape_map=desired_public_shape_map,
-        desired_public_layout_map=desired_public_layout_map,
-    )
-
-    for tensor_name in list(imported_model_ir.inputs) + list(imported_model_ir.outputs):
-        ref_tensor = reference_model_ir.tensors.get(str(tensor_name), None)
-        imported_tensor = imported_model_ir.tensors.get(str(tensor_name), None)
-        if ref_tensor is None or imported_tensor is None:
-            continue
-        imported_tensor.shape_signature = [int(v) for v in list(ref_tensor.shape_signature or ref_tensor.shape)]
-        imported_tensor.logical_layout = desired_public_layout_map.get(
-            str(tensor_name),
-            normalize_logical_layout(ref_tensor.logical_layout),
-        )
-    imported_model_ir.metadata["onnx_boundary_shape_signature_map"] = {
-        str(name): [int(v) for v in list(boundary_shape_map.get(str(name), reference_model_ir.tensors[str(name)].shape))]
-        for name in list(imported_model_ir.inputs) + list(imported_model_ir.outputs)
-        if str(name) in reference_model_ir.tensors
-    }
-    imported_model_ir.metadata["onnx_public_layout_map"] = {
-        str(name): (
-            "NWC"
-            if recurrent_public_boundary_context and len(list(reference_model_ir.tensors[str(name)].shape)) == 3
-            else normalize_logical_layout(
-                onnx_graph_public_layout_map.get(
-                    str(name),
-                    public_layout_map.get(
-                        str(name),
-                        reference_model_ir.tensors[str(name)].logical_layout,
-                    ),
-                )
-            )
-        )
-        for name in list(imported_model_ir.inputs) + list(imported_model_ir.outputs)
-        if str(name) in reference_model_ir.tensors
-    }
-    imported_model_ir.metadata["batchless_rank3_public_boundary_names"] = sorted(
-        str(name)
-        for name in list(batchless_rank3_boundary_names)
-        if str(name) in list(imported_model_ir.inputs) + list(imported_model_ir.outputs)
-    )
 
 
 def _try_export_native_package_from_tflite_import(
