@@ -7058,6 +7058,7 @@ def test_quantization_cleanup_rewrites_have_single_owner() -> None:
         / "quantization_cleanup.py"
     )
     function_names = {
+        "_optimize_concat_pre_quantize_dequantize",
         "_optimize_terminal_quantize_dequantize",
         "_quantized_tensors_share_exact_grid",
     }
@@ -7071,7 +7072,8 @@ def test_quantization_cleanup_rewrites_have_single_owner() -> None:
         }
 
     lowering_functions = _functions(lowering_path)
-    assert function_names <= set(_functions(pass_path))
+    pass_functions = _functions(pass_path)
+    assert function_names <= set(pass_functions)
     for function_name in function_names:
         wrapper_names = {
             node.id
@@ -7079,6 +7081,22 @@ def test_quantization_cleanup_rewrites_have_single_owner() -> None:
             if isinstance(node, ast.Name)
         }
         assert f"{function_name}_pass" in wrapper_names
+
+    concat_owner = pass_functions["_optimize_concat_pre_quantize_dequantize"]
+    concat_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(concat_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in concat_calls
+    assert "_build_tensor_producer_map" not in concat_calls
+    assert "ModelIRGraphIndex" in concat_calls
+    assert "operator_indices" in concat_calls
+    assert "producer" in concat_calls
+    assert "consumer_indices" in concat_calls
+    assert "_set_operator_inputs" in concat_calls
+    assert "_prune_unused_tensors" in concat_calls
 def test_attention_layout_rewrites_have_single_owner() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

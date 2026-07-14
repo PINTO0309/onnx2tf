@@ -306,6 +306,7 @@ from onnx2tf.tflite_builder.passes.cast_cleanup import (
     run_redundant_cast_cleanup,
 )
 from onnx2tf.tflite_builder.passes.quantization_cleanup import (
+    _optimize_concat_pre_quantize_dequantize as _optimize_concat_pre_quantize_dequantize_pass,
     _optimize_terminal_quantize_dequantize as _optimize_terminal_quantize_dequantize_pass,
     _quantized_tensors_share_exact_grid as _quantized_tensors_share_exact_grid_pass,
     run_terminal_quantize_dequantize_cleanup,
@@ -42018,121 +42019,7 @@ def _sanitize_terminal_transpose_before_dequantize(model_ir: ModelIR) -> Dict[st
 
 
 def _optimize_concat_pre_quantize_dequantize(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Bypass redundant QUANTIZE->DEQUANTIZE immediately before CONCATENATION inputs.
-
-    Target pattern:
-      ... -> x_float --QUANTIZE--> q --DEQUANTIZE--> x_dq --CONCATENATION--> ...
-
-    Rewritten:
-      ... -> x_float ---------------------------------> --CONCATENATION--> ...
-
-    Safety conditions:
-    - q is consumed only by that DEQUANTIZE
-    - neither q nor x_dq is a graph output
-    - x_float is the direct output of DEQUANTIZE
-    - the source and destination quantized tensors use the exact same dtype
-      and quantization grid
-
-    A value merely originating from a DEQUANTIZE is not sufficient: arithmetic
-    such as ADD can move values off the destination quantization grid, so
-    removing the Q/DQ pair would discard observable rounding and clipping.
-    """
-    bypassed = 0
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-
-        for concat_idx, concat_op in enumerate(model_ir.operators):
-            if str(concat_op.op_type) != "CONCATENATION":
-                continue
-            if len(concat_op.inputs) == 0:
-                continue
-
-            concat_inputs = list(concat_op.inputs)
-            for input_pos, concat_input_name in enumerate(concat_inputs):
-                dq_idx = producers.get(str(concat_input_name), None)
-                if dq_idx is None:
-                    continue
-                dq_op = model_ir.operators[int(dq_idx)]
-                if str(dq_op.op_type) != "DEQUANTIZE":
-                    continue
-                if len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
-                    continue
-                if str(dq_op.outputs[0]) != str(concat_input_name):
-                    continue
-
-                quantized_name = str(dq_op.inputs[0])
-                if quantized_name in model_ir.outputs or str(concat_input_name) in model_ir.outputs:
-                    continue
-
-                q_idx = producers.get(quantized_name, None)
-                if q_idx is None:
-                    continue
-                q_op = model_ir.operators[int(q_idx)]
-                if str(q_op.op_type) != "QUANTIZE":
-                    continue
-                if len(q_op.inputs) != 1 or len(q_op.outputs) != 1:
-                    continue
-                if str(q_op.outputs[0]) != quantized_name:
-                    continue
-
-                q_users = [int(v) for v in consumers.get(quantized_name, [])]
-                if len(q_users) != 1 or int(q_users[0]) != int(dq_idx):
-                    continue
-
-                float_name = str(q_op.inputs[0])
-                float_tensor = model_ir.tensors.get(float_name, None)
-                dq_tensor = model_ir.tensors.get(str(concat_input_name), None)
-                if float_tensor is None or dq_tensor is None:
-                    continue
-                if str(float_tensor.dtype).upper().startswith("INT"):
-                    continue
-                if not _shapes_equal(list(float_tensor.shape), list(dq_tensor.shape)):
-                    continue
-                float_producer_idx = producers.get(float_name, None)
-                if float_producer_idx is None:
-                    continue
-                float_producer = model_ir.operators[int(float_producer_idx)]
-                if (
-                    str(float_producer.op_type) != "DEQUANTIZE"
-                    or len(float_producer.inputs) != 1
-                    or len(float_producer.outputs) != 1
-                    or str(float_producer.outputs[0]) != float_name
-                ):
-                    continue
-                source_quantized_name = str(float_producer.inputs[0])
-                if not _quantized_tensors_share_exact_grid(
-                    model_ir,
-                    source_quantized_name,
-                    quantized_name,
-                ):
-                    continue
-
-                updated_concat_inputs = [str(v) for v in list(concat_op.inputs)]
-                if int(input_pos) >= 0 and int(input_pos) < len(updated_concat_inputs):
-                    updated_concat_inputs[int(input_pos)] = str(float_name)
-                    _set_operator_inputs(
-                        model_ir=model_ir,
-                        op=concat_op,
-                        new_inputs=updated_concat_inputs,
-                    )
-                bypassed += 1
-                changed = True
-                break
-
-            if changed:
-                break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {
-        "bypassed_concat_pre_quantize_dequantize": int(bypassed),
-    }
+    return _optimize_concat_pre_quantize_dequantize_pass(model_ir)
 
 
 def _optimize_transpose_dequantize_mean_quantize_bridges(model_ir: ModelIR) -> Dict[str, int]:

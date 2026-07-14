@@ -4113,6 +4113,27 @@ axis-count, and two-input-adapter-removal equality on the mixed direct/DQ
 fixture. The Swish compatibility orchestrator is now 69 lines with no raw
 top-level mutation loop.
 
+Concat-input exact-grid Q/DQ bypass is owned by
+`passes/quantization_cleanup.py`. The owner recognizes only
+`DEQUANTIZE(source_q)->float->QUANTIZE->q->DEQUANTIZE->concat_input` and
+rewires the matching Concat slot to the first float tensor. The source and
+destination quantized tensors must have exactly equal dtype, scale, zero point,
+and quantized dimension; the two float shapes must match; `q` must be consumed
+only by its Dequantize; and neither `q` nor the second Dequantize output may be
+public. Arithmetic between the first Dequantize and Quantize therefore remains
+ineligible, preserving observable rounding and clipping.
+
+One optional or locally constructed `ModelIRGraphIndex` supplies graph-order
+Concat candidates, all producer traversal, the exclusive quantized-consumer
+guard, and differential Concat input replacement. Each accepted edge change
+restarts the ordered scan against the maintained index; multiple matches no
+longer rebuild complete producer and consumer maps after every rewrite. A graph
+without Concat still performs the historical unused-tensor pruning but does not
+allocate an index. The lowerer retains a thin compatibility wrapper and its two
+ordered call sites remain unchanged. Extraction-time characterization compiles
+the complete prior committed function AST and confirms exact ModelIR and stats
+equality for both one and two simultaneous matches.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

@@ -15,6 +15,8 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _prune_unused_tensors,
     _rename_tensor_globally,
+    _set_operator_inputs,
+    _shapes_equal,
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR
@@ -49,6 +51,132 @@ def _quantized_tensors_share_exact_grid(
             np.asarray(rhs_q.zero_point, dtype=np.int64),
         )
     )
+
+
+def _optimize_concat_pre_quantize_dequantize(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    """Bypass exact-grid Q/DQ round trips immediately before Concat."""
+
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if active_index is None:
+        if not any(
+            str(operator.op_type) == "CONCATENATION" for operator in model_ir.operators
+        ):
+            _prune_unused_tensors(model_ir, layout_state=layout_state)
+            return {"bypassed_concat_pre_quantize_dequantize": 0}
+        active_index = ModelIRGraphIndex(model_ir)
+    elif len(active_index.operator_indices("CONCATENATION")) == 0:
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        return {"bypassed_concat_pre_quantize_dequantize": 0}
+
+    model_outputs = {str(name) for name in model_ir.outputs}
+    bypassed = 0
+
+    while True:
+        changed = False
+        for concat_index in active_index.operator_indices("CONCATENATION"):
+            concat = model_ir.operators[int(concat_index)]
+            if len(concat.inputs) == 0:
+                continue
+
+            for input_position, concat_input_name in enumerate(
+                [str(name) for name in concat.inputs]
+            ):
+                dequantize = active_index.producer(concat_input_name)
+                dequantize_index = (
+                    active_index.operator_index(dequantize)
+                    if dequantize is not None
+                    else None
+                )
+                if (
+                    dequantize is None
+                    or dequantize_index is None
+                    or str(dequantize.op_type) != "DEQUANTIZE"
+                    or len(dequantize.inputs) != 1
+                    or len(dequantize.outputs) != 1
+                    or str(dequantize.outputs[0]) != concat_input_name
+                ):
+                    continue
+
+                quantized_name = str(dequantize.inputs[0])
+                if (
+                    quantized_name in model_outputs
+                    or concat_input_name in model_outputs
+                ):
+                    continue
+
+                quantize = active_index.producer(quantized_name)
+                if (
+                    quantize is None
+                    or str(quantize.op_type) != "QUANTIZE"
+                    or len(quantize.inputs) != 1
+                    or len(quantize.outputs) != 1
+                    or str(quantize.outputs[0]) != quantized_name
+                ):
+                    continue
+                quantized_users = active_index.consumer_indices(quantized_name)
+                if quantized_users != [int(dequantize_index)]:
+                    continue
+
+                float_name = str(quantize.inputs[0])
+                float_tensor = model_ir.tensors.get(float_name)
+                dequantized_tensor = model_ir.tensors.get(concat_input_name)
+                if float_tensor is None or dequantized_tensor is None:
+                    continue
+                if str(float_tensor.dtype).upper().startswith("INT"):
+                    continue
+                if not _shapes_equal(
+                    list(float_tensor.shape),
+                    list(dequantized_tensor.shape),
+                ):
+                    continue
+
+                source_dequantize = active_index.producer(float_name)
+                if (
+                    source_dequantize is None
+                    or str(source_dequantize.op_type) != "DEQUANTIZE"
+                    or len(source_dequantize.inputs) != 1
+                    or len(source_dequantize.outputs) != 1
+                    or str(source_dequantize.outputs[0]) != float_name
+                ):
+                    continue
+                if not _quantized_tensors_share_exact_grid(
+                    model_ir,
+                    str(source_dequantize.inputs[0]),
+                    quantized_name,
+                ):
+                    continue
+
+                new_inputs = [str(name) for name in concat.inputs]
+                new_inputs[int(input_position)] = float_name
+                _set_operator_inputs(
+                    model_ir=model_ir,
+                    op=concat,
+                    new_inputs=new_inputs,
+                    graph_index=active_index,
+                )
+                bypassed += 1
+                changed = True
+                break
+
+            if changed:
+                break
+
+        if not changed:
+            break
+
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    return {
+        "bypassed_concat_pre_quantize_dequantize": int(bypassed),
+    }
 
 
 def _optimize_terminal_quantize_dequantize(
@@ -174,9 +302,7 @@ def run_terminal_quantize_dequantize_cleanup(
         )
         return {
             **stats,
-            "changed": bool(
-                stats.get("removed_terminal_quantize_dequantize_pairs", 0)
-            ),
+            "changed": bool(stats.get("removed_terminal_quantize_dequantize_pairs", 0)),
         }
 
     details, _ = run_model_ir_pass_group(

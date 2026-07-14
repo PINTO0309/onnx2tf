@@ -8,15 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit extracts Swish-QDQ late mixed-input Concat
-normalization into `passes/quantized_swish_layout.py`. The owner validates the
-complete direct/Dequantize-wrapped input, shape, public-boundary, and strict
-Quantize/inverse-Transpose tail contract before applying indexed rewires,
-metadata updates, and unused-adapter removal. A shared late-phase runner keeps
-one maintained `ModelIRGraphIndex` through normalization and the following
-inverse post-Transpose cleanup. The compatibility orchestrator retains its
-historical phase order and cumulative statistics but now has 69 lines and no
-raw top-level mutation loop.
+The latest implementation unit extracts exact-grid Q/DQ bypass immediately
+before Concat inputs into `passes/quantization_cleanup.py`. One maintained
+`ModelIRGraphIndex` supplies Concat candidates, producer traversal, exclusive
+consumer guards, and differential edge replacement. Exact dtype/scale/zero-
+point/quantized-dimension equality, direct Dequantize provenance, equal float
+shapes, rounding preservation, and public boundaries retain their former
+contract. Multiple matches no longer rebuild producer and consumer maps after
+each accepted rewrite.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -38,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains sixty-nine coherent continuations:
+The current `fb-refactor5` work contains seventy coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -184,9 +183,12 @@ The current `fb-refactor5` work contains sixty-nine coherent continuations:
   across both ordered primary phases;
 - `a91d7bad` gives the two identical inverse post-Transpose sweeps one
   differential-index owner while preserving their separate call sites;
-- the current checkpoint extracts transactional late mixed-input Concat
+- `02462462` extracts transactional late mixed-input Concat
   normalization and shares one maintained index with its following post-
-  Transpose cleanup.
+  Transpose cleanup;
+- the current checkpoint moves Concat pre-Q/DQ exact-grid bypass to its
+  quantization owner and replaces repeated whole-graph maps with one
+  differential index.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -205,8 +207,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/quantized_swish_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_quantized_swish_layout.py`;
+- `onnx2tf/tflite_builder/passes/quantization_cleanup.py`;
+- `tests/test_flatbuffer_direct_quantization_cleanup.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -533,6 +535,14 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   accepted transaction to avoid stale indices after compaction. Its runner
   gives the immediately following inverse-post owner that same index while
   retaining the original statistics and phase order.
+- Concat pre-Q/DQ bypass remains intentionally narrower than generic redundant-
+  quantization cleanup. The Quantize input must be the direct output of a
+  Dequantize, source and destination quantized tensors must share the complete
+  exact grid, and no arithmetic intermediate is accepted. The owner rewires
+  only the Concat edge; existing Q/DQ operators remain available to later
+  cleanup, preserving the historical ordered pipeline. It restarts after each
+  indexed edge change and performs the former pruning side effect even when no
+  Concat exists, without allocating an index in that no-candidate case.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -1585,6 +1595,19 @@ with `237 passed`. TensorFlow-import-blocked direct and `-cotof` plus the
 sequential quantization/evaluation/coverage integration smoke passed with
 `3 passed`. No Tier corpus conversion was run.
 
+The indexed Concat pre-Q/DQ checkpoint compiles the complete prior committed
+function AST and preserves exact ModelIR and statistics for both one and two
+simultaneous matches. Focused characterization covers two-match fixed-point
+rewriting with one index construction, maintained-index equivalence, scale and
+dtype mismatch, quantized fan-out, public quantized/dequantized boundaries,
+shape mismatch, non-Dequantize provenance, rounding-preserving arithmetic
+rejection, exact-grid acceptance, and no-Concat/no-index pruning. The focused
+owner and legacy selection passed with `26 passed`. Architecture, core, pass-
+efficiency, quantization cleanup, and the two established Concat-Q/DQ tests
+passed together with `238 passed`. TensorFlow-import-blocked direct and
+`-cotof` plus the sequential quantization/evaluation/coverage integration smoke
+passed with `3 passed`. No Tier corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1634,12 +1657,17 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Keep the terminal direct backend boundary explicit; do not reintroduce
+3. Audit the adjacent `_sanitize_terminal_transpose_before_dequantize` as the
+   next bounded quantization-cleanup candidate. Preserve its two distinct
+   sanitization/removal statistics, public terminal-output rename behavior,
+   and ordered pruning while replacing its repeated producer/consumer maps
+   only if one maintained index can express both subphases exactly.
+4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
-4. Keep the audited 294-line PyTorch source orchestrator as explicit sequencing
+5. Keep the audited 294-line PyTorch source orchestrator as explicit sequencing
    unless a new bounded decision is found.
-5. Run only the focused synthetic/ownership/static checks unless the user asks
+6. Run only the focused synthetic/ownership/static checks unless the user asks
    for broader conversion validation. Use `uv`, run inference sequentially if
    any is explicitly requested, commit and push coherent units, and do not
    create a pull request.
