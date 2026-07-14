@@ -177,6 +177,9 @@ from onnx2tf.tflite_builder.passes.axis3_const_concat_layout import (
 from onnx2tf.tflite_builder.passes.concat_global_pool_layout import (
     _repair_nchw_concat_global_pool_conv_axes as _repair_nchw_concat_global_pool_conv_axes_pass,
 )
+from onnx2tf.tflite_builder.passes.concat_transpose_conv_layout import (
+    _repair_nchw_concat_transpose_conv_axes as _repair_nchw_concat_transpose_conv_axes_pass,
+)
 from onnx2tf.tflite_builder.passes.dequant_concat_quantize_layout import (
     _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains as _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains_pass,
     run_dequant_concat_quantize_layout_cleanup,
@@ -13536,146 +13539,15 @@ def _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(
 def _repair_nchw_channel_shuffle_concat_gathers(model_ir: ModelIR) -> Dict[str, int]:
     return _repair_nchw_channel_shuffle_concat_gathers_pass(model_ir)
 
-def _repair_nchw_concat_transpose_conv_axes(model_ir: ModelIR) -> Dict[str, int]:
-    """Restore axis=1 for NCHW concat feeding an NHWC Conv adapter.
-
-    Quantized Conv lowering can place PAD/CAST/SUB after the layout transpose
-    and QUANTIZE before it. Those operators preserve the relevant layout, so
-    trace through them instead of requiring CONCAT->TRANSPOSE->CONV to be
-    adjacent.
-    """
-
-    repaired = 0
-    producers = _build_tensor_producer_map(model_ir)
-    for conv_op in model_ir.operators:
-        conv_type = str(conv_op.op_type)
-        if (
-            conv_type not in {"CONV_2D", "TRANSPOSE_CONV"}
-            or len(conv_op.inputs) < (3 if conv_type == "TRANSPOSE_CONV" else 2)
-            or len(conv_op.outputs) != 1
-        ):
-            continue
-        data_input_index = 2 if conv_type == "TRANSPOSE_CONV" else 0
-        filter_input_index = 1
-        conv_data_name = str(conv_op.inputs[data_input_index])
-        transpose_output_name = str(conv_data_name)
-        post_transpose_output_names: List[str] = []
-        transpose_op: Optional[OperatorIR] = None
-        while True:
-            transpose_idx = producers.get(transpose_output_name, None)
-            if transpose_idx is None:
-                break
-            candidate_op = model_ir.operators[int(transpose_idx)]
-            if (
-                str(candidate_op.op_type) == "TRANSPOSE"
-                and len(candidate_op.inputs) >= 2
-                and len(candidate_op.outputs) == 1
-                and _read_transpose_perm(model_ir, candidate_op)
-                == [0, 2, 3, 1]
-            ):
-                transpose_op = candidate_op
-                break
-            if (
-                str(candidate_op.op_type) not in {"PAD", "CAST", "SUB"}
-                or len(candidate_op.inputs) < 1
-                or len(candidate_op.outputs) != 1
-                or str(candidate_op.outputs[0]) != transpose_output_name
-            ):
-                break
-            post_transpose_output_names.append(transpose_output_name)
-            transpose_output_name = str(candidate_op.inputs[0])
-        if transpose_op is None:
-            continue
-        concat_output_name = str(transpose_op.inputs[0])
-        shape_passthrough_output_names: List[str] = []
-        concat_idx = producers.get(concat_output_name, None)
-        while concat_idx is not None:
-            candidate_op = model_ir.operators[int(concat_idx)]
-            if (
-                str(candidate_op.op_type)
-                not in {"RELU", "RELU6", "QUANTIZE", "DEQUANTIZE", "CAST"}
-                or len(candidate_op.inputs) != 1
-                or len(candidate_op.outputs) != 1
-                or str(candidate_op.outputs[0]) != concat_output_name
-            ):
-                break
-            shape_passthrough_output_names.append(concat_output_name)
-            concat_output_name = str(candidate_op.inputs[0])
-            concat_idx = producers.get(concat_output_name, None)
-        if concat_idx is None:
-            continue
-        concat_op = model_ir.operators[int(concat_idx)]
-        if (
-            str(concat_op.op_type) != "CONCATENATION"
-            or len(concat_op.inputs) < 2
-            or len(concat_op.outputs) != 1
-            or int(concat_op.options.get("axis", 1)) == 1
-        ):
-            continue
-        filter_tensor = model_ir.tensors.get(
-            str(conv_op.inputs[filter_input_index]),
-            None,
-        )
-        transpose_tensor = model_ir.tensors.get(transpose_output_name, None)
-        conv_output_tensor = model_ir.tensors.get(str(conv_op.outputs[0]), None)
-        input_tensors = [model_ir.tensors.get(str(name), None) for name in concat_op.inputs]
-        if (
-            filter_tensor is None
-            or transpose_tensor is None
-            or conv_output_tensor is None
-            or any(tensor is None for tensor in input_tensors)
-        ):
-            continue
-        filter_shape = [int(v) for v in list(filter_tensor.shape)]
-        input_shapes = [[int(v) for v in list(tensor.shape)] for tensor in input_tensors if tensor is not None]
-        if len(filter_shape) != 4 or not input_shapes or any(len(shape) != 4 for shape in input_shapes):
-            continue
-        reference = input_shapes[0]
-        if any(
-            any(int(shape[axis]) != int(reference[axis]) for axis in [0, 2, 3])
-            for shape in input_shapes[1:]
-        ):
-            continue
-        expected_channels = int(sum(int(shape[1]) for shape in input_shapes))
-        if expected_channels <= 0 or expected_channels != int(filter_shape[3]):
-            continue
-        if int(transpose_tensor.shape[3]) == expected_channels:
-            continue
-
-        concat_op.options["axis"] = 1
-        concat_shape = [int(v) for v in reference]
-        concat_shape[1] = int(expected_channels)
-        concat_tensor = model_ir.tensors.get(concat_output_name, None)
-        if concat_tensor is not None:
-            concat_tensor.shape = list(concat_shape)
-            concat_tensor.shape_signature = list(concat_shape)
-        for passthrough_output_name in shape_passthrough_output_names:
-            passthrough_tensor = model_ir.tensors.get(
-                passthrough_output_name,
-                None,
-            )
-            if passthrough_tensor is None:
-                continue
-            passthrough_tensor.shape = list(concat_shape)
-            passthrough_tensor.shape_signature = list(concat_shape)
-        nhwc_shape = [
-            int(concat_shape[0]),
-            int(concat_shape[2]),
-            int(concat_shape[3]),
-            int(concat_shape[1]),
-        ]
-        transpose_tensor.shape = list(nhwc_shape)
-        transpose_tensor.shape_signature = list(nhwc_shape)
-        if conv_type == "CONV_2D" and len(post_transpose_output_names) == 0:
-            conv_output_tensor.shape = [
-                int(nhwc_shape[0]),
-                int(nhwc_shape[1]),
-                int(nhwc_shape[2]),
-                int(filter_shape[0]),
-            ]
-            conv_output_tensor.shape_signature = list(conv_output_tensor.shape)
-        repaired += 1
-    return {"repaired_nchw_concat_transpose_conv_axes": int(repaired)}
+def _repair_nchw_concat_transpose_conv_axes(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    return _repair_nchw_concat_transpose_conv_axes_pass(
+        model_ir,
+        layout_state=layout_state,
+    )
 
 
 def _repair_nchw_concat_global_pool_conv_axes(
@@ -47218,7 +47090,10 @@ def lower_onnx_to_ir(
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
     )
-    _repair_nchw_concat_transpose_conv_axes(model_ir)
+    _repair_nchw_concat_transpose_conv_axes(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _repair_nchw_concat_global_pool_conv_axes(
         model_ir,
         layout_state=session.layout_state,

@@ -4497,6 +4497,31 @@ Concat axis and three tensor records partially changed. Exact former-function
 differential execution confirms complete ModelIR/statistics equality for valid
 one/two-chain, negative-axis, and INT64-shape fixtures.
 
+NCHW Concat/Transpose/(Transpose)Conv axis repair is owned by
+`passes/concat_transpose_conv_layout.py`. A family preflight avoids index
+construction for unrelated graphs. One optional or local `ModelIRGraphIndex`
+walks Conv and TransposeConv candidates backward through optional post-
+Transpose PAD/CAST/SUB and optional pre-Transpose
+RELU/RELU6/QUANTIZE/DEQUANTIZE/CAST chains to one Concat. Every edge is
+uniquely produced, exclusively consumed by its next ordered operator, and
+private. The sole production call supplies the Session LayoutState.
+
+The boundary Transpose is exactly `[0,2,3,1]` with a producer-free permutation
+constant. Every Concat input has a fully positive NCHW rank-four shape with
+common batch/spatial dimensions; its axis-one channel sum equals the constant
+OHWI filter input channel and the filter buffer exactly matches its metadata.
+The existing already-correct Transpose-output guard remains. Direct Conv
+without a post-prefix retains its output-shape refresh, while prefixed Conv and
+TransposeConv retain their former output metadata.
+
+Concat options plus Concat, pre-passthrough, Transpose, and eligible direct-
+Conv shape/signature records are one immutable plan. This prevents mutation of
+public or fan-out adapters, duplicate producers, produced permutation/filter
+constants, malformed/runtime filters, invalid input shapes, and nonexclusive
+pre/post chains. Exact former-function differential execution confirms
+complete ModelIR/statistics equality for direct Conv, pre/post-prefix Conv, and
+TransposeConv fixtures.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
