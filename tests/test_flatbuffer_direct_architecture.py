@@ -4576,6 +4576,36 @@ def test_generated_pytorch_concat_policy_has_single_owner() -> None:
     assert "import torch" not in policy_source
 
 
+def test_generated_pytorch_reshape_policy_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    policy_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_reshape_policy.py"
+    ).read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    policy_functions = {
+        node.name
+        for node in ast.parse(policy_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    for function_name in (
+        "_reshape_codegen_is_plain_data_only_for_codegen",
+        "_reshape_prefers_feature_last_for_adjx_batch_matmul_for_codegen",
+        "_static_sequence_length_for_model_ir",
+        "_tensor_exact_static_shape_list_for_model_ir",
+    ):
+        assert function_name in policy_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," in exporter_source
+    assert "import torch" not in policy_source
+
+
 def test_generated_pytorch_shape_policy_has_single_owner() -> None:
     exporter_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"

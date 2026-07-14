@@ -1016,6 +1016,15 @@ op-family contracts and the focused ownership test pass, together with Ruff
 and syntax validation. The exporter shrank by another 196 lines. No model
 conversion or inference was run.
 
+Generated RESHAPE policy now lives in the Torch-free
+`pytorch_reshape_policy.py` owner. Plain-data classification, exact static
+signature and sequence-length queries, and indexed unary traversal to adjX
+BatchMatMul retain explicit graph/callback inputs. Four thousand fixed-seed
+outcomes match checkpoint `6d882d0` exactly; three direct op-family contracts
+and the focused ownership test pass, together with Ruff and syntax validation.
+The exporter shrank by another 202 lines. No model conversion or inference was
+run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

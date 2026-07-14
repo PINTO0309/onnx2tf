@@ -2235,6 +2235,13 @@ and the decision to keep a Slice result channel-first across all indexed
 Concat consumers. ModelIR shape and expression access remain explicit
 callbacks, so the module neither mutates the graph nor owns statement emission.
 
+Generated RESHAPE policy has a focused Torch-free owner in
+`pytorch_reshape_policy.py`. It distinguishes plain data reshapes from layout-
+sensitive plans, resolves exact static signatures and sequence lengths, and
+follows indexed unary chains to an adjX BatchMatMul that requires feature-last
+storage. Runtime-layout and shape-plan collaborators are explicit callbacks;
+the policy owns no graph mutation or source statement emission.
+
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter
