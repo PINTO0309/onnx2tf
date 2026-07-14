@@ -201,6 +201,57 @@ def test_split_planner_reuses_one_model_ir_graph_index(monkeypatch) -> None:
     assert index_build_count == 1
 
 
+def test_split_plan_and_writer_reuse_one_caller_owned_source_index(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    index_build_count = 0
+    original_graph_index = split_planner_module.ModelIRGraphIndex
+
+    class _CountingGraphIndex(original_graph_index):
+        def __post_init__(self) -> None:
+            nonlocal index_build_count
+            index_build_count += 1
+            super().__post_init__()
+
+    monkeypatch.setattr(
+        split_planner_module,
+        "ModelIRGraphIndex",
+        _CountingGraphIndex,
+    )
+    monkeypatch.setattr(
+        split_planner_module,
+        "run_model_ir_validation_pipeline",
+        lambda _model_ir: None,
+    )
+    monkeypatch.setattr(
+        split_planner_module,
+        "write_model_file",
+        lambda **kwargs: None,
+    )
+
+    model_ir = _make_chain_model_ir(op_count=6)
+    graph_index = _CountingGraphIndex(model_ir)
+    report = plan_contiguous_partitions_by_size(
+        model_ir=model_ir,
+        target_max_bytes=250,
+        hard_max_bytes=350,
+        size_estimator=lambda part: len(part.operators) * 100,
+        graph_index=graph_index,
+    )
+    result = write_split_model_files_and_manifest(
+        schema_tflite={},
+        model_ir=model_ir,
+        plan_report=report,
+        output_folder_path=str(tmp_path),
+        output_file_name="shared_source_index",
+        graph_index=graph_index,
+    )
+
+    assert index_build_count == 1
+    assert result["split_partition_count"] == 3
+
+
 def test_split_planner_materializes_first_producer_map_once(monkeypatch) -> None:
     producer_map_build_count = 0
     original_first_producer_indices = split_planner_module._first_producer_indices

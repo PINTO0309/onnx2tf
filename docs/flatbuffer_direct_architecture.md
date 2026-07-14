@@ -1721,6 +1721,11 @@ validation, and manifest edge construction. Its first-producer map is likewise
 materialized once and passed through all three phases instead of being rebuilt
 from the shared index. Standalone helpers accept optional caller-owned index
 and producer-map state while retaining their existing call behavior.
+When split output is requested by the artifact plan, this caller-owned source
+index is created before final ModelIR validation and then remains current and
+shared across validation, planning, and partition-file writing. The normal
+non-split path creates no source split index. Standalone planning and writing
+calls still construct their own index when none is supplied.
 Partition input/output tensor collection likewise uses insertion-ordered
 `seen` sets. It preserves first-seen ordering and duplicate suppression while
 removing the quadratic list-membership cost from every binary-search candidate

@@ -764,6 +764,16 @@ eager and shared indexes, and the focused core/artifact selection passes 41
 tests. A 21-run synthetic 2,000-op validation median improved from 0.002606s to
 0.001233s (2.11x). No model conversion or inference was run.
 
+Requested split artifacts now create one caller-owned source
+`ModelIRGraphIndex` and reuse it through final source validation, contiguous
+partition planning, and partition-file writing. The default non-split path
+does not create this index, while standalone planner/writer calls keep their
+self-contained fallback. One hundred fixed-seed graphs produce identical
+eager and shared-index split reports. Focused split/artifact tests pass 36
+tests; instrumentation proves one source index across planning and writing.
+An 11-run synthetic 2,000-op validation+planning median changed from 0.120197s
+to 0.118535s (1.01x). No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

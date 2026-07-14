@@ -2167,6 +2167,7 @@ def plan_contiguous_partitions_by_size(
     hard_max_bytes: int = DEFAULT_TFLITE_SPLIT_MAX_BYTES,
     schema_tflite: Optional[Dict[str, Any]] = None,
     size_estimator: Optional[Callable[[ModelIR], int]] = None,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Dict[str, Any]:
     target_max_bytes = int(target_max_bytes)
     hard_max_bytes = int(hard_max_bytes)
@@ -2186,7 +2187,10 @@ def plan_contiguous_partitions_by_size(
         schema_tflite=schema_tflite,
         size_estimator=size_estimator,
     )
-    graph_index = ModelIRGraphIndex(model_ir)
+    graph_index = _resolve_split_graph_index(
+        model_ir=model_ir,
+        graph_index=graph_index,
+    )
     producer_index = _first_producer_indices(graph_index)
     candidate_split_points = find_dependency_safe_split_points(
         model_ir,
@@ -2345,12 +2349,16 @@ def write_split_model_files_and_manifest(
     output_folder_path: str,
     output_file_name: str,
     tflite_loader_validator: Optional[Callable[[str], None]] = None,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Dict[str, Any]:
     partitions = list(plan_report.get("partitions", []))
     edges = list(plan_report.get("edges", []))
     generated_partition_paths: List[str] = []
     generated_partition_entries: List[Dict[str, Any]] = []
-    graph_index = ModelIRGraphIndex(model_ir)
+    graph_index = _resolve_split_graph_index(
+        model_ir=model_ir,
+        graph_index=graph_index,
+    )
 
     for part in partitions:
         partition_id = int(part["partition_id"])

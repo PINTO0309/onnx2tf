@@ -553,6 +553,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     internal_pass_diagnostics: Optional[List[Dict[str, Any]]] = (
         [] if internal_pass_metrics_path else None
     )
+    split_graph_index: Optional[ModelIRGraphIndex] = None
     try:
         model_ir = lower_onnx_to_ir(
             onnx_graph=preprocessed_onnx_graph,
@@ -628,7 +629,12 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             model_ir, _ = rewrite_model_ir_unroll_recurrent_ops(
                 model_ir=model_ir,
             )
-        run_model_ir_validation_pipeline(model_ir)
+        if split_plan_requested:
+            split_graph_index = ModelIRGraphIndex(model_ir)
+        run_model_ir_validation_pipeline(
+            model_ir,
+            graph_index=split_graph_index,
+        )
     except Exception as ex:
         if report_op_coverage:
             try:
@@ -720,6 +726,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 target_max_bytes=tflite_split_target_bytes,
                 hard_max_bytes=tflite_split_max_bytes,
                 schema_tflite=schema_tflite,
+                graph_index=split_graph_index,
             )
             split_required_by_estimate = bool(should_split_by_estimate(split_plan_report))
             split_plan_total_estimated_bytes = int(
@@ -746,11 +753,13 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     output_folder_path=output_folder_path,
                     output_file_name=output_file_name,
                     tflite_loader_validator=_validate_split_tflite_loadable,
+                    graph_index=split_graph_index,
                 )
                 split_manifest_path = split_outputs["split_manifest_path"]
                 split_partition_paths = split_outputs["split_partition_paths"]
                 split_partition_count = int(split_outputs["split_partition_count"])
             _advance_export_progress()
+            del split_graph_index
 
         _set_export_progress_desc("write float32 tflite")
         model_ir_fp32 = clone_model_ir_with_float32(model_ir)

@@ -193,13 +193,74 @@ def test_precision_validation_reuses_write_graph_indexes() -> None:
             ),
             None,
         )
-        if isinstance(graph_index_keyword, ast.Name):
+        if (
+            isinstance(graph_index_keyword, ast.Name)
+            and node.args[0].id
+            in {"model_ir_fp32_tflite", "model_ir_fp16_tflite"}
+        ):
             validation_index_by_model[node.args[0].id] = graph_index_keyword.id
 
     assert validation_index_by_model == {
         "model_ir_fp32_tflite": "fp32_write_graph_index",
         "model_ir_fp16_tflite": "fp16_write_graph_index",
     }
+
+
+def test_split_artifact_stages_reuse_source_graph_index() -> None:
+    source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py"
+    ).read_text(encoding="utf-8")
+    builder_tree = ast.parse(source)
+    export_function = next(
+        node
+        for node in builder_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "export_tflite_model_flatbuffer_direct"
+    )
+    expected_calls = {
+        "run_model_ir_validation_pipeline": "model_ir",
+        "plan_contiguous_partitions_by_size": "model_ir",
+        "write_split_model_files_and_manifest": "model_ir",
+    }
+    matched_calls = set()
+    for node in ast.walk(export_function):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        expected_model_name = expected_calls.get(node.func.id)
+        if expected_model_name is None:
+            continue
+        model_argument = (
+            node.args[0]
+            if node.args
+            else next(
+                (
+                    keyword.value
+                    for keyword in node.keywords
+                    if keyword.arg == "model_ir"
+                ),
+                None,
+            )
+        )
+        if not (
+            isinstance(model_argument, ast.Name)
+            and model_argument.id == expected_model_name
+        ):
+            continue
+        index_argument = next(
+            (
+                keyword.value
+                for keyword in node.keywords
+                if keyword.arg == "graph_index"
+            ),
+            None,
+        )
+        if index_argument is None:
+            continue
+        assert isinstance(index_argument, ast.Name)
+        assert index_argument.id == "split_graph_index"
+        matched_calls.add(node.func.id)
+
+    assert matched_calls == set(expected_calls)
 
 
 def test_terminal_artifact_state_is_released_after_its_last_use() -> None:
@@ -216,6 +277,7 @@ def test_terminal_artifact_state_is_released_after_its_last_use() -> None:
     )
 
     terminal_names = {
+        "split_graph_index",
         "fp32_write_graph_index",
         "model_ir_fp32_tflite",
         "model_ir_fp32",
