@@ -14,6 +14,7 @@ DEPENDENCY_SCOPED_ROOTS = [
     for name in ["core", "passes", "op_families"]
 ]
 DEPENDENCY_SCOPED_FILES = [
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "artifact_preparation.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "artifact_metadata.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py",
     REPO_ROOT

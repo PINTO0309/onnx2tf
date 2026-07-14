@@ -623,6 +623,20 @@ lives inside the SavedModel request guard. An AST gate fixes that ownership and
 architecture validation passes 81 tests. No model conversion or inference was
 run.
 
+TFLite precision artifact preparation no longer clones its terminal ModelIR a
+second time unconditionally. Float16 writes directly from its only precision
+clone. Float32 does the same for the normal direct path and split artifacts,
+but retains an isolated write clone when a non-split SavedModel or PyTorch
+exporter will later consume the pre-serialization float32 IR. An eight-case
+artifact/split matrix verifies the exact isolation policy, independent-buffer
+checks prove the retained clone boundary, normalized fingerprints prove that
+single and legacy double precision clones have identical content, and an AST
+gate fixes the terminal float16 reuse. Focused artifact-preparation, writer,
+and architecture validation passes. On a local synthetic 2,000-op ModelIR,
+seven-run medians changed from 0.071958s to 0.034205s for float32 (2.10x) and
+from 0.068364s to 0.035449s for float16 (1.93x); traced clone-stage peak memory
+dropped 50% in both cases. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

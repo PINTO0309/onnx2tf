@@ -1498,8 +1498,16 @@ one-to-one group calls; ScatterND and binary constant folding remain independent
 compatibility helpers outside that pass group. They now accept an optional
 shared GraphIndex, use differential operator removal and LayoutState-aware
 pruning, and contain no direct operator-list deletion. Float32 and float16
-artifact preparation builds one index per cloned artifact and shares it across
-the consecutive ScatterND and binary folds.
+artifact preparation builds one index per serialization artifact and shares it
+across the consecutive ScatterND and binary folds. The terminal precision IR
+is also the serialization IR when no later unsplit exporter needs the
+pre-serialization form. Float16 is always terminal at this point. Float32 is
+isolated by the TensorFlow- and Torch-free policy in `artifact_preparation.py`
+only for an unsplit SavedModel or PyTorch request, because those exporters still
+consume the pre-fold float32 graph; split exporters consume the original
+partition source instead. This removes one complete tensor, operator, subgraph,
+metadata, and constant-buffer clone from the normal direct path while retaining
+copy isolation at the only later mutation boundary.
 
 Late precision conversion in `passes/precision.py` is differential as well.
 Constant floating DIV roots are captured from one operator-type index and each

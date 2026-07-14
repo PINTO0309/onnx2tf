@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional
 from onnx2tf.tflite_builder.artifact_metadata import (
     collect_custom_op_artifact_metadata,
 )
+from onnx2tf.tflite_builder.artifact_preparation import (
+    isolate_float32_model_ir_for_tflite_write,
+)
 from onnx2tf.tflite_builder.core.contracts import ConversionRequest, ConversionResult
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.progress import (
@@ -766,7 +769,12 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         float32_path = os.path.join(output_folder_path, f"{output_file_name}_float32.tflite")
         saved_model_path = None
         float32_write_timing: Dict[str, Any] = {}
-        model_ir_fp32_tflite = clone_model_ir_with_float32(model_ir_fp32)
+        model_ir_fp32_tflite = isolate_float32_model_ir_for_tflite_write(
+            model_ir_fp32,
+            split_manifest_path=split_manifest_path,
+            output_saved_model_from_model_ir=output_saved_model_from_model_ir,
+            output_pytorch_from_model_ir=output_pytorch_from_model_ir,
+        )
         fp32_write_graph_index = ModelIRGraphIndex(model_ir_fp32_tflite)
         _optimize_constant_input_scatter_nd_chains(
             model_ir_fp32_tflite,
@@ -1005,7 +1013,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         )
         float16_path = os.path.join(output_folder_path, f"{output_file_name}_float16.tflite")
         float16_write_timing: Dict[str, Any] = {}
-        model_ir_fp16_tflite = clone_model_ir_with_float16(model_ir_fp16)
+        model_ir_fp16_tflite = model_ir_fp16
         fp16_write_graph_index = ModelIRGraphIndex(model_ir_fp16_tflite)
         _optimize_constant_input_scatter_nd_chains(
             model_ir_fp16_tflite,
