@@ -1025,7 +1025,7 @@ def _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains(
                     is_variable=False,
                 )
 
-                t2_op.op_type = "GATHER"
+                graph_index.replace_operator_type(t2_idx, "GATHER")
                 t2_op.version = 1
                 _set_operator_inputs(
                     model_ir=model_ir,
@@ -1410,7 +1410,7 @@ def _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather(
                 is_variable=False,
             )
 
-            r2_op.op_type = "GATHER"
+            graph_index.replace_operator_type(r2_idx, "GATHER")
             r2_op.version = 1
             _set_operator_inputs(
                 model_ir=model_ir,

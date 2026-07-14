@@ -158,6 +158,13 @@ scope remains between raw Softmax canonicalization and transpose-binary
 rewrites. Consolidation reduces the lowerer's registered-runner call
 characterization from 139 to 137.
 
+The late NCHW channel-shuffle and Gather-axis pair reuses the existing
+channel-shuffle helper with its two-way and NHWC modes disabled. Five prior
+helper invocations retain both modes by default. NHWC and NCHW shuffle
+rewrites now use `replace_operator_type()` when converting the surviving
+operator to `GATHER`, keeping the shared type index current. This consolidation
+reduces the registered-runner call characterization from 137 to 135.
+
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
 and Split/Reshape collapse) retain their order before the two bridge specs

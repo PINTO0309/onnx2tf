@@ -50149,24 +50149,28 @@ def lower_onnx_to_ir(
 
     def _run_channel_shuffle_gather_layout_pass_cluster(
         *,
+        include_two_way_shuffle: bool = True,
+        include_nhwc_shuffle: bool = True,
         include_post_gather_cleanup: bool = False,
     ) -> None:
         state_scope = ModelIRPassStateScope(
             model_ir,
             layout_state=session.layout_state,
         )
-        run_two_way_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
-        run_nhwc_channel_shuffle_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-            state_scope=state_scope,
-        )
+        if include_two_way_shuffle:
+            run_two_way_channel_shuffle_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
+        if include_nhwc_shuffle:
+            run_nhwc_channel_shuffle_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
         run_nchw_channel_shuffle_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -51321,15 +51325,9 @@ def lower_onnx_to_ir(
     _optimize_transpose_reshape_transpose_to_expanddims_nhwc_chains(model_ir)
     _optimize_transpose_reshape_transpose_to_flatten_hw_nhwc_chains(model_ir)
     _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
-    run_nchw_channel_shuffle_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_transpose_gather_axis_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _run_channel_shuffle_gather_layout_pass_cluster(
+        include_two_way_shuffle=False,
+        include_nhwc_shuffle=False,
     )
     _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(model_ir)
     _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)

@@ -3,7 +3,10 @@ from __future__ import annotations
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
-from onnx2tf.tflite_builder.core.model_ir_pass_state import ModelIRPassState
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPassState,
+    ModelIRPassStateScope,
+)
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather,
@@ -128,8 +131,17 @@ def test_nchw_channel_shuffle_runner_uses_one_index(monkeypatch) -> None:
     monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
     monkeypatch.setattr(ModelIRPassState, "snapshot", counted_snapshot)
     diagnostics: list[dict] = []
+    state_scope = ModelIRPassStateScope(model_ir)
 
-    stats = run_nchw_channel_shuffle_cleanup(model_ir, diagnostics=diagnostics)
+    stats = run_nchw_channel_shuffle_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    pass_state, state_built = state_scope.acquire(
+        model_ir=model_ir,
+        layout_state=None,
+    )
 
     assert stats[
         "optimized_nchw_channel_shuffle_reshape_transpose_reshape_to_gather"
@@ -137,6 +149,9 @@ def test_nchw_channel_shuffle_runner_uses_one_index(monkeypatch) -> None:
     assert [operator.op_type for operator in model_ir.operators] == ["GATHER"]
     assert refresh_count == 1
     assert snapshot_count == 1
+    assert state_built is False
+    assert pass_state.graph_index.operator_indices("RESHAPE") == []
+    assert pass_state.graph_index.operator_indices("GATHER") == [0]
     assert diagnostics[0]["code"] == "canonicalize.nchw_channel_shuffle_gather"
     assert diagnostics[0]["phase"] == "canonicalize"
     assert diagnostics[0]["status"] == "changed"
