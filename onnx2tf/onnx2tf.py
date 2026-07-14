@@ -5968,6 +5968,92 @@ def convert(
                 )
             )
 
+    def _validate_and_log_flatbuffer_direct_reports_and_quantization(
+        direct_outputs: Dict[str, Any],
+        *,
+        dynamic_range_completion_message: str,
+    ) -> None:
+        if report_op_coverage:
+            if 'op_coverage_report_path' not in direct_outputs:
+                raise RuntimeError(
+                    'flatbuffer_direct OP coverage report was requested but no report was generated.'
+                )
+            info(
+                Color.GREEN(
+                    f'OP coverage report output complete! '
+                    f'({direct_outputs["op_coverage_report_path"]})'
+                )
+            )
+        if 'tensor_correspondence_report_path' in direct_outputs:
+            info(
+                Color.GREEN(
+                    f'Tensor correspondence report output complete! '
+                    f'({direct_outputs["tensor_correspondence_report_path"]})'
+                )
+            )
+        if output_dynamic_range_quantized_tflite:
+            if 'dynamic_range_quant_tflite_path' not in direct_outputs:
+                raise RuntimeError(
+                    'flatbuffer_direct dynamic-range quantization was requested but no output was generated.'
+                )
+            info(
+                Color.GREEN(
+                    f'{dynamic_range_completion_message} '
+                    f'({direct_outputs["dynamic_range_quant_tflite_path"]})'
+                )
+            )
+        if output_integer_quantized_tflite:
+            if 'integer_quant_tflite_path' not in direct_outputs:
+                raise RuntimeError(
+                    'flatbuffer_direct integer quantization was requested but no output was generated.'
+                )
+            if 'full_integer_quant_tflite_path' not in direct_outputs:
+                raise RuntimeError(
+                    'flatbuffer_direct full integer quantization was requested but no output was generated.'
+                )
+            int16_act_skipped = bool(direct_outputs.get('int16_activation_quantization_skipped', False))
+            int16_act_skip_reasons = direct_outputs.get('int16_activation_quantization_skip_reasons', [])
+            if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
+                raise RuntimeError(
+                    'flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.'
+                )
+            if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
+                raise RuntimeError(
+                    'flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.'
+                )
+            info(
+                Color.GREEN(
+                    f'INT8 Quantization tflite output complete! '
+                    f'({direct_outputs["integer_quant_tflite_path"]})'
+                )
+            )
+            info(
+                Color.GREEN(
+                    f'Full INT8 Quantization tflite output complete! '
+                    f'({direct_outputs["full_integer_quant_tflite_path"]})'
+                )
+            )
+            if int16_act_skipped:
+                info(
+                    Color.YELLOW(
+                        'INT8 Quantization with int16 activations skipped. '
+                        f'Reason: {"; ".join(str(v) for v in int16_act_skip_reasons)}'
+                    )
+                )
+            else:
+                info(
+                    Color.GREEN(
+                        f'INT8 Quantization with int16 activations tflite output complete! '
+                        f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
+                    )
+                )
+                info(
+                    Color.GREEN(
+                        f'Full INT8 Quantization with int16 activations tflite output complete! '
+                        f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
+                    )
+                )
+
     def _run_flatbuffer_direct_export(
         *,
         export_output_folder_path: str,
@@ -6234,86 +6320,12 @@ def convert(
             force_split_manifest=force_split_manifest,
             target_bytes=tflite_split_target_bytes,
         )
-        if report_op_coverage:
-            if 'op_coverage_report_path' not in direct_outputs:
-                raise RuntimeError(
-                    'flatbuffer_direct OP coverage report was requested but no report was generated.'
-                )
-            info(
-                Color.GREEN(
-                    f'OP coverage report output complete! '
-                    f'({direct_outputs["op_coverage_report_path"]})'
-                )
-            )
-        if 'tensor_correspondence_report_path' in direct_outputs:
-            info(
-                Color.GREEN(
-                    f'Tensor correspondence report output complete! '
-                    f'({direct_outputs["tensor_correspondence_report_path"]})'
-                )
-            )
-        if output_dynamic_range_quantized_tflite:
-            if 'dynamic_range_quant_tflite_path' not in direct_outputs:
-                raise RuntimeError(
-                    'flatbuffer_direct dynamic-range quantization was requested but no output was generated.'
-                )
-            info(
-                Color.GREEN(
-                    f'Dynamic Range Quantization tflite output complete! '
-                    f'({direct_outputs["dynamic_range_quant_tflite_path"]})'
-                )
-            )
-        if output_integer_quantized_tflite:
-            if 'integer_quant_tflite_path' not in direct_outputs:
-                raise RuntimeError(
-                    'flatbuffer_direct integer quantization was requested but no output was generated.'
-                )
-            if 'full_integer_quant_tflite_path' not in direct_outputs:
-                raise RuntimeError(
-                    'flatbuffer_direct full integer quantization was requested but no output was generated.'
-                )
-            int16_act_skipped = bool(direct_outputs.get('int16_activation_quantization_skipped', False))
-            int16_act_skip_reasons = direct_outputs.get('int16_activation_quantization_skip_reasons', [])
-            if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
-                raise RuntimeError(
-                    'flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.'
-                )
-            if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
-                raise RuntimeError(
-                    'flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.'
-                )
-            info(
-                Color.GREEN(
-                    f'INT8 Quantization tflite output complete! '
-                    f'({direct_outputs["integer_quant_tflite_path"]})'
-                )
-            )
-            info(
-                Color.GREEN(
-                    f'Full INT8 Quantization tflite output complete! '
-                    f'({direct_outputs["full_integer_quant_tflite_path"]})'
-                )
-            )
-            if int16_act_skipped:
-                info(
-                    Color.YELLOW(
-                        'INT8 Quantization with int16 activations skipped. '
-                        f'Reason: {"; ".join(str(v) for v in int16_act_skip_reasons)}'
-                    )
-                )
-            else:
-                info(
-                    Color.GREEN(
-                        f'INT8 Quantization with int16 activations tflite output complete! '
-                        f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
-                    )
-                )
-                info(
-                    Color.GREEN(
-                        f'Full INT8 Quantization with int16 activations tflite output complete! '
-                        f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
-                    )
-                )
+        _validate_and_log_flatbuffer_direct_reports_and_quantization(
+            direct_outputs,
+            dynamic_range_completion_message=(
+                'Dynamic Range Quantization tflite output complete!'
+            ),
+        )
         if copy_onnx_input_output_names_to_tflite:
             info(
                 'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'
@@ -7470,86 +7482,12 @@ def convert(
                     force_split_manifest=force_split_manifest,
                     target_bytes=tflite_split_target_bytes,
                 )
-                if report_op_coverage:
-                    if 'op_coverage_report_path' not in direct_outputs:
-                        raise RuntimeError(
-                            'flatbuffer_direct OP coverage report was requested but no report was generated.'
-                        )
-                    info(
-                        Color.GREEN(
-                            f'OP coverage report output complete! '
-                            f'({direct_outputs["op_coverage_report_path"]})'
-                        )
-                    )
-                if 'tensor_correspondence_report_path' in direct_outputs:
-                    info(
-                        Color.GREEN(
-                            f'Tensor correspondence report output complete! '
-                            f'({direct_outputs["tensor_correspondence_report_path"]})'
-                        )
-                    )
-                if output_dynamic_range_quantized_tflite:
-                    if 'dynamic_range_quant_tflite_path' not in direct_outputs:
-                        raise RuntimeError(
-                            'flatbuffer_direct dynamic-range quantization was requested but no output was generated.'
-                        )
-                    info(
-                        Color.GREEN(
-                            f'Dynamic range quantized tflite output complete! '
-                            f'({direct_outputs["dynamic_range_quant_tflite_path"]})'
-                        )
-                    )
-                if output_integer_quantized_tflite:
-                    if 'integer_quant_tflite_path' not in direct_outputs:
-                        raise RuntimeError(
-                            'flatbuffer_direct integer quantization was requested but no output was generated.'
-                        )
-                    if 'full_integer_quant_tflite_path' not in direct_outputs:
-                        raise RuntimeError(
-                            'flatbuffer_direct full integer quantization was requested but no output was generated.'
-                        )
-                    int16_act_skipped = bool(direct_outputs.get('int16_activation_quantization_skipped', False))
-                    int16_act_skip_reasons = direct_outputs.get('int16_activation_quantization_skip_reasons', [])
-                    if 'integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
-                        raise RuntimeError(
-                            'flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.'
-                        )
-                    if 'full_integer_quant_with_int16_act_tflite_path' not in direct_outputs and not int16_act_skipped:
-                        raise RuntimeError(
-                            'flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.'
-                        )
-                    info(
-                        Color.GREEN(
-                            f'INT8 Quantization tflite output complete! '
-                            f'({direct_outputs["integer_quant_tflite_path"]})'
-                        )
-                    )
-                    info(
-                        Color.GREEN(
-                            f'Full INT8 Quantization tflite output complete! '
-                            f'({direct_outputs["full_integer_quant_tflite_path"]})'
-                        )
-                    )
-                    if int16_act_skipped:
-                        info(
-                            Color.YELLOW(
-                                'INT8 Quantization with int16 activations skipped. '
-                                f'Reason: {"; ".join(str(v) for v in int16_act_skip_reasons)}'
-                            )
-                        )
-                    else:
-                        info(
-                            Color.GREEN(
-                                f'INT8 Quantization with int16 activations tflite output complete! '
-                                f'({direct_outputs["integer_quant_with_int16_act_tflite_path"]})'
-                            )
-                        )
-                        info(
-                            Color.GREEN(
-                                f'Full INT8 Quantization with int16 activations tflite output complete! '
-                                f'({direct_outputs["full_integer_quant_with_int16_act_tflite_path"]})'
-                            )
-                        )
+                _validate_and_log_flatbuffer_direct_reports_and_quantization(
+                    direct_outputs,
+                    dynamic_range_completion_message=(
+                        'Dynamic range quantized tflite output complete!'
+                    ),
+                )
                 if copy_onnx_input_output_names_to_tflite:
                     info(
                         'Input/Output tensor names are directly written from ONNX graph in flatbuffer_direct backend.'

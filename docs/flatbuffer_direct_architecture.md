@@ -69,6 +69,16 @@ conversion exit paths call that owner. Missing optional variants remain absent
 instead of being reconstructed from output-directory conventions, so report
 execution follows the actual `ConversionResult` artifacts.
 
+The same compatibility boundary has one validation and completion-log owner
+for OP coverage, tensor correspondence, dynamic-range quantization, integer
+quantization, and both int16-activation variants. Both full direct-result
+finalization paths call that owner, so required artifact keys, int16 skip
+semantics, and the six established failure messages cannot drift between the
+paths. Tensor correspondence remains a compatibility-default artifact and is
+logged whenever the builder returns it. The two pre-existing dynamic-range
+completion-message spellings are explicit call-site inputs and remain
+unchanged; centralization does not silently alter observable console output.
+
 A pass has a stable ID, phase, priority, maximum iteration count, and explicit
 `changed` result. Repeating passes must use a graph fingerprint so a cycle
 terminates deterministically. Risky rewrites use the transactional mode and

@@ -2010,6 +2010,87 @@ def test_tflite_evaluation_artifact_selection_has_single_owner() -> None:
     assert "direct_eval_paths['" not in compatibility_source
 
 
+def test_direct_report_and_quantization_finalization_has_single_owner() -> None:
+    compatibility_source = (
+        REPO_ROOT / "onnx2tf" / "onnx2tf.py"
+    ).read_text(encoding="utf-8")
+    compatibility_tree = ast.parse(compatibility_source)
+    convert_function = next(
+        node
+        for node in compatibility_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "convert"
+    )
+    helper_name = (
+        "_validate_and_log_flatbuffer_direct_reports_and_quantization"
+    )
+    helper = next(
+        node
+        for node in convert_function.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    helper_calls = sorted(
+        (
+            node
+            for node in ast.walk(convert_function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == helper_name
+        ),
+        key=lambda node: node.lineno,
+    )
+
+    assert len(helper_calls) == 2
+    completion_messages = []
+    for call in helper_calls:
+        keyword = next(
+            keyword
+            for keyword in call.keywords
+            if keyword.arg == "dynamic_range_completion_message"
+        )
+        assert isinstance(keyword.value, ast.Constant)
+        completion_messages.append(keyword.value.value)
+    assert completion_messages == [
+        "Dynamic Range Quantization tflite output complete!",
+        "Dynamic range quantized tflite output complete!",
+    ]
+
+    helper_names = {
+        node.id
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    }
+    assert {
+        "report_op_coverage",
+        "output_dynamic_range_quantized_tflite",
+        "output_integer_quantized_tflite",
+    } <= helper_names
+    required_artifact_keys = {
+        "op_coverage_report_path",
+        "tensor_correspondence_report_path",
+        "dynamic_range_quant_tflite_path",
+        "integer_quant_tflite_path",
+        "full_integer_quant_tflite_path",
+        "integer_quant_with_int16_act_tflite_path",
+        "full_integer_quant_with_int16_act_tflite_path",
+    }
+    helper_strings = {
+        node.value
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert required_artifact_keys <= helper_strings
+    for error_message in (
+        "flatbuffer_direct OP coverage report was requested but no report was generated.",
+        "flatbuffer_direct dynamic-range quantization was requested but no output was generated.",
+        "flatbuffer_direct integer quantization was requested but no output was generated.",
+        "flatbuffer_direct full integer quantization was requested but no output was generated.",
+        "flatbuffer_direct integer quantization with int16 activations was requested but no output was generated.",
+        "flatbuffer_direct full integer quantization with int16 activations was requested but no output was generated.",
+    ):
+        assert error_message in helper_strings
+        assert compatibility_source.count(error_message) == 1
+
+
 def test_direct_export_reads_options_only_from_normalized_request() -> None:
     builder_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py"
