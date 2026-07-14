@@ -2229,6 +2229,10 @@ Feature-last sequence Reshape permutations, MatMul batch broadcasting,
 BatchMatMul result shapes, and reduction result shapes are pure policies in
 this module as well. Their compatibility names are imported by the generated
 pipeline; ModelIR-backed adjX consumer discovery remains in the exporter.
+Conv3D and transpose-Conv3D constructor inference is co-located with the
+spatial formulas it validates. The policy owns channel/layout interpretation,
+weight-axis search, group selection, and the established conservative fallback;
+the exporter only consumes the selected constructor parameters.
 
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor

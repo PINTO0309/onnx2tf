@@ -9,6 +9,8 @@ from onnx2tf.tflite_builder.pytorch_shape_policy import (
     _conv3d_transpose_output_spatial_shape_for_codegen,
     _fast_precanonicalize_rank4_layout_hint,
     _infer_batch_matmul_shape_for_codegen,
+    _infer_conv3d_ctor_params_for_codegen,
+    _infer_conv3d_transpose_ctor_params_for_codegen,
     _infer_reduction_shape_for_codegen,
     _matmul_broadcast_shape_for_codegen,
     _normalize_cf_rank4_shape,
@@ -85,6 +87,59 @@ def test_conv_output_spatial_shape_policy_rejects_invalid_rank_and_extent() -> N
         dilation_dhw=[1, 1, 1],
         padding_mode="VALID",
     ) is None
+
+
+def test_conv3d_constructor_shape_policy_handles_channel_first_weights() -> None:
+    assert _infer_conv3d_ctor_params_for_codegen(
+        input_shape=[1, 3, 5, 6, 7],
+        output_shape=[1, 4, 5, 6, 7],
+        weight_shape=[4, 3, 1, 1, 1],
+        options={
+            "padding": "SAME",
+            "strideD": 1,
+            "strideH": 1,
+            "strideW": 1,
+            "dilationDFactor": 1,
+            "dilationHFactor": 1,
+            "dilationWFactor": 1,
+        },
+        input_logical_layout="NCDHW",
+        output_logical_layout="NCDHW",
+    ) == (3, 1, 4, [1, 1, 1])
+
+
+def test_transpose_conv3d_constructor_shape_policy_handles_stride() -> None:
+    assert _infer_conv3d_transpose_ctor_params_for_codegen(
+        input_shape=[1, 3, 4, 5, 6],
+        output_shape=[1, 4, 8, 10, 12],
+        weight_shape=[3, 4, 2, 2, 2],
+        options={
+            "padding": "SAME",
+            "strideD": 2,
+            "strideH": 2,
+            "strideW": 2,
+            "dilationDFactor": 1,
+            "dilationHFactor": 1,
+            "dilationWFactor": 1,
+        },
+        input_logical_layout="NCDHW",
+        output_logical_layout="NCDHW",
+    ) == (3, 4, [2, 2, 2], 1)
+
+
+def test_conv3d_constructor_shape_policies_preserve_invalid_fallbacks() -> None:
+    assert _infer_conv3d_ctor_params_for_codegen(
+        input_shape=None,
+        output_shape=[1, 4, 5, 6, 7],
+        weight_shape=[4, 3, 1, 1, 1],
+        options=None,
+    ) == (1, 1, 1, [1, 1, 1])
+    assert _infer_conv3d_transpose_ctor_params_for_codegen(
+        input_shape=[1, 3, 4, 5, 6],
+        output_shape=[1, 4, 8, 10],
+        weight_shape=[3, 4, 2, 2, 2],
+        options=None,
+    ) == (1, 4, [1, 1, 1], 1)
 
 
 def test_conv2d_same_padding_policy_handles_channel_last_stored_shapes() -> None:

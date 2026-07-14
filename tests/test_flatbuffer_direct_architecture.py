@@ -4461,7 +4461,7 @@ def test_generated_pytorch_graph_source_rewrites_have_single_owner() -> None:
     assert "import torch" not in graph_rewrite_source
 
 
-def test_generated_pytorch_rank4_shape_policy_has_single_owner() -> None:
+def test_generated_pytorch_shape_policy_has_single_owner() -> None:
     exporter_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
     ).read_text(encoding="utf-8")
@@ -4486,6 +4486,8 @@ def test_generated_pytorch_rank4_shape_policy_has_single_owner() -> None:
         "_conv3d_transpose_output_spatial_shape_for_codegen",
         "_fast_precanonicalize_rank4_layout_hint",
         "_infer_batch_matmul_shape_for_codegen",
+        "_infer_conv3d_ctor_params_for_codegen",
+        "_infer_conv3d_transpose_ctor_params_for_codegen",
         "_infer_reduction_shape_for_codegen",
         "_matmul_broadcast_shape_for_codegen",
         "_normalize_cf_rank4_shape",

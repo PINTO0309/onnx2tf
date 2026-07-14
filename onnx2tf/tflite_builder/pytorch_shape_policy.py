@@ -139,6 +139,245 @@ def _conv3d_transpose_output_spatial_shape_for_codegen(
     return output_dhw
 
 
+def _infer_conv3d_ctor_params_for_codegen(
+    *,
+    input_shape: Optional[Sequence[int]],
+    output_shape: Optional[Sequence[int]],
+    weight_shape: Optional[Sequence[int]],
+    options: Optional[Dict[str, Any]],
+    input_logical_layout: Optional[str] = None,
+    output_logical_layout: Optional[str] = None,
+) -> Tuple[int, int, int, List[int]]:
+    if input_shape is None or output_shape is None or weight_shape is None:
+        return (1, 1, 1, [1, 1, 1])
+    in_shape = [int(v) for v in list(input_shape)]
+    out_shape = [int(v) for v in list(output_shape)]
+    kernel_shape = [int(v) for v in list(weight_shape)]
+    if len(in_shape) != 5 or len(out_shape) != 5 or len(kernel_shape) != 5:
+        return (
+            1,
+            1,
+            max(1, int(kernel_shape[0]) if len(kernel_shape) > 0 else 1),
+            [1, 1, 1],
+        )
+    if (
+        in_shape[0] > 0
+        and out_shape[0] > 0
+        and int(in_shape[0]) != int(out_shape[0])
+    ):
+        return (
+            max(1, int(in_shape[1])),
+            1,
+            max(1, int(out_shape[1])),
+            [int(v) for v in list(kernel_shape[2:5])],
+        )
+    normalized_input_layout = normalize_logical_layout(input_logical_layout)
+    normalized_output_layout = normalize_logical_layout(output_logical_layout)
+    input_channels = max(
+        1,
+        int(in_shape[-1])
+        if is_channel_last_logical_layout(normalized_input_layout)
+        else int(in_shape[1]),
+    )
+    expected_out_channels = max(
+        1,
+        int(out_shape[-1])
+        if is_channel_last_logical_layout(normalized_output_layout)
+        else int(out_shape[1]),
+    )
+    input_dhw = (
+        [int(in_shape[1]), int(in_shape[2]), int(in_shape[3])]
+        if is_channel_last_logical_layout(normalized_input_layout)
+        else [int(in_shape[2]), int(in_shape[3]), int(in_shape[4])]
+    )
+    output_dhw = (
+        [int(out_shape[1]), int(out_shape[2]), int(out_shape[3])]
+        if is_channel_last_logical_layout(normalized_output_layout)
+        else [int(out_shape[2]), int(out_shape[3]), int(out_shape[4])]
+    )
+    stride_dhw = [
+        int((options or {}).get("strideD", 1)),
+        int((options or {}).get("strideH", 1)),
+        int((options or {}).get("strideW", 1)),
+    ]
+    dilation_dhw = [
+        int((options or {}).get("dilationDFactor", 1)),
+        int((options or {}).get("dilationHFactor", 1)),
+        int((options or {}).get("dilationWFactor", 1)),
+    ]
+    padding_mode = str((options or {}).get("padding", "SAME"))
+
+    import itertools
+
+    best_choice: Optional[Tuple[int, int, int, List[int]]] = None
+    for out_axis in range(5):
+        out_channels = int(kernel_shape[out_axis])
+        if out_channels <= 0 or out_channels != expected_out_channels:
+            continue
+        for in_axis in range(5):
+            if in_axis == out_axis:
+                continue
+            weight_in_channels = int(kernel_shape[in_axis])
+            if (
+                weight_in_channels <= 0
+                or int(input_channels) % int(weight_in_channels) != 0
+            ):
+                continue
+            groups = int(input_channels) // int(weight_in_channels)
+            if groups <= 0 or int(out_channels) % int(groups) != 0:
+                continue
+            kernel_axes = [
+                idx for idx in range(5) if idx not in {out_axis, in_axis}
+            ]
+            if len(kernel_axes) != 3:
+                continue
+            for kernel_order in itertools.permutations(kernel_axes):
+                kernel_dhw = [int(kernel_shape[idx]) for idx in kernel_order]
+                expected_output_dhw = _conv3d_output_spatial_shape_for_codegen(
+                    input_dhw=input_dhw,
+                    kernel_dhw=kernel_dhw,
+                    stride_dhw=stride_dhw,
+                    dilation_dhw=dilation_dhw,
+                    padding_mode=padding_mode,
+                )
+                if expected_output_dhw is None:
+                    continue
+                if expected_output_dhw != output_dhw:
+                    continue
+                choice = (
+                    int(input_channels),
+                    int(groups),
+                    int(out_channels),
+                    [int(v) for v in kernel_dhw],
+                )
+                if best_choice is None or int(choice[1]) < int(best_choice[1]):
+                    best_choice = choice
+    if best_choice is not None:
+        return best_choice
+    fallback_kernel = [int(v) for v in list(kernel_shape[2:5])]
+    return (
+        max(1, int(input_channels)),
+        1,
+        max(1, int(expected_out_channels)),
+        fallback_kernel,
+    )
+
+
+def _infer_conv3d_transpose_ctor_params_for_codegen(
+    *,
+    input_shape: Optional[Sequence[int]],
+    output_shape: Optional[Sequence[int]],
+    weight_shape: Optional[Sequence[int]],
+    options: Optional[Dict[str, Any]],
+    input_logical_layout: Optional[str] = None,
+    output_logical_layout: Optional[str] = None,
+) -> Tuple[int, int, List[int], int]:
+    if input_shape is None or output_shape is None or weight_shape is None:
+        return (1, 1, [1, 1, 1], 1)
+    in_shape = [int(v) for v in list(input_shape)]
+    out_shape = [int(v) for v in list(output_shape)]
+    kernel_shape = [int(v) for v in list(weight_shape)]
+    if len(in_shape) != 5 or len(out_shape) != 5 or len(kernel_shape) != 5:
+        return (
+            1,
+            max(1, int(out_shape[1]) if len(out_shape) > 1 else 1),
+            [1, 1, 1],
+            1,
+        )
+    normalized_input_layout = normalize_logical_layout(input_logical_layout)
+    normalized_output_layout = normalize_logical_layout(output_logical_layout)
+    input_channels = max(
+        1,
+        int(in_shape[-1])
+        if is_channel_last_logical_layout(normalized_input_layout)
+        else int(in_shape[1]),
+    )
+    expected_out_channels = max(
+        1,
+        int(out_shape[-1])
+        if is_channel_last_logical_layout(normalized_output_layout)
+        else int(out_shape[1]),
+    )
+    input_dhw = (
+        [int(in_shape[1]), int(in_shape[2]), int(in_shape[3])]
+        if is_channel_last_logical_layout(normalized_input_layout)
+        else [int(in_shape[2]), int(in_shape[3]), int(in_shape[4])]
+    )
+    output_dhw = (
+        [int(out_shape[1]), int(out_shape[2]), int(out_shape[3])]
+        if is_channel_last_logical_layout(normalized_output_layout)
+        else [int(out_shape[2]), int(out_shape[3]), int(out_shape[4])]
+    )
+    stride_dhw = [
+        int((options or {}).get("strideD", 1)),
+        int((options or {}).get("strideH", 1)),
+        int((options or {}).get("strideW", 1)),
+    ]
+    dilation_dhw = [
+        int((options or {}).get("dilationDFactor", 1)),
+        int((options or {}).get("dilationHFactor", 1)),
+        int((options or {}).get("dilationWFactor", 1)),
+    ]
+    padding_mode = str((options or {}).get("padding", "SAME"))
+
+    import itertools
+
+    best_choice: Optional[Tuple[int, int, List[int], int]] = None
+    for in_axis in range(5):
+        weight_in_channels = int(kernel_shape[in_axis])
+        if weight_in_channels <= 0 or weight_in_channels != input_channels:
+            continue
+        for out_axis in range(5):
+            if out_axis == in_axis:
+                continue
+            weight_out_per_group = int(kernel_shape[out_axis])
+            if (
+                weight_out_per_group <= 0
+                or int(expected_out_channels) % int(weight_out_per_group) != 0
+            ):
+                continue
+            groups = int(expected_out_channels) // int(weight_out_per_group)
+            if groups <= 0 or int(input_channels) % int(groups) != 0:
+                continue
+            kernel_axes = [
+                idx for idx in range(5) if idx not in {in_axis, out_axis}
+            ]
+            if len(kernel_axes) != 3:
+                continue
+            for kernel_order in itertools.permutations(kernel_axes):
+                kernel_dhw = [int(kernel_shape[idx]) for idx in kernel_order]
+                expected_output_dhw = (
+                    _conv3d_transpose_output_spatial_shape_for_codegen(
+                        input_dhw=input_dhw,
+                        kernel_dhw=kernel_dhw,
+                        stride_dhw=stride_dhw,
+                        dilation_dhw=dilation_dhw,
+                        padding_mode=padding_mode,
+                    )
+                )
+                if expected_output_dhw is None:
+                    continue
+                if expected_output_dhw != output_dhw:
+                    continue
+                choice = (
+                    int(input_channels),
+                    int(expected_out_channels),
+                    [int(v) for v in kernel_dhw],
+                    int(groups),
+                )
+                if best_choice is None or int(choice[3]) < int(best_choice[3]):
+                    best_choice = choice
+    if best_choice is not None:
+        return best_choice
+    fallback_kernel = [int(v) for v in list(kernel_shape[2:5])]
+    return (
+        max(1, int(input_channels)),
+        max(1, int(expected_out_channels)),
+        fallback_kernel,
+        1,
+    )
+
+
 def _conv2d_same_pad_padding_arg_for_codegen(
     *,
     input_shape: Optional[Sequence[int]],

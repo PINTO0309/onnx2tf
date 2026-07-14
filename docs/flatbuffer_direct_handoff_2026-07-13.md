@@ -943,6 +943,15 @@ checkpoint `bab67cf`; the focused policy and architecture suites pass 121
 tests. The exporter shrank by another 130 lines. No model conversion or
 inference was run.
 
+Conv3D and transpose-Conv3D constructor inference now lives beside its output-
+spatial formulas in the Torch-free shape-policy owner. Channel/layout
+interpretation, weight-axis permutation search, group selection, and invalid-
+shape fallbacks retain their existing compatibility signatures and outcomes.
+Four thousand fixed-seed outcomes match checkpoint `aed6013` exactly; the
+focused policy and architecture suites pass 124 tests, and Ruff and syntax
+validation pass. The exporter shrank by another 183 lines. No model conversion
+or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
