@@ -4,6 +4,7 @@ import pytest
 
 from onnx2tf.tflite_builder.pytorch_shape_policy import (
     _conv2d_output_spatial_shape_for_codegen,
+    _conv2d_same_pad_padding_arg_for_codegen,
     _conv3d_output_spatial_shape_for_codegen,
     _conv3d_transpose_output_spatial_shape_for_codegen,
     _fast_precanonicalize_rank4_layout_hint,
@@ -72,6 +73,40 @@ def test_conv_output_spatial_shape_policy_rejects_invalid_rank_and_extent() -> N
         stride_hw=[1, 1],
         dilation_hw=[1, 1],
         padding_mode="SAME",
+    ) is None
+
+
+def test_conv2d_same_padding_policy_handles_channel_last_stored_shapes() -> None:
+    assert _conv2d_same_pad_padding_arg_for_codegen(
+        input_shape=[1, 1, 64, 1],
+        output_shape=[1, 1, 64, 64],
+        weight_shape=[64, 1, 1, 9],
+        options={
+            "padding": "SAME",
+            "strideH": 1,
+            "strideW": 1,
+            "dilationHFactor": 1,
+            "dilationWFactor": 1,
+        },
+        input_logical_layout="NCHW",
+        output_logical_layout="NCHW",
+    ) == [4, 4, 0, 0]
+
+
+def test_conv2d_same_padding_policy_rejects_non_same_and_invalid_permutation() -> None:
+    common = {
+        "input_shape": [1, 3, 8, 8],
+        "output_shape": [1, 4, 8, 8],
+        "weight_shape": [4, 3, 3, 3],
+    }
+    assert _conv2d_same_pad_padding_arg_for_codegen(
+        **common,
+        options={"padding": "VALID"},
+    ) is None
+    assert _conv2d_same_pad_padding_arg_for_codegen(
+        **common,
+        options={"padding": "SAME"},
+        input_pre_permute=[0, 2, 1],
     ) is None
     assert _conv3d_transpose_output_spatial_shape_for_codegen(
         input_dhw=[0, 4, 5],

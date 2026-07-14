@@ -2221,6 +2221,10 @@ Pure Conv2D and Conv3D output-spatial calculations share one rank-parameterized
 forward-convolution helper in the same module; transpose-Conv3D retains its
 distinct formula beside it. The exporter imports the three compatibility names
 and no longer owns parallel 2-D and 3-D implementations.
+Asymmetric Conv2D SAME-padding planning is co-located here because it consumes
+only shapes, options, and logical layouts. The exporter retains the compatibility
+name through an import. The older symmetric-only SAME-padding helper had no
+callers and is removed instead of establishing a second padding policy.
 
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor

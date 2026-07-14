@@ -3,6 +3,16 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from onnx2tf.tflite_builder.ir import (
+    is_channel_first_logical_layout,
+    is_channel_last_logical_layout,
+    normalize_logical_layout,
+)
+from onnx2tf.tflite_builder.pytorch_layout_utils import (
+    _perm_cl_to_cf,
+    _permute_shape,
+)
+
 
 def _conv_output_spatial_shape(
     *,
@@ -127,6 +137,158 @@ def _conv3d_transpose_output_spatial_shape_for_codegen(
             return None
         output_dhw.append(int(output_dim))
     return output_dhw
+
+
+def _conv2d_same_pad_padding_arg_for_codegen(
+    *,
+    input_shape: Optional[Sequence[int]],
+    output_shape: Optional[Sequence[int]],
+    weight_shape: Optional[Sequence[int]],
+    options: Optional[Dict[str, Any]],
+    input_pre_permute: Optional[Sequence[int]] = None,
+    input_logical_layout: Optional[str] = None,
+    output_logical_layout: Optional[str] = None,
+) -> Optional[List[int]]:
+    if str((options or {}).get("padding", "SAME")).upper() != "SAME":
+        return None
+    if input_shape is None or output_shape is None or weight_shape is None:
+        return None
+    in_shape = [int(v) for v in list(input_shape)]
+    out_shape = [int(v) for v in list(output_shape)]
+    kernel_shape = [int(v) for v in list(weight_shape)]
+    normalized_input_layout = normalize_logical_layout(input_logical_layout)
+    normalized_output_layout = normalize_logical_layout(output_logical_layout)
+    if len(in_shape) != 4 or len(out_shape) != 4 or len(kernel_shape) != 4:
+        return None
+    if (
+        is_channel_first_logical_layout(normalized_input_layout)
+        and is_channel_first_logical_layout(normalized_output_layout)
+        and int(kernel_shape[0]) > 0
+        and int(out_shape[1]) != int(kernel_shape[0])
+        and int(out_shape[3]) == int(kernel_shape[0])
+    ):
+        perm_to_cf = _perm_cl_to_cf(4)
+        if perm_to_cf is not None:
+            permuted_input_shape = _permute_shape(in_shape, perm_to_cf)
+            permuted_output_shape = _permute_shape(out_shape, perm_to_cf)
+            if (
+                permuted_input_shape is not None
+                and permuted_output_shape is not None
+            ):
+                in_shape = [int(v) for v in list(permuted_input_shape)]
+                out_shape = [int(v) for v in list(permuted_output_shape)]
+    if input_pre_permute is not None:
+        perm = [int(v) for v in list(input_pre_permute)]
+        if len(perm) != 4:
+            return None
+        if not is_channel_first_logical_layout(normalized_input_layout):
+            in_shape = [int(in_shape[idx]) for idx in perm]
+        should_permute_output_shape = normalized_output_layout == "NHWC"
+        if (
+            not should_permute_output_shape
+            and int(kernel_shape[0]) > 0
+            and int(out_shape[1]) != int(kernel_shape[0])
+            and int(out_shape[-1]) == int(kernel_shape[0])
+        ):
+            should_permute_output_shape = True
+        if should_permute_output_shape:
+            out_shape = [int(out_shape[idx]) for idx in perm]
+    else:
+        if is_channel_last_logical_layout(normalized_input_layout):
+            perm = _perm_cl_to_cf(4)
+            if perm is not None:
+                in_shape = [int(in_shape[idx]) for idx in perm]
+        if is_channel_last_logical_layout(normalized_output_layout):
+            perm = _perm_cl_to_cf(4)
+            if perm is not None:
+                out_shape = [int(out_shape[idx]) for idx in perm]
+    stride_hw = [
+        max(1, int((options or {}).get("strideH", 1))),
+        max(1, int((options or {}).get("strideW", 1))),
+    ]
+    dilation_hw = [
+        max(1, int((options or {}).get("dilationHFactor", 1))),
+        max(1, int((options or {}).get("dilationWFactor", 1))),
+    ]
+    input_hw = [int(in_shape[2]), int(in_shape[3])]
+    output_hw = [int(out_shape[2]), int(out_shape[3])]
+    if output_hw[0] <= 0:
+        output_hw[0] = max(
+            1,
+            int(math.ceil(float(input_hw[0]) / float(stride_hw[0]))),
+        )
+    if output_hw[1] <= 0:
+        output_hw[1] = max(
+            1,
+            int(math.ceil(float(input_hw[1]) / float(stride_hw[1]))),
+        )
+    for idx in range(2):
+        if int(input_hw[idx]) <= 0 and int(output_hw[idx]) > 0:
+            input_hw[idx] = max(
+                1,
+                int(output_hw[idx]) * int(stride_hw[idx]),
+            )
+    kernel_hw_candidates: List[List[int]] = []
+    expected_in_channels = int(in_shape[1]) if len(in_shape) == 4 else -1
+    if expected_in_channels > 0:
+        if (
+            int(kernel_shape[1]) == expected_in_channels
+            or (
+                int(kernel_shape[1]) == 1
+                and int(kernel_shape[0]) == expected_in_channels
+            )
+        ):
+            kernel_hw_candidates.append([2, 3])
+        if (
+            int(kernel_shape[3]) == expected_in_channels
+            or (
+                int(kernel_shape[0]) == 1
+                and int(kernel_shape[3]) == expected_in_channels
+            )
+        ):
+            kernel_hw_candidates.append([1, 2])
+    if len(kernel_hw_candidates) == 0:
+        kernel_hw_candidates.append([2, 3])
+        if [1, 2] not in kernel_hw_candidates:
+            kernel_hw_candidates.append([1, 2])
+    best_pad_totals: Optional[Tuple[int, int]] = None
+    effective_kernel: Optional[List[int]] = None
+    for kernel_hw_indices in kernel_hw_candidates:
+        candidate_kernel = [
+            (int(kernel_shape[int(kernel_hw_indices[idx])]) - 1)
+            * int(dilation_hw[idx])
+            + 1
+            for idx in range(2)
+        ]
+        candidate_pad_h_total = max(
+            (int(output_hw[0]) - 1) * int(stride_hw[0])
+            + int(candidate_kernel[0])
+            - int(input_hw[0]),
+            0,
+        )
+        candidate_pad_w_total = max(
+            (int(output_hw[1]) - 1) * int(stride_hw[1])
+            + int(candidate_kernel[1])
+            - int(input_hw[1]),
+            0,
+        )
+        candidate_pad_totals = (
+            int(candidate_pad_h_total),
+            int(candidate_pad_w_total),
+        )
+        if best_pad_totals is None or candidate_pad_totals < best_pad_totals:
+            best_pad_totals = candidate_pad_totals
+            effective_kernel = candidate_kernel
+    if effective_kernel is None or best_pad_totals is None:
+        return None
+    pad_h_total, pad_w_total = best_pad_totals
+    if pad_h_total == 0 and pad_w_total == 0:
+        return None
+    pad_top = int(pad_h_total // 2)
+    pad_bottom = int(pad_h_total - pad_top)
+    pad_left = int(pad_w_total // 2)
+    pad_right = int(pad_w_total - pad_left)
+    return [pad_left, pad_right, pad_top, pad_bottom]
 
 
 def _fast_precanonicalize_rank4_layout_hint(

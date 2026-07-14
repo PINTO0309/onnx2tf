@@ -923,6 +923,16 @@ checkpoint `fcb2a36` exactly, and the focused policy and architecture suites
 pass 110 tests. The monolithic exporter shrank by 112 lines. No model
 conversion or inference was run for this pure calculation move.
 
+Asymmetric Conv2D SAME-padding planning also moved to the Torch-free shape
+policy owner with its compatibility signature unchanged. Its channel-first,
+channel-last, pre-permutation, dynamic-extent, kernel-layout, stride, and
+dilation branches remain intact. The separate symmetric-only padding helper
+had no production, generated-pipeline, or test caller and was deleted rather
+than retained as dead policy. Three thousand fixed-seed outcomes match
+checkpoint `508b60e` exactly, and the focused policy and architecture suites
+pass 112 tests. The exporter shrank by another 157 lines. No model conversion
+or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
