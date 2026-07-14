@@ -16,6 +16,7 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
+    ModelIRPassStateScope,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
@@ -894,6 +895,7 @@ def run_dual_postconv_gate_layout_cleanup(
     *,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Propagate NHWC through guarded complementary-gate output branches."""
 
@@ -956,6 +958,7 @@ def run_dual_postconv_gate_layout_cleanup(
         layout_state=layout_state,
         default_details=defaults,
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

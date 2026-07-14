@@ -273,6 +273,74 @@ def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
     assert len(helper_invocations) == 6
 
 
+def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_run_gate_layout_pass_cluster"
+    )
+    expected_order = [
+        "run_mixed_attention_layout_cleanup",
+        "run_elementwise_gate_layout_cleanup",
+        "run_pad_layout_cleanup",
+        "run_dual_postconv_gate_layout_cleanup",
+        "run_ndhwc_gate_layout_cleanup",
+        "run_cost_volume_scatter_layout_cleanup",
+        "run_add_concat_suffix_layout_cleanup",
+        "run_dual_mul_concat_layout_cleanup",
+    ]
+    calls = {
+        node.func.id: node
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in expected_order
+    }
+
+    assert [
+        call.func.id
+        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
+    ] == expected_order
+    for name in expected_order:
+        scope_keyword = next(
+            keyword
+            for keyword in calls[name].keywords
+            if keyword.arg == "state_scope"
+        )
+        assert isinstance(scope_keyword.value, ast.Name)
+        assert scope_keyword.value.id == "state_scope"
+
+    helper_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_run_gate_layout_pass_cluster"
+    ]
+    assert len(helper_invocations) == 5
+    omitted_mixed_attention = [
+        call
+        for call in helper_invocations
+        if any(
+            keyword.arg == "include_mixed_attention"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is False
+            for keyword in call.keywords
+        )
+    ]
+    assert len(omitted_mixed_attention) == 1
+
+
 def test_reporting_implementation_stays_out_of_lowering_module() -> None:
     reporting_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py"
     lowering_path = (
@@ -2125,7 +2193,7 @@ def test_cost_volume_scatter_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_cost_volume_scatter_layout_cleanup"
     ]
-    assert len(runner_calls) == 6
+    assert len(runner_calls) == 2
 
 
 def test_add_concat_suffix_layout_rewrite_has_single_owner() -> None:
@@ -2198,7 +2266,7 @@ def test_add_concat_suffix_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_add_concat_suffix_layout_cleanup"
     ]
-    assert len(runner_calls) == 5
+    assert len(runner_calls) == 1
 
 
 def test_dual_mul_concat_layout_rewrite_has_single_owner() -> None:
@@ -2271,7 +2339,7 @@ def test_dual_mul_concat_layout_rewrite_has_single_owner() -> None:
         and isinstance(call.func, ast.Name)
         and call.func.id == "run_dual_mul_concat_layout_cleanup"
     ]
-    assert len(runner_calls) == 6
+    assert len(runner_calls) == 2
 
 
 def test_axis3_const_concat_layout_rewrite_has_single_owner() -> None:
@@ -2717,7 +2785,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 255
+    assert len(calls) == 195
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -2958,7 +3026,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_transpose_mean_passthrough_cleanup"
     ]
-    assert len(transpose_mean_calls) == 6
+    assert len(transpose_mean_calls) == 1
 
     mean_mul_add_conv_calls = [
         call
@@ -2966,7 +3034,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_mean_mul_add_conv_layout_cleanup"
     ]
-    assert len(mean_mul_add_conv_calls) == 7
+    assert len(mean_mul_add_conv_calls) == 2
 
     layernorm_statistics_calls = [
         call
@@ -2982,7 +3050,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_terminal_mean_layout_cleanup"
     ]
-    assert len(terminal_mean_calls) == 6
+    assert len(terminal_mean_calls) == 1
 
     se_conv_calls = [
         call
@@ -2990,7 +3058,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_se_conv_layout_cleanup"
     ]
-    assert len(se_conv_calls) == 6
+    assert len(se_conv_calls) == 1
 
     se_fc_calls = [
         call
@@ -2998,7 +3066,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_se_fc_layout_cleanup"
     ]
-    assert len(se_fc_calls) == 9
+    assert len(se_fc_calls) == 4
 
     elementwise_gate_calls = [
         call
@@ -3006,7 +3074,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_elementwise_gate_layout_cleanup"
     ]
-    assert len(elementwise_gate_calls) == 5
+    assert len(elementwise_gate_calls) == 1
 
     multi_branch_gate_calls = [
         call
@@ -3022,7 +3090,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_dual_postconv_gate_layout_cleanup"
     ]
-    assert len(dual_postconv_gate_calls) == 5
+    assert len(dual_postconv_gate_calls) == 1
 
     ndhwc_gate_calls = [
         call
@@ -3030,7 +3098,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_ndhwc_gate_layout_cleanup"
     ]
-    assert len(ndhwc_gate_calls) == 6
+    assert len(ndhwc_gate_calls) == 2
 
     cost_volume_scatter_calls = [
         call
@@ -3038,7 +3106,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_cost_volume_scatter_layout_cleanup"
     ]
-    assert len(cost_volume_scatter_calls) == 6
+    assert len(cost_volume_scatter_calls) == 2
 
     add_concat_suffix_calls = [
         call
@@ -3046,7 +3114,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_add_concat_suffix_layout_cleanup"
     ]
-    assert len(add_concat_suffix_calls) == 5
+    assert len(add_concat_suffix_calls) == 1
 
     dual_mul_concat_calls = [
         call
@@ -3054,7 +3122,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_dual_mul_concat_layout_cleanup"
     ]
-    assert len(dual_mul_concat_calls) == 6
+    assert len(dual_mul_concat_calls) == 2
 
 
 def test_cast_cleanup_rewrites_have_single_owner() -> None:

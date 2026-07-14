@@ -6,6 +6,7 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
+    ModelIRPassStateScope,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
@@ -295,6 +296,65 @@ def test_all_production_runner_preflights_avoid_heavy_no_candidate_work(
             "fingerprint_count": 0,
         }
         for event in diagnostics
+    )
+
+
+def test_adjacent_gate_runners_reuse_one_lazy_pass_state(monkeypatch) -> None:
+    operator_types = [
+        "TRANSPOSE",
+        "MEAN",
+        "REDUCE_MAX",
+        "CONCATENATION",
+        "MIRROR_PAD",
+        "TRANSPOSE",
+        "CONV_2D",
+        "MUL",
+        "ADD",
+        "LOGISTIC",
+        "SUB",
+        "RESHAPE",
+        "LEAKY_RELU",
+        "SCATTER_ND",
+        "CONV_3D",
+    ]
+    model_ir = ModelIR(
+        "gate_scope_preflight_only",
+        operators=[OperatorIR(op_type, [], []) for op_type in operator_types],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_mixed_attention_layout_cleanup,
+        run_elementwise_gate_layout_cleanup,
+        run_pad_layout_cleanup,
+        run_dual_postconv_gate_layout_cleanup,
+        run_ndhwc_gate_layout_cleanup,
+        run_cost_volume_scatter_layout_cleanup,
+        run_add_concat_suffix_layout_cleanup,
+        run_dual_mul_concat_layout_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 15
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert all(
+        event["metrics"]["state_built"] is False
+        for event in diagnostics[1:]
     )
 
 

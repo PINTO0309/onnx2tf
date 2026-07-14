@@ -281,6 +281,7 @@ def run_mixed_attention_layout_cleanup(
     *,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run the mixed reduction/MirrorPad rewrite as an ordered layout pass."""
 
@@ -332,6 +333,7 @@ def run_mixed_attention_layout_cleanup(
             "optimized_mixed_mean_reducemax_concat_mirrorpad_nhwc_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

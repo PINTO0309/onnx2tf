@@ -71,6 +71,14 @@ legacy/raw mutator. The repeated Mean/LayerNorm/terminal-Mean/SE/Conv-attention
 cluster is the first production consumer, preserving its original runner order
 while replacing up to seven identical index constructions with one.
 
+The repeated mixed-attention/elementwise-gate/Pad/dual-postconv-gate/NDHWC-
+gate/cost-volume-scatter/Add-Concat-suffix/dual-Mul-Concat sequence is the
+second production consumer. Four occurrences retain all eight runners and one
+occurrence retains the original seven-runner suffix without mixed attention.
+Each occurrence now constructs at most one index instead of as many as eight.
+Later isolated calls remain standalone because the scope must not cross the
+legacy ModelIR mutators surrounding them.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while
