@@ -1495,6 +1495,16 @@ Ruff, syntax validation, and `git diff --check` pass. The orchestrator shrank
 from 758 to 663 lines. No model conversion, corpus run, or inference was
 performed.
 
+Simple-alias layout handling now lives in one indexed policy helper. The
+rank-three reshape and channel-last PReLU/permuted-Conv boundary forms retain
+their exact guards and optional static-shape alignment; aliases not rewritten
+continue to propagate CF/NHWC evidence. All permuted-Conv decoder call sites
+now belong to the policy owner, allowing its unused exporter import to be
+removed and guarded. Synthetic reshape, Conv, and propagation fixtures plus
+both ownership gates pass 3 tests. Scoped Ruff, syntax validation, and
+`git diff --check` pass. The orchestrator shrank from 663 to 542 lines. No
+model conversion, corpus run, or inference was performed.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

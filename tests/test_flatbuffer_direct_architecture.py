@@ -4026,7 +4026,6 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
         "_parse_align_tensor_target_shape_assign",
         "_parse_torch_permute_assign",
         "_parse_local_response_norm_input_expr",
-        "_parse_permuted_conv_input_assign",
         "_parse_apply_pool2d_input_expr",
         "_parse_apply_resize_input_and_channel_last",
         "_parse_apply_pool2d_input_and_channel_last",
@@ -4051,6 +4050,10 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
     assert "_parse_dynamic_binary_align_assign," in fast_policy_source
     assert "_parse_dynamic_binary_align_assign" in parser_functions
     assert "_parse_dynamic_binary_align_assign" not in exporter_functions
+    assert "_parse_permuted_conv_input_assign" in parser_functions
+    assert "_parse_permuted_conv_input_assign" not in exporter_functions
+    assert "_parse_permuted_conv_input_assign," not in exporter_source
+    assert "_parse_permuted_conv_input_assign," in fast_policy_source
     assert not any(
         isinstance(node, ast.FunctionDef)
         and node.name == "_parse_apply_resize_assign"
@@ -4857,6 +4860,7 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_repair_nhwc_average_pool_binary_bridge",
         "_repair_nhwc_buffer_binary_alignment_at",
         "_repair_nhwc_pool_layout",
+        "_repair_simple_alias_layout_at",
         "_repair_singleton_reshape_cf_binary_at",
         "_repair_split_axis_from_consumers",
         "_repair_terminal_classifier_tail_layout",

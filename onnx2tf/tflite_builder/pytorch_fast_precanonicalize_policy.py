@@ -65,6 +65,20 @@ _DEPTH_TO_SPACE_CF_GATHER_RE = re.compile(
 _DYNAMIC_POOL_BINARY_EXPR_RE = re.compile(
     r"^torch\.(?:mul|add|sub|div|minimum|maximum)\(.+\)$"
 )
+_SIMPLE_ALIAS_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<rhs>[A-Za-z0-9_]+)$"
+)
+_RANK3_RESHAPE_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.reshape\("
+    r"(?P<input>[A-Za-z0-9_]+), "
+    r"(?:_resolve_reshape_shape\(\[(?P<resolved_shape>[0-9,\- ]+)\], "
+    r"(?P=input), allow_zero=False\)|\[(?P<shape>[0-9,\- ]+)\])\)$"
+)
+_CHANNEL_LAST_PRELU_CONSUMER_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*self\.prelu_[0-9]+\("
+    r"(?P<input>[A-Za-z0-9_]+)\.permute\(0, 3, 1, 2\)\.contiguous\(\)\)"
+    r"\.permute\(0, 2, 3, 1\)\.contiguous\(\)$"
+)
 
 
 def _convert_nhwc_pad_to_nchw_pad_values(pad_values: Sequence[int]) -> List[int] | None:
@@ -502,6 +516,124 @@ def _fast_precanonicalize_preferred_channel_count(
         ):
             return int(static_shape[3])
     return None
+
+
+def _repair_simple_alias_layout_at(
+    index: int,
+    lines: List[str],
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[bool, str]:
+    if index < 0 or index >= len(lines):
+        return False, ""
+    alias_match = _SIMPLE_ALIAS_RE.match(lines[index])
+    if alias_match is None:
+        return False, str(lines[index])
+
+    next_line = str(lines[index + 1]) if index + 1 < len(lines) else ""
+    next_rank3_reshape_match = _RANK3_RESHAPE_RE.match(next_line)
+    next_channel_last_prelu_consumer_match = (
+        _CHANNEL_LAST_PRELU_CONSUMER_RE.match(next_line)
+    )
+    next_permuted_conv_input_assign = _parse_permuted_conv_input_assign(next_line)
+    reshape_target_dims: List[int] = []
+    reshape_feature_dim: int | None = None
+    lhs_name = str(alias_match.group("lhs"))
+    rhs_name = str(alias_match.group("rhs"))
+    rhs_producer_module = context.module_output_producers.get(rhs_name)
+    rhs_producer_channels = (
+        context.conv_block_out_channels.get(rhs_producer_module)
+        if rhs_producer_module is not None
+        else None
+    )
+    if next_rank3_reshape_match is not None:
+        reshape_target_text = str(
+            next_rank3_reshape_match.group("resolved_shape")
+            or next_rank3_reshape_match.group("shape")
+            or ""
+        )
+        try:
+            reshape_target_dims = [
+                int(token.strip())
+                for token in reshape_target_text.split(",")
+                if token.strip() != ""
+            ]
+        except Exception:
+            reshape_target_dims = []
+        if len(reshape_target_dims) == 3 and all(
+            int(dim) > 0 for dim in reshape_target_dims
+        ):
+            reshape_feature_dim = int(reshape_target_dims[-1])
+
+    rhs_is_cf_like = (
+        rhs_name in dynamic_cf_like_names
+        or rhs_name.endswith("_cf")
+        or rhs_name.endswith("_out_cf")
+    )
+    if (
+        next_rank3_reshape_match is not None
+        and str(next_rank3_reshape_match.group("input")) == lhs_name
+        and rhs_is_cf_like
+        and (
+            "_nhwc" in lhs_name
+            or (
+                rhs_producer_channels is not None
+                and reshape_feature_dim is not None
+                and int(rhs_producer_channels) == int(reshape_feature_dim)
+                and not lhs_name.endswith("_cf")
+            )
+            or (
+                reshape_feature_dim is not None
+                and len(reshape_target_dims) == 3
+                and int(reshape_target_dims[1]) > int(reshape_target_dims[2])
+                and not lhs_name.endswith("_cf")
+            )
+        )
+    ):
+        lines[index] = (
+            f"{alias_match.group('indent')}{lhs_name} = "
+            f"{rhs_name}.permute(0, 2, 3, 1).contiguous()"
+        )
+        dynamic_nhwc_like_names.add(lhs_name)
+        return True, str(lines[index])
+
+    if (
+        "_nhwc" in lhs_name
+        and rhs_is_cf_like
+        and (
+            (
+                next_channel_last_prelu_consumer_match is not None
+                and str(next_channel_last_prelu_consumer_match.group("input"))
+                == lhs_name
+            )
+            or (
+                next_permuted_conv_input_assign is not None
+                and str(next_permuted_conv_input_assign[3]) == lhs_name
+            )
+        )
+    ):
+        lhs_exact_shape = context.static_shapes.get(lhs_name)
+        if lhs_exact_shape is not None and len(lhs_exact_shape) == 4:
+            lines[index] = (
+                f"{alias_match.group('indent')}{lhs_name} = "
+                f"_align_tensor_to_target_shape("
+                f"{rhs_name}.permute(0, 2, 3, 1).contiguous(), "
+                f"{lhs_exact_shape})"
+            )
+        else:
+            lines[index] = (
+                f"{alias_match.group('indent')}{lhs_name} = "
+                f"{rhs_name}.permute(0, 2, 3, 1).contiguous()"
+            )
+        dynamic_nhwc_like_names.add(lhs_name)
+        return True, str(lines[index])
+
+    if rhs_is_cf_like:
+        dynamic_cf_like_names.add(lhs_name)
+    if rhs_name in dynamic_nhwc_like_names or "_nhwc" in rhs_name:
+        dynamic_nhwc_like_names.add(lhs_name)
+    return False, str(lines[index])
 
 
 def _fast_precanonicalize_infer_consumer_layout(

@@ -2062,6 +2062,12 @@ channel-last execution; CF average pooling derives a concrete target from a
 bounded direct aligned consumer or one binary hop followed by an aligned
 consumer. The binary hop and aligned statements use shared parsers instead of
 orchestrator-local regexes.
+Simple generated aliases are handled by one indexed layout decision. It owns
+the guarded CF→NHWC boundary needed before a rank-three reshape and before the
+channel-last PReLU/permuted-Conv consumer forms, including exact-shape runtime
+alignment when known. Aliases not rewritten propagate existing CF/NHWC
+evidence. All permuted-Conv statement consumers now reside in this policy
+owner, so the exporter no longer imports that decoder directly.
 The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
 restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer

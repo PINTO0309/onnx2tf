@@ -139,6 +139,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_nhwc_average_pool_binary_bridge,
     _repair_nhwc_buffer_binary_alignment_at,
     _repair_nhwc_pool_layout,
+    _repair_simple_alias_layout_at,
     _repair_split_axis_from_consumers,
     _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
@@ -329,7 +330,6 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_dynamic_binary_add_align_assign,
     _parse_int_list_literal,
     _parse_local_response_norm_assign,
-    _parse_permuted_conv_input_assign,
     _parse_rank4_shape_expr,
     _parse_rank4_shape_literal,
     _parse_reduce_max_assign,
@@ -7270,16 +7270,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     changed = False
     cf_like_names: set[str] = set(repair_context.cf_like_names)
     nhwc_like_names: set[str] = set(repair_context.nhwc_like_names)
-    simple_alias_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<rhs>[A-Za-z0-9_]+)$"
-    )
-    rank3_reshape_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.reshape\((?P<input>[A-Za-z0-9_]+), "
-        r"(?:_resolve_reshape_shape\(\[(?P<resolved_shape>[0-9,\- ]+)\], (?P=input), allow_zero=False\)|\[(?P<shape>[0-9,\- ]+)\])\)$"
-    )
-    channel_last_prelu_consumer_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*self\.prelu_[0-9]+\((?P<input>[A-Za-z0-9_]+)\.permute\(0, 3, 1, 2\)\.contiguous\(\)\)\.permute\(0, 2, 3, 1\)\.contiguous\(\)$"
-    )
     aligned_bn_const_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.(?P<op>mul|add)\((?P<input>[A-Za-z0-9_]+), self\.(?P<const_attr>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
     )
@@ -7296,127 +7286,16 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
         r"\[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
     )
     for index, line in enumerate(lines[:-1]):
-        simple_alias_match = simple_alias_re.match(line)
-        if simple_alias_match is not None:
-            next_rank3_reshape_match = (
-                rank3_reshape_re.match(lines[index + 1])
-                if index + 1 < len(lines)
-                else None
-            )
-            next_channel_last_prelu_consumer_match = (
-                channel_last_prelu_consumer_re.match(lines[index + 1])
-                if index + 1 < len(lines)
-                else None
-            )
-            next_permuted_conv_input_assign = (
-                _parse_permuted_conv_input_assign(lines[index + 1])
-                if index + 1 < len(lines)
-                else None
-            )
-            reshape_target_dims: List[int] = []
-            reshape_target_text = ""
-            reshape_feature_dim: int | None = None
-            rhs_name = str(simple_alias_match.group("rhs"))
-            rhs_producer_module = repair_context.module_output_producers.get(rhs_name)
-            rhs_producer_channels = (
-                repair_context.conv_block_out_channels.get(rhs_producer_module)
-                if rhs_producer_module is not None
-                else None
-            )
-            if next_rank3_reshape_match is not None:
-                reshape_target_text = str(
-                    next_rank3_reshape_match.group("resolved_shape")
-                    or next_rank3_reshape_match.group("shape")
-                    or ""
-                )
-                try:
-                    reshape_target_dims = [
-                        int(token.strip())
-                        for token in reshape_target_text.split(",")
-                        if token.strip() != ""
-                    ]
-                except Exception:
-                    reshape_target_dims = []
-                if len(reshape_target_dims) == 3 and all(
-                    int(dim) > 0 for dim in reshape_target_dims
-                ):
-                    reshape_feature_dim = int(reshape_target_dims[-1])
-            if (
-                next_rank3_reshape_match is not None
-                and str(next_rank3_reshape_match.group("input")) == str(simple_alias_match.group("lhs"))
-                and (
-                    rhs_name in cf_like_names
-                    or rhs_name.endswith("_cf")
-                    or rhs_name.endswith("_out_cf")
-                )
-                and (
-                    "_nhwc" in str(simple_alias_match.group("lhs"))
-                    or (
-                        rhs_producer_channels is not None
-                        and reshape_feature_dim is not None
-                        and int(rhs_producer_channels) == int(reshape_feature_dim)
-                        and not str(simple_alias_match.group("lhs")).endswith("_cf")
-                    )
-                    or (
-                        reshape_feature_dim is not None
-                        and len(reshape_target_dims) == 3
-                        and int(reshape_target_dims[1]) > int(reshape_target_dims[2])
-                        and not str(simple_alias_match.group("lhs")).endswith("_cf")
-                    )
-                )
-            ):
-                lines[index] = (
-                    f"{simple_alias_match.group('indent')}{simple_alias_match.group('lhs')} = "
-                    f"{simple_alias_match.group('rhs')}.permute(0, 2, 3, 1).contiguous()"
-                )
-                nhwc_like_names.add(str(simple_alias_match.group("lhs")))
-                changed = True
-                line = lines[index]
-                simple_alias_match = None
-            elif (
-                "_nhwc" in str(simple_alias_match.group("lhs"))
-                and (
-                    rhs_name in cf_like_names
-                    or rhs_name.endswith("_cf")
-                    or rhs_name.endswith("_out_cf")
-                )
-                and (
-                    (
-                        next_channel_last_prelu_consumer_match is not None
-                        and str(next_channel_last_prelu_consumer_match.group("input")) == str(simple_alias_match.group("lhs"))
-                    )
-                    or (
-                        next_permuted_conv_input_assign is not None
-                        and str(next_permuted_conv_input_assign[3]) == str(simple_alias_match.group("lhs"))
-                    )
-                )
-            ):
-                lhs_name = str(simple_alias_match.group("lhs"))
-                lhs_exact_shape = repair_context.static_shapes.get(lhs_name)
-                if lhs_exact_shape is not None and len(lhs_exact_shape) == 4:
-                    lines[index] = (
-                        f"{simple_alias_match.group('indent')}{lhs_name} = "
-                        f"_align_tensor_to_target_shape({simple_alias_match.group('rhs')}.permute(0, 2, 3, 1).contiguous(), {lhs_exact_shape})"
-                    )
-                else:
-                    lines[index] = (
-                        f"{simple_alias_match.group('indent')}{lhs_name} = "
-                        f"{simple_alias_match.group('rhs')}.permute(0, 2, 3, 1).contiguous()"
-                    )
-                nhwc_like_names.add(lhs_name)
-                changed = True
-                line = lines[index]
-                simple_alias_match = None
-        if simple_alias_match is not None:
-            rhs_name = str(simple_alias_match.group("rhs"))
-            if (
-                rhs_name in cf_like_names
-                or rhs_name.endswith("_cf")
-                or rhs_name.endswith("_out_cf")
-            ):
-                cf_like_names.add(str(simple_alias_match.group("lhs")))
-            if rhs_name in nhwc_like_names or "_nhwc" in rhs_name:
-                nhwc_like_names.add(str(simple_alias_match.group("lhs")))
+        repaired_alias_layout, repaired_alias_line = _repair_simple_alias_layout_at(
+            index,
+            lines,
+            cf_like_names,
+            nhwc_like_names,
+            repair_context,
+        )
+        if repaired_alias_layout:
+            changed = True
+            line = repaired_alias_line
         rewritten_split_line, split_cf_outputs = _repair_split_axis_from_consumers(
             line,
             index,

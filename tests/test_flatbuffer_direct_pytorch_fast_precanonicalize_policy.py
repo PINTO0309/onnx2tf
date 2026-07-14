@@ -27,6 +27,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_nhwc_average_pool_binary_bridge,
     _repair_nhwc_buffer_binary_alignment_at,
     _repair_nhwc_pool_layout,
+    _repair_simple_alias_layout_at,
     _repair_split_axis_from_consumers,
     _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
@@ -307,6 +308,61 @@ def test_dynamic_pool_layout_repairs_nhwc_and_cf_paths() -> None:
     assert changed and not short_circuit
     assert "target_shape=[1, 3, 4, 5]" in cf_lines[0]
     assert "pooled" in cf_names
+
+
+def test_simple_alias_layout_repairs_consumers_and_propagates_evidence() -> None:
+    reshape_lines = [
+        "        alias_nhwc = source_cf",
+        "        reshaped = torch.reshape(alias_nhwc, [1, 8, 3])",
+    ]
+    reshape_context = _build_fast_precanonicalize_repair_context(reshape_lines)
+    reshape_nhwc_names: set[str] = set()
+    changed, rewritten = _repair_simple_alias_layout_at(
+        0,
+        reshape_lines,
+        {"source_cf"},
+        reshape_nhwc_names,
+        reshape_context,
+    )
+    assert changed
+    assert rewritten == (
+        "        alias_nhwc = source_cf.permute(0, 2, 3, 1).contiguous()"
+    )
+    assert "alias_nhwc" in reshape_nhwc_names
+
+    conv_lines = [
+        "        feature_nhwc = feature_cf",
+        "        output = self.conv_block_0("
+        "feature_nhwc.permute(0, 3, 1, 2).contiguous())",
+    ]
+    conv_context = _build_fast_precanonicalize_repair_context(conv_lines)
+    conv_context.static_shapes["feature_nhwc"] = [1, 4, 5, 3]
+    changed, rewritten = _repair_simple_alias_layout_at(
+        0,
+        conv_lines,
+        {"feature_cf"},
+        set(),
+        conv_context,
+    )
+    assert changed
+    assert rewritten == (
+        "        feature_nhwc = _align_tensor_to_target_shape("
+        "feature_cf.permute(0, 2, 3, 1).contiguous(), [1, 4, 5, 3])"
+    )
+
+    alias_lines = ["        alias = source_cf", "        output = alias"]
+    alias_context = _build_fast_precanonicalize_repair_context(alias_lines)
+    alias_cf_names = {"source_cf"}
+    changed, rewritten = _repair_simple_alias_layout_at(
+        0,
+        alias_lines,
+        alias_cf_names,
+        set(),
+        alias_context,
+    )
+    assert not changed
+    assert rewritten == alias_lines[0]
+    assert "alias" in alias_cf_names
 
 
 def test_immediate_rank4_permute_source_requires_exact_permutation() -> None:
