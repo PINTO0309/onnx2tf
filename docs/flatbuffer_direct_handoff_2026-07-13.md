@@ -446,6 +446,12 @@ DepthToSpace consumer guards. Indexing and architecture validation passes 79
 tests; Ruff, diff, and AST-equivalence checks pass. No model conversion or
 inference was run.
 
+Native model-file generation now constructs one shared `ModelIRGraphIndex` and
+passes its producer/consumer maps into codegen. The exporter-local full graph
+scan was removed; no codegen path mutates either map. Architecture validation
+passes 71 tests and fixes the single constructor plus read-only contract. No
+model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

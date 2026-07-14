@@ -26912,19 +26912,6 @@ def _build_native_generated_state_dict(
 
 
 
-def _build_model_ir_producer_consumer_index(
-    model_ir: ModelIR,
-) -> Tuple[Dict[str, int], Dict[str, List[int]]]:
-    producers: Dict[str, int] = {}
-    consumers: Dict[str, List[int]] = {}
-    for op_index, op in enumerate(model_ir.operators):
-        for output_name in op.outputs:
-            producers[str(output_name)] = int(op_index)
-        for input_name in op.inputs:
-            consumers.setdefault(str(input_name), []).append(int(op_index))
-    return producers, consumers
-
-
 def _direct_codegen_module_attr_name(op_index: int, op_type: str) -> str:
     base = _sanitize_python_identifier(f"op_{op_index}_{str(op_type).lower()}", prefix="op")
     return base
@@ -27147,7 +27134,9 @@ def _write_native_model_file(
 ) -> List[Tuple[str, str]]:
     package_dir = Path(output_folder_path)
     _ensure_direct_codegen_supported(model_ir)
-    producer_index, consumer_index = _build_model_ir_producer_consumer_index(model_ir)
+    graph_index = ModelIRGraphIndex(model_ir)
+    producer_index = graph_index.producers
+    consumer_index = graph_index.consumers
     load_specs = _write_native_model_file_impl(
         _NativeModelFileWriterContext(
             output_folder_path,

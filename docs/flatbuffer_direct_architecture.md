@@ -2187,6 +2187,12 @@ recognition, and the guarded CRD-to-DCR Gather elision before DepthToSpace. All
 nine function ASTs are identical to their former exporter definitions; emitted
 source strings and ModelIR layout/consumer guards therefore remain unchanged.
 
+Native model-file generation builds its producer/consumer view through the
+shared `ModelIRGraphIndex`. The exporter no longer owns a second complete graph
+scan or a separate indexing policy. Codegen receives the shared index maps as
+read-only context, preserving operator-index semantics while aligning package
+generation with the fixed conversion-session graph contract.
+
 ## Runtime-check memory boundary
 
 The direct backend releases the legacy GraphSurgeon graph before ModelIR

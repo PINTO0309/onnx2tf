@@ -3931,6 +3931,37 @@ def test_generated_pytorch_indexing_codegen_has_single_owner() -> None:
     assert "import torch" not in indexing_source
 
 
+def test_native_pytorch_codegen_uses_shared_model_ir_graph_index() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    exporter_tree = ast.parse(exporter_source)
+    exporter_functions = {
+        node.name: node
+        for node in exporter_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    assert "_build_model_ir_producer_consumer_index" not in exporter_functions
+    writer = exporter_functions["_write_native_model_file"]
+    constructor_calls = [
+        node
+        for node in ast.walk(writer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "ModelIRGraphIndex"
+    ]
+    assert len(constructor_calls) == 1
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id in {"producer_index", "consumer_index"}
+        and node.func.attr in {"clear", "pop", "setdefault", "update"}
+        for node in ast.walk(exporter_tree)
+    )
+
+
 def test_pytorch_capability_registry_has_single_owner() -> None:
     exporter_source = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
