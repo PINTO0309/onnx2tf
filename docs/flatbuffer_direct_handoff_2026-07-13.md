@@ -1168,6 +1168,17 @@ architecture tests deselected), together with Ruff, syntax validation, and
 with the improvement-first validation policy, no model conversion or inference
 was run.
 
+Channel-first binary input-expression selection and direct binary capability
+now also live in `pytorch_binary_policy.py`. Scalar literals, constant buffer
+aliases, cached permuted aliases, channel-first passthroughs, explicit layout
+bridges, and relaxed broadcast checks retain their established resolution
+order. Direct capability still requires every dynamic operand expression to be
+available and the accumulated broadcast shape to equal the declared output.
+Both moved function ASTs match checkpoint `db93f31` exactly. Seven focused
+binary-policy/ownership tests pass (91 unrelated architecture tests deselected),
+together with Ruff, syntax validation, and `git diff --check`; the exporter
+shrank by another net 203 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

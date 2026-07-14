@@ -2321,7 +2321,11 @@ same owner decides whether every consumer can remain a channel-first binary op
 and whether a materialized channel-last alias can be omitted. Recursive alias
 elision is conservative at graph outputs and unsupported fan-out, and preserves
 the existing Transpose, Conv, spatial-reduction, unary, binary-broadcast, rank,
-layout, and cycle boundaries through injected capability callbacks.
+layout, and cycle boundaries through injected capability callbacks. Constant,
+scalar, passthrough, and explicit NHWC→NCHW binary input-expression selection
+uses that owner as well. Direct channel-first binary capability is granted only
+when every dynamic input resolves through this policy and their relaxed
+broadcast exactly matches the declared output shape.
 
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are

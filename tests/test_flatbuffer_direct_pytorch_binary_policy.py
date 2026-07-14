@@ -5,7 +5,9 @@ from onnx2tf.tflite_builder.pytorch_binary_policy import (
     _all_consumers_are_channel_first_binary_ops_for_codegen,
     _binary_requires_runtime_alignment_for_codegen,
     _binary_runtime_shape_passthrough_operand_for_codegen,
+    _can_emit_channel_first_binary_op_for_codegen,
     _can_omit_materialized_channel_last_alias_recursive_for_codegen,
+    _channel_first_binary_input_expr_for_codegen,
     _preferred_binary_alignment_anchor_for_codegen,
 )
 
@@ -110,4 +112,53 @@ def test_alias_elision_preserves_public_output_boundary() -> None:
     assert can_omit(ModelIR(name="internal", tensors={"source": tensor}))
     assert not can_omit(
         ModelIR(name="public", tensors={"source": tensor}, outputs=["source"])
+    )
+
+
+def test_channel_first_binary_input_expr_uses_layout_bridge() -> None:
+    source = _tensor("source", [1, 4, 5, 3])
+    source.logical_layout = "NHWC"
+    peer = _tensor("peer", [1, 3, 4, 5])
+    peer.logical_layout = "NCHW"
+    model_ir = ModelIR(
+        name="binary_input_expr",
+        tensors={"source": source, "peer": peer},
+    )
+
+    expr = _channel_first_binary_input_expr_for_codegen(
+        model_ir=model_ir,
+        channel_first_tensor_expr_aliases={},
+        channel_first_constant_buffer_alias_exprs={},
+        permuted_constant_buffer_alias_exprs={},
+        scalar_literal_expr_fn=lambda _name: None,
+        tensor_shape_list_fn=lambda name: list(model_ir.tensors[name].shape),
+        tensor_expr_fn=lambda name: f"value_{name}",
+        channel_first_passthrough_input_expr_fn=lambda _name: None,
+        tensor_name="source",
+        other_tensor_name="peer",
+    )
+
+    assert expr == "value_source.permute(0, 3, 1, 2).contiguous()"
+
+
+def test_channel_first_binary_capability_requires_complete_broadcast() -> None:
+    tensors = {
+        name: _tensor(name, [1, 3, 4, 5])
+        for name in ("lhs", "rhs", "output")
+    }
+    for tensor in tensors.values():
+        tensor.logical_layout = "NCHW"
+    op = OperatorIR(op_type="ADD", inputs=["lhs", "rhs"], outputs=["output"])
+    model_ir = ModelIR(name="binary_capability", tensors=tensors, operators=[op])
+
+    assert _can_emit_channel_first_binary_op_for_codegen(
+        model_ir=model_ir,
+        tensor_shape_list_fn=lambda name: list(model_ir.tensors[name].shape),
+        channel_first_shape_for_tensor_fn=lambda name: list(
+            model_ir.tensors[name].shape
+        ),
+        scalar_literal_expr_fn=lambda _name: None,
+        can_omit_materialized_channel_last_alias_fn=lambda _name: False,
+        channel_first_binary_input_expr_fn=lambda name, _other: f"value_{name}",
+        op=op,
     )
