@@ -2037,6 +2037,11 @@ Split-axis repair and channel-first Resize/Pool target-shape repair are also
 co-located with these queries. Split voting inspects only later consumers;
 Resize and Pool preserve immediate layout bridges and rewrite only when CF
 input or consumer evidence is stronger than the declared channel-last form.
+The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
+restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
+target shapes are normalized as one chain only when NHWC producer and consumer
+evidence agree; otherwise the repair remains a no-op. Constant-pad axis repair
+and reshape-to-permute replacement reuse the shared parser and layout context.
 
 The direct-module dispatcher is being decomposed by operator family rather than
 moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and

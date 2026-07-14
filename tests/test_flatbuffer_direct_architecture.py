@@ -4802,7 +4802,9 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_infer_unique_channel_count_from_rank4_shape",
         "_repair_cf_pool_target_shape",
         "_repair_cf_resize_target_shape",
+        "_repair_nhwc_average_pool_binary_bridge",
         "_repair_split_axis_from_consumers",
+        "_restore_channel_last_spatial_pool_chains",
     ):
         assert function_name in policy_functions
         assert function_name not in exporter_functions

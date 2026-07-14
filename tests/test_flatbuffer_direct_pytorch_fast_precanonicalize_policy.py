@@ -15,6 +15,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _infer_unique_channel_count_from_rank4_shape,
     _repair_cf_pool_target_shape,
     _repair_cf_resize_target_shape,
+    _repair_nhwc_average_pool_binary_bridge,
     _repair_split_axis_from_consumers,
 )
 
@@ -150,3 +151,28 @@ def test_immediate_rank4_permute_source_requires_exact_permutation() -> None:
     assert not _has_immediate_rank4_permute_source(
         lines, 1, "bridge", [0, 3, 1, 2]
     )
+
+
+def test_nhwc_average_pool_binary_bridge_normalizes_the_whole_chain() -> None:
+    lines = [
+        "        pool_out_nhwc = _apply_pool2d(input_nhwc, filter_height=2, filter_width=2, stride_h=2, stride_w=2, padding='VALID', target_shape=[1, 8, 4, 1], is_max_pool=False, channel_last=False)",
+        "        lhs, rhs = _align_binary_inputs_to_anchor(pool_out_nhwc, torch.reshape(scale, [1, 8, 1, 1]), [1, 8, 4, 1])",
+        "        mul_out = _align_tensor_to_target_shape(torch.mul(lhs, rhs), [1, 8, 4, 1])",
+        "        concat_out = _apply_concat([mul_out, peer], axis=3, target_shape=[1, 4, 1, 16], fused='NONE')",
+    ]
+    context = _build_fast_precanonicalize_repair_context(lines)
+
+    changed, updated_names = _repair_nhwc_average_pool_binary_bridge(
+        0,
+        lines,
+        set(),
+        {"input_nhwc"},
+        context,
+    )
+
+    assert changed
+    assert updated_names == {"pool_out_nhwc", "lhs", "rhs", "mul_out"}
+    assert "target_shape=[1, 4, 1, 8]" in lines[0]
+    assert "channel_last=True" in lines[0]
+    assert "scale.permute(0, 2, 3, 1).contiguous()" in lines[1]
+    assert "target_shape(torch.mul(lhs, rhs), [1, 4, 1, 8])" in lines[2]
