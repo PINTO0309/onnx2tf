@@ -269,3 +269,11 @@ def test_strict_activation_dtype_reuses_boundary_name_sets() -> None:
     assert "set(model_ir.inputs)" not in source
     assert "set(model_ir.outputs)" not in source
     assert not hasattr(quantization, "_activation_dtype_for_tensor")
+
+
+def test_strict_validation_collects_used_tensors_in_its_operator_loop() -> None:
+    source = inspect.getsource(quantization._validate_strict_full_integer_model_ir)
+
+    assert "for op_idx, op in enumerate(model_ir.operators):" in source
+    assert source.count("used_tensors.update(") == 2
+    assert not hasattr(quantization, "_used_tensor_names")

@@ -738,14 +738,6 @@ def _tensor_range_to_report(value: TensorCalibrationRange) -> Dict[str, Any]:
     }
 
 
-def _used_tensor_names(model_ir: ModelIR) -> Set[str]:
-    used = set(str(v) for v in list(model_ir.inputs) + list(model_ir.outputs))
-    for op in model_ir.operators:
-        used.update(str(v) for v in op.inputs if str(v) != "")
-        used.update(str(v) for v in op.outputs if str(v) != "")
-    return used
-
-
 def _elide_identity_operators(model_ir: ModelIR) -> None:
     candidate_ops = list(model_ir.operators)
     if not any(str(op.op_type) == "IDENTITY" for op in candidate_ops):
@@ -1726,8 +1718,10 @@ def _validate_strict_full_integer_model_ir(
         allowed_boundary_float_tensors.update(str(v) for v in model_ir.inputs)
         allowed_boundary_float_tensors.update(str(v) for v in model_ir.outputs)
 
-    used_tensors = _used_tensor_names(model_ir)
+    used_tensors = set(str(v) for v in list(model_ir.inputs) + list(model_ir.outputs))
     for op_idx, op in enumerate(model_ir.operators):
+        used_tensors.update(str(v) for v in op.inputs if str(v) != "")
+        used_tensors.update(str(v) for v in op.outputs if str(v) != "")
         op_type = str(op.op_type)
         if op_type == "QUANTIZE":
             continue

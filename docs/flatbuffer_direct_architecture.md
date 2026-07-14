@@ -1541,6 +1541,10 @@ default still collects a report for compatibility with direct internal callers.
 Full-integer activation dtype resolution also materializes graph-input and
 graph-output name sets once per variant. Every operator/tensor decision reuses
 those immutable boundary sets instead of rebuilding them for each lookup.
+Final strict-model validation collects referenced input/output tensor names in
+the same pass that validates operator support. It preserves the legacy raw-name
+and empty-name boundary behavior while removing the preceding duplicate
+operator/edge traversal.
 
 Late precision conversion in `passes/precision.py` is differential as well.
 Constant floating DIV roots are captured from one operator-type index and each

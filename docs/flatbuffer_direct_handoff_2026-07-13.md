@@ -681,6 +681,14 @@ passes 50 tests. Against the immediately preceding checkpoint, an 11-run
 synthetic 2,000-op INT16 full-integer median improved from 0.013129s to
 0.011785s (1.11x). No model conversion or inference was run.
 
+Strict-model validation now collects used tensor names while performing its
+existing supported-op loop rather than scanning every operator immediately
+before that loop. Raw tensor-name handling and sorted tensor validation remain
+unchanged. The focused ownership gate and strict quantization selection pass
+51 tests. Against checkpoint `57c61a5`, a 15-run synthetic 2,000-op INT16
+full-integer median improved from 0.012662s to 0.012108s (1.05x). No model
+conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted
