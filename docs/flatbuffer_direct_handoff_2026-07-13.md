@@ -1444,6 +1444,16 @@ tests deselected), together with Ruff, syntax validation, and `git diff --check`
 the orchestrator shrank from 1,065 to 1,039 lines and the exporter by net 24
 lines. No model conversion or inference was run.
 
+Rank-four NHWC registered-buffer binary alignment now uses one indexed policy
+helper and the shared context shape map. The rule rewrites only an exact
+`[1,H,W,2]` buffer requested as `[1,2,H,W]`, inserting the constant
+NHWC-to-NCHW Permute without retaining its regex and shape guard in the
+exporter. A synthetic registered-buffer fixture proves the guarded rewrite.
+Seventeen focused policy/ownership tests pass (95 unrelated architecture tests
+deselected), together with Ruff, syntax validation, and `git diff --check`; the
+orchestrator shrank from 1,039 to 1,025 lines and the exporter by net 13 lines.
+No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

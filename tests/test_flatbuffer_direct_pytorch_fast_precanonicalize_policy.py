@@ -22,6 +22,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_concat_axis_from_input_layouts,
     _repair_dynamic_cf_binary_anchor_shapes,
     _repair_nhwc_average_pool_binary_bridge,
+    _repair_nhwc_buffer_binary_alignment_at,
     _repair_split_axis_from_consumers,
     _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
@@ -328,3 +329,17 @@ def test_prelu_and_gather_slice_propagate_channel_first_layout() -> None:
 
     assert {"prelu_out", "gathered"} <= cf_like_names
     assert lines == ["        gathered = prelu_out[:, [0, 2], :, :]"]
+
+
+def test_nhwc_buffer_binary_alignment_permutates_matching_constant() -> None:
+    lines = [
+        "        self.register_buffer('scale', torch.zeros([1, 4, 5, 2], dtype=torch.float32), persistent=True)",
+        "        left, right = _align_binary_inputs(input_cf, self.scale, [1, 2, 4, 5])",
+    ]
+    context = _build_fast_precanonicalize_repair_context(lines)
+
+    assert _repair_nhwc_buffer_binary_alignment_at(1, lines, context)
+    assert lines[1] == (
+        "        left, right = _align_binary_inputs(input_cf, "
+        "self.scale.permute(0, 3, 1, 2).contiguous(), [1, 2, 4, 5])"
+    )

@@ -134,6 +134,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_dynamic_cf_binary_anchor_shapes,
     _repair_cf_gather_slice_at,
     _repair_nhwc_average_pool_binary_bridge,
+    _repair_nhwc_buffer_binary_alignment_at,
     _repair_split_axis_from_consumers,
     _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
@@ -7300,10 +7301,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
         r"(?P<scalar>[-+]?(?:[0-9]*\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?\d+)?)\), "
         r"\[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
     )
-    tensor786_align_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs0>[A-Za-z0-9_]+)\s*,\s*(?P<lhs1>[A-Za-z0-9_]+)\s*=\s*_align_binary_inputs\("
-        r"(?P<input>[A-Za-z0-9_]+), self\.(?P<const_attr>[A-Za-z0-9_]+), \[1, 2, (?P<h>\d+), (?P<w>\d+)\]\)$"
-    )
     for index, line in enumerate(lines[:-1]):
         simple_alias_match = simple_alias_re.match(line)
         if simple_alias_match is not None:
@@ -8154,22 +8151,12 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
             if terminal_lhs is not None:
                 cf_like_names.add(terminal_lhs)
             changed = True
-        tensor786_align_match = tensor786_align_re.match(line)
-        if tensor786_align_match is not None:
-            buffer_shape = repair_context.registered_buffer_shapes.get(
-                str(tensor786_align_match.group("const_attr"))
-            )
-            target_height = int(tensor786_align_match.group("h"))
-            target_width = int(tensor786_align_match.group("w"))
-            if buffer_shape == [1, target_height, target_width, 2]:
-                lines[index] = (
-                    f"{tensor786_align_match.group('indent')}{tensor786_align_match.group('lhs0')}, "
-                    f"{tensor786_align_match.group('lhs1')} = _align_binary_inputs("
-                    f"{tensor786_align_match.group('input')}, "
-                    f"self.{tensor786_align_match.group('const_attr')}.permute(0, 3, 1, 2).contiguous(), "
-                    f"[1, 2, {target_height}, {target_width}])"
-                )
-                changed = True
+        if _repair_nhwc_buffer_binary_alignment_at(
+            index,
+            lines,
+            repair_context,
+        ):
+            changed = True
         _propagate_cf_prelu_output(line, cf_like_names)
         depth_to_space_nhwc_gather_match = depth_to_space_nhwc_gather_re.match(line)
         if depth_to_space_nhwc_gather_match is not None:

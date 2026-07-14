@@ -2069,6 +2069,10 @@ PReLU output evidence propagation and channel-last Gather-slice repair are also
 focused rules in this owner. PReLU retains one rule-local module-call pattern;
 Gather reuses the shared assignment decoder and rewrites only CF-like inputs
 from axis 3 to axis 1 while recording the output as CF-like.
+Rank-four NHWC registered-buffer binary alignment is likewise indexed here. It
+consults the context's shared buffer-shape map and inserts the constant
+NHWC-to-NCHW Permute only when `[1,H,W,2]` exactly matches the requested
+`[1,2,H,W]` alignment.
 Channel-first Softmax and ReduceMax axis repair also use focused parser-backed
 helpers in this owner. Softmax preserves beta and moves the rank-four target
 channel; ReduceMax preserves keepdims and changes only axis 3 to axis 1. Pool

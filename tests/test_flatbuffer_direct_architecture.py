@@ -4850,6 +4850,7 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_repair_dynamic_cf_binary_anchor_at",
         "_repair_dynamic_cf_binary_anchor_shapes",
         "_repair_nhwc_average_pool_binary_bridge",
+        "_repair_nhwc_buffer_binary_alignment_at",
         "_repair_singleton_reshape_cf_binary_at",
         "_repair_split_axis_from_consumers",
         "_repair_terminal_classifier_tail_layout",

@@ -49,6 +49,12 @@ _PRELU_ASSIGN_RE = re.compile(
     r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*"
     r"self\.prelu_[0-9]+\((?P<input>[A-Za-z0-9_]+)\)$"
 )
+_NHWC_BUFFER_BINARY_ALIGN_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<lhs0>[A-Za-z0-9_]+)\s*,\s*"
+    r"(?P<lhs1>[A-Za-z0-9_]+)\s*=\s*_align_binary_inputs\("
+    r"(?P<input>[A-Za-z0-9_]+), self\.(?P<const_attr>[A-Za-z0-9_]+), "
+    r"\[1, 2, (?P<h>\d+), (?P<w>\d+)\]\)$"
+)
 
 
 def _convert_nhwc_pad_to_nchw_pad_values(pad_values: Sequence[int]) -> List[int] | None:
@@ -1602,4 +1608,34 @@ def _repair_cf_gather_slice_at(
         f"{input_name}[:, [{indices_expr}], :, :]"
     )
     dynamic_cf_like_names.add(lhs_name)
+    return True
+
+
+def _repair_nhwc_buffer_binary_alignment_at(
+    index: int,
+    lines: List[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> bool:
+    if index < 0 or index >= len(lines):
+        return False
+    align_match = _NHWC_BUFFER_BINARY_ALIGN_RE.match(lines[index])
+    if align_match is None:
+        return False
+    target_height = int(align_match.group("h"))
+    target_width = int(align_match.group("w"))
+    const_attr = str(align_match.group("const_attr"))
+    if context.registered_buffer_shapes.get(const_attr) != [
+        1,
+        target_height,
+        target_width,
+        2,
+    ]:
+        return False
+    lines[index] = (
+        f"{align_match.group('indent')}{align_match.group('lhs0')}, "
+        f"{align_match.group('lhs1')} = _align_binary_inputs("
+        f"{align_match.group('input')}, "
+        f"self.{const_attr}.permute(0, 3, 1, 2).contiguous(), "
+        f"[1, 2, {target_height}, {target_width}])"
+    )
     return True
