@@ -5502,15 +5502,6 @@ from onnx2tf.tflite_builder.pytorch_export_support import (
 
 
 
-def _suppress_torch_onnx_optional_registration_warnings() -> None:
-    try:
-        import logging
-
-        logging.getLogger("torch.onnx._internal.exporter._registration").setLevel(logging.ERROR)
-    except Exception:
-        pass
-
-
 def export_dynamo_onnx_from_generated_package(
     *,
     package_dir: str,
@@ -26634,11 +26625,6 @@ def _repair_exported_program_channel_last_pool_targets(lines: List[str]) -> List
 
 
 
-
-
-def _direct_codegen_module_attr_name(op_index: int, op_type: str) -> str:
-    base = _sanitize_python_identifier(f"op_{op_index}_{str(op_type).lower()}", prefix="op")
-    return base
 
 
 def _write_native_model_file(

@@ -553,6 +553,13 @@ ASTs match checkpoint `0515e64` exactly. Capability and architecture validation
 pass 85 tests; Ruff, diff, and AST-equivalence checks pass. No model conversion
 or inference was run.
 
+Two unreferenced exporter shims were removed: the old full direct-module
+attribute-name helper and a Torch ONNX warning helper. Generated naming already
+uses `pytorch_naming.py`, while the warning suppression actually used by Dynamo
+export remains inside the isolated artifact child. Architecture validation
+passes 78 tests and fixes both ownership boundaries. No model conversion or
+inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

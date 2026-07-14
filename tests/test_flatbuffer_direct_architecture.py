@@ -3596,6 +3596,11 @@ def test_torchscript_artifact_export_has_single_owner() -> None:
         not in exporter_source
     )
     assert "export_torchscript_from_generated_package," in exporter_source
+    assert "def _suppress_torch_onnx_optional_registration_warnings(" not in exporter_source
+    assert (
+        'logging.getLogger("torch.onnx._internal.exporter._registration")'
+        in artifact_source
+    )
     for helper_name in (
         "_build_metadata_payload",
         "_metadata_has_dynamic_public_inputs",
@@ -3940,6 +3945,7 @@ def test_generated_pytorch_naming_policy_has_single_owner() -> None:
         "_shorten_generated_python_identifier",
     ):
         assert f"{imported_name}," in exporter_source
+    assert "_direct_codegen_module_attr_name" not in exporter_functions
     for constant_name in (
         "_GENERATED_NAME_DROP_TOKENS",
         "_GENERATED_NAME_SUFFIX_PATTERNS",

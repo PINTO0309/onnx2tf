@@ -2179,7 +2179,9 @@ tensor storage names, keyword/digit sanitization, long-name hashing, semantic
 suffix preservation, and deterministic collision resolution share the same
 policy. Direct module-attribute base names are co-located with this generated
 identifier policy. Ten function ASTs and four policy-constant ASTs are identical
-to their former exporter definitions.
+to their former exporter definitions. The obsolete exporter-local full
+module-attribute-name shim had no callers and is removed rather than retained as
+a second naming path.
 
 Native codegen value policy has a Torch-free single owner in
 `pytorch_codegen_values.py`. Small constant eligibility, Python and scalar
