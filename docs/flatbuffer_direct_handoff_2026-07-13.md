@@ -1127,6 +1127,13 @@ syntax validation. One initial test expectation was corrected to the existing
 slash-compaction naming rule. The exporter shrank by another 153 lines. No model
 conversion or inference was run.
 
+Channel-first spatial reduction planning, constant-axis normalization, and
+direct Mean expression selection now live in the Torch-free
+`pytorch_reduction_policy.py` owner. All three moved function ASTs match
+checkpoint `050af84` exactly; two direct policy contracts and the focused
+ownership gate pass, together with Ruff and syntax validation. The exporter
+shrank by another 85 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

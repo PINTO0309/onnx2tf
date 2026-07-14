@@ -2297,6 +2297,12 @@ resolution contract. The same owner resolves channel-first/permuted/transposed
 constant alias expressions and collision-free cached local names; it emits only
 Python source strings and runtime-helper requirements.
 
+Generated reduction axis and direct-expression planning has a separate Torch-
+free owner in `pytorch_reduction_policy.py`. Static channel-last spatial axes
+map to their channel-first equivalents only with unambiguous layout/shape
+evidence. Negative and duplicate axes normalize before compact direct Mean source
+selection; unsupported axes remain on the runtime path.
+
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter
