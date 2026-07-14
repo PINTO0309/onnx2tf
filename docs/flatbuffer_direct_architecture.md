@@ -2243,6 +2243,10 @@ are unchanged. The orchestrator's local binary-anchor decoder was identical to
 the existing shared decoder apart from its parameter name, so it now uses the
 shared implementation. The fast-precanonicalize orchestrator contains no nested
 function definitions; graph-aware ordering and mutation remain in the exporter.
+The repair-context collector and channel-first Resize repair also call the
+shared complete Resize decoder; neither keeps a nested statement parser. The
+shared decoder's explicit outer-call guard subsumes the lower-level Resize
+decoder guard previously relied on by the repair-local copy.
 Parser migration also removes its dead matching scaffold: unused module/return/
 Resize/Pool/LRN/reshape regexes and discarded terminal/Conv match results are
 not retained beside the shared decoders. An AST load check guards this boundary

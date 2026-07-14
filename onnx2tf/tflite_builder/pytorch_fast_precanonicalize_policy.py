@@ -10,7 +10,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_apply_pool2d_assign_with_shape,
     _parse_apply_pool2d_input_and_channel_last,
     _parse_apply_resize_input_and_channel_last,
-    _parse_apply_resize_input_size_shape_and_channel_last,
+    _parse_apply_resize_assign,
     _parse_apply_softmax_input_and_axis,
     _parse_align_binary_inputs_to_anchor_assign_with_shape,
     _parse_align_tensor_target_shape_expr,
@@ -164,9 +164,6 @@ def _build_fast_precanonicalize_repair_context(
     aligned_rank4_any_re = re.compile(
         r"^\s*(?P<lhs>[A-Za-z0-9_]+) = _align_tensor_to_target_shape\((?P<expr>.+), \[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
     )
-    apply_pool2d_re = re.compile(  # noqa: F841 - retained for AST-compatible move
-        r"^\s*(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_apply_pool2d\((?:input=)?(?P<input>[A-Za-z0-9_]+), (?P<rest>.+), target_shape=[\[\(](?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)[\]\)], is_max_pool=(?P<is_max>True|False), channel_last=(?P<channel_last>True|False)\)$"
-    )
     apply_softmax_re = re.compile(
         r"^\s*(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_apply_softmax\((?:input=)?(?P<input>[A-Za-z0-9_]+), axis=(?P<axis>-?\d+), beta=(?P<beta>[-0-9.eE]+), target_shape=[\[\(](?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)[\]\)]\)$"
     )
@@ -185,57 +182,6 @@ def _build_fast_precanonicalize_repair_context(
     module_output_producers: Dict[str, str] = {}
     module_input_consumers: Dict[str, List[str]] = {}
 
-    def _parse_apply_resize_assign(
-        src_line: str,
-    ) -> Tuple[str, str, str, int, int, str, List[int], bool, bool, bool] | None:
-        assign = _parse_simple_assignment_line(src_line)
-        if assign is None:
-            return None
-        indent, lhs, rhs = assign
-        parsed = _parse_apply_resize_input_size_shape_and_channel_last(rhs)
-        if parsed is None:
-            return None
-        input_name, size_value, shape_value, channel_last = parsed
-        if size_value is None or shape_value is None:
-            return None
-        stripped = rhs.strip()
-        if not stripped.startswith("_apply_resize(") or not stripped.endswith(")"):
-            return None
-        parts = _split_top_level_csv_exprs(stripped[len("_apply_resize(") : -1])
-        method_expr: str | None = None
-        align_expr: str | None = None
-        hpc_expr: str | None = None
-        for part in parts:
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
-                continue
-            key, value = part.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            if key == "method":
-                method_expr = value
-            elif key == "align_corners":
-                align_expr = value
-            elif key == "half_pixel_centers":
-                hpc_expr = value
-        if (
-            method_expr is None
-            or align_expr not in {"True", "False"}
-            or hpc_expr not in {"True", "False"}
-            or not (method_expr.startswith("'") and method_expr.endswith("'"))
-        ):
-            return None
-        return (
-            indent,
-            lhs,
-            input_name,
-            int(size_value[0]),
-            int(size_value[1]),
-            method_expr[1:-1],
-            [int(v) for v in list(shape_value)],
-            align_expr == "True",
-            hpc_expr == "True",
-            channel_last,
-        )
 
     pending_conv_block_name: str | None = None
     for index, line in enumerate(lines):
@@ -780,55 +726,6 @@ def _repair_cf_resize_target_shape(
         r"^\s*[A-Za-z0-9_]+ = _align_tensor_to_target_shape\(torch\.(?:mul|add)\((?P<input>[A-Za-z0-9_]+), (?:self|torch\.reshape\(self)\.(?P<const_attr>[A-Za-z0-9_]+).*$"
     )
 
-    def _parse_apply_resize_assign(
-        src_line: str,
-    ) -> Tuple[str, str, str, int, int, str, List[int], bool, bool, bool] | None:
-        assign = _parse_simple_assignment_line(src_line)
-        if assign is None:
-            return None
-        indent, lhs, rhs = assign
-        parsed = _parse_apply_resize_input_size_shape_and_channel_last(rhs)
-        if parsed is None:
-            return None
-        input_name, size_value, shape_value, channel_last = parsed
-        if size_value is None or shape_value is None:
-            return None
-        stripped = rhs.strip()
-        parts = _split_top_level_csv_exprs(stripped[len("_apply_resize(") : -1])
-        method_expr: str | None = None
-        align_expr: str | None = None
-        hpc_expr: str | None = None
-        for part in parts:
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
-                continue
-            key, value = part.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            if key == "method":
-                method_expr = value
-            elif key == "align_corners":
-                align_expr = value
-            elif key == "half_pixel_centers":
-                hpc_expr = value
-        if (
-            method_expr is None
-            or align_expr not in {"True", "False"}
-            or hpc_expr not in {"True", "False"}
-            or not (method_expr.startswith("'") and method_expr.endswith("'"))
-        ):
-            return None
-        return (
-            indent,
-            lhs,
-            input_name,
-            int(size_value[0]),
-            int(size_value[1]),
-            method_expr[1:-1],
-            [int(v) for v in list(shape_value)],
-            align_expr == "True",
-            hpc_expr == "True",
-            channel_last,
-        )
 
     apply_resize_match = _parse_apply_resize_assign(line)
     if apply_resize_match is None:

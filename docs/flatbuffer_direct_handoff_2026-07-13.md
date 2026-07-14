@@ -1351,6 +1351,17 @@ architecture tests deselected), together with Ruff, syntax validation, an AST
 loop-boundary check, and `git diff --check`. The orchestrator shrank from 1,266
 to 1,258 lines. No model conversion or inference was run.
 
+Both nested Resize statement-parser copies in
+`pytorch_fast_precanonicalize_policy.py` now use the shared
+`pytorch_source_parser.py` decoder. The context-builder copy is meaning-equivalent
+after parameter renaming; the repair-local copy had relied on the same
+lower-level outer-call validation that the shared decoder explicitly repeats.
+The obsolete unused Pool regex was removed with them. A structural assertion
+prevents policy-local redefinition. Twenty-five focused parser/fast-policy/
+ownership tests pass (94 unrelated architecture tests deselected), together
+with Ruff, syntax validation, and `git diff --check`; the policy shrank by net
+103 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

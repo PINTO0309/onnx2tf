@@ -3976,6 +3976,12 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
         / "tflite_builder"
         / "pytorch_source_parser.py"
     ).read_text(encoding="utf-8")
+    fast_policy_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_fast_precanonicalize_policy.py"
+    ).read_text(encoding="utf-8")
     exporter_functions = {
         node.name
         for node in ast.parse(exporter_source).body
@@ -4039,6 +4045,12 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
     assert "_SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN =" not in exporter_source
     assert "_SHADOWFORMER_TARGET_BATCH_EXPR_PATTERN," in exporter_source
     assert "import torch" not in parser_source
+    assert "_parse_apply_resize_assign," in fast_policy_source
+    assert not any(
+        isinstance(node, ast.FunctionDef)
+        and node.name == "_parse_apply_resize_assign"
+        for node in ast.walk(ast.parse(fast_policy_source))
+    )
 
     exporter_module = ast.parse(exporter_source)
     orchestrator = next(
