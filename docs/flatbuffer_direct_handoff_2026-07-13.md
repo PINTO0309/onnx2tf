@@ -1179,6 +1179,15 @@ binary-policy/ownership tests pass (91 unrelated architecture tests deselected),
 together with Ruff, syntax validation, and `git diff --check`; the exporter
 shrank by another net 203 lines. No model conversion or inference was run.
 
+Binary output target-shape literal selection now lives in the same Torch-free
+binary-policy owner. It broadcasts rank-3/4/5 inputs in channel-first form,
+maps the result to an explicit channel-last output when required, and retains
+the conservative expected-channel/name-hint checks for unknown layouts. The
+moved function AST matches checkpoint `a5bb099` exactly. Eight focused binary-
+policy/ownership tests pass (91 unrelated architecture tests deselected),
+together with Ruff, syntax validation, and `git diff --check`; the exporter
+shrank by another net 60 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

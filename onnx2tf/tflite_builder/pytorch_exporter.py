@@ -61,6 +61,7 @@ from onnx2tf.tflite_builder.pytorch_capabilities import (
 )
 from onnx2tf.tflite_builder.pytorch_binary_policy import (
     _all_consumers_are_channel_first_binary_ops_for_codegen,
+    _binary_output_target_shape_literal_for_codegen,
     _binary_requires_runtime_alignment_for_codegen,
     _binary_runtime_shape_passthrough_operand_for_codegen,
     _can_emit_channel_first_binary_op_for_codegen,
@@ -866,67 +867,6 @@ def _binary_operand_expr_for_codegen(
     if reshape_dims == tensor_shape:
         return expr
     return f"{expr}.reshape({repr(reshape_dims)})"
-
-
-
-
-def _binary_output_target_shape_literal_for_codegen(
-    *,
-    model_ir: ModelIR,
-    lhs_name: str,
-    rhs_name: str,
-    output_name: str,
-    fallback_literal: str,
-) -> str:
-    output_tensor = model_ir.tensors.get(str(output_name), None)
-    if output_tensor is None:
-        return fallback_literal
-    rank = len(list(output_tensor.shape))
-    if rank not in {3, 4, 5}:
-        return fallback_literal
-    broadcast_cf_shape: Optional[List[int]] = None
-    for input_name in (str(lhs_name), str(rhs_name)):
-        input_tensor = model_ir.tensors.get(input_name, None)
-        if input_tensor is None:
-            return fallback_literal
-        if isinstance(input_tensor.data, np.ndarray) and int(np.asarray(input_tensor.data).size) == 1:
-            continue
-        input_cf_shape = _channel_first_shape_values_for_model_ir(
-            model_ir=model_ir,
-            tensor_name=input_name,
-        )
-        if input_cf_shape is None or len(input_cf_shape) != rank:
-            return fallback_literal
-        broadcast_cf_shape = (
-            [int(v) for v in list(input_cf_shape)]
-            if broadcast_cf_shape is None
-            else _broadcast_shapes_relaxed(broadcast_cf_shape, input_cf_shape)
-        )
-        if broadcast_cf_shape is None:
-            return fallback_literal
-    if broadcast_cf_shape is None:
-        return fallback_literal
-    output_layout = normalize_logical_layout(output_tensor.logical_layout)
-    if is_channel_last_logical_layout(output_layout):
-        perm_to_output = logical_layout_permutation(
-            source_layout=channel_first_logical_layout(rank),
-            target_layout=output_layout,
-        )
-        permuted = _permute_shape(broadcast_cf_shape, perm_to_output or [])
-        if permuted is not None:
-            return repr([int(v) for v in list(permuted)])
-        return fallback_literal
-    if is_channel_first_logical_layout(output_layout):
-        return repr([int(v) for v in list(broadcast_cf_shape)])
-    expected_channels = _expected_channel_dim_for_tensor_for_codegen(
-        model_ir=model_ir,
-        tensor_name=str(output_name),
-    )
-    if expected_channels is not None and int(broadcast_cf_shape[1]) == int(expected_channels):
-        return repr([int(v) for v in list(broadcast_cf_shape)])
-    if not _tensor_name_suggests_channel_last_layout_for_codegen(str(output_name)):
-        return repr([int(v) for v in list(broadcast_cf_shape)])
-    return fallback_literal
 
 
 

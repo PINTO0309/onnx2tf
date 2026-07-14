@@ -3,6 +3,7 @@ from __future__ import annotations
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_binary_policy import (
     _all_consumers_are_channel_first_binary_ops_for_codegen,
+    _binary_output_target_shape_literal_for_codegen,
     _binary_requires_runtime_alignment_for_codegen,
     _binary_runtime_shape_passthrough_operand_for_codegen,
     _can_emit_channel_first_binary_op_for_codegen,
@@ -162,3 +163,24 @@ def test_channel_first_binary_capability_requires_complete_broadcast() -> None:
         channel_first_binary_input_expr_fn=lambda name, _other: f"value_{name}",
         op=op,
     )
+
+
+def test_binary_output_target_shape_follows_declared_output_layout() -> None:
+    lhs = _tensor("lhs", [1, 3, 4, 5])
+    lhs.logical_layout = "NCHW"
+    rhs = _tensor("rhs", [1, 3, 1, 1])
+    rhs.logical_layout = "NCHW"
+    output = _tensor("output", [1, 4, 5, 3])
+    output.logical_layout = "NHWC"
+    model_ir = ModelIR(
+        name="binary_target",
+        tensors={"lhs": lhs, "rhs": rhs, "output": output},
+    )
+
+    assert _binary_output_target_shape_literal_for_codegen(
+        model_ir=model_ir,
+        lhs_name="lhs",
+        rhs_name="rhs",
+        output_name="output",
+        fallback_literal="fallback",
+    ) == "[1, 4, 5, 3]"

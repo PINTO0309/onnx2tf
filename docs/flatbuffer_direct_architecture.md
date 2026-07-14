@@ -2325,7 +2325,10 @@ layout, and cycle boundaries through injected capability callbacks. Constant,
 scalar, passthrough, and explicit NHWC→NCHW binary input-expression selection
 uses that owner as well. Direct channel-first binary capability is granted only
 when every dynamic input resolves through this policy and their relaxed
-broadcast exactly matches the declared output shape.
+broadcast exactly matches the declared output shape. Binary output target
+literals are derived by broadcasting the same channel-first input shapes and
+then mapping them to the declared output layout; unknown layouts retain the
+established expected-channel and tensor-name guards.
 
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
