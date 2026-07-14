@@ -2244,6 +2244,15 @@ required public layout bridges through the shared validation pass, preserves
 batchless metadata, and forces recurrent rank-three boundaries feature-last.
 Its function AST is also identical to the former exporter definition.
 
+Single-op ONNX StringNormalizer package fallback lives in the Torch- and
+TensorFlow-free `pytorch_string_normalizer_exporter.py`. ONNX attribute
+decoding, validation, shared package scaffolding, and public tensor metadata
+serialization are isolated from the native code generator and reuse the
+bounded export-support/package-source contracts. Both functions are
+AST-identical to their former exporter definitions. Invalid graphs are rejected
+before creating an artifact directory, and importing the module cannot load
+Torch or TensorFlow.
+
 ## Runtime-check memory boundary
 
 The direct backend releases the legacy GraphSurgeon graph before ModelIR

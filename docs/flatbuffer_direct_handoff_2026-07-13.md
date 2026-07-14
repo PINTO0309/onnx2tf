@@ -528,6 +528,14 @@ basic public contract and recurrent feature-last override. Boundary and
 architecture validation passes 85 tests; Ruff, diff, and AST-equivalence checks
 pass. No model conversion or inference was run.
 
+Single-op ONNX StringNormalizer package fallback now lives in the dedicated
+Torch- and TensorFlow-free `pytorch_string_normalizer_exporter.py`. Attribute
+decoding and wrapper-package generation reuse the shared metadata and package
+scaffolding contracts; invalid graphs are rejected before output creation.
+Both function ASTs match checkpoint `12535c1` exactly. Five direct ONNX-helper
+and filesystem cases plus architecture validation pass 83 tests; Ruff, diff,
+and AST-equivalence checks pass. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

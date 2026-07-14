@@ -95,6 +95,10 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT
     / "onnx2tf"
     / "tflite_builder"
+    / "pytorch_string_normalizer_exporter.py",
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
     / "pytorch_source_graph_rewrites.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_source_parser.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_source_rewrites.py",
@@ -3598,12 +3602,17 @@ def test_torchscript_artifact_export_has_single_owner() -> None:
         "_generated_package_non_native_skip_reason",
         "_generated_package_torch_export_skip_reason",
         "_run_generated_package_export_child",
-        "_serializable_tensor_meta",
-        "_serializable_value",
     ):
         assert f"def {helper_name}(" in support_source
         assert f"def {helper_name}(" not in exporter_source
         assert f"{helper_name}," in exporter_source
+    for support_only_helper_name in (
+        "_serializable_tensor_meta",
+        "_serializable_value",
+    ):
+        assert f"def {support_only_helper_name}(" in support_source
+        assert f"def {support_only_helper_name}(" not in exporter_source
+        assert f"{support_only_helper_name}," not in exporter_source
 
     for source in (artifact_source, support_source):
         top_level_imports = {
@@ -4186,6 +4195,37 @@ def test_pytorch_runtime_wrapper_export_has_single_owner_and_lazy_torch() -> Non
         and any(alias.name == "torch" for alias in node.names)
     ]
     assert len(lazy_imports) == 1
+
+
+def test_pytorch_string_normalizer_export_has_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    string_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_string_normalizer_exporter.py"
+    ).read_text(encoding="utf-8")
+
+    def _functions(source: str) -> set[str]:
+        return {
+            node.name
+            for node in ast.parse(source).body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+    exporter_functions = _functions(exporter_source)
+    string_functions = _functions(string_source)
+    for function_name in (
+        "_extract_string_normalizer_config_from_onnx_graph",
+        "export_pytorch_package_from_string_normalizer_onnx",
+    ):
+        assert function_name in string_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," in exporter_source
+    assert "import torch" not in string_source
+    assert "tensorflow" not in string_source
 
 
 def test_pytorch_capability_registry_has_single_owner() -> None:
