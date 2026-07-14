@@ -2233,6 +2233,14 @@ prefixed nested calls are co-located with those parsers. The four utility ASTs
 are unchanged, bringing the directly testable generated-source boundary to 36
 functions without moving graph-aware canonicalization policy.
 
+Seven capture-free fast-precanonicalize statement decoders extend this boundary
+to 43 functions: aligned binary assignment, simple return, dynamic Pool,
+local-response normalization, Softmax, Resize, and ReduceMax. Their moved ASTs
+are unchanged. The orchestrator's local binary-anchor decoder was identical to
+the existing shared decoder apart from its parameter name, so it now uses the
+shared implementation. The fast-precanonicalize orchestrator contains no nested
+function definitions; graph-aware ordering and mutation remain in the exporter.
+
 Pure generated-source rewrites now live in the Torch-free
 `pytorch_source_rewrites.py`. Channel-first GAP-to-Conv bridge folding, explicit
 channel-last GAP output materialization, SE scale/binary bridge rewriting,

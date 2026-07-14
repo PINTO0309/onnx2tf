@@ -6,6 +6,13 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _extract_prefixed_call_exprs,
     _model_source_lines,
     _normalize_permute_dims_expr,
+    _parse_aligned_binary_assign_with_shape,
+    _parse_apply_resize_assign,
+    _parse_apply_softmax_assign,
+    _parse_dynamic_apply_pool2d_assign,
+    _parse_local_response_norm_assign,
+    _parse_reduce_max_assign,
+    _parse_simple_return_identifier,
     _parse_align_binary_inputs_to_anchor_assign_with_shape,
     _parse_align_tensor_target_shape_assign,
     _parse_align_tensor_target_shape_expr,
@@ -202,3 +209,28 @@ def test_source_parser_scans_lines_and_balanced_calls() -> None:
         "_apply_resize(x, size=(4, 5))",
         "_apply_resize(torch.add(y, 1), size=(8, 9))",
     ]
+
+
+def test_source_parser_decodes_precanonicalize_repair_statements() -> None:
+    assert _parse_aligned_binary_assign_with_shape(
+        "y = _align_tensor_to_target_shape(torch.add(a, b), [1, 8, 4, 4])"
+    ) == ("y", "add", "a", "b", [1, 8, 4, 4])
+    assert _parse_simple_return_identifier("return (y)") == "y"
+    assert _parse_dynamic_apply_pool2d_assign(
+        "y = _apply_pool2d(input=x, filter_height=2, filter_width=2, "
+        "target_shape=_tensor_shape_list(ref), is_max_pool=True, channel_last=False)"
+    ) == ("", "y", "x", "filter_height=2, filter_width=2", "ref", True)
+    assert _parse_local_response_norm_assign(
+        "y = F.local_response_norm(input=x, size=5, alpha=0.0001, beta=0.75, k=1.0)"
+    ) == ("", "y", "x", "5", "0.0001", "0.75", "1.0")
+    assert _parse_apply_softmax_assign(
+        "y = _apply_softmax(input=x, axis=3, beta=1.0, target_shape=[1, 2, 3, 4])"
+    ) == ("", "y", "x", 3, "1.0", [1, 2, 3, 4])
+    assert _parse_apply_resize_assign(
+        "y = _apply_resize(input=x, size=[8, 9], method='bilinear', "
+        "target_shape=[1, 8, 9, 3], align_corners=False, "
+        "half_pixel_centers=True, channel_last=True)"
+    ) == ("", "y", "x", 8, 9, "bilinear", [1, 8, 9, 3], False, True, True)
+    assert _parse_reduce_max_assign(
+        "y = _reduce_max(input=x, axes=_normalize_axes([3], x.ndim), keepdims=True)"
+    ) == ("", "y", "x", 3, "True")

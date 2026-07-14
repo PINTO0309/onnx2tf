@@ -3988,6 +3988,13 @@ def test_generated_pytorch_source_parsers_have_single_owner() -> None:
     }
 
     for function_name in (
+        "_parse_aligned_binary_assign_with_shape",
+        "_parse_apply_resize_assign",
+        "_parse_apply_softmax_assign",
+        "_parse_dynamic_apply_pool2d_assign",
+        "_parse_local_response_norm_assign",
+        "_parse_reduce_max_assign",
+        "_parse_simple_return_identifier",
         "_parse_int_list_literal",
         "_strip_outer_parentheses",
         "_split_top_level_csv_exprs",

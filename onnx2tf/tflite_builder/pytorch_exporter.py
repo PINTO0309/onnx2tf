@@ -292,6 +292,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _extract_prefixed_call_exprs,
     _model_source_lines,
     _normalize_permute_dims_expr,
+    _parse_aligned_binary_assign_with_shape,
     _parse_align_binary_inputs_to_anchor_assign_with_shape,
     _parse_align_tensor_target_shape_expr,
     _parse_align_tensor_target_shape_assign,
@@ -300,21 +301,27 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_apply_pool2d_input_and_channel_last,
     _parse_apply_pool2d_input_expr,
     _parse_apply_pool2d_input_channel_last_and_is_max,
+    _parse_apply_resize_assign,
     _parse_apply_resize_input_size_shape_and_channel_last,
     _parse_apply_resize_input_and_channel_last,
     _parse_apply_softmax_input_axis_and_shape,
     _parse_apply_softmax_input_and_axis,
+    _parse_apply_softmax_assign,
     _parse_binary_add_args,
     _parse_binary_mul_args,
     _parse_channel_last_gather_slice_assign,
     _parse_constant_pad_assign,
     _parse_copy_call_expr,
+    _parse_dynamic_apply_pool2d_assign,
     _parse_dynamic_binary_add_align_assign,
     _parse_int_list_literal,
+    _parse_local_response_norm_assign,
     _parse_rank4_shape_expr,
     _parse_rank4_shape_literal,
+    _parse_reduce_max_assign,
     _parse_simple_assignment_line,
     _parse_simple_assignment_line_cached,
+    _parse_simple_return_identifier,
     _parse_static_binary_add_align_assign,
     _parse_tensor_split_assign,
     _parse_torch_permute_assign,
@@ -7304,69 +7311,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     aligned_binary_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.(?P<op>mul|add|sub|div|minimum|maximum)\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
     )
-    def _parse_aligned_binary_assign_with_shape(
-        current_line: str,
-    ) -> Tuple[str, str, str, str, List[int]] | None:
-        assign = _parse_simple_assignment_line(current_line)
-        if assign is None:
-            return None
-        _, lhs, rhs = assign
-        align_parts = _parse_align_tensor_target_shape_expr(rhs)
-        if align_parts is None:
-            return None
-        input_expr, target_shape_expr = align_parts
-        target_shape = _parse_rank4_shape_literal(target_shape_expr)
-        if target_shape is None:
-            return None
-        binary_match = re.fullmatch(
-            r"torch\.(?P<op>mul|add|sub|div|minimum|maximum)\((?P<args>.+)\)",
-            input_expr.strip(),
-        )
-        if binary_match is None:
-            return None
-        op_name = str(binary_match.group("op"))
-        if op_name == "mul":
-            binary_args = _parse_binary_mul_args(str(binary_match.group("args")))
-        else:
-            binary_args = _parse_binary_add_args(str(binary_match.group("args")))
-        if (
-            binary_args is None
-            or re.fullmatch(r"[A-Za-z0-9_]+", str(binary_args[0]).strip()) is None
-            or re.fullmatch(r"[A-Za-z0-9_]+", str(binary_args[1]).strip()) is None
-        ):
-            return None
-        return lhs, op_name, str(binary_args[0]).strip(), str(binary_args[1]).strip(), list(target_shape)
-    def _parse_align_binary_inputs_to_anchor_assign_with_shape(
-        current_line: str,
-    ) -> Tuple[str, str, str, str, str, List[int]] | None:
-        assign_match = re.match(
-            r"^(?P<indent>\s*)\(*\s*(?P<lhs0>[A-Za-z0-9_]+)(?::\s*torch\.Tensor)?\s*,\s*(?P<lhs1>[A-Za-z0-9_]+)(?::\s*torch\.Tensor)?\s*\)*\s*=\s*(?P<rhs>.+)$",
-            str(current_line),
-        )
-        if assign_match is None:
-            return None
-        rhs = str(assign_match.group("rhs")).strip()
-        prefix = "_align_binary_inputs_to_anchor("
-        if not rhs.startswith(prefix) or not rhs.endswith(")"):
-            return None
-        parts = _split_top_level_csv_exprs(rhs[len(prefix) : -1])
-        if len(parts) != 3:
-            return None
-        target_shape = _parse_rank4_shape_literal(parts[2].strip())
-        if (
-            target_shape is None
-            or re.fullmatch(r"[A-Za-z0-9_]+", parts[0].strip()) is None
-            or re.fullmatch(r"[A-Za-z0-9_]+", parts[1].strip()) is None
-        ):
-            return None
-        return (
-            str(assign_match.group("indent")),
-            str(assign_match.group("lhs0")),
-            str(assign_match.group("lhs1")),
-            parts[0].strip(),
-            parts[1].strip(),
-            [int(v) for v in list(target_shape)],
-        )
     aligned_rank4_any_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\((?P<expr>.+), \[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
     )
@@ -7384,15 +7328,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     return_value_re = re.compile(
         r"^(?P<indent>\s*)return (?P<value>[A-Za-z0-9_]+)$"
     )
-    def _parse_simple_return_identifier(current_line: str) -> str | None:
-        stripped = str(current_line).strip()
-        direct = re.fullmatch(r"return\s+([A-Za-z0-9_]+)", stripped)
-        if direct is not None:
-            return str(direct.group(1))
-        parenthesized = re.fullmatch(r"return\s+\(\s*([A-Za-z0-9_]+)\s*\)", stripped)
-        if parenthesized is not None:
-            return str(parenthesized.group(1))
-        return None
     apply_resize_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_apply_resize\((?:input=)?(?P<input>[A-Za-z0-9_]+), (?:size=)?[\[\(](?P<out_h>\d+), (?P<out_w>\d+)[\]\)], method='(?P<method>[^']+)', target_shape=[\[\(](?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)[\]\)], align_corners=(?P<align>True|False), half_pixel_centers=(?P<hpc>True|False), channel_last=(?P<channel_last>True|False)\)$"
     )
@@ -7402,56 +7337,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     dynamic_apply_pool2d_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_apply_pool2d\((?:input=)?(?P<input>[A-Za-z0-9_]+), (?P<rest>.+), target_shape=_tensor_shape_list\((?P<shape_input>[A-Za-z0-9_]+)\), is_max_pool=(?P<is_max>True|False), channel_last=False\)$"
     )
-    def _parse_dynamic_apply_pool2d_assign(
-        current_line: str,
-    ) -> Tuple[str, str, str, str, str, bool] | None:
-        assign = _parse_simple_assignment_line(current_line)
-        if assign is None:
-            return None
-        indent, lhs, rhs = assign
-        stripped = rhs.strip()
-        prefix = "_apply_pool2d("
-        if not stripped.startswith(prefix) or not stripped.endswith(")"):
-            return None
-        parsed = _parse_apply_pool2d_input_channel_last_and_is_max(rhs)
-        if parsed is None or parsed[2] is None or parsed[1]:
-            return None
-        input_name, _, is_max_pool = parsed
-        parts = _split_top_level_csv_exprs(stripped[len(prefix) : -1])
-        target_shape_expr: str | None = None
-        rest_parts: List[str] = []
-        positional_index = 0
-        for part in parts:
-            keyword_match = re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part)
-            if keyword_match is not None:
-                key, value = part.split("=", 1)
-                key = key.strip()
-                value = value.strip()
-                if key == "target_shape":
-                    target_shape_expr = value
-                    continue
-                if key in {"input", "is_max_pool", "channel_last"}:
-                    continue
-                rest_parts.append(part.strip())
-                continue
-            if positional_index == 0:
-                positional_index += 1
-                continue
-            rest_parts.append(part.strip())
-            positional_index += 1
-        target_shape_match = (
-            re.fullmatch(r"_tensor_shape_list\(\s*([A-Za-z0-9_]+)\s*\)", target_shape_expr or "")
-        )
-        if target_shape_match is None:
-            return None
-        return (
-            indent,
-            lhs,
-            input_name,
-            ", ".join(rest_parts),
-            str(target_shape_match.group(1)),
-            bool(is_max_pool),
-        )
     const_pad_assign_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*F\.pad\((?P<input>[A-Za-z0-9_]+), \[(?P<pads>[0-9,\s]+)\], mode='constant', value=(?P<value>[-+0-9.eE]+)\)$"
     )
@@ -7474,198 +7359,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
         r"^(?P<indent>\s*)(?P<lhs0>[A-Za-z0-9_]+)\s*,\s*(?P<lhs1>[A-Za-z0-9_]+)\s*=\s*_align_binary_inputs\("
         r"(?P<input>[A-Za-z0-9_]+), self\.(?P<const_attr>[A-Za-z0-9_]+), \[1, 2, (?P<h>\d+), (?P<w>\d+)\]\)$"
     )
-    def _parse_local_response_norm_assign(
-        current_line: str,
-    ) -> Tuple[str, str, str, str, str, str, str] | None:
-        assign = _parse_simple_assignment_line(current_line)
-        if assign is None:
-            return None
-        indent, lhs, rhs = assign
-        stripped = rhs.strip()
-        prefix = "F.local_response_norm("
-        if not stripped.startswith(prefix) or not stripped.endswith(")"):
-            return None
-        parts = _split_top_level_csv_exprs(stripped[len(prefix) : -1])
-        input_expr: str | None = None
-        size_expr: str | None = None
-        alpha_expr: str | None = None
-        beta_expr: str | None = None
-        k_expr: str | None = None
-        positional_index = 0
-        for part in parts:
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is not None:
-                key, value = part.split("=", 1)
-                key = key.strip()
-                value = value.strip()
-                if key == "input":
-                    input_expr = value
-                elif key == "size":
-                    size_expr = value
-                elif key == "alpha":
-                    alpha_expr = value
-                elif key == "beta":
-                    beta_expr = value
-                elif key == "k":
-                    k_expr = value
-                continue
-            if positional_index == 0:
-                input_expr = part.strip()
-            positional_index += 1
-        if (
-            input_expr is None
-            or size_expr is None
-            or alpha_expr is None
-            or beta_expr is None
-            or k_expr is None
-            or re.fullmatch(r"[A-Za-z0-9_]+", input_expr) is None
-            or re.fullmatch(r"\d+", size_expr) is None
-            or re.fullmatch(r"[-+0-9.eE]+", alpha_expr) is None
-            or re.fullmatch(r"[-+0-9.eE]+", beta_expr) is None
-            or re.fullmatch(r"[-+0-9.eE]+", k_expr) is None
-        ):
-            return None
-        return indent, lhs, input_expr, size_expr, alpha_expr, beta_expr, k_expr
-    def _parse_apply_softmax_assign(
-        current_line: str,
-    ) -> Tuple[str, str, str, int, str, List[int]] | None:
-        assign = _parse_simple_assignment_line(current_line)
-        if assign is None:
-            return None
-        indent, lhs, rhs = assign
-        stripped = rhs.strip()
-        prefix = "_apply_softmax("
-        if not stripped.startswith(prefix) or not stripped.endswith(")"):
-            return None
-        parts = _split_top_level_csv_exprs(stripped[len(prefix) : -1])
-        softmax_args = _parse_apply_softmax_input_axis_and_shape(rhs)
-        if softmax_args is None:
-            return None
-        input_expr, axis_value, rank4_shape = softmax_args
-        beta_expr: str | None = None
-        for part in parts:
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
-                continue
-            key, value = part.split("=", 1)
-            if key.strip() == "beta":
-                beta_expr = value.strip()
-                break
-        if (
-            rank4_shape is None
-            or re.fullmatch(r"[A-Za-z0-9_]+", input_expr.strip()) is None
-            or beta_expr is None
-            or re.fullmatch(r"[-+0-9.eE]+", beta_expr) is None
-            or re.fullmatch(r"\d+", str(rank4_shape[0]).strip()) is None
-        ):
-            return None
-        return (
-            indent,
-            lhs,
-            input_expr.strip(),
-            axis_value,
-            beta_expr,
-            [int(v) for v in list(rank4_shape)],
-        )
-    def _parse_apply_resize_assign(
-        current_line: str,
-    ) -> Tuple[str, str, str, int, int, str, List[int], bool, bool, bool] | None:
-        assign = _parse_simple_assignment_line(current_line)
-        if assign is None:
-            return None
-        indent, lhs, rhs = assign
-        parsed = _parse_apply_resize_input_size_shape_and_channel_last(rhs)
-        if parsed is None:
-            return None
-        input_name, size_value, shape_value, channel_last = parsed
-        if size_value is None or shape_value is None:
-            return None
-        stripped = rhs.strip()
-        if not stripped.startswith("_apply_resize(") or not stripped.endswith(")"):
-            return None
-        parts = _split_top_level_csv_exprs(stripped[len("_apply_resize(") : -1])
-        method_expr: str | None = None
-        align_expr: str | None = None
-        hpc_expr: str | None = None
-        for part in parts:
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is None:
-                continue
-            key, value = part.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            if key == "method":
-                method_expr = value
-            elif key == "align_corners":
-                align_expr = value
-            elif key == "half_pixel_centers":
-                hpc_expr = value
-        if (
-            method_expr is None
-            or align_expr not in {"True", "False"}
-            or hpc_expr not in {"True", "False"}
-            or not (method_expr.startswith("'") and method_expr.endswith("'"))
-        ):
-            return None
-        return (
-            indent,
-            lhs,
-            input_name,
-            int(size_value[0]),
-            int(size_value[1]),
-            method_expr[1:-1],
-            [int(v) for v in list(shape_value)],
-            align_expr == "True",
-            hpc_expr == "True",
-            channel_last,
-        )
-    def _parse_reduce_max_assign(
-        current_line: str,
-    ) -> Tuple[str, str, str, int, str] | None:
-        assign = _parse_simple_assignment_line(current_line)
-        if assign is None:
-            return None
-        indent, lhs, rhs = assign
-        stripped = rhs.strip()
-        prefix = "_reduce_max("
-        if not stripped.startswith(prefix) or not stripped.endswith(")"):
-            return None
-        parts = _split_top_level_csv_exprs(stripped[len(prefix) : -1])
-        input_expr: str | None = None
-        axis_expr: str | None = None
-        keepdims_expr: str | None = None
-        positional_index = 0
-        for part in parts:
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", part) is not None:
-                key, value = part.split("=", 1)
-                key = key.strip()
-                value = value.strip()
-                if key == "input":
-                    input_expr = value
-                elif key == "axes":
-                    axis_expr = value
-                elif key == "keepdims":
-                    keepdims_expr = value
-                continue
-            if positional_index == 0:
-                input_expr = part.strip()
-            elif positional_index == 1:
-                axis_expr = part.strip()
-            elif positional_index == 2:
-                keepdims_expr = part.strip()
-            positional_index += 1
-        if (
-            input_expr is None
-            or axis_expr is None
-            or keepdims_expr is None
-            or re.fullmatch(r"[A-Za-z0-9_]+", input_expr) is None
-            or re.fullmatch(r"True|False", keepdims_expr) is None
-        ):
-            return None
-        axis_match = re.fullmatch(
-            r"_normalize_axes\(\s*[\[\(]\s*(?P<axis>-?\d+)\s*,?\s*[\]\)]\s*,\s*[A-Za-z0-9_]+\.ndim\s*\)",
-            axis_expr,
-        )
-        if axis_match is None:
-            return None
-        return indent, lhs, input_expr, int(axis_match.group("axis")), keepdims_expr
     for line in lines:
         register_buffer_match = register_buffer_re.match(line)
         if register_buffer_match is None:

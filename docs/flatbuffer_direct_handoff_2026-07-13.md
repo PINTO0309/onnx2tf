@@ -1320,6 +1320,17 @@ match checkpoint `4a4221f` exactly. Twelve focused policy/ownership tests pass
 validation, and `git diff --check`; the exporter shrank by another net 151
 lines. No model conversion or inference was run.
 
+Seven capture-free statement decoders used by fast precanonicalization now live
+in `pytorch_source_parser.py`: aligned binary assignment, simple return,
+dynamic Pool, local-response normalization, Softmax, Resize, and ReduceMax. The
+local binary-anchor decoder was equivalent to the existing shared parser apart
+from its parameter name and has been removed. All seven moved function ASTs
+match checkpoint `66ac14a` exactly; the orchestrator now has no nested function
+definitions and shrank from 1,608 to 1,294 lines. Thirteen focused parser/
+ownership tests pass (95 unrelated architecture tests deselected), together
+with Ruff, syntax validation, and `git diff --check`; the exporter shrank by
+another net 307 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
