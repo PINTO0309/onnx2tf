@@ -150,6 +150,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_terminal_classifier_tail_layout,
     _propagate_cf_local_response_norm_output,
     _propagate_cf_prelu_output,
+    _record_rewritten_static_shape,
     _restore_channel_last_spatial_pool_chains,
 )
 from onnx2tf.tflite_builder.pytorch_fusion_policy import (
@@ -7362,11 +7363,11 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 lines[index] = rewritten_binary_line
                 if binary_lhs is not None:
                     cf_like_names.add(binary_lhs)
-                    binary_shape_match = re.search(r"\[(?P<shape>[0-9, ]+)\]\)$", rewritten_binary_line)
-                    if binary_shape_match is not None:
-                        repair_context.static_shapes[binary_lhs] = _parse_int_list_literal(
-                            str(binary_shape_match.group("shape"))
-                        )
+                    _record_rewritten_static_shape(
+                        rewritten_binary_line,
+                        binary_lhs,
+                        repair_context,
+                    )
                 changed = True
                 line = rewritten_binary_line
             else:
@@ -7399,11 +7400,11 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 lines[index] = rewritten_resize_line
                 if resize_lhs is not None:
                     cf_like_names.add(resize_lhs)
-                    resize_shape_match = re.search(r"target_shape=\[(?P<shape>[0-9, ]+)\]", rewritten_resize_line)
-                    if resize_shape_match is not None:
-                        repair_context.static_shapes[resize_lhs] = _parse_int_list_literal(
-                            str(resize_shape_match.group("shape"))
-                        )
+                    _record_rewritten_static_shape(
+                        rewritten_resize_line,
+                        resize_lhs,
+                        repair_context,
+                    )
                 changed = True
                 line = rewritten_resize_line
                 apply_resize_match = _parse_apply_resize_assign(line)
@@ -7479,11 +7480,11 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 lines[index] = rewritten_pool_line
                 if pool_lhs is not None:
                     cf_like_names.add(pool_lhs)
-                    pool_shape_match = re.search(r"target_shape=\[(?P<shape>[0-9, ]+)\]", rewritten_pool_line)
-                    if pool_shape_match is not None:
-                        repair_context.static_shapes[pool_lhs] = _parse_int_list_literal(
-                            str(pool_shape_match.group("shape"))
-                        )
+                    _record_rewritten_static_shape(
+                        rewritten_pool_line,
+                        pool_lhs,
+                        repair_context,
+                    )
                 changed = True
                 line = rewritten_pool_line
                 apply_pool2d_assign = _parse_apply_pool2d_assign_with_shape(line)

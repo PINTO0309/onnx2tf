@@ -2107,6 +2107,12 @@ static shapes, and removes stale NHWC evidence for that output. The source line
 is not rewritten, so the exporter does not mark the file changed solely for
 this propagation; the updated evidence is consumed by the subsequent
 Softmax/ReduceMax and Pool decisions.
+Successful aligned-binary, Resize, and Pool rewrites record literal output
+shapes through one policy-owned cache helper. It accepts only a literal
+`target_shape=[...]` or the exact trailing aligned-shape form and leaves the
+existing cache untouched for dynamic or unparseable expressions. The exporter
+still invokes the update immediately after each rewrite, so every later rule in
+the ordered scan observes the same shape evidence as before extraction.
 The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
 restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer

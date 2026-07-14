@@ -109,6 +109,12 @@ _RESHAPED_ALIGNED_BN_CONST_RE = re.compile(
     r"\[1, (?P<reshape_c>\d+), 1, 1\]\)\), "
     r"\[(?P<n>\d+), (?P<c0>\d+), (?P<h>\d+), (?P<w>\d+)\]\)$"
 )
+_REWRITTEN_TARGET_SHAPE_RE = re.compile(
+    r"target_shape=\[(?P<shape>[0-9, ]+)\]"
+)
+_REWRITTEN_TRAILING_SHAPE_RE = re.compile(
+    r"\[(?P<shape>[0-9, ]+)\]\)$"
+)
 
 
 def _convert_nhwc_pad_to_nchw_pad_values(pad_values: Sequence[int]) -> List[int] | None:
@@ -416,6 +422,22 @@ def _build_fast_precanonicalize_repair_context(
         module_output_producers=module_output_producers,
         module_input_consumers=module_input_consumers,
     )
+
+
+def _record_rewritten_static_shape(
+    line: str,
+    lhs_name: str,
+    context: _FastPrecanonicalizeRepairContext,
+) -> bool:
+    shape_match = _REWRITTEN_TARGET_SHAPE_RE.search(line)
+    if shape_match is None:
+        shape_match = _REWRITTEN_TRAILING_SHAPE_RE.search(line)
+    if shape_match is None:
+        return False
+    context.static_shapes[str(lhs_name)] = _parse_int_list_literal(
+        str(shape_match.group("shape"))
+    )
+    return True
 
 
 def _fast_precanonicalize_resolve_alias(

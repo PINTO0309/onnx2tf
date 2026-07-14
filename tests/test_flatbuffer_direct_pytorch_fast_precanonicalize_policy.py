@@ -37,6 +37,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_terminal_classifier_tail_layout,
     _propagate_cf_local_response_norm_output,
     _propagate_cf_prelu_output,
+    _record_rewritten_static_shape,
 )
 from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_apply_pool2d_assign_with_shape,
@@ -105,6 +106,34 @@ def test_fast_precanonicalize_context_collects_module_and_alias_evidence() -> No
         )
         == "cf"
     )
+
+
+def test_rewritten_static_shape_records_target_or_trailing_literal_only() -> None:
+    context = _build_fast_precanonicalize_repair_context([])
+    assert _record_rewritten_static_shape(
+        "        resized = _apply_resize(source, [5, 7], method='nearest', "
+        "target_shape=[1, 8, 5, 7], align_corners=False, "
+        "half_pixel_centers=False, channel_last=False)",
+        "resized",
+        context,
+    )
+    assert context.static_shapes["resized"] == [1, 8, 5, 7]
+
+    assert _record_rewritten_static_shape(
+        "        aligned = _align_tensor_to_target_shape("
+        "torch.add(left, right), [1, 16, 3, 4])",
+        "aligned",
+        context,
+    )
+    assert context.static_shapes["aligned"] == [1, 16, 3, 4]
+
+    context.static_shapes["unchanged"] = [1, 2, 3, 4]
+    assert not _record_rewritten_static_shape(
+        "        unchanged = _apply_pool2d(source, target_shape=dynamic_shape)",
+        "unchanged",
+        context,
+    )
+    assert context.static_shapes["unchanged"] == [1, 2, 3, 4]
 
 
 def test_channel_last_spatial_consumer_detects_direct_rank4_slice() -> None:
