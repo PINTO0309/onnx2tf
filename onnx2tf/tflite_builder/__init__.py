@@ -4,7 +4,15 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+from onnx2tf.tflite_builder.artifact_metadata import (
+    collect_custom_op_artifact_metadata,
+)
+from onnx2tf.tflite_builder.artifact_preparation import (
+    isolate_float32_model_ir_for_tflite_write,
+    resolve_requested_artifact_controls,
+)
 from onnx2tf.tflite_builder.core.contracts import ConversionRequest, ConversionResult
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.progress import (
     ProgressSpinner as _ProgressSpinner,
     create_progress_bar as _create_progress_bar,
@@ -193,36 +201,6 @@ def _reject_unsupported_quantization(**kwargs: Any) -> None:
     return
 
 
-def _resolve_quantization_controls(kwargs: Dict[str, Any]) -> Dict[str, Any]:
-    calibration_method = kwargs.get(
-        "flatbuffer_direct_calibration_method",
-        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_METHOD", "max"),
-    )
-    calibration_percentile = kwargs.get(
-        "flatbuffer_direct_calibration_percentile",
-        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_CALIBRATION_PERCENTILE", "99.99"),
-    )
-    quant_min_numel = kwargs.get(
-        "flatbuffer_direct_quant_min_numel",
-        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_NUMEL", "1"),
-    )
-    quant_min_abs_max = kwargs.get(
-        "flatbuffer_direct_quant_min_abs_max",
-        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_QUANT_MIN_ABS_MAX", "0.0"),
-    )
-    quant_scale_floor = kwargs.get(
-        "flatbuffer_direct_quant_scale_floor",
-        os.environ.get("ONNX2TF_FLATBUFFER_DIRECT_QUANT_SCALE_FLOOR", "1e-8"),
-    )
-    return {
-        "calibration_method": str(calibration_method),
-        "calibration_percentile": float(calibration_percentile),
-        "min_numel": int(quant_min_numel),
-        "min_abs_max": float(quant_min_abs_max),
-        "scale_floor": float(quant_scale_floor),
-    }
-
-
 def _set_reduced_precision_support_metadata(
     *,
     model_ir: Any,
@@ -379,25 +357,28 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     else:
         v = str(custom_allowlist_raw).strip()
         flatbuffer_direct_custom_op_allowlist = [v] if v != "" else None
-    tflite_split_max_bytes = int(
-        kwargs.get(
-            "tflite_split_max_bytes",
-            os.environ.get(
-                "ONNX2TF_FLATBUFFER_DIRECT_SPLIT_MAX_BYTES",
-                str(DEFAULT_TFLITE_SPLIT_MAX_BYTES),
-            ),
-        )
+    artifact_execution_controls = resolve_requested_artifact_controls(
+        request.options,
+        split_plan_requested=split_plan_requested,
+        quantization_requested=(
+            output_dynamic_range_quantized_tflite
+            or output_integer_quantized_tflite
+        ),
+        default_split_max_bytes=DEFAULT_TFLITE_SPLIT_MAX_BYTES,
+        default_split_target_bytes=DEFAULT_TFLITE_SPLIT_TARGET_BYTES,
     )
-    tflite_split_target_bytes = int(
-        kwargs.get(
-            "tflite_split_target_bytes",
-            os.environ.get(
-                "ONNX2TF_FLATBUFFER_DIRECT_SPLIT_TARGET_BYTES",
-                str(DEFAULT_TFLITE_SPLIT_TARGET_BYTES),
-            ),
-        )
-    )
-    quant_controls = _resolve_quantization_controls(kwargs)
+    tflite_split_max_bytes = artifact_execution_controls.split_max_bytes
+    tflite_split_target_bytes = artifact_execution_controls.split_target_bytes
+    quant_controls = artifact_execution_controls.quantization
+    if split_plan_requested and (
+        tflite_split_max_bytes is None or tflite_split_target_bytes is None
+    ):
+        raise RuntimeError("split artifact controls were not resolved")
+    if (
+        output_dynamic_range_quantized_tflite
+        or output_integer_quantized_tflite
+    ) and quant_controls is None:
+        raise RuntimeError("quantization artifact controls were not resolved")
     flatbuffer_direct_show_progress = bool(
         kwargs.get("flatbuffer_direct_show_progress", True)
     )
@@ -531,10 +512,11 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 onnx_graph=onnx_graph,
             )
         except Exception as ex:
-            try:
-                _write_coverage_report(str(ex))
-            except Exception:
-                pass
+            if report_op_coverage:
+                try:
+                    _write_coverage_report(str(ex))
+                except Exception:
+                    pass
             raise
     finally:
         configure_pseudo_ops_wave1_targets(None)
@@ -545,6 +527,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
     internal_pass_diagnostics: Optional[List[Dict[str, Any]]] = (
         [] if internal_pass_metrics_path else None
     )
+    split_graph_index: Optional[ModelIRGraphIndex] = None
     try:
         model_ir = lower_onnx_to_ir(
             onnx_graph=preprocessed_onnx_graph,
@@ -620,12 +603,18 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             model_ir, _ = rewrite_model_ir_unroll_recurrent_ops(
                 model_ir=model_ir,
             )
-        run_model_ir_validation_pipeline(model_ir)
+        if split_plan_requested:
+            split_graph_index = ModelIRGraphIndex(model_ir)
+        run_model_ir_validation_pipeline(
+            model_ir,
+            graph_index=split_graph_index,
+        )
     except Exception as ex:
-        try:
-            _write_coverage_report(str(ex))
-        except Exception:
-            pass
+        if report_op_coverage:
+            try:
+                _write_coverage_report(str(ex))
+            except Exception:
+                pass
         raise
 
     export_progress_labels = _build_export_progress_labels(
@@ -682,46 +671,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             _set_export_progress_desc("op coverage report")
             _write_coverage_report(None)
             _advance_export_progress()
-        else:
-            _write_coverage_report(None)
 
-        custom_ops_used = sorted(
-            list(
-                {
-                    str(op.options.get("customCode", "CUSTOM"))
-                    for op in model_ir.operators
-                    if str(op.op_type) == "CUSTOM"
-                }
-            )
-        )
-        custom_op_nodes: List[Dict[str, str]] = []
-        custom_op_nodes_seen = set()
-        for op in model_ir.operators:
-            if str(op.op_type) != "CUSTOM":
-                continue
-            options = op.options if isinstance(op.options, dict) else {}
-            custom_code = str(options.get("customCode", "CUSTOM")).strip()
-            if custom_code == "":
-                custom_code = "CUSTOM"
-            onnx_op = str(options.get("onnxOp", "")).strip()
-            onnx_node_name = str(options.get("onnxNodeName", "")).strip()
-            key = (custom_code, onnx_op, onnx_node_name)
-            if key in custom_op_nodes_seen:
-                continue
-            custom_op_nodes_seen.add(key)
-            custom_op_nodes.append(
-                {
-                    "custom_code": custom_code,
-                    "onnx_op": onnx_op,
-                    "onnx_node_name": onnx_node_name,
-                }
-            )
-        custom_op_nodes.sort(
-            key=lambda v: (
-                str(v.get("custom_code", "")),
-                str(v.get("onnx_op", "")),
-                str(v.get("onnx_node_name", "")),
-            )
+        custom_ops_used, custom_op_nodes = collect_custom_op_artifact_metadata(
+            model_ir
         )
 
         split_plan_report_path = None
@@ -748,6 +700,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 target_max_bytes=tflite_split_target_bytes,
                 hard_max_bytes=tflite_split_max_bytes,
                 schema_tflite=schema_tflite,
+                graph_index=split_graph_index,
             )
             split_required_by_estimate = bool(should_split_by_estimate(split_plan_report))
             split_plan_total_estimated_bytes = int(
@@ -774,11 +727,13 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     output_folder_path=output_folder_path,
                     output_file_name=output_file_name,
                     tflite_loader_validator=_validate_split_tflite_loadable,
+                    graph_index=split_graph_index,
                 )
                 split_manifest_path = split_outputs["split_manifest_path"]
                 split_partition_paths = split_outputs["split_partition_paths"]
                 split_partition_count = int(split_outputs["split_partition_count"])
             _advance_export_progress()
+            del split_graph_index
 
         _set_export_progress_desc("write float32 tflite")
         model_ir_fp32 = clone_model_ir_with_float32(model_ir)
@@ -797,10 +752,25 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         float32_path = os.path.join(output_folder_path, f"{output_file_name}_float32.tflite")
         saved_model_path = None
         float32_write_timing: Dict[str, Any] = {}
-        model_ir_fp32_tflite = clone_model_ir_with_float32(model_ir_fp32)
-        _optimize_constant_input_scatter_nd_chains(model_ir_fp32_tflite)
-        _optimize_constant_binary_elementwise_chains(model_ir_fp32_tflite)
-        run_model_ir_validation_pipeline(model_ir_fp32_tflite)
+        model_ir_fp32_tflite = isolate_float32_model_ir_for_tflite_write(
+            model_ir_fp32,
+            split_manifest_path=split_manifest_path,
+            output_saved_model_from_model_ir=output_saved_model_from_model_ir,
+            output_pytorch_from_model_ir=output_pytorch_from_model_ir,
+        )
+        fp32_write_graph_index = ModelIRGraphIndex(model_ir_fp32_tflite)
+        _optimize_constant_input_scatter_nd_chains(
+            model_ir_fp32_tflite,
+            graph_index=fp32_write_graph_index,
+        )
+        _optimize_constant_binary_elementwise_chains(
+            model_ir_fp32_tflite,
+            graph_index=fp32_write_graph_index,
+        )
+        run_model_ir_validation_pipeline(
+            model_ir_fp32_tflite,
+            graph_index=fp32_write_graph_index,
+        )
         write_model_file(
             schema_tflite=schema_tflite,
             model_ir=model_ir_fp32_tflite,
@@ -816,6 +786,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             enabled=bool(flatbuffer_direct_show_progress),
         )
         _advance_export_progress()
+        del fp32_write_graph_index
+        del model_ir_fp32_tflite
 
         calibration_ranges = None
         calibration_report: Dict[str, Any] = {}
@@ -840,6 +812,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 },
                 "variants": {},
             }
+            del calibration_samples
 
         def _write_validated_quantized_model_file(
             *,
@@ -901,7 +874,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     model_ir=model_ir_fp32,
                     output_folder_path=saved_model_output_folder_path,
                 )
-        _advance_export_progress()
+            _advance_export_progress()
 
         if output_pytorch_from_model_ir:
             require_torch(required_pytorch_feature or "flatbuffer_direct PyTorch package export")
@@ -1017,6 +990,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     )
             _advance_export_progress()
 
+        model_ir_fp32 = None
+
         _set_export_progress_desc("write float16 tflite")
         model_ir_fp16 = clone_model_ir_with_float16(model_ir)
         optimize_redundant_transpose_operators(
@@ -1029,10 +1004,20 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
         )
         float16_path = os.path.join(output_folder_path, f"{output_file_name}_float16.tflite")
         float16_write_timing: Dict[str, Any] = {}
-        model_ir_fp16_tflite = clone_model_ir_with_float16(model_ir_fp16)
-        _optimize_constant_input_scatter_nd_chains(model_ir_fp16_tflite)
-        _optimize_constant_binary_elementwise_chains(model_ir_fp16_tflite)
-        run_model_ir_validation_pipeline(model_ir_fp16_tflite)
+        model_ir_fp16_tflite = model_ir_fp16
+        fp16_write_graph_index = ModelIRGraphIndex(model_ir_fp16_tflite)
+        _optimize_constant_input_scatter_nd_chains(
+            model_ir_fp16_tflite,
+            graph_index=fp16_write_graph_index,
+        )
+        _optimize_constant_binary_elementwise_chains(
+            model_ir_fp16_tflite,
+            graph_index=fp16_write_graph_index,
+        )
+        run_model_ir_validation_pipeline(
+            model_ir_fp16_tflite,
+            graph_index=fp16_write_graph_index,
+        )
         write_model_file(
             schema_tflite=schema_tflite,
             model_ir=model_ir_fp16_tflite,
@@ -1048,6 +1033,9 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
             enabled=bool(flatbuffer_direct_show_progress),
         )
         _advance_export_progress()
+        del fp16_write_graph_index
+        del model_ir_fp16_tflite
+        del model_ir_fp16
 
         dynamic_range_path = None
         if output_dynamic_range_quantized_tflite:
@@ -1082,6 +1070,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 enabled=bool(flatbuffer_direct_show_progress),
             )
             _advance_export_progress()
+            del dynamic_model_ir
 
         integer_quant_path = None
         full_integer_quant_path = None
@@ -1122,6 +1111,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 enabled=bool(flatbuffer_direct_show_progress),
             )
             _advance_export_progress()
+            del integer_model_ir
+            del integer_result
 
             _set_export_progress_desc("write full integer quant tflite")
             full_integer_result = build_full_integer_quantized_model_ir(
@@ -1158,6 +1149,8 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                 enabled=bool(flatbuffer_direct_show_progress),
             )
             _advance_export_progress()
+            del full_integer_model_ir
+            del full_integer_result
 
             int16_activation_skip_reasons = strict_int16_activation_skip_reasons(model_ir)
             if len(int16_activation_skip_reasons) > 0:
@@ -1216,6 +1209,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     enabled=bool(flatbuffer_direct_show_progress),
                 )
                 _advance_export_progress()
+                del integer_quant_with_int16_act_model_ir
 
                 _set_export_progress_desc("write full integer quant int16-act tflite")
                 full_integer_quant_with_int16_act_model_ir = build_full_integer_quantized_with_int16_act_model_ir(
@@ -1247,12 +1241,15 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     enabled=bool(flatbuffer_direct_show_progress),
                 )
                 _advance_export_progress()
+                del full_integer_quant_with_int16_act_model_ir
             calibration_report_path = os.path.join(
                 output_folder_path,
                 f"{output_file_name}_strict_integer_quant_calibration_report.json",
             )
             with open(calibration_report_path, "w", encoding="utf-8") as f:
                 json.dump(calibration_report, f, indent=2)
+            del calibration_ranges
+            del calibration_report
 
         if output_weights:
             _set_export_progress_desc("export float32 weights")

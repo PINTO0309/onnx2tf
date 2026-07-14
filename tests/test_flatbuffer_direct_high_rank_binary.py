@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.high_rank_binary import (
     coalesce_static_high_rank_binary_operators,
@@ -47,12 +49,28 @@ def _rank6_div_ir(*, dynamic_signature: bool) -> ModelIR:
     return model_ir
 
 
-def test_coalesces_static_rank6_binary_broadcast_to_rank4() -> None:
+def test_coalesces_static_rank6_binary_broadcast_to_rank4(monkeypatch) -> None:
     model_ir = _rank6_div_ir(dynamic_signature=False)
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = coalesce_static_high_rank_binary_operators(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = coalesce_static_high_rank_binary_operators(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
     assert stats == {"coalesced_static_high_rank_binary_operators": 1}
+    assert refresh_count == 1
     assert [op.op_type for op in model_ir.operators] == [
         "RESHAPE",
         "RESHAPE",
@@ -67,6 +85,9 @@ def test_coalesces_static_rank6_binary_broadcast_to_rank4() -> None:
     assert np.prod(model_ir.tensors[div_op.outputs[0]].shape) == np.prod(
         model_ir.tensors["output"].shape
     )
+    assert graph_index.operator_indices("RESHAPE") == [0, 1, 3]
+    assert graph_index.operator_indices("DIV") == [2]
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
 
 def test_keeps_dynamic_rank6_binary_uncoalesced() -> None:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.pad_layout import (
     repair_channel_last_inputs_for_channel_first_pad,
@@ -28,7 +30,7 @@ def _tensor(
     )
 
 
-def test_repair_channel_last_input_for_channel_first_padv2() -> None:
+def test_repair_channel_last_input_for_channel_first_padv2(monkeypatch) -> None:
     model_ir = ModelIR("channel_last_input_for_channel_first_pad")
     model_ir.tensors = {
         "x_nhwc": _tensor("x_nhwc", [1, 120, 160, 3], layout="NHWC"),
@@ -52,8 +54,23 @@ def test_repair_channel_last_input_for_channel_first_padv2() -> None:
             outputs=["y_nchw"],
         )
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = repair_channel_last_inputs_for_channel_first_pad(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = repair_channel_last_inputs_for_channel_first_pad(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
     assert stats == {"repaired_channel_last_inputs_for_channel_first_pad": 1}
     assert [str(op.op_type) for op in model_ir.operators] == ["TRANSPOSE", "PADV2"]
@@ -65,6 +82,12 @@ def test_repair_channel_last_input_for_channel_first_padv2() -> None:
         model_ir.tensors[str(transpose_op.inputs[1])].data,
         np.asarray([0, 3, 1, 2], dtype=np.int32),
     )
+    assert refresh_count == 1
+    assert graph_index.operator_indices("TRANSPOSE") == [0]
+    assert graph_index.operator_indices("PADV2") == [1]
+    assert graph_index.producer(adapter_name) is transpose_op
+    assert graph_index.consumer_indices(adapter_name) == [1]
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
 
 def test_pad_layout_repair_is_noop_for_native_nchw_input() -> None:

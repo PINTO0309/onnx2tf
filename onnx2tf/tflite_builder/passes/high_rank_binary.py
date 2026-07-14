@@ -5,6 +5,8 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
 
@@ -91,10 +93,13 @@ def _coalesced_shape(shape: List[int], groups: List[List[int]]) -> List[int]:
 
 def coalesce_static_high_rank_binary_operators(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """Lower fully-static rank>4 binary broadcasts to equivalent rank<=4 ops."""
     rewritten = 0
-    rebuilt: List[OperatorIR] = []
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     def _unique_name(base: str) -> str:
         candidate = str(base)
@@ -117,13 +122,15 @@ def coalesce_static_high_rank_binary_operators(
         )
         return name
 
-    for op in model_ir.operators:
-        if (
-            str(op.op_type) not in _BROADCAST_BINARY_OPS
-            or len(op.inputs) != 2
-            or len(op.outputs) != 1
-        ):
-            rebuilt.append(op)
+    candidate_ops = [
+        model_ir.operators[int(index)]
+        for index in graph_index.operator_indices_for_types(
+            _BROADCAST_BINARY_OPS
+        )
+    ]
+    for op in candidate_ops:
+        op_index = graph_index.operator_index(op)
+        if op_index is None or len(op.inputs) != 2 or len(op.outputs) != 1:
             continue
 
         output_name = str(op.outputs[0])
@@ -138,7 +145,6 @@ def coalesce_static_high_rank_binary_operators(
             or len(output_shape) <= 4
             or any(shape is None for shape in input_shapes)
         ):
-            rebuilt.append(op)
             continue
 
         padded_input_shapes = [
@@ -151,10 +157,10 @@ def coalesce_static_high_rank_binary_operators(
             output_shape=output_shape,
         )
         if groups is None:
-            rebuilt.append(op)
             continue
 
         coalesced_inputs: List[str] = []
+        replacement_ops: List[OperatorIR] = []
         for input_index, (input_name, padded_shape) in enumerate(
             zip(op.inputs, padded_input_shapes)
         ):
@@ -173,7 +179,7 @@ def coalesce_static_high_rank_binary_operators(
                 quantization=deepcopy(source_tensor.quantization),
                 onnx_tensor_name=source_tensor.onnx_tensor_name,
             )
-            rebuilt.append(
+            replacement_ops.append(
                 OperatorIR(
                     op_type="RESHAPE",
                     inputs=[
@@ -205,7 +211,7 @@ def coalesce_static_high_rank_binary_operators(
             quantization=deepcopy(output_tensor.quantization),
             onnx_tensor_name=output_tensor.onnx_tensor_name,
         )
-        rebuilt.append(
+        replacement_ops.append(
             OperatorIR(
                 op_type=str(op.op_type),
                 inputs=coalesced_inputs,
@@ -217,7 +223,7 @@ def coalesce_static_high_rank_binary_operators(
                 onnx_op_type=op.onnx_op_type,
             )
         )
-        rebuilt.append(
+        replacement_ops.append(
             OperatorIR(
                 op_type="RESHAPE",
                 inputs=[
@@ -232,9 +238,18 @@ def coalesce_static_high_rank_binary_operators(
                 onnx_node_name=op.onnx_node_name,
                 onnx_op_type=op.onnx_op_type,
             )
-        )
+            )
+        current_index = graph_index.operator_index(op)
+        if current_index is None:
+            continue
+        graph_index.remove_operator(int(current_index))
+        for offset, replacement_op in enumerate(replacement_ops):
+            graph_index.insert_operator(
+                int(current_index) + int(offset),
+                replacement_op,
+            )
         rewritten += 1
 
-    if rewritten > 0:
-        model_ir.operators = rebuilt
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"coalesced_static_high_rank_binary_operators": int(rewritten)}

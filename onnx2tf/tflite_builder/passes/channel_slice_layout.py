@@ -13,8 +13,6 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
     _broadcast_static_shapes,
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _is_fully_known_positive_shape,
     _permute_tensor_metadata_if_rank_matches,
@@ -32,7 +30,12 @@ from onnx2tf.tflite_builder.core.passes import PassPhase, PassSpec
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 
 
-def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_boundary_input_transpose_channel_slice_blocks(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Remove shared boundary input TRANSPOSE while preserving downstream NCHW semantics.
 
@@ -74,6 +77,16 @@ def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -
         "MAXIMUM",
         "MINIMUM",
     }
+    propagation_op_types = (
+        layout_passthrough_unary
+        | layout_passthrough_binary
+        | {
+            "CONCATENATION",
+            "SLICE",
+            "CONV_2D",
+            "DEPTHWISE_CONV_2D",
+        }
+    )
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -128,13 +141,14 @@ def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -
         _write_const_ints_to_tensor(size_tensor, new_size)
         return True
 
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
         model_inputs = set(str(v) for v in model_ir.inputs)
 
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+        for pre_idx in graph_index.operator_indices("TRANSPOSE"):
+            pre_op = model_ir.operators[int(pre_idx)]
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
                 continue
 
             input_name = str(pre_op.inputs[0])
@@ -154,7 +168,7 @@ def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -
             if len(list(internal_tensor.shape)) != 4:
                 continue
 
-            internal_users = [int(v) for v in consumers.get(internal_name, [])]
+            internal_users = graph_index.consumer_indices(internal_name)
             if len(internal_users) == 0:
                 continue
 
@@ -169,10 +183,9 @@ def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -
                     source_shape_nchw=[int(v) for v in list(internal_tensor.shape)],
                 ):
                     continue
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=user_op,
-                    new_inputs=[input_name, str(user_op.inputs[1]), str(user_op.inputs[2])],
+                graph_index.replace_operator_inputs(
+                    int(user_idx),
+                    [input_name, str(user_op.inputs[1]), str(user_op.inputs[2])],
                 )
                 if _rewrite_channel_slice_axis1_to_axis3(op=user_op):
                     rewritten_channel_slices += 1
@@ -190,7 +203,10 @@ def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -
             # 2) Propagate NHWC through local axis-sensitive block.
             while True:
                 propagated = False
-                for op_idx, op in enumerate(model_ir.operators):
+                for op_idx in graph_index.operator_indices_for_types(
+                    propagation_op_types
+                ):
+                    op = model_ir.operators[int(op_idx)]
                     if int(op_idx) in converted_ops:
                         continue
                     if len(op.outputs) != 1:
@@ -271,12 +287,11 @@ def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -
                     break
 
             # 3) Bridge NHWC tensors back to NCHW for consumers outside converted block.
-            consumers_nhwc = _build_tensor_consumer_map(model_ir)
             bridge_plans: List[Tuple[int, str, str, List[int]]] = []
             for tensor_name in sorted(list(nhwc_tensors)):
                 users = [
                     int(v)
-                    for v in consumers_nhwc.get(str(tensor_name), [])
+                    for v in graph_index.consumer_indices(str(tensor_name))
                     if int(v) not in converted_ops
                 ]
                 if len(users) == 0:
@@ -309,16 +324,15 @@ def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -
                         bridge_name if str(inp) == str(tensor_name) else str(inp)
                         for inp in list(user_op.inputs)
                     ]
-                    _set_operator_inputs(
-                        model_ir=model_ir,
-                        op=user_op,
-                        new_inputs=updated_inputs,
+                    graph_index.replace_operator_inputs(
+                        int(user_idx),
+                        updated_inputs,
                     )
                 bridge_plans.append((int(min(users)), str(tensor_name), str(bridge_name), [int(v) for v in users]))
 
             inserted = 0
             for insert_idx, source_name, bridge_name, _users in sorted(bridge_plans, key=lambda v: int(v[0])):
-                model_ir.operators.insert(
+                graph_index.insert_operator(
                     int(insert_idx + inserted),
                     OperatorIR(
                         op_type="TRANSPOSE",
@@ -330,8 +344,7 @@ def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -
                 inserted_local_transposes += 1
 
             # 4) Localize any remaining NCHW uses for this boundary tensor.
-            consumers_after = _build_tensor_consumer_map(model_ir)
-            remaining_users = [int(v) for v in consumers_after.get(internal_name, [])]
+            remaining_users = graph_index.consumer_indices(internal_name)
             inserted = 0
             for user_idx in sorted(remaining_users):
                 user_op = model_ir.operators[int(user_idx + inserted)]
@@ -349,7 +362,7 @@ def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -
                     is_variable=False,
                     quantization=_clone_quantization(internal_tensor.quantization),
                 )
-                model_ir.operators.insert(
+                graph_index.insert_operator(
                     int(user_idx + inserted),
                     OperatorIR(
                         op_type="TRANSPOSE",
@@ -362,15 +375,24 @@ def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -
                     local_name if str(inp) == internal_name else str(inp)
                     for inp in list(user_op.inputs)
                 ]
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=user_op,
-                    new_inputs=updated_inputs,
+                shifted_user_idx = graph_index.operator_index(user_op)
+                if shifted_user_idx is None:
+                    raise RuntimeError(
+                        "channel-slice consumer disappeared during adapter insertion"
+                    )
+                graph_index.replace_operator_inputs(
+                    int(shifted_user_idx),
+                    updated_inputs,
                 )
                 inserted_local_transposes += 1
 
             # 5) Remove shared boundary transpose.
-            del model_ir.operators[int(pre_idx)]
+            current_pre_idx = graph_index.operator_index(pre_op)
+            if current_pre_idx is None:
+                raise RuntimeError(
+                    "boundary transpose disappeared during channel-slice rewrite"
+                )
+            graph_index.remove_operator(int(current_pre_idx))
             removed_boundary += 1
             changed = True
             break
@@ -378,7 +400,9 @@ def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if removed_boundary > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {
         "removed_boundary_input_transpose": int(removed_boundary),
         "rewritten_boundary_channel_slices": int(rewritten_channel_slices),
@@ -389,6 +413,9 @@ def _optimize_boundary_input_transpose_channel_slice_blocks(model_ir: ModelIR) -
 
 def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Remove internal NHWC->NCHW transpose stems that only feed channel-slice branches.
@@ -434,6 +461,18 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
         "MAXIMUM",
         "MINIMUM",
     }
+    propagation_op_types = (
+        layout_passthrough_unary
+        | layout_passthrough_binary
+        | {
+            "CONCATENATION",
+            "SLICE",
+            "CONV_2D",
+            "DEPTHWISE_CONV_2D",
+            "AVERAGE_POOL_2D",
+            "MAX_POOL_2D",
+        }
+    )
 
     def _unique_tensor_name(base: str) -> str:
         name = str(base)
@@ -488,13 +527,14 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
         _write_const_ints_to_tensor(size_tensor, new_size)
         return True
 
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
         model_outputs = set(str(v) for v in model_ir.outputs)
 
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+        for pre_idx in graph_index.operator_indices("TRANSPOSE"):
+            pre_op = model_ir.operators[int(pre_idx)]
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
                 continue
             if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
                 continue
@@ -511,7 +551,7 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
             if len(list(input_tensor.shape)) != 4 or len(list(internal_tensor.shape)) != 4:
                 continue
 
-            internal_users = [int(v) for v in consumers.get(internal_name, [])]
+            internal_users = graph_index.consumer_indices(internal_name)
             if len(internal_users) == 0:
                 continue
             if not all(
@@ -525,14 +565,13 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
 
             converted_ops: set = set()
             nhwc_tensors: set = set()
-            removable_transposes: set = set()
+            initial_constant_users: Dict[str, List[int]] = {}
 
             for user_idx in sorted(internal_users):
                 user_op = model_ir.operators[int(user_idx)]
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=user_op,
-                    new_inputs=[input_name, str(user_op.inputs[1]), str(user_op.inputs[2])],
+                graph_index.replace_operator_inputs(
+                    int(user_idx),
+                    [input_name, str(user_op.inputs[1]), str(user_op.inputs[2])],
                 )
                 if _rewrite_channel_slice_axis1_to_axis3(op=user_op):
                     rewritten_channel_slices += 1
@@ -545,7 +584,10 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
 
             while True:
                 propagated = False
-                for op_idx, op in enumerate(model_ir.operators):
+                for op_idx in graph_index.operator_indices_for_types(
+                    propagation_op_types
+                ):
+                    op = model_ir.operators[int(op_idx)]
                     if int(op_idx) in converted_ops:
                         continue
                     if len(op.outputs) != 1:
@@ -656,7 +698,11 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
                                 safe_binary = False
                                 break
 
-                            const_users = [int(v) for v in consumers.get(str(const_name), [])]
+                            if str(const_name) not in initial_constant_users:
+                                initial_constant_users[str(const_name)] = (
+                                    graph_index.consumer_indices(str(const_name))
+                                )
+                            const_users = initial_constant_users[str(const_name)]
                             if any(int(v) != int(op_idx) for v in const_users):
                                 rotated_name = _unique_tensor_name(f"{const_name}_nhwc")
                                 model_ir.tensors[rotated_name] = TensorIR(
@@ -678,10 +724,9 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
                             continue
 
                         if new_inputs != input_names:
-                            _set_operator_inputs(
-                                model_ir=model_ir,
-                                op=op,
-                                new_inputs=new_inputs,
+                            graph_index.replace_operator_inputs(
+                                int(op_idx),
+                                new_inputs,
                             )
 
                         _permute_tensor_metadata_if_rank_matches(
@@ -707,12 +752,11 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
                 if not propagated:
                     break
 
-            consumers_nhwc = _build_tensor_consumer_map(model_ir)
             bridge_plans: List[Tuple[int, str, str, List[int]]] = []
             for tensor_name in sorted(list(nhwc_tensors)):
                 users = [
                     int(v)
-                    for v in consumers_nhwc.get(str(tensor_name), [])
+                    for v in graph_index.consumer_indices(str(tensor_name))
                     if int(v) not in converted_ops
                 ]
                 if len(users) == 0:
@@ -745,16 +789,15 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
                         bridge_name if str(inp) == str(tensor_name) else str(inp)
                         for inp in list(user_op.inputs)
                     ]
-                    _set_operator_inputs(
-                        model_ir=model_ir,
-                        op=user_op,
-                        new_inputs=updated_inputs,
+                    graph_index.replace_operator_inputs(
+                        int(user_idx),
+                        updated_inputs,
                     )
                 bridge_plans.append((int(min(users)), str(tensor_name), str(bridge_name), [int(v) for v in users]))
 
             inserted = 0
             for insert_idx, source_name, bridge_name, _users in sorted(bridge_plans, key=lambda v: int(v[0])):
-                model_ir.operators.insert(
+                graph_index.insert_operator(
                     int(insert_idx + inserted),
                     OperatorIR(
                         op_type="TRANSPOSE",
@@ -765,12 +808,12 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
                 inserted += 1
                 inserted_local_transposes += 1
 
-            remove_indices = sorted(
-                list({int(pre_idx)} | {int(v) for v in removable_transposes}),
-                reverse=True,
-            )
-            for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+            current_pre_idx = graph_index.operator_index(pre_op)
+            if current_pre_idx is None:
+                raise RuntimeError(
+                    "internal transpose disappeared during channel-slice rewrite"
+                )
+            graph_index.remove_operator(int(current_pre_idx))
             removed_internal += 1
             changed = True
             break
@@ -778,7 +821,9 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if removed_internal > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {
         "removed_internal_transpose_channel_slice_stems": int(removed_internal),
         "rewritten_internal_channel_slices": int(rewritten_channel_slices),
@@ -789,6 +834,9 @@ def _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
 
 def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Remove NHWC->NCHW transpose stems whose channel slices immediately bridge back to NHWC.
@@ -915,6 +963,7 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
                 model_ir=model_ir,
                 op=mul_op,
                 new_inputs=mul_inputs,
+                graph_index=graph_index,
             )
         else:
             const_tensor.data = np.asarray(rotated)
@@ -971,13 +1020,18 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
                         return False
         return True
 
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
+        consumers = {
+            str(name): [int(value) for value in values]
+            for name, values in graph_index.consumers.items()
+        }
         model_outputs = set(str(v) for v in model_ir.outputs)
 
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+        for pre_idx in graph_index.operator_indices("TRANSPOSE"):
+            pre_op = model_ir.operators[int(pre_idx)]
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
                 continue
             if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
                 continue
@@ -1020,6 +1074,7 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
                     op=slice_op,
                     input_index=0,
                     new_input_name=pre_in_name,
+                    graph_index=graph_index,
                 )
                 _permute_tensor_metadata_if_rank_matches(
                     model_ir.tensors.get(slice_out_name, None),
@@ -1048,7 +1103,12 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
                         ):
                             rewritable = False
                             break
-                        _replace_tensor_inputs(model_ir, str(user_op.outputs[0]), slice_out_name)
+                        _replace_tensor_inputs(
+                            model_ir,
+                            str(user_op.outputs[0]),
+                            slice_out_name,
+                            graph_index=graph_index,
+                        )
                         remove_indices.add(int(user_idx))
                         continue
 
@@ -1088,7 +1148,12 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
                             model_ir.tensors.get(mul_out_name, None),
                             perm_nchw_to_nhwc,
                         )
-                        _replace_tensor_inputs(model_ir, str(post_op.outputs[0]), mul_out_name)
+                        _replace_tensor_inputs(
+                            model_ir,
+                            str(post_op.outputs[0]),
+                            mul_out_name,
+                            graph_index=graph_index,
+                        )
                         remove_indices.add(int(post_idx))
                         continue
 
@@ -1099,7 +1164,7 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
                 continue
 
             for remove_idx in sorted(list(remove_indices), reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             optimized += 1
             changed = True
@@ -1109,7 +1174,9 @@ def _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
             break
 
     if optimized > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_channel_slice_muladd_nhwc_bridge_chains": int(optimized)}
 
 
@@ -1272,7 +1339,6 @@ def _optimize_transpose_slice_muladd_conv_mergeadd_strict(
     while True:
         changed = False
         consumers = graph_index.consumers
-        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -1825,7 +1891,6 @@ def _optimize_transpose_slice_muladd_mergeadd_posttranspose_strict(
     while True:
         changed = False
         consumers = graph_index.consumers
-        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
         for pre_idx, pre_op in enumerate(model_ir.operators):
@@ -2990,6 +3055,9 @@ def run_channel_slice_merge_layout_cleanup(
 
 def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Remove NHWC<->NCHW boundary transpose round-trips around STRIDED_SLICE QDQ-CONCAT stems.
@@ -3014,14 +3082,15 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
 
     perm_nchw_to_nhwc = [0, 2, 3, 1]
 
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
         model_inputs = set(str(v) for v in model_ir.inputs)
         model_outputs = set(str(v) for v in model_ir.outputs)
 
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+        for pre_idx in graph_index.operator_indices("TRANSPOSE"):
+            pre_op = model_ir.operators[int(pre_idx)]
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
                 continue
 
             input_name = str(pre_op.inputs[0])
@@ -3035,7 +3104,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
             if _read_transpose_perm(model_ir, pre_op) != [0, 3, 1, 2]:
                 continue
 
-            internal_users = [int(v) for v in consumers.get(internal_name, [])]
+            internal_users = graph_index.consumer_indices(internal_name)
             if len(internal_users) == 0:
                 continue
 
@@ -3084,7 +3153,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
                 if slice_out in model_outputs:
                     valid = False
                     break
-                slice_users = [int(v) for v in consumers.get(slice_out, [])]
+                slice_users = graph_index.consumer_indices(slice_out)
                 if len(slice_users) != 1:
                     valid = False
                     break
@@ -3098,7 +3167,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
                     break
 
                 q_out = str(q_op.outputs[0])
-                q_users = [int(v) for v in consumers.get(q_out, [])]
+                q_users = graph_index.consumer_indices(q_out)
                 if len(q_users) != 1:
                     valid = False
                     break
@@ -3112,7 +3181,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
                     break
 
                 dq_out = str(dq_op.outputs[0])
-                dq_users = [int(v) for v in consumers.get(dq_out, [])]
+                dq_users = graph_index.consumer_indices(dq_out)
                 if len(dq_users) != 1:
                     valid = False
                     break
@@ -3160,7 +3229,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
             concat_out = str(concat_op.outputs[0])
             if concat_out in model_outputs:
                 continue
-            concat_users = [int(v) for v in consumers.get(concat_out, [])]
+            concat_users = graph_index.consumer_indices(concat_out)
             if len(concat_users) != 1:
                 continue
             q_concat_idx = int(concat_users[0])
@@ -3173,7 +3242,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
             q_concat_out = str(q_concat_op.outputs[0])
             if q_concat_out in model_outputs:
                 continue
-            post_indices = [int(v) for v in consumers.get(q_concat_out, [])]
+            post_indices = graph_index.consumer_indices(q_concat_out)
             if len(post_indices) == 0:
                 continue
             post_output_names: List[str] = []
@@ -3245,6 +3314,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
                     model_ir=model_ir,
                     op=slice_op,
                     new_inputs=[input_name, begin_name, end_name, stride_name],
+                    graph_index=graph_index,
                 )
                 _permute_tensor_metadata_if_rank_matches(
                     model_ir.tensors.get(str(slice_op.outputs[0]), None),
@@ -3283,9 +3353,15 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
                 model_ir=model_ir,
                 op=q_concat_op,
                 new_outputs=[canonical_post_output],
+                graph_index=graph_index,
             )
             for alias_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, alias_name, canonical_post_output)
+                _replace_tensor_inputs(
+                    model_ir,
+                    alias_name,
+                    canonical_post_output,
+                    graph_index=graph_index,
+                )
 
             canonical_tensor = model_ir.tensors.get(canonical_post_output, None)
             q_concat_tensor = model_ir.tensors.get(q_concat_out, None)
@@ -3304,7 +3380,7 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
                 reverse=True,
             )
             for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
                 if int(remove_idx) in post_indices:
                     removed_post_transposes += 1
             removed_boundary += 1
@@ -3314,7 +3390,9 @@ def _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if removed_boundary > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {
         "removed_boundary_input_transpose_stridedslice_blocks": int(removed_boundary),
         "rewritten_boundary_stridedslices": int(rewritten_slices),

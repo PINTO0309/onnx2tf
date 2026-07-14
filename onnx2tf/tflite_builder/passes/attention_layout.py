@@ -14,8 +14,6 @@ from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
-    _build_tensor_consumer_map,
-    _build_tensor_producer_map,
     _clone_quantization,
     _is_fully_known_positive_shape,
     _is_singleton_constant_tensor,
@@ -846,7 +844,6 @@ def _optimize_attention_split_post_reshape_collapse_chains(
     while True:
         changed = False
         consumers = graph_index.consumers
-        producers = graph_index.producers
 
         for split_idx, split_op in enumerate(model_ir.operators):
             if str(split_op.op_type) != "SPLIT" or len(split_op.inputs) < 2 or len(split_op.outputs) < 2:
@@ -2706,7 +2703,8 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                 "mul_out_name": str(mul_op.outputs[0]),
             }
 
-        for candidate_post_idx, candidate_post_op in enumerate(model_ir.operators):
+        for candidate_post_idx in graph_index.operator_indices("TRANSPOSE"):
+            candidate_post_op = model_ir.operators[int(candidate_post_idx)]
             if (
                 str(candidate_post_op.op_type) != "TRANSPOSE"
                 or len(candidate_post_op.inputs) < 2
@@ -2731,7 +2729,7 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
             if len(mul_output_users) == 0:
                 continue
             post_pairs: List[Tuple[int, OperatorIR]] = []
-            legacy_slots: List[Tuple[int, int]] = []
+            legacy_slots: List[Tuple[OperatorIR, int]] = []
             valid_posts = True
             for user_idx in mul_output_users:
                 user_op = model_ir.operators[int(user_idx)]
@@ -2755,7 +2753,7 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                         valid_posts = False
                         break
                     for input_idx in input_indices:
-                        legacy_slots.append((int(id(user_op)), int(input_idx)))
+                        legacy_slots.append((user_op, int(input_idx)))
                     continue
                 post_pairs.append((int(user_idx), user_op))
             if not valid_posts or len(post_pairs) == 0:
@@ -3016,6 +3014,7 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                     op=model_ir.operators[int(rewire_op_idx)],
                     input_index=int(rewire_input_idx),
                     new_input_name=source_nhwc_name,
+                    graph_index=graph_index,
                 )
             conv1_inputs = [str(v) for v in list(conv1_op.inputs)]
             conv1_inputs[0] = str(mean_output_name)
@@ -3023,12 +3022,14 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                 model_ir=model_ir,
                 op=conv1_op,
                 new_inputs=conv1_inputs,
+                graph_index=graph_index,
             )
             _replace_operator_input_at(
                 model_ir=model_ir,
                 op=gate_head_op,
                 input_index=int(gate_head_input_index),
                 new_input_name=conv2_output_name,
+                graph_index=graph_index,
             )
 
             # Update metadata of tensors that switch from NCHW to NHWC.
@@ -3064,10 +3065,21 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                 model_ir=model_ir,
                 op=mul_op,
                 new_outputs=[canonical_post_output_name],
+                graph_index=graph_index,
             )
-            _replace_tensor_inputs(model_ir, mul_output_name, canonical_post_output_name)
+            _replace_tensor_inputs(
+                model_ir,
+                mul_output_name,
+                canonical_post_output_name,
+                graph_index=graph_index,
+            )
             for alias_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name)
+                _replace_tensor_inputs(
+                    model_ir,
+                    str(alias_name),
+                    canonical_post_output_name,
+                    graph_index=graph_index,
+                )
 
             canonical_tensor = model_ir.tensors.get(canonical_post_output_name, None)
             if old_mul_tensor is not None and canonical_tensor is not None:
@@ -3093,23 +3105,21 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                 *[int(v) for v in post_indices],
             }
             for remove_idx in sorted(remove_indices, reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             if len(pending_legacy_slots) > 0:
-                op_index_by_id = {int(id(op)): int(op_idx) for op_idx, op in enumerate(model_ir.operators)}
-                valid_legacy_slots: List[Tuple[int, int]] = []
-                for op_id, input_idx in pending_legacy_slots:
-                    op_idx = op_index_by_id.get(int(op_id), None)
+                valid_legacy_slots: List[Tuple[OperatorIR, int]] = []
+                for legacy_op, input_idx in pending_legacy_slots:
+                    op_idx = graph_index.operator_index(legacy_op)
                     if op_idx is None:
                         continue
                     if int(op_idx) < 0 or int(op_idx) >= len(model_ir.operators):
                         continue
-                    legacy_op = model_ir.operators[int(op_idx)]
                     if int(input_idx) < 0 or int(input_idx) >= len(legacy_op.inputs):
                         continue
                     if str(legacy_op.inputs[int(input_idx)]) != str(canonical_post_output_name):
                         continue
-                    valid_legacy_slots.append((int(op_idx), int(input_idx)))
+                    valid_legacy_slots.append((legacy_op, int(input_idx)))
 
                 if len(valid_legacy_slots) > 0:
                     adapter_name = _unique_tensor_name(f"{mul_output_name}_nchw_adapter")
@@ -3143,24 +3153,33 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                         inputs=[str(canonical_post_output_name), perm_nhwc_to_nchw_const_name],
                         outputs=[str(adapter_name)],
                     )
-                    for op_idx, input_idx in valid_legacy_slots:
-                        legacy_op = model_ir.operators[int(op_idx)]
+                    valid_legacy_indices: List[int] = []
+                    for legacy_op, input_idx in valid_legacy_slots:
+                        op_idx = graph_index.operator_index(legacy_op)
+                        if op_idx is None:
+                            continue
                         new_inputs = [str(v) for v in list(legacy_op.inputs)]
                         new_inputs[int(input_idx)] = str(adapter_name)
                         _set_operator_inputs(
                             model_ir=model_ir,
                             op=legacy_op,
                             new_inputs=new_inputs,
+                            graph_index=graph_index,
                         )
-                    insert_index = int(min(v[0] for v in valid_legacy_slots))
-                    model_ir.operators.insert(int(insert_index), adapter_op)
+                        valid_legacy_indices.append(int(op_idx))
+                    if len(valid_legacy_indices) > 0:
+                        graph_index.insert_operator(
+                            int(min(valid_legacy_indices)),
+                            adapter_op,
+                        )
 
             rewritten += 1
             changed = True
             break
 
         if not changed:
-            for pre_idx, pre_op in enumerate(model_ir.operators):
+            for pre_idx in graph_index.operator_indices("TRANSPOSE"):
+                pre_op = model_ir.operators[int(pre_idx)]
                 if (
                     str(pre_op.op_type) != "TRANSPOSE"
                     or len(pre_op.inputs) < 2
@@ -3327,6 +3346,7 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                     model_ir=model_ir,
                     op=hs0_add_op,
                     new_inputs=hs0_add_inputs,
+                    graph_index=graph_index,
                 )
                 hs0_mul_op = model_ir.operators[int(hs0_match["mul_idx"])]
                 hs0_mul_inputs = [
@@ -3337,6 +3357,7 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                     model_ir=model_ir,
                     op=hs0_mul_op,
                     new_inputs=hs0_mul_inputs,
+                    graph_index=graph_index,
                 )
 
                 conv_inputs = [str(v) for v in list(conv_op.inputs)]
@@ -3345,6 +3366,7 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                     model_ir=model_ir,
                     op=conv_op,
                     new_inputs=conv_inputs,
+                    graph_index=graph_index,
                 )
 
                 hs1_add_op = model_ir.operators[int(hs1_match["add_idx"])]
@@ -3356,6 +3378,7 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                     model_ir=model_ir,
                     op=hs1_add_op,
                     new_inputs=hs1_add_inputs,
+                    graph_index=graph_index,
                 )
                 hs1_mul_op = model_ir.operators[int(hs1_match["mul_idx"])]
                 hs1_mul_inputs = [
@@ -3366,6 +3389,7 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                     model_ir=model_ir,
                     op=hs1_mul_op,
                     new_inputs=hs1_mul_inputs,
+                    graph_index=graph_index,
                 )
 
                 for tensor_name in [
@@ -3392,19 +3416,13 @@ def _optimize_transpose_conv_attention_nhwc_propagation_chains(
                 if len(pre_remaining_users) == 0:
                     remove_indices.add(int(pre_idx))
                 for remove_idx in sorted(remove_indices, reverse=True):
-                    del model_ir.operators[int(remove_idx)]
+                    graph_index.remove_operator(int(remove_idx))
 
                 rewritten += 1
                 changed = True
                 break
 
-        if changed:
-            # This legacy rewrite still performs several batched input/output
-            # mutations and optional adapter insertion. Refresh once after the
-            # completed transaction iteration instead of rebuilding producer
-            # and consumer maps independently at the next scan.
-            graph_index.refresh()
-        else:
+        if not changed:
             break
 
     _prune_unused_tensors(model_ir, layout_state=layout_state)
@@ -3474,7 +3492,12 @@ def run_conv_attention_layout_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_csp_attention_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Eliminate RTMDet-like CSP attention NCHW/NHWC bridge chains.
 
@@ -3749,13 +3772,15 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
             "metadata_names": [str(v) for v in metadata_names],
         }
 
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     while True:
         changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
+        consumers = graph_index.consumers
+        producers = graph_index.producers
         model_outputs = set(str(v) for v in model_ir.outputs)
 
-        for candidate_post_idx, candidate_post_op in enumerate(model_ir.operators):
+        for candidate_post_idx in graph_index.operator_indices("TRANSPOSE"):
+            candidate_post_op = model_ir.operators[int(candidate_post_idx)]
             if (
                 str(candidate_post_op.op_type) != "TRANSPOSE"
                 or len(candidate_post_op.inputs) < 2
@@ -4096,6 +4121,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=short_sig_op,
                 new_inputs=[str(short_match["source_nhwc_name"])],
+                graph_index=graph_index,
             )
             short_mul_inputs = [
                 str(short_match["source_nhwc_name"])
@@ -4107,6 +4133,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=short_mul_op,
                 new_inputs=short_mul_inputs,
+                graph_index=graph_index,
             )
 
             point_sig_op = model_ir.operators[int(point_match["sigmoid_idx"])]
@@ -4115,6 +4142,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=point_sig_op,
                 new_inputs=[str(point_match["source_nhwc_name"])],
+                graph_index=graph_index,
             )
             point_mul_inputs = [
                 str(point_match["source_nhwc_name"])
@@ -4126,6 +4154,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=point_mul_op,
                 new_inputs=point_mul_inputs,
+                graph_index=graph_index,
             )
 
             if use_add_main_path and add_op is not None:
@@ -4139,6 +4168,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                     model_ir=model_ir,
                     op=add_op,
                     new_inputs=add_inputs,
+                    graph_index=graph_index,
                 )
 
             concat_op.options = dict(concat_op.options) if isinstance(concat_op.options, dict) else {}
@@ -4150,12 +4180,14 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=conv_op,
                 new_inputs=conv_inputs,
+                graph_index=graph_index,
             )
             _replace_operator_input_at(
                 model_ir=model_ir,
                 op=gate_head_op,
                 input_index=int(gate_head_input_index),
                 new_input_name=str(gate_conv_output_name),
+                graph_index=graph_index,
             )
 
             old_mul_tensor = model_ir.tensors.get(mul_output_name, None)
@@ -4197,10 +4229,21 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
                 model_ir=model_ir,
                 op=mul_op,
                 new_outputs=[canonical_post_output_name],
+                graph_index=graph_index,
             )
-            _replace_tensor_inputs(model_ir, mul_output_name, canonical_post_output_name)
+            _replace_tensor_inputs(
+                model_ir,
+                mul_output_name,
+                canonical_post_output_name,
+                graph_index=graph_index,
+            )
             for alias_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name)
+                _replace_tensor_inputs(
+                    model_ir,
+                    str(alias_name),
+                    canonical_post_output_name,
+                    graph_index=graph_index,
+                )
 
             canonical_tensor = model_ir.tensors.get(canonical_post_output_name, None)
             if canonical_tensor is not None and old_mul_tensor is not None:
@@ -4225,7 +4268,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
             if use_add_main_path and main_pre_idx is not None:
                 remove_indices.add(int(main_pre_idx))
             for remove_idx in sorted(remove_indices, reverse=True):
-                del model_ir.operators[int(remove_idx)]
+                graph_index.remove_operator(int(remove_idx))
 
             rewritten += 1
             changed = True
@@ -4234,5 +4277,7 @@ def _optimize_transpose_csp_attention_nhwc_chains(model_ir: ModelIR) -> Dict[str
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten > 0 and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_csp_attention_nhwc_chains": int(rewritten)}

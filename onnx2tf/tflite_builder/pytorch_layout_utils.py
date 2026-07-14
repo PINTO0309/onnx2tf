@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 import numpy as np
 import onnx
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import (
     LOGICAL_LAYOUT_UNKNOWN,
     ModelIR,
@@ -18,6 +19,15 @@ from onnx2tf.tflite_builder.ir import (
     normalize_logical_layout,
     rewrite_axis_for_layout,
 )
+
+
+_PYTORCH_KERNEL_WEIGHT_OP_TYPES = {
+    "CONV_2D",
+    "CONV_3D",
+    "CONV_3D_TRANSPOSE",
+    "DEPTHWISE_CONV_2D",
+    "TRANSPOSE_CONV",
+}
 
 
 def _perm_cl_to_cf(rank: int) -> Optional[List[int]]:
@@ -47,6 +57,64 @@ def _permute_shape(values: Optional[Sequence[int]], perm: Sequence[int]) -> Opti
     if len(items) != len(list(perm)):
         return None
     return [int(items[idx]) for idx in perm]
+
+
+def _tensor_name_suggests_channel_last_layout_for_codegen(
+    tensor_name: str,
+) -> bool:
+    return str(tensor_name).lower().endswith(("_nhwc", "_nwc", "_ndhwc"))
+
+
+def _preferred_reshape_target_values(
+    tensor: Optional[TensorIR],
+) -> Optional[List[int]]:
+    if tensor is None:
+        return None
+    preferred = [int(value) for value in list(tensor.shape)]
+    if tensor.shape_signature is not None:
+        signature = [
+            int(value) for value in list(tensor.shape_signature)
+        ]
+        if (
+            len(signature) == len(list(tensor.shape))
+            and any(int(value) <= 0 for value in signature)
+        ):
+            preferred = signature
+    rank = len(list(preferred))
+    perm_to_cf = _perm_cl_to_cf(rank)
+    if (
+        perm_to_cf is not None
+        and is_channel_first_logical_layout(
+            normalize_logical_layout(tensor.logical_layout)
+        )
+        and _tensor_name_suggests_channel_last_layout_for_codegen(
+            str(tensor.name)
+        )
+    ):
+        permuted = _permute_shape(preferred, perm_to_cf)
+        if permuted is not None:
+            return [int(value) for value in list(permuted)]
+    return preferred
+
+
+def _preferred_reshape_target_values_for_op(
+    *,
+    model_ir: ModelIR,
+    op: OperatorIR,
+) -> Optional[List[int]]:
+    if (
+        str(op.op_type) != "RESHAPE"
+        or len(op.inputs) == 0
+        or len(op.outputs) == 0
+    ):
+        return None
+    output_tensor = model_ir.tensors.get(str(op.outputs[0]), None)
+    if output_tensor is None:
+        return None
+    preferred = _preferred_reshape_target_values(output_tensor)
+    if preferred is None:
+        preferred = [int(value) for value in list(output_tensor.shape)]
+    return preferred
 
 
 def _is_layout_only_transpose_by_shape(
@@ -397,16 +465,27 @@ def _permute_tensor_to_channel_first_inplace(tensor: TensorIR) -> bool:
     return True
 
 
-def _collect_kernel_weight_tensor_names(model_ir: ModelIR) -> Set[str]:
+def _collect_kernel_weight_tensor_names(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Set[str]:
     names: Set[str] = set()
-    for op in model_ir.operators:
-        if str(op.op_type) in {
-            "CONV_2D",
-            "DEPTHWISE_CONV_2D",
-            "TRANSPOSE_CONV",
-            "CONV_3D",
-            "CONV_3D_TRANSPOSE",
-        } and len(op.inputs) >= 2:
+    candidate_ops = (
+        [
+            model_ir.operators[int(index)]
+            for index in graph_index.operator_indices_for_types(
+                _PYTORCH_KERNEL_WEIGHT_OP_TYPES
+            )
+        ]
+        if graph_index is not None
+        else model_ir.operators
+    )
+    for op in candidate_ops:
+        if (
+            str(op.op_type) in _PYTORCH_KERNEL_WEIGHT_OP_TYPES
+            and len(op.inputs) >= 2
+        ):
             names.add(str(op.inputs[1]))
     return names
 

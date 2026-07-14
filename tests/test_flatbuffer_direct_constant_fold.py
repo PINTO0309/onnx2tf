@@ -6,6 +6,8 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.constant_fold import (
+    _optimize_constant_binary_elementwise_chains,
+    _optimize_constant_input_scatter_nd_chains,
     run_constant_input_fold_cleanup,
 )
 
@@ -150,3 +152,80 @@ def test_constant_input_fold_group_preserves_runtime_accumulator_cast() -> None:
     }
     assert [op.op_type for op in model_ir.operators] == ["CAST"]
     assert model_ir.tensors["out"].data is None
+
+
+def test_scatter_and_binary_folds_share_one_differential_index(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("constant_scatter_binary")
+    model_ir.outputs = ["out"]
+    model_ir.tensors = {
+        "indices": _tensor(
+            "indices",
+            "INT32",
+            [1, 1],
+            data=np.asarray([[1]], dtype=np.int32),
+        ),
+        "updates": _tensor(
+            "updates",
+            "FLOAT32",
+            [1],
+            data=np.asarray([5.0], dtype=np.float32),
+        ),
+        "shape": _tensor(
+            "shape",
+            "INT32",
+            [1],
+            data=np.asarray([3], dtype=np.int32),
+        ),
+        "scattered": _tensor("scattered", "FLOAT32", [3]),
+        "bias": _tensor(
+            "bias",
+            "FLOAT32",
+            [3],
+            data=np.asarray([1.0, 1.0, 1.0], dtype=np.float32),
+        ),
+        "out": _tensor("out", "FLOAT32", [3]),
+    }
+    model_ir.operators = [
+        OperatorIR(
+            "SCATTER_ND",
+            ["indices", "updates", "shape"],
+            ["scattered"],
+        ),
+        OperatorIR("ADD", ["scattered", "bias"], ["out"]),
+    ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    scatter_stats = _optimize_constant_input_scatter_nd_chains(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+    binary_stats = _optimize_constant_binary_elementwise_chains(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+    assert scatter_stats == {"optimized_constant_input_scatter_nd_chains": 1}
+    assert binary_stats == {"optimized_constant_binary_elementwise_chains": 1}
+    assert refresh_count == 1
+    assert model_ir.operators == []
+    assert graph_index.operator_indices("SCATTER_ND") == []
+    assert graph_index.operator_indices("ADD") == []
+    np.testing.assert_array_equal(
+        model_ir.tensors["out"].data,
+        np.asarray([1.0, 6.0, 1.0], dtype=np.float32),
+    )
+    assert layout_state.validate_against_model_ir(model_ir) == []

@@ -299,8 +299,9 @@ def _optimize_constant_input_cast_chains(
 
     while True:
         changed = False
-        for cast_idx, cast_op in enumerate(model_ir.operators):
-            if str(cast_op.op_type) != "CAST" or len(cast_op.inputs) != 1 or len(cast_op.outputs) != 1:
+        for cast_idx in graph_index.operator_indices("CAST"):
+            cast_op = model_ir.operators[int(cast_idx)]
+            if len(cast_op.inputs) != 1 or len(cast_op.outputs) != 1:
                 continue
             if bool(
                 cast_op.options.get(
@@ -378,10 +379,11 @@ def _optimize_constant_input_pool_chains(
 
     while True:
         changed = False
-        for pool_idx, pool_op in enumerate(model_ir.operators):
+        for pool_idx in graph_index.operator_indices_for_types(
+            {"AVERAGE_POOL_2D", "MAX_POOL_2D"}
+        ):
+            pool_op = model_ir.operators[int(pool_idx)]
             op_type = str(pool_op.op_type)
-            if op_type not in {"AVERAGE_POOL_2D", "MAX_POOL_2D"}:
-                continue
             if len(pool_op.inputs) != 1 or len(pool_op.outputs) != 1:
                 continue
 
@@ -462,10 +464,11 @@ def _optimize_constant_input_pad_chains(
 
     while True:
         changed = False
-        for pad_idx, pad_op in enumerate(model_ir.operators):
+        for pad_idx in graph_index.operator_indices_for_types(
+            {"PAD", "PADV2"}
+        ):
+            pad_op = model_ir.operators[int(pad_idx)]
             op_type = str(pad_op.op_type)
-            if op_type not in {"PAD", "PADV2"}:
-                continue
             if len(pad_op.outputs) != 1:
                 continue
             if len(pad_op.inputs) not in {2, 3}:
@@ -637,7 +640,12 @@ def run_constant_input_fold_cleanup(
     return {str(key): int(value) for key, value in details.items()}
 
 
-def _optimize_constant_input_scatter_nd_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_constant_input_scatter_nd_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Fold constant-input SCATTER_ND operators by materializing their dense outputs.
 
@@ -647,12 +655,12 @@ def _optimize_constant_input_scatter_nd_chains(model_ir: ModelIR) -> Dict[str, i
       CONST(out_dense_data) and remove the SCATTER_ND op.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        for scatter_idx, scatter_op in enumerate(model_ir.operators):
-            if str(scatter_op.op_type) != "SCATTER_ND":
-                continue
+        for scatter_idx in graph_index.operator_indices("SCATTER_ND"):
+            scatter_op = model_ir.operators[int(scatter_idx)]
             if len(scatter_op.inputs) != 3 or len(scatter_op.outputs) != 1:
                 continue
 
@@ -709,7 +717,7 @@ def _optimize_constant_input_scatter_nd_chains(model_ir: ModelIR) -> Dict[str, i
                 },
             )
 
-            del model_ir.operators[int(scatter_idx)]
+            graph_index.remove_operator(int(scatter_idx))
             rewritten += 1
             changed = True
             break
@@ -718,22 +726,29 @@ def _optimize_constant_input_scatter_nd_chains(model_ir: ModelIR) -> Dict[str, i
             break
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"optimized_constant_input_scatter_nd_chains": int(rewritten)}
 
 
-def _optimize_constant_binary_elementwise_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_constant_binary_elementwise_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Fold strict binary floating-point elementwise ops when both operands are constant.
     """
     rewritten = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
 
     while True:
         changed = False
-        for op_idx, op in enumerate(model_ir.operators):
+        for op_idx in graph_index.operator_indices_for_types(
+            {"ADD", "SUB", "MUL", "DIV"}
+        ):
+            op = model_ir.operators[int(op_idx)]
             op_type = str(op.op_type)
-            if op_type not in {"ADD", "SUB", "MUL", "DIV"}:
-                continue
             if len(op.inputs) != 2 or len(op.outputs) != 1:
                 continue
             if str(op.options.get("fusedActivationFunction", "NONE")).upper() != "NONE":
@@ -780,7 +795,7 @@ def _optimize_constant_binary_elementwise_chains(model_ir: ModelIR) -> Dict[str,
                 },
             )
 
-            del model_ir.operators[int(op_idx)]
+            graph_index.remove_operator(int(op_idx))
             rewritten += 1
             changed = True
             break
@@ -789,5 +804,5 @@ def _optimize_constant_binary_elementwise_chains(model_ir: ModelIR) -> Dict[str,
             break
 
     if rewritten > 0:
-        _prune_unused_tensors(model_ir)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
     return {"optimized_constant_binary_elementwise_chains": int(rewritten)}

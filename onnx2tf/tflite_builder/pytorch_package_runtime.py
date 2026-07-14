@@ -2528,7 +2528,7 @@ def load_generated_model_package(
         return model
     raw_state_dict = torch.load(state_dict_path, map_location=device or "cpu")
     metadata = prepare_generated_model_metadata(metadata=metadata, raw_state_dict=raw_state_dict)
-    model = _GeneratedModel(metadata=metadata)
+    model = _get_generated_model_cls()(metadata=metadata)
     model = load_generated_model_weights(
         model=model,
         metadata=metadata,

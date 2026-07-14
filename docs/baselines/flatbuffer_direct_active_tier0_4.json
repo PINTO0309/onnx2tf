@@ -317,8 +317,8 @@
     {
       "tier": 0,
       "model": "conv_tasnet_dnn_ins.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 4.76837158203125e-06
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 0,
@@ -1077,8 +1077,8 @@
     {
       "tier": 1,
       "model": "model1.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 5.7220458984375e-06
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 1,
@@ -1143,8 +1143,8 @@
     {
       "tier": 1,
       "model": "paddlepaddle_26_ocr.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 7.748603820800781e-07
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 1,
@@ -1401,14 +1401,14 @@
     {
       "tier": 2,
       "model": "bread_180x320.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 0.00103759765625
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 2,
       "model": "bread_nonfm_180x320.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 0.0011749267578125
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 2,
@@ -1437,8 +1437,8 @@
     {
       "tier": 2,
       "model": "double_gru.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 5.364418029785156e-07
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 2,
@@ -1502,8 +1502,8 @@
     {
       "tier": 2,
       "model": "gtcrn_simple.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 4.76837158203125e-06
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 2,
@@ -1809,8 +1809,8 @@
     {
       "tier": 2,
       "model": "spkrec-resnet-voxceleb.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 3.904104232788086e-06
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 2,
@@ -2165,14 +2165,15 @@
     {
       "tier": 3,
       "model": "encoder.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 1.9293278455734253e-05
+      "baseline_classification": "timeout",
+      "baseline_reason": "user_approved_timeout_after_600s",
+      "error_signature_sha256": "2347ce95c7a93231a34b5d76d4387d3de16b1a7b51e339ebbc3e8c1f1c3357f1"
     },
     {
       "tier": 3,
       "model": "fast_acvnet_generalization_opset16_192x320.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 0.0010833740234375
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 3,
@@ -2242,8 +2243,8 @@
     {
       "tier": 3,
       "model": "htdemucs_ft_onnx_1sec.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 0.010263780131936073
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 3,
@@ -2279,8 +2280,8 @@
     {
       "tier": 3,
       "model": "maskrcnn_resnet50_fpn.onnx",
-      "baseline_classification": "pass",
-      "tflite_max_abs": 0.0
+      "baseline_classification": "excluded",
+      "baseline_reason": "user_excluded_from_future_validation"
     },
     {
       "tier": 3,

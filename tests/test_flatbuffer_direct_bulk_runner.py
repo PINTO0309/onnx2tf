@@ -597,6 +597,105 @@ def test_flatbuffer_direct_bulk_runner_marks_timeout(
     assert entry["strict_pass"] is False
 
 
+def test_process_tree_swap_monitor_records_and_terminates_swapping_descendants(
+    monkeypatch,
+) -> None:
+    killed = []
+    swap_by_pid = {101: 32, 102: 16}
+    monkeypatch.setattr(
+        bulk_runner,
+        "_collect_descendant_pids",
+        lambda _root_pid: [101, 102],
+    )
+    monkeypatch.setattr(
+        bulk_runner,
+        "_read_process_swap_kib",
+        lambda pid: swap_by_pid[pid],
+    )
+    monkeypatch.setattr(
+        bulk_runner,
+        "_read_process_name",
+        lambda pid: {101: "onnx2tf", 102: "delegate"}[pid],
+    )
+    monkeypatch.setattr(
+        bulk_runner.os,
+        "kill",
+        lambda pid, process_signal: killed.append((pid, process_signal)),
+    )
+
+    monitor = bulk_runner._ProcessTreeSwapMonitor(root_pid=100)
+    monitor._sample_once()
+
+    assert monitor.result() == {
+        "swap_detected": True,
+        "peak_swap_kib": 48,
+        "swap_processes": [
+            {"pid": 101, "name": "onnx2tf", "peak_swap_kib": 32},
+            {"pid": 102, "name": "delegate", "peak_swap_kib": 16},
+        ],
+    }
+    assert killed == [
+        (102, bulk_runner.signal.SIGTERM),
+        (101, bulk_runner.signal.SIGTERM),
+    ]
+
+    swap_by_pid.update({101: 0, 102: 0})
+    monitor._termination_started_at -= 2.0
+    monitor._sample_once()
+    assert killed[-2:] == [
+        (102, bulk_runner.signal.SIGKILL),
+        (101, bulk_runner.signal.SIGKILL),
+    ]
+
+
+def test_flatbuffer_direct_bulk_runner_classifies_detected_swap(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    model = tmp_path / "swapping.onnx"
+    _write_dummy(model)
+
+    class _FakeSwapMonitor:
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+        def result(self):
+            return {
+                "swap_detected": True,
+                "peak_swap_kib": 4096,
+                "swap_processes": [
+                    {"pid": 123, "name": "onnx2tf", "peak_swap_kib": 4096},
+                ],
+            }
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        return type(
+            "CP",
+            (),
+            {"returncode": -15, "stdout": "", "stderr": "terminated"},
+        )()
+
+    monkeypatch.setattr(bulk_runner, "_ProcessTreeSwapMonitor", _FakeSwapMonitor)
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+    )
+
+    entry = state["entries"][0]
+    assert entry["classification"] == "swap_detected"
+    assert entry["strict_pass"] is False
+    assert entry["reason"] == "process_tree_swap_detected"
+    assert entry["peak_swap_kib"] == 4096
+    assert entry["swap_processes"] == [
+        {"pid": 123, "name": "onnx2tf", "peak_swap_kib": 4096},
+    ]
+
+
 def test_flatbuffer_direct_bulk_runner_marks_conversion_error(
     tmp_path,
     monkeypatch,
@@ -902,6 +1001,7 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
 
     _model(tmp_path / "active.onnx")
     _model(tmp_path / "timed_out.onnx")
+    _model(tmp_path / "excluded.onnx")
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(
         json.dumps(
@@ -924,6 +1024,11 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
                         "tier": 0,
                         "model": "timed_out.onnx",
                         "baseline_classification": "timeout",
+                    },
+                    {
+                        "tier": 0,
+                        "model": "excluded.onnx",
+                        "baseline_classification": "excluded",
                     },
                 ],
             }
@@ -961,12 +1066,135 @@ def test_regression_profile_excludes_recorded_timeouts_from_future_runs(
     assert "-cotof" not in commands[0]
     assert [entry["model"] for entry in state["entries"]] == ["active.onnx"]
     profile_filter = state["summary"]["filters"]["regression_profile"]
-    assert profile_filter["model_count"] == 2
+    assert profile_filter["model_count"] == 3
     assert profile_filter["active_model_count"] == 1
-    assert profile_filter["excluded_model_count"] == 1
+    assert profile_filter["excluded_model_count"] == 2
     assert profile_filter["excluded_baseline_classification_counts"] == {
+        "excluded": 1,
         "timeout": 1,
     }
+
+
+def test_regression_profile_accepts_recorded_tflite_numeric_exception(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from onnx import TensorProto, helper, save
+
+    model_path = tmp_path / "accepted.onnx"
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
+    node = helper.make_node("Relu", ["x"], ["y"])
+    save(helper.make_model(helper.make_graph([node], "g", [x], [y])), model_path)
+
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 1,
+                "max_nodes": 49,
+                "models": [
+                    {
+                        "tier": 0,
+                        "model": model_path.name,
+                        "baseline_classification": "pass",
+                        "acceptance_reason": "approved_unstable_topk_indices",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        _write_accuracy_report(
+            path=artifact_dir / "accepted_accuracy_report.json",
+            evaluation_pass=False,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+        regression_profile=str(profile_path),
+    )
+
+    entry = state["entries"][0]
+    assert entry["classification"] == "pass"
+    assert entry["strict_pass"] is True
+    assert entry["accepted_by_profile"] is True
+    assert entry["profile_acceptance_reason"] == "approved_unstable_topk_indices"
+    assert entry["unaccepted_classification"] == "tflite_fail"
+    assert entry["unaccepted_strict_pass"] is False
+    assert entry["unaccepted_reason"] == "tflite_fail"
+    assert entry["tflite_accuracy_pass"] is False
+    assert entry["tflite_max_abs"] == 1.0
+    assert state["summary"]["counts"]["pass"] == 1
+    assert state["summary"]["strict_fail_count"] == 0
+
+
+def test_regression_profile_runs_models_in_declared_tier_order(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from onnx import TensorProto, helper, save
+
+    def _model(path: Path, *, node_count: int) -> None:
+        x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])
+        y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])
+        nodes = []
+        current = "x"
+        for index in range(node_count):
+            output = "y" if index == node_count - 1 else f"v{index}"
+            nodes.append(helper.make_node("Relu", [current], [output]))
+            current = output
+        save(helper.make_model(helper.make_graph(nodes, "g", [x], [y])), path)
+
+    tier_zero = tmp_path / "z_tier_zero.onnx"
+    tier_one = tmp_path / "a_tier_one.onnx"
+    _model(tier_zero, node_count=1)
+    _model(tier_one, node_count=50)
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 1,
+                "max_nodes": 199,
+                "models": [
+                    {"tier": 0, "model": tier_zero.name},
+                    {"tier": 1, "model": tier_one.name},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: List[str] = []
+
+    def _fake_run(cmd, cwd=None, stdout=None, stderr=None, text=None, timeout=None):
+        model_path = Path(cmd[cmd.index("-i") + 1])
+        artifact_dir = Path(cmd[cmd.index("-o") + 1])
+        calls.append(model_path.name)
+        _write_accuracy_report(
+            path=artifact_dir / f"{model_path.stem}_accuracy_report.json",
+            evaluation_pass=True,
+        )
+        return type("CP", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    state = run_flatbuffer_direct_bulk_verification(
+        root_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        include_pytorch_artifacts=False,
+        regression_profile=str(profile_path),
+    )
+
+    assert calls == [tier_zero.name, tier_one.name]
+    assert [entry["model"] for entry in state["entries"]] == calls
 
 
 def test_regression_profile_accepts_tier_four_models(tmp_path) -> None:
@@ -1006,12 +1234,35 @@ def test_regression_profile_rejects_tier_five_models(tmp_path) -> None:
         bulk_runner._load_regression_profile(str(profile_path))
 
 
+def test_regression_profile_rejects_decreasing_tier_order(tmp_path) -> None:
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "min_nodes": 1,
+                "max_nodes": 199,
+                "models": [
+                    {"tier": 1, "model": "later.onnx"},
+                    {"tier": 0, "model": "earlier.onnx"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="non-decreasing tier"):
+        bulk_runner._load_regression_profile(str(profile_path))
+
+
 @pytest.mark.parametrize(
     ("model_option", "expected_error"),
     [
         ({"eval_num_samples": 0}, "positive integer"),
         ({"eval_num_samples": True}, "positive integer"),
         ({"accuracy_only": "true"}, "must be a boolean"),
+        ({"acceptance_reason": ""}, "non-empty string"),
+        ({"acceptance_reason": 1}, "non-empty string"),
     ],
 )
 def test_regression_profile_rejects_invalid_evaluation_options(
@@ -1052,22 +1303,48 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     profile = bulk_runner._load_regression_profile(str(profile_path))
 
     assert profile["model_count"] == 420
-    assert profile["active_model_count"] == 394
-    assert profile["excluded_model_count"] == 26
-    assert profile["excluded_baseline_classification_counts"] == {"timeout": 26}
+    assert profile["active_model_count"] == 382
+    assert profile["excluded_model_count"] == 38
+    assert profile["excluded_baseline_classification_counts"] == {
+        "excluded": 11,
+        "timeout": 27,
+    }
     assert profile["tiers"] == [0, 1, 2, 3, 4]
     assert profile["min_nodes"] == 1
     assert profile["max_nodes"] == 1999
     assert profile["baseline_classification_counts"] == {
         "missing_tflite_report": 6,
-        "pass": 368,
+        "pass": 356,
         "tflite_fail": 20,
-        "timeout": 26,
+        "timeout": 27,
+        "excluded": 11,
+    }
+    assert profile["acceptance_reasons"] == {
+        "deim_hgnetv2_n_wholebody28_1250query_fp16.onnx": (
+            "user_approved_topk_index_instability_from_near_tied_scores"
+        ),
+        "deim_hgnetv2_s_wholebody28_ft_1250query_fixed.onnx": (
+            "user_approved_topk_index_instability_from_near_tied_scores"
+        ),
+    }
+    profile_payload = json.loads(profile_path.read_text(encoding="utf-8"))
+    encoder_entry = next(
+        entry
+        for entry in profile_payload["models"]
+        if entry["model"] == "encoder.onnx"
+    )
+    assert encoder_entry == {
+        "tier": 3,
+        "model": "encoder.onnx",
+        "baseline_classification": "timeout",
+        "baseline_reason": "user_approved_timeout_after_600s",
+        "error_signature_sha256": (
+            "2347ce95c7a93231a34b5d76d4387d3de16b1a7b51e339ebbc3e8c1f1c3357f1"
+        ),
     }
     assert profile["model_options"]["silero_vad.onnx"] == {
         "keep_shape_absolutely_input_names": ["input", "state", "sr"],
     }
-    profile_payload = json.loads(profile_path.read_text(encoding="utf-8"))
     for model_name in (
         "anime-gan-v2.onnx",
         "anime-gan-v2_org.onnx",
@@ -1224,20 +1501,45 @@ def test_managed_regression_profile_includes_all_tier_zero_to_four_models() -> N
     assert maskrcnn_entry == {
         "tier": 3,
         "model": "maskrcnn_resnet50_fpn.onnx",
-        "baseline_classification": "pass",
-        "tflite_max_abs": 0.0,
+        "baseline_classification": "excluded",
+        "baseline_reason": "user_excluded_from_future_validation",
     }
-    encoder_entry = next(
-        entry
-        for entry in profile_payload["models"]
-        if entry["model"] == "encoder.onnx"
-    )
-    assert encoder_entry == {
-        "tier": 3,
-        "model": "encoder.onnx",
-        "baseline_classification": "pass",
-        "tflite_max_abs": 1.9293278455734253e-05,
-    }
+    for model_name in (
+        "fast_acvnet_generalization_opset16_192x320.onnx",
+        "htdemucs_ft_onnx_1sec.onnx",
+    ):
+        excluded_entry = next(
+            entry
+            for entry in profile_payload["models"]
+            if entry["model"] == model_name
+        )
+        assert excluded_entry == {
+            "tier": 3,
+            "model": model_name,
+            "baseline_classification": "excluded",
+            "baseline_reason": "user_excluded_from_future_validation",
+        }
+    for model_name, tier in (
+        ("conv_tasnet_dnn_ins.onnx", 0),
+        ("model1.onnx", 1),
+        ("paddlepaddle_26_ocr.onnx", 1),
+        ("bread_180x320.onnx", 2),
+        ("bread_nonfm_180x320.onnx", 2),
+        ("double_gru.onnx", 2),
+        ("gtcrn_simple.onnx", 2),
+        ("spkrec-resnet-voxceleb.onnx", 2),
+    ):
+        excluded_entry = next(
+            entry
+            for entry in profile_payload["models"]
+            if entry["model"] == model_name
+        )
+        assert excluded_entry == {
+            "tier": tier,
+            "model": model_name,
+            "baseline_classification": "excluded",
+            "baseline_reason": "user_excluded_from_future_validation",
+        }
     tiny_decoder_entry = next(
         entry
         for entry in profile_payload["models"]

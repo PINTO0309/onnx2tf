@@ -5,7 +5,15 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, TypedDict
 
 import numpy as np
 
-from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.ir import (
+    ModelIR,
+    OperatorIR,
+    QuantParamIR,
+    TensorIR,
+    clone_operator_ir,
+    clone_tensor_ir,
+)
 
 
 class StrictFullIntegerQuantizationError(RuntimeError):
@@ -23,6 +31,66 @@ class TensorCalibrationRange:
 class QuantizedModelResult:
     model_ir: ModelIR
     report: Dict[str, Any]
+
+
+@dataclass
+class _StrictQuantizationReporter:
+    enabled: bool
+    payload: Dict[str, Any]
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        enabled: bool,
+        full_integer_io: bool,
+        calibration_ranges: Dict[str, TensorCalibrationRange],
+    ) -> "_StrictQuantizationReporter":
+        if not enabled:
+            return cls(enabled=False, payload={})
+        return cls(
+            enabled=True,
+            payload={
+                "mode": "full_integer" if full_integer_io else "integer_float_io",
+                "strict": True,
+                "supported_ops": sorted(_STRICT_FULL_INTEGER_SUPPORTED_OPS),
+                "tensor_ranges": {
+                    str(name): _tensor_range_to_report(value)
+                    for name, value in calibration_ranges.items()
+                },
+                "quantized_tensors": {},
+                "quantized_ops": [],
+                "failures": [],
+            },
+        )
+
+    def record_tensor(
+        self,
+        *,
+        tensor_name: str,
+        dtype: str,
+        kind: str,
+        qparams: Optional[QuantParamIR],
+    ) -> None:
+        if not self.enabled:
+            return
+        self.payload["quantized_tensors"][str(tensor_name)] = {
+            "dtype": dtype,
+            "kind": kind,
+            "qparams": _quant_param_to_report(qparams),
+        }
+
+    def record_operator(self, *, index: int, operator: OperatorIR) -> None:
+        if not self.enabled:
+            return
+        self.payload["quantized_ops"].append(
+            {
+                "index": int(index),
+                "op_type": str(operator.op_type),
+                "inputs": [str(value) for value in operator.inputs],
+                "outputs": [str(value) for value in operator.outputs],
+            }
+        )
 
 
 _DYNAMIC_RANGE_KERNEL_OPS = {
@@ -164,48 +232,15 @@ def _clone_model_ir(model_ir: ModelIR) -> ModelIR:
     clone.inputs = list(model_ir.inputs)
     clone.outputs = list(model_ir.outputs)
     clone.operators = [
-        OperatorIR(
-            op_type=op.op_type,
-            inputs=list(op.inputs),
-            outputs=list(op.outputs),
-            options=dict(op.options),
-            axis_semantics=dict(op.axis_semantics),
-            version=op.version,
-            onnx_node_name=op.onnx_node_name,
-            onnx_op_type=op.onnx_op_type,
-        )
+        clone_operator_ir(op, options=dict(op.options))
         for op in model_ir.operators
     ]
     for name, tensor in model_ir.tensors.items():
-        clone.tensors[name] = TensorIR(
-            name=tensor.name,
+        clone.tensors[name] = clone_tensor_ir(
+            tensor,
             dtype=tensor.dtype,
-            shape=list(tensor.shape),
-            shape_signature=list(tensor.shape_signature)
-            if tensor.shape_signature is not None
-            else None,
-            data=tensor.data.copy() if isinstance(tensor.data, np.ndarray) else tensor.data,
-            is_variable=tensor.is_variable,
-            quantization=(
-                dict(tensor.quantization)
-                if isinstance(tensor.quantization, dict)
-                else QuantParamIR(
-                    scale=list(tensor.quantization.scale),
-                    zero_point=list(tensor.quantization.zero_point),
-                    quantized_dimension=int(tensor.quantization.quantized_dimension),
-                    min=list(tensor.quantization.min)
-                    if tensor.quantization.min is not None
-                    else None,
-                    max=list(tensor.quantization.max)
-                    if tensor.quantization.max is not None
-                    else None,
-                )
-                if isinstance(tensor.quantization, QuantParamIR)
-                else tensor.quantization
-            ),
-            logical_layout=tensor.logical_layout,
-            physical_layout=tensor.physical_layout,
-            onnx_tensor_name=tensor.onnx_tensor_name,
+            data=tensor.data,
+            normalize_layouts=False,
         )
     return clone
 
@@ -703,16 +738,14 @@ def _tensor_range_to_report(value: TensorCalibrationRange) -> Dict[str, Any]:
     }
 
 
-def _used_tensor_names(model_ir: ModelIR) -> Set[str]:
-    used = set(str(v) for v in list(model_ir.inputs) + list(model_ir.outputs))
-    for op in model_ir.operators:
-        used.update(str(v) for v in op.inputs if str(v) != "")
-        used.update(str(v) for v in op.outputs if str(v) != "")
-    return used
-
-
 def _elide_identity_operators(model_ir: ModelIR) -> None:
-    rewritten: List[OperatorIR] = []
+    candidate_ops = list(model_ir.operators)
+    if not any(str(op.op_type) == "IDENTITY" for op in candidate_ops):
+        return
+
+    graph_index = ModelIRGraphIndex(model_ir)
+    retained_ops: List[OperatorIR] = []
+    removed_ops: List[OperatorIR] = []
     replacements: Dict[str, str] = {}
     graph_outputs = {str(v) for v in model_ir.outputs}
 
@@ -724,10 +757,18 @@ def _elide_identity_operators(model_ir: ModelIR) -> None:
             current = replacements[current]
         return current
 
-    for op in model_ir.operators:
-        op.inputs = [resolve(str(v)) if str(v) != "" else v for v in op.inputs]
+    for op in candidate_ops:
+        op_index = graph_index.operator_index(op)
+        if op_index is None:
+            continue
+        new_inputs = [
+            resolve(str(value)) if str(value) != "" else value
+            for value in op.inputs
+        ]
+        if new_inputs != list(op.inputs):
+            graph_index.replace_operator_inputs(int(op_index), new_inputs)
         if str(op.op_type) != "IDENTITY" or len(op.inputs) != 1 or len(op.outputs) != 1:
-            rewritten.append(op)
+            retained_ops.append(op)
             continue
         input_name = resolve(str(op.inputs[0]))
         output_name = str(op.outputs[0])
@@ -735,22 +776,52 @@ def _elide_identity_operators(model_ir: ModelIR) -> None:
             producer = next(
                 (
                     candidate
-                    for candidate in reversed(rewritten)
+                    for candidate in reversed(retained_ops)
                     if input_name in [str(v) for v in candidate.outputs]
                 ),
                 None,
             )
             if producer is not None and input_name not in {str(v) for v in model_ir.inputs}:
-                producer.outputs = [output_name if str(v) == input_name else v for v in producer.outputs]
+                producer_index = graph_index.operator_index(producer)
+                if producer_index is None:
+                    retained_ops.append(op)
+                    continue
+                graph_index.replace_operator_outputs(
+                    int(producer_index),
+                    [
+                        output_name if str(value) == input_name else value
+                        for value in producer.outputs
+                    ],
+                )
                 replacements[input_name] = output_name
+                removed_ops.append(op)
                 continue
         replacements[output_name] = input_name
+        removed_ops.append(op)
 
-    for op in rewritten:
-        op.inputs = [resolve(str(v)) if str(v) != "" else v for v in op.inputs]
-        op.outputs = [resolve(str(v)) if str(v) != "" else v for v in op.outputs]
+    for op in retained_ops:
+        op_index = graph_index.operator_index(op)
+        if op_index is None:
+            continue
+        new_inputs = [
+            resolve(str(value)) if str(value) != "" else value
+            for value in op.inputs
+        ]
+        new_outputs = [
+            resolve(str(value)) if str(value) != "" else value
+            for value in op.outputs
+        ]
+        if new_inputs != list(op.inputs):
+            graph_index.replace_operator_inputs(int(op_index), new_inputs)
+        if new_outputs != list(op.outputs):
+            graph_index.replace_operator_outputs(int(op_index), new_outputs)
     model_ir.outputs = [resolve(str(v)) for v in model_ir.outputs]
-    model_ir.operators = rewritten
+    remove_indices = [
+        index
+        for op in removed_ops
+        if (index := graph_index.operator_index(op)) is not None
+    ]
+    graph_index.remove_operators(remove_indices)
 
 
 def _same_qparam_tensor_names_for_op(op: OperatorIR) -> List[str]:
@@ -846,22 +917,6 @@ def _require_tensor_range(
     return calibration_ranges[tensor_name]
 
 
-def _activation_dtype_for_tensor(
-    *,
-    tensor_name: str,
-    model_ir: ModelIR,
-    full_integer_io: bool,
-    input_quant_dtype: str,
-    output_quant_dtype: str,
-    internal_activation_dtype: str,
-) -> str:
-    if full_integer_io and tensor_name in set(model_ir.inputs):
-        return str(input_quant_dtype).upper()
-    if full_integer_io and tensor_name in set(model_ir.outputs):
-        return str(output_quant_dtype).upper()
-    return str(internal_activation_dtype).upper()
-
-
 def _ensure_activation_quantized(
     *,
     model_ir: ModelIR,
@@ -869,7 +924,7 @@ def _ensure_activation_quantized(
     calibration_ranges: Dict[str, TensorCalibrationRange],
     dtype: str,
     scale_floor: float,
-    report: Dict[str, Any],
+    reporter: _StrictQuantizationReporter,
     fixed_qparams: Optional[QuantParamIR] = None,
 ) -> QuantParamIR:
     tensor = model_ir.tensors.get(str(tensor_name), None)
@@ -895,11 +950,12 @@ def _ensure_activation_quantized(
     tensor.dtype = str(dtype).upper()
     tensor.quantization = qparams
     tensor.data = None
-    report["quantized_tensors"][str(tensor_name)] = {
-        "dtype": tensor.dtype,
-        "kind": "activation",
-        "qparams": _quant_param_to_report(qparams),
-    }
+    reporter.record_tensor(
+        tensor_name=str(tensor_name),
+        dtype=tensor.dtype,
+        kind="activation",
+        qparams=qparams,
+    )
     return qparams
 
 
@@ -938,7 +994,7 @@ def _quantize_weight_tensor(
     calibration_method: str,
     calibration_percentile: float,
     scale_floor: float,
-    report: Dict[str, Any],
+    reporter: _StrictQuantizationReporter,
 ) -> QuantParamIR:
     if not isinstance(tensor.data, np.ndarray):
         raise StrictFullIntegerQuantizationError(
@@ -968,11 +1024,12 @@ def _quantize_weight_tensor(
     tensor.data = q_data
     tensor.dtype = "INT8"
     tensor.quantization = qparams
-    report["quantized_tensors"][tensor.name] = {
-        "dtype": "INT8",
-        "kind": "weight",
-        "qparams": _quant_param_to_report(qparams),
-    }
+    reporter.record_tensor(
+        tensor_name=tensor.name,
+        dtype="INT8",
+        kind="weight",
+        qparams=qparams,
+    )
     return qparams
 
 
@@ -981,7 +1038,7 @@ def _quantize_bias_tensor(
     tensor: TensorIR,
     input_qparams: QuantParamIR,
     weight_qparams: QuantParamIR,
-    report: Dict[str, Any],
+    reporter: _StrictQuantizationReporter,
 ) -> None:
     if not isinstance(tensor.data, np.ndarray):
         raise StrictFullIntegerQuantizationError(
@@ -1009,11 +1066,12 @@ def _quantize_bias_tensor(
         zero_point=[0 for _ in range(int(bias_scales.size))],
         quantized_dimension=int(weight_qparams.quantized_dimension),
     )
-    report["quantized_tensors"][tensor.name] = {
-        "dtype": "INT32",
-        "kind": "bias",
-        "qparams": _quant_param_to_report(tensor.quantization),
-    }
+    reporter.record_tensor(
+        tensor_name=tensor.name,
+        dtype="INT32",
+        kind="bias",
+        qparams=tensor.quantization,
+    )
 
 
 def _kernel_weight_quant_axis_for_strict(op_type: str, tensor: TensorIR) -> int:
@@ -1032,7 +1090,7 @@ def _force_same_qparams(
     tensor_names: Iterable[str],
     qparams: QuantParamIR,
     dtype: str,
-    report: Dict[str, Any],
+    reporter: _StrictQuantizationReporter,
 ) -> None:
     for tensor_name in tensor_names:
         tensor = model_ir.tensors.get(str(tensor_name), None)
@@ -1047,11 +1105,16 @@ def _force_same_qparams(
         else:
             tensor.dtype = str(dtype).upper()
             tensor.quantization = _clone_quant_param(qparams)
-        report["quantized_tensors"][str(tensor_name)] = {
-            "dtype": tensor.dtype,
-            "kind": "activation",
-            "qparams": _quant_param_to_report(tensor.quantization if isinstance(tensor.quantization, QuantParamIR) else None),
-        }
+        reporter.record_tensor(
+            tensor_name=str(tensor_name),
+            dtype=tensor.dtype,
+            kind="activation",
+            qparams=(
+                tensor.quantization
+                if isinstance(tensor.quantization, QuantParamIR)
+                else None
+            ),
+        )
 
 
 def _normalize_quantization_controls(
@@ -1094,9 +1157,20 @@ def build_dynamic_range_quantized_model_ir(
     quantized_tensor_names: Set[str] = set()
     dequantized_tensor_map: Dict[str, str] = {}
 
-    rewritten_ops: List[OperatorIR] = []
+    graph_index: Optional[ModelIRGraphIndex] = None
+    candidate_ops = list(clone.operators)
 
-    def ensure_dequantized_tensor(quant_tensor_name: str) -> Optional[str]:
+    def require_graph_index() -> ModelIRGraphIndex:
+        nonlocal graph_index
+        if graph_index is None:
+            graph_index = ModelIRGraphIndex(clone)
+        return graph_index
+
+    def ensure_dequantized_tensor(
+        quant_tensor_name: str,
+        *,
+        before_op: OperatorIR,
+    ) -> Optional[str]:
         if quant_tensor_name in dequantized_tensor_map:
             return dequantized_tensor_map[quant_tensor_name]
 
@@ -1118,35 +1192,32 @@ def build_dynamic_range_quantized_model_ir(
             is_variable=False,
             quantization=None,
         )
-        rewritten_ops.append(
+        active_index = require_graph_index()
+        before_index = active_index.operator_index(before_op)
+        if before_index is None:
+            return None
+        active_index.insert_operator(
+            int(before_index),
             OperatorIR(
                 op_type="DEQUANTIZE",
                 inputs=[quant_tensor_name],
                 outputs=[deq_name],
                 options={},
-            )
+            ),
         )
         dequantized_tensor_map[quant_tensor_name] = deq_name
         return deq_name
 
-    for op in clone.operators:
-        new_op = OperatorIR(
-            op_type=op.op_type,
-            inputs=list(op.inputs),
-            outputs=list(op.outputs),
-            options=dict(op.options),
-            version=op.version,
-        )
-
-        if new_op.op_type in _DYNAMIC_RANGE_KERNEL_OPS and len(new_op.inputs) >= 2:
-            weight_name = new_op.inputs[1]
+    for op in candidate_ops:
+        if op.op_type in _DYNAMIC_RANGE_KERNEL_OPS and len(op.inputs) >= 2:
+            weight_name = op.inputs[1]
             tensor = clone.tensors.get(weight_name)
             if tensor is not None and _is_float_constant_tensor(
                 tensor=tensor,
                 graph_input_names=graph_input_names,
             ):
                 quant_mode = "per-channel" if quant_type == "per-channel" else "per-tensor"
-                quant_axis = _kernel_weight_quant_axis(new_op.op_type, tensor)
+                quant_axis = _kernel_weight_quant_axis(op.op_type, tensor)
                 if _quantize_tensor_inplace(
                     tensor=tensor,
                     quant_mode=quant_mode,
@@ -1159,8 +1230,9 @@ def build_dynamic_range_quantized_model_ir(
                 ):
                     quantized_tensor_names.add(weight_name)
 
-        if new_op.op_type in _DYNAMIC_RANGE_CONST_DEQUANT_OPS:
-            for idx, input_name in enumerate(list(new_op.inputs)):
+        if op.op_type in _DYNAMIC_RANGE_CONST_DEQUANT_OPS:
+            new_inputs = list(op.inputs)
+            for idx, input_name in enumerate(list(op.inputs)):
                 tensor = clone.tensors.get(input_name)
                 if tensor is None:
                     continue
@@ -1183,13 +1255,17 @@ def build_dynamic_range_quantized_model_ir(
                 tensor = clone.tensors.get(input_name)
                 if tensor is None or tensor.dtype != "INT8":
                     continue
-                deq_name = ensure_dequantized_tensor(input_name)
+                deq_name = ensure_dequantized_tensor(
+                    input_name,
+                    before_op=op,
+                )
                 if deq_name is not None:
-                    new_op.inputs[idx] = deq_name
-
-        rewritten_ops.append(new_op)
-
-    clone.operators = rewritten_ops
+                    new_inputs[idx] = deq_name
+            if new_inputs != list(op.inputs):
+                active_index = require_graph_index()
+                op_index = active_index.operator_index(op)
+                if op_index is not None:
+                    active_index.replace_operator_inputs(int(op_index), new_inputs)
 
     if len(quantized_tensor_names) == 0:
         raise NotImplementedError(
@@ -1226,6 +1302,7 @@ def build_integer_quantized_model_ir(
         min_abs_max=min_abs_max,
         scale_floor=scale_floor,
         calibration_ranges=calibration_ranges,
+        collect_report=bool(return_report),
     )
     result.model_ir.description = f"{result.model_ir.description} (strict_integer_quantized)"
     return result if return_report else result.model_ir
@@ -1245,6 +1322,7 @@ def _build_strict_full_integer_model_ir(
     min_abs_max: float,
     scale_floor: float,
     calibration_ranges: Optional[Dict[str, TensorCalibrationRange]],
+    collect_report: bool = True,
 ) -> QuantizedModelResult:
     if calibration_ranges is None or len(calibration_ranges) == 0:
         raise StrictFullIntegerQuantizationError(
@@ -1261,6 +1339,7 @@ def _build_strict_full_integer_model_ir(
     )
     clone = _clone_model_ir(model_ir)
     _elide_identity_operators(clone)
+    graph_index: Optional[ModelIRGraphIndex] = None
     internal_dtype = str(internal_activation_dtype).upper()
     input_dtype = str(input_quant_dtype).upper()
     output_dtype = str(output_quant_dtype).upper()
@@ -1269,31 +1348,58 @@ def _build_strict_full_integer_model_ir(
             "strict full integer quantization does not allow FLOAT32 input/output dtype."
         )
 
-    report: Dict[str, Any] = {
-        "mode": "full_integer" if full_integer_io else "integer_float_io",
-        "strict": True,
-        "supported_ops": sorted(_STRICT_FULL_INTEGER_SUPPORTED_OPS),
-        "tensor_ranges": {
-            str(name): _tensor_range_to_report(value)
-            for name, value in calibration_ranges.items()
-        },
-        "quantized_tensors": {},
-        "quantized_ops": [],
-        "failures": [],
-    }
+    reporter = _StrictQuantizationReporter.create(
+        enabled=bool(collect_report),
+        full_integer_io=bool(full_integer_io),
+        calibration_ranges=calibration_ranges,
+    )
+    graph_input_names = set(clone.inputs) if full_integer_io else set()
+    graph_output_names = set(clone.outputs) if full_integer_io else set()
 
     def activation_dtype(tensor_name: str) -> str:
-        return _activation_dtype_for_tensor(
-            tensor_name=str(tensor_name),
-            model_ir=clone,
-            full_integer_io=bool(full_integer_io),
-            input_quant_dtype=input_dtype,
-            output_quant_dtype=output_dtype,
-            internal_activation_dtype=internal_dtype,
-        )
+        normalized_name = str(tensor_name)
+        if normalized_name in graph_input_names:
+            return input_dtype
+        if normalized_name in graph_output_names:
+            return output_dtype
+        return internal_dtype
 
     pre_ops: List[OperatorIR] = []
     post_ops: List[OperatorIR] = []
+
+    def require_graph_index() -> ModelIRGraphIndex:
+        nonlocal graph_index
+        if graph_index is None:
+            graph_index = ModelIRGraphIndex(clone)
+        return graph_index
+
+    def replace_all_operator_inputs(old_name: str, new_name: str) -> None:
+        active_index = require_graph_index()
+        for op_index in sorted(set(active_index.consumer_indices(str(old_name)))):
+            op = clone.operators[int(op_index)]
+            new_inputs = [
+                str(new_name) if str(value) == str(old_name) else value
+                for value in op.inputs
+            ]
+            if new_inputs != list(op.inputs):
+                active_index.replace_operator_inputs(int(op_index), new_inputs)
+
+    def replace_producer_outputs(old_name: str, new_name: str) -> None:
+        active_index = require_graph_index()
+        producer = active_index.producer(str(old_name))
+        if producer is None:
+            return
+        producer_index = active_index.operator_index(producer)
+        if producer_index is None:
+            return
+        active_index.replace_operator_outputs(
+            int(producer_index),
+            [
+                str(new_name) if str(value) == str(old_name) else value
+                for value in producer.outputs
+            ],
+        )
+
     if not full_integer_io:
         for input_name in list(clone.inputs):
             old_tensor = clone.tensors[str(input_name)]
@@ -1323,13 +1429,13 @@ def _build_strict_full_integer_model_ir(
                 logical_layout=old_tensor.logical_layout,
             )
             pre_ops.append(OperatorIR(op_type="QUANTIZE", inputs=[str(input_name)], outputs=[q_name]))
-            for op in clone.operators:
-                op.inputs = [q_name if str(v) == str(input_name) else v for v in op.inputs]
-            report["quantized_tensors"][q_name] = {
-                "dtype": internal_dtype,
-                "kind": "activation",
-                "qparams": _quant_param_to_report(qparams),
-            }
+            replace_all_operator_inputs(str(input_name), q_name)
+            reporter.record_tensor(
+                tensor_name=q_name,
+                dtype=internal_dtype,
+                kind="activation",
+                qparams=qparams,
+            )
         for output_name in list(clone.outputs):
             old_tensor = clone.tensors[str(output_name)]
             if old_tensor.dtype != "FLOAT32":
@@ -1366,11 +1472,12 @@ def _build_strict_full_integer_model_ir(
             old_tensor.dtype = input_dtype
             old_tensor.quantization = external_qparams
             old_tensor.data = None
-            report["quantized_tensors"][str(input_name)] = {
-                "dtype": input_dtype,
-                "kind": "graph_input",
-                "qparams": _quant_param_to_report(external_qparams),
-            }
+            reporter.record_tensor(
+                tensor_name=str(input_name),
+                dtype=input_dtype,
+                kind="graph_input",
+                qparams=external_qparams,
+            )
             if input_dtype != internal_dtype:
                 internal_name = _make_unique_tensor_name(f"{input_name}_quantized_internal", clone.tensors)
                 internal_qparams = activation_qparams_from_range(
@@ -1390,26 +1497,21 @@ def _build_strict_full_integer_model_ir(
                     logical_layout=old_tensor.logical_layout,
                 )
                 pre_ops.append(OperatorIR(op_type="QUANTIZE", inputs=[str(input_name)], outputs=[internal_name]))
-                for op in clone.operators:
-                    op.inputs = [internal_name if str(v) == str(input_name) else v for v in op.inputs]
-                report["quantized_tensors"][internal_name] = {
-                    "dtype": internal_dtype,
-                    "kind": "activation",
-                    "qparams": _quant_param_to_report(internal_qparams),
-                }
+                replace_all_operator_inputs(str(input_name), internal_name)
+                reporter.record_tensor(
+                    tensor_name=internal_name,
+                    dtype=internal_dtype,
+                    kind="activation",
+                    qparams=internal_qparams,
+                )
 
-        producer_by_output = {
-            str(output_name): op
-            for op in clone.operators
-            for output_name in op.outputs
-        }
         for output_name in list(clone.outputs):
             old_tensor = clone.tensors[str(output_name)]
             if old_tensor.dtype != "FLOAT32":
                 continue
             if output_dtype == internal_dtype:
                 continue
-            producer_op = producer_by_output.get(str(output_name), None)
+            producer_op = require_graph_index().producer(str(output_name))
             fixed_external = fixed_activation_qparams_for_op(
                 op_type=str(producer_op.op_type) if producer_op is not None else "",
                 dtype=output_dtype,
@@ -1438,17 +1540,17 @@ def _build_strict_full_integer_model_ir(
                 quantization=None,
                 logical_layout=old_tensor.logical_layout,
             )
-            for op in clone.operators:
-                op.outputs = [internal_name if str(v) == str(output_name) else v for v in op.outputs]
+            replace_producer_outputs(str(output_name), internal_name)
             old_tensor.dtype = output_dtype
             old_tensor.quantization = external_qparams
             old_tensor.data = None
             post_ops.append(OperatorIR(op_type="QUANTIZE", inputs=[internal_name], outputs=[str(output_name)]))
-            report["quantized_tensors"][str(output_name)] = {
-                "dtype": output_dtype,
-                "kind": "graph_output",
-                "qparams": _quant_param_to_report(external_qparams),
-            }
+            reporter.record_tensor(
+                tensor_name=str(output_name),
+                dtype=output_dtype,
+                kind="graph_output",
+                qparams=external_qparams,
+            )
 
     for op_idx, op in enumerate(clone.operators):
         op_type = str(op.op_type)
@@ -1472,7 +1574,7 @@ def _build_strict_full_integer_model_ir(
                     calibration_ranges=calibration_ranges,
                     dtype=activation_dtype(str(input_name)),
                     scale_floor=float(controls["scale_floor"]),
-                    report=report,
+                    reporter=reporter,
                 )
 
         output_fixed = fixed_activation_qparams_for_op(
@@ -1497,11 +1599,12 @@ def _build_strict_full_integer_model_ir(
                     out_tensor.dtype = ref.dtype
                     out_tensor.quantization = _clone_quant_param(ref.quantization)
                     out_tensor.data = None
-                    report["quantized_tensors"][str(output_name)] = {
-                        "dtype": out_tensor.dtype,
-                        "kind": "activation",
-                        "qparams": _quant_param_to_report(out_tensor.quantization),
-                    }
+                    reporter.record_tensor(
+                        tensor_name=str(output_name),
+                        dtype=out_tensor.dtype,
+                        kind="activation",
+                        qparams=out_tensor.quantization,
+                    )
                 else:
                     same_qparam_names = (
                         _same_qparam_tensor_names_for_op(op)
@@ -1523,7 +1626,7 @@ def _build_strict_full_integer_model_ir(
                             tensor_names=same_qparam_names,
                             qparams=fallback_qparams,
                             dtype=activation_dtype(str(output_name)),
-                            report=report,
+                            reporter=reporter,
                         )
                     else:
                         _ensure_activation_quantized(
@@ -1532,7 +1635,7 @@ def _build_strict_full_integer_model_ir(
                             calibration_ranges=calibration_ranges,
                             dtype=activation_dtype(str(output_name)),
                             scale_floor=float(controls["scale_floor"]),
-                            report=report,
+                            reporter=reporter,
                             fixed_qparams=output_fixed or fallback_qparams,
                         )
 
@@ -1554,7 +1657,7 @@ def _build_strict_full_integer_model_ir(
                 calibration_method=str(controls["calibration_method"]),
                 calibration_percentile=float(controls["calibration_percentile"]),
                 scale_floor=float(controls["scale_floor"]),
-                report=report,
+                reporter=reporter,
             )
             bias_input_idx = 3 if op_type == "TRANSPOSE_CONV" else 2
             if len(op.inputs) > bias_input_idx and str(op.inputs[bias_input_idx]) != "":
@@ -1564,7 +1667,7 @@ def _build_strict_full_integer_model_ir(
                         tensor=bias_tensor,
                         input_qparams=input_tensor.quantization,
                         weight_qparams=weight_qparams,
-                        report=report,
+                        reporter=reporter,
                     )
         elif op_type in _STRICT_FULL_INTEGER_SAME_QPARAM_INDICES and len(op.outputs) > 0:
             out_tensor = clone.tensors[str(op.outputs[0])]
@@ -1579,7 +1682,7 @@ def _build_strict_full_integer_model_ir(
                     tensor_names=_same_qparam_tensor_names_for_op(op),
                     qparams=out_tensor.quantization,
                     dtype=out_tensor.dtype,
-                    report=report,
+                    reporter=reporter,
                 )
         else:
             for input_name in list(op.inputs):
@@ -1602,27 +1705,26 @@ def _build_strict_full_integer_model_ir(
                     dtype=activation_dtype(str(input_name)),
                     qparams=qparams,
                 )
-                report["quantized_tensors"][str(input_name)] = {
-                    "dtype": tensor.dtype,
-                    "kind": "constant",
-                    "qparams": _quant_param_to_report(qparams),
-                }
+                reporter.record_tensor(
+                    tensor_name=str(input_name),
+                    dtype=tensor.dtype,
+                    kind="constant",
+                    qparams=qparams,
+                )
 
-        report["quantized_ops"].append(
-            {
-                "index": int(op_idx),
-                "op_type": op_type,
-                "inputs": [str(v) for v in op.inputs],
-                "outputs": [str(v) for v in op.outputs],
-            }
-        )
+        reporter.record_operator(index=int(op_idx), operator=op)
 
-    clone.operators = pre_ops + clone.operators + post_ops
+    if pre_ops or post_ops:
+        active_index = require_graph_index()
+        for op_index, pre_op in enumerate(pre_ops):
+            active_index.insert_operator(int(op_index), pre_op)
+        for post_op in post_ops:
+            active_index.append_operator(post_op)
     _validate_strict_full_integer_model_ir(
         model_ir=clone,
         allow_float_boundary=not full_integer_io,
     )
-    return QuantizedModelResult(model_ir=clone, report=report)
+    return QuantizedModelResult(model_ir=clone, report=reporter.payload)
 
 
 def _validate_strict_full_integer_model_ir(
@@ -1635,8 +1737,10 @@ def _validate_strict_full_integer_model_ir(
         allowed_boundary_float_tensors.update(str(v) for v in model_ir.inputs)
         allowed_boundary_float_tensors.update(str(v) for v in model_ir.outputs)
 
-    used_tensors = _used_tensor_names(model_ir)
+    used_tensors = set(str(v) for v in list(model_ir.inputs) + list(model_ir.outputs))
     for op_idx, op in enumerate(model_ir.operators):
+        used_tensors.update(str(v) for v in op.inputs if str(v) != "")
+        used_tensors.update(str(v) for v in op.outputs if str(v) != "")
         op_type = str(op.op_type)
         if op_type == "QUANTIZE":
             continue
@@ -1689,6 +1793,7 @@ def build_full_integer_quantized_model_ir(
         min_abs_max=min_abs_max,
         scale_floor=scale_floor,
         calibration_ranges=calibration_ranges,
+        collect_report=bool(return_report),
     )
     result.model_ir.description = f"{result.model_ir.description} (strict_full_integer_quantized)"
     return result if return_report else result.model_ir
@@ -1717,6 +1822,7 @@ def build_integer_quantized_with_int16_act_model_ir(
         min_abs_max=min_abs_max,
         scale_floor=scale_floor,
         calibration_ranges=calibration_ranges,
+        collect_report=False,
     )
     result.model_ir.description = f"{result.model_ir.description} (strict_integer_quant_with_int16_act)"
     return result.model_ir
@@ -1745,6 +1851,7 @@ def build_full_integer_quantized_with_int16_act_model_ir(
         min_abs_max=min_abs_max,
         scale_floor=scale_floor,
         calibration_ranges=calibration_ranges,
+        collect_report=False,
     )
     result.model_ir.description = f"{result.model_ir.description} (strict_full_integer_quant_with_int16_act)"
     return result.model_ir

@@ -47,8 +47,9 @@ def _optimize_dequant_reshape_quantize_chains(
         changed = False
         consumers = graph_index.consumers
 
-        for dq_idx, dq_op in enumerate(model_ir.operators):
-            if str(dq_op.op_type) != "DEQUANTIZE" or len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
+        for dq_idx in graph_index.operator_indices("DEQUANTIZE"):
+            dq_op = model_ir.operators[int(dq_idx)]
+            if len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
                 continue
             q_in_name = str(dq_op.inputs[0])
             f_in_name = str(dq_op.outputs[0])

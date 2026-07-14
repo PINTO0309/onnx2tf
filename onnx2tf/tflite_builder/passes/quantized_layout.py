@@ -4,6 +4,9 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.model_ir_utils import _prune_unused_tensors
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
 
 
@@ -41,22 +44,6 @@ _LAYOUT_PRESERVING_OPS = {
     "SUB",
     "TANH",
 }
-
-
-def _producer_map(model_ir: ModelIR) -> Dict[str, int]:
-    return {
-        str(output_name): int(op_index)
-        for op_index, op in enumerate(model_ir.operators)
-        for output_name in op.outputs
-    }
-
-
-def _consumer_map(model_ir: ModelIR) -> Dict[str, List[int]]:
-    consumers: Dict[str, List[int]] = {}
-    for op_index, op in enumerate(model_ir.operators):
-        for input_name in op.inputs:
-            consumers.setdefault(str(input_name), []).append(int(op_index))
-    return consumers
 
 
 def _transpose_perm(model_ir: ModelIR, op: OperatorIR) -> Optional[List[int]]:
@@ -198,6 +185,9 @@ def _trace_convinteger_data_root(
 
 def repair_channel_last_convinteger_input_transposes(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
     """
     Remove a stale ConvInteger NCHW->NHWC input bridge after layout promotion.
@@ -210,6 +200,7 @@ def repair_channel_last_convinteger_input_transposes(
     """
     propagated = _propagate_channel_last_layout_hints(model_ir)
     repaired = 0
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     channel_last_names = {
         str(name)
         for name in model_ir.metadata.get(
@@ -225,11 +216,12 @@ def repair_channel_last_convinteger_input_transposes(
         }
 
     while True:
-        producer_map = _producer_map(model_ir)
-        consumer_map = _consumer_map(model_ir)
+        producer_map = graph_index.producers
+        consumer_map = graph_index.consumers
         changed = False
 
-        for transpose_index, transpose_op in enumerate(model_ir.operators):
+        for transpose_index in graph_index.operator_indices("TRANSPOSE"):
+            transpose_op = model_ir.operators[int(transpose_index)]
             if str(transpose_op.onnx_op_type or "") != "ConvInteger":
                 continue
             if _transpose_perm(model_ir, transpose_op) != _NCHW_TO_NHWC:
@@ -288,8 +280,10 @@ def repair_channel_last_convinteger_input_transposes(
                 chain_tensor.physical_layout = "NHWC"
                 channel_last_names.add(str(chain_name))
 
-            conv_op.inputs[0] = str(transpose_op.inputs[0])
-            del model_ir.operators[int(transpose_index)]
+            new_conv_inputs = [str(name) for name in conv_op.inputs]
+            new_conv_inputs[0] = str(transpose_op.inputs[0])
+            graph_index.replace_operator_inputs(conv_index, new_conv_inputs)
+            graph_index.remove_operator(int(transpose_index))
             repaired += 1
             changed = True
             break
@@ -301,15 +295,9 @@ def repair_channel_last_convinteger_input_transposes(
         model_ir.metadata["assume_channel_last_layout_tensor_names"] = sorted(
             channel_last_names
         )
-        used_names = {
-            str(name)
-            for op in model_ir.operators
-            for name in list(op.inputs) + list(op.outputs)
-        }
-        boundary_names = {str(name) for name in model_ir.inputs + model_ir.outputs}
-        for tensor_name in list(model_ir.tensors):
-            if str(tensor_name) not in used_names and str(tensor_name) not in boundary_names:
-                model_ir.tensors.pop(str(tensor_name), None)
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
 
     return {
         "propagated_channel_last_layout_hints": int(propagated),

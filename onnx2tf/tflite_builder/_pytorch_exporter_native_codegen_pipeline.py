@@ -39,6 +39,28 @@ _NATIVE_CODEGEN_FUNCTION_SOURCE = _NATIVE_CODEGEN_FUNCTION_SOURCE.replace(
 ).replace(
     "if can_emit_channel_first_binary_op_fn(op) and runtime_shape_passthrough_operand is None and not requires_runtime_alignment:",
     "if can_emit_channel_first_binary_op_fn(op) and runtime_shape_passthrough_operand is None:",
+).replace(
+    "            output_target_shape=output_target_shape,\n"
+    "            channel_first_tensor_expr_aliases=channel_first_tensor_expr_aliases,\n"
+    "            runtime_imports=runtime_imports,\n"
+    "            forward_lines=forward_lines,\n"
+    "            runtime_shape_uncertain_tensors=runtime_shape_uncertain_tensors,\n",
+    "            output_target_shape=output_target_shape,\n"
+    "            channel_first_tensor_expr_aliases=channel_first_tensor_expr_aliases,\n"
+    "            binary_output_target_shape_literal_fn=(\n"
+    "                lambda *, lhs_name, rhs_name, output_name, fallback_literal: (\n"
+    "                    _binary_output_target_shape_literal_for_codegen(\n"
+    "                        model_ir=model_ir,\n"
+    "                        lhs_name=lhs_name,\n"
+    "                        rhs_name=rhs_name,\n"
+    "                        output_name=output_name,\n"
+    "                        fallback_literal=fallback_literal,\n"
+    "                    )\n"
+    "                )\n"
+    "            ),\n"
+    "            runtime_imports=runtime_imports,\n"
+    "            forward_lines=forward_lines,\n"
+    "            runtime_shape_uncertain_tensors=runtime_shape_uncertain_tensors,\n",
 )
 _NATIVE_CODEGEN_FUNCTION_SOURCE = re.sub(
     (

@@ -33,6 +33,11 @@ class ModelIRPassState:
         default_factory=dict,
         repr=False,
     )
+    _prepared_pass_data: Dict[str, Any] = field(
+        init=False,
+        default_factory=dict,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         self.graph_index = ModelIRGraphIndex(self.model_ir)
@@ -40,6 +45,19 @@ class ModelIRPassState:
             self.layout_state = LayoutState.from_model_ir(self.model_ir)
         else:
             self.layout_state.sync_from_model_ir(self.model_ir)
+
+    def set_prepared_pass_data(self, key: str, value: Any) -> None:
+        """Store data prepared for the next callback in this pass session."""
+
+        normalized_key = str(key).strip()
+        if not normalized_key:
+            raise ValueError("prepared pass data key must not be empty")
+        self._prepared_pass_data[normalized_key] = value
+
+    def take_prepared_pass_data(self, key: str) -> Any:
+        """Consume callback data prepared in this pass session, if present."""
+
+        return self._prepared_pass_data.pop(str(key), None)
 
     def _freeze_constant_buffers(self, model_ir: ModelIR) -> None:
         for tensor in model_ir.tensors.values():
@@ -208,6 +226,7 @@ class ModelIRPassState:
         target.outputs = list(snapshot.outputs)
         target.subgraphs = copy.deepcopy(snapshot.subgraphs)
         target.metadata = copy.deepcopy(snapshot.metadata)
+        self._prepared_pass_data.clear()
         self._freeze_constant_buffers(target)
         self.graph_index.refresh()
         assert self.layout_state is not None

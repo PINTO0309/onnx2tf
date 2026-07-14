@@ -225,6 +225,87 @@ def rewrite_axis_for_layout(
     return int(perm.index(resolved_axis))
 
 
+def clone_operator_ir(
+    operator: OperatorIR,
+    *,
+    options: Dict[str, Any],
+    axis_semantics: Optional[Dict[str, Any]] = None,
+) -> OperatorIR:
+    return OperatorIR(
+        op_type=operator.op_type,
+        inputs=list(operator.inputs),
+        outputs=list(operator.outputs),
+        options=options,
+        axis_semantics=(
+            dict(operator.axis_semantics)
+            if axis_semantics is None
+            else axis_semantics
+        ),
+        version=operator.version,
+        onnx_node_name=operator.onnx_node_name,
+        onnx_op_type=operator.onnx_op_type,
+    )
+
+
+def clone_tensor_ir(
+    tensor: TensorIR,
+    *,
+    dtype: str,
+    data: Any,
+    normalize_layouts: bool,
+    copy_data: bool = True,
+    clone_quantization: bool = True,
+) -> TensorIR:
+    quantization = tensor.quantization
+    if clone_quantization:
+        if isinstance(quantization, dict):
+            quantization = dict(quantization)
+        elif isinstance(quantization, QuantParamIR):
+            quantization = QuantParamIR(
+                scale=list(quantization.scale),
+                zero_point=list(quantization.zero_point),
+                quantized_dimension=int(quantization.quantized_dimension),
+                min=(
+                    list(quantization.min)
+                    if quantization.min is not None
+                    else None
+                ),
+                max=(
+                    list(quantization.max)
+                    if quantization.max is not None
+                    else None
+                ),
+            )
+    return TensorIR(
+        name=tensor.name,
+        dtype=dtype,
+        shape=list(tensor.shape),
+        shape_signature=(
+            list(tensor.shape_signature)
+            if tensor.shape_signature is not None
+            else None
+        ),
+        data=(
+            data.copy()
+            if copy_data and isinstance(data, np.ndarray)
+            else data
+        ),
+        is_variable=tensor.is_variable,
+        quantization=quantization,
+        logical_layout=(
+            normalize_logical_layout(tensor.logical_layout)
+            if normalize_layouts
+            else tensor.logical_layout
+        ),
+        physical_layout=(
+            normalize_logical_layout(tensor.physical_layout)
+            if normalize_layouts
+            else tensor.physical_layout
+        ),
+        onnx_tensor_name=tensor.onnx_tensor_name,
+    )
+
+
 def clone_model_ir_with_float16(model_ir: ModelIR) -> ModelIR:
     clone = ModelIR(
         name=model_ir.name,
@@ -235,16 +316,8 @@ def clone_model_ir_with_float16(model_ir: ModelIR) -> ModelIR:
     clone.outputs = list(model_ir.outputs)
     clone.subgraphs = [clone_model_ir_with_float16(subgraph) for subgraph in model_ir.subgraphs]
     clone.operators = [
-        OperatorIR(
-            op_type=op.op_type,
-            inputs=list(op.inputs),
-            outputs=list(op.outputs),
-            options=dict(op.options),
-            axis_semantics=dict(op.axis_semantics),
-            version=op.version,
-            onnx_node_name=op.onnx_node_name,
-            onnx_op_type=op.onnx_op_type,
-        ) for op in model_ir.operators
+        clone_operator_ir(op, options=dict(op.options))
+        for op in model_ir.operators
     ]
     for name, tensor in model_ir.tensors.items():
         new_data = tensor.data
@@ -253,33 +326,11 @@ def clone_model_ir_with_float16(model_ir: ModelIR) -> ModelIR:
             new_dtype = "FLOAT16"
             if isinstance(tensor.data, (np.ndarray, np.generic)):
                 new_data = tensor.data.astype(np.float16)
-        clone.tensors[name] = TensorIR(
-            name=tensor.name,
+        clone.tensors[name] = clone_tensor_ir(
+            tensor,
             dtype=new_dtype,
-            shape=list(tensor.shape),
-            shape_signature=list(tensor.shape_signature) if tensor.shape_signature is not None else None,
-            data=new_data.copy() if isinstance(new_data, np.ndarray) else new_data,
-            is_variable=tensor.is_variable,
-            quantization=(
-                dict(tensor.quantization)
-                if isinstance(tensor.quantization, dict)
-                else QuantParamIR(
-                    scale=list(tensor.quantization.scale),
-                    zero_point=list(tensor.quantization.zero_point),
-                    quantized_dimension=int(tensor.quantization.quantized_dimension),
-                    min=list(tensor.quantization.min)
-                    if tensor.quantization.min is not None
-                    else None,
-                    max=list(tensor.quantization.max)
-                    if tensor.quantization.max is not None
-                    else None,
-                )
-                if isinstance(tensor.quantization, QuantParamIR)
-                else tensor.quantization
-            ),
-            logical_layout=normalize_logical_layout(tensor.logical_layout),
-            physical_layout=normalize_logical_layout(tensor.physical_layout),
-            onnx_tensor_name=tensor.onnx_tensor_name,
+            data=new_data,
+            normalize_layouts=True,
         )
     return clone
 
@@ -309,16 +360,11 @@ def clone_model_ir_with_float32(model_ir: ModelIR) -> ModelIR:
     clone.outputs = list(model_ir.outputs)
     clone.subgraphs = [clone_model_ir_with_float32(subgraph) for subgraph in model_ir.subgraphs]
     clone.operators = [
-        OperatorIR(
-            op_type=op.op_type,
-            inputs=list(op.inputs),
-            outputs=list(op.outputs),
+        clone_operator_ir(
+            op,
             options=_rewrite_float16_token_to_float32(dict(op.options)),
-            axis_semantics=dict(op.axis_semantics),
-            version=op.version,
-            onnx_node_name=op.onnx_node_name,
-            onnx_op_type=op.onnx_op_type,
-        ) for op in model_ir.operators
+        )
+        for op in model_ir.operators
     ]
     for name, tensor in model_ir.tensors.items():
         new_data = tensor.data
@@ -327,33 +373,11 @@ def clone_model_ir_with_float32(model_ir: ModelIR) -> ModelIR:
             new_dtype = "FLOAT32"
             if isinstance(tensor.data, (np.ndarray, np.generic)):
                 new_data = tensor.data.astype(np.float32)
-        clone.tensors[name] = TensorIR(
-            name=tensor.name,
+        clone.tensors[name] = clone_tensor_ir(
+            tensor,
             dtype=new_dtype,
-            shape=list(tensor.shape),
-            shape_signature=list(tensor.shape_signature) if tensor.shape_signature is not None else None,
-            data=new_data.copy() if isinstance(new_data, np.ndarray) else new_data,
-            is_variable=tensor.is_variable,
-            quantization=(
-                dict(tensor.quantization)
-                if isinstance(tensor.quantization, dict)
-                else QuantParamIR(
-                    scale=list(tensor.quantization.scale),
-                    zero_point=list(tensor.quantization.zero_point),
-                    quantized_dimension=int(tensor.quantization.quantized_dimension),
-                    min=list(tensor.quantization.min)
-                    if tensor.quantization.min is not None
-                    else None,
-                    max=list(tensor.quantization.max)
-                    if tensor.quantization.max is not None
-                    else None,
-                )
-                if isinstance(tensor.quantization, QuantParamIR)
-                else tensor.quantization
-            ),
-            logical_layout=normalize_logical_layout(tensor.logical_layout),
-            physical_layout=normalize_logical_layout(tensor.physical_layout),
-            onnx_tensor_name=tensor.onnx_tensor_name,
+            data=new_data,
+            normalize_layouts=True,
         )
     return clone
 

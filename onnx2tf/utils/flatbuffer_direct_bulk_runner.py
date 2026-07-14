@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -106,6 +107,145 @@ class _ProgressSpinner:
                 f"{self._label} {frames[frame_index]}",
                 refresh=True,
             )
+
+
+def _read_direct_child_pids(pid: int) -> List[int]:
+    """Return Linux process children without starting another process."""
+
+    try:
+        with open(
+            f"/proc/{int(pid)}/task/{int(pid)}/children",
+            "r",
+            encoding="utf-8",
+        ) as f:
+            return [int(value) for value in f.read().split()]
+    except (FileNotFoundError, PermissionError, ProcessLookupError, ValueError):
+        return []
+
+
+def _collect_descendant_pids(pid: int) -> List[int]:
+    pending = list(_read_direct_child_pids(int(pid)))
+    descendants: List[int] = []
+    seen = set()
+    while pending:
+        child_pid = int(pending.pop())
+        if child_pid in seen:
+            continue
+        seen.add(child_pid)
+        descendants.append(child_pid)
+        pending.extend(_read_direct_child_pids(child_pid))
+    return descendants
+
+
+def _read_process_swap_kib(pid: int) -> int:
+    try:
+        with open(f"/proc/{int(pid)}/status", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmSwap:"):
+                    values = line.split()
+                    return int(values[1]) if len(values) >= 2 else 0
+    except (FileNotFoundError, PermissionError, ProcessLookupError, ValueError):
+        return 0
+    return 0
+
+
+def _read_process_name(pid: int) -> str:
+    try:
+        with open(f"/proc/{int(pid)}/comm", "r", encoding="utf-8") as f:
+            return f.read().strip() or "unknown"
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        return "unknown"
+
+
+class _ProcessTreeSwapMonitor:
+    """Detect and stop a sequential model subprocess once it starts swapping."""
+
+    def __init__(
+        self,
+        *,
+        root_pid: Optional[int] = None,
+        poll_interval_sec: float = 0.1,
+    ) -> None:
+        self._root_pid = int(os.getpid() if root_pid is None else root_pid)
+        self._poll_interval_sec = float(poll_interval_sec)
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._termination_started_at: Optional[float] = None
+        self._peak_total_swap_kib = 0
+        self._peak_swap_by_pid: Dict[int, Dict[str, Any]] = {}
+
+    @property
+    def swap_detected(self) -> bool:
+        return bool(self._peak_total_swap_kib > 0)
+
+    def start(self) -> None:
+        self.stop()
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        thread = self._thread
+        if thread is not None:
+            self._stop_event.set()
+            thread.join(timeout=max(0.5, self._poll_interval_sec * 2.0))
+        self._thread = None
+
+    def result(self) -> Dict[str, Any]:
+        return {
+            "swap_detected": self.swap_detected,
+            "peak_swap_kib": int(self._peak_total_swap_kib),
+            "swap_processes": [
+                {
+                    "pid": int(process_pid),
+                    "name": str(process_details["name"]),
+                    "peak_swap_kib": int(process_details["peak_swap_kib"]),
+                }
+                for process_pid, process_details in sorted(
+                    self._peak_swap_by_pid.items()
+                )
+            ],
+        }
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self._poll_interval_sec):
+            self._sample_once()
+
+    def _sample_once(self) -> None:
+        descendant_pids = _collect_descendant_pids(self._root_pid)
+        total_swap_kib = 0
+        for descendant_pid in descendant_pids:
+            swap_kib = _read_process_swap_kib(descendant_pid)
+            total_swap_kib += swap_kib
+            if swap_kib <= 0:
+                continue
+            process_name = _read_process_name(descendant_pid)
+            previous_details = self._peak_swap_by_pid.get(descendant_pid, {})
+            self._peak_swap_by_pid[descendant_pid] = {
+                "name": process_name,
+                "peak_swap_kib": max(
+                    int(swap_kib),
+                    int(previous_details.get("peak_swap_kib", 0)),
+                ),
+            }
+        self._peak_total_swap_kib = max(
+            int(total_swap_kib),
+            int(self._peak_total_swap_kib),
+        )
+        if total_swap_kib > 0 and self._termination_started_at is None:
+            self._termination_started_at = time.monotonic()
+        if self._termination_started_at is None:
+            return
+        terminate_signal = (
+            signal.SIGKILL
+            if time.monotonic() - self._termination_started_at >= 1.0
+            else signal.SIGTERM
+        )
+        for descendant_pid in reversed(descendant_pids):
+            try:
+                os.kill(descendant_pid, terminate_signal)
+            except (PermissionError, ProcessLookupError):
+                pass
 
 
 def _utc_now_iso() -> str:
@@ -218,6 +358,7 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
     baseline_classification_counts: Dict[str, int] = {}
     excluded_baseline_classification_counts: Dict[str, int] = {}
     model_options: Dict[str, Dict[str, Any]] = {}
+    acceptance_reasons: Dict[str, str] = {}
     for entry in model_entries:
         if not isinstance(entry, dict):
             raise ValueError(f"Invalid regression profile model entry. path={path}")
@@ -274,13 +415,24 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
             normalized_options["accuracy_only"] = bool(raw_accuracy_only)
         if normalized_options:
             model_options[model_name] = normalized_options
+        raw_acceptance_reason = entry.get("acceptance_reason", None)
+        if raw_acceptance_reason is not None:
+            if (
+                not isinstance(raw_acceptance_reason, str)
+                or str(raw_acceptance_reason).strip() == ""
+            ):
+                raise ValueError(
+                    "Regression profile acceptance_reason must be a non-empty string. "
+                    f"path={path} model={model_name!r}"
+                )
+            acceptance_reasons[model_name] = str(raw_acceptance_reason).strip()
         baseline_classification = str(
             entry.get("baseline_classification", "unspecified")
         )
         baseline_classification_counts[baseline_classification] = int(
             baseline_classification_counts.get(baseline_classification, 0)
         ) + 1
-        if baseline_classification == "timeout":
+        if baseline_classification in {"timeout", "excluded"}:
             excluded_baseline_classification_counts[baseline_classification] = int(
                 excluded_baseline_classification_counts.get(
                     baseline_classification,
@@ -291,6 +443,11 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
             active_model_names.append(model_name)
     if len(model_names) != len(set(model_names)):
         raise ValueError(f"Regression profile contains duplicate model names. path={path}")
+    if tiers != sorted(tiers):
+        raise ValueError(
+            "Regression profile models must be ordered by non-decreasing tier. "
+            f"path={path}"
+        )
     declared_model_count = int(payload.get("model_count", len(model_names)))
     if declared_model_count != len(model_names):
         raise ValueError(
@@ -324,6 +481,7 @@ def _load_regression_profile(profile_path: str) -> Dict[str, Any]:
         "recursive": False,
         "tiers": sorted(set(tiers)),
         "model_options": model_options,
+        "acceptance_reasons": acceptance_reasons,
         "baseline_classification_counts": dict(
             sorted(baseline_classification_counts.items())
         ),
@@ -530,6 +688,37 @@ def _classify_reports(
     }
 
 
+def _apply_profile_acceptance(
+    classification: Dict[str, Any],
+    *,
+    acceptance_reason: str,
+) -> Dict[str, Any]:
+    """Accept a recorded numeric exception without hiding its raw result."""
+
+    reason = str(acceptance_reason).strip()
+    if reason == "" or str(classification.get("classification", "")) != "tflite_fail":
+        return classification
+
+    accepted = dict(classification)
+    accepted.update(
+        {
+            "classification": "pass",
+            "strict_pass": True,
+            "reason": f"profile_acceptance:{reason}",
+            "accepted_by_profile": True,
+            "profile_acceptance_reason": reason,
+            "unaccepted_classification": str(
+                classification.get("classification", "")
+            ),
+            "unaccepted_strict_pass": bool(
+                classification.get("strict_pass", False)
+            ),
+            "unaccepted_reason": str(classification.get("reason", "")),
+        }
+    )
+    return accepted
+
+
 def _build_summary(state: Dict[str, Any]) -> Dict[str, Any]:
     entries = state.get("entries", [])
     counts = {
@@ -734,14 +923,22 @@ def run_flatbuffer_direct_bulk_verification(
     )
     if profile is not None:
         allowed_names = set(profile["active_model_names"])
-        discovered_names = {os.path.basename(path) for path in models}
+        discovered_by_name = {
+            os.path.basename(path): path
+            for path in models
+            if os.path.basename(path) in allowed_names
+        }
+        discovered_names = set(discovered_by_name)
         missing_names = sorted(allowed_names - discovered_names)
         if missing_names:
             raise RuntimeError(
                 "Regression-profile models are missing from the current root corpus. "
                 f"missing_models={missing_names}"
             )
-        models = [path for path in models if os.path.basename(path) in allowed_names]
+        models = [
+            discovered_by_name[model_name]
+            for model_name in profile["active_model_names"]
+        ]
     models_sha256 = _models_sha256(models)
     normalized_skip_model_names = sorted(
         {
@@ -873,6 +1070,9 @@ def run_flatbuffer_direct_bulk_verification(
                 "pytorch_accuracy_pass": None,
                 "tflite_max_abs": None,
                 "pytorch_max_abs": None,
+                "swap_detected": False,
+                "peak_swap_kib": 0,
+                "swap_processes": [],
                 "error_signature": "",
                 "error_signature_sha256": "",
             }
@@ -982,6 +1182,8 @@ def run_flatbuffer_direct_bulk_verification(
                 None,
             )
             os.environ[_INTERNAL_PASS_METRICS_PATH_ENV] = pass_metrics_path
+            swap_monitor = _ProcessTreeSwapMonitor()
+            swap_monitor.start()
             try:
                 completed = subprocess.run(
                     cmd,
@@ -996,11 +1198,21 @@ def run_flatbuffer_direct_bulk_verification(
                 entry["onnx2tf_exit_code"] = int(completed.returncode)
             except subprocess.TimeoutExpired as ex:
                 spinner.stop()
+                swap_monitor.stop()
+                entry.update(swap_monitor.result())
                 stdout_text = ex.stdout if isinstance(ex.stdout, str) else ""
                 stderr_text = ex.stderr if isinstance(ex.stderr, str) else ""
-                entry["classification"] = "timeout"
+                entry["classification"] = (
+                    "swap_detected"
+                    if bool(entry["swap_detected"])
+                    else "timeout"
+                )
                 entry["strict_pass"] = False
-                entry["reason"] = f"timeout_after_{int(timeout_sec)}s"
+                entry["reason"] = (
+                    "process_tree_swap_detected"
+                    if bool(entry["swap_detected"])
+                    else f"timeout_after_{int(timeout_sec)}s"
+                )
                 with open(stdout_log_path, "w", encoding="utf-8") as f:
                     f.write(stdout_text)
                 with open(stderr_log_path, "w", encoding="utf-8") as f:
@@ -1031,7 +1243,10 @@ def run_flatbuffer_direct_bulk_verification(
                     os.environ[_INTERNAL_PASS_METRICS_PATH_ENV] = (
                         previous_metrics_path
                     )
+                swap_monitor.stop()
                 spinner.stop()
+
+            entry.update(swap_monitor.result())
 
             with open(stdout_log_path, "w", encoding="utf-8") as f:
                 f.write(stdout_text)
@@ -1041,6 +1256,30 @@ def run_flatbuffer_direct_bulk_verification(
             pass_metrics = _read_json(pass_metrics_path)
             if isinstance(pass_metrics, dict):
                 entry["pass_metrics"] = pass_metrics
+
+            if bool(entry["swap_detected"]):
+                entry["classification"] = "swap_detected"
+                entry["strict_pass"] = False
+                entry["reason"] = "process_tree_swap_detected"
+                entry["duration_sec"] = float(time.time() - started)
+                entry.update(
+                    _normalized_error_signature(
+                        classification=str(entry["classification"]),
+                        reason=str(entry["reason"]),
+                        stdout_text=stdout_text,
+                        stderr_text=stderr_text,
+                        volatile_paths=[root_dir_abs, output_dir_abs, run_dir],
+                    )
+                )
+                entries.append(entry)
+                state["entries"] = entries
+                _write_json(state_path, state)
+                _update_progress_bar(
+                    progress_bar,
+                    model_name=model_name,
+                    classification=str(entry["classification"]),
+                )
+                continue
 
             if int(entry["onnx2tf_exit_code"]) != 0:
                 entry["classification"] = "conversion_error"
@@ -1073,6 +1312,14 @@ def run_flatbuffer_direct_bulk_verification(
                 pytorch_report=pytorch_report,
                 require_pytorch_report=bool(include_pytorch_artifacts),
             )
+            if profile is not None:
+                classification = _apply_profile_acceptance(
+                    classification,
+                    acceptance_reason=profile.get("acceptance_reasons", {}).get(
+                        model_name,
+                        "",
+                    ),
+                )
             entry["classification"] = str(classification["classification"])
             entry["strict_pass"] = bool(classification["strict_pass"])
             entry["reason"] = str(classification["reason"])
@@ -1080,6 +1327,15 @@ def run_flatbuffer_direct_bulk_verification(
             entry["pytorch_accuracy_pass"] = classification["pytorch_accuracy_pass"]
             entry["tflite_max_abs"] = classification["tflite_max_abs"]
             entry["pytorch_max_abs"] = classification["pytorch_max_abs"]
+            for optional_key in (
+                "accepted_by_profile",
+                "profile_acceptance_reason",
+                "unaccepted_classification",
+                "unaccepted_strict_pass",
+                "unaccepted_reason",
+            ):
+                if optional_key in classification:
+                    entry[optional_key] = classification[optional_key]
             entry["duration_sec"] = float(time.time() - started)
             entry.update(
                 _normalized_error_signature(
@@ -1134,7 +1390,8 @@ def main() -> None:
         help=(
             "Run the models recorded in a managed Tier 0-4 profile. "
             "The profile fixes root-only discovery and its node-count range; "
-            "models whose managed baseline is timeout are excluded."
+            "models whose managed baseline is timeout or explicitly excluded "
+            "are omitted."
         ),
     )
     parser.add_argument(

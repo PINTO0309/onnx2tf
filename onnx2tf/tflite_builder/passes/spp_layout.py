@@ -129,12 +129,10 @@ def _resolve_spp_layout_candidate(
     graph_index: ModelIRGraphIndex,
 ) -> Optional[_SppLayoutCandidate]:
     model_outputs = {str(name) for name in model_ir.outputs}
-    for concat0_op in model_ir.operators:
-        concat0_idx = graph_index.operator_index(concat0_op)
+    for concat0_idx in graph_index.operator_indices("CONCATENATION"):
+        concat0_op = model_ir.operators[int(concat0_idx)]
         if (
-            concat0_idx is None
-            or str(concat0_op.op_type) != "CONCATENATION"
-            or len(concat0_op.inputs) != 4
+            len(concat0_op.inputs) != 4
             or len(concat0_op.outputs) != 1
             or _normalized_axis(concat0_op) != 1
         ):

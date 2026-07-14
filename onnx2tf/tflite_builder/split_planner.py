@@ -8,11 +8,14 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.validation import run_model_ir_validation_pipeline
 from onnx2tf.tflite_builder.ir import (
     ModelIR,
     OperatorIR,
     TensorIR,
+    clone_operator_ir,
+    clone_tensor_ir,
     normalize_onnx_shape,
 )
 from onnx2tf.tflite_builder.model_writer import serialize_model, write_model_file
@@ -28,6 +31,29 @@ class PartitionRange:
     start_op_index: int
     end_op_index: int
     estimated_bytes: int
+
+
+def _resolve_split_graph_index(
+    *,
+    model_ir: ModelIR,
+    graph_index: Optional[ModelIRGraphIndex],
+) -> ModelIRGraphIndex:
+    if graph_index is None:
+        return ModelIRGraphIndex(model_ir)
+    if graph_index.model_ir is not model_ir:
+        raise ValueError("Split graph index belongs to a different ModelIR instance.")
+    return graph_index
+
+
+def _first_producer_indices(
+    graph_index: ModelIRGraphIndex,
+) -> Dict[str, int]:
+    return {
+        str(tensor_name): int(
+            graph_index.duplicate_producers.get(tensor_name, [producer_index])[0]
+        )
+        for tensor_name, producer_index in graph_index.producers.items()
+    }
 
 
 def _dtype_nbytes(dtype: str) -> int:
@@ -96,19 +122,25 @@ def _validate_range(
 
 def _collect_outputs(operators: Sequence[OperatorIR]) -> List[str]:
     outputs: List[str] = []
+    seen_outputs: Set[str] = set()
     for op in operators:
         for output_name in op.outputs:
-            if output_name and output_name not in outputs:
-                outputs.append(output_name)
+            if not output_name or output_name in seen_outputs:
+                continue
+            seen_outputs.add(output_name)
+            outputs.append(output_name)
     return outputs
 
 
 def _collect_inputs(operators: Sequence[OperatorIR]) -> List[str]:
     inputs: List[str] = []
+    seen_inputs: Set[str] = set()
     for op in operators:
         for input_name in op.inputs:
-            if input_name and input_name not in inputs:
-                inputs.append(input_name)
+            if not input_name or input_name in seen_inputs:
+                continue
+            seen_inputs.add(input_name)
+            inputs.append(input_name)
     return inputs
 
 
@@ -181,12 +213,18 @@ def build_partition_model_ir(
     start_op_index: int,
     end_op_index: int,
     partition_id: int,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    copy_tensor_data: bool = True,
 ) -> ModelIR:
     num_ops = len(model_ir.operators)
     _validate_range(
         num_ops=num_ops,
         start_op_index=start_op_index,
         end_op_index=end_op_index,
+    )
+    graph_index = _resolve_split_graph_index(
+        model_ir=model_ir,
+        graph_index=graph_index,
     )
     range_ops = model_ir.operators[start_op_index:end_op_index]
     produced_in_range = _collect_outputs(range_ops)
@@ -198,11 +236,14 @@ def build_partition_model_ir(
         consumed_tensor_names=consumed_in_range,
         produced_tensor_names=produced_set,
     )
-    consumed_after: Set[str] = set()
-    for op in model_ir.operators[end_op_index:]:
-        for input_name in op.inputs:
-            if input_name in produced_set:
-                consumed_after.add(input_name)
+    consumed_after: Set[str] = {
+        tensor_name
+        for tensor_name in produced_set
+        if graph_index.has_consumer_at_or_after(
+            tensor_name,
+            end_op_index,
+        )
+    }
 
     partition_outputs: List[str] = []
     for name in produced_in_range:
@@ -217,7 +258,8 @@ def build_partition_model_ir(
         operators=range_ops,
         partition_outputs=partition_outputs,
     )
-    if len(required_op_indices) > 0:
+    all_range_ops_required = len(required_op_indices) == len(range_ops)
+    if len(required_op_indices) > 0 and not all_range_ops_required:
         range_ops = [range_ops[op_idx] for op_idx in required_op_indices]
         produced_in_range = _collect_outputs(range_ops)
         produced_set = set(produced_in_range)
@@ -245,16 +287,7 @@ def build_partition_model_ir(
         description=f"{model_ir.description} (partition {partition_id})",
     )
     part_model.operators = [
-        OperatorIR(
-            op_type=op.op_type,
-            inputs=list(op.inputs),
-            outputs=list(op.outputs),
-            options=dict(op.options),
-            axis_semantics=dict(op.axis_semantics),
-            version=op.version,
-            onnx_node_name=op.onnx_node_name,
-            onnx_op_type=op.onnx_op_type,
-        )
+        clone_operator_ir(op, options=dict(op.options))
         for op in range_ops
     ]
     part_model.inputs = partition_inputs
@@ -263,19 +296,13 @@ def build_partition_model_ir(
         if tensor_name not in model_ir.tensors:
             continue
         tensor = model_ir.tensors[tensor_name]
-        part_model.tensors[tensor_name] = TensorIR(
-            name=tensor.name,
+        part_model.tensors[tensor_name] = clone_tensor_ir(
+            tensor,
             dtype=tensor.dtype,
-            shape=list(tensor.shape),
-            shape_signature=list(tensor.shape_signature)
-            if tensor.shape_signature is not None
-            else None,
-            data=tensor.data.copy() if isinstance(tensor.data, np.ndarray) else tensor.data,
-            is_variable=bool(tensor.is_variable),
-            quantization=tensor.quantization,
-            logical_layout=tensor.logical_layout,
-            physical_layout=tensor.physical_layout,
-            onnx_tensor_name=tensor.onnx_tensor_name,
+            data=tensor.data,
+            normalize_layouts=False,
+            copy_data=copy_tensor_data,
+            clone_quantization=False,
         )
     return part_model
 
@@ -305,17 +332,17 @@ def crop_model_ir_by_boundary_tensors(
         for name in list(model_ir.tensors.keys())
         if str(name) != ""
     }
-    top_level_tensor_names.update(
+    runtime_input_names: Set[str] = {
         str(name)
         for name in list(model_ir.inputs)
         if str(name) != ""
-    )
+    }
+    top_level_tensor_names.update(runtime_input_names)
     top_level_tensor_names.update(
         str(name)
         for name in list(model_ir.outputs)
         if str(name) != ""
     )
-    nested_tensor_names = _collect_nested_tensor_names(model_ir)
 
     boundary_inputs = [
         str(name)
@@ -347,16 +374,12 @@ def crop_model_ir_by_boundary_tensors(
             f"{crop_error_prefix} requested output boundary list is empty."
         )
 
-    producer_index: Dict[str, int] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        for output_name in list(op.outputs):
-            normalized_name = str(output_name)
-            if normalized_name != "" and normalized_name not in producer_index:
-                producer_index[normalized_name] = int(op_idx)
-
+    nested_tensor_names: Optional[Set[str]] = None
     for tensor_name in boundary_inputs + boundary_outputs:
         if tensor_name in top_level_tensor_names:
             continue
+        if nested_tensor_names is None:
+            nested_tensor_names = _collect_nested_tensor_names(model_ir)
         if tensor_name in nested_tensor_names:
             raise ValueError(
                 f"{crop_error_prefix} nested subgraph tensor names are unsupported. "
@@ -367,36 +390,40 @@ def crop_model_ir_by_boundary_tensors(
             f"name={tensor_name}"
         )
 
-    for tensor_name in boundary_inputs:
-        tensor = model_ir.tensors.get(tensor_name, None)
-        if tensor is None:
-            continue
-        if tensor_name in producer_index:
-            continue
-        if tensor_name in set(str(name) for name in model_ir.inputs):
-            continue
-        if tensor.data is not None:
-            raise ValueError(
-                f"{crop_error_prefix} constant tensors cannot be used as interrupt inputs. "
-                f"name={tensor_name}"
-            )
-
     always_available_tensors: Set[str] = set(boundary_inputs)
     for tensor_name, tensor in model_ir.tensors.items():
         normalized_name = str(tensor_name)
         if normalized_name != "" and tensor.data is not None:
             always_available_tensors.add(normalized_name)
 
+    producer_index: Dict[str, int] = {}
     forward_reachable_ops: Set[int] = set()
     forward_available_tensors: Set[str] = set(always_available_tensors)
     for op_idx, op in enumerate(model_ir.operators):
+        normalized_outputs = [
+            str(name) for name in list(op.outputs) if str(name) != ""
+        ]
+        for output_name in normalized_outputs:
+            if output_name not in producer_index:
+                producer_index[output_name] = int(op_idx)
         op_inputs = [str(name) for name in list(op.inputs) if str(name) != ""]
         if all(input_name in forward_available_tensors for input_name in op_inputs):
             forward_reachable_ops.add(int(op_idx))
-            for output_name in list(op.outputs):
-                normalized_name = str(output_name)
-                if normalized_name != "":
-                    forward_available_tensors.add(normalized_name)
+            forward_available_tensors.update(normalized_outputs)
+
+    for tensor_name in boundary_inputs:
+        tensor = model_ir.tensors.get(tensor_name, None)
+        if tensor is None:
+            continue
+        if tensor_name in producer_index:
+            continue
+        if tensor_name in runtime_input_names:
+            continue
+        if tensor.data is not None:
+            raise ValueError(
+                f"{crop_error_prefix} constant tensors cannot be used as interrupt inputs. "
+                f"name={tensor_name}"
+            )
 
     backward_required_ops: Set[int] = set()
     pending_tensors: List[str] = list(boundary_outputs)
@@ -419,34 +446,28 @@ def crop_model_ir_by_boundary_tensors(
             if normalized_name != "":
                 pending_tensors.append(normalized_name)
 
-    kept_operator_indices = [
-        int(op_idx)
-        for op_idx in range(len(model_ir.operators))
-        if int(op_idx) in forward_reachable_ops
-        and int(op_idx) in backward_required_ops
-    ]
-
-    kept_output_tensors: Set[str] = set()
-    for op_idx in kept_operator_indices:
-        kept_output_tensors.update(
-            str(name)
-            for name in list(model_ir.operators[int(op_idx)].outputs)
-            if str(name) != ""
-        )
+    kept_operator_indices = sorted(
+        forward_reachable_ops.intersection(backward_required_ops)
+    )
 
     missing_runtime_inputs: List[str] = []
     cropped_available_tensors: Set[str] = set(always_available_tensors)
+    required_tensor_names: Set[str] = set(boundary_inputs + boundary_outputs)
+    kept_operators: List[OperatorIR] = []
     for op_idx in kept_operator_indices:
         op = model_ir.operators[int(op_idx)]
+        kept_operators.append(op)
         for input_name in list(op.inputs):
             normalized_name = str(input_name)
             if normalized_name == "":
                 continue
+            required_tensor_names.add(normalized_name)
             if normalized_name not in cropped_available_tensors:
                 missing_runtime_inputs.append(normalized_name)
         for output_name in list(op.outputs):
             normalized_name = str(output_name)
             if normalized_name != "":
+                required_tensor_names.add(normalized_name)
                 cropped_available_tensors.add(normalized_name)
 
     if len(missing_runtime_inputs) > 0:
@@ -466,16 +487,6 @@ def crop_model_ir_by_boundary_tensors(
             f"outputs={sorted(set(unreachable_outputs))}"
         )
 
-    required_tensor_names: Set[str] = set(boundary_inputs + boundary_outputs)
-    for op_idx in kept_operator_indices:
-        op = model_ir.operators[int(op_idx)]
-        required_tensor_names.update(
-            str(name) for name in list(op.inputs) if str(name) != ""
-        )
-        required_tensor_names.update(
-            str(name) for name in list(op.outputs) if str(name) != ""
-        )
-
     cropped_model_ir = ModelIR(
         name=str(model_ir.name),
         description=str(model_ir.description),
@@ -485,14 +496,12 @@ def crop_model_ir_by_boundary_tensors(
     cropped_model_ir.outputs = list(boundary_outputs)
     cropped_model_ir.subgraphs = copy.deepcopy(list(model_ir.subgraphs))
     cropped_model_ir.operators = [
-        OperatorIR(
-            op_type=str(model_ir.operators[int(op_idx)].op_type),
-            inputs=list(model_ir.operators[int(op_idx)].inputs),
-            outputs=list(model_ir.operators[int(op_idx)].outputs),
-            options=copy.deepcopy(dict(model_ir.operators[int(op_idx)].options)),
-            version=int(model_ir.operators[int(op_idx)].version),
+        clone_operator_ir(
+            op,
+            options=copy.deepcopy(dict(op.options)),
+            axis_semantics=copy.deepcopy(dict(op.axis_semantics)),
         )
-        for op_idx in kept_operator_indices
+        for op in kept_operators
     ]
     for tensor_name in required_tensor_names:
         tensor = model_ir.tensors.get(str(tensor_name), None)
@@ -504,7 +513,16 @@ def crop_model_ir_by_boundary_tensors(
 
 class _ModelIRRewriteBuilder:
     def __init__(self, model_ir: ModelIR):
-        self.model_ir = copy.deepcopy(model_ir)
+        self.model_ir = ModelIR(
+            name=str(model_ir.name),
+            description=str(model_ir.description),
+            tensors=copy.deepcopy(dict(model_ir.tensors)),
+            operators=[],
+            inputs=list(model_ir.inputs),
+            outputs=list(model_ir.outputs),
+            subgraphs=copy.deepcopy(list(model_ir.subgraphs)),
+            metadata=copy.deepcopy(dict(model_ir.metadata)),
+        )
         self._serial = 0
         self._aliases: Dict[str, str] = {}
 
@@ -662,7 +680,10 @@ def _copy_operator_with_remapped_inputs(
         inputs=list(remapped_inputs),
         outputs=list(op.outputs),
         options=copy.deepcopy(dict(op.options)),
+        axis_semantics=copy.deepcopy(dict(op.axis_semantics)),
         version=int(op.version),
+        onnx_node_name=op.onnx_node_name,
+        onnx_op_type=op.onnx_op_type,
     )
 
 
@@ -743,7 +764,7 @@ def rewrite_model_ir_disable_group_convolution(
     model_ir: ModelIR,
 ) -> Tuple[ModelIR, int]:
     builder = _ModelIRRewriteBuilder(model_ir)
-    rewritten_ops: List[OperatorIR] = []
+    rewritten_ops = builder.model_ir.operators
     rewritten_count = 0
 
     for original_op in list(model_ir.operators):
@@ -910,7 +931,6 @@ def rewrite_model_ir_disable_group_convolution(
         )
         rewritten_count += 1
 
-    builder.model_ir.operators = rewritten_ops
     _prune_unused_tensors_local(builder.model_ir)
     return builder.model_ir, int(rewritten_count)
 
@@ -920,7 +940,7 @@ def rewrite_model_ir_unfold_batchmatmul(
     model_ir: ModelIR,
 ) -> Tuple[ModelIR, int]:
     builder = _ModelIRRewriteBuilder(model_ir)
-    rewritten_ops: List[OperatorIR] = []
+    rewritten_ops = builder.model_ir.operators
     rewritten_count = 0
 
     for original_op in list(model_ir.operators):
@@ -1158,7 +1178,6 @@ def rewrite_model_ir_unfold_batchmatmul(
         )
         rewritten_count += 1
 
-    builder.model_ir.operators = rewritten_ops
     _prune_unused_tensors_local(builder.model_ir)
     return builder.model_ir, int(rewritten_count)
 
@@ -1757,7 +1776,7 @@ def rewrite_model_ir_unroll_recurrent_ops(
     model_ir: ModelIR,
 ) -> Tuple[ModelIR, int]:
     builder = _ModelIRRewriteBuilder(model_ir)
-    rewritten_ops: List[OperatorIR] = []
+    rewritten_ops = builder.model_ir.operators
     rewritten_count = 0
 
     for original_op in list(model_ir.operators):
@@ -1953,47 +1972,71 @@ def rewrite_model_ir_unroll_recurrent_ops(
             _copy_operator_with_remapped_inputs(original_op, remapped_inputs)
         )
 
-    builder.model_ir.operators = rewritten_ops
     _prune_unused_tensors_local(builder.model_ir)
     return builder.model_ir, int(rewritten_count)
 
 
-def find_dependency_safe_split_points(model_ir: ModelIR) -> List[Dict[str, Any]]:
+def find_dependency_safe_split_points(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    producer_index: Optional[Dict[str, int]] = None,
+) -> List[Dict[str, Any]]:
     op_count = len(model_ir.operators)
     if op_count <= 1:
         return []
-    producer_index: Dict[str, int] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        for out_name in op.outputs:
-            if out_name and out_name not in producer_index:
-                producer_index[out_name] = op_idx
+    graph_index = _resolve_split_graph_index(
+        model_ir=model_ir,
+        graph_index=graph_index,
+    )
+    if producer_index is None:
+        producer_index = _first_producer_indices(graph_index)
+
+    invalid_boundary_delta = [0] * (op_count + 1)
+    last_forward_consumer: Dict[str, int] = {}
+    for input_name, consumer_indices in graph_index.consumers.items():
+        producer_idx = producer_index.get(input_name)
+        if producer_idx is None:
+            continue
+        for consumer_idx in consumer_indices:
+            if producer_idx == consumer_idx:
+                continue
+            if consumer_idx < producer_idx:
+                invalid_boundary_delta[consumer_idx + 1] += 1
+                invalid_boundary_delta[producer_idx + 1] -= 1
+                continue
+            last_forward_consumer[input_name] = max(
+                int(last_forward_consumer.get(input_name, producer_idx)),
+                int(consumer_idx),
+            )
+
+    crossing_starts: Dict[int, Set[str]] = {}
+    crossing_ends: Dict[int, Set[str]] = {}
+    for tensor_name, last_consumer_idx in last_forward_consumer.items():
+        producer_idx = int(producer_index[tensor_name])
+        crossing_starts.setdefault(producer_idx + 1, set()).add(tensor_name)
+        crossing_ends.setdefault(last_consumer_idx + 1, set()).add(tensor_name)
 
     points: List[Dict[str, Any]] = []
+    invalid_dependency_count = 0
+    crossing_tensors: Set[str] = set()
     for boundary in range(1, op_count):
-        valid = True
-        crossing_tensors: Set[str] = set()
-        for op_idx, op in enumerate(model_ir.operators):
-            for input_name in op.inputs:
-                if not input_name:
-                    continue
-                producer = producer_index.get(input_name)
-                if producer is None:
-                    continue
-                if op_idx < boundary and producer >= boundary:
-                    valid = False
-                    break
-                if op_idx >= boundary and producer < boundary:
-                    crossing_tensors.add(input_name)
-            if not valid:
-                break
-        if valid:
-            points.append(
-                {
-                    "index": int(boundary),
-                    "crossing_count": int(len(crossing_tensors)),
-                    "crossing_tensors": sorted(list(crossing_tensors)),
-                }
-            )
+        invalid_dependency_count += int(invalid_boundary_delta[boundary])
+        ending_tensors = crossing_ends.get(boundary)
+        if ending_tensors is not None:
+            crossing_tensors.difference_update(ending_tensors)
+        starting_tensors = crossing_starts.get(boundary)
+        if starting_tensors is not None:
+            crossing_tensors.update(starting_tensors)
+        if invalid_dependency_count > 0:
+            continue
+        points.append(
+            {
+                "index": int(boundary),
+                "crossing_count": int(len(crossing_tensors)),
+                "crossing_tensors": sorted(list(crossing_tensors)),
+            }
+        )
     return points
 
 
@@ -2001,16 +2044,19 @@ def validate_partition_ranges(
     *,
     model_ir: ModelIR,
     partition_ranges: Sequence[Tuple[int, int]],
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    producer_index: Optional[Dict[str, int]] = None,
 ) -> None:
     op_count = len(model_ir.operators)
     if len(partition_ranges) == 0:
         raise ValueError("partition_ranges must not be empty.")
     expected_start = 0
-    producer_index: Dict[str, int] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        for out_name in op.outputs:
-            if out_name and out_name not in producer_index:
-                producer_index[out_name] = op_idx
+    graph_index = _resolve_split_graph_index(
+        model_ir=model_ir,
+        graph_index=graph_index,
+    )
+    if producer_index is None:
+        producer_index = _first_producer_indices(graph_index)
 
     for part_idx, (start_op_index, end_op_index) in enumerate(partition_ranges):
         _validate_range(
@@ -2055,25 +2101,29 @@ def _build_partition_edges(
     *,
     model_ir: ModelIR,
     partition_ranges: Sequence[PartitionRange],
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    producer_index: Optional[Dict[str, int]] = None,
 ) -> List[Dict[str, Any]]:
+    graph_index = _resolve_split_graph_index(
+        model_ir=model_ir,
+        graph_index=graph_index,
+    )
+    if producer_index is None:
+        producer_index = _first_producer_indices(graph_index)
     op_to_part: Dict[int, int] = {}
     for part_idx, partition in enumerate(partition_ranges):
         for op_idx in range(partition.start_op_index, partition.end_op_index):
             op_to_part[op_idx] = part_idx
 
-    producer_to_part: Dict[str, int] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        part_idx = op_to_part[op_idx]
-        for out_name in op.outputs:
-            if out_name and out_name not in producer_to_part:
-                producer_to_part[out_name] = part_idx
-
     edge_map: Dict[Tuple[int, int], Set[str]] = {}
-    for op_idx, op in enumerate(model_ir.operators):
-        dst_part = op_to_part[op_idx]
-        for input_name in op.inputs:
-            src_part = producer_to_part.get(input_name)
-            if src_part is None or src_part >= dst_part:
+    for input_name, consumer_indices in graph_index.consumers.items():
+        producer_op_index = producer_index.get(input_name)
+        if producer_op_index is None:
+            continue
+        src_part = op_to_part[producer_op_index]
+        for consumer_op_index in consumer_indices:
+            dst_part = op_to_part[consumer_op_index]
+            if src_part >= dst_part:
                 continue
             key = (src_part, dst_part)
             if key not in edge_map:
@@ -2117,6 +2167,7 @@ def plan_contiguous_partitions_by_size(
     hard_max_bytes: int = DEFAULT_TFLITE_SPLIT_MAX_BYTES,
     schema_tflite: Optional[Dict[str, Any]] = None,
     size_estimator: Optional[Callable[[ModelIR], int]] = None,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Dict[str, Any]:
     target_max_bytes = int(target_max_bytes)
     hard_max_bytes = int(hard_max_bytes)
@@ -2136,7 +2187,16 @@ def plan_contiguous_partitions_by_size(
         schema_tflite=schema_tflite,
         size_estimator=size_estimator,
     )
-    candidate_split_points = find_dependency_safe_split_points(model_ir)
+    graph_index = _resolve_split_graph_index(
+        model_ir=model_ir,
+        graph_index=graph_index,
+    )
+    producer_index = _first_producer_indices(graph_index)
+    candidate_split_points = find_dependency_safe_split_points(
+        model_ir,
+        graph_index=graph_index,
+        producer_index=producer_index,
+    )
 
     op_count = len(model_ir.operators)
     if op_count == 0:
@@ -2168,6 +2228,8 @@ def plan_contiguous_partitions_by_size(
                 start_op_index=start_op_index,
                 end_op_index=mid,
                 partition_id=partition_id,
+                graph_index=graph_index,
+                copy_tensor_data=False,
             )
             estimated_size = _estimate_partition_size(
                 partition_model_ir=part_model,
@@ -2188,6 +2250,8 @@ def plan_contiguous_partitions_by_size(
                 start_op_index=start_op_index,
                 end_op_index=end_op_index,
                 partition_id=partition_id,
+                graph_index=graph_index,
+                copy_tensor_data=False,
             )
             estimated_size = _estimate_partition_size(
                 partition_model_ir=part_model,
@@ -2222,6 +2286,8 @@ def plan_contiguous_partitions_by_size(
             (part.start_op_index, part.end_op_index)
             for part in partition_ranges
         ],
+        graph_index=graph_index,
+        producer_index=producer_index,
     )
     for part in partition_ranges:
         if part.estimated_bytes > hard_max_bytes:
@@ -2234,6 +2300,8 @@ def plan_contiguous_partitions_by_size(
     edges = _build_partition_edges(
         model_ir=model_ir,
         partition_ranges=partition_ranges,
+        graph_index=graph_index,
+        producer_index=producer_index,
     )
     return {
         "schema_version": 1,
@@ -2281,11 +2349,16 @@ def write_split_model_files_and_manifest(
     output_folder_path: str,
     output_file_name: str,
     tflite_loader_validator: Optional[Callable[[str], None]] = None,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> Dict[str, Any]:
     partitions = list(plan_report.get("partitions", []))
     edges = list(plan_report.get("edges", []))
     generated_partition_paths: List[str] = []
     generated_partition_entries: List[Dict[str, Any]] = []
+    graph_index = _resolve_split_graph_index(
+        model_ir=model_ir,
+        graph_index=graph_index,
+    )
 
     for part in partitions:
         partition_id = int(part["partition_id"])
@@ -2296,6 +2369,7 @@ def write_split_model_files_and_manifest(
             start_op_index=start_op_index,
             end_op_index=end_op_index,
             partition_id=partition_id,
+            graph_index=graph_index,
         )
         run_model_ir_validation_pipeline(part_model_ir)
         split_file_name = f"{output_file_name}_{partition_id:04d}.tflite"

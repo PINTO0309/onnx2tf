@@ -59,8 +59,9 @@ def _optimize_transpose_dequant_prelu_quantize_bridges(
         changed = False
         consumers = graph_index.consumers
 
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+        for pre_idx in graph_index.operator_indices("TRANSPOSE"):
+            pre_op = model_ir.operators[int(pre_idx)]
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
                 continue
 
             perm_pre = _read_transpose_perm(model_ir, pre_op)
@@ -242,8 +243,9 @@ def _optimize_transpose_dequant_prelu_transpose_bridges(
         changed = False
         consumers = graph_index.consumers
 
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
+        for pre_idx in graph_index.operator_indices("TRANSPOSE"):
+            pre_op = model_ir.operators[int(pre_idx)]
+            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
                 continue
 
             perm_pre = _read_transpose_perm(model_ir, pre_op)
@@ -416,8 +418,9 @@ def _optimize_dequant_prelu_quantize_chains(
         changed = False
         consumers = graph_index.consumers
 
-        for dq_idx, dq_op in enumerate(model_ir.operators):
-            if str(dq_op.op_type) != "DEQUANTIZE" or len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
+        for dq_idx in graph_index.operator_indices("DEQUANTIZE"):
+            dq_op = model_ir.operators[int(dq_idx)]
+            if len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
                 continue
             q_in_name = str(dq_op.inputs[0])
             f_in_name = str(dq_op.outputs[0])
@@ -547,8 +550,9 @@ def _optimize_dequant_prelu_depthwise_quantize_chains(
         changed = False
         consumers = graph_index.consumers
 
-        for dq_idx, dq_op in enumerate(model_ir.operators):
-            if str(dq_op.op_type) != "DEQUANTIZE" or len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
+        for dq_idx in graph_index.operator_indices("DEQUANTIZE"):
+            dq_op = model_ir.operators[int(dq_idx)]
+            if len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
                 continue
             q_in_name = str(dq_op.inputs[0])
             f_in_name = str(dq_op.outputs[0])

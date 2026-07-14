@@ -6,6 +6,7 @@ import numpy as np
 import onnx
 import pytest
 from onnx import TensorProto, helper
+import onnx2tf.tflite_builder.core.validation as validation_module
 
 from onnx2tf.tflite_builder.core import (
     ConversionRequest,
@@ -97,6 +98,26 @@ def test_conversion_session_builds_one_graph_index() -> None:
     )
     session.refresh_indexes()
     assert session.layout_state.logical_of("new") == "NHWC"
+
+
+def test_validation_pipeline_reuses_current_caller_index(monkeypatch) -> None:
+    model_ir = _add_model_ir()
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    class _UnexpectedGraphIndex:
+        def __init__(self, _model_ir):
+            raise AssertionError("validation rebuilt a caller-owned graph index")
+
+    monkeypatch.setattr(
+        validation_module,
+        "ModelIRGraphIndex",
+        _UnexpectedGraphIndex,
+    )
+
+    validation_module.run_model_ir_validation_pipeline(
+        model_ir,
+        graph_index=graph_index,
+    )
 
 
 def test_lowerer_private_sink_collects_internal_pass_diagnostics() -> None:
@@ -195,10 +216,17 @@ def test_model_ir_index_incremental_input_output_mutation_matches_refresh() -> N
     index.replace_operator_inputs(0, ["x", "x"])
     index.replace_operator_outputs(0, ["w"])
 
+    assert index.operator_indices("ADD") == [0]
+    assert index.operator_indices("MUL") == []
+    assert index.operator_indices_for_types(["MUL", "ADD", "ADD"]) == [0]
     assert index.consumer_indices("x") == [0, 0]
     assert index.consumer_indices("y") == []
     assert index.producer("z") is None
     assert index.producer("w") is model_ir.operators[0]
+    index.replace_operator_type(0, "DIV")
+    assert index.operator_indices("ADD") == []
+    assert index.operator_indices("DIV") == [0]
+    assert index.operator_indices_for_types({"ADD", "DIV"}) == [0]
     refreshed = ModelIRGraphIndex(model_ir)
     assert index.producers == refreshed.producers
     assert index.consumers == refreshed.consumers
@@ -212,6 +240,9 @@ def test_model_ir_index_incremental_insert_remove_shifts_references() -> None:
 
     index.insert_operator(0, identity)
 
+    assert index.operator_indices("IDENTITY") == [0]
+    assert index.operator_indices("ADD") == [1]
+    assert index.operator_indices_for_types({"ADD", "IDENTITY"}) == [0, 1]
     assert index.duplicate_producers == {"z": [0, 1]}
     assert index.consumer_indices("x") == [0, 1]
     assert index.consumer_indices("y") == [1]
@@ -223,6 +254,9 @@ def test_model_ir_index_incremental_insert_remove_shifts_references() -> None:
     removed = index.remove_operator(0)
 
     assert removed is identity
+    assert index.operator_indices("IDENTITY") == []
+    assert index.operator_indices("ADD") == [0]
+    assert index.operator_indices_for_types({"ADD", "IDENTITY"}) == [0]
     assert index.producers == {"z": 0}
     assert index.consumer_indices("x") == [0]
     assert index.consumer_indices("y") == [0]
@@ -230,6 +264,50 @@ def test_model_ir_index_incremental_insert_remove_shifts_references() -> None:
     refreshed = ModelIRGraphIndex(model_ir)
     assert index.producers == refreshed.producers
     assert index.consumers == refreshed.consumers
+
+
+def test_model_ir_index_batch_remove_compacts_references_once() -> None:
+    model_ir = ModelIR(name="batch_remove")
+    model_ir.inputs = ["x", "y"]
+    model_ir.outputs = ["out"]
+    model_ir.operators = [
+        OperatorIR("ADD", ["x", "y"], ["a"]),
+        OperatorIR("MUL", ["a", "y"], ["b"]),
+        OperatorIR("IDENTITY", ["x"], ["dead0"]),
+        OperatorIR("SUB", ["b", "y"], ["out"]),
+        OperatorIR("IDENTITY", ["y"], ["dead1"]),
+    ]
+    dead0 = model_ir.operators[2]
+    dead1 = model_ir.operators[4]
+    index = ModelIRGraphIndex(model_ir)
+
+    removed = index.remove_operators([4, 2, 4])
+
+    assert removed == [dead0, dead1]
+    assert [op.op_type for op in model_ir.operators] == ["ADD", "MUL", "SUB"]
+    assert index.operator_indices("IDENTITY") == []
+    assert index.operator_indices_for_types({"ADD", "MUL", "SUB"}) == [0, 1, 2]
+    refreshed = ModelIRGraphIndex(model_ir)
+    assert index.producers == refreshed.producers
+    assert index.consumers == refreshed.consumers
+    assert index.duplicate_producers == refreshed.duplicate_producers
+    assert index._operator_indices_by_id == refreshed._operator_indices_by_id
+    assert index._operator_indices_by_type == refreshed._operator_indices_by_type
+
+
+def test_model_ir_pass_state_prepared_data_is_session_local_and_rollback_safe() -> None:
+    first = ModelIRPassState(_add_model_ir())
+    second = ModelIRPassState(_add_model_ir())
+
+    first.set_prepared_pass_data("candidate", {"index": 0})
+    assert second.take_prepared_pass_data("candidate") is None
+    assert first.take_prepared_pass_data("candidate") == {"index": 0}
+    assert first.take_prepared_pass_data("candidate") is None
+
+    snapshot = first.snapshot()
+    first.set_prepared_pass_data("candidate", {"index": 1})
+    first.restore(snapshot)
+    assert first.take_prepared_pass_data("candidate") is None
 
 
 def test_model_ir_invariants_allow_empty_optional_operator_slots() -> None:

@@ -18,18 +18,62 @@ The required stage order is:
 7. invoke only exporters selected by `ArtifactPlan`;
 8. adapt `ConversionResult` back to the legacy return dictionary.
 
+Optional artifact work is guarded at the call site as well as inside each
+exporter. In particular, op-coverage report writing is invoked only when
+`ArtifactPlan.op_coverage_report` is true on success and both failure paths;
+an unrequested report does not enter even the no-op wrapper. Export progress
+advances for SavedModel only inside the SavedModel request guard, so the runtime
+step count remains aligned with the request-derived label count.
+Split thresholds and quantization calibration controls are resolved by the
+TensorFlow- and Torch-free artifact policy only when the corresponding
+`ArtifactPlan` flag is set. An unrequested artifact does not read or parse its
+CLI values or environment variables, while requested values retain the legacy
+conversion and default semantics. The resolved quantization mapping is
+immutable and raw option dictionaries do not propagate into builders.
+
 A pass has a stable ID, phase, priority, maximum iteration count, and explicit
 `changed` result. Repeating passes must use a graph fingerprint so a cycle
 terminates deterministically. Risky rewrites use the transactional mode and
 must leave the graph unchanged when invariant validation fails.
 
+`ModelIRPassState` also provides one-shot prepared pass data for expensive
+preconditions that produce the exact object consumed by their callback. The
+data belongs to one session, is removed on first consumption, and is cleared
+on rollback, so it cannot leak across conversions or survive restored graph
+objects.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while
-producer, consumer, duplicate-producer, and operator-position indices remain
-consistent. A full `refresh()` is retained only for compatibility with
-external mutations that bypass these APIs. Lineage-aware graph mutation
-helpers accept an optional ModelIR index and update it atomically.
+producer, consumer, duplicate-producer, operator-position, and operator-type
+indices remain consistent. The operator-type index returns graph-order
+positions and is shifted together with all edge indices on insertion/removal,
+so bounded passes can enumerate only relevant operator families instead of
+rescanning the full ModelIR operator list. A full `refresh()` is retained only
+for compatibility with external mutations that bypass these APIs.
+Lineage-aware graph mutation helpers accept an optional ModelIR index and
+update it atomically.
+`operator_indices_for_types()` returns a sorted, deduplicated union for
+multi-type roots without scanning the operator list. Cast cleanup and
+constant-input Cast/Pool/Pad/ScatterND/binary folding use these single- or
+multi-type indices; each successful mutation restarts against the updated
+index.
+
+The final ModelIR validation pipeline accepts an optional current caller-owned
+index. Float32 and float16 serialization preparation passes the same index used
+and differentially maintained by terminal ScatterND/binary constant folding,
+so invariant validation does not reconstruct identical producer/consumer and
+duplicate-producer state immediately before writing. Callers without a current
+index retain the original self-contained validation behavior.
+
+Indexed root enumeration is used by the rank-four float and quantized Concat
+families and by the bounded axis-3 constant-Concat, Add/Concat suffix, rank-five
+NDHWC Concat, Concat/unary/Conv, SPP, and Dequantize/Concat/Quantize passes.
+Each visits only graph-order `CONCATENATION` positions; its semantic and
+boundary guards remain unchanged.
+Quantized Reshape and the four quantized PReLU bridge/fusion matchers likewise
+enumerate only indexed `DEQUANTIZE` or `TRANSPOSE` roots. Each successful
+rewrite restarts its outer loop against the differentially updated index.
 
 Operator additions keep capability validation and lowering in the same
 op-family module. Do not add model-name checks. A model-specific failure should
@@ -286,10 +330,264 @@ The adjacent rank-five NDHWC pre-Concat rule has a compact corpus in
 `tests/test_flatbuffer_direct_ndhwc_concat_layout.py`. It fixes mixed direct
 and unary inputs, two inverse post branches, axis-4 canonicalization, and
 complete no-op behavior for fan-out, public, permutation, axis, unary, rank,
-and spatial-shape boundaries. Its 258-line implementation and five production
-calls remain central at the characterization checkpoint; exact-AST mechanical
-extraction is next. The larger generic NHWC pre-Concat matcher is intentionally
-a separate future unit.
+and spatial-shape boundaries. The implementation is owned by
+`passes/ndhwc_concat_layout.py`; indexed candidate planning, differential
+mutation, `LayoutState` reconciliation, and transactional runner
+`layout.ndhwc_pre_concat` replace all five raw production calls. Per-axis
+quantization dimensions move from NCDHW dimension 1 to NDHWC dimension 4.
+
+The much larger rank-four generic NHWC pre-Concat matcher is being migrated by
+semantic family rather than as one monolithic rule. Its strict float-path
+direct-adapter, unary, Pad-plus-direct, Dequantize, PReLU, Softmax, and
+expanded-Swish families, plus the bounded direct-source Slice and Split
+families and the bounded recursive direct/supported-unary/expanded-Swish/
+bounded-Split Add family, are
+owned by `passes/nhwc_concat_layout.py`. The exact pseudo-LeakyRelu
+decomposition is owned there as a bounded family as well.
+Every Concat consumer must be an inverse
+NCHW→NHWC Transpose. Direct inputs come from NHWC→NCHW Transpose; the unary
+family permits one or more RELU, RELU6, LOGISTIC, TANH, or GELU operations
+between exclusive leading adapters and Concat. The Pad family accepts one or
+more strict Pad inputs together with at least one direct input. Candidate
+planning uses one shared `ModelIRGraphIndex`, retains shared or public direct
+adapters, rejects unsafe unary/Pad fan-out and public boundaries, validates
+compatible spatial shapes, and applies the rewrites transactionally under
+stable IDs `layout.nhwc_pre_concat_direct`,
+`layout.nhwc_pre_concat_unary`, `layout.nhwc_pre_concat_pad`, and
+`layout.nhwc_pre_concat_dequantize`, plus
+`layout.nhwc_pre_concat_prelu`, `layout.nhwc_pre_concat_softmax`, and
+`layout.nhwc_pre_concat_swish`, `layout.nhwc_pre_concat_slice`, and
+`layout.nhwc_pre_concat_split`, plus `layout.nhwc_pre_concat_add`.
+One ordered table owns all eleven family names, statistics keys, and priorities;
+frozen callbacks, preconditions, `PassSpec` objects, defaults, and preflight are
+derived once at module import. Candidate enumeration uses the shared
+operator-type index and visits only `CONCATENATION` positions. A successful
+precondition passes its validated candidate through session-local prepared
+data, so the callback does not immediately repeat the same search. The legacy
+family-specific optimizer wrappers remain signature-compatible while the
+runner itself uses the common family optimizer. This declarative conversion
+keeps the module below its original 3,120-line state without changing pass
+order or fallback ownership.
+Input-plan dispatch is also declarative for non-Add families: one map owns the
+common resolver signature, one owns resolvers requiring public tensor names,
+and one owns Swish/Leaky resolvers that permit unary companions. An import-time
+invariant requires these maps to cover every declared family except direct and
+recursive Add. Add remains explicit because it carries the candidate-wide
+consumer set through recursive planning.
+Within the Add root-companion path, one ordered resolver tuple preserves the
+existing Dequantize→PReLU→Softmax→Leaky→Pad→Slice precedence. Split remains the
+final explicit resolver because it alone receives the candidate-wide allowed
+consumer set.
+Candidate combination acceptance is a separate immutable contract table. Each
+family declares allowed and required input kinds, exact-count constraints, and
+whether spatial shapes must be reconciled. One validator replaces the repeated
+per-family count branches; an import-time invariant requires the contract and
+pass-family sets to match. Slice retains only its plan-aware unique-operator
+guard, while recursive Add retains its consumer-ownership planning.
+Unary, Swish, Softmax, and Dequantize application share one common-signature
+applier map. Its keys plus the contextual direct/Pad/PReLU/Slice/Split/Add/
+Leaky paths must equal the union of contract kinds at import time. Split, Add,
+and Leaky retain their applied-operator sets so shared plans are mutated once.
+Adapter liveness and recursive plan walking are top-level helpers rather than
+closures rebuilt for every candidate.
+Exclusive pads constants are remapped in place; shared or public pads
+constants use copy-on-write so unrelated Pad consumers preserve NCHW
+semantics. Dequantize inputs retain source scale and zero-point provenance
+while their output metadata moves to NHWC. PReLU selects the first
+broadcastable rank-4, unchanged, or rank-3 alpha representation in legacy
+order; shared/public transformed alpha uses copy-on-write and its per-axis
+dimension follows the applied permutation. Exactly one Softmax plus at least
+one direct input is lifted through local NHWC→NHCW→Softmax→NHWC adapters,
+preserving the original NCHW last-axis semantics while reducing total
+Transpose count. Canonical Concat and branch/intermediate per-axis
+quantization metadata follow their actual permutations. Expanded Swish accepts
+one or more exact `Logistic(x) * x` diamonds in either Mul input order, with
+only direct or supported unary companion inputs. It rewires both diamond edges
+to the NHWC source and remaps Logistic and Mul output metadata. Adapter,
+Logistic, or Mul fan-out and public boundaries are rejected before mutation;
+public Logistic output rejection deliberately closes an unsafe legacy case.
+The bounded Slice family accepts one or more rank-four Slice inputs whose
+output consumers are limited to the selected Concat and exact inverse
+adapters, optionally together with direct inputs. Begin and size vectors are
+remapped from NCHW to NHWC;
+shared/public parameter tensors use copy-on-write with tensor provenance
+retained, shared/public source adapters remain for their external consumers,
+exact inverse output adapters are bypassed, and Slice-output per-axis
+quantization follows the layout change.
+The bounded Split family accepts one or more outputs from a rank-four Split
+whose outputs are unused or consumed only by the selected Concat. It remaps
+the Split axis to 3 once per operator, uses copy-on-write for a shared/public
+axis tensor, retains shared/public source adapters for external consumers, and
+moves every Split output's shape and per-axis quantization into NHWC while
+bypassing exact inverse output adapters. Swish-source Slice and
+broader Split/Add interactions remain in the legacy matcher. The bounded Add
+family accepts a bounded acyclic two-input Add graph whose leaves come from
+rank-four
+NHWC→NCHW adapters, optionally through a supported unary operation, exact
+expanded-Swish diamond, Dequantize, PReLU, semantics-preserving Softmax,
+exact pseudo-LeakyRelu diamond, exact Pad, bounded direct-source Slice, or
+bounded Split. Dequantize, PReLU, Softmax, pseudo-LeakyRelu, Pad, and Slice
+plans may also be companion inputs of the same root Concat. Add inputs and
+bounded operand
+branches are rewired together, exclusive adapters are removed, shared/public
+adapters remain for external consumers, exact inverse output adapters are
+bypassed, and every Add output shape and per-axis quantization moves into
+NHWC. Candidate-wide planning collects every selected Add plus the root
+Concat, so an Add output may feed multiple selected Add branches or both a
+parent Add and the root Concat. Consumers outside that set must be exact
+inverse adapters or the candidate rejects. Recursive planning tracks visited
+Add outputs, rejects cycles, and
+stops at a maximum depth of 64. Shared application state ensures that nested
+Add and Split operators and cloned integer parameters are materialized only
+once; the same candidate-wide Pad materialization map is reused by nested and
+root-companion Pad plans. Slice begin/size tensors use the same shared integer
+materialization map as Split axes, retaining copy-on-write behavior. One Split
+may feed different Add nodes and a
+separate input of the same root Concat. Candidate planning first collects the
+bounded Add operator set,
+adds the root Concat, and permits Split-output consumers only inside that set
+or through exact inverse adapters. This candidate-wide set makes matching
+independent of Concat input order; any external consumer rejects the whole
+candidate. Each nested output post-adapter remains associated with its own
+Add; cleanup walks the complete input-plan tree only after the rewrites
+succeed.
+Source-adapter removal is decided from the post-rewrite GraphIndex, allowing an
+adapter shared with the root Concat to be removed only after every selected
+consumer is rewired.
+When selected PReLU plans share one transformed alpha, a candidate-wide key of
+source, permutation, and shape reuses one provenance-preserving clone.
+Softmax operands reuse the existing local NHWC↔NHCW adapters, retaining the
+original NCHW last-axis meaning. The exact pseudo-LeakyRelu diamond reuses its
+existing internal-edge and singleton-alpha guards. Other uncharacterized Add
+operands and broader mixed-input quantized-post families remain in legacy
+until independently characterized.
+The indexed
+pseudo-LeakyRelu family recognizes the complete
+`ReLU(x) - alpha * ReLU(-x)` diamond with either Mul operand order and direct
+or supported unary Concat companions. It preserves the non-commutative Sub
+order, rewires Neg and positive Relu to the NHWC source, and remaps all five
+internal/output tensor shapes and per-axis quantization metadata. Public or
+fan-out internal edges, invalid ranks, non-singleton alpha, and incomplete
+diamonds reject before mutation under stable ID
+`layout.nhwc_pre_concat_leaky`. Pad/Add/Split mixed companions and broader
+mixed-input quantized-post families remain in legacy.
+
+The strict direct, unary, Pad-plus-direct, mixed unary-plus-Pad, all-Pad,
+expanded-Swish, Dequantize, PReLU, Softmax, and exact pseudo-LeakyRelu
+plus bounded Slice/Split/Add quantized-post paths are independently owned by
+`passes/nhwc_concat_quantized_layout.py`. They recognize rank-four direct
+NHWC→NCHW inputs, optionally followed by RELU, RELU6, LOGISTIC, TANH, GELU, or
+an exact constant PAD, the exact `Logistic(x) * x` expanded-Swish diamond,
+Dequantize, PReLU, Softmax, or the exact pseudo-LeakyRelu diamond, then channel
+Concat, one Quantize, and one or more inverse
+post Transposes. The
+mixed pass requires at least one unary and one Pad branch; additional direct
+branches are allowed. The all-Pad pass requires at least two Pad branches. The
+Swish pass accepts either Mul operand order and reuses the float path's strict
+resolver and apply operation, including its public/fan-out boundary checks.
+The Dequantize pass likewise shares the float resolver/apply pair and retains a
+leading adapter only when its quantized NCHW output has another consumer.
+PReLU also shares the float resolver/apply pair, including broadcast-safe alpha
+selection, per-axis metadata remapping, and provenance-preserving copy-on-write.
+Softmax reuses the axis-preserving float plan: local NHWC→NHCW→Softmax→NHWC
+adapters retain the original NCHW last-axis meaning while the outer Concat and
+Quantize path remains NHWC.
+The pseudo-LeakyRelu pass shares the exact float matcher/apply pair, preserving
+the non-commutative Sub order, scalar alpha guard, and all internal fan-out and
+public-boundary invariants.
+Expanded-Swish, pseudo-LeakyRelu, and bounded Add may also combine with
+supported unary root-Concat companions through the same unary resolver/apply.
+The bounded Slice pass accepts a rank-four channel Slice with constant
+begin/size and no secondary output adapter, reorders the parameters to NHWC,
+and uses the float path's provenance-preserving copy-on-write materializer.
+The bounded Split pass accepts a constant channel axis and no secondary output
+adapter. Multiple outputs from one Split may feed the root Concat; shared
+application state rewrites the axis and all output metadata exactly once.
+The bounded Add pass accepts a depth-guarded Add tree whose leaves are direct,
+unary, expanded-Swish, Dequantize, PReLU, Softmax, exact pseudo-LeakyRelu,
+Pad, Slice, or Split plans without secondary output adapters, plus direct
+Concat companions. Shared application state
+rewrites each Add once. Shared-plan cleanup walks nested operand plans and
+removes every now-dead adapter while retaining public or still-used boundaries.
+The transactional passes
+rewire Concat and bounded branches to NHWC, retain shared/public input
+adapters, redirect Quantize to one canonical post output, and coalesce
+additional post aliases. Pad constants are reordered from NCHW to NHWC and use
+provenance-preserving copy-on-write when shared or public. Match, constant
+materialization, and Pad metadata updates are shared with the float path
+through `passes/nhwc_concat_pad.py`, so the two pipelines cannot drift
+independently. The float Concat, unary, and Pad output metadata, along with
+quantized output per-axis dimensions, follow NCHW→NHWC.
+Public Concat/Quantize/post or branch boundaries, non-Transpose fan-out,
+invalid ranks/spatial metadata, and partial chains reject before mutation
+under stable IDs
+`layout.nhwc_pre_concat_quantized_direct` and
+`layout.nhwc_pre_concat_quantized_unary`, and
+`layout.nhwc_pre_concat_quantized_pad`, followed by
+`layout.nhwc_pre_concat_quantized_unary_pad`, and
+`layout.nhwc_pre_concat_quantized_all_pad`, followed by
+`layout.nhwc_pre_concat_quantized_swish` and
+`layout.nhwc_pre_concat_quantized_dequantize`, followed by
+`layout.nhwc_pre_concat_quantized_prelu` and
+`layout.nhwc_pre_concat_quantized_softmax`, followed by
+`layout.nhwc_pre_concat_quantized_leaky` and
+`layout.nhwc_pre_concat_quantized_slice`, followed by
+`layout.nhwc_pre_concat_quantized_split` and
+`layout.nhwc_pre_concat_quantized_add`. Shared pads constants are
+materialized once and reused by every selected Pad. Other broader mixed
+quantized inputs remain in legacy.
+
+The quantized-post runner is declarative: one ordered table owns each family
+name, stable statistics key, and priority. Pass IDs, callbacks, preconditions,
+and default diagnostics are generated from that table. Shared float-plan
+resolution is likewise declarative: one resolver map covers the common
+signature, a second covers resolvers that require public tensor names, and one
+adapter maps every selected plan into `_QuantizedInputPlan`. The additional
+rank-four source guard for Dequantize and the no-secondary-post-adapter guard
+for Slice/Split are explicit family sets. Add remains separate because it
+recursively validates bounded leaf plans. These staged declarative changes
+keep `nhwc_concat_quantized_layout.py` materially below its original
+1,549 lines without changing the ordered pass contract or the legacy fallback
+boundary.
+
+Candidate acceptance is also declarative. Each family now records allowed and
+required input kinds, minimum arity, exact-count constraints, and whether
+spatial shapes must be reconciled. One validator replaces thirteen count
+branches, and an import-time invariant requires the input-contract family set
+to match the pass table. The resolver maps and input contracts remain separate:
+the former select safe graph plans, while the latter validate the complete
+Concat input combination. Unary and Pad companion resolution is enabled
+directly from each contract's allowed kinds instead of maintaining duplicate
+family lists. The four shared apply operations with a common signature use a
+matching applier map; an import-time invariant prevents resolver/apply coverage
+from drifting while contextual PReLU/Slice/Split application remains explicit.
+The thirteen frozen `PassSpec` objects, callbacks, preconditions, default
+statistics, and model-only preflight are constructed once at module import
+rather than on every runner call. Adapter liveness and recursive shared-plan
+walking are top-level functions rather than closures recreated for every
+candidate. Each invocation therefore allocates only its pass manager/session
+state while retaining the same transactional snapshots and diagnostics.
+Quantized-post candidate planning enumerates only indexed `CONCATENATION`
+positions; the thirteen family preconditions no longer scan unrelated
+operators in large graphs. A successful precondition stores its fully validated
+candidate in the session-local prepared data and the callback consumes it,
+avoiding immediate duplicate resolution. Only the post-rewrite search for an
+additional candidate runs again.
+
+The legacy ownership boundary uses the same compact style. Simple quantized
+families are described by allowed and required action-kind sets after one
+action multiset is built. Only Slice, Split, and Add retain plan-aware
+predicates. This replaces the repeated per-family count/subset blocks while
+preserving the exact fallback boundary for broader legacy combinations.
+The seven analogous float families now use a second allowed/required-kind
+contract table over the same action multiset. Softmax's single-branch benefit
+gate and Pad's required direct companion remain explicit invariants;
+Slice/Split/Add remain plan-aware. This removes another net 74 lines from the
+central lowerer.
+The public compatibility wrapper also aggregates its eleven float and thirteen
+quantized family counters through explicit key tuples and two sums, then adds
+the legacy counter. This preserves the single historical return key while
+removing another net 110 repeated lowerer lines.
 
 The same family module mechanically owns the adjacent post-Add variant, where
 the two Mul outputs cross inverse adapters before their downstream NHWC Add and
@@ -473,6 +771,47 @@ Constant-vector reads/writes, operator input/output mutation,
 broadcast checks, metadata permutation, and lineage recording remain shared
 core utilities. Legacy function names delegate to the family module.
 
+The earlier synthetic-boundary channel-Slice rewrite also accepts one shared
+`ModelIRGraphIndex` and the session `LayoutState`. It discovers only indexed
+Transpose roots, obtains consumers from the index, and restricts iterative
+NHWC propagation to the supported operator-type union. Slice rewiring, local
+bridge rewiring, bridge insertion, and removal of the shared boundary adapter
+all update the index differentially. The original graph-order insertion rules,
+channel-axis constant conversion, and bridge-localization semantics are
+unchanged. Pruning and final layout synchronization cover every newly created
+adapter tensor without rebuilding producer/consumer maps.
+
+The corresponding internal Transpose/channel-Slice propagation rewrite uses
+the same optional state contract. Indexed Transpose roots and consumers replace
+its repeated map construction, while the propagation loop visits only its
+declared unary, binary, Concat, Slice, Conv, and Pool operator families. A lazy
+per-constant consumer snapshot preserves the original copy-on-write decision
+when multiple converted binary operators share one NCHW constant. Input
+rewrites, cloned-constant rewires, NCHW bridge insertion, and removal of the
+internal stem are differential index operations; final pruning synchronizes
+the active `LayoutState`.
+
+The adjacent channel-Slice/Mul/post-Transpose bridge family now shares that
+indexed contract too. Root discovery is restricted to Transpose indices, all
+Slice/Mul/post aliases are rewired through the index-aware canonical helpers,
+and obsolete pre/post adapters are removed differentially. A lightweight
+consumer-index snapshot is taken from the existing index at each retry because
+the legacy matcher intentionally evaluates every branch against the same
+pre-rewrite consumer view. This preserves branch selection and shared-constant
+copy-on-write behavior without reconstructing producer/consumer maps or
+scanning operators for roots. Successful cleanup prunes and synchronizes the
+session `LayoutState`.
+
+The boundary StridedSlice/QDQ/Concat round-trip rewrite completes the indexed
+migration of this module. It validates the complete multi-branch topology from
+one live index before mutation, then applies StridedSlice inputs, quantized
+Concat output aliasing, and all post-alias rewires through index-aware helpers.
+The shared boundary and trailing Transposes are removed differentially, with
+layout-aware pruning after the retry loop. Consequently
+`passes/channel_slice_layout.py` no longer builds whole-graph consumer maps or
+inserts/deletes operators directly; its legacy function entry points remain
+signature compatible through optional keyword state.
+
 Boundary input normalization chains live in
 `passes/boundary_input_chains.py`. The module owns the guarded
 Transpose/Mul/Sum/Reshape NHWC rewrite and the exclusive
@@ -573,6 +912,16 @@ owns direct inverse-transpose Pad folding and the guarded unary-to-Pad tail
 rewrite that can retain one local NCHW adapter for legacy consumers. Padding
 axis rotation, dynamic metadata, quantization, fan-out slots, and output names
 are preserved; lowerer symbols remain compatibility wrappers.
+
+The final channel-last-input/channel-first-Pad repair also uses this indexed
+contract. It enumerates only `PAD`, `PADV2`, and `MIRROR_PAD` roots, retains the
+existing full static input/output/padding shape proof, rewires the selected Pad
+input through `ModelIRGraphIndex`, and inserts the required NHWC-to-NCHW
+Transpose differentially. Each successful insertion restarts from the updated
+index, preserving graph order without rebuilding producer/consumer maps or
+mutating the operator list directly. The late lowerer call supplies the active
+`LayoutState`, which is synchronized after newly materialized adapter tensors
+are added.
 
 The same Pad module owns the guarded
 `Transpose → Pad → Mul → Transpose → Add` NHWC propagation rewrite. It proves
@@ -1159,7 +1508,1025 @@ Pool folding, whose output can feed Cast folding, all through one differential
 index and LayoutState. Each operator is removed structurally and unused source
 constants are pruned transactionally. The two former lowerer triplets are
 one-to-one group calls; ScatterND and binary constant folding remain independent
-compatibility helpers because they are not part of those production sequences.
+compatibility helpers outside that pass group. They now accept an optional
+shared GraphIndex, use differential operator removal and LayoutState-aware
+pruning, and contain no direct operator-list deletion. Float32 and float16
+artifact preparation builds one index per serialization artifact and shares it
+across the consecutive ScatterND and binary folds. The terminal precision IR
+is also the serialization IR when no later unsplit exporter needs the
+pre-serialization form. Float16 is always terminal at this point. Float32 is
+isolated by the TensorFlow- and Torch-free policy in `artifact_preparation.py`
+only for an unsplit SavedModel or PyTorch request, because those exporters still
+consume the pre-fold float32 graph; split exporters consume the original
+partition source instead. This removes one complete tensor, operator, subgraph,
+metadata, and constant-buffer clone from the normal direct path while retaining
+copy isolation at the only later mutation boundary.
+
+Serialization artifact lifetime is sequential as well as construction order.
+Each write-only GraphIndex and precision/quantized ModelIR reference is released
+immediately after its final writer or exporter consumer, before the next
+precision or quantization variant is built. Strict-integer calibration sample
+arrays are released as soon as their range report has captured the sample
+count; calibration ranges and the in-memory report remain only through the four
+variant builders and JSON write. Paths, timing records, and copied report
+dictionaries are the only state retained for later weight export and result
+assembly. This prevents otherwise sequential float32, float16, dynamic-range,
+integer, full-integer, and INT16-activation graphs from accumulating in one
+function frame.
+
+`ir.py` is the single owner of `OperatorIR` and `TensorIR` element cloning.
+The shared helpers copy every structural, axis-semantic, variable,
+quantization, layout, and ONNX-provenance field plus NumPy constant buffers.
+Precision wrappers retain their established normalized-layout and recursive
+subgraph/metadata behavior; the quantization root clone deliberately retains
+its legacy raw-layout, root-only, empty-metadata behavior. Quantization chooses
+that policy but no longer duplicates the complete field list, so adding ModelIR
+provenance cannot silently diverge across precision and quantized artifacts.
+Split partition construction uses the same element helpers while making its
+ownership policy explicit: final artifacts copy NumPy buffers, binary-search
+size probes may borrow them, quantization metadata remains shared and immutable,
+and raw logical/physical layout strings are preserved. The partition builder
+therefore cannot omit a newly added common tensor or operator provenance field,
+without changing the established buffer and quantization alias behavior.
+
+Strict-integer report construction is request-scoped. A small internal
+reporter owns the existing `tensor_ranges`, `quantized_tensors`, and
+`quantized_ops` schema and serializes qparams only when the public builder was
+called with `return_report=True`. The two orchestrator variants that feed the
+calibration JSON keep full reports; default public model-only calls and both
+INT16-activation variants perform no report-range or qparam serialization.
+Quantization mutation never depends on report state, and the private builder's
+default still collects a report for compatibility with direct internal callers.
+Full-integer activation dtype resolution also materializes graph-input and
+graph-output name sets once per variant. Every operator/tensor decision reuses
+those immutable boundary sets instead of rebuilding them for each lookup.
+Final strict-model validation collects referenced input/output tensor names in
+the same pass that validates operator support. It preserves the legacy raw-name
+and empty-name boundary behavior while removing the preceding duplicate
+operator/edge traversal.
+
+The strict builder's mutable `ModelIRGraphIndex` is lazy. Float-IO or mixed
+external/internal dtype boundaries request it when consumer/producer rewiring
+or pre/post operator insertion first occurs and then share that one instance.
+Full-integer variants whose boundary dtype already matches the internal dtype
+perform no boundary mutation and therefore build no graph index.
+
+Late precision conversion in `passes/precision.py` is differential as well.
+Constant floating DIV roots are captured from one operator-type index and each
+eligible DIV is replaced in graph order by an optional Cast, reciprocal Mul,
+and optional output Cast using indexed remove/insert operations. Precision-
+sensitive reciprocal Mul restoration traverses indexed consumers, updates its
+inputs, and changes MUL to DIV through `ModelIRGraphIndex.replace_operator_type`.
+That primitive updates only the operator-type dispatch index while leaving
+producer/consumer edges intact. Neither precision family rebuilds consumer
+maps or replaces the complete operator list; the main lowerer path also keeps
+the session `LayoutState` synchronized with materialized and pruned constants.
+
+Fully static high-rank binary coalescing in `passes/high_rank_binary.py` no
+longer rebuilds the complete operator list. It captures the original supported
+binary objects from the type index, validates static broadcast coalescing, and
+replaces each selected operator at its current graph position with two input
+Reshapes, the rank-at-most-four binary, and one restoring Reshape. All
+remove/insert operations update one `ModelIRGraphIndex` differentially; the
+main lowerer path synchronizes the session `LayoutState` for the generated
+shape and intermediate tensors.
+
+Static high-rank BatchMatMul compression in `passes/high_rank_matmul.py` uses
+the same contract. Initial `BATCH_MATMUL` objects are indexed once; each proven
+rank-above-five operator has its inputs and output changed through differential
+edge updates, then receives two input Reshapes and one output-restoring Reshape
+at the same graph position. The original BatchMatMul object and options remain
+intact. Complete operator-list replacement and direct input/output assignment
+are forbidden by the ownership gate, and the production lowerer call supplies
+the session `LayoutState`.
+
+PyTorch native-runtime SAME AveragePool compatibility in
+`passes/pytorch_compat.py` also follows the differential ModelIR contract. It
+captures the initial indexed `AVERAGE_POOL_2D` objects, changes each proven
+pool output through `ModelIRGraphIndex.replace_operator_outputs()`, and inserts
+the correction `MUL` immediately after the live pool position. It no longer
+rebuilds the complete operator list or assigns operator outputs directly. The
+entry point accepts an optional shared graph index and layout state while
+retaining its existing single-argument exporter call. This keeps the optional
+PyTorch artifact boundary independent of TensorFlow and permits focused pass
+validation without importing Torch.
+
+Dynamic rank-one Unsqueeze shape materialization is isolated in
+`passes/dynamic_reshape.py`. The lowerer retains its private compatibility
+wrapper, while the pass indexes only initial `RESHAPE` candidates. A proven
+rank-one case rewires the existing Reshape through the differential graph
+index and inserts its runtime `SHAPE` and shape `CONCATENATION` immediately
+before the live operator position. Folded higher-rank inputs retain the
+existing direct `-1` shape-constant repair. Complete operator-list rebuilding
+and direct input-slot assignment are forbidden by the ownership gate, and the
+two main production calls synchronize the session `LayoutState`.
+
+The same module owns fallback MatMul-flatten restoration. Placeholder
+`RESHAPE` candidates and their sole consumers come from one graph index; a
+proven rank-recovered `BATCH_MATMUL` is rewired differentially to the original
+source and the obsolete Reshape is removed by object identity. Tensor pruning
+is layout-aware. This removes another lowerer-wide consumer-map construction,
+complete operator-list filter, and direct MatMul input mutation while retaining
+the existing compatibility wrapper and call order.
+
+`ModelIRGraphIndex.remove_operators()` provides batch removal for graph-wide
+cleanup. It detaches all selected edges against the original index, filters the
+operator list once, and remaps producer, consumer, object, and type indices
+through one old-to-new table without calling `refresh()`. Dead-code pruning is
+owned by `passes/graph_cleanup.py`: one reverse liveness walk retains graph
+outputs and live variable-state mutations, then sends all dead positions to
+that batch primitive and prunes tensors with the active `LayoutState`. Main
+lowering calls pass session layout state; the compatibility wrapper remains in
+the lowerer.
+
+Unsupported-dtype Split fallback is isolated in `passes/split_fallback.py`.
+It enumerates only initial `SPLIT` objects and retains the established LiteRT
+dtype, constant-axis, rank, output-count, and split-size guards. Each proven
+operator is replaced at its live position with an optional output-dtype `CAST`
+and ordered `SLICE` operators through differential remove/insert operations.
+Generated begin/size constants and layout state are reconciled once after the
+rewrite. The lowerer retains a private compatibility wrapper and passes the
+session `LayoutState`; complete operator-list construction is forbidden by the
+ownership gate.
+
+Dynamic Squeeze runtime-shape plumbing no longer rebuilds the lowerer's
+operator list. The established matcher still converts each eligible Squeeze to
+the same Reshape and records its `SHAPE`/`GATHER` prefix. After all direct
+operator metadata changes are complete, one `ModelIRGraphIndex` is constructed
+and the prefixes are inserted in reverse candidate order at their original
+positions. Tensor pruning and newly generated shape tensors are reconciled with
+the session `LayoutState`. Consequently, the only complete `model_ir.operators`
+assignments left in the central lowerer are explicit snapshot rollback paths.
+
+Dynamic-range quantization creates one lazy `ModelIRGraphIndex` over the already
+deep-cloned graph only when an elementwise quantized constant requires a
+`DEQUANTIZE` insertion or input rewire. All later uses share that tensor and
+the same differential index. Conv/Depthwise/FC kernel-only weight quantization
+does not mutate graph topology and builds no index. The former second
+operator-cloning pass and complete list assignment remain removed, reducing
+copy volume while preserving operator axis semantics and ONNX provenance
+already carried by the initial ModelIR clone.
+
+Full-integer Identity elision also uses one differential index. Its ordered
+replacement table preserves Identity-chain resolution and the special graph-
+output producer promotion rule. Retained operator inputs/outputs are updated
+through index primitives, then all elided Identity objects are removed in one
+batch compaction. A no-Identity preflight avoids index construction entirely.
+The quantization module no longer assigns a rebuilt operator list for this
+cleanup.
+
+Strict integer boundary construction shares one graph index after Identity
+elision. Graph-input replacement visits only indexed consumers, and full-
+integer graph-output conversion updates the indexed producer rather than
+rescanning every operator. Boundary `QUANTIZE` operators are inserted in input
+order before the unchanged core graph and output `QUANTIZE`/`DEQUANTIZE`
+operators are appended in output order after quantization analysis, preserving
+report indices. The former `pre_ops + clone.operators + post_ops` assignment is
+removed.
+
+Serialization sanitization reuses the same `prune_dead_operators()` liveness
+implementation. Its shallow container clone requests operator-only pruning,
+then preserves the established constant-input stripping and tensor-pruning
+order. Thus reusable source ModelIR objects and weight buffers remain untouched
+while the serializer no longer owns a duplicate liveness walk or complete
+operator-list filter. The shared pass keeps tensor pruning enabled by default
+for lowerer cleanup and exposes the opt-out only for this serialization order.
+
+Split/export structural rewrites use an append-only `_ModelIRRewriteBuilder`.
+It deep-clones tensors, subgraphs, and metadata but starts with an empty
+operator stream, avoiding an immediately discarded deep copy of every source
+operator. Group-convolution expansion, BatchMatMul unfolding, and recurrent
+unrolling emit directly into that stream and no longer retain a second
+`rewritten_ops` list or assign it at completion. Unchanged operators are copied
+with options, version, axis semantics, and ONNX node/op provenance intact.
+Boundary-based partition cropping follows the same operator contract: its
+newly constructed cropped ModelIR copies axis semantics and ONNX node/op
+provenance in addition to inputs, outputs, options, and version. The crop
+preflight materializes the original runtime-input set once for all requested
+boundaries, and does not collect an unused second set of kept operator outputs.
+Top-level boundary names no longer trigger recursive nested-subgraph name
+collection; that diagnostic-only traversal is deferred until a requested name
+is actually missing from the top level. Producer discovery and forward
+reachability share one operator-stream scan, while missing-input validation,
+required-tensor collection, and kept-operator materialization share a second
+scan over only the retained indices. Cropped operators use the common element
+clone contract with explicit deep-copied options and axis semantics, preserving
+the crop API's independent-mutation behavior.
+
+Dependency-safe split-point discovery uses one producer scan and one consumer
+edge scan. Backward dependencies are represented as invalid-boundary range
+deltas, while forward tensors enter and leave an active crossing set through
+boundary events. This replaces the former full edge rescan for every possible
+boundary and preserves the exact ordered report, including first-producer
+selection, non-topological invalid boundaries, fan-out, external inputs, and
+duplicate tensor names. Runtime is proportional to operators, edges, and the
+crossing tensors that must be written to the report rather than
+`boundary_count * edge_count`. The complete split plan constructs this
+`ModelIRGraphIndex` once and reuses it for candidate discovery, partition-range
+validation, and manifest edge construction. Its first-producer map is likewise
+materialized once and passed through all three phases instead of being rebuilt
+from the shared index. Standalone helpers accept optional caller-owned index
+and producer-map state while retaining their existing call behavior.
+When split output is requested by the artifact plan, this caller-owned source
+index is created before final ModelIR validation and then remains current and
+shared across validation, planning, and partition-file writing. The normal
+non-split path creates no source split index. Standalone planning and writing
+calls still construct their own index when none is supplied.
+Partition input/output tensor collection likewise uses insertion-ordered
+`seen` sets. It preserves first-seen ordering and duplicate suppression while
+removing the quadratic list-membership cost from every binary-search candidate
+and final partition build. Candidate boundary-output discovery queries the
+shared consumer index instead of rescanning the complete graph suffix for every
+candidate. The final split artifact writer also constructs one index and reuses
+it across all emitted partitions. Binary-search size-estimation candidates
+borrow immutable NumPy constant buffers from the source ModelIR instead of
+copying every weight for every probe. The public partition builder and final
+artifact writer retain the established independent-buffer default. Partition
+dead-branch liveness still runs for every candidate, but input/output and
+boundary collection is repeated only when that liveness result removes at
+least one operator. Required indices are a sorted unique subset of the local
+range, so equal cardinality proves the full range without another elementwise
+comparison. Fully required ranges reuse their initial collections. Boundary
+output discovery uses `ModelIRGraphIndex.has_consumer_at_or_after()`: consumer
+indices are maintained in sorted graph order, so a suffix query reads only the
+last index instead of allocating an `any()` generator over the consumer list.
+
+Custom-op result metadata has a single TensorFlow- and Torch-free owner in
+`artifact_metadata.py`. One operator-stream pass produces both the legacy raw
+custom-code list and the normalized, deduplicated node-detail list, preserving
+their intentionally different whitespace/empty-code behavior and deterministic
+sort order. Export orchestration no longer performs two consecutive ModelIR
+scans for these result fields.
+
+PyTorch layout-only Transpose cleanup is owned by the Torch-free
+`passes/pytorch_compat.py` boundary. It indexes initial `TRANSPOSE` objects and
+their live consumers once. Internal adapters rewire consumers and are removed
+differentially; public-output adapters are replaced in place by an Identity
+through indexed remove/insert while retaining the established output-tensor
+clone semantics. The PyTorch exporter no longer owns a consumer-map builder or
+complete operator-list deletion, and the pass can be tested without importing
+Torch.
+
+Native-PyTorch WHILE compatibility expansion is isolated in the Torch-free
+`passes/pytorch_control_flow.py` boundary. It owns subgraph lookup,
+constant/alias guards, static and counter-bounded matching, shape-literal
+creation, root-graph cloning, and both rewrite entry points.
+`_clone_model_ir_without_root_operators()` deep-clones
+tensors, metadata, and complete subgraphs but deliberately leaves the root
+operator stream empty. Static trip-count and counter-bounded expanders consume
+the original root stream once, deep-copy retained operators once, and append
+retained or generated operators directly in established order. This keeps the
+source and result independent and leaves WHILE body/condition subgraphs intact,
+without cloning a root operator stream that would immediately be discarded.
+Static-WHILE, counter-bounded-WHILE, and recurrent-sequence entry points use
+copy-on-write preflight: a no-op returns the borrowed input, which is safe
+because the following channel-first normalizer creates its own deep copy before
+mutation. A proven expansion still clones before modifying any graph state.
+The exporter imports only the two ordered rewrite entry points, so control-flow
+canonicalization can be validated with synthetic ModelIR without importing
+Torch.
+Both matchers build one `ModelIRGraphIndex` per candidate body and reuse it for
+all producer and Reshape-alias queries. Required edges with duplicate producers
+are rejected before cloning, making the rewrite deterministic while replacing
+the former repeated linear scans of the body operator list.
+Each root operator is matched exactly once into an immutable-by-convention
+rewrite-plan map before copy-on-write construction begins. The static and
+counter-bounded emit loops consume those plans instead of invoking the matcher
+again against the cloned graph, so candidate body indexes and structural guards
+are not rebuilt during emission.
+The exporter architecture gate detects attribute assignments through the AST,
+so alternate local names cannot silently reintroduce complete operator-list
+replacement.
+
+Recurrent-sequence canonicalization and capability selection are separately
+owned by Torch-free `passes/pytorch_recurrent.py`. The module defines the
+supported 15/24-input unidirectional and 29/48-input bidirectional LSTM index
+contracts, constant and optional-input validation, direct native RNN/LSTM
+selection, and copy-on-write delegation to
+`rewrite_model_ir_unroll_recurrent_ops()`. The exporter imports these functions
+for both preparation and its generated-code execution environment instead of
+implementing a parallel capability policy. Unsupported recurrent forms still
+use the shared append-only split-planner rewrite, while directly supported or
+absent recurrent ops return the borrowed graph for the subsequent owning
+normalizer copy.
+
+Native recurrent constant preparation has a separate Torch-free owner in
+`pytorch_recurrent_codegen_policy.py`. It enforces required constant arrays and
+builds LSTM gate-bias buffers in index order. Fully omitted biases produce one
+zero synthetic tensor, while partially omitted bias groups remain an explicit
+export error.
+
+The same recurrent module owns legacy orphan step-tensor repair. It preflights
+`_h_step_`/`_c_step_` names before allocating graph state, then uses one
+`ModelIRGraphIndex` to find the corresponding shape-driven Reshape and update
+all orphan consumers differentially. It no longer constructs ad hoc producer
+and consumer maps or scans every operator once per candidate; graphs without a
+candidate return without index construction.
+
+Softmax-specific channel-first validation is isolated in Torch-free
+`passes/pytorch_layout_validation.py`. Attention-like Softmax consumers and
+Transpose-sandwich producers/consumers are resolved from one shared
+`ModelIRGraphIndex`. The top-level exportability validator creates that index
+only when it encounters an unknown-layout Softmax and reuses it thereafter,
+removing the former per-tensor full graph scans. Duplicate sandwich producers
+reject the exception path rather than selecting one by graph order.
+
+The same module owns feature-last region closure. Seed discovery constructs one
+`ModelIRGraphIndex`; `_propagate_feature_last_tensor_names()` then runs a
+deterministic worklist over only adjacent producer/consumer edges. Its
+bidirectional passthrough semantics and standard channel-layout Transpose and
+factorized rank-three Reshape barriers match the former monotonic fixed-point
+loop, while removing repeated complete operator scans as the region grows.
+
+Forward channel-last annotation also uses a consumer worklist. Existing
+channel-last tensors seed the queue; only indexed consumers in the unchanged
+safe-op allowlist are inspected, and newly annotated rank-three through
+rank-five outputs extend the queue. This preserves unsupported-op boundaries
+and works for non-topological operator order without the previous repeated
+complete scans.
+
+The layout-application entry point is also owned by
+`passes/pytorch_layout_validation.py`. It consumes a caller-provided graph
+index when available and otherwise builds one `ModelIRGraphIndex`; an empty
+preserve set returns before index construction. Preserved output producers,
+including duplicate producers, are enumerated in graph order from that index
+and reused for both initial Transpose/Reshape decisions and raw ONNX Reshape
+shape restoration. Unrelated operators are not scanned. Constant-shape updates
+remain in this single Torch-free canonicalization owner, while the exporter
+contains only the ordered invocations.
+
+Feature-last seed discovery and its rank-four island policy are co-located in
+the same module. The module also owns preserved-region shrinking and restoration
+of non-preserved tensors to channel-first layouts. These functions share the
+collector's graph index or accept the normalizer's existing producer/consumer
+maps, so the exporter no longer implements a second layout-region policy or ad
+hoc fallback map construction.
+
+Public PyTorch input/output layout bridges are now owned by the same Torch-free
+layout module. Bridge eligibility is resolved before graph indexing, so a graph
+whose public shape and layout already match its contract pays no indexing cost.
+When a bridge is required, one lazily created `ModelIRGraphIndex` is shared
+across every public input and output: indexed consumers and producers are
+rewired differentially, input Transposes are inserted in the established
+front-of-graph order, and output Transposes are appended in public-output order.
+Tensor names, bridge metadata, layout permutations, and operator provenance are
+unchanged while the former complete operator scans are removed.
+
+General PyTorch-friendly unary, binary, Concat, Pack/Unpack, Split, resize, and
+pool layout propagation is co-located in this module as well. One graph index
+seeds a deterministic operator worklist; a changed tensor schedules only its
+indexed producer and consumers. This retains Concat peer-layout back-propagation
+and works for non-topological graph order without the former repeated complete
+operator sweep to a fixed point.
+
+The channel-first normalizer now creates one `ModelIRGraphIndex` after its
+owning deep copy and shares it across feature-last collection, both friendly-
+layout propagations, redundant-Transpose removal, ATAN2 canonicalization,
+recurrent orphan repair, and final validation. Structural and edge changes use
+the index mutation API, so the final residual-Transpose check consumes the
+still-current consumer table instead of rebuilding an ad hoc map. The ATAN2
+ones-like rewrite is owned by `passes/pytorch_compat.py`; irrelevant graphs
+return before index construction when it is called independently.
+An internal normalization result carries this current index into native
+preparation's public-boundary bridge and shape-alignment stage, removing the
+former second index over the same prepared graph. The public
+`normalize_model_ir_for_pytorch_channel_first()` compatibility function still
+returns only ModelIR, and the layout-agnostic error fallback creates its own
+index after constructing a different fallback graph.
+Native model-file generation likewise creates one index and supplies it to
+feature-last collection before placing the index itself in the writer context.
+Read-only producer and consumer compatibility properties expose that same
+object's maps to the generated pipeline. Code generation therefore does not
+build a second index or detach raw tables from their owner.
+
+PyTorch convolution-filter physicalization is also owned by the Torch-free
+layout module. It queries only Conv2D, depthwise Conv2D, transpose-Conv2D,
+Conv3D, and transpose-Conv3D indices from the shared graph index, preserves
+graph order, and tracks shared weight names so each buffer is permuted exactly
+once. The normalizer supplies its existing index; no extra operator scan or
+index build is required. The pre-permutation exclusion set uses the same
+op-family declaration and shared index, so unrelated operators are not scanned
+a second time merely to identify kernel buffers.
+
+Residual channel-layout Transpose validation and its Reshape-only exception are
+owned by `passes/pytorch_compat.py`. The normalizer queries only indexed
+Transpose operators and reuses the current consumer table. Public bridge,
+preserved feature-last, recurrent rank-three, unknown-layout, shape-only, and
+Reshape-only exceptions retain their established guards and error signature.
+
+Layout-sensitive axis, vector, pad-matrix, Transpose-permutation,
+transpose-convolution output-shape, and Reshape-target canonicalization is owned
+by `passes/pytorch_layout_validation.py`. It queries only the affected op-family
+indices from the normalizer's shared graph index and retains the one-rewrite
+rule for shared constant tensors. Reshape target selection and channel-last
+name recognition live in `pytorch_layout_utils.py`, so canonicalization and
+native code generation share one policy without an exporter callback.
+The subsequent Reshape target synchronization step is co-located with that
+rewrite and enumerates only indexed Reshape operators, while preserving its
+feature-last exclusion and constant dtype behavior.
+
+Channel-first exportability validation is now part of the same Torch-free
+layout owner. It enumerates only layout-sensitive op-family indices, reuses the
+normalizer's graph index for attention and Transpose-sandwich Softmax
+exceptions, and retains the existing recurrent, ScatterND, degenerate sequence,
+public-bridge, preserved-region, and safe rank-four island guards. The exporter
+contains only the ordered validation call and shared error type.
+
+Public boundary shape/layout reconciliation and recurrent-sequence context
+detection are co-located in the layout owner. The channel-first normalizer uses
+its existing graph index to identify recurrent op families, while the
+layout-agnostic fallback path retains direct detection. Explicit boundary
+signatures, public layout metadata, dynamic-dimension concretization, and the
+rank-three recurrent NWC default remain unchanged.
+
+The complete channel-first normalization orchestration is owned by the new
+Torch-free `passes/pytorch_normalization.py` module. It creates the owning deep
+copy, constructs exactly one graph index, invokes the ordered layout,
+constant/filter, compatibility, recurrent-repair, boundary, and validation
+steps, and returns the validated copy. The remaining public-output Transpose
+inspection uses the same index rather than a raw operator scan. The exporter
+imports this single orchestration entry point, making the full normalizer
+directly testable without importing Torch.
+
+Native PyTorch preparation is owned by the same module. Static-WHILE,
+counter-bounded-WHILE, and recurrent compatibility rewrites execute in their
+established order before the channel-first normalizer. One root op-family scan
+dispatches only the rewrite entry points that can apply; after WHILE expansion,
+the root types are recomputed so recurrent operators introduced from a body are
+still handled. Direct recurrent capability selection itself is a single scan
+that stops at the first operator requiring unroll. The normalizer's current
+index then continues through public bridge insertion and final public
+shape/layout alignment; only the distinct layout-agnostic fallback constructs
+its own index. Recursive root/subgraph op-type collection and the fallback
+capability policy are also centralized here; the exporter retains compatibility
+imports for the public internal entry points and artifact generation only.
+
+Native PyTorch operation emission is being separated behind a Torch-free,
+callback-driven boundary in `pytorch_emitters.py`. The unary operator family is
+the first owner: its complete expression table and channel-first/channel-last
+bridge emitter moved together, while tensor naming, alignment, omission, and
+shape policy remain explicit callbacks supplied by the exporter. This keeps the
+generated Python source and runtime-helper selection unchanged, permits direct
+ModelIR code-generation tests without importing Torch, and prevents the central
+exporter from regaining a duplicate unary implementation through an architecture
+ownership gate. Subsequent binary and shape-transform families can move through
+the same boundary independently.
+
+The shape-transform family now follows that boundary as well. ReverseV2,
+ExpandDims, Squeeze, Pack, Unpack, and Split source emission is owned by
+`pytorch_emitters.py`, including runtime axis normalization and multi-output
+statement construction. Constant integer-vector decoding moved to the shared
+Torch-free `pytorch_codegen_utils.py` owner so the emitter and the generated
+pipeline's remaining families use one policy. The generated pipeline keeps the
+same imported global function names, avoiding a compatibility wrapper or source
+template change.
+
+Binary expression selection and source emission are also owned by
+`pytorch_emitters.py`. Integer division, scalar comparison coercion,
+channel-first aliases, fused activations, channel-last materialization, and
+runtime broadcast alignment now live together with the complete binary dispatch
+table. The stored generated pipeline still calls its original exporter global;
+that name is a thin compatibility adapter which injects the exporter's existing
+broadcast target-shape policy into the Torch-free emitter. The adapter contains
+no statement-emission logic, and its shape policy can be separated later without
+changing the pipeline contract.
+
+Transpose source emission is directly owned by `pytorch_emitters.py` with no
+exporter adapter. It reuses the Torch-free layout and compatibility policies for
+permutation decoding, inconsistent-layout elision, residual Reshape bridges, and
+channel-first aliases. Fold-only Slice/binary consumers, omitted materialized
+channel-last aliases, constant/runtime permutations, and runtime-helper imports
+retain their established behavior. The exporter and stored generated pipeline
+continue to resolve the same imported function name.
+
+Concat source emission and its channel-last axis-sensitive consumer guard are
+co-located in `pytorch_emitters.py`. GatherElements coordinate construction,
+channel-first concatenation and fused activation, NHWC/NDHWC materialization,
+omitted aliases, and exact-shape runtime fallback therefore share one focused
+owner. Gather, Split, and Unpack channel-axis consumers continue to block unsafe
+channel-first emission. The generated pipeline again resolves the unchanged
+imported emitter name directly.
+
+Generic output expression finalization is also owned by
+`pytorch_emitters.py`. Shape-preserving expressions bypass alignment, while
+shape mismatches import the runtime alignment helper; direct-module outputs
+first apply the declared rank-3/4/5 logical-layout permutation and then align
+to the shared target-shape literal. Both helpers retain callback-based shape
+access and have no exporter-local duplicate.
+Fused activation statement generation is co-located with these emitters.
+Direct ReLU, clamp, SiLU, and Tanh forms retain their compact source, while
+unknown activation names use the shared generated-runtime fallback.
+
+The native codegen entrypoint retains only writer-reachable orchestration
+wrappers. The former `_assemble_native_model_source` stub had no caller and
+self-recursed under its own name, so it is removed and guarded from
+reintroduction by the architecture test.
+
+Fast generated-source precanonicalization begins with a small Torch-free value
+policy in `pytorch_fast_precanonicalize_policy.py`. It owns reversible NHWC/NCHW
+rank-four pad-axis conversion, conservative channel-count inference, and source
+identifier extraction. The larger repair context consumes these shared values
+without maintaining local duplicates. Its dataclass, one-pass source-line
+collector, alias resolver, and CF/NHWC classification helpers are co-located in
+the same owner. The collector records static shapes, consumers, buffer channel
+counts, Conv block arity, module edges, and propagated alias layout evidence.
+It also records complete rank-four registered-buffer shapes during that same
+source scan. The orchestrator reuses this map for constant-alignment repair and
+does not compile another buffer regex or rescan every generated source line.
+Buffer channel/shape maps, Conv output channels, and module producers remain
+read-only after context construction, so the orchestrator queries those four
+maps directly instead of allocating full dictionary copies. Dynamic CF/NHWC
+sets remain per-pass mutable copies.
+Preferred channel selection, scored consumer-layout inference, and recursive
+channel-last spatial-consumer detection query the same context in this owner.
+They remain conservative when source evidence ties or cycles.
+Split-axis repair and channel-first Resize/Pool target-shape repair are also
+co-located with these queries. Split voting inspects only later consumers;
+Resize and Pool preserve immediate layout bridges and rewrite only when CF
+input or consumer evidence is stronger than the declared channel-last form.
+Static Pool NHWC selection is co-located here as one ordered decision. A MaxPool
+with a channel-last spatial consumer takes priority; otherwise an immediate
+NHWC bridge or unambiguous NHWC input evidence enables channel-last execution
+and shape normalization. An immediate CF bridge continues to block the second
+case. The exporter applies the returned statement and layout evidence before
+its existing CF repair.
+Two CF Pool-neighbor corrections are also one indexed policy decision. An
+exact CF constant-Pad→channel-last MaxPool→permuted-Conv chain restores the
+Pool to CF and returns an explicit short-circuit so later precanonicalization
+rules retain the old `continue` boundary. A CF Pool followed by local response
+normalization repairs its static target without stopping the scan. Both use the
+shared statement decoders and repair context.
+Dynamic-shape Pool layout repair is another indexed decision with the same
+explicit short-circuit contract. Immediate NHWC/CF bridge evidence controls
+channel-last execution; CF average pooling derives a concrete target from a
+bounded direct aligned consumer or one binary hop followed by an aligned
+consumer. The binary hop and aligned statements use shared parsers instead of
+orchestrator-local regexes.
+Simple generated aliases are handled by one indexed layout decision. It owns
+the guarded CF→NHWC boundary needed before a rank-three reshape and before the
+channel-last PReLU/permuted-Conv consumer forms, including exact-shape runtime
+alignment when known. Aliases not rewritten propagate existing CF/NHWC
+evidence. All permuted-Conv statement consumers now reside in this policy
+owner, so the exporter no longer imports that decoder directly.
+Aligned scalar-binary shape reconciliation is also policy-owned. It rewrites
+only when the previous aligned assignment and the next aligned or Softmax
+consumer agree on one rank-four shape and the current shape is the exact H/W
+swap. The rule keeps its positional scalar grammar and uses the shared aligned
+and Softmax statement decoders; their remaining consumers are policy-local, so
+the exporter does not import them.
+The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
+restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
+target shapes are normalized as one chain only when NHWC producer and consumer
+evidence agree; otherwise the repair remains a no-op. Constant-pad axis repair
+and reshape-to-permute replacement reuse the shared parser and layout context.
+Channel-first binary alignment repair is co-located with that context as well.
+It normalizes only rank-four targets backed by CF operands or CF consumer
+evidence, preserves already normalized targets, and leaves explicit binary
+anchor chains and any NHWC operand untouched.
+Concat-axis and terminal-classifier tail repair complete the standalone layout
+helpers in this owner. Concat rewrites only when every input is CF-like; the
+tail repair adds an explicit singleton channel or removes a redundant trailing-
+singleton reshape only when its source is CF-like. The exporter retains the
+ordered precanonicalization orchestrator and imports these focused decisions.
+The older post-helper `torch.cat(dim=3)` regex block was a strict subset of the
+shared concat helper's alias-aware CF guard and is removed; concat axis repair
+therefore has one decision point.
+The singleton-reshape-to-CF-binary repair is another focused rule in this
+owner. Its local patterns, feature-axis guard, following binary relationship,
+rewrite, and CF evidence update are applied atomically through one indexed
+helper; the orchestrator retains only its ordered call.
+PReLU output evidence propagation and channel-last Gather-slice repair are also
+focused rules in this owner. PReLU retains one rule-local module-call pattern;
+Gather reuses the shared assignment decoder and rewrites only CF-like inputs
+from axis 3 to axis 1 while recording the output as CF-like.
+Rank-four NHWC registered-buffer binary alignment is likewise indexed here. It
+consults the context's shared buffer-shape map and inserts the constant
+NHWC-to-NCHW Permute only when `[1,H,W,2]` exactly matches the requested
+`[1,2,H,W]` alignment.
+DepthToSpace-adjacent Gather repair is indexed here as well. One policy helper
+owns structural channel-first inference through a bounded preceding Concat,
+Gather output shape/layout evidence, guarded removal of a following Conv input
+Permute, and channel-last DepthToSpace index correction. It reuses the shared
+permuted-Conv assignment decoder and parses each preceding assignment once.
+Channel-first Softmax and ReduceMax axis repair also use focused parser-backed
+helpers in this owner. Softmax preserves beta and moves the rank-four target
+channel; ReduceMax preserves keepdims and changes only axis 3 to axis 1. Pool
+lookbehind and scalar-binary lookahead consume shared Pad/Softmax parser tuples,
+so the exporter keeps no duplicate regex for these statements.
+
+The direct-module dispatcher is being decomposed by operator family rather than
+moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and
+bidirectional LSTM source emission now delegates to the Torch-free recurrent
+emitter. State-slot selection continues to use the shared recurrent arity/index
+contract, and the generated alignment call and runtime-helper import are
+unchanged. Conv, transpose-Conv, fully connected, and PReLU branches remain in
+the dispatcher for subsequent independent extraction.
+
+FullyConnected and PReLU are the next separated direct-module families.
+FullyConnected owns its direct module call and fused-activation ordering in a
+small emitter. PReLU owns parameter-count detection, NHWC/NWC/NDHWC parameter-
+axis bridges, shape-preserving fast paths, and alignment fallback in a separate
+emitter. The dispatcher retains only ordered delegation for both families;
+convolution families and fused-module emission remain its final substantial
+responsibilities.
+
+TransposeConv2D and TransposeConv3D now have separate focused emitters. They own
+constant or tensor-metadata fallback output shapes, module weight/bias/stride/
+padding/dilation/output-padding arguments, target logical layout, and fused-
+activation ordering. The legacy named-NHWC override for a channel-first
+TransposeConv2D tensor remains explicit in the 2D emitter. Only fused modules
+and regular Conv2D/depthwise/Conv3D remain substantial direct-dispatch logic.
+
+Regular Conv3D direct and runtime-helper emission is now a focused emitter as
+well. It owns NCDHW raw-output annotation, NDHWC materialization aliases,
+direct-module capability fallback, module-output bridging, and activation order.
+The only remaining `CONV_3D` check in the dispatcher belongs to the still-
+central fused-module raw-layout classification; the ordinary Conv3D branch is
+gone.
+
+Regular Conv2D and DepthwiseConv2D emission is now focused in the same emitter
+module. Input layout/shape shortcuts, existing channel-first aliases, planned or
+folded pre-permutations, explicit module padding, direct/runtime capability,
+NCHW aliases, public-output correction, and fused activation remain ordered as
+before. The direct-module dispatcher has consequently fallen from 374 lines at
+the preceding checkpoint to roughly 255 lines, with the fused-module branch as
+its only remaining large implementation block.
+
+Fused-module emission is now separated too. Planned input permutation folding,
+legacy NHWC Conv fallback, raw-output layout classification, channel-first alias
+retention, public-output correction, channel-last materialization, and generic
+module-output fallback are owned by one focused emitter. The former direct-
+module implementation is now an approximately 171-line ordered dispatcher: it
+contains no generated statement append and no permutation expression, only the
+capability guard, attribute/spec lookup, and family emitter delegation.
+
+That final direct-module dispatcher and its supported-op table now live beside
+the family emitters. The exporter no longer defines any direct-module emission
+function or module-family table; it imports the unchanged names required by the
+stored generated pipeline. The dispatcher itself remains statement-free and
+preserves recurrent, fused, Conv2D, TransposeConv2D, Conv3D,
+TransposeConv3D, FullyConnected, and PReLU priority exactly.
+
+The final binary compatibility adapter has also been removed. The stored native
+codegen source injects the exporter's existing broadcast target-shape resolver
+as one explicit callback argument at the binary call site, then invokes the
+Torch-free binary emitter directly. A structural gate verifies exactly one
+injected keyword and parses the transformed function source as Python. Thus the
+exporter no longer defines any of the extracted native unary, binary, transpose,
+shape-transform, Concat, or direct-module emitters.
+
+Generated encoder-stage composition now has a separate Torch-free owner in
+`pytorch_codegen_stages.py`. It groups staged BERT encoder statements, derives
+their live inputs and outputs, and emits the optional attention/FFN submodule
+source, initialization lines, and forward calls without importing Torch at
+module import time. The stored native-codegen pipeline still resolves the same
+imported function name, so its contract is unchanged. The former non-composite
+encoder builder had no production or test callers and was removed rather than
+preserved as a second implementation. Deterministic differential validation
+over 300 generated stage specifications fixes exact return-value equivalence
+with the previous composite builder.
+
+Forward-source partitioning and its single-use static Reshape-chain folding now
+share that stage-codegen owner. Large forward bodies retain the same liveness-
+based 18/28/36-line partition policy, deterministic boundary score, generated
+method signatures, and inline fallback. Adjacent foldable Reshape pairs are
+kept within one stage and reduced using the shared reshape-target policy. The
+exporter imports only the partitioning entry point used by the stored pipeline;
+the nested folder is no longer exporter-owned. Differential checks cover 250
+deterministic forward bodies and representative literal, inferred, fan-out, and
+multi-step Reshape chains with exact old/new return equality.
+
+TorchScript package export now has a focused artifact owner in
+`pytorch_artifact_exporters.py`. Public arguments, artifact naming, trace-then-
+script fallback, timeout handling, metadata schema, skip behavior, error
+contract, and return path are unchanged; `pytorch_exporter.py` re-exports the
+imported function name for compatibility. Shared example-input metadata,
+dynamic-boundary detection, native-package eligibility, torch.export-specific
+skip policy, and sequential child-process execution live in
+`pytorch_export_support.py` for reuse by later Dynamo ONNX and ExportedProgram
+separation. That support module no longer imports Torch at module load time;
+only image resize and requested artifact execution import it locally. The five
+moved helpers are AST-identical to their previous exporter implementations, and
+the TorchScript body is identical after its lazy Torch availability guard.
+The same owner now builds the generated package metadata schema, including
+public ONNX boundary shape/layout restoration and NumPy-backed operator option
+serialization. Tensor metadata, recursive value serialization, and the payload
+builder are AST-identical to their former exporter definitions.
+
+Dynamo ONNX package export now shares the same artifact owner. The exporter
+keeps a signature-compatible wrapper whose only responsibility is to supply the
+existing generated-model source-rewrite context and final-repair callback;
+input construction, skip/error metadata, the sequential child invocation,
+timeout handling, artifact naming, sanitization, and return behavior live in
+the artifact module. ONNX external-data preservation, missing public-output
+shape restoration, graph cleanup, layout-bridge folding, and final metadata
+sanitization are isolated in the Torch-free
+`pytorch_onnx_artifact_support.py`. After normalizing the two explicit callback
+names, the artifact function is AST-identical to the previous implementation,
+and all four moved ONNX support functions are AST-identical without
+normalization.
+
+The ExportedProgram child process source has its own inert payload module,
+`pytorch_exported_program_child.py`. The 1,813-line embedded literal previously
+obscured the approximately 140-line host orchestration; the exporter now assigns
+the imported `_EXPORTED_PROGRAM_CHILD_SCRIPT` constant before invoking the same
+single child runner. The 71,054-byte string is byte-for-byte identical to the
+previous literal, has fixed SHA-256
+`548c123d658c61780a134e34dbc02939f07d1db7e6bccc81db08fddf6cf77d5e`, and
+parses as Python. Importing the payload module does not import or execute Torch.
+
+That exposed ExportedProgram host orchestration now lives beside TorchScript and
+Dynamo ONNX in `pytorch_artifact_exporters.py`. The public exporter wrapper
+supplies two established hooks: temporary generated-source rewriting and final
+model repair. All
+metadata, native/torch.export skip policy, example-input construction,
+sequential child execution, timeout behavior, cleanup ordering, and return/error
+contracts remain in the focused artifact implementation. After normalizing the
+two callback names, the moved host function is AST-identical to its former
+exporter implementation.
+
+ExportedProgram stack-trace removal is directly owned by the import-safe
+`pytorch_exported_program_archive.py`. It rewrites only `models/model.json`
+entries in a temporary archive, removes every nested `stack_trace`, preserves
+other JSON fields and archive entries, leaves the original untouched when no
+field is found, and atomically replaces it after a change. The moved 46-line
+implementation is AST-identical; the artifact host calls it directly instead
+of receiving it through the exporter wrapper.
+
+The same archive owner now contains inverse-permute and related FX cleanup. The
+2,015-line optimizer is mechanically identical to its exporter implementation;
+the only added statement is a local `import torch` after archive-existence
+validation, so importing artifact policy does not load Torch. The artifact host
+calls it directly and preserves its best-effort exception handling. The
+exporter retains an imported private alias for compatibility but owns no archive
+algorithm. Full execution of this optimizer remains covered by the optional
+Torch suite; the current Python 3.12 environment cannot load its Python 3.10
+libtorch, so this checkpoint uses exact AST equivalence and an import-free
+missing-archive contract rather than new Torch execution.
+
+Reusable generated-Python expression parsing now has a Torch-free owner in
+`pytorch_source_parser.py`. Top-level CSV splitting, balanced outer-parenthesis
+removal, binary/alignment arguments, cached simple assignments, rank-four shape
+literals, runtime Concat/`torch.cat` arguments, integer lists, and permutation
+dimension normalization form one 12-function boundary. The exporter imports the
+same private names used throughout canonicalization and source rewrites. Every
+moved function, including the 131,072-entry assignment-parser cache decorator,
+is AST-identical to the previous top-level implementation; nested canonicalizer
+helpers remain local where their semantics are intentionally narrower.
+
+The parser owner also handles eight complete generated-call forms: channel-last
+Gather slicing, static/dynamic-batch rank-four shapes, resize, pool arguments and
+assignments, tensor split assignments, softmax, and NHWC-to-NCHW bridge source
+resolution. The shared ShadowFormer batch-expression pattern moved with this
+group and remains imported by the exporter's narrower structural rewrites. All
+eight function ASTs and the pattern value are identical to their previous
+definitions, bringing the common top-level parser boundary to 20 functions.
+
+The remaining 12 pure top-level decoders now use that boundary too: buffer
+`copy_`, aligned assignment, cached functional/method permute assignment,
+local-response-normalization input, compact pool/resize/softmax inputs,
+constant Pad, dynamic/static binary alignment, and anchor alignment. All ASTs,
+including the permute parser's 131,072-entry LRU decorator, are unchanged. The
+shared owner therefore contains 32 reusable parsers while graph-aware signature
+and rewrite decisions remain in the exporter.
+
+Source line splitting, regex presence/count scanning, and balanced extraction of
+prefixed nested calls are co-located with those parsers. The four utility ASTs
+are unchanged, bringing the directly testable generated-source boundary to 36
+functions without moving graph-aware canonicalization policy.
+
+Seven capture-free fast-precanonicalize statement decoders extend this boundary
+to 43 functions: aligned binary assignment, simple return, dynamic Pool,
+local-response normalization, Softmax, Resize, and ReduceMax. Their moved ASTs
+are unchanged. The orchestrator's local binary-anchor decoder was identical to
+the existing shared decoder apart from its parameter name, so it now uses the
+shared implementation. The fast-precanonicalize orchestrator contains no nested
+function definitions; graph-aware ordering and mutation remain in the exporter.
+The repair-context collector and channel-first Resize repair also call the
+shared complete Resize decoder; neither keeps a nested statement parser. The
+shared decoder's explicit outer-call guard subsumes the lower-level Resize
+decoder guard previously relied on by the repair-local copy.
+Generic dynamic binary alignment is the 44th shared decoder and covers Add,
+Mul, Sub, Div, Minimum, and Maximum while preserving the existing Add-specific
+adapter contract. Fast precanonicalization uses one policy repair for a
+dynamic-target binary anchor both during the main scan and during the required
+post-scan revisit; the revisit is a named phase rather than duplicated rewrite
+logic in a second exporter loop.
+Permuted Conv input assignment is the 45th shared decoder. It returns the
+indentation, destination, Conv block, and unpermuted input as one tuple, so
+lookahead rules do not compile or interpret separate copies of the same
+generated-statement regex.
+Exact positional rank-four `_align_tensor_to_target_shape` assignment is the
+46th shared decoder. It preserves the generated format's four-integer grammar
+and supplies destination, expression, and shape tuples to both scalar-binary
+lookaround and dynamic-Pool repair.
+The context collector likewise uses the shared complete Softmax and constant
+Pad assignment decoders for shape and CF/NHWC evidence, instead of compiling
+narrower duplicate statement regexes.
+Each remaining generic source assignment is decoded once through the cached
+shared parser. Consumer identifiers, simple aliases, layout-name hints, and
+aligned rank-four shapes derive from that tuple, replacing three overlapping
+line regexes and accepting the same positional or keyword alignment syntax as
+the shared parser.
+Parser migration also removes its dead matching scaffold: unused module/return/
+Resize/Pool/LRN/reshape regexes and discarded terminal/Conv match results are
+not retained beside the shared decoders. An AST load check guards this boundary
+by requiring every remaining simple local assignment in the orchestrator to be
+referenced.
+
+Pure generated-source rewrites now live in the Torch-free
+`pytorch_source_rewrites.py`. Channel-first GAP-to-Conv bridge folding, explicit
+channel-last GAP output materialization, SE scale/binary bridge rewriting,
+channel-last affine-to-Conv bridge folding, and rank-3/rank-4 channel-last GAP
+mean rewriting share the common parser boundary and retain their established
+ordering. Boundary transpose/Conv folding, redundant permute-chain collapse,
+public layout-bridge alias inlining, channel-last PReLU bridge folding, and
+rank-4 reshape/permute/Conv folding use the same owner. The channel-first
+hard-sigmoid gate/Conv rewrite is co-located with these pure transforms as
+well. Channel-last binary bridge-chain folding uses the same callback-based
+boundary for local-name and constant-layout decisions. All twelve ASTs are
+identical to their former exporter definitions. Channel-last GAP/Conv input
+repair now uses the shared rank-4 shape policy and is the thirteenth pure
+rewrite owned here; its AST is likewise unchanged. Backward liveness pruning of
+generated forward lines is also owned here and accepts explicit public input and
+output variable names instead of consulting graph state. ExportedProgram's
+direct-Conv channel-first Add-target repair is also owned here; it recognizes
+only a declared Conv block, its input-channel count, the exact Add/ReLU chain,
+and a nearby direct consumer before changing the static target. Its AST is
+unchanged from the exporter implementation. Direct fixtures fix each
+rewrite's representative success form and unmatched-source no-op behavior.
+Graph-aware GatherND boundary repair is deliberately not mixed into this pure
+source-rewrite boundary. It lives in the Torch-free
+`pytorch_source_graph_rewrites.py` beside its ModelIR-backed GatherND shape
+query. This keeps graph/layout inspection explicit while removing both
+implementations from the exporter.
+
+Read-only ModelIR codegen queries have a separate Torch-free owner in
+`pytorch_graph_policy.py`. Gather boundary pre-permutation compares static
+output signatures, while effective rank-4 runtime layout follows indexed
+producer/consumer edges through a fixed passthrough family to a Conv boundary.
+Neither query mutates ModelIR or emits source, keeping graph inspection out of
+both the monolithic exporter and the source-rewrite module.
+The same owner stores the writer's shared `ModelIRGraphIndex` in the native
+codegen cache. Producer queries use `ModelIRGraphIndex.producer()` directly,
+and expected Conv2D channel discovery enumerates only the indexed Conv2D
+family. No detached producer-to-operator table or repeated all-operator scan is
+created during writer preparation.
+Public target-shape, base-signature, channel-first shape, and named-tensor
+resolution form one mutually recursive family in this owner. It uses the same
+graph/cache queries for binary broadcast and Conv channel evidence, while
+returning public tensors in their declared logical layout. Compact target and
+Resize shape literal rendering plus alias-aware rank-3/4/5 channel-first shape
+queries are co-located with that contract; statement emission remains outside
+this read-only graph-policy boundary.
+The same owner decides whether a package graph is a single public-input/public-
+output chain whose non-data inputs are all constants. Transpose-convolution data
+input positions retain their explicit exception; branching, multiple outputs,
+or dynamic side inputs reject the sequential fast path.
+
+Generated CONCAT and adjacent Slice layout policy has a focused Torch-free
+owner in `pytorch_concat_policy.py`. It owns channel-first input expressions,
+static Slice/StridedSlice alias guards, channel-axis validation and recovery,
+and the decision to keep a Slice result channel-first across all indexed
+Concat consumers. ModelIR shape and expression access remain explicit
+callbacks, so the module neither mutates the graph nor owns statement emission.
+
+Generated RESHAPE policy has a focused Torch-free owner in
+`pytorch_reshape_policy.py`. It distinguishes plain data reshapes from layout-
+sensitive plans, resolves exact static signatures and sequence lengths, and
+follows indexed unary chains to an adjX BatchMatMul that requires feature-last
+storage. Runtime-layout and shape-plan collaborators are explicit callbacks;
+the policy owns no graph mutation or source statement emission.
+
+Native NMS postprocess recognition has a focused Torch-free owner in
+`pytorch_nms_policy.py`. It validates the unit-step RANGE that supplies Gather
+indices and requires every indexed consumer to be the matching selected-index
+Gather. Alias, producer/consumer, and scalar-literal evidence are explicit
+inputs; unrelated RANGE or Gather chains remain ordinary generated ops.
+
+Native Affine LayerNorm and expanded Swish recognition have a focused Torch-
+free owner in `pytorch_fusion_policy.py`. The LayerNorm matcher requires the
+named constant gamma/beta Mul→Add form and returns a module specification without
+mutating the graph. The Swish matcher requires an exclusive
+`Logistic(x) * x` diamond and rejects additional Logistic consumers. Producer,
+consumer, constant, canonical-name, and attribute-allocation collaborators stay
+explicit at this boundary.
+The axis-0 tensor-mux Slice matcher is co-located here. It recognizes the exact
+Cast/Sub condition arithmetic, then/else first-dimension products, merged size,
+axis-0 value Concat, and terminal Slice before returning the three conditional
+input names; it does not rewrite the graph.
+
+Generated constant and shape-tensor evaluation has a focused Torch-free owner
+in `pytorch_constant_policy.py`. It resolves direct integer constants and the
+bounded SHAPE, CAST/identity, GATHER/GATHER_ND, SLICE/STRIDED_SLICE,
+CONCATENATION/PACK, and MINIMUM/MAXIMUM forms used by native code generation.
+The same owner tracks whether a Reshape shape expression contains runtime
+dimensions, including SPLIT and UNPACK propagation, while rejecting cycles and
+unsupported expressions conservatively. It reads the shared producer index but
+does not mutate ModelIR or emit generated statements.
+Constant Pad and scalar literal rendering, static/runtime axis expressions, and
+static mirror-Pad expression planning use the same owner. Runtime helper imports
+are explicit mutable inputs, and tensor-expression lookup remains a callback;
+the policy therefore contains no Torch import and does not own generated-model
+state.
+
+Constant-buffer alias shape and broadcast-permutation decisions have a separate
+Torch-free owner in `pytorch_constant_alias_policy.py`. It validates trailing-
+axis vectors, rank-four singleton channel constants, public/produced/inlined
+exclusions, and declared NCW/NCHW/NCDHW permutation preference. Constants that
+already express an intentional singleton broadcast remain unpermuted.
+
+Generated tensor-expression selection has a separate Torch-free owner in
+`pytorch_expression_policy.py`. Explicit aliases, channel-first aliases,
+registered buffers, inline constants, and tensor variables retain one ordered
+resolution contract. The same owner resolves channel-first/permuted/transposed
+constant alias expressions and collision-free cached local names; it emits only
+Python source strings and runtime-helper requirements.
+
+Generated reduction axis and direct-expression planning has a separate Torch-
+free owner in `pytorch_reduction_policy.py`. Static channel-last spatial axes
+map to their channel-first equivalents only with unambiguous layout/shape
+evidence. Negative and duplicate axes normalize before compact direct Mean source
+selection; unsupported axes remain on the runtime path.
+
+Static channel-first expression tracing has a separate Torch-free owner in
+`pytorch_channel_first_policy.py`. It follows exact CF→CL Transpose bridges,
+direct convolution-family producers, and shape-preserving unary chains while
+honoring precomputed aliases and cycle bounds. Unary direct-emission eligibility
+uses the same trace and relaxed shape equality.
+
+Binary runtime-shape alignment policy has a separate Torch-free owner in
+`pytorch_binary_policy.py`. It recognizes all-ones passthrough operands, compares
+materialized shapes with dynamic signatures and channel-first broadcast shapes,
+and selects the operand whose signature best anchors the declared output. The
+same owner decides whether every consumer can remain a channel-first binary op
+and whether a materialized channel-last alias can be omitted. Recursive alias
+elision is conservative at graph outputs and unsupported fan-out, and preserves
+the existing Transpose, Conv, spatial-reduction, unary, binary-broadcast, rank,
+layout, and cycle boundaries through injected capability callbacks. Constant,
+scalar, passthrough, and explicit NHWC→NCHW binary input-expression selection
+uses that owner as well. Direct channel-first binary capability is granted only
+when every dynamic input resolves through this policy and their relaxed
+broadcast exactly matches the declared output shape. Binary output target
+literals are derived by broadcasting the same channel-first input shapes and
+then mapping them to the declared output layout; unknown layouts retain the
+established expected-channel and tensor-name guards. Operand expression policy
+also owns explicit pair aliases, channel-first constant aliases, public-input
+Transpose reuse, vector-to-channel reshape, and deterministic constant-axis
+permutation fallback while receiving all generated names through callbacks.
+
+Generated-code layout bridge recognition has a separate Torch-free owner in
+`pytorch_layout_bridge_policy.py`. A public-input Transpose is folded only when
+its bridge marker, public source, single consumer, and valid permutation all
+agree. Downstream bridge matching likewise requires one consumer, distinct
+known logical layouts, and an exact permutation derived from those layouts.
+The same owner follows conservative consumer hints for ambiguous same-shape
+channel Transposes and bounded producer traces for batchless rank-3 public
+outputs; explicit metadata boundaries take precedence over structural hints.
+
+Generated shape-expression reconstruction has a separate Torch-free owner in
+`pytorch_shape_expression_policy.py`. It rebuilds constant and runtime shape
+lists/scalars through Shape, Slice, StridedSlice, Gather, Concat, reshape-like,
+comparison, arithmetic, and ReduceProd producers with explicit cycle guards.
+Runtime shape-list helper imports are recorded only when static reconstruction
+is unavailable.
+
+Rank-4 generated-source shape policy has a Torch-free shared owner in
+`pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
+used by both exporter policy and source rewrites without importing the exporter
+or duplicating heuristics. Special Reshape layout planning is co-located with
+this policy so pre/post permutations and reshape targets are not inferred in a
+separate exporter-only branch. The four function ASTs are identical to their
+former exporter definitions, and direct tests cover non-rank-4 passthrough,
+preferred channel selection, singleton-channel hints, ambiguous layouts,
+spatial dimension preservation, and each supported special Reshape form.
+Shape-preserving unary alignment elision also lives here: it requires identical
+logical layouts and either equal shapes or equal element counts before allowing
+the emitter to bypass runtime target-shape alignment.
+TopK rank-3/4/5 layout-bridge planning also uses this owner. It searches
+deterministic input permutations from static value-output shape evidence and
+returns an optional inverse permutation when the index output retains the
+original layout.
+Pure Conv2D and Conv3D output-spatial calculations share one rank-parameterized
+forward-convolution helper in the same module; transpose-Conv3D retains its
+distinct formula beside it. The exporter imports the three compatibility names
+and no longer owns parallel 2-D and 3-D implementations.
+Asymmetric Conv2D SAME-padding planning is co-located here because it consumes
+only shapes, options, and logical layouts. The exporter retains the compatibility
+name through an import. The older symmetric-only SAME-padding helper had no
+callers and is removed instead of establishing a second padding policy.
+Feature-last sequence Reshape permutations, MatMul batch broadcasting,
+BatchMatMul result shapes, and reduction result shapes are pure policies in
+this module as well. Their compatibility names are imported by the generated
+pipeline; ModelIR-backed adjX consumer discovery remains in the exporter.
+Conv3D and transpose-Conv3D constructor inference is co-located with the
+spatial formulas it validates. The policy owns channel/layout interpretation,
+weight-axis search, group selection, and the established conservative fallback;
+the exporter only consumes the selected constructor parameters.
+The corresponding Conv2D family is also centralized here: one layout-candidate
+search feeds both input pre-permutation and regular/depthwise constructor
+selection. Shape, option, and logical-layout inputs remain explicit, and no
+ModelIR or emitter state enters this policy boundary.
 
 `ModelIRPassState.fingerprint()` provides deterministic cycle state for
 repeating passes. It covers graph/subgraph topology, public boundaries, tensor
@@ -1222,11 +2589,25 @@ Conv-based attention NHWC propagation is also owned by
 attention, expanded HardSigmoid gates, HardSwish activation, and self-HardSwish
 Mean chains. Each nested matcher proves the full region and legacy consumers
 before any transpose removal or coefficient/axis rewrite.
+All variants now mutate through their runner-owned `ModelIRGraphIndex` without
+an end-of-iteration refresh. Index-aware input/output rewrites and differential
+removals retain live topology throughout the transaction. Optional legacy NCHW
+consumers are tracked by operator object across removals, rewired to one local
+adapter, and preceded by an indexed Transpose insertion. Both candidate scans
+enumerate only indexed Transpose roots. The attention module consequently has
+no whole-graph map builder, direct operator-list insertion/deletion, or routine
+index refresh; an architecture gate preserves those constraints.
 
 CSP attention propagation is the final currently characterized large member
 of `passes/attention_layout.py`. It validates both residual forms, expanded
 HardSigmoid or sigmoid-self-Mul gates, singleton-spatial reshape adapters,
 branch fan-out, and terminal layout before rewiring the region to NHWC.
+Its root discovery and complete producer/consumer proof now reuse one
+`ModelIRGraphIndex`. Every branch, gate, Conv, terminal-output, and alias edge
+rewrite uses index-aware helpers; all proven bridge Transposes are removed
+differentially in reverse graph order. The lowerer supplies the active
+`LayoutState`, which is synchronized after pruning. The optional state keywords
+preserve the legacy single-argument compatibility entry point.
 
 ## Dependency boundaries
 
@@ -1245,6 +2626,123 @@ in `pytorch_export_support.py`; shared export exceptions live in
 must not import TensorFlow. Image trace data is resized with the existing
 PyTorch dependency so TorchScript, Dynamo ONNX, and ExportedProgram generation
 does not require the TensorFlow optional extra.
+
+PyTorch op capability selection lives in the Torch-free
+`pytorch_capabilities.py`. It composes direct emitter module/unary/binary
+declarations with the existing runtime-kernel set, owns explicit CUSTOM
+rejection and unsupported-op diagnostics, and returns a defensive copy from the
+public supported-kernel query. Runtime-wrapper selection and the explicit
+`ONNX_SLICE` custom-code allowance use this same capability owner. The registry
+expressions, native direct-codegen validation, and the typed fallback-error
+classifier use the same owner. This keeps runtime-kernel support distinct from
+the smaller native source-emitter set without duplicating the registry. All six
+functions are AST-identical to their former exporter definitions.
+Model-specific direct-module eligibility is co-located here as well. Only
+channel-first Conv2D, depthwise Conv2D, and Conv3D tensors with the expected rank
+and positive static channel dimensions select direct module calls.
+Native package preparation combines root-CUSTOM rejection and recursive
+supported-op validation in one traversal. The compatibility validators remain
+available independently, while production and debug export paths use only the
+combined validator and preserve the established error precedence.
+
+Generated PyTorch identifiers have a Torch-free single owner in
+`pytorch_naming.py`. Tensor variables, constant-buffer attributes, serialized
+tensor storage names, keyword/digit sanitization, long-name hashing, semantic
+suffix preservation, and deterministic collision resolution share the same
+policy. Direct module-attribute base names are co-located with this generated
+identifier policy. Affine-module attribute canonicalization and collision
+resolution also use this owner, including conflicts with direct-module and
+already planned LayerNorm attributes. Twelve function ASTs and four policy-
+constant ASTs are identical to their former exporter definitions. The obsolete
+exporter-local full module-attribute-name shim had no callers and is removed
+rather than retained as a second naming path.
+
+Native codegen value policy has a Torch-free single owner in
+`pytorch_codegen_values.py`. Small constant eligibility, Python and scalar
+literal rendering, TFLite-to-Torch pad ordering, Torch dtype spelling, and
+Conv-block fused-activation selection no longer live in the monolithic
+exporter. All seven function ASTs are identical to their former exporter
+definitions, including non-finite float handling and unsupported-dtype errors.
+
+Native Slice, StridedSlice, Gather, and Gather-plus-Reshape code generation has
+a Torch-free single owner in `pytorch_indexing_codegen.py`. It owns the direct
+index expression builders, suffix-flatten recognition, singleton-axis-drop
+recognition, and the guarded CRD-to-DCR Gather elision before DepthToSpace. All
+nine function ASTs are identical to their former exporter definitions; emitted
+source strings and ModelIR layout/consumer guards therefore remain unchanged.
+
+Native model-file generation builds its producer/consumer view through the
+shared `ModelIRGraphIndex`. The exporter no longer owns a second complete graph
+scan or a separate indexing policy. Codegen context owns the shared index and
+exposes its maps through read-only compatibility properties, preserving
+operator-index semantics while aligning package generation with the fixed
+conversion-session graph contract.
+
+Generated-package import and native state-dict reconciliation live in
+`pytorch_state_dict_support.py`. Import-name sanitization, stale generated
+module cleanup, dtype/shape alignment, state-key validation, and ModelIR buffer
+mapping have one owner. The module has no eager Torch import: Torch is loaded
+only inside tensor materialization after a PyTorch artifact has been requested.
+All three function ASTs are identical to their former exporter definitions.
+
+Generated package scaffolding lives in the Torch-free
+`pytorch_package_sources.py`. The common package initializer/runtime bridge,
+wrapper model source, native runtime source assembly, and idempotent Pool2D
+channel-last recovery patch are shared by native, TFLite-backed, and
+SavedModel-backed packages. All four function ASTs are identical to their
+former exporter definitions; Torch references exist only in generated source
+strings and do not import Torch while the conversion modules are loaded.
+
+Runtime-wrapper artifact generation lives in
+`pytorch_runtime_wrapper_exporter.py`. It consumes the shared capability,
+metadata, naming, and package-source contracts, writes only the requested
+wrapper package, and imports Torch locally only when serializing the state dict.
+Its function AST is identical to the former exporter definition, while an
+unsupported ModelIR is rejected before any artifact directory is created.
+
+TFLite-backed and SavedModel-backed PyTorch package exports live with the other
+artifact writers in `pytorch_artifact_exporters.py`. Their public-boundary-only
+metadata builders live in `pytorch_export_support.py`. Both paths reuse the
+shared package scaffolding, copy only the explicitly requested backing artifact,
+and reject missing sources before creating output. All four function ASTs are
+identical to their former exporter definitions; neither path imports TensorFlow.
+
+Fallback package preference lives in the Torch-free
+`pytorch_package_selection.py`. Recurrent/control and length-input exclusions,
+transpose-convolution and channel-first Softmax signals, and the established
+large-graph structural thresholds are evaluated independently from artifact
+writing. TFLite-backed and SavedModel-backed selection share this single policy;
+the saved-model entry remains a direct alias of that policy. Root operator
+types, counts, and Softmax candidates are collected in one traversal before the
+established guard order is evaluated. Once the final fallback has selected the
+TFLite artifact unconditionally, it writes that package directly without a
+redundant preference evaluation whose branches produced the same artifact.
+The early native TFLite-import preference for control-flow and recurrent ops is
+owned here as well. Export orchestration invokes its short-circuit scan only
+after a non-empty, custom-op-free fallback TFLite path is established, so the
+ordinary native path does not collect root op types for an unavailable
+fallback.
+
+Reference ONNX public-boundary inference lives in
+`pytorch_onnx_artifact_support.py`. Transpose permutation decoding, short
+layout-preserving boundary walks, input/output layout inference, and batchless
+rank-three Squeeze/Unsqueeze detection share the ONNX artifact boundary rather
+than fallback orchestration. All four function ASTs are identical to their
+former exporter definitions and build their producer/consumer views once per
+reference graph. Reference ModelIR/ONNX shape and layout reconciliation is
+co-located here as well: it restores public names/signatures, materializes any
+required public layout bridges through the shared validation pass, preserves
+batchless metadata, and forces recurrent rank-three boundaries feature-last.
+Its function AST is also identical to the former exporter definition.
+
+Single-op ONNX StringNormalizer package fallback lives in the Torch- and
+TensorFlow-free `pytorch_string_normalizer_exporter.py`. ONNX attribute
+decoding, validation, shared package scaffolding, and public tensor metadata
+serialization are isolated from the native code generator and reuse the
+bounded export-support/package-source contracts. Both functions are
+AST-identical to their former exporter definitions. Invalid graphs are rejected
+before creating an artifact directory, and importing the module cannot load
+Torch or TensorFlow.
 
 ## Runtime-check memory boundary
 
@@ -1448,7 +2946,12 @@ reports. Median and maximum durations were 7.124 and 120.360 seconds.
 The layout planner records channel-last provenance through elementwise and
 decomposed DynamicQuantizeLinear regions, and a bounded quantized-layout pass
 removes stale ConvInteger NCHW-to-NHWC input bridges only when that provenance
-proves the input is already NHWC. This eliminates the double transpose and
+proves the input is already NHWC. The repair now builds one
+`ModelIRGraphIndex`, enumerates only indexed Transpose roots, updates the Conv
+input and removes the stale adapter differentially, and synchronizes the active
+LayoutState after pruning. It no longer rebuilds producer/consumer maps on each
+iteration or mutates the operator list directly. This eliminates the double
+transpose and
 improves the fixed-seed maximum error from `2.7819780111312866` to
 `0.22717905044555664`, while cosine similarity improves from
 `0.7283386855698387` to `0.999042264918951`. DynamicQuantizeLinear now rounds
@@ -1840,6 +3343,47 @@ The Tier 4 result is part of the active improvement gate. The Tier 5 result is
 retained only as historical evidence; do not rerun Tier 5 or use its failed
 models as current improvement gates.
 
+The rank-five NDHWC pre-Concat layout matcher is mechanically isolated in
+`passes/ndhwc_concat_layout.py`. Its extracted function AST matches the
+characterized central implementation at SHA-256
+`0b0c625290f2ed31351ca204b0bbc5f2a463fa09ffe1bf1eccb8ff15de6aee17`.
+The indexed checkpoint retains the lowerer compatibility wrapper but replaces
+all five raw production calls with transactional runner
+`layout.ndhwc_pre_concat`. Candidate planning now uses one shared
+`ModelIRGraphIndex`, validates every adapter, fan-out, public boundary,
+permutation, rank, and spatial-shape condition before mutation, removes
+operators through differential index updates, and reconciles `LayoutState`
+after pruning. Rank-five unary and canonical Concat tensors also clone and
+remap per-axis quantization metadata from NCDHW dimension 1 to NDHWC dimension
+4. The original implementation and the indexed implementation produce
+identical ModelIR for all sixteen non-quantized characterization cases; the
+quantized cases intentionally differ only by the corrected quantized axis.
+Focused characterization, runner instrumentation, ownership, and architecture
+validation pass 60 tests. A single sequential `superpoint.onnx` smoke retains
+`evaluation_pass=true`, maximum absolute error
+`1.6666017472743988e-06`, RMSE `1.6207873294228388e-07`, and cosine similarity
+`1.0`; the NDHWC pre-Concat precondition skips all five production positions
+without snapshots or fingerprints for that unrelated rank-four graph.
+
+## Managed-corpus SWAP exclusion policy
+
+Managed corpus validation remains strictly sequential. While each converter
+subprocess is active, the bulk runner samples `VmSwap` for that subprocess and
+all of its descendants from Linux `/proc`. Existing host-wide SWAP use and
+SWAP use by unrelated processes are deliberately ignored. If any process in
+the active model's process tree reports nonzero `VmSwap`, the runner terminates
+that process tree, records the model as `swap_detected`, and includes the peak
+tree total and per-process peak values in `bulk_status.json` and the generated
+summary.
+
+A model reported as `swap_detected` must be changed to
+`baseline_classification: excluded` in the managed regression profile before
+the next corpus run, with `baseline_reason` set to
+`swap_detected_during_managed_validation`. The managed-profile count and exact
+exclusion contract tests must be updated in the same checkpoint. Because that
+changes profile identity, the next authoritative run starts with a clean
+output directory rather than resuming results produced by the older profile.
+
 ## Remaining refactoring order
 
 1. Improve Tier 0-4 layout, transpose, broadcast, shape reconciliation, and
@@ -1849,6 +3393,7 @@ models as current improvement gates.
 3. Complete quantization, split/crop, custom/pseudo op, report, and requested-
    artifact-only regression coverage on the validated ModelIR contract.
 4. Complete the shared PyTorch/TorchScript/Dynamo ONNX/ExportedProgram
-   canonicalization and emitter separation.
+   canonicalization and artifact-emitter separation on top of the extracted
+   native op and encoder-stage codegen boundaries.
 5. Measure warm-run conversion time and peak RSS on the active Tier 0-4 set,
    then document improvements and remaining normalized failures.

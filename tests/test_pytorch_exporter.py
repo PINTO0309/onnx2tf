@@ -52,6 +52,14 @@ from onnx2tf.tflite_builder.pytorch_accuracy_evaluator import (
     evaluate_tflite_pytorch_package_outputs,
     smoke_test_pytorch_package_inference,
 )
+from onnx2tf.tflite_builder.passes.pytorch_compat import (
+    _reject_residual_layout_transposes,
+    _remove_redundant_layout_transposes,
+)
+from onnx2tf.tflite_builder.passes.pytorch_layout_validation import (
+    _propagate_pytorch_friendly_layouts,
+    validate_channel_first_exportability,
+)
 from onnx2tf.tflite_builder.pytorch_exporter import (
     ModelIRPyTorchExportError,
     NativePyTorchGenerationTimeoutError,
@@ -84,11 +92,8 @@ from onnx2tf.tflite_builder.pytorch_exporter import (
     _make_tensor_storage_name_map,
     _merge_reference_public_boundary_metadata,
     _preferred_reshape_target_values,
-    _propagate_pytorch_friendly_layouts,
     _repair_channel_last_gap_conv_inputs,
     _reapply_post_export_final_model_repairs,
-    _reject_residual_layout_transposes,
-    _remove_redundant_layout_transposes,
     _restore_same_average_pool_exclude_pad_correction_for_native_runtime,
     _rewrite_generated_model_source_for_exported_program,
     _rewrite_channel_first_gap_outputs_to_explicit_channel_last,
@@ -118,7 +123,6 @@ from onnx2tf.tflite_builder.pytorch_exporter import (
     export_torchscript_from_generated_package,
     normalize_model_ir_for_pytorch_channel_first,
     prepare_model_ir_for_native_pytorch,
-    validate_channel_first_exportability,
 )
 from onnx2tf.tflite_builder.schema_loader import load_schema_module
 from onnx2tf.tflite_builder.tflite_importer import import_model_ir_from_tflite
@@ -911,6 +915,40 @@ def test_canonicalize_generated_model_source_rewrites_compact_scalar_first_binar
     rewritten = model_path.read_text(encoding="utf-8")
     assert "y = torch.add(x, 1.0)" in rewritten
     assert "torch.add(1.0, x)" not in rewritten
+
+
+def test_canonicalize_generated_model_source_preserves_scalar_tensor_for_reshape(
+    tmp_path,
+) -> None:
+    package_dir = tmp_path / "scalar_reshape_pkg"
+    package_dir.mkdir()
+    model_path = package_dir / "model.py"
+    scalar_expr = (
+        "torch.as_tensor(16.0, dtype=torch.float32, "
+        "device=_module_device(self))"
+    )
+    model_path.write_text(
+        "\n".join(
+            [
+                "import torch",
+                "",
+                "class Model(torch.nn.Module):",
+                "    def forward(self) -> torch.Tensor:",
+                f"        y = torch.reshape({scalar_expr}, [1, 1])",
+                f"        z = torch.reshape(torch.mul(y, {scalar_expr}), [1, 1])",
+                "        return z",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _canonicalize_generated_model_source_for_raw_export(package_dir)
+
+    rewritten = model_path.read_text(encoding="utf-8")
+    assert f"y = torch.reshape({scalar_expr}, [1, 1])" in rewritten
+    assert "z = torch.reshape(torch.mul(y, 16.0), [1, 1])" in rewritten
+    assert "torch.reshape(16.0, [1, 1])" not in rewritten
 
 
 def test_canonicalize_generated_model_source_rewrites_compact_singleton_const_anchor(
@@ -39332,9 +39370,20 @@ def test_convert_flatbuffer_direct_outputs_pytorch_package(tmp_path) -> None:
     assert torch.allclose(model(x, y), x + y)
 
 
-def test_convert_input_tflite_outputs_pytorch_package(tmp_path) -> None:
+def test_convert_input_tflite_outputs_pytorch_package(tmp_path, monkeypatch) -> None:
     tflite_path = _write_model_ir_as_tflite(str(tmp_path), "add_input", _make_add_model_ir())
     output_dir = tmp_path / "out_tflite"
+
+    real_import = builtins.__import__
+
+    def _block_tensorflow_import(name, *args, **kwargs):
+        if name == "tensorflow" or name.startswith("tensorflow."):
+            raise AssertionError("TFLite-to-PyTorch export must not import TensorFlow")
+        if name == "tf_keras" or name.startswith("tf_keras."):
+            raise AssertionError("TFLite-to-PyTorch export must not import tf-keras")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _block_tensorflow_import)
     onnx2tf.convert(
         input_tflite_file_path=str(tflite_path),
         output_folder_path=str(output_dir),

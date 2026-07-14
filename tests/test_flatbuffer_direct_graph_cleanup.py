@@ -12,6 +12,7 @@ from onnx2tf.tflite_builder.passes.graph_cleanup import (
     _optimize_squeeze_reshape_identity_chains,
     _optimize_duplicate_reshape_fanout,
     _optimize_duplicate_transpose_fanout,
+    prune_dead_operators,
     run_clamp_cleanup,
     run_consecutive_mul_constants_cleanup,
     run_duplicate_fanout_cleanup,
@@ -35,6 +36,51 @@ def _tensor(
         data=data,
         is_variable=data is None,
     )
+
+
+def test_dead_operator_pruning_uses_one_batch_index_compaction(monkeypatch) -> None:
+    model_ir = ModelIR("dead_operator_pruning")
+    model_ir.inputs = ["x", "y"]
+    model_ir.outputs = ["out"]
+    model_ir.tensors = {
+        name: _tensor(name, [1, 3])
+        for name in ("x", "y", "dead0", "mid", "dead1", "out")
+    }
+    for tensor in model_ir.tensors.values():
+        tensor.is_variable = False
+    model_ir.operators = [
+        OperatorIR("IDENTITY", ["x"], ["dead0"]),
+        OperatorIR("ADD", ["x", "y"], ["mid"]),
+        OperatorIR("MUL", ["dead0", "y"], ["dead1"]),
+        OperatorIR("MUL", ["mid", "y"], ["out"]),
+    ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = prune_dead_operators(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+    assert stats == {"removed_dead_operators": 2}
+    assert refresh_count == 1
+    assert [op.op_type for op in model_ir.operators] == ["ADD", "MUL"]
+    assert graph_index.operator_indices("IDENTITY") == []
+    assert graph_index.operator_indices("ADD") == [0]
+    assert graph_index.operator_indices("MUL") == [1]
+    assert "dead0" not in model_ir.tensors
+    assert "dead1" not in model_ir.tensors
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
 
 def _consecutive_mul_model(

@@ -8,6 +8,7 @@ import flatbuffers
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
 from onnx2tf.tflite_builder.opcodes import build_operator_codes, operator_code_key
+from onnx2tf.tflite_builder.passes.graph_cleanup import prune_dead_operators
 from onnx2tf.tflite_builder.signature_builder import build_signature_defs
 from onnx2tf.tflite_builder.tensor_buffer_builder import build_tensors_and_buffers
 
@@ -55,39 +56,7 @@ def _prune_unused_tensors_in_place(model_ir: ModelIR) -> None:
 
 
 def _prune_dead_operators_in_place(model_ir: ModelIR) -> None:
-    if len(model_ir.operators) == 0:
-        return
-
-    live_tensors = set(model_ir.outputs)
-    keep_flags = [False for _ in model_ir.operators]
-
-    for op_idx in range(len(model_ir.operators) - 1, -1, -1):
-        op = model_ir.operators[op_idx]
-        outputs_live = any(output_name in live_tensors for output_name in op.outputs)
-
-        # Keep stateful ops that mutate live variable tensors in-place even when
-        # their explicit outputs are not referenced.
-        mutates_live_variable_input = False
-        if not outputs_live:
-            for input_name in op.inputs:
-                if input_name not in live_tensors:
-                    continue
-                input_tensor = model_ir.tensors.get(str(input_name), None)
-                if input_tensor is not None and bool(input_tensor.is_variable):
-                    mutates_live_variable_input = True
-                    break
-
-        if outputs_live or mutates_live_variable_input:
-            keep_flags[op_idx] = True
-            for input_name in op.inputs:
-                live_tensors.add(input_name)
-
-    if all(keep_flags):
-        return
-
-    model_ir.operators = [
-        op for idx, op in enumerate(model_ir.operators) if keep_flags[idx]
-    ]
+    prune_dead_operators(model_ir, prune_tensors=False)
 
 
 def _strip_embedded_constant_inputs_in_place(model_ir: ModelIR) -> None:

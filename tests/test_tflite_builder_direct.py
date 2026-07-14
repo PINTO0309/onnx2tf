@@ -9287,7 +9287,9 @@ def test_singleton_transpose_does_not_reapply_remapped_mean_layout() -> None:
     assert model_ir.tensors["mean_adapter"].shape == [1, 1, 1, 64]
 
 
-def test_static_rank6_batch_matmul_is_wrapped_with_rank5_reshapes() -> None:
+def test_static_rank6_batch_matmul_is_wrapped_with_rank5_reshapes(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("rank6_batch_matmul")
     model_ir.inputs = ["lhs", "rhs"]
     model_ir.outputs = ["output"]
@@ -9313,10 +9315,26 @@ def test_static_rank6_batch_matmul_is_wrapped_with_rank5_reshapes() -> None:
             {"adjX": False, "adjY": False},
         )
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _compress_static_high_rank_batch_matmul(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _compress_static_high_rank_batch_matmul(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
     assert stats["compressed_static_high_rank_batch_matmul"] == 1
+    assert refresh_count == 1
     assert [str(op.op_type) for op in model_ir.operators] == [
         "RESHAPE",
         "RESHAPE",
@@ -9328,6 +9346,9 @@ def test_static_rank6_batch_matmul_is_wrapped_with_rank5_reshapes() -> None:
     assert model_ir.tensors[batch_matmul.inputs[1]].shape == [2, 2, 3, 5, 6]
     assert model_ir.tensors[batch_matmul.outputs[0]].shape == [2, 2, 3, 4, 6]
     assert model_ir.operators[-1].outputs == ["output"]
+    assert graph_index.operator_indices("RESHAPE") == [0, 1, 3]
+    assert graph_index.operator_indices("BATCH_MATMUL") == [2]
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
     rng = np.random.default_rng(0)
     lhs = rng.standard_normal(lhs_shape).astype(np.float32)
@@ -9677,7 +9698,9 @@ def test_flatbuffer_direct_keeps_boundary_input_layout_transpose_for_gather_nd()
     assert list(gather_nd_op.inputs) == ["x_onnx_ncx_internal", "indices"]
 
 
-def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_op0() -> None:
+def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_op0(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("boundary_input_transpose_channel_slice_block_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y", "z"]
@@ -9783,9 +9806,26 @@ def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_o
         OperatorIR(op_type="RELU", inputs=["x_onnx_ncx_internal"], outputs=["y"]),
         OperatorIR(op_type="RELU", inputs=["split1"], outputs=["z"]),
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _optimize_boundary_input_transpose_channel_slice_blocks(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _optimize_boundary_input_transpose_channel_slice_blocks(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
     assert stats["removed_boundary_input_transpose"] == 1
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
     assert model_ir.inputs == ["x"]
     assert list(model_ir.tensors["x"].shape) == [1, 2, 2, 3]
@@ -9821,9 +9861,12 @@ def test_flatbuffer_direct_boundary_input_transpose_channel_slice_block_elides_o
         and any(str(v).startswith("x_onnx_ncx_internal_local") for v in list(op.outputs))
         for op in model_ir.operators
     )
+    assert graph_index.operator_indices("TRANSPOSE") == [5]
 
 
-def test_flatbuffer_direct_internal_transpose_channel_slice_nhwc_propagation() -> None:
+def test_flatbuffer_direct_internal_transpose_channel_slice_nhwc_propagation(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("internal_transpose_channel_slice_nhwc_propagation_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["y_nchw"]
@@ -10026,9 +10069,26 @@ def test_flatbuffer_direct_internal_transpose_channel_slice_nhwc_propagation() -
         ),
         OperatorIR(op_type="RELU", inputs=["add1_out"], outputs=["y_nchw"]),
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _optimize_internal_transpose_channel_slice_nhwc_propagation_chains(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
     assert stats["removed_internal_transpose_channel_slice_stems"] == 1
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
     assert not any(
         str(op.op_type) == "TRANSPOSE"
@@ -10060,9 +10120,16 @@ def test_flatbuffer_direct_internal_transpose_channel_slice_nhwc_propagation() -
 
     # Legacy NCHW consumer keeps one localized adapter.
     assert any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+    assert graph_index.operator_indices("TRANSPOSE") == [
+        index
+        for index, operator in enumerate(model_ir.operators)
+        if str(operator.op_type) == "TRANSPOSE"
+    ]
 
 
-def test_flatbuffer_direct_transpose_channel_slice_muladd_nhwc_bridge_chain() -> None:
+def test_flatbuffer_direct_transpose_channel_slice_muladd_nhwc_bridge_chain(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("transpose_channel_slice_muladd_nhwc_bridge_chain_test")
     model_ir.inputs = ["x_nhwc"]
     model_ir.outputs = ["z"]
@@ -10211,9 +10278,26 @@ def test_flatbuffer_direct_transpose_channel_slice_muladd_nhwc_bridge_chain() ->
         OperatorIR(op_type="ADD", inputs=["s1_nhwc", "add1_bias"], outputs=["y1"]),
         OperatorIR(op_type="ADD", inputs=["y0", "y1"], outputs=["z"]),
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _optimize_transpose_channel_slice_muladd_nhwc_bridge_chains(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
     assert stats["optimized_transpose_channel_slice_muladd_nhwc_bridge_chains"] == 1
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
     assert not any(
         str(op.op_type) == "TRANSPOSE"
@@ -10237,6 +10321,7 @@ def test_flatbuffer_direct_transpose_channel_slice_muladd_nhwc_bridge_chain() ->
     assert np.array_equal(np.asarray(model_ir.tensors["slice1_size"].data), np.asarray([1, 2, 2, 2], dtype=np.int32))
     mul_const_shape = [int(v) for v in list(model_ir.tensors["mul_const"].shape)]
     assert mul_const_shape in ([1, 1, 1, 2], [1, 2, 1, 1])
+    assert graph_index.operator_indices("TRANSPOSE") == []
 
 
 def test_flatbuffer_direct_transpose_channel_slice_dual_add_bridges_strict(
@@ -11762,7 +11847,9 @@ def test_flatbuffer_direct_transpose_stridedslice_pad_concat_mul_add_posttranspo
             assert int(op.options.get("endMask", -1)) == 11
 
 
-def test_flatbuffer_direct_boundary_input_transpose_stridedslice_qdq_concat_elides_roundtrip() -> None:
+def test_flatbuffer_direct_boundary_input_transpose_stridedslice_qdq_concat_elides_roundtrip(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("boundary_input_transpose_stridedslice_qdq_concat_test")
     model_ir.inputs = ["x"]
     model_ir.outputs = ["y", "z"]
@@ -12012,14 +12099,32 @@ def test_flatbuffer_direct_boundary_input_transpose_stridedslice_qdq_concat_elid
         OperatorIR(op_type="RELU", inputs=["post0"], outputs=["y"]),
         OperatorIR(op_type="RELU", inputs=["post1"], outputs=["z"]),
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
     assert stats["removed_boundary_input_transpose_stridedslice_blocks"] == 1
     assert stats["rewritten_boundary_stridedslices"] == 4
     assert stats["rewritten_boundary_qdq_concat_axis"] == 1
     assert stats["removed_boundary_post_transposes"] == 2
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
     assert not any(str(op.op_type) == "TRANSPOSE" for op in model_ir.operators)
+    assert graph_index.operator_indices("TRANSPOSE") == []
 
     concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
     assert int(concat_op.options.get("axis", -1)) == 3
@@ -25144,10 +25249,12 @@ def test_flatbuffer_direct_transpose_leakyrelu_concat_conv_nhwc_groups_optimized
     assert [str(v) for v in list(leaky_ops[1].inputs)] == ["b_nhwc"]
 
 
-def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized() -> None:
+def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("transpose_conv_attention_nhwc_propagation_opt_test")
     model_ir.inputs = ["x_nhwc"]
-    model_ir.outputs = ["z"]
+    model_ir.outputs = ["z", "legacy_nchw"]
     model_ir.tensors["x_nhwc"] = TensorIR(
         name="x_nhwc",
         dtype="FLOAT32",
@@ -25276,6 +25383,12 @@ def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized()
         shape=[1, 8, 8, 16],
         shape_signature=[1, 8, 8, 16],
     )
+    model_ir.tensors["legacy_nchw"] = TensorIR(
+        name="legacy_nchw",
+        dtype="FLOAT32",
+        shape=[1, 16, 8, 8],
+        shape_signature=[1, 16, 8, 8],
+    )
     conv_options = {
         "padding": "SAME",
         "strideH": 1,
@@ -25301,20 +25414,34 @@ def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized()
         ),
         OperatorIR(op_type="TRANSPOSE", inputs=["mul_nchw", "post_perm"], outputs=["y_nhwc"]),
         OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
+        OperatorIR(op_type="RELU", inputs=["mul_nchw"], outputs=["legacy_nchw"]),
     ]
 
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
     diagnostics: list[dict[str, Any]] = []
     stats = run_conv_attention_layout_cleanup(
         model_ir,
+        layout_state=layout_state,
         diagnostics=diagnostics,
     )
     assert stats["optimized_transpose_conv_attention_nhwc_propagation_chains"] == 1
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
     assert diagnostics[0]["code"] == "layout.conv_attention_nhwc"
     assert diagnostics[0]["status"] == "changed"
     assert diagnostics[0]["changed"] is True
 
     op_types = [str(op.op_type) for op in model_ir.operators]
-    assert op_types.count("TRANSPOSE") == 0
+    assert op_types.count("TRANSPOSE") == 1
     assert np.array_equal(np.asarray(model_ir.tensors["mean_axes"].data), np.asarray([1, 2], dtype=np.int32))
 
     conv_ops = [op for op in model_ir.operators if str(op.op_type) == "CONV_2D"]
@@ -25324,6 +25451,20 @@ def test_flatbuffer_direct_transpose_conv_attention_nhwc_propagation_optimized()
     mul_op = next(op for op in model_ir.operators if str(op.op_type) == "MUL")
     assert list(mul_op.outputs) == ["y_nhwc"]
     assert list(model_ir.tensors["a_nchw"].shape) == [1, 8, 8, 16]
+    legacy_op = next(
+        op for op in model_ir.operators if list(op.outputs) == ["legacy_nchw"]
+    )
+    legacy_adapter_name = str(legacy_op.inputs[0])
+    legacy_adapter_op = next(
+        op
+        for op in model_ir.operators
+        if str(op.op_type) == "TRANSPOSE"
+        and list(op.outputs) == [legacy_adapter_name]
+    )
+    assert list(legacy_adapter_op.inputs) == [
+        "y_nhwc",
+        "__nhwc_to_nchw_perm_rank4__",
+    ]
 
 
 def test_flatbuffer_direct_transpose_conv_attention_hardsigmoid_nhwc_propagation_optimized() -> None:
@@ -26017,7 +26158,9 @@ def test_flatbuffer_direct_transpose_conv_hardswish_mean_conv_hardswish_mean_cha
     assert list(model_ir.tensors["mean1_out"].shape) == [1, 1, 1, 16]
 
 
-def test_flatbuffer_direct_transpose_csp_attention_nhwc_chain_optimized() -> None:
+def test_flatbuffer_direct_transpose_csp_attention_nhwc_chain_optimized(
+    monkeypatch,
+) -> None:
     model_ir = ModelIR("transpose_csp_attention_nhwc_chain_opt_test")
     model_ir.inputs = ["short_nhwc", "main_nhwc", "point_nhwc"]
     model_ir.outputs = ["z"]
@@ -26253,12 +26396,30 @@ def test_flatbuffer_direct_transpose_csp_attention_nhwc_chain_optimized() -> Non
         OperatorIR(op_type="TRANSPOSE", inputs=["attn_mul_nchw", "post_perm"], outputs=["y_nhwc"]),
         OperatorIR(op_type="RELU", inputs=["y_nhwc"], outputs=["z"]),
     ]
+    layout_state = LayoutState.from_model_ir(model_ir)
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
 
-    stats = _optimize_transpose_csp_attention_nhwc_chains(model_ir)
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    stats = _optimize_transpose_csp_attention_nhwc_chains(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
     assert stats["optimized_transpose_csp_attention_nhwc_chains"] == 1
+    assert refresh_count == 1
+    assert layout_state.validate_against_model_ir(model_ir) == []
 
     op_types = [str(op.op_type) for op in model_ir.operators]
     assert op_types.count("TRANSPOSE") == 0
+    assert graph_index.operator_indices("TRANSPOSE") == []
     concat_op = next(op for op in model_ir.operators if str(op.op_type) == "CONCATENATION")
     assert int(concat_op.options.get("axis", -1)) == 3
     np.testing.assert_array_equal(

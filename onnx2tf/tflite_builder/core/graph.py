@@ -184,6 +184,10 @@ class ModelIRGraphIndex:
     consumers: Dict[str, List[int]] = field(default_factory=dict, init=False)
     duplicate_producers: Dict[str, List[int]] = field(default_factory=dict, init=False)
     _operator_indices_by_id: Dict[int, int] = field(default_factory=dict, init=False)
+    _operator_indices_by_type: Dict[str, List[int]] = field(
+        default_factory=dict,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         self.refresh()
@@ -193,8 +197,13 @@ class ModelIRGraphIndex:
         self.consumers.clear()
         self.duplicate_producers.clear()
         self._operator_indices_by_id.clear()
+        self._operator_indices_by_type.clear()
         for index, op in enumerate(self.model_ir.operators):
             self._operator_indices_by_id[id(op)] = int(index)
+            self._operator_indices_by_type.setdefault(
+                str(op.op_type),
+                [],
+            ).append(int(index))
             for name in _names(op.outputs):
                 previous = self.producers.get(name)
                 if previous is not None:
@@ -216,6 +225,17 @@ class ModelIRGraphIndex:
     def consumer_indices(self, tensor_name: str) -> List[int]:
         return list(self.consumers.get(str(tensor_name), []))
 
+    def has_consumer_at_or_after(
+        self,
+        tensor_name: str,
+        operator_index: int,
+    ) -> bool:
+        consumer_indices = self.consumers.get(str(tensor_name), [])
+        return bool(
+            consumer_indices
+            and int(consumer_indices[-1]) >= int(operator_index)
+        )
+
     def operator_index(self, op: OperatorIR) -> Optional[int]:
         index = self._operator_indices_by_id.get(id(op))
         if index is None or index < 0 or index >= len(self.model_ir.operators):
@@ -223,6 +243,25 @@ class ModelIRGraphIndex:
         if self.model_ir.operators[index] is not op:
             return None
         return int(index)
+
+    def operator_indices(self, op_type: str) -> List[int]:
+        """Return graph-order indices for one current ModelIR operator type."""
+
+        return list(self._operator_indices_by_type.get(str(op_type), []))
+
+    def operator_indices_for_types(
+        self,
+        op_types: Iterable[str],
+    ) -> List[int]:
+        """Return graph-order indices for the requested operator-type union."""
+
+        return sorted(
+            {
+                int(index)
+                for op_type in {str(value) for value in op_types}
+                for index in self._operator_indices_by_type.get(op_type, [])
+            }
+        )
 
     def _producer_indices(self, tensor_name: str) -> List[int]:
         name = str(tensor_name)
@@ -329,6 +368,37 @@ class ModelIRGraphIndex:
             producers.append(index)
             self._set_producer_indices(name, producers)
 
+    def replace_operator_type(
+        self,
+        operator_index: int,
+        new_op_type: str,
+    ) -> None:
+        """Mutate one operator type while maintaining type-index dispatch."""
+
+        index = int(operator_index)
+        op = self.model_ir.operators[index]
+        old_op_type = str(op.op_type)
+        normalized_new_op_type = str(new_op_type)
+        if old_op_type == normalized_new_op_type:
+            return
+        remaining = [
+            value
+            for value in self._operator_indices_by_type.get(old_op_type, [])
+            if int(value) != index
+        ]
+        if remaining:
+            self._operator_indices_by_type[old_op_type] = remaining
+        else:
+            self._operator_indices_by_type.pop(old_op_type, None)
+        op.op_type = normalized_new_op_type
+        new_indices = list(
+            self._operator_indices_by_type.get(normalized_new_op_type, [])
+        )
+        new_indices.append(index)
+        self._operator_indices_by_type[normalized_new_op_type] = sorted(
+            new_indices
+        )
+
     def insert_operator(self, operator_index: int, op: OperatorIR) -> None:
         """Insert an operator while shifting existing index references once."""
 
@@ -353,6 +423,17 @@ class ModelIRGraphIndex:
             for operator_id, value in self._operator_indices_by_id.items()
         }
         self._operator_indices_by_id[id(op)] = index
+        self._operator_indices_by_type = {
+            op_type: [
+                value + 1 if int(value) >= index else int(value)
+                for value in values
+            ]
+            for op_type, values in self._operator_indices_by_type.items()
+        }
+        self._operator_indices_by_type.setdefault(str(op.op_type), []).append(
+            index
+        )
+        self._operator_indices_by_type[str(op.op_type)].sort()
         self._attach_operator(index, op)
 
     def append_operator(self, op: OperatorIR) -> None:
@@ -388,4 +469,74 @@ class ModelIRGraphIndex:
             operator_id: value - 1 if int(value) > index else int(value)
             for operator_id, value in self._operator_indices_by_id.items()
         }
+        self._operator_indices_by_type = {
+            op_type: [
+                value - 1 if int(value) > index else int(value)
+                for value in values
+                if int(value) != index
+            ]
+            for op_type, values in self._operator_indices_by_type.items()
+        }
         return op
+
+    def remove_operators(
+        self,
+        operator_indices: Iterable[int],
+    ) -> List[OperatorIR]:
+        """Remove several operators with one index compaction."""
+
+        indices = sorted({int(value) for value in operator_indices})
+        if len(indices) == 0:
+            return []
+        op_count = len(self.model_ir.operators)
+        if indices[0] < 0 or indices[-1] >= op_count:
+            raise IndexError(f"operator index out of range: {indices}")
+
+        removed_set = set(indices)
+        removed_ops = [self.model_ir.operators[index] for index in indices]
+        for index, op in zip(indices, removed_ops):
+            self._detach_operator(
+                index,
+                inputs=op.inputs,
+                outputs=op.outputs,
+            )
+
+        old_to_new: Dict[int, int] = {}
+        kept_ops: List[OperatorIR] = []
+        for old_index, op in enumerate(self.model_ir.operators):
+            if old_index in removed_set:
+                continue
+            old_to_new[int(old_index)] = len(kept_ops)
+            kept_ops.append(op)
+        self.model_ir.operators[:] = kept_ops
+
+        self.producers = {
+            name: old_to_new[int(value)]
+            for name, value in self.producers.items()
+            if int(value) in old_to_new
+        }
+        self.duplicate_producers = {
+            name: [old_to_new[int(value)] for value in values]
+            for name, values in self.duplicate_producers.items()
+            if all(int(value) in old_to_new for value in values)
+        }
+        self.consumers = {
+            name: [old_to_new[int(value)] for value in values]
+            for name, values in self.consumers.items()
+            if all(int(value) in old_to_new for value in values)
+        }
+        self._operator_indices_by_id = {
+            operator_id: old_to_new[int(value)]
+            for operator_id, value in self._operator_indices_by_id.items()
+            if int(value) in old_to_new
+        }
+        self._operator_indices_by_type = {
+            op_type: [
+                old_to_new[int(value)]
+                for value in values
+                if int(value) in old_to_new
+            ]
+            for op_type, values in self._operator_indices_by_type.items()
+            if any(int(value) in old_to_new for value in values)
+        }
+        return removed_ops

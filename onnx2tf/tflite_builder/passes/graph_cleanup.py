@@ -39,6 +39,55 @@ from onnx2tf.tflite_builder.ir import (
 from onnx2tf.tflite_builder.tensor_buffer_builder import tflite_dtype_from_numpy
 
 
+def prune_dead_operators(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    prune_tensors: bool = True,
+) -> Dict[str, int]:
+    """Remove operators that do not contribute to graph outputs."""
+
+    if len(model_ir.operators) == 0:
+        return {"removed_dead_operators": 0}
+
+    live_tensors = set(model_ir.outputs)
+    keep_flags = [False for _ in model_ir.operators]
+    for op_index in range(len(model_ir.operators) - 1, -1, -1):
+        op = model_ir.operators[op_index]
+        outputs_live = any(
+            output_name in live_tensors for output_name in op.outputs
+        )
+
+        # Some kernels mutate variable input tensors in place. Retain such an
+        # operator when live graph state depends on that variable input.
+        mutates_live_variable_input = False
+        if not outputs_live:
+            for input_name in op.inputs:
+                if input_name not in live_tensors:
+                    continue
+                input_tensor = model_ir.tensors.get(str(input_name), None)
+                if input_tensor is not None and bool(input_tensor.is_variable):
+                    mutates_live_variable_input = True
+                    break
+
+        if outputs_live or mutates_live_variable_input:
+            keep_flags[op_index] = True
+            live_tensors.update(op.inputs)
+
+    remove_indices = [
+        index for index, keep in enumerate(keep_flags) if not keep
+    ]
+    if len(remove_indices) == 0:
+        return {"removed_dead_operators": 0}
+
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
+    graph_index.remove_operators(remove_indices)
+    if prune_tensors:
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+    return {"removed_dead_operators": int(len(remove_indices))}
+
+
 def _optimize_duplicate_transpose_fanout(
     model_ir: ModelIR,
     *,

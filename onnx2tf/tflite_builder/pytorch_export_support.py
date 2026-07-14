@@ -1,15 +1,94 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
-import torch
 
+from onnx2tf.tflite_builder.ir import (
+    ModelIR,
+    TensorIR,
+    infer_model_ir_logical_layouts,
+    logical_layout_rank,
+    normalize_logical_layout,
+)
 from onnx2tf.tflite_builder.pytorch_export_errors import ModelIRPyTorchExportError
+
+
+def _build_tflite_backed_metadata_payload(
+    *,
+    model_ir: ModelIR,
+    tflite_file_name: str,
+) -> Dict[str, Any]:
+    inferred = copy.deepcopy(model_ir)
+    infer_model_ir_logical_layouts(inferred)
+    boundary_shape_map = inferred.metadata.get("onnx_boundary_shape_signature_map", {})
+    if not isinstance(boundary_shape_map, dict):
+        boundary_shape_map = {}
+
+    public_tensor_names = {
+        str(name) for name in list(inferred.inputs) + list(inferred.outputs)
+    }
+    tensors: Dict[str, Dict[str, Any]] = {}
+    for tensor_name in sorted(public_tensor_names):
+        tensor = inferred.tensors.get(str(tensor_name), None)
+        if tensor is None:
+            continue
+        tensor_meta = _serializable_tensor_meta(tensor)
+        boundary_shape = boundary_shape_map.get(str(tensor_name), None)
+        if isinstance(boundary_shape, list) and len(boundary_shape) == len(
+            tensor_meta["shape"]
+        ):
+            tensor_meta["shape"] = [
+                max(1, int(v)) if int(v) >= 0 else 1 for v in boundary_shape
+            ]
+            tensor_meta["shape_signature"] = [int(v) for v in boundary_shape]
+        tensor_meta["has_data"] = False
+        tensors[str(tensor_name)] = tensor_meta
+
+    current_public_layouts = {
+        str(name): normalize_logical_layout(inferred.tensors[str(name)].logical_layout)
+        for name in public_tensor_names
+        if str(name) in inferred.tensors
+    }
+    return {
+        "schema_version": 1,
+        "execution_backend": "tflite",
+        "name": str(inferred.name),
+        "description": str(inferred.description),
+        "inputs": [str(v) for v in inferred.inputs],
+        "outputs": [str(v) for v in inferred.outputs],
+        "tensors": tensors,
+        "operators": [],
+        "public_layouts": _serializable_value(
+            dict(inferred.metadata.get("onnx_public_layout_map", {}))
+        ),
+        "current_public_layouts": _serializable_value(current_public_layouts),
+        "boundary_shape_signatures": _serializable_value(boundary_shape_map),
+        "tflite_file_name": str(tflite_file_name),
+    }
+
+
+def _build_saved_model_backed_metadata_payload(
+    *,
+    model_ir: ModelIR,
+    saved_model_dir_name: str,
+) -> Dict[str, Any]:
+    metadata = _build_tflite_backed_metadata_payload(
+        model_ir=model_ir,
+        tflite_file_name="",
+    )
+    metadata["execution_backend"] = "saved_model"
+    metadata["saved_model_dir_name"] = str(saved_model_dir_name)
+    metadata.pop("tflite_file_name", None)
+    return metadata
 
 
 _NUMPY_DTYPE_BY_TENSOR_DTYPE: Dict[str, np.dtype] = {
@@ -126,6 +205,8 @@ def _resize_nhwc_image_batch(
     target_h: int,
     target_w: int,
 ) -> np.ndarray:
+    import torch
+
     tensor = torch.from_numpy(np.asarray(data)).permute(0, 3, 1, 2)
     resized = torch.nn.functional.interpolate(
         tensor.to(dtype=torch.float32),
@@ -482,3 +563,245 @@ def _remove_generated_package_artifact_if_exists(artifact_path: Path) -> None:
         artifact_path.unlink()
     except Exception:
         pass
+
+
+
+def _is_runtime_wrapper_package_dir(package_dir: Path) -> bool:
+    model_path = package_dir / "model.py"
+    if not model_path.exists():
+        return False
+    try:
+        model_source = model_path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+    return "load_generated_model_package" in model_source
+
+
+def _metadata_has_dynamic_public_inputs(metadata: Dict[str, Any]) -> bool:
+    tensor_meta_map = metadata.get("tensors", {})
+    if not isinstance(tensor_meta_map, dict):
+        return False
+    for input_name in [str(v) for v in list(metadata.get("inputs", []))]:
+        tensor_meta = tensor_meta_map.get(str(input_name), {})
+        if not isinstance(tensor_meta, dict):
+            continue
+        shape_values = tensor_meta.get("shape_signature", tensor_meta.get("shape", []))
+        if not isinstance(shape_values, list):
+            shape_values = tensor_meta.get("shape", [])
+        if not isinstance(shape_values, list):
+            continue
+        if any(int(v) <= 0 for v in list(shape_values)):
+            return True
+    return False
+
+
+def _generated_package_non_native_skip_reason(package_path: Path) -> Optional[str]:
+    metadata_path = package_path / "metadata.json"
+    metadata: Dict[str, Any] = {}
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except Exception:
+            metadata = {}
+    execution_backend = str(metadata.get("execution_backend", "")).strip().lower()
+    if execution_backend == "" and _is_runtime_wrapper_package_dir(package_path):
+        execution_backend = "runtime_wrapper"
+    if execution_backend not in {"", "native"}:
+        return (
+            "artifact export is skipped for generated packages with non-native execution "
+            f"backend. execution_backend={execution_backend or 'native'}"
+        )
+    return None
+
+
+def _generated_package_torch_export_skip_reason(package_path: Path) -> Optional[str]:
+    non_native_skip_reason = _generated_package_non_native_skip_reason(package_path)
+    if non_native_skip_reason is not None:
+        return non_native_skip_reason
+    model_path = package_path / "model.py"
+    if not model_path.exists():
+        return None
+    try:
+        model_source = model_path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    if re.search(
+        r"def _run_nms_\d+\(self, boxes: torch\.Tensor, scores: torch\.Tensor, max_output_size: torch\.Tensor",
+        model_source,
+    ):
+        return (
+            "torch.export-based artifacts are skipped for generated packages "
+            "with data-dependent NON_MAX_SUPPRESSION_V4 parameters."
+        )
+    if (
+        "_apply_non_max_suppression_v4(" in model_source
+        and (
+            "torch.as_tensor(min(2147483647, (_shape_list(" in model_source
+            or "torch.as_tensor(min(2147483647, (_tensor_shape_list(" in model_source
+            or (
+                "torch.as_tensor(min(2147483647, " in model_source
+                and ".shape[" in model_source
+            )
+        )
+    ):
+        return (
+            "torch.export-based artifacts are skipped for generated packages "
+            "with data-dependent NON_MAX_SUPPRESSION_V4 parameters."
+        )
+
+    if re.search(
+        r"selected_indices_nms_valid_indices_c\d+\s*=\s*torch\.arange\(\s*start=0,\s*"
+        r"end=selected_indices_nms_valid_count_scalar_c\d+\.reshape\(-1\)\[0\]\.item\(\)",
+        model_source,
+    ):
+        return (
+            "torch.export-based artifacts are skipped for generated packages "
+            "with data-dependent NON_MAX_SUPPRESSION output-shape post-processing."
+        )
+    return None
+
+
+def _run_generated_package_export_child(
+    *,
+    example_inputs: Tuple[Any, ...],
+    child_script: str,
+    package_path: Path,
+    artifact_path: Path,
+    child_payload: Dict[str, Any],
+    child_args: Optional[List[str]] = None,
+    temp_prefix: str,
+    timeout_sec: int = 0,
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    try:
+        import torch
+    except Exception as ex:
+        raise ModelIRPyTorchExportError(
+            "PyTorch export child execution requires `torch` to be installed."
+        ) from ex
+
+    if child_args is None:
+        child_args = []
+    with tempfile.TemporaryDirectory(prefix=temp_prefix) as temp_dir:
+        serialized_inputs_path = os.path.join(temp_dir, "example_inputs.pt")
+        payload = dict(child_payload)
+        payload["inputs"] = tuple(example_inputs)
+        torch.save(payload, serialized_inputs_path)
+        child_run_kwargs: Dict[str, Any] = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "check": False,
+        }
+        if int(timeout_sec) > 0:
+            child_run_kwargs["timeout"] = float(timeout_sec)
+        try:
+            child_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    child_script,
+                    str(package_path),
+                    str(serialized_inputs_path),
+                    str(artifact_path),
+                    *[str(v) for v in child_args],
+                ],
+                **child_run_kwargs,
+            )
+        except subprocess.TimeoutExpired:
+            return None, (
+                "timed out after "
+                f"{int(timeout_sec)}s while exporting generated PyTorch package child artifact."
+            )
+    if child_result.returncode == 0:
+        try:
+            return json.loads(child_result.stdout.strip() or "{}"), ""
+        except json.JSONDecodeError:
+            return {}, ""
+    stderr_text = child_result.stderr.strip()
+    stdout_text = child_result.stdout.strip()
+    return None, (
+        f"returncode={child_result.returncode} "
+        f"stdout={stdout_text} stderr={stderr_text}"
+    )
+
+
+def _serializable_tensor_meta(tensor: TensorIR) -> Dict[str, Any]:
+    return {
+        "dtype": str(tensor.dtype),
+        "shape": [int(v) for v in list(tensor.shape)],
+        "shape_signature": (
+            [int(v) for v in list(tensor.shape_signature)]
+            if tensor.shape_signature is not None
+            else None
+        ),
+        "is_variable": bool(tensor.is_variable),
+        "has_data": bool(isinstance(tensor.data, np.ndarray)),
+        "logical_layout": normalize_logical_layout(tensor.logical_layout),
+    }
+
+
+def _serializable_value(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(k): _serializable_value(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return [_serializable_value(v) for v in value]
+    if isinstance(value, list):
+        return [_serializable_value(v) for v in value]
+    return value
+
+
+def _build_metadata_payload(model_ir: ModelIR) -> Dict[str, Any]:
+    boundary_shape_map = model_ir.metadata.get("onnx_boundary_shape_signature_map", {})
+    if not isinstance(boundary_shape_map, dict):
+        boundary_shape_map = {}
+    public_layout_map = model_ir.metadata.get("onnx_public_layout_map", {})
+    if not isinstance(public_layout_map, dict):
+        public_layout_map = {}
+    public_tensor_names = {
+        str(name) for name in list(model_ir.inputs) + list(model_ir.outputs)
+    }
+    current_public_layouts: Dict[str, str] = {}
+    tensors: Dict[str, Dict[str, Any]] = {}
+    for name, tensor in model_ir.tensors.items():
+        tensor_name = str(name)
+        tensor_meta = _serializable_tensor_meta(tensor)
+        if tensor_name in public_tensor_names:
+            current_public_layouts[tensor_name] = str(tensor_meta["logical_layout"])
+            boundary_shape = boundary_shape_map.get(tensor_name, None)
+            if isinstance(boundary_shape, list) and len(boundary_shape) == len(tensor_meta["shape"]):
+                tensor_meta["shape"] = [
+                    max(1, int(v)) if int(v) >= 0 else 1
+                    for v in list(boundary_shape)
+                ]
+                tensor_meta["shape_signature"] = [int(v) for v in list(boundary_shape)]
+            public_layout = normalize_logical_layout(public_layout_map.get(tensor_name, None))
+            if logical_layout_rank(public_layout) == len(tensor_meta["shape"]):
+                tensor_meta["logical_layout"] = public_layout
+        tensors[tensor_name] = tensor_meta
+    return {
+        "schema_version": 1,
+        "name": str(model_ir.name),
+        "description": str(model_ir.description),
+        "inputs": [str(v) for v in model_ir.inputs],
+        "outputs": [str(v) for v in model_ir.outputs],
+        "tensors": tensors,
+        "operators": [
+            {
+                "op_type": str(op.op_type),
+                "inputs": [str(v) for v in op.inputs],
+                "outputs": [str(v) for v in op.outputs],
+                "options": _serializable_value(dict(op.options)),
+                "axis_semantics": _serializable_value(dict(op.axis_semantics)),
+                "version": int(op.version),
+            }
+            for op in model_ir.operators
+        ],
+        "public_layouts": _serializable_value(dict(model_ir.metadata.get("onnx_public_layout_map", {}))),
+        "current_public_layouts": _serializable_value(current_public_layouts),
+        "boundary_shape_signatures": _serializable_value(boundary_shape_map),
+    }
