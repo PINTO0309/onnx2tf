@@ -9,11 +9,11 @@ subsequent work uses coherent commits and pushes without opening a pull
 request.
 
 The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-the late Dequantize/Concat/Quantize, unary-passthrough, and unary-fan-out
-sequence. The three diagnostic events construct one graph index instead of up
-to three. The scope starts after the raw Dequantize/HardSigmoid/Quantize bridge
-rewrite and ends before the raw swish rewrite. The lowerer's registered-runner
-call characterization remains 139 because this is one production occurrence;
+the terminal singleton-MaxPool/consecutive-Reshape pair. The three diagnostic
+events construct one graph index instead of up to two. The scope starts after
+the conditional elementwise-roundtrip rewrite and ends before the conditional
+Conv/Pool-output rewrite. The lowerer's registered-runner call
+characterization remains 139 because this is one production occurrence;
 runtime index construction is the optimized dimension.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -36,7 +36,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains twenty-six coherent continuations:
+The current `fb-refactor5` work contains twenty-seven coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -92,8 +92,10 @@ The current `fb-refactor5` work contains twenty-six coherent continuations:
   Gather-channel-fan-out pairs;
 - `e177face` shares state across the five-runner terminal boundary/layout
   sequence;
-- the current checkpoint shares state across the late Dequantize/Concat/
-  Quantize and unary-fan-out sequence.
+- `ce11c27f` shares state across the late Dequantize/Concat/Quantize and unary-
+  fan-out sequence;
+- the current checkpoint shares state across the terminal singleton-MaxPool/
+  consecutive-Reshape pair.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -252,8 +254,8 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   triplets use a target-parameterized helper. Two invocations use the primary
   ModelIR and Session layout state; fallback relowering passes `fallback_ir`
   and no LayoutState, preventing state identity from crossing conversion
-  instances. The standalone singleton-MaxPool/consecutive-Reshape pair is not
-  included in this checkpoint.
+  instances. The terminal singleton-MaxPool/consecutive-Reshape pair remains
+  outside this target-parameterized helper and owns a separate bounded scope.
 - Two repeated QKV attention prefix/bridge pairs use a two-runner helper-owned
   scope. The four prefix specs and two bridge specs retain exact order and
   diagnostic grouping. Both runners expose optional standalone-compatible
@@ -284,6 +286,11 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   optional standalone-compatible scopes. Architecture checks fix the raw
   Dequantize/HardSigmoid/Quantize predecessor and raw swish successor as hard
   boundaries, preventing shared state from crossing a legacy mutator.
+- The terminal singleton-MaxPool/consecutive-Reshape pair uses one helper-
+  owned scope. The two singleton-MaxPool specs retain their order before the
+  general Reshape cleanup spec. Architecture checks fix the conditional
+  elementwise-roundtrip predecessor and conditional Conv/Pool-output successor
+  as hard boundaries.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -712,10 +719,30 @@ The preflight-only fixture records one graph-index refresh across three events;
 only the first reports `state_built: true`. Architecture checks fix all three
 runner calls, their shared scope, the preceding raw QDQ bridge, and the
 following raw swish rewrite.
+A focused terminal singleton-MaxPool/Reshape checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_singleton_maxpool.py \
+  tests/test_flatbuffer_direct_consecutive_reshape.py \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_terminal_singleton_maxpool_reshape_pair_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_terminal_singleton_maxpool_reshape_pair_reuses_scope \
+  tests/test_flatbuffer_direct_architecture.py::test_ordered_model_ir_runner_calls_record_session_diagnostics
+
+8 passed
+```
+
+The preflight-only fixture records one graph-index refresh across three events;
+the two singleton-MaxPool events report `state_built: true` because they share
+the first registered group, and the Reshape event reports `false`.
+Architecture checks fix both runner calls, their shared scope, and the exact
+conditional legacy-rewrite boundaries.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`165 passed` after adding the late-Dequantize/unary checks.
+`167 passed` after adding the terminal singleton-MaxPool/Reshape checks.
 
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
@@ -757,10 +784,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the standalone terminal singleton-MaxPool/consecutive-Reshape pair
-   while treating the preceding conditional shape-extract rewrite and the
-   following conditional Conv/Pool-output rewrite as hard boundaries. Its one
-   occurrence can eliminate one repeated index construction.
+2. Audit the terminal clamp, unary-passthrough, and maximum-zero-to-ReLU
+   sequence while treating the preceding conditional terminal layout-recovery
+   block and the following raw SiNet rewrite as hard boundaries. Its one
+   occurrence can eliminate up to two repeated index constructions.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.

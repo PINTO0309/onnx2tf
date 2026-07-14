@@ -119,8 +119,10 @@ variant exactly as before. Three later singleton-channel/duplicate-fan-out/
 consecutive-Reshape triplets use a smaller target-parameterized helper, so the
 fallback ModelIR receives its own identity-bound scope without inheriting the
 primary Session layout state. No scope crosses the legacy rewrites around
-these sequences. The separate singleton-MaxPool/consecutive-Reshape pair
-remains outside this checkpoint.
+these sequences. The separate terminal singleton-MaxPool/consecutive-Reshape
+pair uses its own scope between the conditional elementwise-roundtrip and
+Conv/Pool-output legacy rewrites. Its two runners retain their order and
+three-spec diagnostic grouping while constructing one graph index.
 
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,

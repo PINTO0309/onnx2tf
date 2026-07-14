@@ -750,6 +750,48 @@ def test_late_dequant_unary_fanout_cluster_reuses_one_pass_state(
     )
 
 
+def test_terminal_singleton_maxpool_reshape_pair_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "terminal_singleton_maxpool_reshape_scope_preflight_only",
+        operators=[
+            OperatorIR("RESHAPE", [], []),
+            OperatorIR("MAX_POOL_2D", [], []),
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_singleton_maxpool_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_consecutive_reshape_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 3
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        True,
+        False,
+    ]
+
+
 def test_shuffle_gather_cluster_reuses_one_pass_state(monkeypatch) -> None:
     model_ir = ModelIR(
         "shuffle_gather_scope_preflight_only",

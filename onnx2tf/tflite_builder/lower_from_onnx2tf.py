@@ -50250,6 +50250,26 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_terminal_singleton_maxpool_reshape_pass_pair() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_singleton_maxpool_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        # Boundary cleanup can recreate a terminal no-op RESHAPE.
+        # Run one last pass to remove shape-preserving single reshapes.
+        run_consecutive_reshape_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> None:
         state_scope = ModelIRPassStateScope(
             model_ir,
@@ -51306,18 +51326,7 @@ def lower_onnx_to_ir(
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     if optimize_layout_transpose_chains:
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)
-    run_singleton_maxpool_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    # Boundary cleanup can recreate a terminal no-op RESHAPE.
-    # Run one last pass to remove shape-preserving single reshapes.
-    run_consecutive_reshape_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_terminal_singleton_maxpool_reshape_pass_pair()
     if optimize_layout_transpose_chains:
         _optimize_convpool_output_transpose_nhwc_passthrough_chains(model_ir)
     elif apply_safe_transpose_reduction_lite_on_no_layout_opt:
