@@ -61,6 +61,16 @@ data belongs to one session, is removed on first consumption, and is cleared
 on rollback, so it cannot leak across conversions or survive restored graph
 objects.
 
+`ModelIRPassStateScope` is the explicit reuse boundary for adjacent registered
+pass groups that have no raw ModelIR mutation between them. It is lazy, so a
+sequence whose model-only preflights all fail still constructs no graph index.
+The first matching group constructs one `ModelIRPassState`; later groups reuse
+its differentially maintained `ModelIRGraphIndex` and `LayoutState`. A scope
+rejects a different ModelIR or LayoutState identity and must end before any
+legacy/raw mutator. The repeated Mean/LayerNorm/terminal-Mean/SE/Conv-attention
+cluster is the first production consumer, preserving its original runner order
+while replacing up to seven identical index constructions with one.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while

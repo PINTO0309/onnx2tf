@@ -7,14 +7,13 @@ The active branch is `fb-refactor5`, created from `main` after pull request
 currently tracks this branch. The Goal is active again; subsequent work uses
 coherent commits and pushes without opening an additional pull request.
 
-The latest implementation unit closes a lowering-time synthetic-consumer gap.
-Inverse-Transpose generation previously read only ONNX consumer counts and
-directly deleted its producer operator. A compact probe demonstrated that a
-synthetic bridge with an existing Identity side consumer lost its producer,
-while `ir_tensor_producers` retained the removed object. `LoweringContext` now
-maintains differential IR consumer counts, owns operator removal, and combines
-the ONNX or synthetic count appropriate to the edge without rescanning the
-partial graph.
+The latest implementation unit introduces a lazy `ModelIRPassStateScope` for
+adjacent registered pass groups. Six repeated production clusters now share one
+differential index across Mean, optional LayerNorm, terminal Mean, SE conv, SE
+FC, and optional Conv-attention runners. The scope ends before every raw legacy
+mutator. A characterization in which the first Mean runner builds state but
+does not rewrite and the second runner does rewrite proves that graph-index
+refreshes fall from two to one without changing pass order.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -36,7 +35,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains twelve coherent continuations:
+The current `fb-refactor5` work contains thirteen coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -63,8 +62,10 @@ The current `fb-refactor5` work contains twelve coherent continuations:
   boundary;
 - `6e8a8486` synchronizes lowering-time logical and physical layout mutations
   with the Session before the first post-lowering pass;
-- the current checkpoint centralizes lowering-time operator removal and protects
-  synthetic inverse-Transpose fan-out with differential consumer counts.
+- `e7c1457d` centralizes lowering-time operator removal and protects synthetic
+  inverse-Transpose fan-out with differential consumer counts;
+- the current checkpoint lazily shares `ModelIRPassState` across the repeated
+  Mean/attention registered-pass cluster.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -82,9 +83,15 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
 The final checkpoint changes:
 
-- `onnx2tf/tflite_builder/core/lowering_context.py`;
-- `onnx2tf/tflite_builder/op_builders/shared.py`;
-- `tests/test_flatbuffer_direct_core.py`;
+- `onnx2tf/tflite_builder/core/model_ir_pass_state.py`;
+- `onnx2tf/tflite_builder/core/__init__.py`;
+- `onnx2tf/tflite_builder/passes/mean_layout.py`;
+- `onnx2tf/tflite_builder/passes/layernorm_layout.py`;
+- `onnx2tf/tflite_builder/passes/terminal_mean_layout.py`;
+- `onnx2tf/tflite_builder/passes/se_layout.py`;
+- `onnx2tf/tflite_builder/passes/attention_layout.py`;
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
+- `tests/test_flatbuffer_direct_mean_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -169,6 +176,14 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   pair is still elided, while a synthetic side consumer keeps its producer.
   This replaces the only direct op-builder deletion and adds no partial-graph
   scan.
+- `ModelIRPassStateScope` is lazy and identity-bound. A group with a successful
+  model-only preflight acquires the state; subsequent adjacent groups reuse it
+  and report `state_built: false`, so diagnostic `state_build_count` reflects
+  actual construction rather than pass invocation count. The scope is never
+  carried across legacy helpers that mutate ModelIR outside the differential
+  index. All six production occurrences retain the exact order
+  transpose-Mean, Mean/Mul/Add/Conv, optional LayerNorm, terminal Mean, SE conv,
+  SE FC, and optional Conv attention.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -295,6 +310,28 @@ inverse Transposes remove their operator and differential indexes, while a
 synthetic bridge already consumed by an Identity retains its producer. The
 architecture gate rejects direct operator-list writes and mutating method calls
 from op builders.
+The adjacent pass-state reuse checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_mean_layout.py \
+  tests/test_flatbuffer_direct_layernorm_layout.py \
+  tests/test_flatbuffer_direct_terminal_mean_layout.py \
+  tests/test_flatbuffer_direct_se_layout.py \
+  tests/test_flatbuffer_direct_core.py \
+  tests/test_flatbuffer_direct_pass_efficiency.py \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope
+
+65 passed
+```
+
+The focused reuse case observes one `ModelIRGraphIndex.refresh()` across two
+candidate Mean runners and a diagnostic build sequence of `[true, false]`.
+The all-preflight-miss case observes zero index refreshes and `[false, false]`.
+The architecture gate fixes all seven runner calls, their order, their shared
+scope keyword, and the six production cluster invocations.
 The exporter and policy pass `python -m py_compile`, and `git diff --check`
 passes. The immediately preceding DepthToSpace, Pool, dynamic-Pool,
 simple-alias, and aligned-scalar checkpoints passed their focused synthetic and
@@ -333,12 +370,12 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the remaining `ConversionSession`/`LoweringContext` constant ownership
-   and constant-fold updates for a bounded stale-map gap; layout, lowering-time
-   producer, and synthetic-consumer mutation are now centralized.
-3. Characterize pre-session behavior and a focused fan-out/no-op boundary
-   before changing another handoff; do not introduce a second graph scan or a
-   blanket post-lowering resynchronization.
+2. Apply the same scope only to the next contiguous registered-runner cluster
+   after proving that no raw ModelIR mutator occurs inside its lifetime. The
+   mixed-attention through dual-Mul/Concat block is the next candidate.
+3. Add a focused index-construction count and preserve exact diagnostics and
+   rule order before migrating that cluster. Never carry a scope across a
+   legacy helper or introduce a blanket refresh.
 4. Keep the audited 294-line PyTorch source orchestrator as explicit sequencing
    unless a new bounded decision is found.
 5. Run only the focused synthetic/ownership/static checks unless the user asks

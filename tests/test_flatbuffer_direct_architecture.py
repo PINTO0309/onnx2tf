@@ -217,6 +217,62 @@ def test_op_builders_mutate_operator_list_only_through_lowering_context() -> Non
     assert offenders == []
 
 
+def test_lowerer_mean_attention_cluster_reuses_one_pass_state_scope() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_run_mean_attention_layout_pass_cluster"
+    )
+    expected_order = [
+        "run_transpose_mean_passthrough_cleanup",
+        "run_mean_mul_add_conv_layout_cleanup",
+        "run_layernorm_statistics_layout_cleanup",
+        "run_terminal_mean_layout_cleanup",
+        "run_se_conv_layout_cleanup",
+        "run_se_fc_layout_cleanup",
+        "run_conv_attention_layout_cleanup",
+    ]
+    calls = {
+        node.func.id: node
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in expected_order
+    }
+
+    assert [
+        call.func.id
+        for call in sorted(calls.values(), key=lambda candidate: candidate.lineno)
+    ] == expected_order
+    for name in expected_order:
+        scope_keyword = next(
+            keyword
+            for keyword in calls[name].keywords
+            if keyword.arg == "state_scope"
+        )
+        assert isinstance(scope_keyword.value, ast.Name)
+        assert scope_keyword.value.id == "state_scope"
+
+    helper_invocations = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_run_mean_attention_layout_pass_cluster"
+    ]
+    assert len(helper_invocations) == 6
+
+
 def test_reporting_implementation_stays_out_of_lowering_module() -> None:
     reporting_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py"
     lowering_path = (

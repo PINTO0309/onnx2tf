@@ -10,6 +10,7 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPreflightResult,
     ModelIRPassState,
+    ModelIRPassStateScope,
     preflight_required_op_types,
     run_model_ir_pass_group,
 )
@@ -3436,6 +3437,7 @@ def run_conv_attention_layout_cleanup(
     *,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run generic Conv-attention NHWC propagation transactionally."""
 
@@ -3487,6 +3489,7 @@ def run_conv_attention_layout_cleanup(
             "optimized_transpose_conv_attention_nhwc_propagation_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

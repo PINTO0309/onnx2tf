@@ -3,6 +3,10 @@ from __future__ import annotations
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
+from onnx2tf.tflite_builder.core.model_ir_pass_state import (
+    ModelIRPassStateScope,
+    summarize_model_ir_pass_diagnostics,
+)
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.lower_from_onnx2tf import (
     _optimize_transpose_mean_mul_reshape_add_conv_nhwc_chains,
@@ -197,6 +201,84 @@ def test_mean_mul_add_conv_runner_records_transaction(monkeypatch) -> None:
     assert diagnostics[0]["changed"] is True
     assert diagnostics[0]["metrics"]["snapshot_count"] == 1
     assert refresh_count == 1
+
+
+def test_adjacent_mean_runners_reuse_one_lazy_pass_state(monkeypatch) -> None:
+    model_ir = _model(fanout=False)
+    diagnostics: list[dict[str, object]] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    passthrough_stats = run_transpose_mean_passthrough_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    branch_stats = run_mean_mul_add_conv_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert passthrough_stats[
+        "optimized_transpose_mean_prepost_nhwc_passthrough_chains"
+    ] == 0
+    assert branch_stats[
+        "optimized_transpose_mean_mul_reshape_add_conv_nhwc_chains"
+    ] == 1
+    assert refresh_count == 1
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        False,
+    ]
+    assert summarize_model_ir_pass_diagnostics(diagnostics)["totals"][
+        "state_build_count"
+    ] == 1
+
+
+def test_adjacent_mean_scope_stays_lazy_when_all_preflights_miss(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "mean_scope_no_candidates",
+        operators=[OperatorIR("ADD", [], []) for _ in range(32)],
+    )
+    diagnostics: list[dict[str, object]] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_transpose_mean_passthrough_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_mean_mul_add_conv_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 0
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        False,
+        False,
+    ]
 
 
 def test_transpose_mean_passthrough_runner_records_transaction(monkeypatch) -> None:
