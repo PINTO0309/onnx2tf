@@ -2074,6 +2074,15 @@ consumer agree on one rank-four shape and the current shape is the exact H/W
 swap. The rule keeps its positional scalar grammar and uses the shared aligned
 and Softmax statement decoders; their remaining consumers are policy-local, so
 the exporter does not import them.
+The subsequent aligned-binary fallback is policy-owned as a separate decision.
+It preserves the narrower generated-statement grammar and runs only when the
+general binary alignment repair made no change. Two channel-first operand names
+are not sufficient by themselves: an immediate matching BN constant operation,
+direct return, or channel-first Resize with matching channel evidence is also
+required. Channel mismatches, channel-last Resize, mixed-layout operand names,
+and already-channel-first shapes remain no-ops. The exporter applies returned
+layout evidence before its existing Resize rule, preserving the established
+general-repair → downstream-fallback → Resize ordering.
 The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
 restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer

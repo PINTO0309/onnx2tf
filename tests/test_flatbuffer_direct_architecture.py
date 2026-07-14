@@ -4901,6 +4901,7 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
         "_has_immediate_rank4_permute_source",
         "_infer_unique_channel_count_from_rank4_shape",
         "_repair_binary_alignment_layout",
+        "_repair_binary_alignment_from_downstream_evidence",
         "_repair_aligned_scalar_binary_shape_at",
         "_repair_cf_pool_target_shape",
         "_repair_cf_pool_neighbor_layout_at",
@@ -4949,6 +4950,13 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
             "module_output_producers",
             "registered_buffer_shapes",
         }
+    )
+    orchestrator_source = ast.get_source_segment(exporter_source, orchestrator)
+    assert orchestrator_source is not None
+    assert orchestrator_source.index("_repair_binary_alignment_layout(") < (
+        orchestrator_source.index(
+            "_repair_binary_alignment_from_downstream_evidence("
+        )
     )
 
 

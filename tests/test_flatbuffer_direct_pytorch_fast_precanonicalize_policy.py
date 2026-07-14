@@ -14,6 +14,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _has_immediate_rank4_permute_source,
     _infer_unique_channel_count_from_rank4_shape,
     _repair_binary_alignment_layout,
+    _repair_binary_alignment_from_downstream_evidence,
     _repair_aligned_scalar_binary_shape_at,
     _repair_cf_pool_target_shape,
     _repair_cf_pool_neighbor_layout_at,
@@ -380,6 +381,95 @@ def test_aligned_scalar_binary_shape_uses_neighbor_consensus() -> None:
         "        scaled = _align_tensor_to_target_shape("
         "torch.mul(base, 2.0), [1, 2, 3, 4])"
     )
+
+
+def test_binary_alignment_uses_only_exact_downstream_cf_evidence() -> None:
+    positive_cases = [
+        (
+            [
+                "        fused = _align_tensor_to_target_shape("
+                "torch.add(left_in, right_in), [1, 5, 7, 16])",
+                "        normalized = _align_tensor_to_target_shape("
+                "torch.mul(fused, self.scale), [1, 5, 7, 16])",
+                "        return normalized",
+            ],
+            "        fused = _align_tensor_to_target_shape("
+            "torch.add(left_in, right_in), [1, 16, 5, 7])",
+        ),
+        (
+            [
+                "        fused = _align_tensor_to_target_shape("
+                "torch.maximum(left_in, right_in), [1, 5, 7, 16])",
+                "        return fused",
+            ],
+            "        fused = _align_tensor_to_target_shape("
+            "torch.maximum(left_in, right_in), [1, 16, 5, 7])",
+        ),
+        (
+            [
+                "        fused = _align_tensor_to_target_shape("
+                "torch.sub(left_in, right_in), [1, 5, 7, 16])",
+                "        resized = _apply_resize("
+                "fused, [10, 14], method='nearest', "
+                "target_shape=[1, 5, 7, 16], align_corners=False, "
+                "half_pixel_centers=False, channel_last=False)",
+                "        return resized",
+            ],
+            "        fused = _align_tensor_to_target_shape("
+            "torch.sub(left_in, right_in), [1, 16, 5, 7])",
+        ),
+    ]
+    for lines, expected in positive_cases:
+        context = _build_fast_precanonicalize_repair_context(lines)
+        rewritten, lhs_name = _repair_binary_alignment_from_downstream_evidence(
+            lines[0],
+            0,
+            lines,
+            set(),
+            set(),
+            context,
+        )
+        assert rewritten == expected
+        assert lhs_name == "fused"
+
+    negative_cases = [
+        [
+            "        fused = _align_tensor_to_target_shape("
+            "torch.add(left_in, right_in), [1, 5, 7, 16])",
+            "        normalized = _align_tensor_to_target_shape("
+            "torch.mul(fused, self.scale), [1, 5, 7, 8])",
+            "        return normalized",
+        ],
+        [
+            "        fused = _align_tensor_to_target_shape("
+            "torch.sub(left_in, right_in), [1, 5, 7, 16])",
+            "        resized = _apply_resize("
+            "fused, [10, 14], method='nearest', "
+            "target_shape=[1, 5, 7, 16], align_corners=False, "
+            "half_pixel_centers=False, channel_last=True)",
+            "        return resized",
+        ],
+        [
+            "        fused = _align_tensor_to_target_shape("
+            "torch.add(left_in, right_nhwc), [1, 5, 7, 16])",
+            "        return fused",
+        ],
+        [
+            "        fused = _align_tensor_to_target_shape("
+            "torch.add(left_in, right_in), [1, 1, 5, 7])",
+            "        return fused",
+        ],
+    ]
+    for lines in negative_cases:
+        context = _build_fast_precanonicalize_repair_context(lines)
+        assert _repair_binary_alignment_from_downstream_evidence(
+            lines[0],
+            0,
+            lines,
+            set(),
+            set(),
+            context,
+        ) == (None, None)
 
 
 def test_immediate_rank4_permute_source_requires_exact_permutation() -> None:

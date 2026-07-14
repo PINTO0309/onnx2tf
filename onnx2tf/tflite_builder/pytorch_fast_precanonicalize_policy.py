@@ -28,6 +28,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_rank4_shape_literal,
     _parse_reduce_max_assign,
     _parse_simple_assignment_line,
+    _parse_simple_return_identifier,
     _parse_tensor_split_assign,
     _parse_torch_cat_inputs_and_dim,
     _parse_torch_permute_assign,
@@ -86,6 +87,19 @@ _ALIGNED_SCALAR_BINARY_RE = re.compile(
     r"(?P<scalar>[-+]?(?:[0-9]*\.[0-9]+|[0-9]+(?:\.[0-9]*)?)"
     r"(?:[eE][-+]?\d+)?)\), "
     r"\[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
+)
+_DOWNSTREAM_EVIDENCE_ALIGNED_BINARY_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*"
+    r"_align_tensor_to_target_shape\("
+    r"torch\.(?P<op>mul|add|sub|div|minimum|maximum)\("
+    r"(?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), "
+    r"\[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
+)
+_DOWNSTREAM_EVIDENCE_ALIGNED_BN_RE = re.compile(
+    r"^\s*[A-Za-z0-9_]+\s*=\s*_align_tensor_to_target_shape\("
+    r"torch\.(?:mul|add)\((?P<input>[A-Za-z0-9_]+), "
+    r"self\.[A-Za-z0-9_]+\), "
+    r"\[\d+, \d+, \d+, (?P<c>\d+)\]\)$"
 )
 
 
@@ -1808,6 +1822,80 @@ def _repair_binary_alignment_layout(
     )
     if rewritten == line:
         return None, lhs_name
+    return rewritten, lhs_name
+
+
+def _repair_binary_alignment_from_downstream_evidence(
+    line: str,
+    index: int,
+    lines: Sequence[str],
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[str | None, str | None]:
+    aligned_binary_match = _DOWNSTREAM_EVIDENCE_ALIGNED_BINARY_RE.match(line)
+    if aligned_binary_match is None or index + 1 >= len(lines):
+        return None, None
+
+    arg_a = str(aligned_binary_match.group("a"))
+    arg_b = str(aligned_binary_match.group("b"))
+    current_shape = [
+        int(aligned_binary_match.group("n")),
+        int(aligned_binary_match.group("h")),
+        int(aligned_binary_match.group("w")),
+        int(aligned_binary_match.group("c")),
+    ]
+    current_shape_hint = _fast_precanonicalize_rank4_layout_hint(
+        current_shape,
+        preferred_channel_count=_fast_precanonicalize_preferred_channel_count(
+            arg_a,
+            dynamic_cf_like_names,
+            dynamic_nhwc_like_names,
+            context,
+            shape_hint=current_shape,
+        ),
+    )
+    operands_are_cf_like = all(
+        name in dynamic_cf_like_names
+        or name.endswith("_cf")
+        or name.endswith("_out_cf")
+        or (name.endswith("_in") and not name.endswith("_in_nhwc"))
+        for name in (arg_a, arg_b)
+    )
+    if current_shape_hint == "cf" or not operands_are_cf_like:
+        return None, None
+
+    next_line = str(lines[index + 1])
+    lhs_name = str(aligned_binary_match.group("lhs"))
+    next_aligned_bn_match = _DOWNSTREAM_EVIDENCE_ALIGNED_BN_RE.match(next_line)
+    next_return_value = _parse_simple_return_identifier(next_line)
+    next_resize_match = _parse_apply_resize_assign(next_line)
+    has_downstream_cf_evidence = (
+        (
+            next_aligned_bn_match is not None
+            and str(next_aligned_bn_match.group("input")) == lhs_name
+            and int(next_aligned_bn_match.group("c"))
+            == int(aligned_binary_match.group("c"))
+        )
+        or (next_return_value is not None and str(next_return_value) == lhs_name)
+        or (
+            next_resize_match is not None
+            and str(next_resize_match[2]) == lhs_name
+            and not bool(next_resize_match[9])
+            and int(next_resize_match[6][3])
+            == int(aligned_binary_match.group("c"))
+        )
+    )
+    if not has_downstream_cf_evidence:
+        return None, None
+
+    rewritten = (
+        f"{aligned_binary_match.group('indent')}{lhs_name} = "
+        f"_align_tensor_to_target_shape("
+        f"torch.{aligned_binary_match.group('op')}({arg_a}, {arg_b}), "
+        f"[{aligned_binary_match.group('n')}, {aligned_binary_match.group('c')}, "
+        f"{aligned_binary_match.group('h')}, {aligned_binary_match.group('w')}])"
+    )
     return rewritten, lhs_name
 
 

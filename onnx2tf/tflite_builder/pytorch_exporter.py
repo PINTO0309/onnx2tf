@@ -126,6 +126,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _has_immediate_rank4_permute_source,
     _infer_unique_channel_count_from_rank4_shape,
     _repair_binary_alignment_layout,
+    _repair_binary_alignment_from_downstream_evidence,
     _repair_aligned_scalar_binary_shape_at,
     _repair_cf_pool_target_shape,
     _repair_cf_pool_neighbor_layout_at,
@@ -7316,9 +7317,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     aligned_bn_const_reshaped_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.(?P<op>mul|add)\((?P<input>[A-Za-z0-9_]+), torch\.reshape\(self\.(?P<const_attr>[A-Za-z0-9_]+), \[1, (?P<reshape_c>\d+), 1, 1\]\)\), \[(?P<n>\d+), (?P<c0>\d+), (?P<h>\d+), (?P<w>\d+)\]\)$"
     )
-    aligned_binary_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.(?P<op>mul|add|sub|div|minimum|maximum)\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
-    )
     for index, line in enumerate(lines[:-1]):
         repaired_alias_layout, repaired_alias_line = _repair_simple_alias_layout_at(
             index,
@@ -7353,9 +7351,8 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
         ):
             changed = True
             line = lines[index]
-        aligned_binary_match = aligned_binary_re.match(line)
         aligned_binary_assign = _parse_aligned_binary_assign_with_shape(line)
-        if aligned_binary_match is not None or aligned_binary_assign is not None:
+        if aligned_binary_assign is not None:
             rewritten_binary_line, binary_lhs = _repair_binary_alignment_layout(
                 line,
                 index,
@@ -7375,79 +7372,22 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                         )
                 changed = True
                 line = rewritten_binary_line
-                aligned_binary_match = None
-                aligned_binary_assign = None
-        if aligned_binary_match is not None:
-            arg_a = str(aligned_binary_match.group("a"))
-            arg_b = str(aligned_binary_match.group("b"))
-            next_aligned_bn_match = aligned_bn_const_re.match(lines[index + 1])
-            next_return_value = _parse_simple_return_identifier(lines[index + 1])
-            next_resize_match = _parse_apply_resize_assign(lines[index + 1])
-            current_shape_hint = _fast_precanonicalize_rank4_layout_hint(
-                [
-                    int(aligned_binary_match.group("n")),
-                    int(aligned_binary_match.group("h")),
-                    int(aligned_binary_match.group("w")),
-                    int(aligned_binary_match.group("c")),
-                ],
-                preferred_channel_count=_fast_precanonicalize_preferred_channel_count(
-                    arg_a,
-                    cf_like_names,
-                    nhwc_like_names,
-                    repair_context,
-                    shape_hint=[
-                        int(aligned_binary_match.group("n")),
-                        int(aligned_binary_match.group("h")),
-                        int(aligned_binary_match.group("w")),
-                        int(aligned_binary_match.group("c")),
-                    ],
-                ),
-            )
-            operands_are_cf_like = (
-                (
-                    arg_a in cf_like_names
-                    or arg_a.endswith("_cf")
-                    or arg_a.endswith("_out_cf")
-                    or (arg_a.endswith("_in") and not arg_a.endswith("_in_nhwc"))
-                )
-                and (
-                    arg_b in cf_like_names
-                    or arg_b.endswith("_cf")
-                    or arg_b.endswith("_out_cf")
-                    or (arg_b.endswith("_in") and not arg_b.endswith("_in_nhwc"))
-                )
-            )
-            if (
-                current_shape_hint != "cf"
-                and
-                operands_are_cf_like
-                and (
-                    (
-                        next_aligned_bn_match is not None
-                        and str(next_aligned_bn_match.group("input")) == str(aligned_binary_match.group("lhs"))
-                        and int(next_aligned_bn_match.group("c")) == int(aligned_binary_match.group("c"))
-                    )
-                    or (
-                        next_return_value is not None
-                        and str(next_return_value) == str(aligned_binary_match.group("lhs"))
-                    )
-                    or (
-                        next_resize_match is not None
-                        and str(next_resize_match[2]) == str(aligned_binary_match.group("lhs"))
-                        and not bool(next_resize_match[9])
-                        and int(next_resize_match[6][3]) == int(aligned_binary_match.group("c"))
+            else:
+                downstream_binary_line, downstream_binary_lhs = (
+                    _repair_binary_alignment_from_downstream_evidence(
+                        line,
+                        index,
+                        lines,
+                        cf_like_names,
+                        nhwc_like_names,
+                        repair_context,
                     )
                 )
-            ):
-                lines[index] = (
-                    f"{aligned_binary_match.group('indent')}{aligned_binary_match.group('lhs')} = "
-                    f"_align_tensor_to_target_shape(torch.{aligned_binary_match.group('op')}("
-                    f"{arg_a}, {arg_b}), "
-                    f"[{aligned_binary_match.group('n')}, {aligned_binary_match.group('c')}, "
-                    f"{aligned_binary_match.group('h')}, {aligned_binary_match.group('w')}])"
-                )
-                cf_like_names.add(str(aligned_binary_match.group("lhs")))
-                changed = True
+                if downstream_binary_line is not None:
+                    lines[index] = downstream_binary_line
+                    if downstream_binary_lhs is not None:
+                        cf_like_names.add(downstream_binary_lhs)
+                    changed = True
         apply_resize_match = _parse_apply_resize_assign(line)
         if apply_resize_match is not None:
             rewritten_resize_line, resize_lhs = _repair_cf_resize_target_shape(

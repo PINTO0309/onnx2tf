@@ -1,20 +1,22 @@
-# `flatbuffer_direct` refactor pause checkpoint — 2026-07-14
+# `flatbuffer_direct` refactor continuation checkpoint — 2026-07-14
 
 ## Status
 
-The active branch is `fb-refactor4`. This checkpoint is intended to leave the
-branch committed, pushed, and clean so the Goal can be paused without carrying
-a partial source rewrite. No pull request was created.
+The active branch is `fb-refactor5`, created from `main` after pull request
+`#949` merged the complete `fb-refactor4` checkpoint. The Goal is active again;
+subsequent work uses coherent commits and pushes without opening another pull
+request.
 
-The latest implementation unit moves aligned scalar-binary shape
-reconciliation out of `_apply_fast_precanonicalize_repairs` and into the
-Torch-free `pytorch_fast_precanonicalize_policy.py` owner. The orchestrator is
-482 lines at this checkpoint, down from 1,025 lines at the beginning of this
-continuation and 1,608 lines before the broader fast-precanonicalize extraction.
+The latest implementation unit moves the downstream-evidence aligned-binary
+fallback out of `_apply_fast_precanonicalize_repairs` and into the Torch-free
+`pytorch_fast_precanonicalize_policy.py` owner. The orchestrator is 421 lines at
+this checkpoint, down from 482 lines at Goal resumption, 1,025 lines at the
+beginning of the previous continuation, and 1,608 lines before the broader
+fast-precanonicalize extraction.
 
 ## Completed work
 
-Recent pushed checkpoints on `fb-refactor4` are:
+The merged `fb-refactor4` checkpoints included:
 
 - `062ddc4` — centralized DepthToSpace/Gather repair and the permuted-Conv
   statement decoder;
@@ -25,9 +27,14 @@ Recent pushed checkpoints on `fb-refactor4` are:
   aligned-rank4 decoder;
 - `e0bc280` — centralized simple-alias layout repair and moved all
   permuted-Conv decoder consumers into the policy owner;
-- the checkpoint carrying this document — centralizes aligned scalar-binary
+- `afb5bb5` — centralizes aligned scalar-binary
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
+
+The current `fb-refactor5` checkpoint centralizes the ordered fallback that
+repairs aligned binary shapes only when general binary repair made no change
+and the immediate next statement supplies matching BN, direct-return, or
+channel-first Resize evidence.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -40,7 +47,7 @@ conversion or inference was run during these checkpoints.
 
 ## Current branch and changed files
 
-Branch: `fb-refactor4`, tracking `origin/fb-refactor4`.
+Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
 The final checkpoint changes:
 
@@ -49,11 +56,10 @@ The final checkpoint changes:
 - `tests/test_flatbuffer_direct_pytorch_fast_precanonicalize_policy.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
-- `docs/flatbuffer_direct_handoff_2026-07-13.md`;
 - this handoff document.
 
 The expected handoff state after committing and pushing is an empty `git
-status --short` with local `fb-refactor4` equal to `origin/fb-refactor4`.
+status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
 
 ## Important design decisions
 
@@ -65,6 +71,13 @@ status --short` with local `fb-refactor4` equal to `origin/fb-refactor4`.
   generated source unless the preserved rule already required a bounded scan.
 - Former loop `continue` behavior is represented explicitly in helper results;
   extraction must not silently allow later rules to run.
+- General binary repair remains first. The downstream-evidence fallback is
+  called only from its unchanged no-rewrite branch, and its returned CF
+  evidence is visible to the following Resize repair in the same scan.
+- The fallback deliberately retains its narrower positional grammar and legacy
+  `_in` naming evidence. It additionally requires an immediate matching BN,
+  direct return, or channel-first Resize; mismatched channels and mixed-layout
+  names remain no-ops.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -74,21 +87,25 @@ status --short` with local `fb-refactor4` equal to `origin/fb-refactor4`.
 
 ## Tests executed
 
-The final aligned scalar-binary checkpoint passed:
+The resumed downstream-evidence checkpoint passed:
 
 ```text
-uv run --no-sync pytest -q \
-  tests/test_flatbuffer_direct_pytorch_fast_precanonicalize_policy.py::test_aligned_scalar_binary_shape_uses_neighbor_consensus \
-  tests/test_flatbuffer_direct_architecture.py::test_generated_pytorch_source_parsers_have_single_owner \
-  tests/test_flatbuffer_direct_architecture.py::test_generated_pytorch_fast_precanonicalize_policy_has_single_owner
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_pytorch_fast_precanonicalize_policy.py \
+  tests/test_flatbuffer_direct_architecture.py
 
-3 passed
+120 passed
 ```
 
-The touched policy and tests pass scoped Ruff, the exporter and policy pass
-`python -m py_compile`, and `git diff --check` passes. The immediately preceding
-DepthToSpace, Pool, dynamic-Pool, and simple-alias checkpoints passed focused
-synthetic/ownership selections of 4, 2, 2, 4, and 3 tests respectively.
+Seven pre/post-extraction characterization cases also preserve the exact
+orchestrator output for matching BN, direct return, channel-first Resize,
+channel mismatch, channel-last Resize, mixed operands, and an already-CF shape.
+The exporter and policy pass `python -m py_compile`, and `git diff --check`
+passes. The immediately preceding DepthToSpace, Pool, dynamic-Pool,
+simple-alias, and aligned-scalar checkpoints passed their focused synthetic and
+ownership selections.
 
 ## Failing tests and known issues
 
@@ -110,10 +127,8 @@ synthetic/ownership selections of 4, 2, 2, 4, and 3 tests respectively.
 ## Unfinished work
 
 The full Goal is not complete. The fast-precanonicalize orchestrator still has
-482 lines. Its largest remaining in-loop blocks are:
+421 lines. Its largest remaining in-loop blocks are:
 
-- 71 lines: aligned binary repair selected by downstream BN, return, or Resize
-  evidence;
 - 65 lines: Resize shape repair selected by following BN constant evidence;
 - 32 and 26 lines: reshaped and direct aligned BN-constant repair;
 - smaller Pool state-update glue and local-response-normalization shape repair.
@@ -122,19 +137,18 @@ The broader fixed-pipeline, exporter, artifact-matrix, optional TensorFlow,
 PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier regression work also
 remains subject to the original refactor plan and its verification gates.
 
-## First work on resume
+## Next work
 
-1. Confirm `git status --short --branch` is clean and local `fb-refactor4`
-   matches `origin/fb-refactor4`.
-2. Inspect the 71-line aligned-binary downstream-evidence block in
-   `_apply_fast_precanonicalize_repairs`.
-3. Characterize its BN, direct-return, and Resize guards with one compact
-   synthetic policy fixture, then move the exact rule to the policy owner.
-4. Preserve the existing order: general binary alignment repair runs first;
-   the downstream-evidence fallback runs only when that repair made no change.
+1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
+   matches `origin/fb-refactor5`.
+2. Inspect the 65-line Resize repair selected by following BN constant
+   evidence in `_apply_fast_precanonicalize_repairs`.
+3. Characterize direct and reshaped BN constant evidence, channel-count
+   agreement, and no-op cases before moving the exact decision to the policy
+   owner.
+4. Preserve the current ordering after downstream binary evidence and before
+   the later aligned BN-constant repairs.
 5. Run only the focused synthetic/ownership/static checks unless the user asks
    for broader conversion validation. Use `uv`, run inference sequentially if
    any is explicitly requested, commit and push coherent units, and do not
    create a pull request.
-
-Do not begin the remaining work before the Goal is explicitly resumed.
