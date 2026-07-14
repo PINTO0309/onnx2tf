@@ -4592,6 +4592,48 @@ This also makes duplicate/later producers, public-input conflicts, floating or
 produced constants, missing output metadata, mixed dtypes, invalid grids, and
 shape/signature mismatches complete no-ops.
 
+The paired Swin-style window-reverse canonicalization is owned by the same
+`passes/window_partition_layout.py` module. Its two-Reshape/one-Transpose
+preflight also preserves historical pruning without allocating an index for
+unrelated graphs. Otherwise one optional or local `ModelIRGraphIndex` captures
+the graph-order Reshape objects once and resolves their current positions as
+earlier final Reshapes are removed. This avoids repeated consumer-map scans
+while preserving the former sequential shared-constant behavior.
+
+The reverse input is rank three `[N*OH*OW,BS*BS,C]`. Its first Reshape must be
+exactly `[N,OH,OW,BS,BS,C]`, the square block must be greater than one, the
+Transpose permutation must be `[0,1,3,2,4,5]`, and the final Reshape must be
+`[N,OH*BS,OW*BS,C]`. The replacement retains the first Reshape with target
+`[N,OH,OW,BS*BS*C]`, changes the same Transpose object in place to
+DEPTH_TO_SPACE with the exact block option and final output, and removes the
+last Reshape. Operator version, axis semantics, ONNX provenance, output
+lineage, public output identity, and unused-tensor pruning are preserved.
+
+All four data tensors have one dtype and either no quantization or the same
+valid per-tensor grid. Every internal edge is private, uniquely produced, and
+exclusively consumed in increasing graph order. The data source is a graph
+input, producer-free constant, or uniquely produced earlier value. Shape and
+permutation tensors are exact producer-free INT32/INT64 vectors; runtime graph
+inputs are not accepted as constants, and the first shape vector cannot be a
+public output because the rewrite changes its value.
+
+The changed first-Reshape vector is prepared before graph mutation. A private
+vector is updated in place. A shared vector is cloned with its original dtype
+and quantization, using the former deterministic `*_d2s_shape` naming rule;
+after that edge is updated in the differential index, a later sole consumer
+can update the original vector in place exactly as before. Clone failure is a
+complete no-op. One consistent dynamic batch, spatial, or channel dimension is
+encoded as the sole `-1` in the changed shape vector, options, and tensor
+signature. Contracts needing two inferred first-Reshape dimensions are not
+rewritten.
+
+Static public-input, produced-input, quantized, and shared-vector multi-chain
+fixtures retain exact former ModelIR and statistics. Extra operator inputs,
+floating shape vectors, a public first shape vector, mixed data dtypes, and
+inconsistent signatures formerly matched but now remain transactionally
+unchanged. Both production call sites supply the Session LayoutState, and a
+real ONNX Reshape/Transpose/Reshape graph characterizes the production owner.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
