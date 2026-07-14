@@ -2033,6 +2033,10 @@ counts, Conv block arity, module edges, and propagated alias layout evidence.
 It also records complete rank-four registered-buffer shapes during that same
 source scan. The orchestrator reuses this map for constant-alignment repair and
 does not compile another buffer regex or rescan every generated source line.
+Buffer channel/shape maps, Conv output channels, and module producers remain
+read-only after context construction, so the orchestrator queries those four
+maps directly instead of allocating full dictionary copies. Dynamic CF/NHWC
+sets remain per-pass mutable copies.
 Preferred channel selection, scored consumer-layout inference, and recursive
 channel-last spatial-consumer detection query the same context in this owner.
 They remain conservative when source evidence ties or cycles.

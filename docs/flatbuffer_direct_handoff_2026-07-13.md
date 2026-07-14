@@ -1381,6 +1381,15 @@ with Ruff, syntax validation, and `git diff --check`; the context builder shrank
 from 203 to 195 lines and the policy by net eight lines. No model conversion or
 inference was run.
 
+The fast-precanonicalize orchestrator no longer copies four read-only context
+maps: buffer channel counts, registered-buffer shapes, Conv output channels,
+and module producers. All seven lookups query the shared repair context
+directly; only the dynamically updated CF/NHWC sets remain copied. A structural
+assertion prevents the four local map stores from returning. Twelve focused
+policy/ownership tests pass (95 unrelated architecture tests deselected),
+together with Ruff, syntax validation, and `git diff --check`; the orchestrator
+shrunk from 1,258 to 1,254 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

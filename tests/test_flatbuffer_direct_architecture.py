@@ -4854,6 +4854,26 @@ def test_generated_pytorch_fast_precanonicalize_policy_has_single_owner() -> Non
     assert "_FastPrecanonicalizeRepairContext," in exporter_source
     assert "import torch" not in policy_source
 
+    orchestrator = next(
+        node
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_apply_fast_precanonicalize_repairs"
+    )
+    stored_names = {
+        node.id
+        for node in ast.walk(orchestrator)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    assert not stored_names.intersection(
+        {
+            "const_channel_counts",
+            "conv_block_out_channels",
+            "module_output_producers",
+            "registered_buffer_shapes",
+        }
+    )
+
 
 def test_generated_pytorch_reshape_policy_has_single_owner() -> None:
     exporter_source = (

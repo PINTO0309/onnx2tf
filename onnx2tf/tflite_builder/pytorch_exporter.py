@@ -7256,12 +7256,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     changed = False
     cf_like_names: set[str] = set(repair_context.cf_like_names)
     nhwc_like_names: set[str] = set(repair_context.nhwc_like_names)
-    const_channel_counts: Dict[str, int] = dict(repair_context.const_channel_counts)
-    conv_block_out_channels: Dict[str, int] = dict(repair_context.conv_block_out_channels)
-    module_output_producers: Dict[str, str] = dict(repair_context.module_output_producers)
-    registered_buffer_shapes: Dict[str, List[int]] = dict(
-        repair_context.registered_buffer_shapes
-    )
     singleton_reshape_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*torch\.reshape\((?P<expr>.+), \[(?P<n>\d+), 1, (?P<h>\d+), (?P<w>\d+)\]\)$"
     )
@@ -7354,9 +7348,9 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
             reshape_target_text = ""
             reshape_feature_dim: int | None = None
             rhs_name = str(simple_alias_match.group("rhs"))
-            rhs_producer_module = module_output_producers.get(rhs_name, None)
+            rhs_producer_module = repair_context.module_output_producers.get(rhs_name)
             rhs_producer_channels = (
-                conv_block_out_channels.get(rhs_producer_module, None)
+                repair_context.conv_block_out_channels.get(rhs_producer_module)
                 if rhs_producer_module is not None
                 else None
             )
@@ -7702,7 +7696,7 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 next_aligned_bn_match is not None
                 and str(next_aligned_bn_match.group("input")) == resize_lhs_name
             ):
-                next_bn_channel_count = const_channel_counts.get(
+                next_bn_channel_count = repair_context.const_channel_counts.get(
                     str(next_aligned_bn_match.group("const_attr")),
                     None,
                 )
@@ -7977,8 +7971,8 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                     next_lrn_assign is not None and str(next_lrn_assign[2]) == pool_lhs_name
                 )
             ):
-                input_channel_count = conv_block_out_channels.get(
-                    module_output_producers.get(input_name, ""),
+                input_channel_count = repair_context.conv_block_out_channels.get(
+                    repair_context.module_output_producers.get(input_name, ""),
                     None,
                 )
                 preferred_channel_count = (
@@ -8142,7 +8136,7 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
         if aligned_bn_const_match is not None:
             input_name = str(aligned_bn_const_match.group("input"))
             const_attr = str(aligned_bn_const_match.group("const_attr"))
-            channel_count = const_channel_counts.get(const_attr, None)
+            channel_count = repair_context.const_channel_counts.get(const_attr)
             if (
                 (
                     input_name in cf_like_names
@@ -8296,7 +8290,9 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
             changed = True
         tensor786_align_match = tensor786_align_re.match(line)
         if tensor786_align_match is not None:
-            buffer_shape = registered_buffer_shapes.get(str(tensor786_align_match.group("const_attr")))
+            buffer_shape = repair_context.registered_buffer_shapes.get(
+                str(tensor786_align_match.group("const_attr"))
+            )
             target_height = int(tensor786_align_match.group("h"))
             target_width = int(tensor786_align_match.group("w"))
             if buffer_shape == [1, target_height, target_width, 2]:
@@ -8382,7 +8378,7 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                     and str(next_permuted_conv_match.group("input")) == lhs_name
                 ):
                     conv_module = str(next_permuted_conv_match.group("module"))
-                    conv_in_channels = conv_block_out_channels.get(conv_module)
+                    conv_in_channels = repair_context.conv_block_out_channels.get(conv_module)
                     if conv_in_channels is None:
                         conv_in_channels = repair_context.conv_block_in_channels.get(conv_module)
                     if conv_in_channels is None or int(conv_in_channels) == int(len(gathered_indices)):
