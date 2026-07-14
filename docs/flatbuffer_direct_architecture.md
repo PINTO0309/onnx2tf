@@ -3695,6 +3695,18 @@ the helper and are asserted structurally. The extraction removes 37 net
 lowerer lines and reduces direct registered-runner call sites from 123 to 121
 without changing runtime invocation count or order.
 
+Two AST-identical 14-call terminal slice/Concat layout-recovery sequences are
+owned by `_run_terminal_slice_concat_layout_recovery_sequence`. The helper
+preserves channel-slice/Pad/Mul cleanup, post-Transpose Add, Concat affine,
+split-tail, NHWC-axis sanitation, StridedSlice, pre-Add, and final layout-
+Transpose cleanup order. The final registered runner remains unscoped because
+raw ModelIR mutators separate it from the first registered cluster. The
+immediately preceding channel-slice bridge remains outside because only the
+first site passes `layout_state`; the following boundary-QDQ and slice-
+passthrough calls also remain outside as distinct successors. The extraction
+removes 14 net lowerer lines and reduces direct registered-runner call sites
+from 121 to 120 without changing runtime invocation count or order.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

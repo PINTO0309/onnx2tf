@@ -614,6 +614,88 @@ def test_lowerer_qkv_attention_pair_reuses_one_pass_state_scope() -> None:
     assert layout_keyword.value.id == "optimize_layout_transpose_chains"
 
 
+def test_lowerer_terminal_slice_concat_recovery_has_one_ordered_owner() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+    helper_name = "_run_terminal_slice_concat_layout_recovery_sequence"
+    helper = next(
+        node
+        for node in lowerer.body
+        if isinstance(node, ast.FunctionDef) and node.name == helper_name
+    )
+    expected_order = [
+        "_run_channel_slice_pad_mul_layout_pass_cluster",
+        "_optimize_transpose_mul_posttranspose_add_nhwc_chains",
+        "_optimize_concat_mul_add_transpose_nhwc_bridge_chains",
+        "_optimize_concat_mul_add_transpose_add_nhwc_bridge_chains",
+        "_optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains",
+        "_optimize_concat_tree_mul_add_transpose_nhwc_bridge_chains",
+        "_optimize_singleton_gate_conv_concat_nhwc_bridge_blocks",
+        "_optimize_transpose_unary_split_concat_single_post_nchw",
+        "_optimize_transpose_split_channelwise_tail_to_single_post_nchw",
+        "_optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw",
+        "_sanitize_probable_nhwc_axis_sensitive_ops",
+        "_optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains",
+        "_optimize_transpose_pre_add_nhwc_chains",
+        "run_layout_transpose_cleanup",
+    ]
+    helper_calls = [
+        statement.value
+        for statement in helper.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+    ]
+    assert [call.func.id for call in helper_calls] == expected_order
+    assert all(
+        keyword.arg != "state_scope" for keyword in helper_calls[-1].keywords
+    )
+
+    invocation_indexes = [
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == helper_name
+    ]
+    assert len(invocation_indexes) == 2
+    previous_keyword_names = []
+    next_call_names = []
+    for index in invocation_indexes:
+        invocation = lowerer.body[index].value
+        assert invocation.args == []
+        assert invocation.keywords == []
+        previous = lowerer.body[index - 1]
+        assert isinstance(previous, ast.Expr)
+        assert isinstance(previous.value, ast.Call)
+        assert isinstance(previous.value.func, ast.Name)
+        assert (
+            previous.value.func.id
+            == "_optimize_transpose_channel_slice_muladd_nhwc_bridge_chains"
+        )
+        previous_keyword_names.append(
+            [keyword.arg for keyword in previous.value.keywords]
+        )
+        following = lowerer.body[index + 1]
+        assert isinstance(following, ast.Expr)
+        assert isinstance(following.value, ast.Call)
+        assert isinstance(following.value.func, ast.Name)
+        next_call_names.append(following.value.func.id)
+    assert previous_keyword_names == [["layout_state"], []]
+    assert next_call_names == [
+        "_optimize_boundary_input_transpose_stridedslice_qdq_concat_blocks",
+        "_optimize_transpose_slice_prepost_nhwc_passthrough_chains",
+    ]
+
+
 def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -2070,7 +2152,7 @@ def test_lowerer_channel_slice_pad_mul_pair_reuses_pass_state_scope() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == helper_name
     ]
-    assert len(helper_invocations) == 3
+    assert len(helper_invocations) == 2
 
 
 def test_lowerer_singleton_reshape_clusters_reuse_pass_state_scopes() -> None:
@@ -4813,7 +4895,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
     ]
 
     assert {call.func.id for call in calls if isinstance(call.func, ast.Name)} == runner_names
-    assert len(calls) == 121
+    assert len(calls) == 120
     for call in calls:
         diagnostics_keywords = [
             keyword for keyword in call.keywords if keyword.arg == "diagnostics"
@@ -4966,7 +5048,7 @@ def test_ordered_model_ir_runner_calls_record_session_diagnostics() -> None:
         if isinstance(call.func, ast.Name)
         and call.func.id == "run_layout_transpose_cleanup"
     ]
-    assert len(layout_transpose_calls) == 13
+    assert len(layout_transpose_calls) == 12
 
     transpose_gather_axis_calls = [
         call
