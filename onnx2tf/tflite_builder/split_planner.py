@@ -120,19 +120,25 @@ def _validate_range(
 
 def _collect_outputs(operators: Sequence[OperatorIR]) -> List[str]:
     outputs: List[str] = []
+    seen_outputs: Set[str] = set()
     for op in operators:
         for output_name in op.outputs:
-            if output_name and output_name not in outputs:
-                outputs.append(output_name)
+            if not output_name or output_name in seen_outputs:
+                continue
+            seen_outputs.add(output_name)
+            outputs.append(output_name)
     return outputs
 
 
 def _collect_inputs(operators: Sequence[OperatorIR]) -> List[str]:
     inputs: List[str] = []
+    seen_inputs: Set[str] = set()
     for op in operators:
         for input_name in op.inputs:
-            if input_name and input_name not in inputs:
-                inputs.append(input_name)
+            if not input_name or input_name in seen_inputs:
+                continue
+            seen_inputs.add(input_name)
+            inputs.append(input_name)
     return inputs
 
 

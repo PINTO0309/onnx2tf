@@ -6,11 +6,31 @@ import pytest
 import onnx2tf.tflite_builder.split_planner as split_planner_module
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.split_planner import (
+    _collect_inputs,
+    _collect_outputs,
     build_partition_model_ir,
     find_dependency_safe_split_points,
     plan_contiguous_partitions_by_size,
     validate_partition_ranges,
 )
+
+
+def test_partition_tensor_collection_preserves_first_seen_order() -> None:
+    operators = [
+        OperatorIR(
+            op_type="DUMMY",
+            inputs=["x", "shared", ""],
+            outputs=["a", "shared_out"],
+        ),
+        OperatorIR(
+            op_type="DUMMY",
+            inputs=["shared", "a", "x"],
+            outputs=["shared_out", "b", "a"],
+        ),
+    ]
+
+    assert _collect_inputs(operators) == ["x", "shared", "a"]
+    assert _collect_outputs(operators) == ["a", "shared_out", "b"]
 
 
 def _make_chain_model_ir(op_count: int = 6) -> ModelIR:

@@ -1638,6 +1638,10 @@ crossing tensors that must be written to the report rather than
 `ModelIRGraphIndex` once and reuses it for candidate discovery, partition-range
 validation, and manifest edge construction. Standalone helpers accept an
 optional caller-owned index and retain their existing call signatures.
+Partition input/output tensor collection likewise uses insertion-ordered
+`seen` sets. It preserves first-seen ordering and duplicate suppression while
+removing the quadratic list-membership cost from every binary-search candidate
+and final partition build.
 
 PyTorch layout-only Transpose cleanup is owned by the Torch-free
 `passes/pytorch_compat.py` boundary. It indexes initial `TRANSPOSE` objects and

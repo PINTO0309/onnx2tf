@@ -577,6 +577,13 @@ construct their own index unless a caller supplies one. A focused constructor
 instrumentation test proves one index build for the complete planner; all nine
 split-planner tests pass. No model conversion or inference was run.
 
+Partition input/output tensor collection now uses insertion-ordered `seen`
+sets instead of repeated list membership. First-seen ordering, empty-name
+filtering, and duplicate suppression are unchanged. All ten split-planner tests
+pass. On a local synthetic 2,000-op partition, five-run median collection time
+changed from 0.013159s to 0.000176s for outputs (74.7x) and from 0.013017s to
+0.000175s for inputs (74.3x). No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted
