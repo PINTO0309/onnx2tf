@@ -4020,6 +4020,32 @@ checks maintained-index equivalence, and covers public intermediates/source/
 aliases, branch fan-out, non-Transpose post users, per-channel quantization,
 wrong permutations, and the no-Transpose/no-index preflight.
 
+The primary branch-rewrite phase of the broader Swish-QDQ NHWC-island
+optimizer is owned by the Torch/TensorFlow-free
+`passes/quantized_swish_layout.py` module. Its explicit result contract returns
+the rewritten branch count, removed pre-Transpose count, and immutable set of
+NHWC-rewritten tensor names needed by later propagation phases. One optional
+or locally constructed `ModelIRGraphIndex` supplies graph-order Transpose
+candidates, every producer/consumer guard, both DQ source rewrites, and
+differential removal of an unused pre-Transpose. No legacy producer/consumer
+map is rebuilt, and a Transpose-free graph allocates no index.
+
+Shared-input multi-branch ordering, quantized and float MUL tails, peer Swish
+recognition, fixed spatial threshold, explicit concat-closure mode, public
+intermediate/post-output guards, data fan-out, shape/signature permutation, and
+the historical ordered restart are unchanged. Because only the two DQ source
+edges and an unused pre-Transpose can change, downstream match edges are read
+directly from the maintained index without copying the full consumer map.
+Extraction-time differential comparison runs the prior committed phase AST
+and the new owner over shared, closure, spatial-guard, public, and fan-out
+fixtures and compares the complete ModelIR and result. The comprehensive
+existing three-branch fixture retains digest
+`529b9889fafe9982ebb37ca63687b9329fa11a837562c154480c1856bbc05760`,
+with three rewritten branches, two removed pre-Transposes, and twenty rewritten
+tensors. Metadata propagation, late Concat normalization, inverse-post cleanup,
+and the independently owned Conv-input safety valve remain later ordered
+phases of the compatibility orchestrator.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

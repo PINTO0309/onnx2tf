@@ -1811,6 +1811,82 @@ def test_wrong_way_conv_transpose_sanitizer_has_one_indexed_owner() -> None:
     assert len(swish_invocations) == 1
 
 
+def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "quantized_swish_layout.py"
+    )
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    owner_tree = ast.parse(owner_path.read_text(encoding="utf-8"))
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    owner_name = "rewrite_transpose_swish_qdq_nhwc_branches"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    owner_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in owner_calls
+    assert "_build_tensor_producer_map" not in owner_calls
+    assert "ModelIRGraphIndex" in owner_calls
+    assert "operator_indices" in owner_calls
+    assert "consumer_indices" in owner_calls
+    assert "_set_operator_inputs" in owner_calls
+    assert "remove_operator" in owner_calls
+    setter_calls = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_set_operator_inputs"
+    ]
+    assert len(setter_calls) == 2
+    assert all(
+        any(
+            keyword.arg == "graph_index"
+            and isinstance(keyword.value, ast.Name)
+            and keyword.value.id == "active_index"
+            for keyword in call.keywords
+        )
+        for call in setter_calls
+    )
+
+    swish_orchestrator = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_optimize_transpose_swish_qdq_nhwc_islands"
+    )
+    owner_invocations = [
+        node
+        for node in ast.walk(swish_orchestrator)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == owner_name
+    ]
+    assert len(owner_invocations) == 1
+    assert isinstance(owner_invocations[0].args[0], ast.Name)
+    assert owner_invocations[0].args[0].id == "model_ir"
+    nested_names = {
+        node.name
+        for node in swish_orchestrator.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert "_is_swish_quantized_output" not in nested_names
+    assert "_concat_has_quantize_transpose_tail" not in nested_names
+    assert "_has_concat_closure_from_tensor" not in nested_names
+
+
 def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:
     owner_path = (
         REPO_ROOT
