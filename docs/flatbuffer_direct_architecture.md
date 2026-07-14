@@ -1104,6 +1104,16 @@ residual multiplication, optional Mean fan-out, and inverse terminal
 transposes before snapshotting; operator rewires and boundary-transpose removal
 update the differential index directly.
 
+The terminal hard-activation recovery and its immediately following optional
+generic Transpose cleanup share one lazy `ModelIRPassStateScope`. The hard
+runner keeps its exact late configuration: HardSwish is disabled, both
+HardSigmoid variants are enabled, and their order is reversed. When generic
+layout optimization is disabled, the hard-activation runner still executes by
+itself as before; when enabled, the Transpose runner reuses the already-built
+graph index and layout state. The scope begins after the raw
+HardSwish/SE/HardSigmoid rewrite and ends before the raw pre-Concat rewrite, so
+no unindexed legacy mutation can invalidate the shared state.
+
 Pad layout ownership is centralized in `passes/pad_layout.py`. In addition to
 repairing a proven channel-last input/channel-first Pad mismatch, the module
 owns direct inverse-transpose Pad folding and the guarded unary-to-Pad tail

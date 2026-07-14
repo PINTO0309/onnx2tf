@@ -50394,6 +50394,32 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_late_hard_activation_layout_pass_pair(
+        *,
+        include_layout_transpose: bool,
+    ) -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_hard_activation_passthrough_cleanup(
+            model_ir,
+            include_hardswish=False,
+            include_hardsigmoid=True,
+            include_hardsigmoid_mul=True,
+            reverse_hardsigmoid_order=True,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        if include_layout_transpose:
+            run_layout_transpose_cleanup(
+                model_ir,
+                layout_state=session.layout_state,
+                diagnostics=session.diagnostics,
+                state_scope=state_scope,
+            )
+
     def _run_absolute_final_normalization_attention_pass_pair() -> None:
         state_scope = ModelIRPassStateScope(
             model_ir,
@@ -51594,21 +51620,9 @@ def lower_onnx_to_ir(
     # Late affine/fusion cleanups can recreate
     # TRANSPOSE->(ADD/MUL hard-sigmoid-like)->MUL->TRANSPOSE wrappers.
     # Run strict hard-sigmoid transpose passthrough once more at terminal stage.
-    run_hard_activation_passthrough_cleanup(
-        model_ir,
-        include_hardswish=False,
-        include_hardsigmoid=True,
-        include_hardsigmoid_mul=True,
-        reverse_hardsigmoid_order=True,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
+    _run_late_hard_activation_layout_pass_pair(
+        include_layout_transpose=optimize_layout_transpose_chains,
     )
-    if optimize_layout_transpose_chains:
-        run_layout_transpose_cleanup(
-            model_ir,
-            layout_state=session.layout_state,
-            diagnostics=session.diagnostics,
-        )
     # Absolute-end cleanup: late bridge rewrites can recreate strict
     # pre/post CONCAT transpose wrappers and SHAPE-extract transposes.
     _optimize_transpose_pre_concat_nhwc_chains(

@@ -2016,6 +2016,7 @@ def run_hard_activation_passthrough_cleanup(
     reverse_hardsigmoid_order: bool = False,
     layout_state: Optional[LayoutState] = None,
     diagnostics: Optional[List[Dict[str, Any]]] = None,
+    state_scope: Optional[ModelIRPassStateScope] = None,
 ) -> Dict[str, int]:
     """Run hard-activation passthrough specs in the selected production order."""
 
@@ -2297,6 +2298,7 @@ def run_hard_activation_passthrough_cleanup(
             "rewritten_hardsigmoid_mul_transpose_passthrough_chains": 0,
         },
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}
