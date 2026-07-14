@@ -2228,6 +2228,13 @@ Resize shape literal rendering plus alias-aware rank-3/4/5 channel-first shape
 queries are co-located with that contract; statement emission remains outside
 this read-only graph-policy boundary.
 
+Generated CONCAT and adjacent Slice layout policy has a focused Torch-free
+owner in `pytorch_concat_policy.py`. It owns channel-first input expressions,
+static Slice/StridedSlice alias guards, channel-axis validation and recovery,
+and the decision to keep a Slice result channel-first across all indexed
+Concat consumers. ModelIR shape and expression access remain explicit
+callbacks, so the module neither mutates the graph nor owns statement emission.
+
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter

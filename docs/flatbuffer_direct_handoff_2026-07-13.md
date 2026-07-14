@@ -1007,6 +1007,15 @@ policy contracts and the focused ownership test pass, together with Ruff and
 syntax validation. The exporter shrank by another 132 lines. No model
 conversion or inference was run.
 
+Generated CONCAT and adjacent Slice layout policy now lives in the Torch-free
+`pytorch_concat_policy.py` owner. Channel-first input expression selection,
+static Slice/StridedSlice alias guards, channel-axis recovery, and the indexed
+all-Concat consumer decision retain explicit ModelIR/callback inputs. Five
+thousand fixed-seed outcomes match checkpoint `31b5b50` exactly; three direct
+op-family contracts and the focused ownership test pass, together with Ruff
+and syntax validation. The exporter shrank by another 196 lines. No model
+conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
