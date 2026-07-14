@@ -172,6 +172,13 @@ disables the prefix, and always runs the bridge. Its scope stays between the
 raw shape-extract and split/Conv/Concat rewrites, reducing the registered-
 runner call characterization from 135 to 134.
 
+The very-late Gather-axis, constant-fold/Cast, and flattened-normalization Pad
+sequence shares one scope between the raw unbound-input transpose repair and
+dynamic-Reshape resolution. The constant-fold/Cast helper accepts an optional
+external scope: its earlier call still creates an internal scope, while this
+later wrapper supplies the Gather-owned scope. Seven diagnostic events reuse
+one index without changing the registered-runner call characterization.
+
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
 and Split/Reshape collapse) retain their order before the two bridge specs

@@ -50024,11 +50024,15 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
-    def _run_constant_fold_cast_cleanup_pass_cluster() -> None:
-        state_scope = ModelIRPassStateScope(
-            model_ir,
-            layout_state=session.layout_state,
-        )
+    def _run_constant_fold_cast_cleanup_pass_cluster(
+        *,
+        state_scope: ModelIRPassStateScope | None = None,
+    ) -> None:
+        if state_scope is None:
+            state_scope = ModelIRPassStateScope(
+                model_ir,
+                layout_state=session.layout_state,
+            )
         run_constant_input_fold_cleanup(
             model_ir,
             layout_state=session.layout_state,
@@ -50037,6 +50041,29 @@ def lower_onnx_to_ir(
         )
         run_redundant_cast_cleanup(
             model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
+    def _run_very_late_gather_constant_normalization_pass_cluster() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_transpose_gather_axis_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        _run_constant_fold_cast_cleanup_pass_cluster(
+            state_scope=state_scope,
+        )
+        run_normalization_pad_layout_cleanup(
+            model_ir,
+            include_instance=False,
+            include_flatten=True,
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
             state_scope=state_scope,
@@ -51611,19 +51638,7 @@ def lower_onnx_to_ir(
     # NHWC->NCHW->NHWC MUL/ADD wrappers (repair_perm tensors).
     # Fold them again before final shape/topology reconciliation.
     _optimize_transpose_mul_posttranspose_add_nhwc_chains(model_ir)
-    run_transpose_gather_axis_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    _run_constant_fold_cast_cleanup_pass_cluster()
-    run_normalization_pad_layout_cleanup(
-        model_ir,
-        include_instance=False,
-        include_flatten=True,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_very_late_gather_constant_normalization_pass_cluster()
     # Very late terminal bridge/transpose rewrites above can still stale out
     # RESHAPE constant inputs. Re-resolve once immediately before final sort.
     _resolve_dynamic_reshape_shapes(

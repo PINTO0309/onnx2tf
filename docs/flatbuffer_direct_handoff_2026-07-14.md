@@ -9,13 +9,14 @@ subsequent work uses coherent commits and pushes without opening a pull
 request.
 
 The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-the conditional late generic-transpose and QKV-bridge pair. The three
-diagnostic events construct one graph index instead of up to two groups. The
-existing QKV helper now has compatible mode flags: its two prior invocations
-retain prefix-plus-bridge behavior, while the new invocation forwards the
-runtime layout flag, disables the prefix, and always runs the bridge. The
-scope stays between raw shape-extract and split/Conv/Concat rewrites. The
-lowerer's registered-runner call characterization is now 134, down from 135.
+the very-late Gather-axis, constant-fold/Cast, and flattened-normalization Pad
+sequence. Seven diagnostic events construct one graph index instead of up to
+three. The constant-fold/Cast helper now accepts an optional external scope:
+its earlier invocation retains internal ownership, while this later wrapper
+passes the Gather-owned scope through. The scope stays between raw unbound-
+input transpose repair and dynamic-Reshape resolution. The lowerer's
+registered-runner call characterization remains 134 because the optimization
+is runtime state reuse rather than another static call extraction.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains thirty-four coherent continuations:
+The current `fb-refactor5` work contains thirty-five coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -109,8 +110,10 @@ The current `fb-refactor5` work contains thirty-four coherent continuations:
   sequence;
 - `916419d9` shares state across the late NCHW channel-shuffle and Gather-axis
   pair;
-- the current checkpoint shares state across the conditional late generic-
-  transpose and QKV-bridge pair.
+- `8eaab05b` shares state across the conditional late generic-transpose and
+  QKV-bridge pair;
+- the current checkpoint shares state across the very-late Gather-axis,
+  constant-fold/Cast, and normalization-Pad sequence.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -345,6 +348,11 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   bridge path. The new invocation forwards `optimize_layout_transpose_chains`
   to the layout mode while always running bridge cleanup. Architecture checks
   fix the runtime flag and raw shape-extract/split-Conv boundaries.
+- The very-late Gather-axis, constant-fold/Cast, and normalization-Pad sequence
+  uses one wrapper-owned scope. The constant-fold/Cast helper accepts an
+  optional external scope; only this later invocation supplies one. The
+  normalization include flags remain false/true. Architecture checks fix the
+  external scope, runner order, flags, and raw repair/Reshape boundaries.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -943,10 +951,33 @@ only the generic-transpose event reports `state_built: true`. Architecture
 checks preserve two default helper invocations, require one bridge-only
 invocation with the runtime layout flag, fix both raw boundaries, and
 characterize 134 runner calls.
+A focused very-late Gather/constant/normalization checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_transpose_gather_axis.py \
+  tests/test_flatbuffer_direct_constant_fold.py \
+  tests/test_flatbuffer_direct_cast_cleanup.py \
+  tests/test_tflite_builder_direct.py::test_flatbuffer_direct_transpose_flatten_globalnorm_pad_prepost_nhwc_chain_optimized \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_constant_fold_cast_pair_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_very_late_gather_constant_normalization_cluster_reuses_one_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_constant_fold_cast_pair_reuses_pass_state_scope \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_very_late_gather_constant_normalization_cluster_reuses_scope \
+  tests/test_flatbuffer_direct_architecture.py::test_ordered_model_ir_runner_calls_record_session_diagnostics
+
+21 passed
+```
+
+The preflight-only fixture records one graph-index refresh across seven events;
+only the Gather-axis event reports `state_built: true`. Architecture checks
+require exactly one externally scoped constant-fold/Cast invocation, preserve
+the normalization flags, and fix both raw boundaries.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`181 passed` after adding the conditional layout/QKV-bridge checks.
+`183 passed` after adding the very-late Gather/constant/normalization checks.
 
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
@@ -988,10 +1019,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the very-late Gather-axis, constant-fold/Cast, and normalization-Pad
-   sequence while treating the preceding raw unbound-input/transpose repair
-   and following raw dynamic-Reshape resolution as hard boundaries. Its one
-   occurrence can eliminate up to two repeated index constructions.
+2. Audit the late hard-activation/conditional generic-transpose pair while
+   treating the preceding raw HardSwish/SE rewrite and following raw pre-
+   Concat rewrite as hard boundaries. Its one occurrence can eliminate one
+   repeated index construction when layout optimization is enabled.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.
