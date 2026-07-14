@@ -138,7 +138,10 @@ def _normalize_model_ir_for_pytorch_channel_first_with_index(
         normalized,
         graph_index=layout_graph_index,
     )
-    kernel_weight_tensor_names = _collect_kernel_weight_tensor_names(normalized)
+    kernel_weight_tensor_names = _collect_kernel_weight_tensor_names(
+        normalized,
+        graph_index=layout_graph_index,
+    )
     for tensor_name, tensor in normalized.tensors.items():
         if str(tensor_name) in kernel_weight_tensor_names:
             continue

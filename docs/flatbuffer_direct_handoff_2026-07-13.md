@@ -884,6 +884,16 @@ sparse-preserve synthetic 2,000-op graph, the shared-index application median
 improved from 0.001540002s to 0.000013905s (110.75x). No model conversion or
 inference was run.
 
+Kernel-weight identification and filter physicalization now share one
+Conv2D/depthwise/transpose-Conv2D/Conv3D op-family declaration. The normalizer
+passes its existing graph index to both stages, so the pre-permutation
+exclusion set enumerates only indexed family members instead of scanning every
+operator. Five hundred fixed-seed kernel-weight sets match checkpoint
+`5475221` exactly, and the focused layout, normalization, and architecture
+suites pass 116 tests. On a synthetic 2,000-op irrelevant graph, the
+shared-index collection median improved from 0.000041247s to 0.000001075s
+(38.37x). No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

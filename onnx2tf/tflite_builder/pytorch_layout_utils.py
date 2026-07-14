@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 import numpy as np
 import onnx
 
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import (
     LOGICAL_LAYOUT_UNKNOWN,
     ModelIR,
@@ -18,6 +19,15 @@ from onnx2tf.tflite_builder.ir import (
     normalize_logical_layout,
     rewrite_axis_for_layout,
 )
+
+
+_PYTORCH_KERNEL_WEIGHT_OP_TYPES = {
+    "CONV_2D",
+    "CONV_3D",
+    "CONV_3D_TRANSPOSE",
+    "DEPTHWISE_CONV_2D",
+    "TRANSPOSE_CONV",
+}
 
 
 def _perm_cl_to_cf(rank: int) -> Optional[List[int]]:
@@ -455,16 +465,27 @@ def _permute_tensor_to_channel_first_inplace(tensor: TensorIR) -> bool:
     return True
 
 
-def _collect_kernel_weight_tensor_names(model_ir: ModelIR) -> Set[str]:
+def _collect_kernel_weight_tensor_names(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Set[str]:
     names: Set[str] = set()
-    for op in model_ir.operators:
-        if str(op.op_type) in {
-            "CONV_2D",
-            "DEPTHWISE_CONV_2D",
-            "TRANSPOSE_CONV",
-            "CONV_3D",
-            "CONV_3D_TRANSPOSE",
-        } and len(op.inputs) >= 2:
+    candidate_ops = (
+        [
+            model_ir.operators[int(index)]
+            for index in graph_index.operator_indices_for_types(
+                _PYTORCH_KERNEL_WEIGHT_OP_TYPES
+            )
+        ]
+        if graph_index is not None
+        else model_ir.operators
+    )
+    for op in candidate_ops:
+        if (
+            str(op.op_type) in _PYTORCH_KERNEL_WEIGHT_OP_TYPES
+            and len(op.inputs) >= 2
+        ):
             names.add(str(op.inputs[1]))
     return names
 

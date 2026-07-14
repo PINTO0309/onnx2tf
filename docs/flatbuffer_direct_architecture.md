@@ -1893,7 +1893,9 @@ layout module. It queries only Conv2D, depthwise Conv2D, transpose-Conv2D,
 Conv3D, and transpose-Conv3D indices from the shared graph index, preserves
 graph order, and tracks shared weight names so each buffer is permuted exactly
 once. The normalizer supplies its existing index; no extra operator scan or
-index build is required.
+index build is required. The pre-permutation exclusion set uses the same
+op-family declaration and shared index, so unrelated operators are not scanned
+a second time merely to identify kernel buffers.
 
 Residual channel-layout Transpose validation and its Reshape-only exception are
 owned by `passes/pytorch_compat.py`. The normalizer queries only indexed

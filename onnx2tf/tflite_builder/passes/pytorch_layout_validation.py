@@ -19,6 +19,7 @@ from onnx2tf.tflite_builder.ir import (
     rewrite_axis_for_layout,
 )
 from onnx2tf.tflite_builder.pytorch_layout_utils import (
+    _PYTORCH_KERNEL_WEIGHT_OP_TYPES,
     _assign_tensor_logical_layout,
     _clone_tensor,
     _has_channel_last_factorized_rank3_sequence_consumer,
@@ -313,13 +314,7 @@ def _rewrite_filter_tensors_for_pytorch(
     candidate_ops = [
         model_ir.operators[int(index)]
         for index in graph_index.operator_indices_for_types(
-            {
-                "CONV_2D",
-                "CONV_3D",
-                "CONV_3D_TRANSPOSE",
-                "DEPTHWISE_CONV_2D",
-                "TRANSPOSE_CONV",
-            }
+            _PYTORCH_KERNEL_WEIGHT_OP_TYPES
         )
     ]
     for op in candidate_ops:
