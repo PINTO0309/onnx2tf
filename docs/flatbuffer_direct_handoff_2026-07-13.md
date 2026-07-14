@@ -701,6 +701,16 @@ Against checkpoint `28763e6`, a 15-run synthetic 2,000-op full-INT16 median
 improved from 0.012144s to 0.010351s (1.17x). No model conversion or inference
 was run.
 
+Dynamic-range graph indexing is now lazy as well. Conv, DepthwiseConv, and
+FullyConnected kernel-only weight quantization performs no topology mutation
+and constructs no index; quantized elementwise constants still create one
+index at the first `DEQUANTIZE` insertion and share it for later rewires. The
+zero-index kernel fixture and existing one-index shared-constant fixture bring
+the strict/dynamic quantization selection to 54 tests. Kernel-only and
+constant-Dequantize ModelIR fingerprints match checkpoint `dca871b` exactly.
+On a synthetic 2,000-FullyConnected graph, a 15-run median changed from
+0.053744s to 0.050637s (1.06x). No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

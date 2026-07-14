@@ -68,6 +68,45 @@ def test_dynamic_range_quantization_inserts_one_shared_dequantize(monkeypatch) -
     assert model_ir.operators == [first_add, second_add]
 
 
+def test_dynamic_range_kernel_only_quantization_skips_graph_index(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("dynamic_range_kernel_only")
+    model_ir.inputs = ["x"]
+    model_ir.outputs = ["y"]
+    model_ir.tensors = {
+        "x": TensorIR("x", "FLOAT32", [1, 4], [1, 4]),
+        "weight": TensorIR(
+            "weight",
+            "FLOAT32",
+            [3, 4],
+            [3, 4],
+            data=np.arange(12, dtype=np.float32).reshape(3, 4),
+        ),
+        "y": TensorIR("y", "FLOAT32", [1, 3], [1, 3]),
+    }
+    model_ir.operators = [
+        OperatorIR("FULLY_CONNECTED", ["x", "weight"], ["y"]),
+    ]
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    quantized = build_dynamic_range_quantized_model_ir(
+        model_ir,
+        quant_type="per-tensor",
+    )
+
+    assert refresh_count == 0
+    assert quantized.tensors["weight"].dtype == "INT8"
+
+
 def test_quantization_identity_elision_promotes_graph_output_producer(
     monkeypatch,
 ) -> None:

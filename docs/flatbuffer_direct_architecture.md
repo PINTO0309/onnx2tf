@@ -1639,14 +1639,14 @@ positions. Tensor pruning and newly generated shape tensors are reconciled with
 the session `LayoutState`. Consequently, the only complete `model_ir.operators`
 assignments left in the central lowerer are explicit snapshot rollback paths.
 
-Dynamic-range quantization builds one `ModelIRGraphIndex` over the already
-deep-cloned graph and reuses those cloned operators. Constant quantization is
-unchanged; the first elementwise use of each quantized constant receives one
-indexed `DEQUANTIZE` insertion, and all later uses are rewired to the shared
-dequantized tensor through indexed input replacement. The former second
-operator-cloning pass and complete list assignment are removed, reducing copy
-volume while preserving operator axis semantics and ONNX provenance already
-carried by the initial ModelIR clone.
+Dynamic-range quantization creates one lazy `ModelIRGraphIndex` over the already
+deep-cloned graph only when an elementwise quantized constant requires a
+`DEQUANTIZE` insertion or input rewire. All later uses share that tensor and
+the same differential index. Conv/Depthwise/FC kernel-only weight quantization
+does not mutate graph topology and builds no index. The former second
+operator-cloning pass and complete list assignment remain removed, reducing
+copy volume while preserving operator axis semantics and ONNX provenance
+already carried by the initial ModelIR clone.
 
 Full-integer Identity elision also uses one differential index. Its ordered
 replacement table preserves Identity-chain resolution and the special graph-

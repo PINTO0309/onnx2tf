@@ -883,8 +883,9 @@ def test_dynamic_range_quantization_uses_differential_graph_index() -> None:
     assert function_source is not None
     assert "clone.operators =" not in function_source
     assert "ModelIRGraphIndex(clone)" in function_source
-    assert "graph_index.insert_operator(" in function_source
-    assert "graph_index.replace_operator_inputs(" in function_source
+    assert "require_graph_index()" in function_source
+    assert "active_index.insert_operator(" in function_source
+    assert "active_index.replace_operator_inputs(" in function_source
 
 
 def test_quantization_identity_elision_uses_batch_graph_index_removal() -> None:

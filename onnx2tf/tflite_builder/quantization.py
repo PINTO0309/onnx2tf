@@ -1157,8 +1157,14 @@ def build_dynamic_range_quantized_model_ir(
     quantized_tensor_names: Set[str] = set()
     dequantized_tensor_map: Dict[str, str] = {}
 
-    graph_index = ModelIRGraphIndex(clone)
+    graph_index: Optional[ModelIRGraphIndex] = None
     candidate_ops = list(clone.operators)
+
+    def require_graph_index() -> ModelIRGraphIndex:
+        nonlocal graph_index
+        if graph_index is None:
+            graph_index = ModelIRGraphIndex(clone)
+        return graph_index
 
     def ensure_dequantized_tensor(
         quant_tensor_name: str,
@@ -1186,10 +1192,11 @@ def build_dynamic_range_quantized_model_ir(
             is_variable=False,
             quantization=None,
         )
-        before_index = graph_index.operator_index(before_op)
+        active_index = require_graph_index()
+        before_index = active_index.operator_index(before_op)
         if before_index is None:
             return None
-        graph_index.insert_operator(
+        active_index.insert_operator(
             int(before_index),
             OperatorIR(
                 op_type="DEQUANTIZE",
@@ -1254,9 +1261,11 @@ def build_dynamic_range_quantized_model_ir(
                 )
                 if deq_name is not None:
                     new_inputs[idx] = deq_name
-            op_index = graph_index.operator_index(op)
-            if op_index is not None and new_inputs != list(op.inputs):
-                graph_index.replace_operator_inputs(int(op_index), new_inputs)
+            if new_inputs != list(op.inputs):
+                active_index = require_graph_index()
+                op_index = active_index.operator_index(op)
+                if op_index is not None:
+                    active_index.replace_operator_inputs(int(op_index), new_inputs)
 
     if len(quantized_tensor_names) == 0:
         raise NotImplementedError(
