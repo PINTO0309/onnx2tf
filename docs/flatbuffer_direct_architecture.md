@@ -2171,6 +2171,13 @@ suffix preservation, and deterministic collision resolution share the same
 policy. Nine function ASTs and four policy-constant ASTs are identical to their
 former exporter definitions.
 
+Native codegen value policy has a Torch-free single owner in
+`pytorch_codegen_values.py`. Small constant eligibility, Python and scalar
+literal rendering, TFLite-to-Torch pad ordering, Torch dtype spelling, and
+Conv-block fused-activation selection no longer live in the monolithic
+exporter. All seven function ASTs are identical to their former exporter
+definitions, including non-finite float handling and unsupported-dtype errors.
+
 ## Runtime-check memory boundary
 
 The direct backend releases the legacy GraphSurgeon graph before ModelIR

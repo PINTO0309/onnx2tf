@@ -416,6 +416,16 @@ names, excluded buffers, keywords, digits, and empty names. Naming and
 architecture validation passes 73 tests; syntax, Ruff, pycompile, diff, and
 AST-equivalence checks pass. No model conversion or inference was run.
 
+Native PyTorch codegen value policy now lives in the Torch-free
+`pytorch_codegen_values.py`. Small inline-constant eligibility, nested and
+non-finite Python literals, scalar literals, reversed/permuted Torch padding,
+dtype spelling, and Conv-block fused activations share one owner. All seven
+function ASTs match the prior exporter checkpoint. Thirteen direct tests fix
+size/rank/dtype boundaries, padding order, unsupported dtype diagnostics, every
+supported fused activation, and LeakyReLU alpha handling. Value-policy and
+architecture validation passes 82 tests; Ruff, diff, and AST-equivalence checks
+pass. No model conversion or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

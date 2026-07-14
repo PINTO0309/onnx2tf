@@ -66,6 +66,7 @@ DEPENDENCY_SCOPED_FILES = [
     / "op_builders"
     / "qlinear_pool.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_utils.py",
+    REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_values.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_capabilities.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_layout_utils.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_naming.py",
@@ -3857,6 +3858,40 @@ def test_generated_pytorch_naming_policy_has_single_owner() -> None:
         assert constant_name in naming_source
         assert constant_name not in exporter_source
     assert "import torch" not in naming_source
+
+
+def test_generated_pytorch_codegen_values_have_single_owner() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    values_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_codegen_values.py"
+    ).read_text(encoding="utf-8")
+    exporter_functions = {
+        node.name
+        for node in ast.parse(exporter_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    values_functions = {
+        node.name
+        for node in ast.parse(values_source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    moved_functions = (
+        "_conv_block_activation_config",
+        "_conv_block_activation_config_from_fused_name",
+        "_is_small_inline_constant_tensor",
+        "_python_literal_for_constant_tensor",
+        "_scalar_literal_for_constant_tensor",
+        "_torch_dtype_literal",
+        "_torch_pad_literal_for_constant_tensor",
+    )
+    for function_name in moved_functions:
+        assert function_name in values_functions
+        assert function_name not in exporter_functions
+        assert f"{function_name}," in exporter_source
+    assert "import torch" not in values_source
 
 
 def test_pytorch_capability_registry_has_single_owner() -> None:
