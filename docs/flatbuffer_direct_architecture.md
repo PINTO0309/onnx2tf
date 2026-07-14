@@ -4317,6 +4317,33 @@ removing a producer whose bridge is exposed as a public input. Exact former-
 function differential execution confirms complete ModelIR and statistics
 equality for valid one- and two-chain fixtures.
 
+Canonical quantized Logistic cleanup is owned by
+`passes/quantized_logistic.py`. One optional or local `ModelIRGraphIndex`
+enumerates graph-order Dequantize candidates, proves the exclusive and
+topologically ordered Logistic/Quantize consumers, applies lineage-aware
+Logistic input/output rewrites, and removes both wrappers differentially.
+Independent INT8 and UINT8 chains therefore share one current index. Graphs
+missing any required operator family retain historical unused-tensor and
+optional LayoutState pruning without allocating an index; both production
+call sites supply the Session-owned LayoutState.
+
+The quantized input and output use the same INT8 or UINT8 dtype. Input scale
+must be positive and finite, with its zero point in the dtype range. Output
+quantization is exactly the builtin's canonical scale `1/256` and zero point
+`-128` for INT8 or `0` for UINT8; the former tolerance is intentionally not
+used. All four tensor records must exist, the two bridge dtypes must be the
+same floating type, and elementwise shape/signature metadata must agree across
+the complete chain without imposing a rank-four restriction. Both bridges are
+private, exclusively consumed, uniquely produced, and topologically ordered;
+the quantized output cannot also be a graph input. All guards finish before
+mutation. Logistic options and provenance remain on the retained object,
+version becomes two for INT8 and one for UINT8, and the public output object
+and canonical quantization remain stable. This deliberately prevents former
+rewrites with a near-canonical output scale, absent or invalid input grid,
+missing float metadata, or public-input bridge. Exact former-function
+differential execution confirms complete ModelIR and statistics equality for
+valid one- and two-chain fixtures.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

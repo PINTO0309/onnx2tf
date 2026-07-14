@@ -8,16 +8,16 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit gives exact-grid
-DEQUANTIZE-to-MAX_POOL_2D-to-QUANTIZE cleanup one semantic owner in
-`passes/quantized_pool.py`. One maintained `ModelIRGraphIndex` supplies
+The latest implementation unit gives canonical
+DEQUANTIZE-to-LOGISTIC-to-QUANTIZE cleanup one semantic owner in
+`passes/quantized_logistic.py`. One maintained `ModelIRGraphIndex` supplies
 graph-order Dequantize candidates, exact chain consumers/producers, indexed
-Pool edge rewrites, and differential wrapper removal. INT8/UINT8 dtype, exact
-scale and zero point, rank-four shape/signature, Pool options/output identity,
-lineage, statistics, and pruning retain valid former behavior. Near-equal but
-different grids, missing float bridge tensors, public bridges, duplicate
-producers, operator-order violations, and inconsistent metadata are complete
-no-ops.
+Logistic edge rewrites, and differential wrapper removal. INT8/UINT8 input
+grid validity, exact canonical output grid, shape/signature, Logistic
+options/output identity, lineage, statistics, and pruning retain valid former
+behavior. Near-canonical output scales, missing input quantization or float
+bridge tensors, public bridges, duplicate producers, operator-order
+violations, and inconsistent metadata are complete no-ops.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -39,7 +39,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains seventy-eight coherent continuations:
+The current `fb-refactor5` work contains seventy-nine coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -207,7 +207,9 @@ The current `fb-refactor5` work contains seventy-eight coherent continuations:
   indexed terminal-layout owner and centralizes the propagation marker;
 - `e1e8ab39` moves pre-ArgMax channel-layout cleanup to one indexed owner with
   transactional shape and constant-ownership guards;
-- the current checkpoint moves exact-grid quantized MaxPool cleanup to one
+- `0cfc1ef9` moves exact-grid quantized MaxPool cleanup to one indexed owner
+  with transactional topology, grid, and metadata guards;
+- the current checkpoint moves canonical quantized Logistic cleanup to one
   indexed owner with transactional topology, grid, and metadata guards.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
@@ -227,8 +229,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/quantized_pool.py`;
-- `tests/test_flatbuffer_direct_indexed_quantized_pool.py`;
+- `onnx2tf/tflite_builder/passes/quantized_logistic.py`;
+- `tests/test_flatbuffer_direct_indexed_quantized_logistic.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -648,6 +650,22 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   intentionally fixes former rewrites that accepted near-equal grids, absent
   float metadata, or a float bridge exposed as a public input. Missing
   required operator families retain historical pruning without allocating an
+  index, and both production call sites pass the Session `LayoutState`.
+- Quantized Logistic cleanup accepts only an exact linear
+  `DEQUANTIZE -> LOGISTIC -> QUANTIZE` chain. Input and output tensors must use
+  the same INT8 or UINT8 dtype. The input grid requires a positive finite
+  scale and in-range zero point; the output grid is exactly scale `1/256` with
+  zero point `-128` for INT8 or `0` for UINT8. Tolerant scale equality is not
+  sufficient for the builtin's canonical output contract. All four tensors
+  must exist, float dtypes must agree, and elementwise shape/signature metadata
+  must be identical across the complete chain without imposing a fixed rank.
+  Both float bridges are private, uniquely produced, exclusively consumed,
+  and topologically ordered; the quantized output cannot also be an input.
+  Every guard completes before indexed Logistic edge mutation, version
+  selection, and differential wrapper removal. This intentionally fixes
+  former rewrites that accepted a near-canonical output scale, missing or
+  invalid input quantization, absent float metadata, or a public-input bridge.
+  Missing required families retain historical pruning without allocating an
   index, and both production call sites pass the Session `LayoutState`.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
@@ -1848,6 +1866,27 @@ quantization/evaluation/coverage smoke passed with `3 passed`. Ruff on the new
 owner/test and architecture test, syntax compilation, and `git diff --check`
 passed. No Tier corpus conversion was run.
 
+The indexed quantized-Logistic checkpoint compiles the complete prior
+committed function and preserves exact ModelIR and statistics for valid one-
+and two-chain fixtures across INT8 and UINT8. Differential checks separately
+prove that the former tolerant comparison folded a near-canonical output
+scale, missing input quantization was accepted, missing float bridge tensors
+were accepted, and a public-input bridge could lose its producer; all four are
+now transactional no-ops. Focused coverage verifies one-index multi-match
+execution, maintained-index and LayoutState equivalence, quantized input/output
+fan-out, dictionary grids, rank-independent elementwise metadata, Logistic
+options/version/provenance, public boundaries, duplicate producers, operator
+order and arity, input grid validity, exact canonical output grid, float dtype,
+shape/signature equality, missing tensors, missing-family/no-index pruning,
+the two established direct tests, and unique semantic ownership with
+`55 passed`. Architecture, core, pass-efficiency, established quantized-Pool
+and quantization-cleanup coverage, both indexed quantized suites, and the two
+direct Logistic tests passed together with `373 passed`. TensorFlow-import-
+blocked direct and `-cotof` plus the sequential quantization/evaluation/
+coverage smoke passed with `3 passed`. Ruff on the new owner/test and
+architecture test, syntax compilation, and `git diff --check` passed. No Tier
+corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1897,11 +1936,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit `_optimize_dequant_logistic_quantize_chains` as the next bounded
-   quantized-op cleanup. Preserve exact quantization grids, Logistic options,
-   public/fan-out, shape/signature, output identity, statistics, and pruning
-   contracts while replacing its repeated producer/consumer maps with one
-   maintained index and a complete pre-mutation plan.
+3. Audit `_optimize_dequant_softmax_quantize_chains` as the next bounded
+   quantized-op cleanup. Preserve canonical output quantization, beta and
+   Softmax options, public/fan-out, shape/signature, output identity,
+   statistics, and pruning contracts while replacing its repeated producer/
+   consumer maps with one maintained index and a complete pre-mutation plan.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

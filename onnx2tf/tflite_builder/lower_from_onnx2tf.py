@@ -276,6 +276,9 @@ from onnx2tf.tflite_builder.passes.terminal_argmax_layout import (
 from onnx2tf.tflite_builder.passes.quantized_pool import (
     _optimize_dequant_maxpool_quantize_chains as _optimize_dequant_maxpool_quantize_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.quantized_logistic import (
+    _optimize_dequant_logistic_quantize_chains as _optimize_dequant_logistic_quantize_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.split_fallback import (
     replace_unsupported_split_with_slice as _replace_unsupported_split_with_slice_pass,
 )
@@ -40653,125 +40656,15 @@ def _optimize_dequant_softmax_quantize_chains(model_ir: ModelIR) -> Dict[str, in
     return {"folded_dequant_softmax_quantize_chains": int(folded)}
 
 
-def _optimize_dequant_logistic_quantize_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold DEQUANTIZE->LOGISTIC->QUANTIZE into quantized LOGISTIC when TFLite-compatible.
-
-    Target pattern:
-      Xq --DEQUANTIZE--> Xf --LOGISTIC--> Yf --QUANTIZE--> Yq
-
-    Rewritten:
-      Xq --LOGISTIC(int8/uint8)--> Yq
-
-    Safety conditions:
-    - Chain is linear (single consumer at each bridge tensor)
-    - input/output quantized tensors are per-tensor INT8/UINT8
-    - output quantization matches TFLite quantized logistic canonical params
-      (INT8: scale=1/256, zp=-128; UINT8: scale=1/256, zp=0)
-    """
-    folded = 0
-
-    def _is_supported_logistic_qparams(dtype: str, quantization: Any) -> bool:
-        qparams = _get_per_tensor_scale_zero_point(quantization)
-        if qparams is None:
-            return False
-        scale, zero_point = qparams
-        if not np.isclose(float(scale), 1.0 / 256.0, rtol=0.0, atol=1e-7):
-            return False
-        dtype_u = str(dtype).upper()
-        if dtype_u == "INT8":
-            return int(zero_point) == -128
-        if dtype_u == "UINT8":
-            return int(zero_point) == 0
-        return False
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-
-        for dq_idx, dq_op in enumerate(model_ir.operators):
-            if str(dq_op.op_type) != "DEQUANTIZE" or len(dq_op.inputs) != 1 or len(dq_op.outputs) != 1:
-                continue
-            q_in_name = str(dq_op.inputs[0])
-            f_in_name = str(dq_op.outputs[0])
-
-            logistic_users = consumers.get(f_in_name, [])
-            if len(logistic_users) != 1:
-                continue
-            logistic_idx = int(logistic_users[0])
-            logistic_op = model_ir.operators[logistic_idx]
-            if str(logistic_op.op_type) != "LOGISTIC" or len(logistic_op.inputs) != 1 or len(logistic_op.outputs) != 1:
-                continue
-            if str(logistic_op.inputs[0]) != f_in_name:
-                continue
-            f_out_name = str(logistic_op.outputs[0])
-
-            q_users = consumers.get(f_out_name, [])
-            if len(q_users) != 1:
-                continue
-            q_idx = int(q_users[0])
-            q_op = model_ir.operators[q_idx]
-            if str(q_op.op_type) != "QUANTIZE" or len(q_op.inputs) != 1 or len(q_op.outputs) != 1:
-                continue
-            if str(q_op.inputs[0]) != f_out_name:
-                continue
-            q_out_name = str(q_op.outputs[0])
-
-            if f_in_name in model_ir.outputs or f_out_name in model_ir.outputs:
-                continue
-
-            q_in_tensor = model_ir.tensors.get(q_in_name, None)
-            q_out_tensor = model_ir.tensors.get(q_out_name, None)
-            f_in_tensor = model_ir.tensors.get(f_in_name, None)
-            f_out_tensor = model_ir.tensors.get(f_out_name, None)
-            if q_in_tensor is None or q_out_tensor is None:
-                continue
-            if not _all_per_tensor_quantized([q_in_tensor, q_out_tensor]):
-                continue
-
-            q_in_dtype = str(q_in_tensor.dtype).upper()
-            q_out_dtype = str(q_out_tensor.dtype).upper()
-            if q_in_dtype not in {"INT8", "UINT8"} or q_out_dtype != q_in_dtype:
-                continue
-            if not _is_supported_logistic_qparams(q_out_dtype, q_out_tensor.quantization):
-                continue
-
-            if f_in_tensor is not None and not _shapes_match_if_known(q_in_tensor.shape, f_in_tensor.shape):
-                continue
-            if f_out_tensor is not None and not _shapes_match_if_known(q_out_tensor.shape, f_out_tensor.shape):
-                continue
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=logistic_op,
-                new_inputs=[q_in_name],
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=logistic_op,
-                new_outputs=[q_out_name],
-            )
-            # TFLite quantized LOGISTIC uses version 2 for INT8.
-            logistic_op.version = 2 if q_out_dtype == "INT8" else 1
-
-            if f_out_tensor is not None:
-                q_out_tensor.shape = [int(v) for v in list(f_out_tensor.shape)]
-                if f_out_tensor.shape_signature is not None:
-                    q_out_tensor.shape_signature = [int(v) for v in list(f_out_tensor.shape_signature)]
-                else:
-                    q_out_tensor.shape_signature = [int(v) for v in list(f_out_tensor.shape)]
-
-            for remove_idx in sorted([dq_idx, q_idx], reverse=True):
-                del model_ir.operators[remove_idx]
-            folded += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"folded_dequant_logistic_quantize_chains": int(folded)}
+def _optimize_dequant_logistic_quantize_chains(
+    model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    return _optimize_dequant_logistic_quantize_chains_pass(
+        model_ir,
+        layout_state=layout_state,
+    )
 
 
 def _quantized_tensors_share_exact_grid(
@@ -47518,7 +47411,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
         _optimize_dequant_softmax_quantize_chains(model_ir)
-        _optimize_dequant_logistic_quantize_chains(model_ir)
+        _optimize_dequant_logistic_quantize_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _canonicalize_softmax_transpose_chains(model_ir)
         _run_safe_binary_bridge_recovery_sequence()
 
@@ -47553,7 +47449,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
         )
         _optimize_dequant_softmax_quantize_chains(model_ir)
-        _optimize_dequant_logistic_quantize_chains(model_ir)
+        _optimize_dequant_logistic_quantize_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _canonicalize_softmax_transpose_chains(model_ir)
 
     def _run_terminal_slice_concat_layout_recovery_sequence() -> None:
