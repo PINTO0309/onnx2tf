@@ -1546,6 +1546,12 @@ the same pass that validates operator support. It preserves the legacy raw-name
 and empty-name boundary behavior while removing the preceding duplicate
 operator/edge traversal.
 
+The strict builder's mutable `ModelIRGraphIndex` is lazy. Float-IO or mixed
+external/internal dtype boundaries request it when consumer/producer rewiring
+or pre/post operator insertion first occurs and then share that one instance.
+Full-integer variants whose boundary dtype already matches the internal dtype
+perform no boundary mutation and therefore build no graph index.
+
 Late precision conversion in `passes/precision.py` is differential as well.
 Constant floating DIV roots are captured from one operator-type index and each
 eligible DIV is replaced in graph order by an optional Cast, reciprocal Mul,

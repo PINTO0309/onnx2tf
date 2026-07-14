@@ -12,6 +12,7 @@ from onnx2tf.tflite_builder.quantization import (
     _elide_identity_operators,
     TensorCalibrationRange,
     build_dynamic_range_quantized_model_ir,
+    build_full_integer_quantized_model_ir,
     build_integer_quantized_model_ir,
     build_full_integer_quantized_with_int16_act_model_ir,
     build_integer_quantized_with_int16_act_model_ir,
@@ -155,6 +156,59 @@ def test_strict_integer_float_io_inserts_indexed_boundary_ops(monkeypatch) -> No
     assert quantized.outputs == quantized.operators[2].outputs
     assert model_ir.operators[0].inputs == ["x", "constant"]
     assert model_ir.operators[0].outputs == ["y"]
+
+
+def test_full_integer_matching_boundary_dtype_skips_graph_index(monkeypatch) -> None:
+    model_ir, calibration_ranges = _strict_integer_add_fixture()
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        quant_type="per-tensor",
+        input_quant_dtype="int8",
+        output_quant_dtype="int8",
+        calibration_ranges=calibration_ranges,
+    )
+
+    assert refresh_count == 0
+    assert quantized.tensors["x"].dtype == "INT8"
+    assert quantized.tensors["y"].dtype == "INT8"
+
+
+def test_full_integer_mixed_output_dtype_builds_one_lazy_graph_index(
+    monkeypatch,
+) -> None:
+    model_ir, calibration_ranges = _strict_integer_add_fixture()
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    quantized = build_full_integer_quantized_model_ir(
+        model_ir,
+        quant_type="per-tensor",
+        input_quant_dtype="int8",
+        output_quant_dtype="uint8",
+        calibration_ranges=calibration_ranges,
+    )
+
+    assert refresh_count == 1
+    assert quantized.tensors["x"].dtype == "INT8"
+    assert quantized.tensors["y"].dtype == "UINT8"
+    assert quantized.operators[-1].op_type == "QUANTIZE"
 
 
 def _strict_integer_add_fixture() -> tuple[

@@ -924,10 +924,11 @@ def test_strict_integer_boundary_ops_use_differential_graph_index() -> None:
     assert function_source is not None
     assert "clone.operators =" not in function_source
     assert "ModelIRGraphIndex(clone)" in function_source
-    assert "graph_index.replace_operator_inputs(" in function_source
-    assert "graph_index.replace_operator_outputs(" in function_source
-    assert "graph_index.insert_operator(" in function_source
-    assert "graph_index.append_operator(" in function_source
+    assert "require_graph_index()" in function_source
+    assert "active_index.replace_operator_inputs(" in function_source
+    assert "active_index.replace_operator_outputs(" in function_source
+    assert "active_index.insert_operator(" in function_source
+    assert "active_index.append_operator(" in function_source
 
 
 def test_model_writer_reuses_shared_dead_operator_pruning() -> None:

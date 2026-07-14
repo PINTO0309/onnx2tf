@@ -1330,7 +1330,7 @@ def _build_strict_full_integer_model_ir(
     )
     clone = _clone_model_ir(model_ir)
     _elide_identity_operators(clone)
-    graph_index = ModelIRGraphIndex(clone)
+    graph_index: Optional[ModelIRGraphIndex] = None
     internal_dtype = str(internal_activation_dtype).upper()
     input_dtype = str(input_quant_dtype).upper()
     output_dtype = str(output_quant_dtype).upper()
@@ -1358,24 +1358,32 @@ def _build_strict_full_integer_model_ir(
     pre_ops: List[OperatorIR] = []
     post_ops: List[OperatorIR] = []
 
+    def require_graph_index() -> ModelIRGraphIndex:
+        nonlocal graph_index
+        if graph_index is None:
+            graph_index = ModelIRGraphIndex(clone)
+        return graph_index
+
     def replace_all_operator_inputs(old_name: str, new_name: str) -> None:
-        for op_index in sorted(set(graph_index.consumer_indices(str(old_name)))):
+        active_index = require_graph_index()
+        for op_index in sorted(set(active_index.consumer_indices(str(old_name)))):
             op = clone.operators[int(op_index)]
             new_inputs = [
                 str(new_name) if str(value) == str(old_name) else value
                 for value in op.inputs
             ]
             if new_inputs != list(op.inputs):
-                graph_index.replace_operator_inputs(int(op_index), new_inputs)
+                active_index.replace_operator_inputs(int(op_index), new_inputs)
 
     def replace_producer_outputs(old_name: str, new_name: str) -> None:
-        producer = graph_index.producer(str(old_name))
+        active_index = require_graph_index()
+        producer = active_index.producer(str(old_name))
         if producer is None:
             return
-        producer_index = graph_index.operator_index(producer)
+        producer_index = active_index.operator_index(producer)
         if producer_index is None:
             return
-        graph_index.replace_operator_outputs(
+        active_index.replace_operator_outputs(
             int(producer_index),
             [
                 str(new_name) if str(value) == str(old_name) else value
@@ -1494,7 +1502,7 @@ def _build_strict_full_integer_model_ir(
                 continue
             if output_dtype == internal_dtype:
                 continue
-            producer_op = graph_index.producer(str(output_name))
+            producer_op = require_graph_index().producer(str(output_name))
             fixed_external = fixed_activation_qparams_for_op(
                 op_type=str(producer_op.op_type) if producer_op is not None else "",
                 dtype=output_dtype,
@@ -1697,10 +1705,12 @@ def _build_strict_full_integer_model_ir(
 
         reporter.record_operator(index=int(op_idx), operator=op)
 
-    for op_index, pre_op in enumerate(pre_ops):
-        graph_index.insert_operator(int(op_index), pre_op)
-    for post_op in post_ops:
-        graph_index.append_operator(post_op)
+    if pre_ops or post_ops:
+        active_index = require_graph_index()
+        for op_index, pre_op in enumerate(pre_ops):
+            active_index.insert_operator(int(op_index), pre_op)
+        for post_op in post_ops:
+            active_index.append_operator(post_op)
     _validate_strict_full_integer_model_ir(
         model_ir=clone,
         allow_float_boundary=not full_integer_io,

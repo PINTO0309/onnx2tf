@@ -689,6 +689,18 @@ unchanged. The focused ownership gate and strict quantization selection pass
 full-integer median improved from 0.012662s to 0.012108s (1.05x). No model
 conversion or inference was run.
 
+Strict-integer `ModelIRGraphIndex` construction is now lazy. Float-IO and mixed
+boundary-dtype variants still build and differentially update exactly one
+index; the common full-integer and full-integer INT16 variants skip it when no
+boundary rewiring or pre/post insertion is needed. A focused zero-index fixture
+and a mixed-output one-index fixture join the existing one-index float-IO
+fixture; the strict quantization selection passes 53 tests. Four float/full ×
+INT8/INT16 configurations plus two mixed boundary configurations match the
+eager-index checkpoint's ModelIR fingerprints and requested reports exactly.
+Against checkpoint `28763e6`, a 15-run synthetic 2,000-op full-INT16 median
+improved from 0.012144s to 0.010351s (1.17x). No model conversion or inference
+was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted
