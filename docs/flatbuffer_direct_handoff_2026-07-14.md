@@ -9,13 +9,12 @@ subsequent work uses coherent commits and pushes without opening a pull
 request.
 
 The latest implementation unit shares one lazy `ModelIRPassStateScope` across
-the late Mean/Mul/Add/Conv, generic SPP, and Gather-axis sequence. The three
-diagnostic events construct one graph index instead of up to three. The scope
-starts after the conditional generic-transpose cleanup and ends before the
-constant-fold/Cast helper. Generic SPP cleanup now exposes an optional scope.
-The lowerer's registered-runner call characterization remains 139 because this
-is one production occurrence; runtime index construction is the optimized
-dimension.
+the late generic SPP and Concat/unary/Conv pair. The two diagnostic events
+construct one graph index instead of up to two. The scope starts after the raw
+StridedSlice/Pad/Concat rewrite and ends before the raw shape-extract rewrite.
+Concat/unary/Conv cleanup now exposes an optional scope. The lowerer's
+registered-runner call characterization remains 139 because this is one
+production occurrence; runtime index construction is the optimized dimension.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +36,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains twenty-nine coherent continuations:
+The current `fb-refactor5` work contains thirty coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -99,8 +98,10 @@ The current `fb-refactor5` work contains twenty-nine coherent continuations:
   Reshape pair;
 - `fcae7233` shares state across the terminal scalar-clamp, unary-passthrough,
   and maximum-zero-to-ReLU sequence;
-- the current checkpoint shares state across the late Mean/Mul/Add/Conv,
-  generic SPP, and Gather-axis sequence.
+- `36f73b18` shares state across the late Mean/Mul/Add/Conv, generic SPP, and
+  Gather-axis sequence;
+- the current checkpoint shares state across the late generic SPP and Concat/
+  unary/Conv pair.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -119,7 +120,7 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/spp_layout.py`;
+- `onnx2tf/tflite_builder/passes/concat_unary_conv_layout.py`;
 - `tests/test_flatbuffer_direct_pass_efficiency.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
@@ -309,6 +310,11 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   compatible scope and retains its differential index mutations. Architecture
   checks fix the conditional generic-transpose predecessor and constant-fold/
   Cast helper successor as hard boundaries.
+- The late generic SPP and Concat/unary/Conv pair uses one helper-owned scope.
+  Concat/unary/Conv cleanup now exposes an optional standalone-compatible
+  scope and retains its differential index mutations. Architecture checks fix
+  the raw StridedSlice/Pad/Concat predecessor and raw shape-extract successor
+  as hard boundaries.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -796,14 +802,34 @@ The preflight-only fixture records one graph-index refresh across three events;
 only the first reports `state_built: true`. Architecture checks fix the runner
 order, shared scope keywords, conditional generic-transpose predecessor, and
 constant-fold/Cast helper successor.
+A focused late SPP/Concat-unary-Conv checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_spp_layout.py \
+  tests/test_flatbuffer_direct_concat_unary_conv_layout.py \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_late_spp_concat_unary_conv_pair_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_late_spp_concat_unary_conv_pair_reuses_scope \
+  tests/test_flatbuffer_direct_architecture.py::test_ordered_model_ir_runner_calls_record_session_diagnostics
+
+73 passed
+```
+
+The preflight-only fixture records one graph-index refresh across two events;
+the first reports `state_built: true` and the second `false`. Architecture
+checks fix both runner calls, shared scope keywords, and both raw rewrite
+boundaries.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`171 passed` after adding the late Mean/SPP/Gather checks.
+`173 passed` after adding the late SPP/Concat-unary-Conv checks.
 
-The changed SPP owner and tests pass Ruff normally. The lowerer passes with its
-pre-existing `F401` and `F841` findings scoped out. Every changed Python file
-passes `python -m py_compile`, and `git diff --check` passes. The
+The changed Concat/unary/Conv owner and tests pass Ruff normally. The lowerer
+passes with its pre-existing `F401` and `F841` findings scoped out. Every
+changed Python file passes `python -m py_compile`, and `git diff --check`
+passes. The
 immediately preceding DepthToSpace, Pool, dynamic-Pool, simple-alias, and
 aligned-scalar checkpoints passed their focused synthetic and ownership
 selections.
@@ -841,10 +867,10 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the late generic SPP/Concat-unary-Conv pair while treating the
-   preceding raw split/channelwise rewrites and following raw shape-extract
-   rewrite as hard boundaries. Its one occurrence can eliminate one repeated
-   index construction.
+2. Audit the absolute-final normalization-Pad/mixed-attention pair while
+   treating the preceding raw InstanceNorm rewrite and following dynamic-rank
+   Unsqueeze/Reshape rewrite as hard boundaries. Its one occurrence can
+   eliminate one repeated index construction.
 3. Add a focused production-boundary characterization before sharing another
    scope, and preserve exact diagnostics and rule order. Never carry a scope
    across a legacy helper or introduce a blanket refresh.

@@ -50321,6 +50321,24 @@ def lower_onnx_to_ir(
             state_scope=state_scope,
         )
 
+    def _run_late_spp_concat_unary_conv_pass_pair() -> None:
+        state_scope = ModelIRPassStateScope(
+            model_ir,
+            layout_state=session.layout_state,
+        )
+        run_spp_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+        run_concat_unary_conv_layout_cleanup(
+            model_ir,
+            layout_state=session.layout_state,
+            diagnostics=session.diagnostics,
+            state_scope=state_scope,
+        )
+
     def _run_boundary_batchmatmul_unary_layout_pass_cluster() -> None:
         state_scope = ModelIRPassStateScope(
             model_ir,
@@ -51503,16 +51521,7 @@ def lower_onnx_to_ir(
     _optimize_transpose_binary_split_channelwise_tail_to_single_post_nchw(model_ir)
     _sanitize_probable_nhwc_axis_sensitive_ops(model_ir)
     _optimize_transpose_stridedslice_pad_concat_mul_add_posttranspose_nhwc_chains(model_ir)
-    run_spp_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
-    run_concat_unary_conv_layout_cleanup(
-        model_ir,
-        layout_state=session.layout_state,
-        diagnostics=session.diagnostics,
-    )
+    _run_late_spp_concat_unary_conv_pass_pair()
     _optimize_transpose_shape_extract_nhwc_to_nchw_chains(model_ir)
     if optimize_layout_transpose_chains:
         run_layout_transpose_cleanup(

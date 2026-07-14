@@ -138,6 +138,11 @@ constant-fold/Cast helper. Generic SPP cleanup now accepts an optional scope;
 its existing differential input and operator-removal updates allow the three
 runners to reuse one index without a blanket refresh.
 
+The late generic SPP and Concat/unary/Conv pair shares one scope between the
+raw StridedSlice/Pad/Concat and shape-extract rewrites. Concat/unary/Conv
+cleanup now accepts an optional scope, and its existing differential input and
+operator-removal updates keep the shared index current.
+
 Two repeated QKV attention prefix/bridge pairs share one scope per occurrence.
 The four prefix specs (Gather-layout hoist, Gather-to-Slice, Slice-to-Split,
 and Split/Reshape collapse) retain their order before the two bridge specs

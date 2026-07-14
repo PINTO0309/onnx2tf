@@ -888,6 +888,52 @@ def test_late_mean_spp_gather_cluster_reuses_one_pass_state(
     )
 
 
+def test_late_spp_concat_unary_conv_pair_reuses_one_pass_state(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR(
+        "late_spp_concat_unary_conv_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "RESIZE_BILINEAR",
+                "ADD",
+                "CONCATENATION",
+                "MUL",
+                "CONV_2D",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    run_spp_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+    run_concat_unary_conv_layout_cleanup(
+        model_ir,
+        diagnostics=diagnostics,
+        state_scope=state_scope,
+    )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 2
+    assert diagnostics[0]["metrics"]["state_built"] is True
+    assert diagnostics[1]["metrics"]["state_built"] is False
+
+
 def test_shuffle_gather_cluster_reuses_one_pass_state(monkeypatch) -> None:
     model_ir = ModelIR(
         "shuffle_gather_scope_preflight_only",
