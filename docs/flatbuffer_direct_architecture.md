@@ -2316,7 +2316,12 @@ uses the same trace and relaxed shape equality.
 Binary runtime-shape alignment policy has a separate Torch-free owner in
 `pytorch_binary_policy.py`. It recognizes all-ones passthrough operands, compares
 materialized shapes with dynamic signatures and channel-first broadcast shapes,
-and selects the operand whose signature best anchors the declared output.
+and selects the operand whose signature best anchors the declared output. The
+same owner decides whether every consumer can remain a channel-first binary op
+and whether a materialized channel-last alias can be omitted. Recursive alias
+elision is conservative at graph outputs and unsupported fan-out, and preserves
+the existing Transpose, Conv, spatial-reduction, unary, binary-broadcast, rank,
+layout, and cycle boundaries through injected capability callbacks.
 
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are

@@ -4643,8 +4643,10 @@ def test_generated_pytorch_binary_policy_has_single_owner() -> None:
     }
 
     for function_name in (
+        "_all_consumers_are_channel_first_binary_ops_for_codegen",
         "_binary_requires_runtime_alignment_for_codegen",
         "_binary_runtime_shape_passthrough_operand_for_codegen",
+        "_can_omit_materialized_channel_last_alias_recursive_for_codegen",
         "_preferred_binary_alignment_anchor_for_codegen",
     ):
         assert function_name in policy_functions

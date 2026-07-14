@@ -1156,6 +1156,18 @@ alignment-anchor selection now live in the Torch-free
 ownership gate pass, together with Ruff and syntax validation. The exporter
 shrank by another 151 lines. No model conversion or inference was run.
 
+Channel-first binary-consumer classification and recursive materialized
+channel-last alias elision now share the Torch-free `pytorch_binary_policy.py`
+owner. The recursive contract remains conservative at public graph outputs and
+unsupported fan-out, while retaining the established Transpose, rank-3 bridge,
+Conv/depthwise, spatial-reduction, shape-preserving unary, static binary
+broadcast, layout, and cycle guards. Both moved function ASTs match checkpoint
+`3de6a07` exactly. Five focused binary-policy/ownership tests pass (91 unrelated
+architecture tests deselected), together with Ruff, syntax validation, and
+`git diff --check`; the exporter shrank by another net 195 lines. In accordance
+with the improvement-first validation policy, no model conversion or inference
+was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
