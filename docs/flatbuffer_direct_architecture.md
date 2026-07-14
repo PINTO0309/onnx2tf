@@ -4214,6 +4214,32 @@ square, or anchor intermediates are now protected transactionally—a deliberate
 fix for the former rule, which could remove producers of graph outputs. Valid
 one- and two-match fixtures retain complete former ModelIR and statistics.
 
+Leading-singleton Gather-to-Reshape canonicalization is owned by
+`passes/gather_reshape_cleanup.py`. One optional or local
+`ModelIRGraphIndex` enumerates graph-order Gather candidates, proves the sole
+Reshape consumer, records the Reshape data-edge replacement through the common
+lineage-aware setter, and removes the Gather differentially. Multiple matches
+therefore use one index instead of rebuilding the complete consumer map after
+each removal. The graph-order scan restarts only after a successful removal,
+preserving the former fixed point when an inner Gather removal exposes an
+outer Gather directly before Reshape. Graphs missing either required operator
+family retain historical unused-tensor pruning without allocating an index,
+and optional LayoutState pruning keeps the session contract current.
+
+The value-preservation contract requires normalized axis zero, zero batch
+dimensions, exactly one signed-integer zero in the constant index buffer, a
+statically fixed leading-one input signature, exact rank-reduced tail
+shape/signature, matching input/Gather-output dtype and quantization, a private
+uniquely produced Gather output, and a topologically later Reshape that consumes
+it only at data input zero. The singleton index may retain physical shape
+`[1]`, matching direct TFLite scalar-index legalization. Every guard completes
+before mutation. This deliberately prevents two unsafe former rewrites:
+multiple zero indices, which repeat the selected slice, and a dynamic leading
+signature, which cannot prove that bypassing Gather preserves element count.
+Exact former-function AST comparison confirms complete ModelIR, lineage, and
+statistics equality for valid independent one- and two-match fixtures and the
+nested fixed point.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

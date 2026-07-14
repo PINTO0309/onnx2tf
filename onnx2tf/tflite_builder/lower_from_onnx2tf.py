@@ -263,6 +263,9 @@ from onnx2tf.tflite_builder.passes.dynamic_reshape import (
     restore_placeholder_matmul_flattened_inputs as _restore_placeholder_matmul_flattened_inputs_pass,
     rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs as _rewrite_dynamic_rank1_unsqueeze_reshape_shape_inputs_pass,
 )
+from onnx2tf.tflite_builder.passes.gather_reshape_cleanup import (
+    _optimize_gather_axis0_singleton_to_reshape_input_chains as _optimize_gather_axis0_singleton_to_reshape_input_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.split_fallback import (
     replace_unsupported_split_with_slice as _replace_unsupported_split_with_slice_pass,
 )
@@ -19821,99 +19824,13 @@ def _optimize_attention_gather_transpose_reshape_cleanup_chains(
 
 def _optimize_gather_axis0_singleton_to_reshape_input_chains(
     model_ir: ModelIR,
+    *,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    """
-    Remove singleton-axis Gather before a lone Reshape.
-
-    Target:
-      x[1,...] --GATHER(axis=0, indices={0})--> g
-               --RESHAPE(shape=S)--> y
-
-    Rewrite:
-      x --RESHAPE(shape=S)--> y
-
-    Safety:
-    - Gather output has exactly one consumer (the Reshape).
-    - Gather axis is normalized axis 0.
-    - Gather indices are compile-time constants and all zeros.
-    - Gather input leading dimension is statically 1.
-    """
-    rewritten = 0
-
-    def _normalize_axis(axis: int, rank: int) -> int:
-        axis_i = int(axis)
-        if axis_i < 0:
-            axis_i += int(rank)
-        return int(axis_i)
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for gather_idx, gather_op in enumerate(model_ir.operators):
-            if str(gather_op.op_type) != "GATHER" or len(gather_op.inputs) < 2 or len(gather_op.outputs) != 1:
-                continue
-            gather_in_name = str(gather_op.inputs[0])
-            gather_out_name = str(gather_op.outputs[0])
-            if gather_out_name in model_outputs:
-                continue
-
-            gather_in_tensor = model_ir.tensors.get(gather_in_name, None)
-            gather_out_tensor = model_ir.tensors.get(gather_out_name, None)
-            if gather_in_tensor is None or gather_out_tensor is None:
-                continue
-            if (
-                not _is_fully_known_positive_shape(gather_in_tensor.shape)
-                or not _is_fully_known_positive_shape(gather_out_tensor.shape)
-            ):
-                continue
-            in_shape = [int(v) for v in list(gather_in_tensor.shape)]
-            out_shape = [int(v) for v in list(gather_out_tensor.shape)]
-            if len(in_shape) <= 0 or len(out_shape) != len(in_shape) - 1:
-                continue
-            if int(in_shape[0]) != 1:
-                continue
-
-            axis = _normalize_axis(int(gather_op.options.get("axis", 0)), len(in_shape))
-            if axis != 0:
-                continue
-
-            gather_indices = _read_const_ints_from_tensor(model_ir.tensors.get(str(gather_op.inputs[1]), None))
-            if gather_indices is None or len(gather_indices) <= 0:
-                continue
-            if any(int(v) != 0 for v in list(gather_indices)):
-                continue
-
-            gather_users = [int(v) for v in consumers.get(gather_out_name, [])]
-            if len(gather_users) != 1:
-                continue
-            reshape_idx = int(gather_users[0])
-            reshape_op = model_ir.operators[int(reshape_idx)]
-            if (
-                str(reshape_op.op_type) != "RESHAPE"
-                or len(reshape_op.inputs) < 2
-                or len(reshape_op.outputs) != 1
-                or str(reshape_op.inputs[0]) != str(gather_out_name)
-            ):
-                continue
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=reshape_op,
-                new_inputs=[str(gather_in_name)] + [str(v) for v in list(reshape_op.inputs[1:])],
-            )
-
-            del model_ir.operators[int(gather_idx)]
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"optimized_gather_axis0_singleton_to_reshape_input_chains": int(rewritten)}
+    return _optimize_gather_axis0_singleton_to_reshape_input_chains_pass(
+        model_ir,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(
@@ -47826,7 +47743,10 @@ def lower_onnx_to_ir(
         _optimize_reshape_transpose_reshape_transpose_to_nhwc_reshape_chains(model_ir)
         _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(model_ir)
         _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
-        _optimize_gather_axis0_singleton_to_reshape_input_chains(model_ir)
+        _optimize_gather_axis0_singleton_to_reshape_input_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
         _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
         _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)
@@ -48396,7 +48316,10 @@ def lower_onnx_to_ir(
     )
     _optimize_attention_qkv_reshape_transpose_reshape_to_reshape_transpose_chains(model_ir)
     _optimize_attention_gather_transpose_reshape_cleanup_chains(model_ir)
-    _optimize_gather_axis0_singleton_to_reshape_input_chains(model_ir)
+    _optimize_gather_axis0_singleton_to_reshape_input_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _optimize_attention_preproj_reshape_to_batchmatmul_ranklift_chains(model_ir)
     _optimize_window_partition_reshape_transpose_to_space_to_depth_chains(model_ir)
     _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains(model_ir)

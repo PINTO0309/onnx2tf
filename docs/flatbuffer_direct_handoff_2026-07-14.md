@@ -8,15 +8,16 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit replaces YOLO-named semantic ownership with the
-generic `_optimize_mul_square_anchor_constant_chains` owner in
-`passes/constant_fold.py`. One maintained `ModelIRGraphIndex` owns MUL
-candidates, full chain traversal, duplicate-aware square consumers, edge/output
-rewrites, and batch removal of the first/final MUL. Exact input ordering,
-singleton/finite guards, floating buffers, fused dtype/shape/quantization,
-output identity, statistics, pruning, and both constant-side orders retain
-valid former behavior. Public intermediates are newly protected as complete
-no-ops.
+The latest implementation unit gives the leading-singleton Gather-to-Reshape
+canonicalization one semantic owner in `passes/gather_reshape_cleanup.py`.
+One maintained `ModelIRGraphIndex` supplies graph-order Gather candidates,
+exclusive Reshape consumers, indexed input replacement, and differential
+Gather removal. Exact axis-zero, one-zero constant buffer, data-input position,
+shape/signature, dtype/quantization, public-boundary, output-identity,
+statistics, lineage, and pruning contracts retain valid former behavior.
+Multiple indices, a dynamic leading signature, inconsistent metadata,
+duplicate producers, and nonzero batch dimensions are newly protected as
+complete no-ops.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -38,7 +39,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains seventy-four coherent continuations:
+The current `fb-refactor5` work contains seventy-five coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -197,8 +198,11 @@ The current `fb-refactor5` work contains seventy-four coherent continuations:
   quantization-cleanup transaction;
 - `3042329e` moves pseudo-op LeakyReLU fusion to one indexed graph-cleanup
   owner with batch producer compaction;
-- the current checkpoint moves the former YOLO MUL-square fold to a generic
-  indexed constant-fold owner and protects public intermediates.
+- `9a513d4c` moves the former YOLO MUL-square fold to a generic indexed
+  constant-fold owner and protects public intermediates;
+- the current checkpoint moves leading-singleton Gather-to-Reshape cleanup to
+  one indexed shape/indexing owner and makes every unsafe metadata or topology
+  case transactional.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -217,8 +221,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/constant_fold.py`;
-- `tests/test_flatbuffer_direct_indexed_mul_square_constant_fold.py`;
+- `onnx2tf/tflite_builder/passes/gather_reshape_cleanup.py`;
+- `tests/test_flatbuffer_direct_indexed_gather_reshape_cleanup.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -582,6 +586,17 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   float32, checked finite, cast back to anchor dtype, and receives cloned anchor
   quantization. All three removable intermediates are now explicitly rejected
   when public before any tensor or edge mutation.
+- Leading-singleton Gather-to-Reshape cleanup accepts one signed integer zero
+  in either a scalar or TFLite-legalized singleton buffer, because both select
+  the only leading slice without changing element order or count. It requires
+  axis zero after negative-axis normalization, batch dimensions zero, a
+  statically fixed leading-one signature, exact rank-reduced tail shape and
+  signature, matching dtype and quantization, one topologically later Reshape
+  consumer at data input zero, and no public or duplicate-produced Gather
+  output. All guards finish before the indexed Reshape edge is changed and the
+  Gather is removed. Missing Gather/Reshape families still receive historical
+  unused-tensor pruning without allocating an index, and the active
+  `LayoutState` receives the same pruning at both production call sites.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -1705,6 +1720,24 @@ TensorFlow-import-blocked direct and `-cotof` plus the sequential quantization/
 evaluation/coverage smoke passed with `3 passed`. No Tier corpus conversion was
 run.
 
+The indexed leading-singleton Gather-to-Reshape checkpoint compiles the
+complete prior committed function AST and preserves exact valid ModelIR,
+lineage metadata, and statistics for one and two simultaneous matches. A
+separate differential check proves that multiple zero indices and a dynamic
+leading signature, both formerly rewritten, are now complete no-ops. Focused
+coverage verifies one-index multi-match execution, negative-axis
+normalization, nested fixed-point exposure, maintained-index and LayoutState
+equivalence, matching quantization, all public/fan-out/duplicate/order/input-
+position boundaries, axis and batch-dimension options, static and dynamic
+metadata consistency, constant buffer dtype/value/cardinality,
+dtype/quantization equality, missing tensors, transactional rejection,
+missing-family/no-index pruning, and unique semantic ownership with `38 passed`.
+Architecture, core, pass-efficiency, ModelIR utilities, dynamic Reshape, and
+indexed Gather/Reshape coverage passed with `269 passed`.
+TensorFlow-import-blocked direct and `-cotof` plus the
+sequential quantization/evaluation/coverage smoke passed with `3 passed`. No
+Tier corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1754,11 +1787,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit `_optimize_gather_axis0_singleton_to_reshape_input_chains` as the next
-   bounded shape/indexing cleanup. Preserve axis-zero, singleton-index,
-   constant-buffer, Reshape-input-position, public/fan-out, shape/signature,
-   output identity, statistics, and pruning contracts while eliminating its
-   repeated consumer scan through one maintained index.
+3. Audit `_optimize_terminal_softmax_transpose_after_nhwc_propagation` as the
+   next bounded terminal layout cleanup. Preserve exact Softmax axis,
+   permutation, public-output, fan-out, shape/signature, output identity,
+   statistics, and pruning behavior while replacing its repeated producer and
+   consumer maps with one maintained index.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
