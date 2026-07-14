@@ -122,6 +122,7 @@ from onnx2tf.tflite_builder.pytorch_package_sources import (
     _write_wrapper_model_file,
 )
 from onnx2tf.tflite_builder.pytorch_package_selection import (
+    _has_tflite_import_preferred_control_or_recurrent_ops,
     _should_prefer_saved_model_backed_package,
     _should_prefer_tflite_backed_package,
 )
@@ -26932,18 +26933,11 @@ def _export_pytorch_package_from_model_ir_impl(
         resolved_fallback_saved_model_path = str(generated_path)
         return resolved_fallback_saved_model_path
 
-    model_op_types = {str(op.op_type) for op in model_ir.operators}
-    control_or_recurrent_ops = {
-        "WHILE",
-        "UNIDIRECTIONAL_SEQUENCE_RNN",
-        "UNIDIRECTIONAL_SEQUENCE_LSTM",
-        "BIDIRECTIONAL_SEQUENCE_LSTM",
-    }
     if (
         fallback_tflite_path is not None
         and str(fallback_tflite_path).strip() != ""
         and not bool(fallback_tflite_has_custom_ops)
-        and any(op_type in control_or_recurrent_ops for op_type in model_op_types)
+        and _has_tflite_import_preferred_control_or_recurrent_ops(model_ir)
     ):
         try:
             imported_native_package_path = _try_export_native_package_from_tflite_import(

@@ -10,6 +10,26 @@ from onnx2tf.tflite_builder.ir import (
 )
 
 
+_TFLITE_IMPORT_PREFERRED_CONTROL_OR_RECURRENT_OP_TYPES = frozenset(
+    {
+        "BIDIRECTIONAL_SEQUENCE_LSTM",
+        "UNIDIRECTIONAL_SEQUENCE_LSTM",
+        "UNIDIRECTIONAL_SEQUENCE_RNN",
+        "WHILE",
+    }
+)
+
+
+def _has_tflite_import_preferred_control_or_recurrent_ops(
+    model_ir: ModelIR,
+) -> bool:
+    return any(
+        str(op.op_type)
+        in _TFLITE_IMPORT_PREFERRED_CONTROL_OR_RECURRENT_OP_TYPES
+        for op in model_ir.operators
+    )
+
+
 def _should_prefer_tflite_backed_package(model_ir: ModelIR) -> bool:
     op_types = []
     softmax_ops = []

@@ -894,6 +894,16 @@ suites pass 116 tests. On a synthetic 2,000-op irrelevant graph, the
 shared-index collection median improved from 0.000041247s to 0.000001075s
 (38.37x). No model conversion or inference was run.
 
+Early native TFLite-import preference for WHILE and recurrent families now
+lives with the Torch-free fallback-selection policy. Export orchestration
+checks the fallback path and custom-op guard before invoking its short-circuit
+operator scan; the normal no-fallback path no longer materializes a complete
+root op-type set. Five hundred fixed-seed fallback decisions match checkpoint
+`8723f61` exactly, and the focused selection and architecture suites pass 100
+tests. On a synthetic 2,000-op no-fallback graph, the decision median improved
+from 0.000035102s to 0.000000176s (199.44x). No model conversion or inference
+was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

@@ -4,6 +4,7 @@ import pytest
 
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_package_selection import (
+    _has_tflite_import_preferred_control_or_recurrent_ops,
     _should_prefer_saved_model_backed_package,
     _should_prefer_tflite_backed_package,
 )
@@ -37,6 +38,35 @@ def test_simple_graph_does_not_prefer_backed_packages() -> None:
 
     assert not _should_prefer_tflite_backed_package(model_ir)
     assert not _should_prefer_saved_model_backed_package(model_ir)
+
+
+@pytest.mark.parametrize(
+    "op_type",
+    [
+        "WHILE",
+        "UNIDIRECTIONAL_SEQUENCE_RNN",
+        "UNIDIRECTIONAL_SEQUENCE_LSTM",
+        "BIDIRECTIONAL_SEQUENCE_LSTM",
+    ],
+)
+def test_control_and_recurrent_ops_prefer_early_tflite_import(
+    op_type: str,
+) -> None:
+    model_ir = ModelIR(name=f"early_import_{op_type.lower()}")
+    _append_ops(model_ir, op_type, 1)
+
+    assert _has_tflite_import_preferred_control_or_recurrent_ops(
+        model_ir
+    )
+
+
+def test_ordinary_ops_do_not_prefer_early_tflite_import() -> None:
+    model_ir = ModelIR(name="no_early_import")
+    _append_ops(model_ir, "ADD", 1)
+
+    assert not _has_tflite_import_preferred_control_or_recurrent_ops(
+        model_ir
+    )
 
 
 def test_package_selection_scans_root_operators_once() -> None:

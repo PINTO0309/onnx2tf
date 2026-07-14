@@ -4276,6 +4276,7 @@ def test_pytorch_backed_package_selection_has_single_owner() -> None:
     }
 
     for function_name in (
+        "_has_tflite_import_preferred_control_or_recurrent_ops",
         "_should_prefer_saved_model_backed_package",
         "_should_prefer_tflite_backed_package",
     ):
@@ -4289,6 +4290,11 @@ def test_pytorch_backed_package_selection_has_single_owner() -> None:
     ]
     assert exporter_calls.count("_should_prefer_saved_model_backed_package") == 1
     assert exporter_calls.count("_should_prefer_tflite_backed_package") == 2
+    assert exporter_calls.count(
+        "_has_tflite_import_preferred_control_or_recurrent_ops"
+    ) == 1
+    assert "model_op_types =" not in exporter_source
+    assert "control_or_recurrent_ops =" not in exporter_source
     assert "import torch" not in selection_source
 
 

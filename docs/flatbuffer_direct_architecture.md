@@ -2397,6 +2397,11 @@ types, counts, and Softmax candidates are collected in one traversal before the
 established guard order is evaluated. Once the final fallback has selected the
 TFLite artifact unconditionally, it writes that package directly without a
 redundant preference evaluation whose branches produced the same artifact.
+The early native TFLite-import preference for control-flow and recurrent ops is
+owned here as well. Export orchestration invokes its short-circuit scan only
+after a non-empty, custom-op-free fallback TFLite path is established, so the
+ordinary native path does not collect root op types for an unavailable
+fallback.
 
 Reference ONNX public-boundary inference lives in
 `pytorch_onnx_artifact_support.py`. Transpose permutation decoding, short
