@@ -1810,6 +1810,12 @@ use the shared append-only split-planner rewrite, while directly supported or
 absent recurrent ops return the borrowed graph for the subsequent owning
 normalizer copy.
 
+Native recurrent constant preparation has a separate Torch-free owner in
+`pytorch_recurrent_codegen_policy.py`. It enforces required constant arrays and
+builds LSTM gate-bias buffers in index order. Fully omitted biases produce one
+zero synthetic tensor, while partially omitted bias groups remain an explicit
+export error.
+
 The same recurrent module owns legacy orphan step-tensor repair. It preflights
 `_h_step_`/`_c_step_` names before allocating graph state, then uses one
 `ModelIRGraphIndex` to find the corresponding shape-driven Reshape and update

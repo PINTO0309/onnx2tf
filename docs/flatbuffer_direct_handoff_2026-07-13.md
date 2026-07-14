@@ -1231,6 +1231,16 @@ The exporter shrank by a net 289 lines, including removal of the legacy blank
 section; the displaced export-support import was restored in the normal
 top-level dependency block. No model conversion or inference was run.
 
+Required recurrent constant lookup and sequence-LSTM gate-bias construction
+now live in the new Torch-free `pytorch_recurrent_codegen_policy.py` owner.
+Fully omitted bias groups still produce one zero synthetic tensor, partially
+omitted groups still fail explicitly, and present gate biases concatenate in
+the index contract's order as float32. Both moved function ASTs match checkpoint
+`32bc66a` exactly. Three focused policy/ownership tests pass (94 unrelated
+architecture tests deselected), together with Ruff, syntax validation, and
+`git diff --check`; the exporter shrank by another net 54 lines. No model
+conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
