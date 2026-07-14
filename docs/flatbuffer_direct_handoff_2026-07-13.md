@@ -617,6 +617,12 @@ report no longer calls even the no-op wrapper. An AST ownership/gating test
 checks every call ancestor; architecture validation passes 80 tests. No model
 conversion or inference was run.
 
+SavedModel export progress previously advanced once even when the artifact was
+not requested, while its progress label was correctly omitted. The advance now
+lives inside the SavedModel request guard. An AST gate fixes that ownership and
+architecture validation passes 81 tests. No model conversion or inference was
+run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

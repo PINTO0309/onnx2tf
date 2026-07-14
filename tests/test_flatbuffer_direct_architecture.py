@@ -252,6 +252,30 @@ def test_op_coverage_writer_is_called_only_when_requested() -> None:
         assert guarded
 
 
+def test_saved_model_progress_advances_only_when_artifact_is_requested() -> None:
+    builder_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "__init__.py"
+    ).read_text(encoding="utf-8")
+    export_function = next(
+        node
+        for node in ast.parse(builder_source).body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "export_tflite_model_flatbuffer_direct"
+    )
+    saved_model_guard = next(
+        node
+        for node in ast.walk(export_function)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "output_saved_model_from_model_ir"
+    )
+    last_statement = saved_model_guard.body[-1]
+    assert isinstance(last_statement, ast.Expr)
+    assert isinstance(last_statement.value, ast.Call)
+    assert isinstance(last_statement.value.func, ast.Name)
+    assert last_statement.value.func.id == "_advance_export_progress"
+
+
 def test_high_rank_matmul_pass_and_prune_utility_have_single_owners() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"

@@ -877,7 +877,7 @@ def export_tflite_model_flatbuffer_direct(**kwargs: Any) -> Dict[str, Any]:
                     model_ir=model_ir_fp32,
                     output_folder_path=saved_model_output_folder_path,
                 )
-        _advance_export_progress()
+            _advance_export_progress()
 
         if output_pytorch_from_model_ir:
             require_torch(required_pytorch_feature or "flatbuffer_direct PyTorch package export")
