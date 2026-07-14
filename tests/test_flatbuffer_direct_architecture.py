@@ -4282,6 +4282,13 @@ def test_pytorch_backed_package_selection_has_single_owner() -> None:
         assert function_name in selection_functions
         assert function_name not in exporter_functions
         assert f"{function_name}," in exporter_source
+    exporter_calls = [
+        node.func.id
+        for node in ast.walk(ast.parse(exporter_source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    ]
+    assert exporter_calls.count("_should_prefer_saved_model_backed_package") == 1
+    assert exporter_calls.count("_should_prefer_tflite_backed_package") == 2
     assert "import torch" not in selection_source
 
 

@@ -862,6 +862,17 @@ focused capability and architecture selection passes 90 tests, and a 101-run
 synthetic 2,000-op median improved from 0.000070605s to 0.000035143s (2.01x).
 No model conversion or inference was run.
 
+Fallback package selection now collects root op types, structural counts, and
+Softmax candidates in one operator-list traversal instead of repeatedly
+rescanning the same list for each guard and threshold. Recurrent/control,
+length-input, transpose-convolution, channel-first Softmax, and large-graph
+decisions retain their established evaluation order. Five hundred fixed-seed
+selection graphs match checkpoint `064d927` exactly, and the focused selection
+and architecture suites pass 95 tests. A 101-run synthetic 2,000-op median
+improved from 0.000256567s to 0.000105230s (2.44x). The final unconditional
+TFLite fallback also no longer evaluates the same preference policy before two
+identical artifact writes. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

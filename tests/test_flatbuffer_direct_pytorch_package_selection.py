@@ -39,6 +39,26 @@ def test_simple_graph_does_not_prefer_backed_packages() -> None:
     assert not _should_prefer_saved_model_backed_package(model_ir)
 
 
+def test_package_selection_scans_root_operators_once() -> None:
+    class CountingOperators(list[OperatorIR]):
+        def __init__(self, values: list[OperatorIR]) -> None:
+            super().__init__(values)
+            self.iteration_count = 0
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            self.iteration_count += 1
+            return super().__iter__()
+
+    model_ir = ModelIR(name="counting")
+    _append_ops(model_ir, "CONV_2D", 20)
+    _append_ops(model_ir, "STRIDED_SLICE", 4)
+    _append_ops(model_ir, "CONCATENATION", 4)
+    model_ir.operators = CountingOperators(model_ir.operators)
+
+    assert not _should_prefer_tflite_backed_package(model_ir)
+    assert model_ir.operators.iteration_count == 1  # type: ignore[attr-defined]
+
+
 @pytest.mark.parametrize(
     "guard_op_type",
     [

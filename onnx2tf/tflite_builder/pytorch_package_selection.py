@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import re
 
 from onnx2tf.tflite_builder.ir import (
@@ -10,14 +11,21 @@ from onnx2tf.tflite_builder.ir import (
 
 
 def _should_prefer_tflite_backed_package(model_ir: ModelIR) -> bool:
-    op_types = [str(op.op_type) for op in model_ir.operators]
+    op_types = []
+    softmax_ops = []
+    for op in model_ir.operators:
+        op_type = str(op.op_type)
+        op_types.append(op_type)
+        if op_type == "SOFTMAX":
+            softmax_ops.append(op)
+    op_type_counts = Counter(op_types)
     recurrent_or_control_ops = {
         "WHILE",
         "UNIDIRECTIONAL_SEQUENCE_RNN",
         "UNIDIRECTIONAL_SEQUENCE_LSTM",
         "BIDIRECTIONAL_SEQUENCE_LSTM",
     }
-    if any(op_type in recurrent_or_control_ops for op_type in op_types):
+    if any(op_type_counts[op_type] > 0 for op_type in recurrent_or_control_ops):
         return False
     has_length_like_input = False
     for input_name in model_ir.inputs:
@@ -29,10 +37,13 @@ def _should_prefer_tflite_backed_package(model_ir: ModelIR) -> bool:
             break
     if has_length_like_input:
         return False
-    if any(op_type in {"TRANSPOSE_CONV", "CONV_3D_TRANSPOSE"} for op_type in op_types):
+    if (
+        op_type_counts["TRANSPOSE_CONV"] > 0
+        or op_type_counts["CONV_3D_TRANSPOSE"] > 0
+    ):
         return True
-    for op in model_ir.operators:
-        if str(op.op_type) != "SOFTMAX" or len(op.inputs) == 0:
+    for op in softmax_ops:
+        if len(op.inputs) == 0:
             continue
         input_tensor = model_ir.tensors.get(str(op.inputs[0]), None)
         if input_tensor is None:
@@ -41,18 +52,18 @@ def _should_prefer_tflite_backed_package(model_ir: ModelIR) -> bool:
             normalize_logical_layout(input_tensor.logical_layout)
         ):
             return True
-    conv_like_count = sum(
-        1 for op_type in op_types if op_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}
+    conv_like_count = (
+        op_type_counts["CONV_2D"]
+        + op_type_counts["DEPTHWISE_CONV_2D"]
     )
-    strided_slice_count = sum(1 for op_type in op_types if op_type == "STRIDED_SLICE")
-    concat_count = sum(1 for op_type in op_types if op_type == "CONCATENATION")
-    resize_count = sum(
-        1
-        for op_type in op_types
-        if op_type in {"RESIZE_BILINEAR", "RESIZE_NEAREST_NEIGHBOR"}
+    strided_slice_count = op_type_counts["STRIDED_SLICE"]
+    concat_count = op_type_counts["CONCATENATION"]
+    resize_count = (
+        op_type_counts["RESIZE_BILINEAR"]
+        + op_type_counts["RESIZE_NEAREST_NEIGHBOR"]
     )
-    split_count = sum(1 for op_type in op_types if op_type == "SPLIT")
-    softmax_count = sum(1 for op_type in op_types if op_type == "SOFTMAX")
+    split_count = op_type_counts["SPLIT"]
+    softmax_count = op_type_counts["SOFTMAX"]
     nhwc_named_tensor_count = sum(
         1
         for tensor_name in model_ir.tensors.keys()

@@ -27136,15 +27136,6 @@ def _export_pytorch_package_from_model_ir_impl(
                     return imported_native_package_path
             except Exception:
                 pass
-        if (
-            not bool(fallback_tflite_has_custom_ops)
-            and _should_prefer_tflite_backed_package(model_ir)
-        ):
-            return export_pytorch_package_from_tflite_artifact(
-                model_ir=model_ir,
-                output_folder_path=output_folder_path,
-                tflite_file_path=str(fallback_tflite_path),
-            )
         return export_pytorch_package_from_tflite_artifact(
             model_ir=model_ir,
             output_folder_path=output_folder_path,

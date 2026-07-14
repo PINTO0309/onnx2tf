@@ -2388,7 +2388,11 @@ Fallback package preference lives in the Torch-free
 transpose-convolution and channel-first Softmax signals, and the established
 large-graph structural thresholds are evaluated independently from artifact
 writing. TFLite-backed and SavedModel-backed selection share this single policy;
-both function ASTs are identical to their former exporter definitions.
+the saved-model entry remains a direct alias of that policy. Root operator
+types, counts, and Softmax candidates are collected in one traversal before the
+established guard order is evaluated. Once the final fallback has selected the
+TFLite artifact unconditionally, it writes that package directly without a
+redundant preference evaluation whose branches produced the same artifact.
 
 Reference ONNX public-boundary inference lives in
 `pytorch_onnx_artifact_support.py`. Transpose permutation decoding, short
