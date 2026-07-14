@@ -1484,6 +1484,17 @@ contracts, and the single-owner gate passes with 2 tests. Scoped Ruff, syntax
 validation, and `git diff --check` pass. The orchestrator shrank from 864 to
 758 lines. No model conversion, corpus run, or inference was performed.
 
+Dynamic-shape Pool layout repair now lives in one indexed policy helper.
+Immediate NHWC/CF bridges retain their channel-last decision and explicit
+short-circuit; CF average pooling still searches only the next three lines for
+a direct aligned consumer or one binary hop before an aligned consumer. The
+exact positional aligned-rank4 assignment is now the 46th shared source
+decoder and is also used by scalar-binary lookaround. Synthetic NHWC and CF
+binary-hop fixtures plus parser and single-owner gates pass 4 tests. Scoped
+Ruff, syntax validation, and `git diff --check` pass. The orchestrator shrank
+from 758 to 663 lines. No model conversion, corpus run, or inference was
+performed.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

@@ -23,6 +23,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_concat_axis_from_input_layouts,
     _repair_depth_to_space_gather_at,
     _repair_dynamic_cf_binary_anchor_shapes,
+    _repair_dynamic_pool_layout_at,
     _repair_nhwc_average_pool_binary_bridge,
     _repair_nhwc_buffer_binary_alignment_at,
     _repair_nhwc_pool_layout,
@@ -33,6 +34,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
 )
 from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_apply_pool2d_assign_with_shape,
+    _parse_dynamic_apply_pool2d_assign,
 )
 
 
@@ -255,6 +257,56 @@ def test_cf_pool_neighbor_layout_repairs_pad_conv_and_lrn_paths() -> None:
     assert changed and not short_circuit
     assert "target_shape=[1, 8, 4, 3]" in lrn_lines[0]
     assert "pooled" in lrn_cf_names
+
+
+def test_dynamic_pool_layout_repairs_nhwc_and_cf_paths() -> None:
+    nhwc_lines = [
+        "        bridge = source.permute(0, 2, 3, 1).contiguous()",
+        "        pooled = _apply_pool2d(bridge, filter_height=2, "
+        "filter_width=2, stride_h=2, stride_w=2, padding='VALID', "
+        "target_shape=_tensor_shape_list(bridge), is_max_pool=True, "
+        "channel_last=False)",
+    ]
+    nhwc_context = _build_fast_precanonicalize_repair_context(nhwc_lines)
+    nhwc_assign = _parse_dynamic_apply_pool2d_assign(nhwc_lines[1])
+    assert nhwc_assign is not None
+    nhwc_names: set[str] = set()
+    changed, short_circuit = _repair_dynamic_pool_layout_at(
+        1,
+        nhwc_lines,
+        nhwc_assign,
+        set(),
+        nhwc_names,
+        nhwc_context,
+    )
+    assert changed and short_circuit
+    assert "channel_last=True" in nhwc_lines[1]
+    assert "pooled" in nhwc_names
+
+    cf_lines = [
+        "        pooled = _apply_pool2d(input_cf, filter_height=2, "
+        "filter_width=2, stride_h=2, stride_w=2, padding='VALID', "
+        "target_shape=_tensor_shape_list(input_cf), is_max_pool=False, "
+        "channel_last=False)",
+        "        combined = torch.add(pooled, peer)",
+        "        output = _align_tensor_to_target_shape("
+        "torch.relu(combined), [1, 3, 4, 5])",
+    ]
+    cf_context = _build_fast_precanonicalize_repair_context(cf_lines)
+    cf_assign = _parse_dynamic_apply_pool2d_assign(cf_lines[0])
+    assert cf_assign is not None
+    cf_names = {"input_cf"}
+    changed, short_circuit = _repair_dynamic_pool_layout_at(
+        0,
+        cf_lines,
+        cf_assign,
+        cf_names,
+        set(),
+        cf_context,
+    )
+    assert changed and not short_circuit
+    assert "target_shape=[1, 3, 4, 5]" in cf_lines[0]
+    assert "pooled" in cf_names
 
 
 def test_immediate_rank4_permute_source_requires_exact_permutation() -> None:

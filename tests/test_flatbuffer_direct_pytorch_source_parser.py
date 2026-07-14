@@ -16,6 +16,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_align_binary_inputs_to_anchor_assign_with_shape,
     _parse_align_tensor_target_shape_assign,
     _parse_align_tensor_target_shape_expr,
+    _parse_aligned_rank4_assign,
     _parse_apply_concat_inputs_axis_and_shape,
     _parse_apply_pool2d_assign_with_shape,
     _parse_apply_pool2d_input_and_channel_last,
@@ -87,6 +88,9 @@ def test_source_parser_decodes_assignments_shapes_and_concat() -> None:
         )
         is None
     )
+    assert _parse_aligned_rank4_assign(
+        "    y = _align_tensor_to_target_shape(torch.add(x, z), [1, 2, 3, 4])"
+    ) == ("    ", "y", "torch.add(x, z)", [1, 2, 3, 4])
 
 
 def test_source_parser_normalizes_only_complete_outer_syntax() -> None:

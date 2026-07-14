@@ -2056,6 +2056,12 @@ Pool to CF and returns an explicit short-circuit so later precanonicalization
 rules retain the old `continue` boundary. A CF Pool followed by local response
 normalization repairs its static target without stopping the scan. Both use the
 shared statement decoders and repair context.
+Dynamic-shape Pool layout repair is another indexed decision with the same
+explicit short-circuit contract. Immediate NHWC/CF bridge evidence controls
+channel-last execution; CF average pooling derives a concrete target from a
+bounded direct aligned consumer or one binary hop followed by an aligned
+consumer. The binary hop and aligned statements use shared parsers instead of
+orchestrator-local regexes.
 The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
 restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer
@@ -2298,6 +2304,10 @@ Permuted Conv input assignment is the 45th shared decoder. It returns the
 indentation, destination, Conv block, and unpermuted input as one tuple, so
 lookahead rules do not compile or interpret separate copies of the same
 generated-statement regex.
+Exact positional rank-four `_align_tensor_to_target_shape` assignment is the
+46th shared decoder. It preserves the generated format's four-integer grammar
+and supplies destination, expression, and shape tuples to both scalar-binary
+lookaround and dynamic-Pool repair.
 The context collector likewise uses the shared complete Softmax and constant
 Pad assignment decoders for shape and CF/NHWC evidence, instead of compiling
 narrower duplicate statement regexes.

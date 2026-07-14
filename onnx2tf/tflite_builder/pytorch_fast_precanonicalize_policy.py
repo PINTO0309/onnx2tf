@@ -15,6 +15,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_apply_softmax_input_and_axis,
     _parse_align_binary_inputs_to_anchor_assign_with_shape,
     _parse_align_tensor_target_shape_expr,
+    _parse_aligned_rank4_assign,
     _parse_binary_add_args,
     _parse_binary_mul_args,
     _parse_channel_last_gather_slice_assign,
@@ -60,6 +61,9 @@ _NHWC_BUFFER_BINARY_ALIGN_RE = re.compile(
 _DEPTH_TO_SPACE_CF_GATHER_RE = re.compile(
     r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*"
     r"(?P<input>[A-Za-z0-9_]+)\[:, \[(?P<indices>[0-9,\s-]+)\], :, :\]$"
+)
+_DYNAMIC_POOL_BINARY_EXPR_RE = re.compile(
+    r"^torch\.(?:mul|add|sub|div|minimum|maximum)\(.+\)$"
 )
 
 
@@ -1130,6 +1134,114 @@ def _repair_cf_pool_neighbor_layout_at(
         dynamic_cf_like_names.add(pool_lhs_name)
         return True, False
     return False, False
+
+
+def _repair_dynamic_pool_layout_at(
+    index: int,
+    lines: List[str],
+    dynamic_pool_assign: Tuple[str, str, str, str, str, bool],
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[bool, bool]:
+    (
+        pool_indent,
+        lhs_name,
+        input_name,
+        pool_rest,
+        shape_input_name,
+        is_max_pool,
+    ) = dynamic_pool_assign
+    input_is_immediate_nhwc_bridge = _has_immediate_rank4_permute_source(
+        lines,
+        index,
+        input_name,
+        [0, 2, 3, 1],
+    )
+    input_is_immediate_cf_bridge = _has_immediate_rank4_permute_source(
+        lines,
+        index,
+        input_name,
+        [0, 3, 1, 2],
+    )
+    if shape_input_name == input_name and (
+        input_is_immediate_nhwc_bridge
+        or (
+            not input_is_immediate_cf_bridge
+            and _fast_precanonicalize_is_nhwc_like(
+                input_name,
+                dynamic_nhwc_like_names,
+                context,
+            )
+            and not _fast_precanonicalize_is_cf_like(
+                input_name,
+                dynamic_cf_like_names,
+                context,
+            )
+        )
+    ):
+        lines[index] = (
+            f"{pool_indent}{lhs_name} = _apply_pool2d("
+            f"{input_name}, {pool_rest}, "
+            f"target_shape=_tensor_shape_list({shape_input_name}), "
+            f"is_max_pool={is_max_pool}, channel_last=True)"
+        )
+        dynamic_nhwc_like_names.add(lhs_name)
+        return True, True
+
+    if not (
+        not is_max_pool
+        and (
+            input_name in dynamic_cf_like_names
+            or input_name.endswith("_cf")
+            or input_name.endswith("_out_cf")
+        )
+        and shape_input_name == input_name
+    ):
+        return False, False
+
+    repaired_target_shape: List[int] | None = None
+    for lookahead in range(index + 1, min(len(lines), index + 4)):
+        aligned_rank4_assign = _parse_aligned_rank4_assign(lines[lookahead])
+        if (
+            aligned_rank4_assign is not None
+            and re.search(
+                rf"\b{re.escape(lhs_name)}\b",
+                str(aligned_rank4_assign[2]),
+            )
+            is not None
+        ):
+            repaired_target_shape = [int(value) for value in aligned_rank4_assign[3]]
+            break
+        binary_assign = _parse_simple_assignment_line(lines[lookahead])
+        if (
+            binary_assign is None
+            or lines[lookahead].split("=", 1)[0].strip() != binary_assign[1]
+            or _DYNAMIC_POOL_BINARY_EXPR_RE.fullmatch(binary_assign[2]) is None
+            or re.search(rf"\b{re.escape(lhs_name)}\b", binary_assign[2]) is None
+            or lookahead + 1 >= len(lines)
+        ):
+            continue
+        aligned_rank4_assign = _parse_aligned_rank4_assign(lines[lookahead + 1])
+        if (
+            aligned_rank4_assign is not None
+            and re.search(
+                rf"\b{re.escape(str(binary_assign[1]))}\b",
+                str(aligned_rank4_assign[2]),
+            )
+            is not None
+        ):
+            repaired_target_shape = [int(value) for value in aligned_rank4_assign[3]]
+            break
+    if repaired_target_shape is not None:
+        lines[index] = (
+            f"{pool_indent}{lhs_name} = _apply_pool2d("
+            f"{input_name}, {pool_rest}, "
+            f"target_shape={repr(repaired_target_shape)}, "
+            f"is_max_pool={is_max_pool}, channel_last=False)"
+        )
+        dynamic_cf_like_names.add(lhs_name)
+    return True, False
 
 
 def _repair_nhwc_average_pool_binary_bridge(

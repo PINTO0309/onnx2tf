@@ -132,6 +132,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_cf_softmax_axis,
     _repair_concat_axis_from_input_layouts,
     _repair_depth_to_space_gather_at,
+    _repair_dynamic_pool_layout_at,
     _repair_dynamic_cf_binary_anchor_at,
     _repair_dynamic_cf_binary_anchor_shapes,
     _repair_cf_gather_slice_at,
@@ -306,6 +307,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_aligned_binary_assign_with_shape,
     _parse_align_binary_inputs_to_anchor_assign_with_shape,
     _parse_align_tensor_target_shape_expr,
+    _parse_aligned_rank4_assign,
     _parse_align_tensor_target_shape_assign,
     _parse_apply_concat_inputs_axis_and_shape,
     _parse_apply_pool2d_assign_with_shape,
@@ -7268,9 +7270,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     changed = False
     cf_like_names: set[str] = set(repair_context.cf_like_names)
     nhwc_like_names: set[str] = set(repair_context.nhwc_like_names)
-    binary_assign_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<expr>torch\.(?:mul|add|sub|div|minimum|maximum)\(.+\))$"
-    )
     simple_alias_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<rhs>[A-Za-z0-9_]+)$"
     )
@@ -7289,9 +7288,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     )
     aligned_binary_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.(?P<op>mul|add|sub|div|minimum|maximum)\((?P<a>[A-Za-z0-9_]+), (?P<b>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
-    )
-    aligned_rank4_any_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\((?P<expr>.+), \[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
     )
     aligned_scalar_binary_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\("
@@ -7436,9 +7432,9 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
             line = rewritten_split_line
         aligned_scalar_binary_match = aligned_scalar_binary_re.match(line)
         if aligned_scalar_binary_match is not None and index > 0:
-            prev_aligned_rank4_match = aligned_rank4_any_re.match(lines[index - 1])
-            next_aligned_rank4_match = (
-                aligned_rank4_any_re.match(lines[index + 1])
+            prev_aligned_rank4_assign = _parse_aligned_rank4_assign(lines[index - 1])
+            next_aligned_rank4_assign = (
+                _parse_aligned_rank4_assign(lines[index + 1])
                 if index + 1 < len(lines)
                 else None
             )
@@ -7448,15 +7444,10 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 else None
             )
             if (
-                prev_aligned_rank4_match is not None
-                and str(prev_aligned_rank4_match.group("lhs")) == str(aligned_scalar_binary_match.group("input"))
+                prev_aligned_rank4_assign is not None
+                and str(prev_aligned_rank4_assign[1]) == str(aligned_scalar_binary_match.group("input"))
             ):
-                prev_shape = [
-                    int(prev_aligned_rank4_match.group("n")),
-                    int(prev_aligned_rank4_match.group("d1")),
-                    int(prev_aligned_rank4_match.group("d2")),
-                    int(prev_aligned_rank4_match.group("d3")),
-                ]
+                prev_shape = [int(value) for value in prev_aligned_rank4_assign[3]]
                 current_shape = [
                     int(aligned_scalar_binary_match.group("n")),
                     int(aligned_scalar_binary_match.group("d1")),
@@ -7466,18 +7457,15 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 consumer_shape = None
                 current_lhs = str(aligned_scalar_binary_match.group("lhs"))
                 if (
-                    next_aligned_rank4_match is not None
+                    next_aligned_rank4_assign is not None
                     and re.search(
                         rf"\b{re.escape(current_lhs)}\b",
-                        str(next_aligned_rank4_match.group("expr")),
+                        str(next_aligned_rank4_assign[2]),
                     )
                     is not None
                 ):
                     consumer_shape = [
-                        int(next_aligned_rank4_match.group("n")),
-                        int(next_aligned_rank4_match.group("d1")),
-                        int(next_aligned_rank4_match.group("d2")),
-                        int(next_aligned_rank4_match.group("d3")),
+                        int(value) for value in next_aligned_rank4_assign[3]
                     ]
                 elif (
                     next_apply_softmax_assign is not None
@@ -7769,101 +7757,20 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 continue
         dynamic_apply_pool2d_assign = _parse_dynamic_apply_pool2d_assign(line)
         if dynamic_apply_pool2d_assign is not None:
-            dynamic_pool_indent, lhs, input_name, dynamic_pool_rest, dynamic_pool_shape_input, dynamic_pool_is_max = dynamic_apply_pool2d_assign
-            input_is_immediate_nhwc_bridge = _has_immediate_rank4_permute_source(
-                lines,
-                index,
-                input_name,
-                [0, 2, 3, 1],
-            )
-            input_is_immediate_cf_bridge = _has_immediate_rank4_permute_source(
-                lines,
-                index,
-                input_name,
-                [0, 3, 1, 2],
-            )
-            if (
-                dynamic_pool_shape_input == input_name
-                and (
-                    input_is_immediate_nhwc_bridge
-                    or (
-                        not input_is_immediate_cf_bridge
-                        and _fast_precanonicalize_is_nhwc_like(
-                            input_name,
-                            nhwc_like_names,
-                            repair_context,
-                        )
-                        and not _fast_precanonicalize_is_cf_like(
-                            input_name,
-                            cf_like_names,
-                            repair_context,
-                        )
-                    )
+            repaired_dynamic_pool, stop_current_repair_scan = (
+                _repair_dynamic_pool_layout_at(
+                    index,
+                    lines,
+                    dynamic_apply_pool2d_assign,
+                    cf_like_names,
+                    nhwc_like_names,
+                    repair_context,
                 )
-            ):
-                lines[index] = (
-                    f"{dynamic_pool_indent}{lhs} = _apply_pool2d("
-                    f"{input_name}, {dynamic_pool_rest}, "
-                    f"target_shape=_tensor_shape_list({dynamic_pool_shape_input}), "
-                    f"is_max_pool={dynamic_pool_is_max}, channel_last=True)"
-                )
-                nhwc_like_names.add(lhs)
+            )
+            if repaired_dynamic_pool:
                 changed = True
+            if stop_current_repair_scan:
                 continue
-            if (
-                not dynamic_pool_is_max
-                and (
-                    input_name in cf_like_names
-                    or input_name.endswith("_cf")
-                    or input_name.endswith("_out_cf")
-                )
-                and dynamic_pool_shape_input == input_name
-            ):
-                repaired_target_shape: list[int] | None = None
-                for lookahead in range(index + 1, min(len(lines), index + 4)):
-                    aligned_rank4_match = aligned_rank4_any_re.match(lines[lookahead])
-                    if (
-                        aligned_rank4_match is not None
-                        and re.search(rf"\b{re.escape(lhs)}\b", str(aligned_rank4_match.group("expr"))) is not None
-                    ):
-                        repaired_target_shape = [
-                            int(aligned_rank4_match.group("n")),
-                            int(aligned_rank4_match.group("d1")),
-                            int(aligned_rank4_match.group("d2")),
-                            int(aligned_rank4_match.group("d3")),
-                        ]
-                        break
-                    binary_consumer_match = binary_assign_re.match(lines[lookahead])
-                    if (
-                        binary_consumer_match is None
-                        or re.search(rf"\b{re.escape(lhs)}\b", str(binary_consumer_match.group("expr"))) is None
-                        or lookahead + 1 >= len(lines)
-                    ):
-                        continue
-                    aligned_rank4_match = aligned_rank4_any_re.match(lines[lookahead + 1])
-                    if (
-                        aligned_rank4_match is not None
-                        and re.search(
-                            rf"\b{re.escape(str(binary_consumer_match.group('lhs')))}\b",
-                            str(aligned_rank4_match.group("expr")),
-                        ) is not None
-                    ):
-                        repaired_target_shape = [
-                            int(aligned_rank4_match.group("n")),
-                            int(aligned_rank4_match.group("d1")),
-                            int(aligned_rank4_match.group("d2")),
-                            int(aligned_rank4_match.group("d3")),
-                        ]
-                        break
-                if repaired_target_shape is not None:
-                    lines[index] = (
-                        f"{dynamic_pool_indent}{lhs} = _apply_pool2d("
-                        f"{input_name}, {dynamic_pool_rest}, "
-                        f"target_shape={repr(repaired_target_shape)}, "
-                        f"is_max_pool={dynamic_pool_is_max}, channel_last=False)"
-                    )
-                    cf_like_names.add(lhs)
-                changed = True
         rewritten_concat_line, concat_lhs = _repair_concat_axis_from_input_layouts(
             line,
             cf_like_names,

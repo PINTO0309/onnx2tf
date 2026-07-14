@@ -202,6 +202,30 @@ def _parse_rank4_shape_literal(shape_expr: str) -> Tuple[int, int, int, int] | N
     )
 
 
+def _parse_aligned_rank4_assign(
+    line: str,
+) -> Tuple[str, str, str, List[int]] | None:
+    assign = _parse_simple_assignment_line(line)
+    if assign is None:
+        return None
+    indent, lhs, rhs = assign
+    if line.split("=", 1)[0].strip() != lhs:
+        return None
+    match = re.fullmatch(
+        r"_align_tensor_to_target_shape\((?P<expr>.+), "
+        r"\[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)",
+        rhs.strip(),
+    )
+    if match is None:
+        return None
+    return indent, lhs, str(match.group("expr")), [
+        int(match.group("n")),
+        int(match.group("d1")),
+        int(match.group("d2")),
+        int(match.group("d3")),
+    ]
+
+
 def _parse_apply_concat_inputs_axis_and_shape(
     expr: str,
 ) -> Tuple[List[str], int, List[int] | None] | None:
