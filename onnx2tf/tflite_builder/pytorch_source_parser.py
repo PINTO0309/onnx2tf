@@ -282,7 +282,10 @@ def _parse_apply_concat_inputs_axis_and_shape(
         return None
     shape_values = None
     if shape_expr is not None:
-        shape_match = re.fullmatch(r"[\[\(](?P<shape>[0-9,\s]+)[\]\)]", shape_expr)
+        shape_match = re.fullmatch(
+            r"[\[\(](?P<shape>[+-]?\d+(?:\s*,\s*[+-]?\d+)*)[\]\)]",
+            shape_expr,
+        )
         if shape_match is not None:
             shape_values = _parse_int_list_literal(str(shape_match.group("shape")))
     return (

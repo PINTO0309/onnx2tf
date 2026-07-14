@@ -2848,7 +2848,19 @@ def _canonicalize_generated_model_source_for_raw_export(
             line = scalar_first_inline_replaced
         scalar_as_tensor_replaced = line
         if not inside_nms_method and "_apply_non_max_suppression_v4(" not in line:
-            scalar_as_tensor_replaced = scalar_as_tensor_re.sub(r"\g<value>", line)
+            def _replace_scalar_as_tensor(match: re.Match[str]) -> str:
+                prefix = line[: match.start()]
+                if re.search(
+                    r"torch\.reshape\(\s*(?:input\s*=\s*)?$",
+                    prefix,
+                ) is not None:
+                    return str(match.group(0))
+                return str(match.group("value"))
+
+            scalar_as_tensor_replaced = scalar_as_tensor_re.sub(
+                _replace_scalar_as_tensor,
+                line,
+            )
         if scalar_as_tensor_replaced != line:
             lines[index] = scalar_as_tensor_replaced
             changed = True
@@ -5032,8 +5044,8 @@ def _canonicalize_generated_model_source_for_raw_export(
             ]
             lhs = str(concat_assign[1] if concat_assign is not None else concat_match.group("lhs"))
             target_shape_values = (
-                list(parsed_concat_args[2])
-                if parsed_concat_args is not None and parsed_concat_args[2] is not None
+                list(parsed_concat_args[2] or [])
+                if parsed_concat_args is not None
                 else [
                     int(value.strip())
                     for value in str(concat_match.group("shape")).split(",")
@@ -5046,7 +5058,8 @@ def _canonicalize_generated_model_source_for_raw_export(
                 and target_shape_values[1] > target_shape_values[3]
             )
             should_rewrite_concat = (
-                len(normalized_input_names) >= 2
+                len(target_shape_values) == 4
+                and len(normalized_input_names) >= 2
                 and all(_is_known_cf_name(name, singleton_cf_vars) for name in normalized_input_names)
             )
             if (

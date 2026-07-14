@@ -81,6 +81,9 @@ def test_source_parser_decodes_assignments_shapes_and_concat() -> None:
     assert _parse_apply_concat_inputs_axis_and_shape(
         "_apply_concat([x, torch.relu(y)], axis=3, target_shape=[1, 2, 3, 4])"
     ) == (["x", "torch.relu(y)"], 3, [1, 2, 3, 4])
+    assert _parse_apply_concat_inputs_axis_and_shape(
+        "_apply_concat([boxes, scores], axis=2, target_shape=[1, -1, +6])"
+    ) == (["boxes", "scores"], 2, [1, -1, 6])
     assert _parse_torch_cat_inputs_and_dim("torch.cat(tensors=[x, y], dim=1)") == (
         ["x", "y"],
         1,

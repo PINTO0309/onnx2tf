@@ -917,6 +917,40 @@ def test_canonicalize_generated_model_source_rewrites_compact_scalar_first_binar
     assert "torch.add(1.0, x)" not in rewritten
 
 
+def test_canonicalize_generated_model_source_preserves_scalar_tensor_for_reshape(
+    tmp_path,
+) -> None:
+    package_dir = tmp_path / "scalar_reshape_pkg"
+    package_dir.mkdir()
+    model_path = package_dir / "model.py"
+    scalar_expr = (
+        "torch.as_tensor(16.0, dtype=torch.float32, "
+        "device=_module_device(self))"
+    )
+    model_path.write_text(
+        "\n".join(
+            [
+                "import torch",
+                "",
+                "class Model(torch.nn.Module):",
+                "    def forward(self) -> torch.Tensor:",
+                f"        y = torch.reshape({scalar_expr}, [1, 1])",
+                f"        z = torch.reshape(torch.mul(y, {scalar_expr}), [1, 1])",
+                "        return z",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _canonicalize_generated_model_source_for_raw_export(package_dir)
+
+    rewritten = model_path.read_text(encoding="utf-8")
+    assert f"y = torch.reshape({scalar_expr}, [1, 1])" in rewritten
+    assert "z = torch.reshape(torch.mul(y, 16.0), [1, 1])" in rewritten
+    assert "torch.reshape(16.0, [1, 1])" not in rewritten
+
+
 def test_canonicalize_generated_model_source_rewrites_compact_singleton_const_anchor(
     tmp_path,
 ) -> None:

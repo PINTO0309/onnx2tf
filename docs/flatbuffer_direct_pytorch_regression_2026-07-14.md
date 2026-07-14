@@ -131,6 +131,60 @@ assertion or runtime failures after the missing helper bindings were restored.
 They require broader layout-policy work and were deliberately left unchanged
 rather than risking already passing models.
 
+### Exact post-repair accounting
+
+The complete central suite was rerun once more at checkpoint `3127e39d` after
+the bounded inherited-failure repairs above. The seven already classified
+long-running tests were deselected. The exact result was **1,019 passed, 94
+non-timeout failures, and 7 long-running exclusions** out of 1,120 collected
+tests. This is a net improvement of 24 passing tests from the 995/118 snapshot.
+
+All 94 remaining non-timeout failures were rerun against `fb-refactor3` commit
+`c52bc1699b4c7a11a03a535e0b7f10315e1292bd`. Every one failed there as well,
+with the same exception type and normalized first message in 94 out of 94
+cases. Six are user-excluded `bread` model tests. The 88 active inherited
+failures consist of 51 source-rewrite/canonicalization assertions, 20
+synthetic exporter/runtime cases, and 17 real-model integration cases.
+
+### Safe follow-up for the five inherited CONCAT parser crashes
+
+The five remaining `AttributeError: 'NoneType' object has no attribute
+'group'` cases shared one source-canonicalization defect. The structured
+`_apply_concat` parser rejected signed target dimensions such as `-1`; the
+legacy fallback also did not match, but the canonicalizer nevertheless
+dereferenced the absent legacy regex match.
+
+The bounded repair does the following:
+
+- accepts signed integer literals in parsed CONCAT target shapes;
+- treats a parsed but runtime-dependent target shape as unresolved evidence
+  instead of falling through to an absent legacy match;
+- permits the NCHW `torch.cat(..., dim=1)` rewrite only when rank-four shape
+  evidence is present, so rank-three NMS and dynamic-middle-dimension CONCATs
+  retain their original axis semantics;
+- preserves an inlined scalar `torch.as_tensor(...)` only when it is the
+  direct data argument of `torch.reshape`, whose PyTorch API requires a Tensor.
+  Scalar tensors in ordinary elementwise expressions are still simplified to
+  literals as before.
+
+All five cases now pass the former crash site. Three pass completely: the
+rank-three dynamic CONCAT case and both NMS postprocess cases. The two Yolov7
+cases expose older, deeper assertions instead of an exception:
+
+- the native-package characterization expects the local spelling
+  `cv64_in_cf`, while the generated source uses `cv64_in`; both forms are the
+  same channel-first `torch.cat(..., dim=1)` value and feed the Conv directly;
+- direct and helper Dynamo ONNX exports both complete, but their structural
+  signatures differ. The helper path intentionally runs the common Dynamo
+  ONNX sanitizer/optimizer while the direct call in this test does not. The
+  observed differences include output dimension-symbol names and optimized
+  operator counts.
+
+No broad variable rename or sanitizer bypass was applied for these two
+assertions because neither is evidence of a numerical failure and either
+change would affect unrelated passing artifacts. The focused checks completed
+without timeout or SWAP.
+
 ## Historical central exporter-suite investigation
 
 The monolithic `test_pytorch_exporter.py` remains useful as a characterization
@@ -218,10 +272,10 @@ the long-running behavior is inherited rather than introduced by
 
 - No unresolved non-timeout regression specific to `fb-refactor4` is confirmed
   in the 1,120-test exporter collection.
-- The 112 reproduced failures are the exact pre-follow-up snapshot. A focused
-  subset is now fixed, but the complete remaining count was intentionally not
-  recomputed; the historical failures are not evidence that the current
-  exporter is fully correct.
+- The last complete checkpoint has 94 reproduced non-timeout failures. The
+  focused CONCAT follow-up makes three more tests pass and changes two failure
+  signatures, but the complete 1,120-test count was intentionally not rerun
+  after this local patch.
 - Six `bread` model tests remain outside comparison by explicit user exclusion.
 - The seven inherited long-running cases need bounded performance tests or
   independent optimization before routine full-suite execution.
