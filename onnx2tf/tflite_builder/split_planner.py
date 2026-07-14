@@ -237,9 +237,9 @@ def build_partition_model_ir(
     consumed_after: Set[str] = {
         tensor_name
         for tensor_name in produced_set
-        if any(
-            int(consumer_index) >= end_op_index
-            for consumer_index in graph_index.consumers.get(tensor_name, [])
+        if graph_index.has_consumer_at_or_after(
+            tensor_name,
+            end_op_index,
         )
     }
 
@@ -256,13 +256,7 @@ def build_partition_model_ir(
         operators=range_ops,
         partition_outputs=partition_outputs,
     )
-    all_range_ops_required = (
-        len(required_op_indices) == len(range_ops)
-        and all(
-            int(required_index) == int(op_index)
-            for op_index, required_index in enumerate(required_op_indices)
-        )
-    )
+    all_range_ops_required = len(required_op_indices) == len(range_ops)
     if len(required_op_indices) > 0 and not all_range_ops_required:
         range_ops = [range_ops[op_idx] for op_idx in required_op_indices]
         produced_in_range = _collect_outputs(range_ops)

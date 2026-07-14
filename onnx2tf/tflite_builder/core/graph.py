@@ -225,6 +225,17 @@ class ModelIRGraphIndex:
     def consumer_indices(self, tensor_name: str) -> List[int]:
         return list(self.consumers.get(str(tensor_name), []))
 
+    def has_consumer_at_or_after(
+        self,
+        tensor_name: str,
+        operator_index: int,
+    ) -> bool:
+        consumer_indices = self.consumers.get(str(tensor_name), [])
+        return bool(
+            consumer_indices
+            and int(consumer_indices[-1]) >= int(operator_index)
+        )
+
     def operator_index(self, op: OperatorIR) -> Optional[int]:
         index = self._operator_indices_by_id.get(id(op))
         if index is None or index < 0 or index >= len(self.model_ir.operators):

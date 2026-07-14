@@ -721,6 +721,17 @@ selection pass 22 tests. The full 2,000-op/20-partition plan report matches
 checkpoint `03d0177` exactly; a 15-run median changed from 0.120941s to
 0.113134s (1.07x). No model conversion or inference was run.
 
+Fully required split ranges now identify the complete sorted-unique index set
+by cardinality instead of comparing every index against `0..N-1`.
+`ModelIRGraphIndex.has_consumer_at_or_after()` also exposes its maintained
+sorted-consumer invariant, allowing partition boundary-output discovery to
+answer each suffix query from the final consumer index without an `any()`
+generator scan. Tail-query behavior, complete-range scan reuse, and the split
+selection pass 23 tests; the related split/core selection passes 26 tests. The
+2,000-op/20-partition report remains identical to checkpoint `4943bcb`; a
+15-run median changed from 0.119641s to 0.114021s (1.05x). No model conversion
+or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

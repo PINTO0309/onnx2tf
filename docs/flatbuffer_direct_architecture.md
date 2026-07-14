@@ -1712,7 +1712,12 @@ copying every weight for every probe. The public partition builder and final
 artifact writer retain the established independent-buffer default. Partition
 dead-branch liveness still runs for every candidate, but input/output and
 boundary collection is repeated only when that liveness result removes at
-least one operator. Fully required ranges reuse their initial collections.
+least one operator. Required indices are a sorted unique subset of the local
+range, so equal cardinality proves the full range without another elementwise
+comparison. Fully required ranges reuse their initial collections. Boundary
+output discovery uses `ModelIRGraphIndex.has_consumer_at_or_after()`: consumer
+indices are maintained in sorted graph order, so a suffix query reads only the
+last index instead of allocating an `any()` generator over the consumer list.
 
 Custom-op result metadata has a single TensorFlow- and Torch-free owner in
 `artifact_metadata.py`. One operator-stream pass produces both the legacy raw

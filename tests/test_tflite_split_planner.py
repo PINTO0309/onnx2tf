@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import onnx2tf.tflite_builder.split_planner as split_planner_module
+from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.split_planner import (
     _collect_inputs,
@@ -33,6 +34,16 @@ def test_partition_tensor_collection_preserves_first_seen_order() -> None:
 
     assert _collect_inputs(operators) == ["x", "shared", "a"]
     assert _collect_outputs(operators) == ["a", "shared_out", "b"]
+
+
+def test_graph_index_answers_consumer_suffix_queries_from_sorted_tail() -> None:
+    model_ir = _make_chain_model_ir(op_count=4)
+    model_ir.operators[3].inputs.append("t0")
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    assert graph_index.has_consumer_at_or_after("t0", 3) is True
+    assert graph_index.has_consumer_at_or_after("t0", 4) is False
+    assert graph_index.has_consumer_at_or_after("missing", 0) is False
 
 
 def test_crop_model_ir_uses_intermediate_boundaries_without_extra_operators() -> None:
