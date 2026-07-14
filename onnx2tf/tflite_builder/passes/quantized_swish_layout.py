@@ -9,6 +9,7 @@ from onnx2tf.tflite_builder.core.model_ir_utils import (
     _broadcast_static_shapes,
     _permute_tensor_metadata_if_rank_matches,
     _read_transpose_perm,
+    _replace_tensor_inputs,
     _set_operator_inputs,
 )
 from onnx2tf.tflite_builder.ir import ModelIR
@@ -37,6 +38,11 @@ class SwishQDQPrimaryPhasesResult:
     removed_pre_transposes: int
     rewritten_concat_axes: int
     rewritten_tensors: frozenset[str]
+
+
+@dataclass(frozen=True)
+class SwishQDQPostTransposeCleanupResult:
+    removed_post_transposes: int
 
 
 def copy_swish_qdq_shape_signature(
@@ -890,4 +896,65 @@ def run_swish_qdq_nhwc_primary_phases(
         removed_pre_transposes=int(branch_result.removed_pre_transposes),
         rewritten_concat_axes=int(metadata_result.rewritten_concat_axes),
         rewritten_tensors=metadata_result.rewritten_tensors,
+    )
+
+
+def remove_inverse_post_transposes_for_swish_qdq(
+    model_ir: ModelIR,
+    rewritten_tensors: Iterable[str],
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> SwishQDQPostTransposeCleanupResult:
+    """Remove inverse post-Transposes fed by known NHWC Swish tensors."""
+
+    rewritten = {str(name) for name in rewritten_tensors}
+    if len(rewritten) == 0:
+        return SwishQDQPostTransposeCleanupResult(0)
+
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else None
+    )
+    if active_index is None:
+        if not any(
+            str(operator.op_type) == "TRANSPOSE" for operator in model_ir.operators
+        ):
+            return SwishQDQPostTransposeCleanupResult(0)
+        active_index = ModelIRGraphIndex(model_ir)
+    elif len(active_index.operator_indices("TRANSPOSE")) == 0:
+        return SwishQDQPostTransposeCleanupResult(0)
+
+    model_outputs = {str(name) for name in model_ir.outputs}
+    removed_post_transposes = 0
+
+    while True:
+        changed = False
+        for operator_index in active_index.operator_indices("TRANSPOSE"):
+            operator = model_ir.operators[int(operator_index)]
+            if len(operator.inputs) < 2 or len(operator.outputs) != 1:
+                continue
+            if _read_transpose_perm(model_ir, operator) != _NCHW_TO_NHWC:
+                continue
+            input_name = str(operator.inputs[0])
+            output_name = str(operator.outputs[0])
+            if output_name in model_outputs or input_name not in rewritten:
+                continue
+
+            _replace_tensor_inputs(
+                model_ir,
+                output_name,
+                input_name,
+                graph_index=active_index,
+            )
+            active_index.remove_operator(int(operator_index))
+            removed_post_transposes += 1
+            changed = True
+            break
+
+        if not changed:
+            break
+
+    return SwishQDQPostTransposeCleanupResult(
+        removed_post_transposes=int(removed_post_transposes),
     )

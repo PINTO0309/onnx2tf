@@ -11,6 +11,7 @@ from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.quantized_swish_layout import (
     copy_swish_qdq_shape_signature,
     propagate_swish_qdq_nhwc_metadata,
+    remove_inverse_post_transposes_for_swish_qdq,
     rewrite_transpose_swish_qdq_nhwc_branches,
     run_swish_qdq_nhwc_primary_phases,
 )
@@ -327,6 +328,65 @@ def _make_metadata_propagation_model_ir() -> ModelIR:
             ["concat_post"],
         ),
         OperatorIR("RELU", ["concat_post"], ["y"]),
+    ]
+    return model_ir
+
+
+def _make_post_transpose_cleanup_model_ir() -> ModelIR:
+    model_ir = ModelIR("indexed_quantized_swish_post_transpose_cleanup")
+    shape = [1, 4, 4, 2]
+    model_ir.inputs = ["x", "z", "other"]
+    for name in model_ir.inputs:
+        model_ir.tensors[name] = _tensor(name, shape)
+    model_ir.tensors["perm_post"] = _tensor(
+        "perm_post",
+        [4],
+        dtype="INT32",
+        data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    model_ir.tensors["perm_wrong"] = _tensor(
+        "perm_wrong",
+        [4],
+        dtype="INT32",
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+    )
+    for name in [
+        "alias1",
+        "alias2",
+        "alias3",
+        "public_alias",
+        "wrong_alias",
+        "untracked_alias",
+        "relu1",
+        "relu2",
+        "relu3",
+        "sum",
+        "wrong_tap",
+        "untracked_tap",
+    ]:
+        model_ir.tensors[name] = _tensor(name, shape)
+    model_ir.operators = [
+        OperatorIR("TRANSPOSE", ["x", "perm_post"], ["alias1"]),
+        OperatorIR("RELU", ["alias1"], ["relu1"]),
+        OperatorIR("TRANSPOSE", ["x", "perm_post"], ["alias2"]),
+        OperatorIR("ADD", ["alias2", "other"], ["sum"]),
+        OperatorIR("RELU", ["alias2"], ["relu2"]),
+        OperatorIR("TRANSPOSE", ["alias1", "perm_post"], ["alias3"]),
+        OperatorIR("RELU", ["alias3"], ["relu3"]),
+        OperatorIR("TRANSPOSE", ["x", "perm_post"], ["public_alias"]),
+        OperatorIR("TRANSPOSE", ["x", "perm_wrong"], ["wrong_alias"]),
+        OperatorIR("RELU", ["wrong_alias"], ["wrong_tap"]),
+        OperatorIR("TRANSPOSE", ["z", "perm_post"], ["untracked_alias"]),
+        OperatorIR("RELU", ["untracked_alias"], ["untracked_tap"]),
+    ]
+    model_ir.outputs = [
+        "relu1",
+        "relu2",
+        "relu3",
+        "sum",
+        "public_alias",
+        "wrong_tap",
+        "untracked_tap",
     ]
     return model_ir
 
@@ -665,3 +725,75 @@ def test_swish_shape_signature_owner_is_shared_with_late_concat_phase() -> None:
         "source",
     )
     assert not copy_swish_qdq_shape_signature(model_ir, "missing", "source")
+
+
+def test_indexed_swish_post_cleanup_rewrites_alias_fanout_and_keeps_index() -> None:
+    model_ir = _make_post_transpose_cleanup_model_ir()
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    result = remove_inverse_post_transposes_for_swish_qdq(
+        model_ir,
+        {"x"},
+        graph_index=graph_index,
+    )
+
+    assert result.removed_post_transposes == 3
+    remaining_transpose_outputs = {
+        str(operator.outputs[0])
+        for operator in model_ir.operators
+        if str(operator.op_type) == "TRANSPOSE"
+    }
+    assert remaining_transpose_outputs == {
+        "public_alias",
+        "wrong_alias",
+        "untracked_alias",
+    }
+    rewritten_inputs = {
+        str(operator.outputs[0]): [str(name) for name in operator.inputs]
+        for operator in model_ir.operators
+        if str(operator.outputs[0]) in {"relu1", "relu2", "relu3", "sum"}
+    }
+    assert rewritten_inputs == {
+        "relu1": ["x"],
+        "relu2": ["x"],
+        "relu3": ["x"],
+        "sum": ["x", "other"],
+    }
+    _assert_index_matches_fresh(model_ir, graph_index)
+
+
+def test_indexed_swish_post_cleanup_constructs_one_index(monkeypatch) -> None:
+    model_ir = _make_post_transpose_cleanup_model_ir()
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    result = remove_inverse_post_transposes_for_swish_qdq(model_ir, {"x"})
+
+    assert result.removed_post_transposes == 3
+    assert refresh_count == 1
+
+
+def test_indexed_swish_post_cleanup_skips_index_without_rewritten_seed(
+    monkeypatch,
+) -> None:
+    model_ir = _make_post_transpose_cleanup_model_ir()
+
+    def unexpected_index(*args, **kwargs):
+        raise AssertionError("unexpected graph index allocation")
+
+    monkeypatch.setattr(swish_module, "ModelIRGraphIndex", unexpected_index)
+
+    result = remove_inverse_post_transposes_for_swish_qdq(model_ir, set())
+
+    assert result.removed_post_transposes == 0
+    assert (
+        sum(str(operator.op_type) == "TRANSPOSE" for operator in model_ir.operators)
+        == 6
+    )

@@ -8,16 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit extracts the four-family Swish-QDQ metadata
-fixed point into `passes/quantized_swish_layout.py`. Unary quantization, binary
-broadcast, Pool/Resize, and strict Concat-tail propagation share one explicit
-rewritten-tensor result instead of rebuilding a consumer map per iteration. A
-module-level runner constructs one differential `ModelIRGraphIndex` and shares
-it with both the preceding branch owner and metadata phase. The branch phase
-maintains it through source rewrites/root removal; metadata changes no topology.
-An empty seed or Transpose-free primary sequence allocates no unnecessary
-index. Existing public-output, broadcast fallback, channel, shape/signature,
-Concat-axis, tail-fan-out, fixed-point order, and statistics behavior remain
+The latest implementation unit replaces both identical inverse post-Transpose
+loops around Swish-QDQ late Concat normalization with one indexed owner in
+`passes/quantized_swish_layout.py`. Their two historical invocation points and
+cumulative removal statistics remain distinct. Each call constructs at most
+one `ModelIRGraphIndex`, rewires every alias consumer through the index, and
+removes accepted Transposes differentially. Empty rewritten state and
+Transpose-free graphs allocate no index. Graph-order restart, public output,
+exact permutation, alias-chain, fan-out, and untracked-input behavior remain
 unchanged.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -40,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains sixty-seven coherent continuations:
+The current `fb-refactor5` work contains sixty-eight coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -182,8 +180,10 @@ The current `fb-refactor5` work contains sixty-seven coherent continuations:
   owner and removes its duplicate Swish-local implementation;
 - `bad1a806` extracts the primary Swish-QDQ NHWC branch rewrite into one
   differential-index owner with an explicit phase result contract;
-- the current checkpoint extracts its four-family metadata fixed point and
-  shares one index across both ordered primary phases.
+- `406136b5` extracts its four-family metadata fixed point and shares one index
+  across both ordered primary phases;
+- the current checkpoint gives the two identical inverse post-Transpose sweeps
+  one differential-index owner while preserving their separate call sites.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -513,6 +513,13 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   restart semantics remain unchanged. The shape/signature copier is also the
   explicit owner used by the later Dequantize-input repair, preserving the
   previously hidden cross-phase dependency without a lowerer-local closure.
+- The two Swish-QDQ inverse post-Transpose sweeps share one semantic owner and
+  remain on opposite sides of late Concat normalization. Empty rewritten state
+  and Transpose-free graphs return without an index. Otherwise indexed
+  graph-order candidates, global alias replacement, and differential removal
+  preserve ordered restart without per-removal full scans. Public aliases,
+  wrong permutations, and inputs outside the rewritten set remain protected;
+  alias chains and arbitrary consumer fan-out are rewired before removal.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -1539,6 +1546,18 @@ TensorFlow-import-blocked direct and `-cotof` plus the sequential quantization/
 evaluation/coverage integration smoke passed with `3 passed`. No Tier corpus
 conversion was run.
 
+The indexed Swish-QDQ inverse-post checkpoint first proves the two former
+lowerer loops have identical ASTs, then preserves complete former-loop ModelIR
+and the three-removal result for chained aliases, multi-consumer fan-out,
+public alias output, wrong permutation, and untracked input. Focused exact-
+legacy, maintained-index, one-index, empty-seed/no-index, two-call ownership,
+all existing indexed Swish cases, and both legacy Swish variants passed with
+`16 passed`. Complete architecture, lightweight core/pass-efficiency, both
+indexed Swish/Conv-safety suites, and legacy Swish characterizations passed
+together with `232 passed`. TensorFlow-import-blocked direct and `-cotof` plus
+the sequential quantization/evaluation/coverage integration smoke passed with
+`3 passed`. No Tier corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1584,12 +1603,12 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Extract the two identical inverse-post-Transpose cleanup loops from
-   `_optimize_transpose_swish_qdq_nhwc_islands` into one indexed owner that
-   accepts the immutable rewritten-tensor state. Keep their two historical
-   invocation points separated by late Concat normalization. Characterize
-   graph-order alias replacement, public post outputs, fan-out, and maintained-
-   index behavior before addressing the intervening late Concat phase.
+2. Extract the remaining late Concat normalization loop from
+   `_optimize_transpose_swish_qdq_nhwc_islands`. Its transaction must jointly
+   normalize direct and Dequantize-wrapped pre-Transposes, remap axis and
+   metadata, update the rewritten-tensor state, and remove only adapters made
+   unused by the committed rewires. Preserve its fixed-point restart and keep
+   both surrounding inverse-post owner calls in their existing order.
 3. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

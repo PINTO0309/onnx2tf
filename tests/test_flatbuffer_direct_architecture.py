@@ -1941,6 +1941,53 @@ def test_quantized_swish_primary_phase_has_one_indexed_owner() -> None:
     assert len(late_shape_invocations) == 1
     assert isinstance(late_shape_invocations[0].args[0], ast.Name)
     assert late_shape_invocations[0].args[0].id == "model_ir"
+    post_owner_name = "remove_inverse_post_transposes_for_swish_qdq"
+    post_owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == post_owner_name
+    )
+    post_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(post_owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in post_calls
+    assert "_build_tensor_producer_map" not in post_calls
+    assert "ModelIRGraphIndex" in post_calls
+    assert "operator_indices" in post_calls
+    assert "_replace_tensor_inputs" in post_calls
+    assert "remove_operator" in post_calls
+    post_invocations = sorted(
+        [
+            node
+            for node in ast.walk(swish_orchestrator)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == post_owner_name
+        ],
+        key=lambda node: node.lineno,
+    )
+    assert len(post_invocations) == 2
+    assert all(
+        len(call.args) == 2
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "model_ir"
+        and isinstance(call.args[1], ast.Name)
+        and call.args[1].id == "rewritten_tensors"
+        for call in post_invocations
+    )
+    late_concat_loop = next(
+        node
+        for node in swish_orchestrator.body
+        if isinstance(node, ast.While)
+    )
+    assert (
+        post_invocations[0].lineno
+        < late_concat_loop.lineno
+        < post_invocations[1].lineno
+    )
     nested_names = {
         node.name
         for node in swish_orchestrator.body

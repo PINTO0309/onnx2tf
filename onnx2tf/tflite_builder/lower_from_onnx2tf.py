@@ -236,6 +236,7 @@ from onnx2tf.tflite_builder.passes.quantized_gate import (
 )
 from onnx2tf.tflite_builder.passes.quantized_swish_layout import (
     copy_swish_qdq_shape_signature,
+    remove_inverse_post_transposes_for_swish_qdq,
     run_swish_qdq_nhwc_primary_phases,
 )
 from onnx2tf.tflite_builder.passes.conv_input_layout import (
@@ -4940,27 +4941,11 @@ def _optimize_transpose_swish_qdq_nhwc_islands(
     rewritten_tensors.update(primary_result.rewritten_tensors)
 
     # 3) Remove inverse post-transposes fed by rewritten NHWC tensors.
-    while True:
-        changed = False
-        for op_idx, op in enumerate(model_ir.operators):
-            if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 2 or len(op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, op) != perm_nchw_to_nhwc:
-                continue
-            in_name = str(op.inputs[0])
-            out_name = str(op.outputs[0])
-            if out_name in model_outputs:
-                continue
-            if in_name not in rewritten_tensors:
-                continue
-
-            _replace_tensor_inputs(model_ir, out_name, in_name)
-            del model_ir.operators[int(op_idx)]
-            removed_post += 1
-            changed = True
-            break
-        if not changed:
-            break
+    post_cleanup = remove_inverse_post_transposes_for_swish_qdq(
+        model_ir,
+        rewritten_tensors,
+    )
+    removed_post += int(post_cleanup.removed_post_transposes)
 
     # 3b) Late concat-axis rewrite after post-transpose cleanup.
     while True:
@@ -5164,27 +5149,11 @@ def _optimize_transpose_swish_qdq_nhwc_islands(
             break
 
     # 3c) Remove post-transposes newly unlocked by late concat-axis rewrite.
-    while True:
-        changed = False
-        for op_idx, op in enumerate(model_ir.operators):
-            if str(op.op_type) != "TRANSPOSE" or len(op.inputs) < 2 or len(op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, op) != perm_nchw_to_nhwc:
-                continue
-            in_name = str(op.inputs[0])
-            out_name = str(op.outputs[0])
-            if out_name in model_outputs:
-                continue
-            if in_name not in rewritten_tensors:
-                continue
-
-            _replace_tensor_inputs(model_ir, out_name, in_name)
-            del model_ir.operators[int(op_idx)]
-            removed_post += 1
-            changed = True
-            break
-        if not changed:
-            break
+    late_post_cleanup = remove_inverse_post_transposes_for_swish_qdq(
+        model_ir,
+        rewritten_tensors,
+    )
+    removed_post += int(late_post_cleanup.removed_post_transposes)
 
     # 4) Keep the historical Swish-pass timing while delegating this independent
     # Conv-input safety valve to its single indexed semantic owner.

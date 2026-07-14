@@ -4072,6 +4072,26 @@ one rewritten Concat axis, and twenty-four rewritten tensors. Late Concat
 normalization and inverse-post cleanup remain outside this shared-index
 boundary because they perform additional rewires and removals.
 
+Both inverse post-Transpose sweeps around late Concat normalization delegate to
+`remove_inverse_post_transposes_for_swish_qdq` in the same module. The two
+historical invocation points remain distinct, but match/guard/rewrite logic has
+one semantic owner. Each invocation skips index construction for an empty
+rewritten set or Transpose-free graph; otherwise one `ModelIRGraphIndex`
+supplies graph-order candidates, global alias-consumer replacement, and
+differential removal. A public post output, non-inverse permutation, or input
+outside the rewritten-tensor state remains untouched. Full fan-out is safe
+because every alias consumer is updated before removal, and a newly exposed
+alias chain is reconsidered by the ordered restart without rescanning all
+operators.
+
+The two former lowerer loops have identical ASTs. Differential
+characterization applies the prior committed loop and the indexed owner to a
+fixture containing chained aliases, multi-consumer fan-out, a public alias,
+wrong permutation, and untracked input; complete ModelIR and the three-removal
+count match. A supplied index remains equal to a fresh rebuild. Late Concat
+normalization intentionally remains between the two calls and is the only raw
+mutation loop left in the Swish compatibility orchestrator.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
