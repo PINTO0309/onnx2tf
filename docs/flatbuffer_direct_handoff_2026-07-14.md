@@ -8,13 +8,15 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit converts the wrong-way NCHW-to-NHWC Transpose-
-before-Conv sanitizer to differential `ModelIRGraphIndex` updates. Indexed
-Transpose candidates and consumer lists replace the complete consumer-map
-rebuild that formerly ran after every match. All accepted Conv input rewrites
-and Transpose removals update the same function-owned index. Multiple matches,
-multi-Conv fan-out, non-Conv fan-out, filter-channel mismatch, graph-output
-preservation, and the complete former result are characterized exactly.
+The latest implementation unit removes duplicate direct/PyTorch recurrent
+orphan-step repair rules. One Torch-free `recurrent_alias` owner now preflights
+the exact `*_h_step_N`/`*_c_step_N` grammar, builds at most one
+`ModelIRGraphIndex`, finds the first matching Reshape through indexed shape-
+tensor consumers, and updates every alias consumer differentially. The direct
+wrapper preserves its count dictionary and the PyTorch wrapper preserves its
+`None` return. Multiple aliases, first-match order, public input/output,
+produced and missing aliases, no-consumer cleanup, and complete former direct
+behavior are characterized exactly.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -36,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains fifty-eight coherent continuations:
+The current `fb-refactor5` work contains fifty-nine coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -159,8 +161,10 @@ The current `fb-refactor5` work contains fifty-eight coherent continuations:
   index across both terminal three-round convergence loops;
 - `902cab42` indexes the singleton-Reshape and stale-Transpose Conv-input
   repair pair and shares one index across its primary and fallback invocations;
-- the current checkpoint indexes the wrong-way NCHW-to-NHWC Transpose-before-
-  Conv sanitizer and removes its per-match consumer-map rebuild.
+- `79d30ae1` indexes the wrong-way NCHW-to-NHWC Transpose-before-Conv
+  sanitizer and removes its per-match consumer-map rebuild;
+- the current checkpoint centralizes direct and PyTorch recurrent orphan-step
+  alias repair in one Torch-free differential-index owner.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -179,7 +183,9 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `tests/test_flatbuffer_direct_indexed_wrong_way_conv_transpose.py`;
+- `onnx2tf/tflite_builder/passes/recurrent_alias.py`;
+- `onnx2tf/tflite_builder/passes/pytorch_recurrent.py`;
+- `tests/test_flatbuffer_direct_indexed_recurrent_alias.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -462,6 +468,15 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   deliberately not shared across either neighboring raw sanitizer. Exact
   permutation, rank-four metadata, all-consumers-are-Conv, filter-channel,
   graph-output, and nonempty-consumer guards are unchanged.
+- Recurrent orphan-step alias repair has one Torch-free semantic owner in
+  `passes/recurrent_alias.py`. Candidate discovery occurs before index
+  construction, so graphs without the exact step-name grammar allocate no
+  index. A supplied matching index is reused; otherwise exactly one index is
+  built. Producer rejection, shape-tensor consumer order, Reshape arity,
+  public input/output, consumer rewrites, and non-public orphan tensor removal
+  retain the direct implementation's behavior. The direct and PyTorch modules
+  are compatibility wrappers only and do not carry parallel match/rewrite
+  rules.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -1313,6 +1328,17 @@ wrong-way sanitizer coverage passed with `110 passed`. Its single sequential
 quantization, evaluation, and coverage integration smoke passed with
 `1 passed`.
 
+The shared indexed recurrent-alias checkpoint passed direct legacy-equivalence,
+three-alias repair, first-Reshape ordering, public input/output, produced,
+missing-shape, invalid-grammar, no-consumer, no-candidate/no-index, maintained-
+index, direct/PyTorch wrapper equality, and ownership coverage with `8 passed`.
+The complete recurrent, PyTorch normalization, recurrent-codegen-policy, and
+new shared-owner selection passed with `18 passed`. The complete architecture
+file passed with `146 passed`; the lightweight core/indexed selection passed
+with `113 passed`. The real PyTorch exporter normalization regression passed
+with `1 passed`, and the single sequential direct quantization, evaluation, and
+coverage integration smoke passed with `1 passed`.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1358,11 +1384,12 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the bounded recurrent orphan-step tensor repair next. It still builds
-   producer and consumer maps initially and again after every repaired alias;
-   preserve its exact step-name grammar, matching Reshape shape tensor, first-
-   match ordering, graph input/output, and tensor-pruning behavior if moving
-   its input rewrites to one differential index.
+2. Audit `_repair_unbound_nonconstant_operator_inputs_with_layout_transpose`
+   next as a staged checkpoint. It is called for both primary and fallback IR
+   and still rescans unbound inputs plus complete producer/consumer maps after
+   every insertion. First characterize its DEQUANTIZE, RESHAPE/SHAPE/SPLIT,
+   and MUL-alias families separately before changing index ownership or insert
+   ordering.
 3. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

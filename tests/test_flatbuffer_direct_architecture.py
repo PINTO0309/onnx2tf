@@ -1769,6 +1769,74 @@ def test_wrong_way_conv_transpose_sanitizer_uses_one_graph_index() -> None:
     assert invocations[0].args[0].id == "model_ir"
 
 
+def test_recurrent_alias_repair_has_one_shared_indexed_owner() -> None:
+    owner_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "recurrent_alias.py"
+    )
+    lowerer_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    pytorch_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "pytorch_recurrent.py"
+    )
+    owner_source = owner_path.read_text(encoding="utf-8")
+    owner_tree = ast.parse(owner_source)
+    owner_name = "repair_orphan_recurrent_step_tensors"
+    owner = next(
+        node
+        for node in owner_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == owner_name
+    )
+    owner_call_names = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_producer_map" not in owner_call_names
+    assert "_build_tensor_consumer_map" not in owner_call_names
+    assert "ModelIRGraphIndex" in owner_call_names
+    assert "producer" in owner_call_names
+    assert "consumers_of" in owner_call_names
+    assert "operator_index" in owner_call_names
+    assert "replace_operator_inputs" in owner_call_names
+    assert "for op in model_ir.operators" not in owner_source
+
+    wrapper_name = "_repair_orphan_recurrent_step_tensors"
+    for wrapper_path in [lowerer_path, pytorch_path]:
+        wrapper_source = wrapper_path.read_text(encoding="utf-8")
+        wrapper_tree = ast.parse(wrapper_source)
+        assert f"def {owner_name}(" not in wrapper_source
+        wrapper = next(
+            node
+            for node in wrapper_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+        )
+        owner_calls = [
+            node
+            for node in ast.walk(wrapper)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == owner_name
+        ]
+        assert len(owner_calls) == 1
+        index_keyword = next(
+            keyword
+            for keyword in owner_calls[0].keywords
+            if keyword.arg == "graph_index"
+        )
+        assert isinstance(index_keyword.value, ast.Name)
+        assert index_keyword.value.id == "graph_index"
+
+
 def test_lowerer_late_layout_qkv_bridge_pair_stays_between_raw_rewrites() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -3983,8 +4051,9 @@ def test_pytorch_compat_and_control_flow_have_focused_owners() -> None:
         recurrent_functions["_repair_orphan_recurrent_step_tensors"],
     )
     assert orphan_repair_source is not None
-    assert "ModelIRGraphIndex(model_ir)" in orphan_repair_source
-    assert "graph_index.replace_operator_inputs(" in orphan_repair_source
+    assert "repair_orphan_recurrent_step_tensors(" in orphan_repair_source
+    assert "graph_index=graph_index" in orphan_repair_source
+    assert "graph_index.replace_operator_inputs(" not in orphan_repair_source
     assert "for op in model_ir.operators" not in orphan_repair_source
 
 

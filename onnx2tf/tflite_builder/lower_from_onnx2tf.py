@@ -96,6 +96,9 @@ from onnx2tf.tflite_builder.passes.precision import (
     _restore_precision_sensitive_reciprocal_divisions,
     _rewrite_constant_divisors_to_multiplicative_reciprocals,
 )
+from onnx2tf.tflite_builder.passes.recurrent_alias import (
+    repair_orphan_recurrent_step_tensors,
+)
 from onnx2tf.tflite_builder.passes.channel_shuffle import (
     _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather as _optimize_nchw_channel_shuffle_reshape_transpose_reshape_to_gather_pass,
     _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains as _optimize_shufflenet_reshape_transpose_shuffle_nhwc_chains_pass,
@@ -430,7 +433,11 @@ def _find_unbound_nonconstant_operator_inputs(model_ir: ModelIR) -> List[Dict[st
     return issues
 
 
-def _repair_orphan_recurrent_step_tensors(model_ir: ModelIR) -> Dict[str, int]:
+def _repair_orphan_recurrent_step_tensors(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+) -> Dict[str, int]:
     """
     Repair orphan recurrent step aliases left behind by late graph-output rewrites.
 
@@ -444,46 +451,10 @@ def _repair_orphan_recurrent_step_tensors(model_ir: ModelIR) -> Dict[str, int]:
     `*_h_step_*` tensor. That later surfaces as `Input tensor N lacks data` in
     TFLite because the orphan tensor has no producer and no constant buffer.
     """
-    repaired = 0
-    producer_index = _build_tensor_producer_map(model_ir)
-    consumers = _build_tensor_consumer_map(model_ir)
-    model_inputs = {str(v) for v in list(model_ir.inputs)}
-    model_outputs = {str(v) for v in list(model_ir.outputs)}
-
-    for tensor_name in list(model_ir.tensors.keys()):
-        tensor_name = str(tensor_name)
-        if tensor_name in producer_index or tensor_name in model_inputs:
-            continue
-        match = re.match(r"^(.+_(?:h|c)_step_)(\d+)$", tensor_name)
-        if match is None:
-            continue
-        shape_tensor_name = f"{match.group(1)}shape_{match.group(2)}"
-        replacement_name: Optional[str] = None
-        for op in model_ir.operators:
-            if str(op.op_type) != "RESHAPE" or len(op.inputs) < 2 or len(op.outputs) != 1:
-                continue
-            if str(op.inputs[1]) != shape_tensor_name:
-                continue
-            candidate_name = str(op.outputs[0])
-            if candidate_name == tensor_name:
-                replacement_name = None
-                break
-            replacement_name = candidate_name
-            break
-        if replacement_name is None:
-            continue
-        for consumer_idx in consumers.get(tensor_name, []):
-            consumer = model_ir.operators[int(consumer_idx)]
-            consumer.inputs = [
-                replacement_name if str(input_name) == tensor_name else str(input_name)
-                for input_name in consumer.inputs
-            ]
-        if tensor_name not in model_outputs:
-            model_ir.tensors.pop(tensor_name, None)
-        repaired += 1
-        producer_index = _build_tensor_producer_map(model_ir)
-        consumers = _build_tensor_consumer_map(model_ir)
-
+    repaired = repair_orphan_recurrent_step_tensors(
+        model_ir,
+        graph_index=graph_index,
+    )
     return {"repaired_orphan_recurrent_step_tensors": int(repaired)}
 
 

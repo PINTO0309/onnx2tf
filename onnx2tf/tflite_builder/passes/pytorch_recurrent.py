@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
 
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR
+from onnx2tf.tflite_builder.passes.recurrent_alias import (
+    repair_orphan_recurrent_step_tensors,
+)
 from onnx2tf.tflite_builder.pytorch_export_errors import (
     ModelIRPyTorchExportError,
 )
@@ -29,59 +31,10 @@ def _repair_orphan_recurrent_step_tensors(
     *,
     graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> None:
-    public_inputs = {str(name) for name in model_ir.inputs}
-    public_outputs = {str(name) for name in model_ir.outputs}
-    candidates: list[tuple[str, str]] = []
-    for tensor_name in model_ir.tensors:
-        normalized_name = str(tensor_name)
-        if normalized_name in public_inputs:
-            continue
-        match = re.match(r"^(.+_(?:h|c)_step_)(\d+)$", normalized_name)
-        if match is None:
-            continue
-        candidates.append(
-            (
-                normalized_name,
-                f"{match.group(1)}shape_{match.group(2)}",
-            )
-        )
-    if len(candidates) == 0:
-        return
-
-    graph_index = graph_index or ModelIRGraphIndex(model_ir)
-    for tensor_name, shape_tensor_name in candidates:
-        if graph_index.producer(tensor_name) is not None:
-            continue
-        replacement_name: Optional[str] = None
-        for op in graph_index.consumers_of(shape_tensor_name):
-            if (
-                str(op.op_type) != "RESHAPE"
-                or len(op.inputs) < 2
-                or len(op.outputs) != 1
-                or str(op.inputs[1]) != shape_tensor_name
-            ):
-                continue
-            candidate_name = str(op.outputs[0])
-            if candidate_name == tensor_name:
-                replacement_name = None
-                break
-            replacement_name = candidate_name
-            break
-        if replacement_name is None:
-            continue
-        for consumer in graph_index.consumers_of(tensor_name):
-            consumer_index = graph_index.operator_index(consumer)
-            if consumer_index is None:
-                continue
-            graph_index.replace_operator_inputs(
-                int(consumer_index),
-                [
-                    replacement_name if str(input_name) == tensor_name else str(input_name)
-                    for input_name in consumer.inputs
-                ],
-            )
-        if tensor_name not in public_outputs:
-            model_ir.tensors.pop(tensor_name, None)
+    repair_orphan_recurrent_step_tensors(
+        model_ir,
+        graph_index=graph_index,
+    )
 
 
 def _sequence_lstm_input_name(op: OperatorIR, index: int) -> str:

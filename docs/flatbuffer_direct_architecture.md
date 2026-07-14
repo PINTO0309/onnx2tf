@@ -3883,6 +3883,22 @@ observes one index build and no compatibility consumer-map call, and confirms
 that the maintained producer, consumer, duplicate-producer, identity, and type
 indexes equal a fresh rebuild.
 
+Recurrent orphan-step alias repair is shared by direct lowering and PyTorch
+normalization through the Torch-free
+`passes/recurrent_alias.py::repair_orphan_recurrent_step_tensors` owner. It
+preflights tensor names using the exact `*_h_step_N`/`*_c_step_N` grammar and
+therefore builds no index when no candidate exists. Otherwise it reuses a
+matching supplied `ModelIRGraphIndex` or builds one index, rejects already-
+produced and public-input names, finds the first valid Reshape among indexed
+consumers of the corresponding `*_step_shape_N` tensor, and rewrites indexed
+alias consumers in place. Non-public orphan tensor metadata is removed; public
+output metadata remains. The direct wrapper converts the repaired count to its
+existing stats dictionary, while the PyTorch wrapper preserves its existing
+`None` return. Exact legacy comparison and cross-wrapper comparison cover
+multiple aliases, first-match order, public boundaries, missing and produced
+aliases, no-consumer cleanup, zero-candidate allocation, and maintained-index
+equivalence.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
