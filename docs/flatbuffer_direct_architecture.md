@@ -2062,6 +2062,11 @@ The singleton-reshape-to-CF-binary repair is another focused rule in this
 owner. Its local patterns, feature-axis guard, following binary relationship,
 rewrite, and CF evidence update are applied atomically through one indexed
 helper; the orchestrator retains only its ordered call.
+Channel-first Softmax and ReduceMax axis repair also use focused parser-backed
+helpers in this owner. Softmax preserves beta and moves the rank-four target
+channel; ReduceMax preserves keepdims and changes only axis 3 to axis 1. Pool
+lookbehind and scalar-binary lookahead consume shared Pad/Softmax parser tuples,
+so the exporter keeps no duplicate regex for these statements.
 
 The direct-module dispatcher is being decomposed by operator family rather than
 moved as another monolith. Its unidirectional RNN, unidirectional LSTM, and

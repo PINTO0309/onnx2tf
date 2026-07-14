@@ -127,6 +127,8 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_binary_alignment_layout,
     _repair_cf_pool_target_shape,
     _repair_cf_resize_target_shape,
+    _repair_cf_reduce_max_axis,
+    _repair_cf_softmax_axis,
     _repair_concat_axis_from_input_layouts,
     _repair_dynamic_cf_binary_anchor_at,
     _repair_dynamic_cf_binary_anchor_shapes,
@@ -7305,15 +7307,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
         r"(?P<scalar>[-+]?(?:[0-9]*\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?\d+)?)\), "
         r"\[(?P<n>\d+), (?P<d1>\d+), (?P<d2>\d+), (?P<d3>\d+)\]\)$"
     )
-    const_pad_assign_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*F\.pad\((?P<input>[A-Za-z0-9_]+), \[(?P<pads>[0-9,\s]+)\], mode='constant', value=(?P<value>[-+0-9.eE]+)\)$"
-    )
-    apply_softmax_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_apply_softmax\((?:input=)?(?P<input>[A-Za-z0-9_]+), axis=(?P<axis>-?\d+), beta=(?P<beta>[-0-9.eE]+), target_shape=[\[\(](?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)[\]\)]\)$"
-    )
-    reduce_max_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_reduce_max\((?P<input>[A-Za-z0-9_]+), _normalize_axes\(\[(?P<axis>-?\d+)\], (?P=input)\.ndim\), (?P<keepdims>True|False)\)$"
-    )
     tensor786_align_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs0>[A-Za-z0-9_]+)\s*,\s*(?P<lhs1>[A-Za-z0-9_]+)\s*=\s*_align_binary_inputs\("
         r"(?P<input>[A-Za-z0-9_]+), self\.(?P<const_attr>[A-Za-z0-9_]+), \[1, 2, (?P<h>\d+), (?P<w>\d+)\]\)$"
@@ -7461,8 +7454,8 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 if index + 1 < len(lines)
                 else None
             )
-            next_apply_softmax_match = (
-                apply_softmax_re.match(lines[index + 1])
+            next_apply_softmax_assign = (
+                _parse_apply_softmax_assign(lines[index + 1])
                 if index + 1 < len(lines)
                 else None
             )
@@ -7499,14 +7492,11 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                         int(next_aligned_rank4_match.group("d3")),
                     ]
                 elif (
-                    next_apply_softmax_match is not None
-                    and str(next_apply_softmax_match.group("input")) == current_lhs
+                    next_apply_softmax_assign is not None
+                    and str(next_apply_softmax_assign[2]) == current_lhs
                 ):
                     consumer_shape = [
-                        int(next_apply_softmax_match.group("n")),
-                        int(next_apply_softmax_match.group("h")),
-                        int(next_apply_softmax_match.group("w")),
-                        int(next_apply_softmax_match.group("c")),
+                        int(value) for value in next_apply_softmax_assign[5]
                     ]
                 if (
                     consumer_shape == prev_shape
@@ -7844,8 +7834,8 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 apply_pool2d_assign = _parse_apply_pool2d_assign_with_shape(line)
         if apply_pool2d_assign is not None:
             pool_indent, pool_lhs_name, input_name, pool_rest, pool_shape, pool_is_max, pool_channel_last = apply_pool2d_assign
-            prev_const_pad_match = (
-                const_pad_assign_re.match(lines[index - 1])
+            prev_const_pad_assign = (
+                _parse_constant_pad_assign(lines[index - 1])
                 if index > 0
                 else None
             )
@@ -7870,19 +7860,15 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 and
                 pool_channel_last
                 and pool_is_max
-                and prev_const_pad_match is not None
-                and str(prev_const_pad_match.group("lhs")) == input_name
+                and prev_const_pad_assign is not None
+                and str(prev_const_pad_assign[1]) == input_name
                 and (
-                    str(prev_const_pad_match.group("input")) in cf_like_names
-                    or str(prev_const_pad_match.group("input")).endswith("_cf")
-                    or str(prev_const_pad_match.group("input")).endswith("_out_cf")
+                    str(prev_const_pad_assign[2]) in cf_like_names
+                    or str(prev_const_pad_assign[2]).endswith("_cf")
+                    or str(prev_const_pad_assign[2]).endswith("_out_cf")
                 )
             ):
-                pad_values = [
-                    int(value.strip())
-                    for value in str(prev_const_pad_match.group("pads")).split(",")
-                    if value.strip()
-                ]
+                pad_values = [int(value) for value in prev_const_pad_assign[3]]
                 immediate_permuted_conv_consumers = 0
                 for lookahead in range(index + 1, min(len(lines), index + 4)):
                     permuted_conv_match = permuted_conv_input_re.match(lines[lookahead])
@@ -8167,78 +8153,24 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 if static_input_shape is not None and len(static_input_shape) == 4:
                     repair_context.static_shapes[lhs_name] = [int(v) for v in list(static_input_shape)]
                 nhwc_like_names.discard(lhs_name)
-        softmax_match = apply_softmax_re.match(line)
-        softmax_assign = _parse_apply_softmax_assign(line)
-        if softmax_match is not None or softmax_assign is not None:
-            input_name = (
-                str(softmax_match.group("input"))
-                if softmax_match is not None
-                else str(softmax_assign[2])
-            )
-            axis_value = (
-                int(softmax_match.group("axis"))
-                if softmax_match is not None
-                else int(softmax_assign[3])
-            )
-            if (
-                (
-                    input_name in cf_like_names
-                    or input_name.endswith("_cf")
-                    or input_name.endswith("_out_cf")
-                )
-                and axis_value in {3, -1}
-            ):
-                if softmax_match is not None:
-                    lhs_name = str(softmax_match.group("lhs"))
-                    beta_expr = str(softmax_match.group("beta"))
-                    target_shape = [
-                        int(softmax_match.group("n")),
-                        int(softmax_match.group("h")),
-                        int(softmax_match.group("w")),
-                        int(softmax_match.group("c")),
-                    ]
-                    indent = str(softmax_match.group("indent"))
-                else:
-                    lhs_name = str(softmax_assign[1])
-                    beta_expr = str(softmax_assign[4])
-                    target_shape = list(softmax_assign[5])
-                    indent = str(softmax_assign[0])
-                lines[index] = (
-                    f"{indent}{lhs_name} = _apply_softmax("
-                    f"{input_name}, axis=1, beta={beta_expr}, "
-                    f"target_shape=[{target_shape[0]}, {target_shape[3]}, "
-                    f"{target_shape[1]}, {target_shape[2]}])"
-                )
-                cf_like_names.add(lhs_name)
-                changed = True
-        reduce_max_match = reduce_max_re.match(line)
-        reduce_max_assign = _parse_reduce_max_assign(line)
-        if reduce_max_match is not None or reduce_max_assign is not None:
-            input_name = (
-                str(reduce_max_match.group("input"))
-                if reduce_max_match is not None
-                else str(reduce_max_assign[2])
-            )
-            axis_value = (
-                int(reduce_max_match.group("axis"))
-                if reduce_max_match is not None
-                else int(reduce_max_assign[3])
-            )
-            if input_name in cf_like_names and axis_value == 3:
-                if reduce_max_match is not None:
-                    indent = str(reduce_max_match.group("indent"))
-                    lhs_name = str(reduce_max_match.group("lhs"))
-                    keepdims_expr = str(reduce_max_match.group("keepdims"))
-                else:
-                    indent = str(reduce_max_assign[0])
-                    lhs_name = str(reduce_max_assign[1])
-                    keepdims_expr = str(reduce_max_assign[4])
-                lines[index] = (
-                    f"{indent}{lhs_name} = _reduce_max("
-                    f"{input_name}, _normalize_axes([1], {input_name}.ndim), {keepdims_expr})"
-                )
-                cf_like_names.add(lhs_name)
-                changed = True
+        rewritten_softmax_line, softmax_lhs = _repair_cf_softmax_axis(
+            line,
+            cf_like_names,
+        )
+        if rewritten_softmax_line is not None:
+            lines[index] = rewritten_softmax_line
+            if softmax_lhs is not None:
+                cf_like_names.add(softmax_lhs)
+            changed = True
+        rewritten_reduce_max_line, reduce_max_lhs = _repair_cf_reduce_max_axis(
+            line,
+            cf_like_names,
+        )
+        if rewritten_reduce_max_line is not None:
+            lines[index] = rewritten_reduce_max_line
+            if reduce_max_lhs is not None:
+                cf_like_names.add(reduce_max_lhs)
+            changed = True
         rewritten_terminal_line, terminal_lhs = _repair_terminal_classifier_tail_layout(
             line,
             cf_like_names,

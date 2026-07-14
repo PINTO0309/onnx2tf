@@ -1413,6 +1413,18 @@ together with Ruff, syntax validation, and `git diff --check`; the orchestrator
 shrunk from 1,186 to 1,158 lines and the exporter by net 27 lines. No model
 conversion or inference was run.
 
+Channel-first Softmax and ReduceMax axis rewrites now live in focused
+fast-precanonicalize policy helpers. The exporter no longer maintains fallback
+regex branches beside their complete shared parsers. Scalar-binary Softmax
+lookahead and Pool constant-Pad lookbehind also consume parser tuples directly,
+including the Pad decoder's integer list. A combined synthetic fixture proves
+Softmax target `[N,H,W,C]` to `[N,C,H,W]`, axis 3 to 1, and ReduceMax axis 3 to
+1 while preserving keepdims. Fifteen focused policy/ownership tests pass (95
+unrelated architecture tests deselected), together with Ruff, syntax
+validation, and `git diff --check`; the orchestrator shrank from 1,158 to 1,088
+lines and the exporter by net 68 lines. No model conversion or inference was
+run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

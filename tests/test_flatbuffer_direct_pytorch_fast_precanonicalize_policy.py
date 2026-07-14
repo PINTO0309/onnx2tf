@@ -15,7 +15,9 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _infer_unique_channel_count_from_rank4_shape,
     _repair_binary_alignment_layout,
     _repair_cf_pool_target_shape,
+    _repair_cf_reduce_max_axis,
     _repair_cf_resize_target_shape,
+    _repair_cf_softmax_axis,
     _repair_concat_axis_from_input_layouts,
     _repair_dynamic_cf_binary_anchor_shapes,
     _repair_nhwc_average_pool_binary_bridge,
@@ -281,3 +283,32 @@ def test_singleton_reshape_cf_binary_repair_moves_feature_axis() -> None:
     assert changed
     assert lines[0] == "        reshaped = torch.reshape(source, [1, 16, 1, 1])"
     assert cf_like_names == {"reshaped"}
+
+
+def test_softmax_and_reduce_max_repairs_use_channel_first_axis() -> None:
+    softmax_line = (
+        "        score = _apply_softmax(input=input_cf, axis=3, beta=1.0, "
+        "target_shape=[1, 20, 30, 3])"
+    )
+    rewritten_softmax, softmax_lhs = _repair_cf_softmax_axis(
+        softmax_line,
+        {"input_cf"},
+    )
+
+    assert softmax_lhs == "score"
+    assert rewritten_softmax is not None
+    assert "axis=1" in rewritten_softmax
+    assert "target_shape=[1, 3, 20, 30]" in rewritten_softmax
+
+    reduce_line = (
+        "        maximum = _reduce_max(input_cf, "
+        "_normalize_axes([3], input_cf.ndim), True)"
+    )
+    rewritten_reduce, reduce_lhs = _repair_cf_reduce_max_axis(
+        reduce_line,
+        {"input_cf"},
+    )
+
+    assert reduce_lhs == "maximum"
+    assert rewritten_reduce is not None
+    assert "_normalize_axes([1], input_cf.ndim)" in rewritten_reduce

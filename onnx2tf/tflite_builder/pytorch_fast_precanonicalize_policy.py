@@ -22,6 +22,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_int_list_literal,
     _parse_local_response_norm_input_expr,
     _parse_rank4_shape_literal,
+    _parse_reduce_max_assign,
     _parse_simple_assignment_line,
     _parse_tensor_split_assign,
     _parse_torch_cat_inputs_and_dim,
@@ -1505,3 +1506,49 @@ def _repair_singleton_reshape_cf_binary_at(
     )
     dynamic_cf_like_names.add(lhs)
     return True
+
+
+def _repair_cf_softmax_axis(
+    line: str,
+    dynamic_cf_like_names: Set[str],
+) -> Tuple[str | None, str | None]:
+    softmax_assign = _parse_apply_softmax_assign(line)
+    if softmax_assign is None:
+        return None, None
+    indent, lhs_name, input_name, axis_value, beta_expr, target_shape = (
+        softmax_assign
+    )
+    if not (
+        (
+            input_name in dynamic_cf_like_names
+            or input_name.endswith("_cf")
+            or input_name.endswith("_out_cf")
+        )
+        and axis_value in {3, -1}
+    ):
+        return None, None
+    rewritten = (
+        f"{indent}{lhs_name} = _apply_softmax("
+        f"{input_name}, axis=1, beta={beta_expr}, "
+        f"target_shape=[{target_shape[0]}, {target_shape[3]}, "
+        f"{target_shape[1]}, {target_shape[2]}])"
+    )
+    return rewritten, lhs_name
+
+
+def _repair_cf_reduce_max_axis(
+    line: str,
+    dynamic_cf_like_names: Set[str],
+) -> Tuple[str | None, str | None]:
+    reduce_max_assign = _parse_reduce_max_assign(line)
+    if reduce_max_assign is None:
+        return None, None
+    indent, lhs_name, input_name, axis_value, keepdims_expr = reduce_max_assign
+    if input_name not in dynamic_cf_like_names or axis_value != 3:
+        return None, None
+    rewritten = (
+        f"{indent}{lhs_name} = _reduce_max("
+        f"{input_name}, _normalize_axes([1], {input_name}.ndim), "
+        f"{keepdims_expr})"
+    )
+    return rewritten, lhs_name
