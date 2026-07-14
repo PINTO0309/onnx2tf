@@ -4344,6 +4344,35 @@ missing float metadata, or public-input bridge. Exact former-function
 differential execution confirms complete ModelIR and statistics equality for
 valid one- and two-chain fixtures.
 
+Canonical quantized Softmax cleanup is owned by
+`passes/quantized_softmax.py`. One optional or local `ModelIRGraphIndex`
+enumerates graph-order Dequantize candidates, proves the exclusive and
+topologically ordered Softmax/Quantize consumers, applies lineage-aware
+Softmax input/output rewrites, and removes both wrappers differentially.
+Independent INT8 and UINT8 chains therefore share one current index. Graphs
+missing any required operator family retain historical unused-tensor and
+optional LayoutState pruning without allocating an index; both production
+call sites supply the Session-owned LayoutState.
+
+Input and canonical output grid requirements match quantized Logistic. The
+existing absolute beta tolerance of `1e-6` remains, with finite and parseable
+beta now required. Tensor rank must be positive, and an explicit negative or
+positive axis must normalize to the final dimension; when axis is omitted the
+final dimension is the default. This makes the match consistent with the
+serialized TFLite Softmax options, which retain beta but have no independent
+axis field. All four tensor records must exist, float dtypes must agree, and
+elementwise shape/signature metadata must match throughout. Both bridges are
+private, exclusively consumed, uniquely produced, and topologically ordered;
+the quantized output cannot also be a graph input. All guards finish before
+mutation. Softmax options and provenance remain on the retained object,
+version becomes two for INT8 and one for UINT8, and public output identity and
+canonical quantization remain stable. This deliberately prevents former folds
+with a near-canonical output grid, absent/invalid input grid, missing float
+metadata, public-input bridge, malformed options, scalar rank, or non-last
+axis. Exact former-function differential execution confirms complete ModelIR
+and statistics equality for valid one- and two-chain fixtures, while a real
+QLinearSoftmax wrap inference remains bit-exact to ONNX.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

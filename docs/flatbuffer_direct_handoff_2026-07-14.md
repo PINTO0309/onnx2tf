@@ -8,16 +8,17 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit gives canonical
-DEQUANTIZE-to-LOGISTIC-to-QUANTIZE cleanup one semantic owner in
-`passes/quantized_logistic.py`. One maintained `ModelIRGraphIndex` supplies
+The latest implementation unit gives canonical last-axis
+DEQUANTIZE-to-SOFTMAX-to-QUANTIZE cleanup one semantic owner in
+`passes/quantized_softmax.py`. One maintained `ModelIRGraphIndex` supplies
 graph-order Dequantize candidates, exact chain consumers/producers, indexed
-Logistic edge rewrites, and differential wrapper removal. INT8/UINT8 input
-grid validity, exact canonical output grid, shape/signature, Logistic
-options/output identity, lineage, statistics, and pruning retain valid former
-behavior. Near-canonical output scales, missing input quantization or float
-bridge tensors, public bridges, duplicate producers, operator-order
-violations, and inconsistent metadata are complete no-ops.
+Softmax edge rewrites, and differential wrapper removal. INT8/UINT8 input grid
+validity, exact canonical output grid, beta tolerance, last-axis semantics,
+shape/signature, options/output identity, lineage, statistics, and pruning
+retain valid former behavior. Near-canonical output scales, missing input
+quantization or float bridge tensors, public bridges, non-last axes, duplicate
+producers, operator-order violations, and inconsistent metadata are complete
+no-ops.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -39,7 +40,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains seventy-nine coherent continuations:
+The current `fb-refactor5` work contains eighty coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -209,8 +210,10 @@ The current `fb-refactor5` work contains seventy-nine coherent continuations:
   transactional shape and constant-ownership guards;
 - `0cfc1ef9` moves exact-grid quantized MaxPool cleanup to one indexed owner
   with transactional topology, grid, and metadata guards;
-- the current checkpoint moves canonical quantized Logistic cleanup to one
-  indexed owner with transactional topology, grid, and metadata guards.
+- `e3dde5a4` moves canonical quantized Logistic cleanup to one indexed owner
+  with transactional topology, grid, and metadata guards;
+- the current checkpoint moves canonical last-axis quantized Softmax cleanup
+  to one indexed owner with transactional option, grid, and metadata guards.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -229,8 +232,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/quantized_logistic.py`;
-- `tests/test_flatbuffer_direct_indexed_quantized_logistic.py`;
+- `onnx2tf/tflite_builder/passes/quantized_softmax.py`;
+- `tests/test_flatbuffer_direct_indexed_quantized_softmax.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -667,6 +670,24 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   invalid input quantization, absent float metadata, or a public-input bridge.
   Missing required families retain historical pruning without allocating an
   index, and both production call sites pass the Session `LayoutState`.
+- Quantized Softmax cleanup accepts only an exact linear
+  `DEQUANTIZE -> SOFTMAX -> QUANTIZE` chain. Its grid requirements match the
+  canonical quantized Logistic contract: the input uses a positive finite
+  per-tensor INT8/UINT8 grid, while output scale is exactly `1/256` with zero
+  point `-128` or `0`. The existing beta tolerance of `1e-6` is preserved, but
+  beta must be finite and parseable. Rank must be positive, and an explicit or
+  default axis must normalize to the final dimension because the serialized
+  TFLite builtin has no independent axis field. All four tensors must exist,
+  float dtypes must agree, and shape/signature metadata must be identical
+  across the elementwise chain. Both float bridges are private, uniquely
+  produced, exclusively consumed, and topologically ordered; the quantized
+  output cannot also be an input. Every guard completes before indexed
+  Softmax edge mutation, version selection, and differential wrapper removal.
+  This intentionally fixes former rewrites that accepted near-canonical
+  output scales, missing/invalid input grids, absent float metadata, public-
+  input bridges, malformed options, or non-last axes. Missing required
+  families retain historical pruning without index allocation, and both
+  production call sites pass the Session `LayoutState`.
 - Recurrent orphan-step alias repair has one Torch-free semantic owner in
   `passes/recurrent_alias.py`. Candidate discovery occurs before index
   construction, so graphs without the exact step-name grammar allocate no
@@ -1887,6 +1908,29 @@ coverage smoke passed with `3 passed`. Ruff on the new owner/test and
 architecture test, syntax compilation, and `git diff --check` passed. No Tier
 corpus conversion was run.
 
+The indexed quantized-Softmax checkpoint compiles the complete prior committed
+function and preserves exact ModelIR and statistics for valid one- and two-
+chain fixtures across INT8 and UINT8, including the former beta tolerance.
+Differential checks separately prove that the former tolerant grid comparison
+folded a near-canonical output scale, missing input quantization and float
+bridge tensors were accepted, a public-input bridge could lose its producer,
+and an explicit non-last axis was ignored; all five are now transactional no-
+ops. Focused coverage verifies one-index multi-match execution, maintained-
+index and LayoutState equivalence, quantized input/output fan-out, dictionary
+grids, rank-two negative-axis handling, beta/default/axis option preservation,
+Softmax version/provenance, public boundaries, duplicate producers, operator
+order and arity, input grid validity, exact canonical output grid, malformed
+options, positive rank, float dtype, shape/signature equality, missing tensors,
+missing-family/no-index pruning, and unique semantic ownership with
+`62 passed`. The real QLinearSoftmax wrap conversion and sequential inference
+matched ONNX exactly with `1 passed`. Architecture, core, pass-efficiency,
+established quantized-Pool and quantization-cleanup coverage, and all three
+indexed quantized suites passed together with `433 passed`. TensorFlow-import-
+blocked direct and `-cotof` plus the sequential quantization/evaluation/
+coverage smoke passed with `3 passed`. Ruff on the new owner/test and
+architecture test, syntax compilation, and `git diff --check` passed. No Tier
+corpus conversion was run.
+
 The changed tests pass Ruff normally. The lowerer passes with its pre-existing
 `F401` and `F841` findings scoped out. Every changed Python file passes
 `python -m py_compile`, and `git diff --check` passes. The
@@ -1936,11 +1980,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit `_optimize_dequant_softmax_quantize_chains` as the next bounded
-   quantized-op cleanup. Preserve canonical output quantization, beta and
-   Softmax options, public/fan-out, shape/signature, output identity,
-   statistics, and pruning contracts while replacing its repeated producer/
-   consumer maps with one maintained index and a complete pre-mutation plan.
+3. Audit `_optimize_dequant_hardsigmoid_quantize_chains` as the next bounded
+   quantized-op cleanup. Its multi-operator scalar retargeting is larger than
+   the three preceding linear folds, so first characterize transactional
+   constant ownership and exact-grid behavior before replacing repeated graph
+   maps with one maintained index and a complete pre-mutation plan.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
