@@ -51181,25 +51181,33 @@ def lower_onnx_to_ir(
         model_ir,
         enable_conv_add_only_fold=True,
     )
+    late_concat_layout_state_scope = ModelIRPassStateScope(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     run_axis3_const_concat_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
+        state_scope=late_concat_layout_state_scope,
     )
     run_dequant_concat_quantize_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
+        state_scope=late_concat_layout_state_scope,
     )
     run_layernorm_statistics_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
+        state_scope=late_concat_layout_state_scope,
     )
     run_layout_transpose_cleanup(
         model_ir,
         layout_state=session.layout_state,
         diagnostics=session.diagnostics,
+        state_scope=late_concat_layout_state_scope,
     )
     if optimize_layout_transpose_chains:
         _optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains(model_ir)

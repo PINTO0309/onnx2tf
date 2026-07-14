@@ -84,6 +84,12 @@ The preceding mixed-attention runner is intentionally excluded because a
 legacy dequantize/HardSigmoid/quantize mutator separates it from the pair. The
 scope ends before the following raw convolution-affine fold.
 
+Immediately after that fold, the axis-3 constant-Concat, Dequantize/Concat/
+Quantize, LayerNorm-statistics, and generic transpose-cleanup runners share a
+third late scope. All four implementations mutate through the differential
+index. The scope ends before the conditional legacy elementwise-roundtrip
+optimizer.
+
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
 ModelIR rewriters can replace inputs/outputs or insert/remove operators while

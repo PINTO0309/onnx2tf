@@ -396,6 +396,67 @@ def test_lowerer_late_ndhwc_cost_volume_pair_reuses_one_pass_state_scope() -> No
         assert scope_keyword.value.id == "late_ndhwc_cost_volume_state_scope"
 
 
+def test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope() -> None:
+    lowering_path = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    )
+    lowering_tree = ast.parse(lowering_path.read_text(encoding="utf-8"))
+    lowerer = next(
+        node
+        for node in lowering_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
+    )
+
+    assignment_index = next(
+        index
+        for index, statement in enumerate(lowerer.body)
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "late_concat_layout_state_scope"
+    )
+    assignment = lowerer.body[assignment_index]
+    assert isinstance(assignment, ast.Assign)
+    assert isinstance(assignment.value, ast.Call)
+    assert isinstance(assignment.value.func, ast.Name)
+    assert assignment.value.func.id == "ModelIRPassStateScope"
+
+    def _statement_call(statement: ast.stmt) -> ast.Call:
+        assert isinstance(statement, ast.Expr)
+        assert isinstance(statement.value, ast.Call)
+        assert isinstance(statement.value.func, ast.Name)
+        return statement.value
+
+    previous_raw_boundary = _statement_call(lowerer.body[assignment_index - 1])
+    assert previous_raw_boundary.func.id == "_optimize_fold_conv_mul_add_affine_chains"
+
+    expected_order = [
+        "run_axis3_const_concat_layout_cleanup",
+        "run_dequant_concat_quantize_layout_cleanup",
+        "run_layernorm_statistics_layout_cleanup",
+        "run_layout_transpose_cleanup",
+    ]
+    runner_calls = [
+        _statement_call(lowerer.body[assignment_index + offset])
+        for offset in range(1, 5)
+    ]
+    assert [call.func.id for call in runner_calls] == expected_order
+    for call in runner_calls:
+        scope_keyword = next(
+            keyword for keyword in call.keywords if keyword.arg == "state_scope"
+        )
+        assert isinstance(scope_keyword.value, ast.Name)
+        assert scope_keyword.value.id == "late_concat_layout_state_scope"
+
+    next_boundary = lowerer.body[assignment_index + 5]
+    assert isinstance(next_boundary, ast.If)
+    next_raw_boundary = _statement_call(next_boundary.body[0])
+    assert (
+        next_raw_boundary.func.id
+        == "_optimize_transpose_elementwise_roundtrip_nhwc_nchw_fanout_chains"
+    )
+
+
 def test_reporting_implementation_stays_out_of_lowering_module() -> None:
     reporting_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py"
     lowering_path = (

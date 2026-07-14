@@ -8,6 +8,7 @@ from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_pass_state import (
     ModelIRPassState,
     ModelIRPreflightResult,
+    ModelIRPassStateScope,
     run_model_ir_pass_group,
 )
 from onnx2tf.tflite_builder.core.model_ir_utils import (
@@ -332,6 +333,7 @@ def run_dequant_concat_quantize_layout_cleanup(
     *,
     layout_state: LayoutState | None = None,
     diagnostics: List[Dict[str, Any]] | None = None,
+    state_scope: ModelIRPassStateScope | None = None,
 ) -> Dict[str, int]:
     """Propagate a validated Dequantize/Concat/Quantize island to NHWC."""
 
@@ -372,6 +374,7 @@ def run_dequant_concat_quantize_layout_cleanup(
         layout_state=layout_state,
         default_details={stats_key: 0},
         diagnostics=diagnostics,
+        state_scope=state_scope,
         preflight=_preflight,
     )
     return {str(key): int(value) for key, value in details.items()}

@@ -7,14 +7,13 @@ The active branch is `fb-refactor5`, created from `main` after pull request
 currently tracks this branch. The Goal is active again; subsequent work uses
 coherent commits and pushes without opening an additional pull request.
 
-The latest implementation unit audits the later mixed-attention/NDHWC/cost-
-volume sequence. A raw dequantize/HardSigmoid/quantize mutator separates mixed
-attention from the other runners, so mixed attention intentionally remains
-standalone. Only the contiguous NDHWC-gate and cost-volume-scatter runners now
-share a separate lazy `ModelIRPassStateScope`, which ends before the following
-raw convolution-affine fold. A synthetic model whose two model-only preflights
-match proves that three diagnostic events construct one graph index without
-crossing either raw boundary.
+The latest implementation unit shares one lazy `ModelIRPassStateScope` across
+the late axis-3 constant-Concat, Dequantize/Concat/Quantize, LayerNorm-
+statistics, and generic transpose-cleanup runners. The scope starts after the
+raw convolution-affine fold and ends before the conditional legacy
+elementwise-roundtrip optimizer. A synthetic model whose four model-only
+preflights match proves that five diagnostic events construct one graph index
+without crossing either raw boundary.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -36,7 +35,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains fifteen coherent continuations:
+The current `fb-refactor5` work contains sixteen coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -69,8 +68,10 @@ The current `fb-refactor5` work contains fifteen coherent continuations:
   Mean/attention registered-pass cluster;
 - `514fc683` applies the same bounded reuse contract to the repeated mixed-
   attention through dual-Mul/Concat registered-pass cluster;
-- the current checkpoint shares state only across the separately audited late
-  NDHWC-gate/cost-volume-scatter pair.
+- `9b32c680` shares state only across the separately audited late NDHWC-gate/
+  cost-volume-scatter pair;
+- the current checkpoint shares state across the following four registered
+  Concat, LayerNorm, and transpose-cleanup runners.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -88,7 +89,11 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 
 The final checkpoint changes:
 
+- `onnx2tf/tflite_builder/passes/axis3_const_concat_layout.py`;
+- `onnx2tf/tflite_builder/passes/dequant_concat_quantize_layout.py`;
+- `onnx2tf/tflite_builder/passes/layout_transpose.py`;
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
+- `tests/test_flatbuffer_direct_core.py`;
 - `tests/test_flatbuffer_direct_pass_efficiency.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
@@ -195,6 +200,12 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   NDHWC is a hard boundary. A new scope is therefore constructed only for the
   immediately adjacent NDHWC and cost-volume runners, and ends before the raw
   convolution-affine optimizer. Both runners preserve standalone behavior.
+- After that convolution-affine boundary, axis-3 constant-Concat,
+  Dequantize/Concat/Quantize, LayerNorm-statistics, and generic transpose
+  cleanup form one independently audited four-runner scope. Each runner either
+  already accepted a scope or now exposes the same optional
+  standalone-compatible argument; the scope ends before the conditional raw
+  elementwise-roundtrip optimizer.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -393,17 +404,39 @@ build flags `[true, true, false]`: both events in the first two-spec runner
 belong to the one state-building group, and the second runner reuses that
 state. The architecture test fixes both raw boundaries and proves that mixed
 attention receives no shared scope.
+A focused late-Concat cluster checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_pass_efficiency.py::test_late_concat_layout_cluster_reuses_one_pass_state \
+  tests/test_flatbuffer_direct_architecture.py::test_lowerer_late_concat_layout_cluster_reuses_one_pass_state_scope \
+  tests/test_flatbuffer_direct_axis3_const_concat_layout.py \
+  tests/test_flatbuffer_direct_dequant_concat_quantize_layout.py \
+  tests/test_flatbuffer_direct_layernorm_layout.py \
+  tests/test_flatbuffer_direct_layout_transpose.py
+
+74 passed
+```
+
+The synthetic runtime fixture records one graph-index refresh and build flags
+`[true, false, false, false, false]`. The architecture test fixes the four-
+runner order and both raw boundaries. The core layout-handoff monkeypatch now
+accepts and forwards the runner's optional scope without changing its original
+pre-pass layout assertions.
 A broader single-process selection of
 `test_flatbuffer_direct_core.py`, `test_flatbuffer_direct_pass_efficiency.py`,
 and the complete `test_flatbuffer_direct_architecture.py` passed with
-`141 passed` after adding the late-pair checks.
+`143 passed` after adding the late-Concat cluster checks.
 
-All changed pass modules and tests pass Ruff. The lowerer passes Ruff with only
-its pre-existing `F401` and `F841` findings scoped out. Every changed Python
-file passes `python -m py_compile`, and `git diff --check` passes. The
-immediately preceding DepthToSpace, Pool, dynamic-Pool, simple-alias, and
-aligned-scalar checkpoints passed their focused synthetic and ownership
-selections.
+The changed axis-3/dequant pass modules and tests pass Ruff normally.
+`layout_transpose.py` passes with its one pre-existing `F841` finding scoped
+out, and the lowerer passes with its pre-existing `F401` and `F841` findings
+scoped out. Every changed Python file passes `python -m py_compile`, and
+`git diff --check` passes. The immediately preceding DepthToSpace, Pool,
+dynamic-Pool, simple-alias, and aligned-scalar checkpoints passed their focused
+synthetic and ownership selections.
 
 ## Failing tests and known issues
 

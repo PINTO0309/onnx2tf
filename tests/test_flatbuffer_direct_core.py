@@ -203,7 +203,13 @@ def test_lowerer_keeps_session_layout_current_before_first_post_pass(
     observed_layouts: dict[str, str] = {}
     original_cleanup = lowering_module.run_layout_transpose_cleanup
 
-    def _tracking_cleanup(model_ir, *, layout_state=None, diagnostics=None):
+    def _tracking_cleanup(
+        model_ir,
+        *,
+        layout_state=None,
+        diagnostics=None,
+        state_scope=None,
+    ):
         assert layout_state is not None
         if not observed_problems:
             observed_problems.append(layout_state.validate_against_model_ir(model_ir))
@@ -222,6 +228,7 @@ def test_lowerer_keeps_session_layout_current_before_first_post_pass(
             model_ir,
             layout_state=layout_state,
             diagnostics=diagnostics,
+            state_scope=state_scope,
         )
 
     monkeypatch.setattr(

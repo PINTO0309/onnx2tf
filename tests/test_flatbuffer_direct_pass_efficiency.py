@@ -405,6 +405,57 @@ def test_late_ndhwc_cost_volume_pair_reuses_one_pass_state(monkeypatch) -> None:
     ]
 
 
+def test_late_concat_layout_cluster_reuses_one_pass_state(monkeypatch) -> None:
+    model_ir = ModelIR(
+        "late_concat_layout_scope_preflight_only",
+        operators=[
+            OperatorIR(op_type, [], [])
+            for op_type in [
+                "TRANSPOSE",
+                "CONCATENATION",
+                "DEQUANTIZE",
+                "QUANTIZE",
+                "MEAN",
+                "SUB",
+                "MUL",
+            ]
+        ],
+    )
+    diagnostics: list[dict] = []
+    refresh_count = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(graph_index: ModelIRGraphIndex) -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh(graph_index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+    state_scope = ModelIRPassStateScope(model_ir)
+
+    for runner in [
+        run_axis3_const_concat_layout_cleanup,
+        run_dequant_concat_quantize_layout_cleanup,
+        run_layernorm_statistics_layout_cleanup,
+        run_layout_transpose_cleanup,
+    ]:
+        runner(
+            model_ir,
+            diagnostics=diagnostics,
+            state_scope=state_scope,
+        )
+
+    assert refresh_count == 1
+    assert len(diagnostics) == 5
+    assert [event["metrics"]["state_built"] for event in diagnostics] == [
+        True,
+        False,
+        False,
+        False,
+        False,
+    ]
+
+
 def test_channel_slice_merge_guard_rejects_incomplete_prefix_before_snapshot(
     monkeypatch,
 ) -> None:
