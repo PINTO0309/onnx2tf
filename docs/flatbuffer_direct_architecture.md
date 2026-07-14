@@ -1887,6 +1887,10 @@ former second index over the same prepared graph. The public
 `normalize_model_ir_for_pytorch_channel_first()` compatibility function still
 returns only ModelIR, and the layout-agnostic error fallback creates its own
 index after constructing a different fallback graph.
+Native model-file generation likewise creates one index and supplies it to
+feature-last collection before reusing its producer and consumer tables in the
+writer context. Code generation therefore does not build a second index over
+the same prepared ModelIR.
 
 PyTorch convolution-filter physicalization is also owned by the Torch-free
 layout module. It queries only Conv2D, depthwise Conv2D, transpose-Conv2D,

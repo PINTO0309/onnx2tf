@@ -26648,7 +26648,10 @@ def _write_native_model_file(
             metadata,
             tensor_storage_name_map,
             package_dir,
-            _collect_feature_last_sequence_tensor_names(model_ir),
+            _collect_feature_last_sequence_tensor_names(
+                model_ir,
+                graph_index=graph_index,
+            ),
             _build_tensor_var_name_map(model_ir),
             producer_index,
             consumer_index,

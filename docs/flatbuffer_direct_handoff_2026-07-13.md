@@ -904,6 +904,15 @@ tests. On a synthetic 2,000-op no-fallback graph, the decision median improved
 from 0.000035102s to 0.000000176s (199.44x). No model conversion or inference
 was run.
 
+Native model-file generation now passes its newly built `ModelIRGraphIndex` to
+feature-last collection before placing the same producer and consumer tables
+in the writer context. This removes a second complete index build over the
+prepared ModelIR without changing the collected closure. Architecture
+validation fixes one writer-owned constructor and the explicit shared-index
+argument and passes 81 tests. A 101-run synthetic 2,000-op writer-preflight
+median improved from 0.003089471s to 0.001504030s (2.05x), with an identical
+feature-last closure. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

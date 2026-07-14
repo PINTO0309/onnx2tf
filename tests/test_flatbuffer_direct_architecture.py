@@ -4171,6 +4171,20 @@ def test_native_pytorch_codegen_uses_shared_model_ir_graph_index() -> None:
         and node.func.id == "ModelIRGraphIndex"
     ]
     assert len(constructor_calls) == 1
+    collector_calls = [
+        node
+        for node in ast.walk(writer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_collect_feature_last_sequence_tensor_names"
+    ]
+    assert len(collector_calls) == 1
+    assert any(
+        keyword.arg == "graph_index"
+        and isinstance(keyword.value, ast.Name)
+        and keyword.value.id == "graph_index"
+        for keyword in collector_calls[0].keywords
+    )
     assert not any(
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
