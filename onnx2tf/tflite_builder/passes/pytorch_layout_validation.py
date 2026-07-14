@@ -1240,12 +1240,37 @@ def _apply_feature_last_sequence_layouts(
     model_ir: ModelIR,
     preserve_channel_last_tensor_names: Set[str],
     consumers: Optional[Dict[str, List[int]]] = None,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
 ) -> bool:
     if len(preserve_channel_last_tensor_names) == 0:
         return False
     any_changed = False
+    graph_index = graph_index or ModelIRGraphIndex(model_ir)
     if consumers is None:
-        consumers = ModelIRGraphIndex(model_ir).consumers
+        consumers = graph_index.consumers
+    candidate_op_indices: Set[int] = set()
+    for tensor_name in preserve_channel_last_tensor_names:
+        normalized_tensor_name = str(tensor_name)
+        duplicate_producers = graph_index.duplicate_producers.get(
+            normalized_tensor_name,
+            None,
+        )
+        if duplicate_producers is not None:
+            candidate_op_indices.update(
+                int(index) for index in duplicate_producers
+            )
+            continue
+        producer_index = graph_index.producers.get(
+            normalized_tensor_name,
+            None,
+        )
+        if producer_index is not None:
+            candidate_op_indices.add(int(producer_index))
+    candidate_ops = [
+        model_ir.operators[int(index)]
+        for index in sorted(candidate_op_indices)
+    ]
     for tensor_name in preserve_channel_last_tensor_names:
         tensor = model_ir.tensors.get(str(tensor_name), None)
         if tensor is None:
@@ -1260,7 +1285,7 @@ def _apply_feature_last_sequence_layouts(
         tensor.logical_layout = LOGICAL_LAYOUT_UNKNOWN
         any_changed = True
 
-    for op in model_ir.operators:
+    for op in candidate_ops:
         output_name = str(op.outputs[0]) if len(op.outputs) == 1 else None
         if output_name is None or output_name not in preserve_channel_last_tensor_names:
             continue
@@ -1375,7 +1400,7 @@ def _apply_feature_last_sequence_layouts(
         consumers=consumers,
     ):
         any_changed = True
-    for op in model_ir.operators:
+    for op in candidate_ops:
         if str(op.op_type) != "RESHAPE" or len(op.outputs) != 1:
             continue
         output_name = str(op.outputs[0])

@@ -329,6 +329,36 @@ def test_feature_last_application_restores_preserved_reshape_contract() -> None:
     )
 
 
+def test_feature_last_application_enumerates_preserved_producers_from_index() -> None:
+    class CountingOperators(list[OperatorIR]):
+        def __init__(self, values: list[OperatorIR]) -> None:
+            super().__init__(values)
+            self.iteration_count = 0
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            self.iteration_count += 1
+            return super().__iter__()
+
+    model_ir = ModelIR(name="indexed_preserved_feature_last")
+    model_ir.tensors = {
+        "x": _tensor("x", [1, 2, 3]),
+        "y": _tensor("y", [1, 2, 3]),
+    }
+    model_ir.operators = [OperatorIR("RELU", ["x"], ["y"])]
+    graph_index = ModelIRGraphIndex(model_ir)
+    counting_operators = CountingOperators(model_ir.operators)
+    model_ir.operators = counting_operators
+
+    _apply_feature_last_sequence_layouts(
+        model_ir,
+        {"y"},
+        consumers=graph_index.consumers,
+        graph_index=graph_index,
+    )
+
+    assert counting_operators.iteration_count == 0
+
+
 def test_feature_last_application_skips_index_for_empty_preserve_set(
     monkeypatch,
 ) -> None:

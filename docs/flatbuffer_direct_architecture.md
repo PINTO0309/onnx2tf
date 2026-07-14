@@ -1840,12 +1840,14 @@ and works for non-topological operator order without the previous repeated
 complete scans.
 
 The layout-application entry point is also owned by
-`passes/pytorch_layout_validation.py`. It consumes a caller-provided consumer
+`passes/pytorch_layout_validation.py`. It consumes a caller-provided graph
 index when available and otherwise builds one `ModelIRGraphIndex`; an empty
-preserve set returns before index construction. Transpose/Reshape decisions,
-raw ONNX Reshape shape restoration, and constant-shape updates remain in this
-single Torch-free canonicalization owner, while the exporter contains only the
-ordered invocations.
+preserve set returns before index construction. Preserved output producers,
+including duplicate producers, are enumerated in graph order from that index
+and reused for both initial Transpose/Reshape decisions and raw ONNX Reshape
+shape restoration. Unrelated operators are not scanned. Constant-shape updates
+remain in this single Torch-free canonicalization owner, while the exporter
+contains only the ordered invocations.
 
 Feature-last seed discovery and its rank-four island policy are co-located in
 the same module. The module also owns preserved-region shrinking and restoration

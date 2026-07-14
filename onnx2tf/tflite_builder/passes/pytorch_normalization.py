@@ -91,6 +91,7 @@ def _normalize_model_ir_for_pytorch_channel_first_with_index(
         normalized,
         preserve_channel_last_tensor_names,
         consumers=consumer_index,
+        graph_index=layout_graph_index,
     )
     if feature_last_changed:
         infer_model_ir_logical_layouts(normalized)
@@ -113,6 +114,7 @@ def _normalize_model_ir_for_pytorch_channel_first_with_index(
         normalized,
         preserve_channel_last_tensor_names,
         consumers=consumer_index,
+        graph_index=layout_graph_index,
     )
     if preserve_names_changed or feature_last_changed:
         infer_model_ir_logical_layouts(normalized)
@@ -166,6 +168,7 @@ def _normalize_model_ir_for_pytorch_channel_first_with_index(
         normalized,
         preserve_channel_last_tensor_names,
         consumers=layout_graph_index.consumers,
+        graph_index=layout_graph_index,
     )
     _restore_non_preserved_channel_first_layouts(
         normalized,

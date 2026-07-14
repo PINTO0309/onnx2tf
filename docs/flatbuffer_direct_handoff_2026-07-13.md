@@ -873,6 +873,17 @@ improved from 0.000256567s to 0.000105230s (2.44x). The final unconditional
 TFLite fallback also no longer evaluates the same preference policy before two
 identical artifact writes. No model conversion or inference was run.
 
+Feature-last layout application now enumerates only the indexed producers of
+preserved tensors and reuses that graph-ordered candidate list for both the
+initial layout rewrite and final Reshape contract restoration. Duplicate
+producers retain their complete graph-order behavior, and all three normalizer
+invocations reuse the existing mutable `ModelIRGraphIndex`. Five hundred
+fixed-seed mutation graphs match checkpoint `41ae336` exactly, and the focused
+layout, normalization, and architecture suites pass 111 tests. On a
+sparse-preserve synthetic 2,000-op graph, the shared-index application median
+improved from 0.001540002s to 0.000013905s (110.75x). No model conversion or
+inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
