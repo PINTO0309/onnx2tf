@@ -4522,6 +4522,40 @@ pre/post chains. Exact former-function differential execution confirms
 complete ModelIR/statistics equality for direct Conv, pre/post-prefix Conv, and
 TransposeConv fixtures.
 
+Mixed singleton NCHW-input repair for an NHWC Concat is owned by
+`passes/mixed_singleton_concat_layout.py`. A Concat-family preflight avoids
+index construction for unrelated graphs. One optional or local
+`ModelIRGraphIndex` enumerates every graph-order `CONCATENATION` exactly once,
+plans all local adapters before mutation, and maintains producer/consumer and
+operator-type state while inserting each Reshape. The sole production call
+supplies the Session LayoutState.
+
+A candidate must have at least two same-dtype inputs, one output, and exact
+axis three. Every concrete rank-four dimension is positive; the output's last
+dimension equals the input count, and every input is either the matching NHWC
+singleton shape or its NCHW `[N,1,H,W]` projection. Shape signatures must
+describe the same layout contract. One dynamic batch or spatial dimension is
+preserved as the sole `-1` in the Reshape buffer, options, and adapter
+signature. A contract needing two dynamic Reshape dimensions is left
+unchanged because one TFLite Reshape cannot infer both safely.
+
+Each runtime source is a graph input or has one earlier producer; producer-
+free constants remain accepted. Duplicate, self, later, or unresolved
+producers are rejected. Repeated uses of one NCHW source share one local
+adapter instead of creating duplicate producers. Adapter and shape names are
+reserved across all tensor, operator, and public-boundary names before any
+operator is inserted. Source dtype and cloned quantization are retained, and
+the integer shape tensor plus Reshape operator are immutable plan objects.
+
+Indexed insertion and lineage-aware Concat rewiring occur only after every
+fallible shape, name, and quantization decision for that candidate succeeds.
+This prevents the former partial insertion when a later quantization clone
+raises, and rejects output-channel mismatches, mixed dtypes, inconsistent
+dynamic metadata, and ambiguous topology as complete no-ops. Exact
+former-function differential execution confirms ModelIR/statistics equality
+for valid static multi-candidate, multi-adapter, quantized-metadata, and name-
+collision fixtures.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

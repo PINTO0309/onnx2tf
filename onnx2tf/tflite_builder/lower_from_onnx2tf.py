@@ -180,6 +180,9 @@ from onnx2tf.tflite_builder.passes.concat_global_pool_layout import (
 from onnx2tf.tflite_builder.passes.concat_transpose_conv_layout import (
     _repair_nchw_concat_transpose_conv_axes as _repair_nchw_concat_transpose_conv_axes_pass,
 )
+from onnx2tf.tflite_builder.passes.mixed_singleton_concat_layout import (
+    _repair_mixed_singleton_nchw_inputs_for_nhwc_concat as _repair_mixed_singleton_nchw_inputs_for_nhwc_concat_pass,
+)
 from onnx2tf.tflite_builder.passes.dequant_concat_quantize_layout import (
     _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains as _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains_pass,
     run_dequant_concat_quantize_layout_cleanup,
@@ -37036,141 +37039,17 @@ def _optimize_singleton_gate_conv_concat_nhwc_bridge_blocks(model_ir: ModelIR) -
     return {"optimized_singleton_gate_conv_concat_nhwc_bridge_blocks": int(rewritten)}
 
 
-def _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Repair remaining NHWC CONCAT(axis=3) ops that still consume singleton-channel
-    NCHW tensors directly.
-
-    Pattern:
-      CONCAT(axis=3, [..., x_nchw=[N,1,H,W], ... y_nhwc=[N,H,W,1] ...])
-
-    Rewrite:
-      Insert a local RESHAPE adapter for each direct singleton NCHW input:
-        x_nchw -> x_nhwc_adapter=[N,H,W,1]
-      and rewire CONCAT to consume the adapter.
-    """
-    repaired = 0
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-
-    def _unique_tensor_name(base: str) -> str:
-        existing = set(model_ir.tensors.keys())
-        existing.update(str(v) for op in list(model_ir.operators) for v in list(op.outputs))
-        if str(base) not in existing:
-            return str(base)
-        suffix = 1
-        while f"{base}_{suffix}" in existing:
-            suffix += 1
-        return f"{base}_{suffix}"
-
-    while True:
-        changed = False
-        producers = _build_tensor_producer_map(model_ir)
-        for concat_idx, concat_op in enumerate(model_ir.operators):
-            if str(concat_op.op_type) != "CONCATENATION" or int(concat_op.options.get("axis", 3)) != 3:
-                continue
-            concat_out_name = str(concat_op.outputs[0]) if len(concat_op.outputs) == 1 else ""
-            concat_out_tensor = model_ir.tensors.get(concat_out_name, None)
-            if (
-                concat_out_tensor is None
-                or not _is_fully_known_positive_shape(concat_out_tensor.shape)
-                or len(list(concat_out_tensor.shape)) != 4
-            ):
-                continue
-            target_shape = [int(v) for v in list(concat_out_tensor.shape)]
-            if int(target_shape[3]) <= 0:
-                continue
-
-            new_inputs: List[str] = []
-            adapters_to_insert: List[Tuple[str, str, str, List[int]]] = []
-            valid = True
-            needs_repair = False
-
-            for input_name in [str(v) for v in list(concat_op.inputs)]:
-                input_tensor = model_ir.tensors.get(str(input_name), None)
-                if (
-                    input_tensor is None
-                    or not _is_fully_known_positive_shape(input_tensor.shape)
-                    or len(list(input_tensor.shape)) != 4
-                ):
-                    valid = False
-                    break
-                input_shape = [int(v) for v in list(input_tensor.shape)]
-                if input_shape == target_shape[:-1] + [1]:
-                    new_inputs.append(str(input_name))
-                    continue
-                nhwc_shape = _permute_shape(input_shape, perm_nchw_to_nhwc)
-                if (
-                    nhwc_shape is not None
-                    and [int(v) for v in list(nhwc_shape)] == target_shape[:-1] + [1]
-                    and int(input_shape[1]) == 1
-                ):
-                    adapter_name = _unique_tensor_name(f"{input_name}_nhwc_concat_adapter")
-                    shape_name = _unique_tensor_name(f"{adapter_name}_reshape_shape")
-                    adapters_to_insert.append(
-                        (
-                            str(input_name),
-                            str(adapter_name),
-                            str(shape_name),
-                            [int(v) for v in list(nhwc_shape)],
-                        )
-                    )
-                    new_inputs.append(str(adapter_name))
-                    needs_repair = True
-                    continue
-                valid = False
-                break
-
-            if not valid or not needs_repair:
-                continue
-
-            insert_pos = int(concat_idx)
-            for source_name, adapter_name, shape_name, nhwc_shape in adapters_to_insert:
-                source_tensor = model_ir.tensors.get(source_name, None)
-                source_dtype = str(source_tensor.dtype) if source_tensor is not None else "FLOAT32"
-                source_quant = _clone_quantization(source_tensor.quantization) if source_tensor is not None else None
-                model_ir.tensors[shape_name] = TensorIR(
-                    name=str(shape_name),
-                    dtype="INT32",
-                    shape=[len(nhwc_shape)],
-                    shape_signature=[len(nhwc_shape)],
-                    data=np.asarray(nhwc_shape, dtype=np.int32),
-                    is_variable=False,
-                    quantization=None,
-                )
-                model_ir.tensors[adapter_name] = TensorIR(
-                    name=str(adapter_name),
-                    dtype=str(source_dtype),
-                    shape=[int(v) for v in list(nhwc_shape)],
-                    shape_signature=[int(v) for v in list(nhwc_shape)],
-                    data=None,
-                    is_variable=False,
-                    quantization=_clone_quantization(source_quant),
-                )
-                model_ir.operators.insert(
-                    int(insert_pos),
-                    OperatorIR(
-                        op_type="RESHAPE",
-                        inputs=[str(source_name), str(shape_name)],
-                        outputs=[str(adapter_name)],
-                        options={"newShape": [int(v) for v in list(nhwc_shape)]},
-                    ),
-                )
-                insert_pos += 1
-
-            concat_op = next((op for op in model_ir.operators if op is concat_op), None)
-            if concat_op is None:
-                continue
-            _set_operator_inputs(model_ir=model_ir, op=concat_op, new_inputs=[str(v) for v in list(new_inputs)])
-            repaired += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if repaired > 0:
-        _prune_unused_tensors(model_ir)
-    return {"repaired_mixed_singleton_nchw_inputs_for_nhwc_concat": int(repaired)}
+def _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    return _repair_mixed_singleton_nchw_inputs_for_nhwc_concat_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_transpose_unary_split_concat_single_post_nchw(model_ir: ModelIR) -> Dict[str, int]:
@@ -47332,7 +47211,10 @@ def lower_onnx_to_ir(
         _reconcile_static_tensor_shapes(model_ir)
         _topologically_sort_operators(model_ir)
         infer_model_ir_logical_layouts(model_ir)
-    _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(model_ir)
+    _repair_mixed_singleton_nchw_inputs_for_nhwc_concat(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     _reconcile_static_tensor_shapes(model_ir)
     if int(
         _restore_placeholder_matmul_flattened_inputs(
