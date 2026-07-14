@@ -136,6 +136,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_cf_gather_slice_at,
     _repair_nhwc_average_pool_binary_bridge,
     _repair_nhwc_buffer_binary_alignment_at,
+    _repair_nhwc_pool_layout,
     _repair_split_axis_from_consumers,
     _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
@@ -7714,89 +7715,21 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 line = lines[index]
                 apply_pool2d_assign = _parse_apply_pool2d_assign_with_shape(line)
         if apply_pool2d_assign is not None:
-            pool_indent, pool_lhs_name, pool_input_name, pool_rest, pool_shape, pool_is_max, pool_channel_last = apply_pool2d_assign
-            if (
-                not pool_channel_last
-                and pool_is_max
-                and _fast_precanonicalize_has_channel_last_spatial_consumer(
-                    pool_lhs_name,
-                    index,
-                    lines,
-                    repair_context,
-                )
-            ):
-                lines[index] = (
-                    f"{pool_indent}{pool_lhs_name} = _apply_pool2d("
-                    f"{pool_input_name}, {pool_rest}, "
-                    f"target_shape={repr(pool_shape)}, "
-                    f"is_max_pool={pool_is_max}, channel_last=True)"
-                )
-                nhwc_like_names.add(pool_lhs_name)
+            rewritten_nhwc_pool_line, nhwc_pool_lhs = _repair_nhwc_pool_layout(
+                line,
+                index,
+                lines,
+                cf_like_names,
+                nhwc_like_names,
+                repair_context,
+            )
+            if rewritten_nhwc_pool_line is not None:
+                lines[index] = rewritten_nhwc_pool_line
+                if nhwc_pool_lhs is not None:
+                    nhwc_like_names.add(nhwc_pool_lhs)
                 changed = True
-                line = lines[index]
+                line = rewritten_nhwc_pool_line
         apply_pool2d_assign = _parse_apply_pool2d_assign_with_shape(line)
-        if apply_pool2d_assign is not None:
-            pool_indent, pool_lhs_name, pool_input_name, pool_rest, pool_shape, pool_is_max, pool_channel_last = apply_pool2d_assign
-            input_is_immediate_nhwc_bridge = _has_immediate_rank4_permute_source(
-                lines,
-                index,
-                pool_input_name,
-                [0, 2, 3, 1],
-            )
-            input_is_immediate_cf_bridge = _has_immediate_rank4_permute_source(
-                lines,
-                index,
-                pool_input_name,
-                [0, 3, 1, 2],
-            )
-            if (
-                not pool_channel_last
-                and (
-                    input_is_immediate_nhwc_bridge
-                    or (
-                        not input_is_immediate_cf_bridge
-                        and _fast_precanonicalize_is_nhwc_like(
-                            pool_input_name,
-                            nhwc_like_names,
-                            repair_context,
-                        )
-                        and not _fast_precanonicalize_is_cf_like(
-                            pool_input_name,
-                            cf_like_names,
-                            repair_context,
-                        )
-                    )
-                )
-            ):
-                preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
-                    pool_lhs_name,
-                    cf_like_names,
-                    nhwc_like_names,
-                    repair_context,
-                    shape_hint=pool_shape,
-                )
-                if preferred_channel_count is None:
-                    preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
-                        pool_input_name,
-                        cf_like_names,
-                        nhwc_like_names,
-                        repair_context,
-                        shape_hint=pool_shape,
-                    )
-                normalized_shape = _normalize_nhwc_rank4_shape(
-                    pool_shape,
-                    preferred_channel_count=preferred_channel_count,
-                )
-                lines[index] = (
-                    f"{pool_indent}{pool_lhs_name} = _apply_pool2d("
-                    f"{pool_input_name}, {pool_rest}, "
-                    f"target_shape={repr(normalized_shape)}, "
-                    f"is_max_pool={pool_is_max}, channel_last=True)"
-                )
-                nhwc_like_names.add(pool_lhs_name)
-                changed = True
-                line = lines[index]
-                apply_pool2d_assign = _parse_apply_pool2d_assign_with_shape(line)
         if apply_pool2d_assign is not None:
             rewritten_pool_line, pool_lhs = _repair_cf_pool_target_shape(
                 line,

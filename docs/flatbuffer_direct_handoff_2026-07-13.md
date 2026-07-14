@@ -1466,6 +1466,15 @@ validation, and `git diff --check` pass. The orchestrator shrank from 1,025 to
 931 lines. Per the current efficiency-first instruction, no model conversion,
 corpus run, or inference was performed.
 
+The two consecutive static-Pool NHWC decisions now share one focused policy
+helper. Channel-last spatial-consumer evidence for MaxPool retains priority;
+otherwise immediate NHWC/CF bridges and existing layout evidence guard NHWC
+shape normalization. The exporter still runs AveragePool bridge repair first
+and CF target-shape repair afterward. Synthetic consumer and immediate-bridge
+fixtures plus the single-owner gate pass 2 tests; scoped Ruff, syntax
+validation, and `git diff --check` pass. The orchestrator shrank from 931 to
+864 lines. No model conversion, corpus run, or inference was performed.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

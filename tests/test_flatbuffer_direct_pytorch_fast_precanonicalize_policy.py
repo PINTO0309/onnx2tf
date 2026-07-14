@@ -24,6 +24,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_dynamic_cf_binary_anchor_shapes,
     _repair_nhwc_average_pool_binary_bridge,
     _repair_nhwc_buffer_binary_alignment_at,
+    _repair_nhwc_pool_layout,
     _repair_split_axis_from_consumers,
     _repair_singleton_reshape_cf_binary_at,
     _repair_terminal_classifier_tail_layout,
@@ -155,6 +156,50 @@ def test_resize_and_pool_repairs_normalize_channel_first_targets() -> None:
     )
     assert pooled_name == "pooled"
     assert pooled is not None and "target_shape=[1, 3, 20, 30]" in pooled
+
+
+def test_nhwc_pool_layout_uses_consumer_and_immediate_bridge_evidence() -> None:
+    consumer_lines = [
+        "        pooled = _apply_pool2d(input_cf, filter_height=2, "
+        "filter_width=2, stride_h=2, stride_w=2, padding='VALID', "
+        "target_shape=[1, 4, 4, 3], is_max_pool=True, channel_last=False)",
+        "        output = pooled[:, :, :, :]",
+    ]
+    consumer_context = _build_fast_precanonicalize_repair_context(consumer_lines)
+    consumer_rewrite, consumer_lhs = _repair_nhwc_pool_layout(
+        consumer_lines[0],
+        0,
+        consumer_lines,
+        {"input_cf"},
+        set(),
+        consumer_context,
+    )
+    assert consumer_lhs == "pooled"
+    assert consumer_rewrite is not None
+    assert "target_shape=[1, 4, 4, 3]" in consumer_rewrite
+    assert "channel_last=True" in consumer_rewrite
+
+    bridge_lines = [
+        "        bridge = source.permute(0, 2, 3, 1).contiguous()",
+        "        pooled = _apply_pool2d(bridge, filter_height=2, "
+        "filter_width=2, stride_h=2, stride_w=2, padding='VALID', "
+        "target_shape=[1, 3, 4, 4], is_max_pool=False, channel_last=False)",
+    ]
+    bridge_context = _build_fast_precanonicalize_repair_context(bridge_lines)
+    bridge_context.module_input_consumers["bridge"] = ["conv_block_0"]
+    bridge_context.conv_block_in_channels["conv_block_0"] = 3
+    bridge_rewrite, bridge_lhs = _repair_nhwc_pool_layout(
+        bridge_lines[1],
+        1,
+        bridge_lines,
+        set(),
+        set(),
+        bridge_context,
+    )
+    assert bridge_lhs == "pooled"
+    assert bridge_rewrite is not None
+    assert "target_shape=[1, 4, 4, 3]" in bridge_rewrite
+    assert "channel_last=True" in bridge_rewrite
 
 
 def test_immediate_rank4_permute_source_requires_exact_permutation() -> None:

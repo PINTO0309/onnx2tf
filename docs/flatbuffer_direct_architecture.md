@@ -2044,6 +2044,12 @@ Split-axis repair and channel-first Resize/Pool target-shape repair are also
 co-located with these queries. Split voting inspects only later consumers;
 Resize and Pool preserve immediate layout bridges and rewrite only when CF
 input or consumer evidence is stronger than the declared channel-last form.
+Static Pool NHWC selection is co-located here as one ordered decision. A MaxPool
+with a channel-last spatial consumer takes priority; otherwise an immediate
+NHWC bridge or unambiguous NHWC input evidence enables channel-last execution
+and shape normalization. An immediate CF bridge continues to block the second
+case. The exporter applies the returned statement and layout evidence before
+its existing CF repair.
 The NHWC AveragePool-to-binary bridge repair and its channel-last spatial-pool
 restoration wrapper use the same owner. AveragePool, binary-anchor, and multiply
 target shapes are normalized as one chain only when NHWC producer and consumer

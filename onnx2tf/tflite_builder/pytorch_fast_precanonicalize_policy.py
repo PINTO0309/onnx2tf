@@ -895,6 +895,105 @@ def _repair_cf_pool_target_shape(
     return rewritten, lhs_name
 
 
+def _repair_nhwc_pool_layout(
+    line: str,
+    index: int,
+    lines: Sequence[str],
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+) -> Tuple[str | None, str | None]:
+    apply_pool2d_assign = _parse_apply_pool2d_assign_with_shape(line)
+    if apply_pool2d_assign is None:
+        return None, None
+    (
+        pool_indent,
+        pool_lhs_name,
+        pool_input_name,
+        pool_rest,
+        pool_shape,
+        pool_is_max,
+        pool_channel_last,
+    ) = apply_pool2d_assign
+    if (
+        not pool_channel_last
+        and pool_is_max
+        and _fast_precanonicalize_has_channel_last_spatial_consumer(
+            pool_lhs_name,
+            index,
+            lines,
+            context,
+        )
+    ):
+        return (
+            f"{pool_indent}{pool_lhs_name} = _apply_pool2d("
+            f"{pool_input_name}, {pool_rest}, "
+            f"target_shape={repr(pool_shape)}, "
+            f"is_max_pool={pool_is_max}, channel_last=True)",
+            pool_lhs_name,
+        )
+
+    input_is_immediate_nhwc_bridge = _has_immediate_rank4_permute_source(
+        lines,
+        index,
+        pool_input_name,
+        [0, 2, 3, 1],
+    )
+    input_is_immediate_cf_bridge = _has_immediate_rank4_permute_source(
+        lines,
+        index,
+        pool_input_name,
+        [0, 3, 1, 2],
+    )
+    if not (
+        not pool_channel_last
+        and (
+            input_is_immediate_nhwc_bridge
+            or (
+                not input_is_immediate_cf_bridge
+                and _fast_precanonicalize_is_nhwc_like(
+                    pool_input_name,
+                    dynamic_nhwc_like_names,
+                    context,
+                )
+                and not _fast_precanonicalize_is_cf_like(
+                    pool_input_name,
+                    dynamic_cf_like_names,
+                    context,
+                )
+            )
+        )
+    ):
+        return None, pool_lhs_name
+
+    preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+        pool_lhs_name,
+        dynamic_cf_like_names,
+        dynamic_nhwc_like_names,
+        context,
+        shape_hint=pool_shape,
+    )
+    if preferred_channel_count is None:
+        preferred_channel_count = _fast_precanonicalize_preferred_channel_count(
+            pool_input_name,
+            dynamic_cf_like_names,
+            dynamic_nhwc_like_names,
+            context,
+            shape_hint=pool_shape,
+        )
+    normalized_shape = _normalize_nhwc_rank4_shape(
+        pool_shape,
+        preferred_channel_count=preferred_channel_count,
+    )
+    return (
+        f"{pool_indent}{pool_lhs_name} = _apply_pool2d("
+        f"{pool_input_name}, {pool_rest}, "
+        f"target_shape={repr(normalized_shape)}, "
+        f"is_max_pool={pool_is_max}, channel_last=True)",
+        pool_lhs_name,
+    )
+
+
 def _repair_nhwc_average_pool_binary_bridge(
     index: int,
     lines: List[str],
