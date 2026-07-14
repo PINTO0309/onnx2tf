@@ -130,6 +130,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_cf_reduce_max_axis,
     _repair_cf_softmax_axis,
     _repair_concat_axis_from_input_layouts,
+    _repair_depth_to_space_gather_at,
     _repair_dynamic_cf_binary_anchor_at,
     _repair_dynamic_cf_binary_anchor_shapes,
     _repair_cf_gather_slice_at,
@@ -324,6 +325,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_dynamic_binary_add_align_assign,
     _parse_int_list_literal,
     _parse_local_response_norm_assign,
+    _parse_permuted_conv_input_assign,
     _parse_rank4_shape_expr,
     _parse_rank4_shape_literal,
     _parse_reduce_max_assign,
@@ -7277,12 +7279,6 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
     channel_last_prelu_consumer_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*self\.prelu_[0-9]+\((?P<input>[A-Za-z0-9_]+)\.permute\(0, 3, 1, 2\)\.contiguous\(\)\)\.permute\(0, 2, 3, 1\)\.contiguous\(\)$"
     )
-    permuted_conv_input_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*self\.(?P<module>conv_block_[0-9]+)\((?P<input>[A-Za-z0-9_]+)\.permute\(0, 3, 1, 2\)\.contiguous\(\)\)$"
-    )
-    depth_to_space_nhwc_gather_re = re.compile(
-        r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*(?P<input>[A-Za-z0-9_]+)\[:, \[(?P<indices>[0-9,\s-]+)\], :, :\]$"
-    )
     aligned_bn_const_re = re.compile(
         r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*_align_tensor_to_target_shape\(torch\.(?P<op>mul|add)\((?P<input>[A-Za-z0-9_]+), self\.(?P<const_attr>[A-Za-z0-9_]+)\), \[(?P<n>\d+), (?P<h>\d+), (?P<w>\d+), (?P<c>\d+)\]\)$"
     )
@@ -7314,8 +7310,8 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 if index + 1 < len(lines)
                 else None
             )
-            next_permuted_conv_input_match = (
-                permuted_conv_input_re.match(lines[index + 1])
+            next_permuted_conv_input_assign = (
+                _parse_permuted_conv_input_assign(lines[index + 1])
                 if index + 1 < len(lines)
                 else None
             )
@@ -7392,8 +7388,8 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                         and str(next_channel_last_prelu_consumer_match.group("input")) == str(simple_alias_match.group("lhs"))
                     )
                     or (
-                        next_permuted_conv_input_match is not None
-                        and str(next_permuted_conv_input_match.group("input")) == str(simple_alias_match.group("lhs"))
+                        next_permuted_conv_input_assign is not None
+                        and str(next_permuted_conv_input_assign[3]) == str(simple_alias_match.group("lhs"))
                     )
                 )
             ):
@@ -7861,10 +7857,12 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
                 pad_values = [int(value) for value in prev_const_pad_assign[3]]
                 immediate_permuted_conv_consumers = 0
                 for lookahead in range(index + 1, min(len(lines), index + 4)):
-                    permuted_conv_match = permuted_conv_input_re.match(lines[lookahead])
+                    permuted_conv_assign = _parse_permuted_conv_input_assign(
+                        lines[lookahead]
+                    )
                     if (
-                        permuted_conv_match is not None
-                        and str(permuted_conv_match.group("input")) == pool_lhs_name
+                        permuted_conv_assign is not None
+                        and str(permuted_conv_assign[3]) == pool_lhs_name
                     ):
                         immediate_permuted_conv_consumers += 1
                 if pad_values == [1, 1, 1, 1] and immediate_permuted_conv_consumers > 0:
@@ -8158,104 +8156,15 @@ def _apply_fast_precanonicalize_repairs(package_path: Path) -> None:
         ):
             changed = True
         _propagate_cf_prelu_output(line, cf_like_names)
-        depth_to_space_nhwc_gather_match = depth_to_space_nhwc_gather_re.match(line)
-        if depth_to_space_nhwc_gather_match is not None:
-            input_name = str(depth_to_space_nhwc_gather_match.group("input"))
-            lhs_name = str(depth_to_space_nhwc_gather_match.group("lhs"))
-            next_line = str(lines[index + 1]) if index + 1 < len(lines) else ""
-            gathered_indices = [
-                int(token.strip())
-                for token in str(depth_to_space_nhwc_gather_match.group("indices")).split(",")
-                if token.strip() != ""
-            ]
-            input_is_structural_cf = _fast_precanonicalize_is_cf_like(
-                input_name,
-                cf_like_names,
-                repair_context,
-            )
-            if not input_is_structural_cf:
-                for back in range(max(0, index - 4), index):
-                    parsed_cat = _parse_torch_cat_inputs_and_dim(
-                        _parse_simple_assignment_line(lines[back])[2]
-                    ) if _parse_simple_assignment_line(lines[back]) is not None else None
-                    assigned_lhs = (
-                        _parse_simple_assignment_line(lines[back])[1]
-                        if _parse_simple_assignment_line(lines[back]) is not None
-                        else None
-                    )
-                    if assigned_lhs != input_name or parsed_cat is None or int(parsed_cat[1]) != 1:
-                        continue
-                    cat_inputs = [name.strip() for name in parsed_cat[0] if name.strip()]
-                    if cat_inputs and all(
-                        name in cf_like_names
-                        or name.endswith("_cf")
-                        or name.endswith("_out_cf")
-                        for name in cat_inputs
-                    ):
-                        input_is_structural_cf = True
-                        break
-            resolved_input_name = _fast_precanonicalize_resolve_alias(
-                input_name,
-                repair_context.aliases,
-            )
-            input_shape = repair_context.static_shapes.get(input_name)
-            if input_shape is None:
-                input_shape = repair_context.static_shapes.get(resolved_input_name)
-            if (
-                input_is_structural_cf
-            ):
-                if input_shape is not None and len(input_shape) == 4:
-                    repair_context.static_shapes[lhs_name] = [
-                        int(input_shape[0]),
-                        int(len(gathered_indices)),
-                        int(input_shape[2]),
-                        int(input_shape[3]),
-                    ]
-                cf_like_names.add(lhs_name)
-                nhwc_like_names.discard(lhs_name)
-                next_permuted_conv_match = (
-                    permuted_conv_input_re.match(next_line)
-                    if index + 1 < len(lines)
-                    else None
-                )
-                if (
-                    next_permuted_conv_match is not None
-                    and str(next_permuted_conv_match.group("input")) == lhs_name
-                ):
-                    conv_module = str(next_permuted_conv_match.group("module"))
-                    conv_in_channels = repair_context.conv_block_out_channels.get(conv_module)
-                    if conv_in_channels is None:
-                        conv_in_channels = repair_context.conv_block_in_channels.get(conv_module)
-                    if conv_in_channels is None or int(conv_in_channels) == int(len(gathered_indices)):
-                        lines[index + 1] = (
-                            f"{next_permuted_conv_match.group('indent')}{next_permuted_conv_match.group('lhs')} = "
-                            f"self.{conv_module}({lhs_name})"
-                        )
-                        cf_like_names.add(str(next_permuted_conv_match.group("lhs")))
-                        changed = True
-            is_depth_to_space_reorder = (
-                _fast_precanonicalize_is_nhwc_like(
-                    input_name,
-                    nhwc_like_names,
-                    repair_context,
-                )
-                and not input_is_structural_cf
-                and (
-                    "depth_to" in lhs_name.lower()
-                    or "depthtospace" in lhs_name.lower()
-                    or (
-                        f"= {lhs_name}" in next_line
-                        and "_depth_to_space_" in next_line
-                    )
-                )
-            )
-            if is_depth_to_space_reorder:
-                lines[index] = (
-                    f"{depth_to_space_nhwc_gather_match.group('indent')}"
-                    f"{lhs_name} = {input_name}[:, :, :, "
-                    f"[{depth_to_space_nhwc_gather_match.group('indices')}]]"
-                )
-                changed = True
+        if _repair_depth_to_space_gather_at(
+            index,
+            lines,
+            cf_like_names,
+            nhwc_like_names,
+            repair_context,
+            candidate_line=line,
+        ):
+            changed = True
         if _repair_cf_gather_slice_at(index, lines, cf_like_names):
             changed = True
         if _repair_singleton_reshape_cf_binary_at(

@@ -22,6 +22,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_dynamic_binary_align_assign,
     _parse_int_list_literal,
     _parse_local_response_norm_input_expr,
+    _parse_permuted_conv_input_assign,
     _parse_rank4_shape_literal,
     _parse_reduce_max_assign,
     _parse_simple_assignment_line,
@@ -54,6 +55,10 @@ _NHWC_BUFFER_BINARY_ALIGN_RE = re.compile(
     r"(?P<lhs1>[A-Za-z0-9_]+)\s*=\s*_align_binary_inputs\("
     r"(?P<input>[A-Za-z0-9_]+), self\.(?P<const_attr>[A-Za-z0-9_]+), "
     r"\[1, 2, (?P<h>\d+), (?P<w>\d+)\]\)$"
+)
+_DEPTH_TO_SPACE_CF_GATHER_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<lhs>[A-Za-z0-9_]+)\s*=\s*"
+    r"(?P<input>[A-Za-z0-9_]+)\[:, \[(?P<indices>[0-9,\s-]+)\], :, :\]$"
 )
 
 
@@ -1609,6 +1614,125 @@ def _repair_cf_gather_slice_at(
     )
     dynamic_cf_like_names.add(lhs_name)
     return True
+
+
+def _repair_depth_to_space_gather_at(
+    index: int,
+    lines: List[str],
+    dynamic_cf_like_names: Set[str],
+    dynamic_nhwc_like_names: Set[str],
+    context: _FastPrecanonicalizeRepairContext,
+    candidate_line: str | None = None,
+) -> bool:
+    if index < 0 or index >= len(lines):
+        return False
+    gather_match = _DEPTH_TO_SPACE_CF_GATHER_RE.match(
+        lines[index] if candidate_line is None else candidate_line
+    )
+    if gather_match is None:
+        return False
+
+    changed = False
+    input_name = str(gather_match.group("input"))
+    lhs_name = str(gather_match.group("lhs"))
+    next_line = str(lines[index + 1]) if index + 1 < len(lines) else ""
+    gathered_indices = [
+        int(token.strip())
+        for token in str(gather_match.group("indices")).split(",")
+        if token.strip() != ""
+    ]
+    input_is_structural_cf = _fast_precanonicalize_is_cf_like(
+        input_name,
+        dynamic_cf_like_names,
+        context,
+    )
+    if not input_is_structural_cf:
+        for back in range(max(0, index - 4), index):
+            back_assign = _parse_simple_assignment_line(lines[back])
+            parsed_cat = (
+                _parse_torch_cat_inputs_and_dim(back_assign[2])
+                if back_assign is not None
+                else None
+            )
+            assigned_lhs = back_assign[1] if back_assign is not None else None
+            if (
+                assigned_lhs != input_name
+                or parsed_cat is None
+                or int(parsed_cat[1]) != 1
+            ):
+                continue
+            cat_inputs = [name.strip() for name in parsed_cat[0] if name.strip()]
+            if cat_inputs and all(
+                name in dynamic_cf_like_names
+                or name.endswith("_cf")
+                or name.endswith("_out_cf")
+                for name in cat_inputs
+            ):
+                input_is_structural_cf = True
+                break
+
+    resolved_input_name = _fast_precanonicalize_resolve_alias(
+        input_name,
+        context.aliases,
+    )
+    input_shape = context.static_shapes.get(input_name)
+    if input_shape is None:
+        input_shape = context.static_shapes.get(resolved_input_name)
+    if input_is_structural_cf:
+        if input_shape is not None and len(input_shape) == 4:
+            context.static_shapes[lhs_name] = [
+                int(input_shape[0]),
+                int(len(gathered_indices)),
+                int(input_shape[2]),
+                int(input_shape[3]),
+            ]
+        dynamic_cf_like_names.add(lhs_name)
+        dynamic_nhwc_like_names.discard(lhs_name)
+        next_permuted_conv_assign = (
+            _parse_permuted_conv_input_assign(next_line)
+            if index + 1 < len(lines)
+            else None
+        )
+        if (
+            next_permuted_conv_assign is not None
+            and str(next_permuted_conv_assign[3]) == lhs_name
+        ):
+            conv_module = str(next_permuted_conv_assign[2])
+            conv_in_channels = context.conv_block_out_channels.get(conv_module)
+            if conv_in_channels is None:
+                conv_in_channels = context.conv_block_in_channels.get(conv_module)
+            if conv_in_channels is None or int(conv_in_channels) == int(
+                len(gathered_indices)
+            ):
+                lines[index + 1] = (
+                    f"{next_permuted_conv_assign[0]}"
+                    f"{next_permuted_conv_assign[1]} = "
+                    f"self.{conv_module}({lhs_name})"
+                )
+                dynamic_cf_like_names.add(str(next_permuted_conv_assign[1]))
+                changed = True
+
+    is_depth_to_space_reorder = (
+        _fast_precanonicalize_is_nhwc_like(
+            input_name,
+            dynamic_nhwc_like_names,
+            context,
+        )
+        and not input_is_structural_cf
+        and (
+            "depth_to" in lhs_name.lower()
+            or "depthtospace" in lhs_name.lower()
+            or (f"= {lhs_name}" in next_line and "_depth_to_space_" in next_line)
+        )
+    )
+    if is_depth_to_space_reorder:
+        lines[index] = (
+            f"{gather_match.group('indent')}"
+            f"{lhs_name} = {input_name}[:, :, :, "
+            f"[{gather_match.group('indices')}]]"
+        )
+        changed = True
+    return changed
 
 
 def _repair_nhwc_buffer_binary_alignment_at(

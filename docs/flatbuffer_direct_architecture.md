@@ -2073,6 +2073,11 @@ Rank-four NHWC registered-buffer binary alignment is likewise indexed here. It
 consults the context's shared buffer-shape map and inserts the constant
 NHWC-to-NCHW Permute only when `[1,H,W,2]` exactly matches the requested
 `[1,2,H,W]` alignment.
+DepthToSpace-adjacent Gather repair is indexed here as well. One policy helper
+owns structural channel-first inference through a bounded preceding Concat,
+Gather output shape/layout evidence, guarded removal of a following Conv input
+Permute, and channel-last DepthToSpace index correction. It reuses the shared
+permuted-Conv assignment decoder and parses each preceding assignment once.
 Channel-first Softmax and ReduceMax axis repair also use focused parser-backed
 helpers in this owner. Softmax preserves beta and moves the rank-four target
 channel; ReduceMax preserves keepdims and changes only axis 3 to axis 1. Pool
@@ -2277,6 +2282,10 @@ adapter contract. Fast precanonicalization uses one policy repair for a
 dynamic-target binary anchor both during the main scan and during the required
 post-scan revisit; the revisit is a named phase rather than duplicated rewrite
 logic in a second exporter loop.
+Permuted Conv input assignment is the 45th shared decoder. It returns the
+indentation, destination, Conv block, and unpermuted input as one tuple, so
+lookahead rules do not compile or interpret separate copies of the same
+generated-statement regex.
 The context collector likewise uses the shared complete Softmax and constant
 Pad assignment decoders for shape and CF/NHWC evidence, instead of compiling
 narrower duplicate statement regexes.

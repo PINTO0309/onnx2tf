@@ -20,6 +20,7 @@ from onnx2tf.tflite_builder.pytorch_fast_precanonicalize_policy import (
     _repair_cf_resize_target_shape,
     _repair_cf_softmax_axis,
     _repair_concat_axis_from_input_layouts,
+    _repair_depth_to_space_gather_at,
     _repair_dynamic_cf_binary_anchor_shapes,
     _repair_nhwc_average_pool_binary_bridge,
     _repair_nhwc_buffer_binary_alignment_at,
@@ -329,6 +330,44 @@ def test_prelu_and_gather_slice_propagate_channel_first_layout() -> None:
 
     assert {"prelu_out", "gathered"} <= cf_like_names
     assert lines == ["        gathered = prelu_out[:, [0, 2], :, :]"]
+
+
+def test_depth_to_space_gather_uses_indexed_layout_evidence() -> None:
+    cf_lines = [
+        "        gathered = input_cf[:, [0, 2], :, :]",
+        "        output = self.conv_block_0(gathered.permute(0, 3, 1, 2).contiguous())",
+    ]
+    cf_context = _build_fast_precanonicalize_repair_context(cf_lines)
+    cf_context.static_shapes["input_cf"] = [1, 4, 5, 6]
+    cf_like_names = {"input_cf"}
+    nhwc_like_names: set[str] = set()
+
+    assert _repair_depth_to_space_gather_at(
+        0,
+        cf_lines,
+        cf_like_names,
+        nhwc_like_names,
+        cf_context,
+        candidate_line=cf_lines[0],
+    )
+    assert cf_lines[1] == "        output = self.conv_block_0(gathered)"
+    assert {"gathered", "output"} <= cf_like_names
+    assert cf_context.static_shapes["gathered"] == [1, 2, 5, 6]
+
+    nhwc_lines = [
+        "        depth_to_space_gather = input_nhwc[:, [0, 2], :, :]",
+    ]
+    nhwc_context = _build_fast_precanonicalize_repair_context(nhwc_lines)
+    assert _repair_depth_to_space_gather_at(
+        0,
+        nhwc_lines,
+        set(),
+        {"input_nhwc"},
+        nhwc_context,
+    )
+    assert nhwc_lines == [
+        "        depth_to_space_gather = input_nhwc[:, :, :, [0, 2]]"
+    ]
 
 
 def test_nhwc_buffer_binary_alignment_permutates_matching_constant() -> None:

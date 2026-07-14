@@ -1454,6 +1454,18 @@ deselected), together with Ruff, syntax validation, and `git diff --check`; the
 orchestrator shrank from 1,039 to 1,025 lines and the exporter by net 13 lines.
 No model conversion or inference was run.
 
+DepthToSpace-adjacent Gather layout repair now lives in one indexed
+fast-precanonicalize policy helper. Structural CF inference through the bounded
+Concat lookback, Gather shape/layout evidence, guarded following-Conv Permute
+removal, and NHWC DepthToSpace index correction retain their previous order and
+guards. The three fast-precanonicalize call sites that recognize a permuted
+Conv input now share the 45th source decoder, and the extracted Concat lookback
+parses each assignment once instead of up to three times. Compact CF and NHWC
+fixtures plus parser and single-owner gates pass 4 tests; Ruff, syntax
+validation, and `git diff --check` pass. The orchestrator shrank from 1,025 to
+931 lines. Per the current efficiency-first instruction, no model conversion,
+corpus run, or inference was performed.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

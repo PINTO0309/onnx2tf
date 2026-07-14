@@ -167,6 +167,26 @@ def _parse_simple_assignment_line(line: str) -> Tuple[str, str, str] | None:
     return _parse_simple_assignment_line_cached(str(line))
 
 
+def _parse_permuted_conv_input_assign(
+    line: str,
+) -> Tuple[str, str, str, str] | None:
+    assign = _parse_simple_assignment_line(line)
+    if assign is None:
+        return None
+    indent, lhs, rhs = assign
+    if line.split("=", 1)[0].strip() != lhs:
+        return None
+    match = re.fullmatch(
+        r"self\.(?P<module>conv_block_[0-9]+)\("
+        r"(?P<input>[A-Za-z0-9_]+)\.permute\(0, 3, 1, 2\)"
+        r"\.contiguous\(\)\)",
+        rhs.strip(),
+    )
+    if match is None:
+        return None
+    return indent, lhs, str(match.group("module")), str(match.group("input"))
+
+
 def _parse_rank4_shape_literal(shape_expr: str) -> Tuple[int, int, int, int] | None:
     shape_match = re.fullmatch(
         r"[\[\(]\s*(?P<n>\d+)\s*,\s*(?P<d1>\d+)\s*,\s*(?P<d2>\d+)\s*,\s*(?P<d3>\d+)\s*[\]\)]",

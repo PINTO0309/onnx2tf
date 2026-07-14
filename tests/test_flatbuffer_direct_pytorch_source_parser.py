@@ -32,6 +32,7 @@ from onnx2tf.tflite_builder.pytorch_source_parser import (
     _parse_dynamic_binary_add_align_assign,
     _parse_dynamic_binary_align_assign,
     _parse_local_response_norm_input_expr,
+    _parse_permuted_conv_input_assign,
     _parse_rank4_shape_expr,
     _parse_rank4_shape_literal,
     _parse_simple_assignment_line,
@@ -75,6 +76,16 @@ def test_source_parser_decodes_assignments_shapes_and_concat() -> None:
     assert _parse_torch_cat_inputs_and_dim("torch.cat(tensors=[x, y], dim=1)") == (
         ["x", "y"],
         1,
+    )
+    assert _parse_permuted_conv_input_assign(
+        "    y = self.conv_block_0(x.permute(0, 3, 1, 2).contiguous())"
+    ) == ("    ", "y", "conv_block_0", "x")
+    assert (
+        _parse_permuted_conv_input_assign(
+            "    y: torch.Tensor = "
+            "self.conv_block_0(x.permute(0, 3, 1, 2).contiguous())"
+        )
+        is None
     )
 
 
