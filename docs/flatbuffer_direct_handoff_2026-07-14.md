@@ -7,13 +7,14 @@ The active branch is `fb-refactor5`, created from `main` after pull request
 currently tracks this branch. The Goal is active again; subsequent work uses
 coherent commits and pushes without opening an additional pull request.
 
-The latest implementation unit closes a lowering-time `LayoutState` handoff
-gap. Tensor creation already registered layout state, but seven subsequent
-layout mutations in shape-family lowerers changed `TensorIR` directly. A
-rank-three Resize probe demonstrated four logical-layout mismatches immediately
-before the first post-lowering pass. `LoweringContext.set_tensor_layout()` now
-updates tensor metadata and the Session-owned state together, and all direct
-op-builder layout assignments use that boundary.
+The latest implementation unit closes a lowering-time synthetic-consumer gap.
+Inverse-Transpose generation previously read only ONNX consumer counts and
+directly deleted its producer operator. A compact probe demonstrated that a
+synthetic bridge with an existing Identity side consumer lost its producer,
+while `ir_tensor_producers` retained the removed object. `LoweringContext` now
+maintains differential IR consumer counts, owns operator removal, and combines
+the ONNX or synthetic count appropriate to the edge without rescanning the
+partial graph.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -35,7 +36,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains eleven coherent continuations:
+The current `fb-refactor5` work contains twelve coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -60,8 +61,10 @@ The current `fb-refactor5` work contains eleven coherent continuations:
   immutable quantization controls;
 - `4f3d20b0` restores Session-owned consumer counts at the `LoweringContext`
   boundary;
-- the current checkpoint synchronizes lowering-time logical and physical
-  layout mutations with the Session before the first post-lowering pass.
+- `6e8a8486` synchronizes lowering-time logical and physical layout mutations
+  with the Session before the first post-lowering pass;
+- the current checkpoint centralizes lowering-time operator removal and protects
+  synthetic inverse-Transpose fan-out with differential consumer counts.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -80,8 +83,9 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The final checkpoint changes:
 
 - `onnx2tf/tflite_builder/core/lowering_context.py`;
-- `onnx2tf/tflite_builder/op_builders/shape.py`;
+- `onnx2tf/tflite_builder/op_builders/shared.py`;
 - `tests/test_flatbuffer_direct_core.py`;
+- `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
 
@@ -157,6 +161,14 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   Shape-family edge-Pad passthroughs, integer-linear Resize casts, and rank-three
   Resize adapters no longer assign layout fields directly. This fixes observed
   pre-pass staleness without adding an eager ModelIR-wide synchronization.
+- `LoweringContext.add_operator()` increments a differential consumer count for
+  every emitted input occurrence. `remove_operator()` decrements those counts
+  and removes only producer entries owned by the removed object. The inverse
+  Transpose helper uses the authoritative ONNX count when present; otherwise it
+  adds the pending inverse use to the current synthetic IR count. An exclusive
+  pair is still elided, while a synthetic side consumer keeps its producer.
+  This replaces the only direct op-builder deletion and adds no partial-graph
+  scan.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -264,6 +276,25 @@ ModelIR mismatch. The focused edge-Pad and integer-linear Resize tests also
 serialize and execute their TFLite artifacts sequentially. The architecture
 gate rejects future direct logical/physical layout assignments anywhere below
 `op_builders`.
+The synthetic-consumer checkpoint passed:
+
+```text
+env -u PYTHONPATH -u LD_LIBRARY_PATH \
+  OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q \
+  tests/test_flatbuffer_direct_core.py \
+  tests/test_tflite_builder_direct.py::test_flatbuffer_direct_elides_inverse_transpose_chain_at_generation \
+  tests/test_tflite_builder_direct.py::test_flatbuffer_direct_no_dead_operator_outputs_after_prune \
+  tests/test_flatbuffer_direct_architecture.py::test_op_builders_mutate_operator_list_only_through_lowering_context
+
+35 passed
+```
+
+The two direct context cases prove both sides of the contract: exclusive
+inverse Transposes remove their operator and differential indexes, while a
+synthetic bridge already consumed by an Identity retains its producer. The
+architecture gate rejects direct operator-list writes and mutating method calls
+from op builders.
 The exporter and policy pass `python -m py_compile`, and `git diff --check`
 passes. The immediately preceding DepthToSpace, Pool, dynamic-Pool,
 simple-alias, and aligned-scalar checkpoints passed their focused synthetic and
@@ -302,9 +333,9 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Audit the remaining `ConversionSession`/`LoweringContext` handoffs for a
-   bounded stale constant, producer, or synthetic-consumer state gap; layout
-   field mutation is now centralized.
+2. Audit the remaining `ConversionSession`/`LoweringContext` constant ownership
+   and constant-fold updates for a bounded stale-map gap; layout, lowering-time
+   producer, and synthetic-consumer mutation are now centralized.
 3. Characterize pre-session behavior and a focused fan-out/no-op boundary
    before changing another handoff; do not introduce a second graph scan or a
    blanket post-lowering resynchronization.

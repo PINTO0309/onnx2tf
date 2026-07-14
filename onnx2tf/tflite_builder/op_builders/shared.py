@@ -539,15 +539,20 @@ def make_transpose(
                 prev_input_shape = list(ctx.get_tensor_shape(prev_input_name))
                 output_shape = list(ctx.get_tensor_shape(output_name))
                 if prev_input_shape == output_shape:
-                    consumer_count = int(ctx.tensor_consumer_count.get(str(input_name), 0))
+                    consumer_count = int(
+                        ctx.effective_tensor_consumer_count(
+                            str(input_name),
+                            include_pending_synthetic_consumer=True,
+                        )
+                    )
                     if (
                         consumer_count <= 1
                         and str(input_name) not in set(ctx.graph_output_names)
                         and producer_idx is not None
                     ):
-                        # input_name is an ONNX edge consumed only by this transpose.
+                        # The ONNX or synthetic edge is exclusive to this inverse use.
                         # Remove the previous transpose as well to avoid leaving dead ops.
-                        del ctx.model_ir.operators[int(producer_idx)]
+                        ctx.remove_operator(int(producer_idx))
                     return prev_input_name
 
     input_shape = [int(v) for v in list(ctx.get_tensor_shape(input_name))]

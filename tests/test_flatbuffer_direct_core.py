@@ -15,6 +15,7 @@ from onnx2tf.tflite_builder.core import (
     ConversionSession,
     GraphIndex,
     LayoutState,
+    LoweringContext,
     ModelIRGraphIndex,
     ModelIRPassState,
     OrderedPassManager,
@@ -28,6 +29,7 @@ from onnx2tf.tflite_builder.core import (
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.dispatcher import dispatch_node
 from onnx2tf.tflite_builder.lower_from_onnx2tf import lower_onnx_to_ir
+from onnx2tf.tflite_builder.op_builders.shared import make_transpose
 
 
 def _add_onnx_model() -> onnx.ModelProto:
@@ -237,6 +239,101 @@ def test_lowerer_keeps_session_layout_current_before_first_post_pass(
         "rank3_resize_output_nhwc": "NHWC",
         "rank3_resize_output_nwc": "NWC",
     }
+
+
+def _inverse_transpose_lowering_context() -> LoweringContext:
+    model_ir = ModelIR(
+        name="inverse_transpose_context",
+        tensors={
+            "source": TensorIR(
+                "source",
+                "FLOAT32",
+                [1, 3, 2, 2],
+                [1, 3, 2, 2],
+            ),
+            "bridge": TensorIR(
+                "bridge",
+                "FLOAT32",
+                [1, 2, 2, 3],
+                [1, 2, 2, 3],
+            ),
+            "side": TensorIR(
+                "side",
+                "FLOAT32",
+                [1, 2, 2, 3],
+                [1, 2, 2, 3],
+            ),
+            "restored": TensorIR(
+                "restored",
+                "FLOAT32",
+                [1, 3, 2, 2],
+                [1, 3, 2, 2],
+            ),
+        },
+    )
+    context = LoweringContext(
+        model_ir=model_ir,
+        shape_map={},
+        dtype_map={},
+        constants={},
+        tensor_consumer_count={},
+    )
+    perm_name = context.add_const_tensor(
+        "to_nhwc_perm",
+        np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    context.add_operator(
+        OperatorIR(
+            op_type="TRANSPOSE",
+            inputs=["source", perm_name],
+            outputs=["bridge"],
+        )
+    )
+    return context
+
+
+def test_inverse_transpose_elision_removes_lowering_indexes() -> None:
+    context = _inverse_transpose_lowering_context()
+
+    result = make_transpose(
+        context,
+        "bridge",
+        "restored",
+        [0, 3, 1, 2],
+        allow_elide_inverse_chain=True,
+    )
+
+    assert result == "source"
+    assert context.model_ir.operators == []
+    assert "bridge" not in context.ir_tensor_producers
+    assert context.ir_tensor_consumer_count == {}
+
+
+def test_inverse_transpose_elision_preserves_synthetic_fanout() -> None:
+    context = _inverse_transpose_lowering_context()
+    context.add_operator(
+        OperatorIR(
+            op_type="IDENTITY",
+            inputs=["bridge"],
+            outputs=["side"],
+        )
+    )
+
+    result = make_transpose(
+        context,
+        "bridge",
+        "restored",
+        [0, 3, 1, 2],
+        allow_elide_inverse_chain=True,
+    )
+
+    assert result == "source"
+    assert [str(op.op_type) for op in context.model_ir.operators] == [
+        "TRANSPOSE",
+        "IDENTITY",
+    ]
+    assert context.ir_tensor_producers["bridge"] is context.model_ir.operators[0]
+    assert context.ir_tensor_consumer_count["bridge"] == 1
 
 
 def test_layout_state_sync_rename_remove_and_validation() -> None:

@@ -116,6 +116,7 @@ class LoweringContext:
         }
         self._serial = 0
         self.ir_tensor_producers: Dict[str, OperatorIR] = {}
+        self.ir_tensor_consumer_count: Dict[str, int] = {}
         self.onnx_tensor_consumers: Dict[str, List[Any]] = (
             session.graph_index.consumers if session is not None else {}
         )
@@ -267,6 +268,46 @@ class LoweringContext:
 
     def add_operator(self, op: OperatorIR) -> None:
         self.model_ir.operators.append(op)
+        for input_name in op.inputs:
+            name = str(input_name)
+            if name:
+                self.ir_tensor_consumer_count[name] = int(
+                    self.ir_tensor_consumer_count.get(name, 0) + 1
+                )
         for output_name in op.outputs:
             if str(output_name):
                 self.ir_tensor_producers[str(output_name)] = op
+
+    def remove_operator(self, operator_index: int) -> OperatorIR:
+        """Remove one lowering-time operator and update differential indexes."""
+
+        op = self.model_ir.operators.pop(int(operator_index))
+        for input_name in op.inputs:
+            name = str(input_name)
+            if not name:
+                continue
+            remaining = int(self.ir_tensor_consumer_count.get(name, 0) - 1)
+            if remaining > 0:
+                self.ir_tensor_consumer_count[name] = remaining
+            else:
+                self.ir_tensor_consumer_count.pop(name, None)
+        for output_name in op.outputs:
+            name = str(output_name)
+            if self.ir_tensor_producers.get(name) is op:
+                self.ir_tensor_producers.pop(name, None)
+        return op
+
+    def effective_tensor_consumer_count(
+        self,
+        name: str,
+        *,
+        include_pending_synthetic_consumer: bool = False,
+    ) -> int:
+        """Return ONNX fan-out or the current differential synthetic fan-out."""
+
+        tensor_name = str(name)
+        if tensor_name in self.tensor_consumer_count:
+            return int(self.tensor_consumer_count[tensor_name])
+        return int(self.ir_tensor_consumer_count.get(tensor_name, 0)) + int(
+            bool(include_pending_synthetic_consumer)
+        )

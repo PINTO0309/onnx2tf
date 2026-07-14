@@ -178,6 +178,45 @@ def test_op_builders_mutate_layout_only_through_lowering_context() -> None:
     assert offenders == []
 
 
+def test_op_builders_mutate_operator_list_only_through_lowering_context() -> None:
+    op_builders_root = REPO_ROOT / "onnx2tf" / "tflite_builder" / "op_builders"
+    mutating_methods = {"append", "extend", "insert", "pop", "remove", "clear"}
+    offenders: list[str] = []
+
+    def _is_context_operator_list(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Attribute)
+            and node.attr == "operators"
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "model_ir"
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id == "ctx"
+        )
+
+    for path in op_builders_root.glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            is_mutating_call = (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in mutating_methods
+                and _is_context_operator_list(node.func.value)
+            )
+            is_direct_store = (
+                isinstance(node, (ast.Attribute, ast.Subscript))
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+                and _is_context_operator_list(
+                    node if isinstance(node, ast.Attribute) else node.value
+                )
+            )
+            if is_mutating_call or is_direct_store:
+                offenders.append(
+                    f"{path.relative_to(REPO_ROOT)}:{node.lineno}"
+                )
+
+    assert offenders == []
+
+
 def test_reporting_implementation_stays_out_of_lowering_module() -> None:
     reporting_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "reporting.py"
     lowering_path = (

@@ -80,6 +80,14 @@ and the Session-owned `LayoutState` together, so the first post-lowering pass
 receives current layout evidence without relying on that pass to hide stale
 state through a full resynchronization. Op-family builders must not assign
 `TensorIR.logical_layout` or `TensorIR.physical_layout` directly.
+`LoweringContext.add_operator()` and `remove_operator()` likewise own the
+lowering-time operator list and maintain differential IR producer and consumer
+maps. Inverse-Transpose generation uses the ONNX `GraphIndex` count for an ONNX
+edge and the current IR count plus the pending use for a synthetic edge. It may
+therefore remove an exclusive producer without rescanning the partial graph,
+while retaining that producer when a previously emitted side branch still
+consumes its synthetic output. Op-family builders must not mutate
+`model_ir.operators` directly.
 Lineage-aware graph mutation helpers accept an optional ModelIR index and
 update it atomically.
 `operator_indices_for_types()` returns a sorted, deduplicated union for
