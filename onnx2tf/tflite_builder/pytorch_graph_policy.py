@@ -133,6 +133,35 @@ def _producer_op_for_model_ir(
     ).producer(str(tensor_name))
 
 
+def _is_sequential_single_input_graph_for_codegen(
+    *,
+    model_ir: ModelIR,
+) -> bool:
+    if len(model_ir.inputs) != 1 or len(model_ir.outputs) != 1:
+        return False
+    current_name = str(model_ir.inputs[0])
+    for op in model_ir.operators:
+        if len(op.outputs) != 1:
+            return False
+        data_input_index = (
+            2
+            if str(op.op_type) in {"TRANSPOSE_CONV", "CONV_3D_TRANSPOSE"}
+            else 0
+        )
+        if len(op.inputs) <= data_input_index:
+            return False
+        if str(op.inputs[data_input_index]) != current_name:
+            return False
+        for input_index, input_name in enumerate(op.inputs):
+            if int(input_index) == int(data_input_index) or str(input_name) == "":
+                continue
+            input_tensor = model_ir.tensors.get(str(input_name), None)
+            if input_tensor is None or not isinstance(input_tensor.data, np.ndarray):
+                return False
+        current_name = str(op.outputs[0])
+    return current_name == str(model_ir.outputs[0])
+
+
 def _expected_channel_dim_for_tensor_for_codegen(
     *,
     model_ir: ModelIR,

@@ -1,3 +1,5 @@
+import numpy as np
+
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.pytorch_graph_policy import (
@@ -7,6 +9,7 @@ from onnx2tf.tflite_builder.pytorch_graph_policy import (
     _expected_channel_dim_for_tensor_for_codegen,
     _gather_input_pre_permute_for_codegen,
     _infer_effective_rank4_runtime_layout_for_codegen,
+    _is_sequential_single_input_graph_for_codegen,
     _native_codegen_cache_bucket_for_model_ir,
     _native_codegen_graph_index_for_model_ir,
     _producer_op_for_model_ir,
@@ -187,3 +190,44 @@ def test_resize_target_literal_recovers_channel_first_storage() -> None:
         output_name="output",
         input_name="input",
     ) == "[1, 3, 16, 16]"
+
+
+def test_sequential_graph_policy_requires_constant_side_inputs() -> None:
+    model_ir = ModelIR(
+        name="sequential_graph",
+        tensors={
+            "input": _tensor("input", [1, 3]),
+            "weight": TensorIR(
+                name="weight",
+                dtype="FLOAT32",
+                shape=[3],
+                data=np.ones([3], dtype=np.float32),
+            ),
+            "mid": _tensor("mid", [1, 3]),
+            "bias": TensorIR(
+                name="bias",
+                dtype="FLOAT32",
+                shape=[3],
+                data=np.zeros([3], dtype=np.float32),
+            ),
+            "output": _tensor("output", [1, 3]),
+        },
+        operators=[
+            OperatorIR(
+                op_type="MUL",
+                inputs=["input", "weight"],
+                outputs=["mid"],
+            ),
+            OperatorIR(
+                op_type="ADD",
+                inputs=["mid", "bias"],
+                outputs=["output"],
+            ),
+        ],
+        inputs=["input"],
+        outputs=["output"],
+    )
+
+    assert _is_sequential_single_input_graph_for_codegen(model_ir=model_ir)
+    model_ir.tensors["bias"].data = None
+    assert not _is_sequential_single_input_graph_for_codegen(model_ir=model_ir)

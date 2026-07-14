@@ -189,6 +189,7 @@ from onnx2tf.tflite_builder.pytorch_graph_policy import (
     _expected_channel_dim_for_tensor_for_codegen,
     _gather_input_pre_permute_for_codegen,
     _infer_effective_rank4_runtime_layout_for_codegen,
+    _is_sequential_single_input_graph_for_codegen,
     _native_codegen_cache_bucket_for_model_ir,
     _producer_op_for_model_ir,
     _rank4_channel_first_shape_for_tensor_for_codegen,
@@ -611,31 +612,6 @@ def _match_single_consumer_layout_bridge_transpose_for_codegen(
     if [int(v) for v in list(expected_perm)] != [int(v) for v in list(actual_perm)]:
         return None
     return output_name, bridge_op_idx
-
-
-def _is_sequential_single_input_graph_for_codegen(
-    *,
-    model_ir: ModelIR,
-) -> bool:
-    if len(model_ir.inputs) != 1 or len(model_ir.outputs) != 1:
-        return False
-    current_name = str(model_ir.inputs[0])
-    for op in model_ir.operators:
-        if len(op.outputs) != 1:
-            return False
-        data_input_index = 2 if str(op.op_type) in {"TRANSPOSE_CONV", "CONV_3D_TRANSPOSE"} else 0
-        if len(op.inputs) <= data_input_index:
-            return False
-        if str(op.inputs[data_input_index]) != current_name:
-            return False
-        for input_index, input_name in enumerate(op.inputs):
-            if int(input_index) == int(data_input_index) or str(input_name) == "":
-                continue
-            input_tensor = model_ir.tensors.get(str(input_name), None)
-            if input_tensor is None or not isinstance(input_tensor.data, np.ndarray):
-                return False
-        current_name = str(op.outputs[0])
-    return current_name == str(model_ir.outputs[0])
 
 
 def _is_channel_last_layout_for_codegen(logical_layout: Any) -> bool:

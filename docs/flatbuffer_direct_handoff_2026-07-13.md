@@ -1094,6 +1094,14 @@ exactly; the direct activation contract and focused emitter ownership gate pass,
 together with Ruff and syntax validation. The exporter shrank by another 18
 lines. No model conversion or inference was run.
 
+Single-input/single-output sequential graph eligibility now lives in the Torch-
+free graph-policy owner. Constant side-input requirements and transpose-
+convolution data-input positions retain their existing behavior. The moved
+function AST matches checkpoint `b1100b4` exactly; the direct constant/dynamic
+side-input contract and focused ownership gate pass, together with Ruff and
+syntax validation. The exporter shrank by another 24 lines. No model conversion
+or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

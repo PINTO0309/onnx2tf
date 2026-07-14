@@ -2237,6 +2237,10 @@ returning public tensors in their declared logical layout. Compact target and
 Resize shape literal rendering plus alias-aware rank-3/4/5 channel-first shape
 queries are co-located with that contract; statement emission remains outside
 this read-only graph-policy boundary.
+The same owner decides whether a package graph is a single public-input/public-
+output chain whose non-data inputs are all constants. Transpose-convolution data
+input positions retain their explicit exception; branching, multiple outputs,
+or dynamic side inputs reject the sequential fast path.
 
 Generated CONCAT and adjacent Slice layout policy has a focused Torch-free
 owner in `pytorch_concat_policy.py`. It owns channel-first input expressions,

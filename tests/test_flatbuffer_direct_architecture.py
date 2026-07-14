@@ -4532,6 +4532,7 @@ def test_generated_pytorch_graph_policy_has_single_owner() -> None:
         "_expected_channel_dim_for_tensor_for_codegen",
         "_gather_input_pre_permute_for_codegen",
         "_infer_effective_rank4_runtime_layout_for_codegen",
+        "_is_sequential_single_input_graph_for_codegen",
         "_native_codegen_cache_bucket_for_model_ir",
         "_producer_op_for_model_ir",
         "_rank4_channel_first_shape_for_tensor_for_codegen",
