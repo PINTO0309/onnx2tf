@@ -452,6 +452,16 @@ scan was removed; no codegen path mutates either map. Architecture validation
 passes 71 tests and fixes the single constructor plus read-only contract. No
 model conversion or inference was run.
 
+Generated-package import and native state-dict reconciliation now live in
+`pytorch_state_dict_support.py`. The module owns sanitized generated-module
+loading, stale-module eviction, dtype/shape preparation, key reconciliation,
+and ModelIR constant mapping while retaining a function-local lazy Torch import.
+All three function ASTs match the prior exporter checkpoint. Six direct tests
+use a Torch-free tensor double to fix exact-shape, reshape, error, package-load,
+key-mismatch, and missing-data behavior. State-dict and architecture validation
+passes 78 tests; Ruff, diff, and AST-equivalence checks pass. No model conversion
+or inference was run.
+
 The last large direct-module block, fused-module emission, has moved to the
 Torch-free emitter. It preserves folded input adapters, legacy NHWC Conv input/
 output fallback, raw NCHW/NCDHW aliases, public output correction, omitted

@@ -85,6 +85,10 @@ DEPENDENCY_SCOPED_FILES = [
     REPO_ROOT
     / "onnx2tf"
     / "tflite_builder"
+    / "pytorch_state_dict_support.py",
+    REPO_ROOT
+    / "onnx2tf"
+    / "tflite_builder"
     / "pytorch_source_graph_rewrites.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_source_parser.py",
     REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_source_rewrites.py",
@@ -110,6 +114,7 @@ PYTORCH_PURE_UTILITY_FILES = [
         "pytorch_artifact_exporters.py",
         "pytorch_export_support.py",
         "pytorch_exported_program_archive.py",
+        "pytorch_state_dict_support.py",
     }
 ]
 
@@ -3960,6 +3965,52 @@ def test_native_pytorch_codegen_uses_shared_model_ir_graph_index() -> None:
         and node.func.attr in {"clear", "pop", "setdefault", "update"}
         for node in ast.walk(exporter_tree)
     )
+
+
+def test_native_pytorch_state_dict_support_has_single_owner_and_lazy_torch() -> None:
+    exporter_source = (
+        REPO_ROOT / "onnx2tf" / "tflite_builder" / "pytorch_exporter.py"
+    ).read_text(encoding="utf-8")
+    support_source = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "pytorch_state_dict_support.py"
+    ).read_text(encoding="utf-8")
+    exporter_tree = ast.parse(exporter_source)
+    support_tree = ast.parse(support_source)
+    exporter_functions = {
+        node.name
+        for node in exporter_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    support_functions = {
+        node.name: node
+        for node in support_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    moved_functions = (
+        "_build_native_generated_state_dict",
+        "_import_generated_package_from_output",
+        "_prepare_exported_state_tensor",
+    )
+    for function_name in moved_functions:
+        assert function_name in support_functions
+        assert function_name not in exporter_functions
+    assert "_build_native_generated_state_dict," in exporter_source
+    assert not any(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        and any(alias.name == "torch" for alias in node.names)
+        for node in support_tree.body
+    )
+    prepare_imports = [
+        node
+        for node in ast.walk(support_functions["_prepare_exported_state_tensor"])
+        if isinstance(node, ast.Import)
+        and any(alias.name == "torch" for alias in node.names)
+    ]
+    assert len(prepare_imports) == 1
 
 
 def test_pytorch_capability_registry_has_single_owner() -> None:

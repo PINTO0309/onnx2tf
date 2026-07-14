@@ -2193,6 +2193,13 @@ scan or a separate indexing policy. Codegen receives the shared index maps as
 read-only context, preserving operator-index semantics while aligning package
 generation with the fixed conversion-session graph contract.
 
+Generated-package import and native state-dict reconciliation live in
+`pytorch_state_dict_support.py`. Import-name sanitization, stale generated
+module cleanup, dtype/shape alignment, state-key validation, and ModelIR buffer
+mapping have one owner. The module has no eager Torch import: Torch is loaded
+only inside tensor materialization after a PyTorch artifact has been requested.
+All three function ASTs are identical to their former exporter definitions.
+
 ## Runtime-check memory boundary
 
 The direct backend releases the legacy GraphSurgeon graph before ModelIR
