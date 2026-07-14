@@ -2313,6 +2313,11 @@ direct convolution-family producers, and shape-preserving unary chains while
 honoring precomputed aliases and cycle bounds. Unary direct-emission eligibility
 uses the same trace and relaxed shape equality.
 
+Binary runtime-shape alignment policy has a separate Torch-free owner in
+`pytorch_binary_policy.py`. It recognizes all-ones passthrough operands, compares
+materialized shapes with dynamic signatures and channel-first broadcast shapes,
+and selects the operand whose signature best anchors the declared output.
+
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are
 used by both exporter policy and source rewrites without importing the exporter

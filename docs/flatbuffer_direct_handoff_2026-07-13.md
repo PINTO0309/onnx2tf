@@ -1149,6 +1149,13 @@ pattern fixture and focused ownership gate pass, together with Ruff and syntax
 validation. The exporter shrank by another 111 lines. No model conversion or
 inference was run.
 
+Binary uncertain-shape passthrough, runtime-alignment detection, and preferred
+alignment-anchor selection now live in the Torch-free
+`pytorch_binary_policy.py` owner. All three moved function ASTs match checkpoint
+`e477e68` exactly; two direct dynamic-signature contracts and the focused
+ownership gate pass, together with Ruff and syntax validation. The exporter
+shrank by another 151 lines. No model conversion or inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-
