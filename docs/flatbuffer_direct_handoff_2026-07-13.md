@@ -1050,6 +1050,13 @@ conservative behavior. Four thousand fixed-seed outcomes match checkpoint
 pass, together with Ruff and syntax validation. The exporter shrank by another
 262 lines. No model conversion or inference was run.
 
+Constant Pad/scalar literals, static or runtime axis expressions, and static
+mirror-Pad expression planning now share that constant-policy owner. All six
+moved function ASTs match checkpoint `5661eb4` exactly; six direct policy
+contracts and the focused single-owner test pass, together with Ruff and syntax
+validation. The exporter shrank by another 100 lines. No model conversion or
+inference was run.
+
 Conv2D/depthwise/transpose-Conv2D and Conv3D filter physicalization now lives
 in the Torch-free layout owner and enumerates only those op families through
 the normalizer's shared graph index. Shared weight buffers retain the one-

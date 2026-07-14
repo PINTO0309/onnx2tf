@@ -65,9 +65,15 @@ from onnx2tf.tflite_builder.pytorch_concat_policy import (
     _resolve_concat_axis_for_channel_first_for_codegen,
 )
 from onnx2tf.tflite_builder.pytorch_constant_policy import (
+    _axis_expr_from_input_for_codegen,
+    _constant_pad_pairs_for_codegen,
+    _int_scalar_literal_expr_for_codegen,
     _is_constant_tensor_name_for_codegen,
+    _pad_literal_expr_for_codegen,
     _reshape_shape_tensor_uses_runtime_dims_for_codegen,
+    _scalar_literal_expr_for_codegen,
     _shape_tensor_constant_is_non_zero_int_vector_for_codegen,
+    _static_mirror_pad_expr_for_codegen,
     _static_int_tensor_values_for_codegen,
 )
 from onnx2tf.tflite_builder.pytorch_export_errors import (
@@ -111,9 +117,7 @@ from onnx2tf.tflite_builder.pytorch_codegen_values import (
     _conv_block_activation_config_from_fused_name,
     _is_small_inline_constant_tensor,
     _python_literal_for_constant_tensor,
-    _scalar_literal_for_constant_tensor,
     _torch_dtype_literal,
-    _torch_pad_literal_for_constant_tensor,
 )
 from onnx2tf.tflite_builder.pytorch_shape_policy import (
     _conv2d_input_pre_permute_for_codegen,
@@ -285,8 +289,6 @@ from onnx2tf.tflite_builder.pytorch_layout_utils import (
     _read_onnx_unsqueeze_axes,
     _compose_axis_permutations,
     _inverse_axis_permutation,
-    _normalize_constant_pad_pairs,
-    _constant_pad_pairs_for_tensor,
     _pad_output_matches_pre_permuted_input,
     _should_emit_channel_last_space_to_depth,
     _should_emit_channel_last_depth_to_space,
@@ -819,59 +821,6 @@ def _topk_codegen_layout_bridge_for_codegen(
     return None, None
 
 
-def _pad_literal_expr_for_codegen(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-) -> Optional[str]:
-    return _torch_pad_literal_for_constant_tensor(model_ir.tensors.get(str(tensor_name), None))
-
-
-def _constant_pad_pairs_for_codegen(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-) -> Optional[List[List[int]]]:
-    tensor = model_ir.tensors.get(str(tensor_name), None)
-    if tensor is None or not isinstance(tensor.data, np.ndarray):
-        return None
-    return _constant_pad_pairs_for_tensor(tensor)
-
-
-def _scalar_literal_expr_for_codegen(
-    *,
-    model_ir: ModelIR,
-    tensor_name: str,
-) -> Optional[str]:
-    return _scalar_literal_for_constant_tensor(model_ir.tensors.get(str(tensor_name), None))
-
-
-def _int_scalar_literal_expr_for_codegen(
-    *,
-    static_int_tensor_values_fn: Callable[[str], Optional[List[int]]],
-    tensor_name: str,
-) -> Optional[str]:
-    values = static_int_tensor_values_fn(str(tensor_name))
-    if values is None or len(values) != 1:
-        return None
-    return repr(int(values[0]))
-
-
-def _axis_expr_from_input_for_codegen(
-    *,
-    runtime_imports: Set[str],
-    int_scalar_literal_expr_fn: Callable[[str], Optional[str]],
-    tensor_expr_fn: Callable[[str], str],
-    tensor_name: str,
-    device_expr: str,
-) -> str:
-    axis_literal = int_scalar_literal_expr_fn(tensor_name)
-    if axis_literal is not None:
-        return axis_literal
-    runtime_imports.add("_coerce_scalar_axis")
-    return f"_coerce_scalar_axis({tensor_expr_fn(str(tensor_name))}, device={device_expr}.device)"
-
-
 def _activation_lines_for_codegen(var_name: str, fused: str) -> List[str]:
     key = str(fused).upper()
     if key in {"", "NONE"}:
@@ -889,55 +838,6 @@ def _activation_lines_for_codegen(var_name: str, fused: str) -> List[str]:
     if key == "TANH":
         return [f"{var_name} = torch.tanh({var_name})"]
     return [f"{var_name} = _apply_fused_activation({var_name}, {fused!r})"]
-
-
-def _static_mirror_pad_expr_for_codegen(
-    *,
-    model_ir: ModelIR,
-    runtime_imports: Set[str],
-    constant_pad_pairs_fn: Callable[[str], Optional[List[List[int]]]],
-    tensor_expr_fn: Callable[[str], str],
-    input_tensor_name: str,
-    pads_tensor_name: str,
-) -> Optional[str]:
-    pad_pairs = constant_pad_pairs_fn(pads_tensor_name)
-    input_tensor = model_ir.tensors.get(str(input_tensor_name), None)
-    if pad_pairs is None or input_tensor is None:
-        return None
-    rank = len(list(input_tensor.shape))
-    if rank <= 0:
-        return None
-    if len(pad_pairs) < rank:
-        pad_pairs = ([[0, 0]] * (rank - len(pad_pairs))) + pad_pairs
-    elif len(pad_pairs) > rank:
-        pad_pairs = pad_pairs[-rank:]
-    non_zero_axes = [
-        idx for idx, (before, after) in enumerate(pad_pairs)
-        if int(before) != 0 or int(after) != 0
-    ]
-    input_expr = tensor_expr_fn(str(input_tensor_name))
-    if len(non_zero_axes) == 0:
-        return input_expr
-    if len(non_zero_axes) > 3:
-        return None
-    keep_axes = [idx for idx in range(rank) if idx not in non_zero_axes]
-    perm = keep_axes + non_zero_axes
-    expr = input_expr
-    if perm != list(range(rank)):
-        runtime_imports.add("_torch_permute")
-        expr = f"_torch_permute({expr}, {repr(perm)})"
-    torch_pad: List[int] = []
-    for axis in reversed(non_zero_axes):
-        before, after = pad_pairs[axis]
-        torch_pad.extend([int(before), int(after)])
-    expr = f"F.pad({expr}, {repr(torch_pad)}, mode='reflect')"
-    if perm == list(range(rank)):
-        return expr
-    inverse_perm = [0] * rank
-    for permuted_axis, original_axis in enumerate(perm):
-        inverse_perm[int(original_axis)] = int(permuted_axis)
-    runtime_imports.add("_torch_permute")
-    return f"_torch_permute({expr}, {repr(inverse_perm)})"
 
 
 def _is_sequential_single_input_graph_for_codegen(

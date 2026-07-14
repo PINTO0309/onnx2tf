@@ -4659,9 +4659,15 @@ def test_generated_pytorch_constant_policy_has_single_owner() -> None:
     }
 
     for function_name in (
+        "_axis_expr_from_input_for_codegen",
+        "_constant_pad_pairs_for_codegen",
+        "_int_scalar_literal_expr_for_codegen",
         "_is_constant_tensor_name_for_codegen",
+        "_pad_literal_expr_for_codegen",
         "_reshape_shape_tensor_uses_runtime_dims_for_codegen",
+        "_scalar_literal_expr_for_codegen",
         "_shape_tensor_constant_is_non_zero_int_vector_for_codegen",
+        "_static_mirror_pad_expr_for_codegen",
         "_static_int_tensor_values_for_codegen",
     ):
         assert function_name in policy_functions

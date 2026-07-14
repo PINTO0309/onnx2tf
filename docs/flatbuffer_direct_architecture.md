@@ -2263,6 +2263,11 @@ The same owner tracks whether a Reshape shape expression contains runtime
 dimensions, including SPLIT and UNPACK propagation, while rejecting cycles and
 unsupported expressions conservatively. It reads the shared producer index but
 does not mutate ModelIR or emit generated statements.
+Constant Pad and scalar literal rendering, static/runtime axis expressions, and
+static mirror-Pad expression planning use the same owner. Runtime helper imports
+are explicit mutable inputs, and tensor-expression lookup remains a callback;
+the policy therefore contains no Torch import and does not own generated-model
+state.
 
 Rank-4 generated-source shape policy has a Torch-free shared owner in
 `pytorch_shape_policy.py`. Layout hinting and CF/NHWC shape normalization are

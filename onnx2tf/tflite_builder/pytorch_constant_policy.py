@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 
 import numpy as np
 
 from onnx2tf.tflite_builder.ir import ModelIR
 from onnx2tf.tflite_builder.pytorch_codegen_utils import _constant_int_list
+from onnx2tf.tflite_builder.pytorch_codegen_values import (
+    _scalar_literal_for_constant_tensor,
+    _torch_pad_literal_for_constant_tensor,
+)
+from onnx2tf.tflite_builder.pytorch_layout_utils import (
+    _constant_pad_pairs_for_tensor,
+)
 
 
 def _is_constant_tensor_name_for_codegen(
@@ -281,3 +288,113 @@ def _reshape_shape_tensor_uses_runtime_dims_for_codegen(
             return False
         return saw_runtime_dims
     return False
+
+
+def _pad_literal_expr_for_codegen(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> Optional[str]:
+    return _torch_pad_literal_for_constant_tensor(
+        model_ir.tensors.get(str(tensor_name), None)
+    )
+
+
+def _constant_pad_pairs_for_codegen(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> Optional[List[List[int]]]:
+    tensor = model_ir.tensors.get(str(tensor_name), None)
+    if tensor is None or not isinstance(tensor.data, np.ndarray):
+        return None
+    return _constant_pad_pairs_for_tensor(tensor)
+
+
+def _scalar_literal_expr_for_codegen(
+    *,
+    model_ir: ModelIR,
+    tensor_name: str,
+) -> Optional[str]:
+    return _scalar_literal_for_constant_tensor(
+        model_ir.tensors.get(str(tensor_name), None)
+    )
+
+
+def _int_scalar_literal_expr_for_codegen(
+    *,
+    static_int_tensor_values_fn: Callable[[str], Optional[List[int]]],
+    tensor_name: str,
+) -> Optional[str]:
+    values = static_int_tensor_values_fn(str(tensor_name))
+    if values is None or len(values) != 1:
+        return None
+    return repr(int(values[0]))
+
+
+def _axis_expr_from_input_for_codegen(
+    *,
+    runtime_imports: Set[str],
+    int_scalar_literal_expr_fn: Callable[[str], Optional[str]],
+    tensor_expr_fn: Callable[[str], str],
+    tensor_name: str,
+    device_expr: str,
+) -> str:
+    axis_literal = int_scalar_literal_expr_fn(tensor_name)
+    if axis_literal is not None:
+        return axis_literal
+    runtime_imports.add("_coerce_scalar_axis")
+    return (
+        f"_coerce_scalar_axis({tensor_expr_fn(str(tensor_name))}, "
+        f"device={device_expr}.device)"
+    )
+
+
+def _static_mirror_pad_expr_for_codegen(
+    *,
+    model_ir: ModelIR,
+    runtime_imports: Set[str],
+    constant_pad_pairs_fn: Callable[[str], Optional[List[List[int]]]],
+    tensor_expr_fn: Callable[[str], str],
+    input_tensor_name: str,
+    pads_tensor_name: str,
+) -> Optional[str]:
+    pad_pairs = constant_pad_pairs_fn(pads_tensor_name)
+    input_tensor = model_ir.tensors.get(str(input_tensor_name), None)
+    if pad_pairs is None or input_tensor is None:
+        return None
+    rank = len(list(input_tensor.shape))
+    if rank <= 0:
+        return None
+    if len(pad_pairs) < rank:
+        pad_pairs = ([[0, 0]] * (rank - len(pad_pairs))) + pad_pairs
+    elif len(pad_pairs) > rank:
+        pad_pairs = pad_pairs[-rank:]
+    non_zero_axes = [
+        idx
+        for idx, (before, after) in enumerate(pad_pairs)
+        if int(before) != 0 or int(after) != 0
+    ]
+    input_expr = tensor_expr_fn(str(input_tensor_name))
+    if len(non_zero_axes) == 0:
+        return input_expr
+    if len(non_zero_axes) > 3:
+        return None
+    keep_axes = [idx for idx in range(rank) if idx not in non_zero_axes]
+    perm = keep_axes + non_zero_axes
+    expr = input_expr
+    if perm != list(range(rank)):
+        runtime_imports.add("_torch_permute")
+        expr = f"_torch_permute({expr}, {repr(perm)})"
+    torch_pad: List[int] = []
+    for axis in reversed(non_zero_axes):
+        before, after = pad_pairs[axis]
+        torch_pad.extend([int(before), int(after)])
+    expr = f"F.pad({expr}, {repr(torch_pad)}, mode='reflect')"
+    if perm == list(range(rank)):
+        return expr
+    inverse_perm = [0] * rank
+    for permuted_axis, original_axis in enumerate(perm):
+        inverse_perm[int(original_axis)] = int(permuted_axis)
+    runtime_imports.add("_torch_permute")
+    return f"_torch_permute({expr}, {repr(inverse_perm)})"
