@@ -293,6 +293,133 @@ def apply_constant_update(
     return True
 
 
+def constant_is_private_and_unquantized(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    name: str,
+    public_names: AbstractSet[str],
+) -> bool:
+    tensor = model_ir.tensors.get(str(name))
+    return bool(
+        tensor is not None
+        and tensor.data is not None
+        and str(name) not in public_names
+        and str(name) not in graph_index.producers
+        and str(name) not in graph_index.duplicate_producers
+        and tensor.quantization is None
+    )
+
+
+def _coefficient_replacement(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    name: str,
+    dtype: str,
+    channel_count: int,
+) -> Optional[np.ndarray]:
+    data = float_constant(model_ir, graph_index, name, dtype)
+    if data is None:
+        return None
+    shape = tuple(int(value) for value in data.shape)
+    if data.size == 1 or shape == (1, 1, 1, int(channel_count)):
+        return np.asarray(data)
+    if shape != (1, int(channel_count), 1, 1):
+        return None
+    return np.transpose(data, (0, 2, 3, 1))
+
+
+def plan_nhwc_instance_norm_constant_updates(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    core: DecomposedInstanceNormCore,
+    bias_name: str,
+    bias_operator: OperatorIR,
+    bias_input_index: int,
+    channel_count: int,
+    public_names: AbstractSet[str],
+) -> Optional[Tuple[ConstantUpdate, ...]]:
+    """Plan Mean-axis and affine updates shared by NHWC InstanceNorm owners."""
+
+    axes_uses: dict[str, list[ConstantUse]] = {}
+    axes_uses.setdefault(core.mean1_axes_name, []).append(
+        ConstantUse(core.mean1, 1)
+    )
+    axes_uses.setdefault(core.mean2_axes_name, []).append(
+        ConstantUse(core.mean2, 1)
+    )
+    updates = []
+    for axes_name, uses in axes_uses.items():
+        if not constant_is_private_and_unquantized(
+            model_ir,
+            graph_index,
+            axes_name,
+            public_names,
+        ):
+            return None
+        update = plan_constant_update(
+            model_ir,
+            graph_index,
+            axes_name,
+            np.asarray(
+                [1, 2],
+                dtype=np.asarray(model_ir.tensors[axes_name].data).dtype,
+            ),
+            tuple(uses),
+            "nhwc_axes",
+            public_names,
+        )
+        if update is None:
+            return None
+        updates.append(update)
+
+    coefficient_uses: dict[str, list[ConstantUse]] = {}
+    coefficient_uses.setdefault(core.scale_name, []).append(
+        ConstantUse(core.scale, core.scale_input_index)
+    )
+    coefficient_uses.setdefault(str(bias_name), []).append(
+        ConstantUse(bias_operator, int(bias_input_index))
+    )
+    dtype = str(core.x.tensor.dtype)
+    for coefficient_name, uses in coefficient_uses.items():
+        if not constant_is_private_and_unquantized(
+            model_ir,
+            graph_index,
+            coefficient_name,
+            public_names,
+        ):
+            return None
+        replacement = _coefficient_replacement(
+            model_ir,
+            graph_index,
+            name=coefficient_name,
+            dtype=dtype,
+            channel_count=int(channel_count),
+        )
+        if replacement is None:
+            return None
+        current = np.asarray(model_ir.tensors[coefficient_name].data)
+        if current.shape == replacement.shape and np.array_equal(
+            current,
+            replacement,
+        ):
+            continue
+        update = plan_constant_update(
+            model_ir,
+            graph_index,
+            coefficient_name,
+            replacement,
+            tuple(uses),
+            "nhwc_coefficient",
+            public_names,
+        )
+        if update is None:
+            return None
+        updates.append(update)
+    return tuple(updates)
+
+
 def match_decomposed_instance_norm_core(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,

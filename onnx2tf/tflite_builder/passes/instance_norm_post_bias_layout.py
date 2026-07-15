@@ -4,8 +4,6 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
-import numpy as np
-
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.core.model_ir_utils import (
@@ -25,14 +23,13 @@ from onnx2tf.tflite_builder.passes.conv1d_unary_layout import (
 from onnx2tf.tflite_builder.passes.decomposed_instance_norm import (
     FLOAT_DTYPES,
     ConstantUpdate,
-    ConstantUse,
     DecomposedInstanceNormCore,
     TensorMetadataUpdate,
     apply_constant_update,
     binary_other_input,
-    float_constant,
+    constant_is_private_and_unquantized,
     match_decomposed_instance_norm_core,
-    plan_constant_update,
+    plan_nhwc_instance_norm_constant_updates,
     sole_consumer,
     tensor_contract_exact,
 )
@@ -58,42 +55,6 @@ class _PostBiasPlan:
     channel_last_names: Tuple[str, ...]
 
 
-def _constant_is_private_and_unquantized(
-    model_ir: ModelIR,
-    graph_index: ModelIRGraphIndex,
-    name: str,
-    public_names: set[str],
-) -> bool:
-    tensor = model_ir.tensors.get(str(name))
-    return bool(
-        tensor is not None
-        and tensor.data is not None
-        and str(name) not in public_names
-        and str(name) not in graph_index.producers
-        and str(name) not in graph_index.duplicate_producers
-        and tensor.quantization is None
-    )
-
-
-def _coefficient_replacement(
-    model_ir: ModelIR,
-    graph_index: ModelIRGraphIndex,
-    *,
-    name: str,
-    dtype: str,
-    channel_count: int,
-) -> Optional[np.ndarray]:
-    data = float_constant(model_ir, graph_index, name, dtype)
-    if data is None:
-        return None
-    shape = tuple(int(value) for value in data.shape)
-    if data.size == 1 or shape == (1, 1, 1, int(channel_count)):
-        return np.asarray(data)
-    if shape != (1, int(channel_count), 1, 1):
-        return None
-    return np.transpose(data, _PERM_NCHW_TO_NHWC)
-
-
 def _resolve_candidate(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -115,7 +76,7 @@ def _resolve_candidate(
             public_inputs,
         )
         != _PERM_NHWC_TO_NCHW
-        or not _constant_is_private_and_unquantized(
+        or not constant_is_private_and_unquantized(
             model_ir,
             graph_index,
             str(pre.inputs[1]),
@@ -188,7 +149,7 @@ def _resolve_candidate(
             public_inputs,
         )
         != _PERM_NCHW_TO_NHWC
-        or not _constant_is_private_and_unquantized(
+        or not constant_is_private_and_unquantized(
             model_ir,
             graph_index,
             str(post.inputs[1]),
@@ -257,77 +218,18 @@ def _resolve_candidate(
     ):
         return None
 
-    axes_uses: Dict[str, list[ConstantUse]] = {}
-    axes_uses.setdefault(core.mean1_axes_name, []).append(ConstantUse(core.mean1, 1))
-    axes_uses.setdefault(core.mean2_axes_name, []).append(ConstantUse(core.mean2, 1))
-    constant_updates = []
-    for axes_name, uses in axes_uses.items():
-        if not _constant_is_private_and_unquantized(
-            model_ir,
-            graph_index,
-            axes_name,
-            public_names,
-        ):
-            return None
-        update = plan_constant_update(
-            model_ir,
-            graph_index,
-            axes_name,
-            np.asarray(
-                [1, 2],
-                dtype=np.asarray(model_ir.tensors[axes_name].data).dtype,
-            ),
-            tuple(uses),
-            "nhwc_axes",
-            public_names,
-        )
-        if update is None:
-            return None
-        constant_updates.append(update)
-
-    coefficient_uses: Dict[str, list[ConstantUse]] = {}
-    coefficient_uses.setdefault(core.scale_name, []).append(
-        ConstantUse(core.scale, core.scale_input_index)
+    constant_updates = plan_nhwc_instance_norm_constant_updates(
+        model_ir,
+        graph_index,
+        core=core,
+        bias_name=bias_name,
+        bias_operator=add_bias,
+        bias_input_index=bias_input_index,
+        channel_count=int(pre_output.shape[1]),
+        public_names=public_names,
     )
-    coefficient_uses.setdefault(bias_name, []).append(
-        ConstantUse(add_bias, bias_input_index)
-    )
-    channel_count = int(pre_output.shape[1])
-    for coefficient_name, uses in coefficient_uses.items():
-        if not _constant_is_private_and_unquantized(
-            model_ir,
-            graph_index,
-            coefficient_name,
-            public_names,
-        ):
-            return None
-        replacement = _coefficient_replacement(
-            model_ir,
-            graph_index,
-            name=coefficient_name,
-            dtype=dtype,
-            channel_count=channel_count,
-        )
-        if replacement is None:
-            return None
-        current = np.asarray(model_ir.tensors[coefficient_name].data)
-        if current.shape == replacement.shape and np.array_equal(
-            current,
-            replacement,
-        ):
-            continue
-        update = plan_constant_update(
-            model_ir,
-            graph_index,
-            coefficient_name,
-            replacement,
-            tuple(uses),
-            "nhwc_coefficient",
-            public_names,
-        )
-        if update is None:
-            return None
-        constant_updates.append(update)
+    if constant_updates is None:
+        return None
 
     full_contracts = (
         core.centered,
@@ -369,7 +271,7 @@ def _resolve_candidate(
         post_output_name=post_output_name,
         add_bias=add_bias,
         add_bias_data_input_index=1 - int(bias_input_index),
-        constant_updates=tuple(constant_updates),
+        constant_updates=constant_updates,
         metadata_updates=metadata_updates,
         channel_last_names=channel_last_names,
     )

@@ -5018,6 +5018,35 @@ four-tail owner and this post-bias owner, while all production calls supply the
 Session `LayoutState`. The owner has a deterministic 32-rewrite ceiling and no
 whole-graph consumer-map rebuild or fixed-point `while` loop.
 
+The dual-branch decomposed-InstanceNormalization form whose normalized result
+is added to a residual NCHW branch is owned by
+`passes/instance_norm_residual_add_layout.py`. Its exact boundary is two
+independent `NHWC -> Transpose[0,3,1,2]` inputs, the common two-Mean
+InstanceNorm core through scale and bias, and a residual ADD with at least one
+later NCHW consumer. The rewrite removes both input Transposes, performs the
+normalization and residual ADD in NHWC, then inserts exactly one
+`Transpose[0,3,1,2]` immediately before the earliest downstream consumer. The
+adapter reproduces the original ADD output name and NCHW tensor contract, so
+all downstream fan-out and repeated input slots remain unchanged.
+
+One `ModelIRGraphIndex` proves the full producer, consumer, graph-order,
+boundary, shape/signature, dtype, quantization, permutation, affine-constant,
+and adapter contract before mutation. The common constant planner in
+`passes/decomposed_instance_norm.py` prepares both Mean-axis updates and the
+scale/bias changes as one transaction. Shared constants receive deterministic
+clones when required; an existing adapter permutation is reused only when it
+is a private unquantized INT32/INT64 `[0,3,1,2]` constant. Clone, output, and
+adapter-name collisions, invalid public or produced constants, unsafe dynamic
+contracts, and unsupported graph boundaries are complete no-ops.
+
+The indexed owner scans Transpose candidates in graph order, applies at most
+32 rewrites, updates the graph index differentially, and prunes unused tensors
+only after at least one successful rewrite. Its lowerer compatibility function
+is a 19-line dispatcher. The repeated normalization recovery loop supplies the
+same live index used by the adjacent post-bias owner, and both production calls
+supply the Session `LayoutState`. No full producer/consumer-map rebuild or
+unbounded fixed-point loop remains in this path.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
