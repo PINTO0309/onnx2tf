@@ -148,6 +148,9 @@ from onnx2tf.tflite_builder.passes.instance_norm_dual_stats_layout import (
 from onnx2tf.tflite_builder.passes.affine_chain_fold import (
     optimize_fold_mul_add_mul_affine_chains as _optimize_fold_mul_add_mul_affine_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.affine_prepost_layout import (
+    optimize_transpose_mul_add_const_prepost_nhwc_chains as _optimize_transpose_mul_add_const_prepost_nhwc_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.terminal_mean_layout import (
     _optimize_transpose_pre_unary_mean_terminal_nhwc_chains as _optimize_transpose_pre_unary_mean_terminal_nhwc_chains_pass,
     run_terminal_mean_layout_cleanup,
@@ -20175,415 +20178,23 @@ def _optimize_fold_mul_add_mul_affine_chains(
     )
 
 
-def _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Eliminate NCHW round-trips around linear TRANSPOSE->MUL(const)->ADD(const)->TRANSPOSE chains.
+def _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    """Dispatch the indexed affine pre/post layout owner."""
 
-    Target:
-      x_nhwc --TRANSPOSE(0,3,1,2)--> x_nchw
-      x_nchw --MUL(const)--> m_nchw --ADD(const)--> y_nchw
-      y_nchw --TRANSPOSE(0,2,3,1)--> y_nhwc
-
-    Rewrite:
-      x_nhwc --MUL(const_nhwc)--> m_nhwc --ADD(const_nhwc)--> y_nhwc
-    """
-    rewritten = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-
-    def _unique_tensor_name(base: str) -> str:
-        name = str(base)
-        suffix = 1
-        while name in model_ir.tensors:
-            name = f"{base}_{suffix}"
-            suffix += 1
-        return name
-
-    def _rewrite_binary_const_to_nhwc(
-        *,
-        op_idx: int,
-        side_input_index: int,
-        side_input_name: str,
-        target_broadcast_shape: Optional[List[int]],
-        chain_index_set: set[int],
-        consumers: Dict[str, List[int]],
-    ) -> bool:
-        side_tensor = model_ir.tensors.get(str(side_input_name), None)
-        if side_tensor is None or side_tensor.data is None:
-            return False
-        side_data = np.asarray(side_tensor.data)
-        if int(side_data.size) == 1:
-            return True
-        if side_data.ndim != 4:
-            return False
-
-        nhwc_data: Optional[np.ndarray] = None
-        target_shape = (
-            [int(v) for v in list(target_broadcast_shape)]
-            if _is_fully_known_positive_shape(target_broadcast_shape)
-            else None
-        )
-        if target_shape is not None:
-            side_shape = [int(v) for v in list(side_data.shape)]
-            is_nchw_channelwise = (
-                len(side_shape) == 4
-                and int(side_shape[0]) == 1
-                and int(side_shape[1]) > 0
-                and int(side_shape[2]) == 1
-                and int(side_shape[3]) == 1
-            )
-            if is_nchw_channelwise:
-                rotated = np.transpose(side_data, perm_nchw_to_nhwc).astype(side_data.dtype, copy=False)
-                rotated_shape = [int(v) for v in list(rotated.shape)]
-                if _broadcast_static_shapes(target_shape, rotated_shape) is None:
-                    return False
-                nhwc_data = np.asarray(rotated)
-                if np.array_equal(nhwc_data, side_data):
-                    return True
-            elif _broadcast_static_shapes(target_shape, side_shape) is not None:
-                # Already NHWC-compatible. Keep idempotent across repeated sweeps.
-                return True
-            else:
-                rotated = np.asarray(side_data)
-                for _ in range(3):
-                    rotated = np.transpose(rotated, perm_nchw_to_nhwc).astype(side_data.dtype, copy=False)
-                    rotated_shape = [int(v) for v in list(rotated.shape)]
-                    if _broadcast_static_shapes(target_shape, rotated_shape) is not None:
-                        nhwc_data = np.asarray(rotated)
-                        break
-                if nhwc_data is None:
-                    return False
-        else:
-            side_shape = [int(v) for v in list(side_data.shape)]
-            if (
-                len(side_shape) == 4
-                and int(side_shape[0]) == 1
-                and int(side_shape[1]) > 1
-                and int(side_shape[2]) == 1
-                and int(side_shape[3]) == 1
-            ):
-                nhwc_data = np.transpose(side_data, perm_nchw_to_nhwc).astype(side_data.dtype, copy=False)
-            else:
-                return True
-
-        side_users = [int(v) for v in consumers.get(str(side_input_name), [])]
-        shared_outside_chain = any(int(u) not in chain_index_set for u in side_users)
-
-        target_name = str(side_input_name)
-        if shared_outside_chain:
-            target_name = _unique_tensor_name(f"{side_input_name}_nhwc")
-            model_ir.tensors[target_name] = TensorIR(
-                name=target_name,
-                dtype=str(side_tensor.dtype),
-                shape=[int(v) for v in list(nhwc_data.shape)],
-                shape_signature=[int(v) for v in list(nhwc_data.shape)],
-                data=np.asarray(nhwc_data),
-                is_variable=False,
-                quantization=_clone_quantization(side_tensor.quantization),
-            )
-        else:
-            side_tensor.data = np.asarray(nhwc_data)
-            side_tensor.shape = [int(v) for v in list(nhwc_data.shape)]
-            side_tensor.shape_signature = [int(v) for v in list(nhwc_data.shape)]
-
-        _replace_operator_input_at(
-            model_ir=model_ir,
-            op=model_ir.operators[int(op_idx)],
-            input_index=int(side_input_index),
-            new_input_name=str(target_name),
-        )
-        return True
-
-    def _can_rewrite_binary_const_to_nhwc(
-        *,
-        side_input_name: str,
-        target_broadcast_shape: Optional[List[int]],
-    ) -> bool:
-        side_tensor = model_ir.tensors.get(str(side_input_name), None)
-        if side_tensor is None or side_tensor.data is None:
-            return False
-        side_data = np.asarray(side_tensor.data)
-        if int(side_data.size) == 1:
-            return True
-        if side_data.ndim != 4:
-            return False
-        target_shape = (
-            [int(v) for v in list(target_broadcast_shape)]
-            if _is_fully_known_positive_shape(target_broadcast_shape)
-            else None
-        )
-        if target_shape is None:
-            return True
-        side_shape = [int(v) for v in list(side_data.shape)]
-        is_nchw_channelwise = (
-            len(side_shape) == 4
-            and int(side_shape[0]) == 1
-            and int(side_shape[1]) > 0
-            and int(side_shape[2]) == 1
-            and int(side_shape[3]) == 1
-        )
-        if is_nchw_channelwise:
-            rotated = np.transpose(side_data, perm_nchw_to_nhwc).astype(side_data.dtype, copy=False)
-            rotated_shape = [int(v) for v in list(rotated.shape)]
-            return _broadcast_static_shapes(target_shape, rotated_shape) is not None
-        if _broadcast_static_shapes(target_shape, side_shape) is not None:
-            return True
-        rotated = np.asarray(side_data)
-        for _ in range(3):
-            rotated = np.transpose(rotated, perm_nchw_to_nhwc).astype(side_data.dtype, copy=False)
-            rotated_shape = [int(v) for v in list(rotated.shape)]
-            if _broadcast_static_shapes(target_shape, rotated_shape) is not None:
-                return True
-        return False
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
-                continue
-            pre_input_name = str(pre_op.inputs[0])
-            pre_output_name = str(pre_op.outputs[0])
-            if pre_input_name in model_outputs or pre_output_name in model_outputs:
-                continue
-
-            pre_users = [int(v) for v in consumers.get(pre_output_name, [])]
-            if len(pre_users) == 0:
-                continue
-            for mul_idx in pre_users:
-                mul_op = model_ir.operators[int(mul_idx)]
-                if str(mul_op.op_type) != "MUL" or len(mul_op.inputs) != 2 or len(mul_op.outputs) != 1:
-                    continue
-                mul_in0 = str(mul_op.inputs[0])
-                mul_in1 = str(mul_op.inputs[1])
-                if mul_in0 == pre_output_name:
-                    mul_side_input_index = 1
-                    mul_side_name = mul_in1
-                elif mul_in1 == pre_output_name:
-                    mul_side_input_index = 0
-                    mul_side_name = mul_in0
-                else:
-                    continue
-
-                add_input_name = str(mul_op.outputs[0])
-                if add_input_name in model_outputs:
-                    continue
-                add_users = [int(v) for v in consumers.get(add_input_name, [])]
-                if len(add_users) != 1:
-                    continue
-                add_idx = int(add_users[0])
-                add_op = model_ir.operators[add_idx]
-                if str(add_op.op_type) != "ADD" or len(add_op.inputs) != 2 or len(add_op.outputs) != 1:
-                    continue
-                add_in0 = str(add_op.inputs[0])
-                add_in1 = str(add_op.inputs[1])
-                if add_in0 == add_input_name:
-                    add_side_input_index = 1
-                    add_side_name = add_in1
-                elif add_in1 == add_input_name:
-                    add_side_input_index = 0
-                    add_side_name = add_in0
-                else:
-                    continue
-
-                add_output_name = str(add_op.outputs[0])
-                if add_output_name in model_outputs:
-                    continue
-
-                bridge_output_name = str(add_output_name)
-                bridge_output_producer_idx = int(add_idx)
-                bridge_output_producer_op = add_op
-                prelu_idx: Optional[int] = None
-                prelu_side_input_index: Optional[int] = None
-                prelu_side_name: Optional[str] = None
-
-                add_output_users = [int(v) for v in consumers.get(add_output_name, []) if int(v) != int(add_idx)]
-                if len(add_output_users) == 0:
-                    continue
-                if False and len(add_output_users) == 1:
-                    candidate_idx = int(add_output_users[0])
-                    candidate_op = model_ir.operators[int(candidate_idx)]
-                    if (
-                        str(candidate_op.op_type) == "PRELU"
-                        and len(candidate_op.inputs) == 2
-                        and len(candidate_op.outputs) == 1
-                        and str(candidate_op.inputs[0]) == add_output_name
-                    ):
-                        candidate_out_name = str(candidate_op.outputs[0])
-                        if candidate_out_name in model_outputs:
-                            continue
-                        prelu_idx = int(candidate_idx)
-                        prelu_side_input_index = 1
-                        prelu_side_name = str(candidate_op.inputs[1])
-                        bridge_output_name = str(candidate_out_name)
-                        bridge_output_producer_idx = int(candidate_idx)
-                        bridge_output_producer_op = candidate_op
-
-                bridge_output_users = [
-                    int(v)
-                    for v in consumers.get(bridge_output_name, [])
-                    if int(v) != int(bridge_output_producer_idx)
-                ]
-                if len(bridge_output_users) == 0:
-                    continue
-
-                post_indices: List[int] = []
-                post_output_names: List[str] = []
-                legacy_users: List[int] = []
-                valid_posts = True
-                for user_idx in bridge_output_users:
-                    user_op = model_ir.operators[int(user_idx)]
-                    if (
-                        str(user_op.op_type) == "TRANSPOSE"
-                        and len(user_op.inputs) >= 2
-                        and len(user_op.outputs) == 1
-                        and str(user_op.inputs[0]) == bridge_output_name
-                        and _read_transpose_perm(model_ir, user_op) == perm_nchw_to_nhwc
-                        and str(user_op.outputs[0]) not in model_outputs
-                    ):
-                        post_indices.append(int(user_idx))
-                        post_output_names.append(str(user_op.outputs[0]))
-                    else:
-                        legacy_users.append(int(user_idx))
-                if not valid_posts or len(post_indices) == 0:
-                    continue
-                if len(legacy_users) > 0:
-                    continue
-
-                chain_index_set = {int(mul_idx), int(add_idx)}
-                if prelu_idx is not None:
-                    chain_index_set.add(int(prelu_idx))
-                target_nhwc_shape = (
-                    list(model_ir.tensors[pre_input_name].shape)
-                    if pre_input_name in model_ir.tensors
-                    else None
-                )
-                if not _can_rewrite_binary_const_to_nhwc(
-                    side_input_name=str(mul_side_name),
-                    target_broadcast_shape=target_nhwc_shape,
-                ):
-                    continue
-                if not _can_rewrite_binary_const_to_nhwc(
-                    side_input_name=str(add_side_name),
-                    target_broadcast_shape=target_nhwc_shape,
-                ):
-                    continue
-                if not _rewrite_binary_const_to_nhwc(
-                    op_idx=int(mul_idx),
-                    side_input_index=int(mul_side_input_index),
-                    side_input_name=str(mul_side_name),
-                    target_broadcast_shape=target_nhwc_shape,
-                    chain_index_set=chain_index_set,
-                    consumers=consumers,
-                ):
-                    continue
-                if not _rewrite_binary_const_to_nhwc(
-                    op_idx=int(add_idx),
-                    side_input_index=int(add_side_input_index),
-                    side_input_name=str(add_side_name),
-                    target_broadcast_shape=target_nhwc_shape,
-                    chain_index_set=chain_index_set,
-                    consumers=consumers,
-                ):
-                    continue
-                if prelu_idx is not None:
-                    if prelu_side_input_index is None or prelu_side_name is None:
-                        continue
-                    if not _can_rewrite_binary_const_to_nhwc(
-                        side_input_name=str(prelu_side_name),
-                        target_broadcast_shape=target_nhwc_shape,
-                    ):
-                        continue
-                    if not _rewrite_binary_const_to_nhwc(
-                        op_idx=int(prelu_idx),
-                        side_input_index=int(prelu_side_input_index),
-                        side_input_name=str(prelu_side_name),
-                        target_broadcast_shape=target_nhwc_shape,
-                        chain_index_set=chain_index_set,
-                        consumers=consumers,
-                    ):
-                        continue
-
-                # Bypass only this branch input from pre_output to pre_input.
-                mul_inputs = [str(v) for v in list(mul_op.inputs)]
-                if mul_inputs[0] == pre_output_name:
-                    mul_inputs[0] = pre_input_name
-                elif mul_inputs[1] == pre_output_name:
-                    mul_inputs[1] = pre_input_name
-                else:
-                    continue
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=mul_op,
-                    new_inputs=mul_inputs,
-                )
-
-                _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(add_input_name, None),
-                    perm_nchw_to_nhwc,
-                )
-                _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(add_output_name, None),
-                    perm_nchw_to_nhwc,
-                )
-                if prelu_idx is not None:
-                    _permute_tensor_metadata_if_rank_matches(
-                        model_ir.tensors.get(bridge_output_name, None),
-                        perm_nchw_to_nhwc,
-                    )
-
-                canonical_post_output_name = str(post_output_names[0])
-                _set_operator_outputs(
-                    model_ir=model_ir,
-                    op=bridge_output_producer_op,
-                    new_outputs=[canonical_post_output_name],
-                )
-                for alias_name in post_output_names[1:]:
-                    _replace_tensor_inputs(model_ir, str(alias_name), canonical_post_output_name)
-
-                old_add_out_tensor = model_ir.tensors.get(bridge_output_name, None)
-                canonical_tensor = model_ir.tensors.get(canonical_post_output_name, None)
-                if old_add_out_tensor is not None and canonical_tensor is not None:
-                    canonical_tensor.dtype = str(old_add_out_tensor.dtype)
-                    canonical_tensor.quantization = _clone_quantization(old_add_out_tensor.quantization)
-                    canonical_tensor.shape = [int(v) for v in list(old_add_out_tensor.shape)]
-                    canonical_tensor.shape_signature = (
-                        [int(v) for v in list(old_add_out_tensor.shape_signature)]
-                        if old_add_out_tensor.shape_signature is not None
-                        else [int(v) for v in list(old_add_out_tensor.shape)]
-                    )
-                    _permute_tensor_metadata_if_rank_matches(
-                        canonical_tensor,
-                        perm_nchw_to_nhwc,
-                    )
-
-                post_remove_indices = [int(v) for v in post_indices]
-
-                remove_indices = set(int(v) for v in post_remove_indices)
-                # Drop pre transpose only when this rewrite consumed its last user.
-                pre_remaining_users = [int(v) for v in pre_users if int(v) != int(mul_idx)]
-                if len(pre_remaining_users) == 0:
-                    remove_indices.add(int(pre_idx))
-                for remove_idx in sorted(remove_indices, reverse=True):
-                    del model_ir.operators[int(remove_idx)]
-
-                rewritten += 1
-                changed = True
-                break
-
-            if changed:
-                break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"optimized_transpose_mul_add_const_prepost_nhwc_chains": int(rewritten)}
+    return _optimize_transpose_mul_add_const_prepost_nhwc_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_transpose_pad_mul_posttranspose_add_nhwc_chains(
@@ -40319,7 +39930,10 @@ def lower_onnx_to_ir(
         _optimize_transpose_pre_add_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mul_add_prelu_nhwc_chains(model_ir)
         _optimize_transpose_pre_add_mul_add_transpose_fanout_nhwc_chains(model_ir)
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
+        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
         _run_mean_attention_layout_pass_cluster()
@@ -40378,7 +39992,10 @@ def lower_onnx_to_ir(
         *,
         include_duplicate_transpose: bool,
     ) -> None:
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
+        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
         _run_mean_attention_layout_pass_cluster()
@@ -40438,7 +40055,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
+        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_concat_mul_add_transpose_nhwc_bridge_chains(model_ir)
         _optimize_concat_mul_add_transpose_add_nhwc_bridge_chains(model_ir)
         _optimize_concat_mul_add_add_mean_reshape_tail_nhwc_bridge_chains(model_ir)
@@ -40545,7 +40165,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
+        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_pre_unary_mul_add_transpose_fanout_nhwc_chains(model_ir)
         _optimize_transpose_mean_mul_add_const_prepost_nhwc_chains(model_ir)
         _run_mean_attention_layout_pass_cluster(include_layernorm=True)
@@ -41014,7 +40637,10 @@ def lower_onnx_to_ir(
         # Keep strict, const-only NHWC<->NCHW affine bridge folding enabled
         # in no-layout fallback so simple TRANSPOSE->MUL->ADD->TRANSPOSE
         # chains are still reduced.
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
+        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
     _optimize_transpose_dequant_hardsigmoid_quantize_bridges(model_ir)
     _run_late_dequant_unary_fanout_pass_cluster()
     # No-layout fallback relowering can still keep strict
@@ -41136,7 +40762,10 @@ def lower_onnx_to_ir(
             _optimize_terminal_transpose_prelu_reshape_batchmatmul_nhwc_chains(model_ir)
         # PRELU rewrite can recreate strict TRANSPOSE->MUL(const)->ADD(const)->TRANSPOSE
         # bridges on legacy branches. Fold them again in this final stage.
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
+        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         if optimize_layout_transpose_chains:
             run_layout_transpose_cleanup(
                 model_ir,
@@ -41422,7 +41051,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_transpose_mul_add_const_prepost_nhwc_chains(model_ir)
+        _optimize_transpose_mul_add_const_prepost_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _topologically_sort_operators(model_ir)
     # Final boundary-signature restore:
     # late static-shape reconciliations may overwrite graph-boundary dynamic

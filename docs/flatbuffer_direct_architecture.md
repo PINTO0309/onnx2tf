@@ -5154,6 +5154,46 @@ success-only pruning, and Session `LayoutState` synchronization. The former
 219-line raw lowerer loop is a 17-line compatibility dispatcher, and all three
 production calls provide the Session LayoutState.
 
+The strict
+`NHWC -> Transpose(NCHW) -> MUL(const) -> ADD(const) -> Transpose(NHWC)`
+layout island is owned by `passes/affine_prepost_layout.py`. Matching begins at
+each MUL candidate and proves the unique pre-Transpose producer, sole ADD
+consumer, and every inverse post-Transpose consumer. The pre adapter may remain
+for unrelated branches. The ADD output may fan out only through valid inverse
+post adapters; all post aliases are merged into the first graph-ordered output
+while downstream fan-out and repeated input slots are preserved.
+
+The owner supports finite FLOAT16, FLOAT32, and FLOAT64 scalar or rank-four
+constants. Raw NCHW channel, spatial, and full tensors are transposed once to
+NHWC. A constant already compatible only with the NHWC target is retained, so
+recovery is idempotent after an earlier partial layout sweep. Known
+logical/physical NCHW or NHWC annotations disambiguate orientation when
+available. If both the direct and rotated non-invariant arrays are compatible
+because channel and spatial dimensions coincide, the owner rejects the
+candidate instead of guessing an axis meaning. Constants are grouped across
+MUL and ADD; unrelated consumers receive deterministic `_nhwc` clones.
+
+Pre/post permutation tensors must be private, typed INT32/INT64 vectors with
+exact values. All data tensors must be rank four, unquantized, same-dtype, and
+have exact NCHW/NHWC shape and dynamic-signature permutations. Fused binary
+activations, public intermediates or post outputs, produced or variable
+constants, legacy ADD-output consumers, duplicate producers, invalid order,
+and partial alias contracts reject the entire plan before mutation. The
+disabled legacy PRELU branch and unused `valid_posts` state are not part of the
+owner contract.
+
+The first post output tensor is the authoritative final contract and is not
+overwritten. The surviving MUL intermediate adopts its shape, signature,
+logical layout, and physical layout; the old ADD intermediate receives the
+same metadata only so output renaming cannot contaminate dynamic axes before it
+is pruned. This fixes the legacy path that first permuted the ADD intermediate,
+copied it onto the canonical output, and then permuted the canonical tensor a
+second time. A side-effect-free plan is resolved again immediately before
+apply. One differential index, a graph-ordered candidate snapshot, a
+configurable 32-rewrite ceiling, success-only pruning, and LayoutState sync
+replace the unbounded full-map loop. The former 409-line helper is a 17-line
+dispatcher, and all seven production calls provide the Session LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
