@@ -269,10 +269,11 @@ now accepts an optional scope while remaining standalone-compatible.
 
 The late Dequantize/Concat/Quantize, unary-passthrough, and unary-fan-out
 sequence also shares one scope. The scope begins after the raw Dequantize/
-HardSigmoid/Quantize bridge rewrite and ends before the raw swish rewrite, so
-no legacy ModelIR mutation can invalidate its index. The three runners retain
-their exact order and diagnostics while constructing one graph index instead
-of up to three.
+HardSigmoid/Quantize bridge rewrite and ends before the independently indexed
+Swish dispatcher. The Swish semantic owner maintains its own differential
+index, so pass state is not shared across that phase boundary. The three
+runners retain their exact order and diagnostics while constructing one graph
+index instead of up to three.
 
 `GraphIndex` and `ModelIRGraphIndex` provide differential mutation contracts.
 ONNX rewriters notify node input/output updates and node registration/removal;
@@ -1155,6 +1156,52 @@ LayoutState. Indexed guards trace singleton constants, Add/clamp topology,
 residual multiplication, optional Mean fan-out, and inverse terminal
 transposes before snapshotting; operator rewires and boundary-transpose removal
 update the differential index directly.
+
+Unquantized pseudo-Swish transpose passthrough is independently owned by
+`passes/swish_passthrough_layout.py`. The former 194-line raw helper is a thin
+dispatcher at its two unchanged production positions: once in the ordered
+activation recovery prefix and once in the no-layout-compatible late recovery.
+Both calls receive Session `LayoutState`. This owner is separate from the
+quantized Swish-QDQ phases because it recognizes the exact float or per-tensor
+`Logistic(x) * x` residual topology rather than Dequantize/Quantize closure.
+
+The resolver accepts a typed immutable INT32/INT64 permutation of rank two or
+higher, an exact source-to-transposed tensor view, one Logistic consumer, one
+residual Mul consumer in either operand order, and at least one typed inverse
+post adapter. Static shapes, independently dynamic signatures, dtype,
+per-tensor quantization, layout transition, provenance, unique production,
+consumer slots, graph order, public aliases, and every post-adapter output are
+proven before planning. Immutable operator-produced and constant sources are
+both supported; the source data is never transposed or mutated because Swish
+is elementwise and commutes with the boundary permutation.
+
+All post aliases collapse to one source-layout Mul output. Exact consumer-slot
+grouping preserves repeated inputs and selects a public post alias when one is
+present. If the old transposed Mul result still has a legacy consumer or is a
+graph output, one local adapter is inserted immediately after Mul. It reuses
+the proven pre-permutation buffer. The old helper instead overwrote a selected
+post-permutation buffer in place, which could corrupt an unrelated user when
+that constant was shared.
+
+The immutable plan records both head rewrites, every alias rewrite, metadata,
+public lists, adapter removals, and complete tensor/operator contracts. A full
+second resolution and preflight precede mutation. One differential graph index
+updates slots, compacts the pre/post adapters, changes the Mul output, and
+inserts the optional legacy adapter. LayoutState is updated only for surviving
+source-layout tensors and pruning occurs only after success. Graph-ordered
+Transpose candidates and an optional candidate-count limit replace the raw
+full-map unbounded fixed-point loop.
+
+Fifty-six focused cases cover rank-three/rank-four static and dynamic views,
+INT32/INT64 permutations, both Mul operand orders, one/multiple posts, repeated
+alias slots, a public post, immutable constant source, shared post permutation,
+legacy and public transposed boundaries, exact numerical equivalence,
+candidate limits, idempotence, GraphIndex, LayoutState, and twenty-seven
+transactional rejection cases. The focused owner, adjacent input and
+quantized-Swish owners, active Swish fixtures, and complete architecture suite
+pass together with `304 passed in 44.59s`. TensorFlow-blocked
+direct/default/`-cotof` checks pass sequentially, and YuNet reproduces all five
+fixed artifact hashes.
 
 The terminal hard-activation recovery and its immediately following optional
 generic Transpose cleanup share one lazy `ModelIRPassStateScope`. The hard

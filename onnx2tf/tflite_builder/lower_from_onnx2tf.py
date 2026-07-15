@@ -164,6 +164,9 @@ from onnx2tf.tflite_builder.passes.split_all_outputs_layout import (
 from onnx2tf.tflite_builder.passes.split_conv_concat_bridge_layout import (
     optimize_split_conv_concat_transpose_bridge_to_single_post_nchw as _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw_pass,
 )
+from onnx2tf.tflite_builder.passes.swish_passthrough_layout import (
+    optimize_swish_transpose_passthrough_chains as _optimize_swish_transpose_passthrough_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
     optimize_sinet_late_residual_pre_add_mul_add_prelu_chains as _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains_pass,
     optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains as _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains_pass,
@@ -5809,198 +5812,21 @@ def _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains(
     return _optimize_transpose_norm_subgraph_pad_prepost_nhwc_chains_pass(model_ir)
 
 
-def _optimize_swish_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold transpose wrappers around pseudo-op-expanded Swish chains.
-
-    Target:
-      X --TRANSPOSE(P)--> x_t
-      x_t --LOGISTIC--> s_t
-      MUL(x_t, s_t) --> y_t
-      y_t --TRANSPOSE(inv(P))--> Y
-
-    Rewrite:
-      X --LOGISTIC--> s
-      MUL(X, s) --> Y
-
-    Safety:
-    - Strict Swish topology (LOGISTIC + residual MUL input).
-    - LOGISTIC output must be consumed only by the MUL.
-    - Requires at least one inverse post-transpose consumer.
-    """
-    rewritten = 0
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE":
-                continue
-            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
-                continue
-
-            pre_input_name = str(pre_op.inputs[0])
-            pre_output_name = str(pre_op.outputs[0])
-            if pre_output_name in model_outputs:
-                continue
-
-            perm_pre = _read_transpose_perm(model_ir, pre_op)
-            if perm_pre is None:
-                continue
-            perm_post_expected = _invert_perm(perm_pre)
-            if perm_post_expected is None:
-                continue
-
-            pre_users = [int(v) for v in consumers.get(pre_output_name, [])]
-            if len(pre_users) != 2:
-                continue
-
-            log_idx = None
-            mul_idx = None
-            for user_idx in pre_users:
-                user_op = model_ir.operators[int(user_idx)]
-                user_type = str(user_op.op_type)
-                if (
-                    user_type == "LOGISTIC"
-                    and len(user_op.inputs) == 1
-                    and len(user_op.outputs) == 1
-                    and str(user_op.inputs[0]) == pre_output_name
-                ):
-                    log_idx = int(user_idx)
-                elif user_type == "MUL":
-                    mul_idx = int(user_idx)
-            if log_idx is None or mul_idx is None:
-                continue
-
-            log_op = model_ir.operators[int(log_idx)]
-            log_out_name = str(log_op.outputs[0])
-            log_users = [int(v) for v in consumers.get(log_out_name, [])]
-            if len(log_users) != 1 or int(log_users[0]) != int(mul_idx):
-                continue
-
-            mul_op = model_ir.operators[int(mul_idx)]
-            if len(mul_op.inputs) != 2 or len(mul_op.outputs) != 1:
-                continue
-            mul_inputs = [str(v) for v in mul_op.inputs]
-            if mul_inputs[0] == pre_output_name and mul_inputs[1] == log_out_name:
-                mul_data_input_index = 0
-            elif mul_inputs[1] == pre_output_name and mul_inputs[0] == log_out_name:
-                mul_data_input_index = 1
-            else:
-                continue
-
-            mul_out_name = str(mul_op.outputs[0])
-            mul_users = [int(v) for v in consumers.get(mul_out_name, []) if int(v) != int(mul_idx)]
-            if len(mul_users) == 0:
-                continue
-
-            post_indices: List[int] = []
-            post_output_names: List[str] = []
-            legacy_users: List[int] = []
-            valid_users = True
-            for user_idx in mul_users:
-                user_op = model_ir.operators[int(user_idx)]
-                if (
-                    str(user_op.op_type) == "TRANSPOSE"
-                    and len(user_op.inputs) >= 2
-                    and len(user_op.outputs) == 1
-                    and str(user_op.inputs[0]) == mul_out_name
-                ):
-                    perm_post = _read_transpose_perm(model_ir, user_op)
-                    if perm_post is None or perm_post != perm_post_expected:
-                        valid_users = False
-                        break
-                    post_output_name = str(user_op.outputs[0])
-                    if post_output_name in model_outputs:
-                        valid_users = False
-                        break
-                    post_indices.append(int(user_idx))
-                    post_output_names.append(post_output_name)
-                else:
-                    legacy_users.append(int(user_idx))
-            if not valid_users or len(post_indices) == 0:
-                continue
-
-            representative_output_name = str(post_output_names[0])
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=log_op,
-                new_inputs=[pre_input_name],
-            )
-            _replace_operator_input_at(
-                model_ir=model_ir,
-                op=mul_op,
-                input_index=int(mul_data_input_index),
-                new_input_name=pre_input_name,
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=mul_op,
-                new_outputs=[representative_output_name],
-            )
-            for alias_output_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, alias_output_name, representative_output_name)
-
-            # LOGISTIC is layout-agnostic; update metadata from transposed to source layout.
-            _permute_tensor_metadata_if_rank_matches(
-                model_ir.tensors.get(log_out_name, None),
-                perm_post_expected,
-            )
-
-            old_mul_tensor = model_ir.tensors.get(mul_out_name, None)
-            representative_tensor = model_ir.tensors.get(representative_output_name, None)
-            if old_mul_tensor is not None and representative_tensor is not None:
-                representative_tensor.dtype = str(old_mul_tensor.dtype)
-                representative_tensor.quantization = _clone_quantization(old_mul_tensor.quantization)
-                representative_tensor.shape = [int(v) for v in list(old_mul_tensor.shape)]
-                representative_tensor.shape_signature = (
-                    [int(v) for v in list(old_mul_tensor.shape_signature)]
-                    if old_mul_tensor.shape_signature is not None
-                    else [int(v) for v in list(old_mul_tensor.shape)]
-                )
-                _permute_tensor_metadata_if_rank_matches(
-                    representative_tensor,
-                    perm_post_expected,
-                )
-
-            preserve_nchw_adapter = len(legacy_users) > 0 or mul_out_name in model_outputs
-            if preserve_nchw_adapter:
-                keep_post_idx = int(post_indices[0])
-                keep_post_op = model_ir.operators[keep_post_idx]
-                keep_perm_name = str(keep_post_op.inputs[1])
-                keep_perm_tensor = model_ir.tensors.get(keep_perm_name, None)
-                if keep_perm_tensor is not None:
-                    keep_perm_tensor.data = np.asarray(perm_pre, dtype=np.int32)
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=keep_post_op,
-                    new_inputs=[representative_output_name, keep_perm_name],
-                )
-                _set_operator_outputs(
-                    model_ir=model_ir,
-                    op=keep_post_op,
-                    new_outputs=[mul_out_name],
-                )
-                post_remove_indices = [int(v) for v in post_indices[1:]]
-            else:
-                post_remove_indices = [int(v) for v in post_indices]
-
-            remove_indices = sorted(list({int(pre_idx), *post_remove_indices}), reverse=True)
-            for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"rewritten_swish_transpose_passthrough_chains": int(rewritten)}
+def _optimize_swish_transpose_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: Optional[int] = None,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    return _optimize_swish_transpose_passthrough_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_gelu_tanh_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
@@ -29366,7 +29192,10 @@ def lower_onnx_to_ir(
             layout_state=session.layout_state,
             diagnostics=session.diagnostics,
         )
-        _optimize_swish_transpose_passthrough_chains(model_ir)
+        _optimize_swish_transpose_passthrough_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_gelu_tanh_transpose_passthrough_chains(model_ir)
         _optimize_center_size_offset_terminal_transpose_chains(model_ir)
         _optimize_leakyrelu_transpose_passthrough_chains(model_ir)
@@ -30227,7 +30056,10 @@ def lower_onnx_to_ir(
     _run_late_dequant_unary_fanout_pass_cluster()
     # No-layout fallback relowering can still keep strict
     # TRANSPOSE->LOGISTIC->MUL->TRANSPOSE swish wrappers (e.g. MobileViT stem).
-    _optimize_swish_transpose_passthrough_chains(model_ir)
+    _optimize_swish_transpose_passthrough_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     # Conv1D shim patterns can retain:
     # TRANSPOSE -> SQUEEZE -> UNARY -> EXPAND_DIMS -> TRANSPOSE.
     # Fold them to a single rank-4 UNARY op.

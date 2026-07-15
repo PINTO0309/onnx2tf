@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves the direct Split/Conv/Concat bridge into
-the TensorFlow-free indexed
-`passes/split_conv_concat_bridge_layout.py` owner. Its former 287-line full-map
-fixed-point helper is now a thin dispatcher at all three unchanged production
-positions, and each call receives Session LayoutState. The plan classifies
-every Split and Concat edge, proves the bounded NHWC branch path and all owned
-adapters, preserves the original local NCHW Concat boundary, and revalidates
-the complete immutable contract before mutation.
+The latest implementation unit moves unquantized pseudo-Swish transpose
+passthrough into the TensorFlow-free indexed
+`passes/swish_passthrough_layout.py` owner. Its former 194-line full-map
+fixed-point helper is now a thin dispatcher at both unchanged production
+positions, and each call receives Session LayoutState. The plan proves the
+complete Logistic/residual-Mul topology, every inverse post alias, and an
+optional retained legacy boundary before mutation. Shared post-permutation
+constants are no longer rewritten in place.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -307,6 +307,67 @@ and `schema_generated.py`
 `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
 Temporary outputs were removed. No Tier corpus run was performed.
 
+### Unquantized pseudo-Swish passthrough continuation
+
+The raw `_optimize_swish_transpose_passthrough_chains` implementation is now
+owned by `passes/swish_passthrough_layout.py`. Its position after registered
+hard-activation cleanup in the ordered recovery prefix and its late
+no-layout-compatible recovery position are unchanged. Both calls supply
+Session LayoutState, and the legacy stats key remains unchanged.
+
+The resolver requires a typed immutable rank-two-or-higher INT32/INT64
+permutation, exact source/transposed shapes and independently dynamic
+signatures, one Logistic consumer, and one residual Mul consumer in either
+operand order. At least one typed inverse post adapter must close the
+source-layout path. All producer, consumer-slot, graph-order, public-boundary,
+dtype, per-tensor quantization, layout, and alias contracts are resolved before
+a plan exists. Immutable operator-produced and constant sources are supported;
+source buffers remain unchanged because elementwise Swish commutes with the
+permutation.
+
+All inverse-post aliases are grouped by exact downstream input slot and fold
+to one representative source-layout Mul result. One public post alias may be
+the representative. When the old transposed Mul tensor still has a legacy
+consumer or is itself public, the plan inserts one adapter immediately after
+Mul and reuses the proven pre-permutation. The old helper mutated the selected
+post-permutation tensor to the opposite direction; the new structure leaves a
+shared post constant and every unrelated consumer untouched.
+
+Input rewrites, output changes, metadata, public lists, removals, and complete
+tensor/operator contracts are immutable plan state and are fully re-resolved
+before apply. One differential graph index performs all rewrites, one adapter
+compaction, and the optional legacy-adapter insertion. LayoutState changes only
+with the accepted transaction, candidate count bounds execution, and pruning
+is success-only.
+
+Pre-extraction and post-extraction characterization ran sequentially on YuNet,
+FastestDet, HumanSeg, OSNet, and SiNet. The helper was invoked five times on
+each of the first four models and six times on SiNet. All 26 invocations were
+zero-match and preserved operator/tensor counts before and after extraction.
+
+The focused suite passes with `56 passed`. It covers rank-three/rank-four,
+static/dynamic signatures, INT32/INT64 permutations, both Mul operand orders,
+one/multiple posts, repeated alias slots, public post selection, immutable
+constant source, shared post permutation, legacy/public transposed boundaries,
+exact numerical equivalence, candidate limits, idempotence, GraphIndex,
+LayoutState, and twenty-seven unsafe transactional no-op cases. The new owner,
+adjacent input and quantized-Swish suites, four active Swish fixtures, and full
+architecture suite pass together with `304 passed in 44.59s`.
+
+TensorFlow-import-blocked explicit direct, default direct, and `-cotof`
+conversion pass sequentially with `3 passed in 4.19s`. One sequential YuNet
+conversion reproduced float32
+`43c65782ae622ea5aefc97632f2c69033fb8a314469e4c30703c88f9907cc380`,
+float16
+`13232a21173ef434c7b4986320931a17a28a211109fa894023c6da7672609433`,
+correspondence
+`7e2b57a9b2264ef08db5aaead11922109079274eb15befbfc90bf321de370b4d`,
+`schema.fbs`
+`0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`,
+and `schema_generated.py`
+`b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+Temporary outputs were removed and no Tier corpus was run.
+
 ## Completed work
 
 The merged `fb-refactor4` checkpoints included:
@@ -324,7 +385,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 129 coherent implementation
+The current `fb-refactor5` work contains 130 coherent implementation
 continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
@@ -638,6 +699,10 @@ continuations:
   indexed owner, classifies every direct and post-adapter Concat input, permits
   only a bounded proven NHWC branch interior, and preserves the original local
   NCHW Concat contract through one revalidated transaction.
+- the current checkpoint moves unquantized pseudo-Swish passthrough to an
+  indexed owner, proves all Logistic/Mul/post-alias slots, preserves an
+  optional legacy transposed boundary with the pre-permutation, and eliminates
+  mutation of shared post-permutation constants.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -656,8 +721,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/split_conv_concat_bridge_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_split_conv_concat_bridge_layout.py`;
+- `onnx2tf/tflite_builder/passes/swish_passthrough_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_swish_passthrough_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -778,6 +843,24 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   private NHWC tensor becomes the Concat producer output and one new post
   adapter reuses the proven pre-adapter permutation. Split axes preserve their
   INT32/INT64 dtype and use copy-on-write when shared.
+- Unquantized pseudo-Swish is independent from Swish-QDQ. Its semantic root is
+  one `Logistic(x) * x` residual island with inverse post aliases, not a
+  Dequantize/Quantize closure. Both Mul operand positions are preserved.
+- Typed permutations may be rank two or higher and INT32 or INT64. Static
+  shape and dynamic signature views must match in both directions. Known
+  logical/physical layouts must describe the same transition; unknown layout
+  remains valid when tensor views prove the permutation directly.
+- Post aliases are grouped by exact consumer slot. A public alias becomes the
+  representative when present. Multiple public aliases reject the candidate
+  because removing them would otherwise change the output-name contract.
+- A legacy consumer of the old transposed Mul tensor is preserved by inserting
+  one adapter immediately after Mul. The adapter uses the immutable pre-
+  permutation instead of reversing a post-permutation buffer in place, so
+  shared post constants and unrelated consumers cannot be corrupted.
+- Immutable constant sources are supported without data mutation. Moving
+  Logistic and Mul to the source view is exact because Swish is elementwise;
+  runtime intermediates and adapter endpoints remain fully typed and
+  per-tensor quantized.
 - The exporter remains the ordered orchestration owner; match/guard/rewrite
   decisions move to `pytorch_fast_precanonicalize_policy.py` one coherent
   family at a time.
@@ -978,8 +1061,9 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
 - The late Dequantize/Concat/Quantize, unary-passthrough, and unary-fan-out
   sequence uses one helper-owned scope. All three runners already expose
   optional standalone-compatible scopes. Architecture checks fix the raw
-  Dequantize/HardSigmoid/Quantize predecessor and raw swish successor as hard
-  boundaries, preventing shared state from crossing a legacy mutator.
+  Dequantize/HardSigmoid/Quantize predecessor and independently indexed Swish
+  successor as hard boundaries. The Swish owner maintains its own differential
+  index rather than reusing pass state across that semantic phase boundary.
 - The terminal singleton-MaxPool/consecutive-Reshape pair uses one helper-
   owned scope. The two singleton-MaxPool specs retain their order before the
   general Reshape cleanup spec. Architecture checks fix the conditional
@@ -1855,7 +1939,7 @@ env -u PYTHONPATH -u LD_LIBRARY_PATH \
 The preflight-only fixture records one graph-index refresh across three events;
 only the first reports `state_built: true`. Architecture checks fix all three
 runner calls, their shared scope, the preceding raw QDQ bridge, and the
-following raw swish rewrite.
+following independently indexed Swish dispatcher.
 A focused terminal singleton-MaxPool/Reshape checkpoint passed:
 
 ```text
@@ -4656,6 +4740,11 @@ the generic direct bridge has its own indexed owner and preserves all three
 production positions. The five short representatives remain zero-match for
 the bridge, and YuNet retains byte-identical artifacts.
 
+The unquantized pseudo-Swish passthrough helper is also indexed at both
+production positions. The adjacent raw activation helpers for tanh-GELU,
+center/size offset, LeakyReLU, and PReLU remain independent candidates and
+must be characterized separately before extraction.
+
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
 optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
 regression work also remains subject to the original refactor plan and its
@@ -4665,10 +4754,11 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Re-audit the current lowerer to select the next bounded raw semantic owner;
-   do not assume an old line-count inventory remains current after the three
-   Split/Conv/Concat extractions. Keep existing phase order and characterize
-   the selected helper before mutation.
+2. Characterize the adjacent raw activation recovery helpers in their current
+   order, beginning with
+   `_optimize_gelu_tanh_transpose_passthrough_chains`. Select only one bounded
+   semantic owner after confirming its runtime match set, topology, and
+   interaction with Swish and the center/size-offset helper.
 3. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
