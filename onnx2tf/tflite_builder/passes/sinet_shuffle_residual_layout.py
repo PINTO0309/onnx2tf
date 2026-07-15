@@ -17,6 +17,7 @@ from onnx2tf.tflite_builder.passes.affine_prepost_layout import (
     _FLOAT_DTYPES,
     _NCHW_TO_NHWC,
     _NHWC_TO_NCHW,
+    _data_and_constant_inputs,
     _has_exact_producer,
     _permute,
     _plain_binary,
@@ -146,6 +147,25 @@ class _LateResidualPlan:
     constant_plans: Tuple[_ConstantPlan, ...]
     metadata_updates: Tuple[_MetadataUpdate, ...]
     remove_operators: Tuple[OperatorIR, ...]
+
+
+@dataclass(frozen=True)
+class _LateAffineTailMatch:
+    root: OperatorIR
+    downstream: OperatorIR
+    prelu1: OperatorIR
+    add1: OperatorIR
+    mul1: OperatorIR
+    add0: OperatorIR
+    prelu1_output_name: str
+    post1_output_name: str
+    add1_output_name: str
+    mul1_output_name: str
+    add0_output_name: str
+    mul1_constant_name: str
+    mul1_constant_index: int
+    add1_constant_name: str
+    add1_constant_index: int
 
 
 def _producer(
@@ -1129,14 +1149,15 @@ def _resolve_candidate(
     )
 
 
-def _resolve_late_candidate(
+def _resolve_late_affine_tail(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
     root: OperatorIR,
-) -> Optional[_LateResidualPlan]:
+    *,
+    public_inputs: set[str],
+    public_outputs: set[str],
+) -> Optional[_LateAffineTailMatch]:
     root_index = graph_index.operator_index(root)
-    public_inputs = {str(name) for name in model_ir.inputs}
-    public_outputs = {str(name) for name in model_ir.outputs}
     public_names = public_inputs | public_outputs
     if (
         root_index is None
@@ -1201,47 +1222,41 @@ def _resolve_late_candidate(
     if add1_match is None:
         return None
     add1_index, add1 = add1_match
+    add1_inputs = _data_and_constant_inputs(model_ir, add1)
     if (
-        not _plain_binary(add1, "ADD")
+        add1_inputs is None
+        or not _plain_binary(add1, "ADD")
         or int(add1_index) >= int(prelu1_index)
         or graph_index.consumer_indices(add1_output_name)
         != [int(prelu1_index)]
     ):
         return None
-    add1_constants = [
-        index
-        for index, name in enumerate(add1.inputs)
-        if (tensor := model_ir.tensors.get(str(name))) is not None
-        and tensor.data is not None
-    ]
-    if len(add1_constants) != 1:
-        return None
-    add1_constant_index = int(add1_constants[0])
-    add1_constant_name = str(add1.inputs[add1_constant_index])
-    mul1_output_name = str(add1.inputs[1 - add1_constant_index])
+    (
+        _,
+        mul1_output_name,
+        add1_constant_index,
+        add1_constant_name,
+    ) = add1_inputs
 
     mul1_match = _producer(model_ir, graph_index, mul1_output_name, "MUL")
     if mul1_match is None:
         return None
     mul1_index, mul1 = mul1_match
+    mul1_inputs = _data_and_constant_inputs(model_ir, mul1)
     if (
-        not _plain_binary(mul1, "MUL")
+        mul1_inputs is None
+        or not _plain_binary(mul1, "MUL")
         or int(mul1_index) >= int(add1_index)
         or graph_index.consumer_indices(mul1_output_name)
         != [int(add1_index)]
     ):
         return None
-    mul1_constants = [
-        index
-        for index, name in enumerate(mul1.inputs)
-        if (tensor := model_ir.tensors.get(str(name))) is not None
-        and tensor.data is not None
-    ]
-    if len(mul1_constants) != 1:
-        return None
-    mul1_constant_index = int(mul1_constants[0])
-    mul1_constant_name = str(mul1.inputs[mul1_constant_index])
-    add0_output_name = str(mul1.inputs[1 - mul1_constant_index])
+    (
+        _,
+        add0_output_name,
+        mul1_constant_index,
+        mul1_constant_name,
+    ) = mul1_inputs
 
     add0_match = _producer(model_ir, graph_index, add0_output_name, "ADD")
     if add0_match is None:
@@ -1254,7 +1269,59 @@ def _resolve_late_candidate(
         != [int(mul1_index)]
     ):
         return None
+    return _LateAffineTailMatch(
+        root=root,
+        downstream=downstream,
+        prelu1=prelu1,
+        add1=add1,
+        mul1=mul1,
+        add0=add0,
+        prelu1_output_name=prelu1_output_name,
+        post1_output_name=post1_output_name,
+        add1_output_name=add1_output_name,
+        mul1_output_name=mul1_output_name,
+        add0_output_name=add0_output_name,
+        mul1_constant_name=mul1_constant_name,
+        mul1_constant_index=int(mul1_constant_index),
+        add1_constant_name=add1_constant_name,
+        add1_constant_index=int(add1_constant_index),
+    )
 
+
+def _resolve_late_candidate(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    root: OperatorIR,
+) -> Optional[_LateResidualPlan]:
+    public_inputs = {str(name) for name in model_ir.inputs}
+    public_outputs = {str(name) for name in model_ir.outputs}
+    public_names = public_inputs | public_outputs
+    tail = _resolve_late_affine_tail(
+        model_ir,
+        graph_index,
+        root,
+        public_inputs=public_inputs,
+        public_outputs=public_outputs,
+    )
+    if tail is None:
+        return None
+    downstream = tail.downstream
+    prelu1 = tail.prelu1
+    add1 = tail.add1
+    mul1 = tail.mul1
+    add0 = tail.add0
+    prelu1_output_name = tail.prelu1_output_name
+    post1_output_name = tail.post1_output_name
+    add1_output_name = tail.add1_output_name
+    mul1_output_name = tail.mul1_output_name
+    add0_output_name = tail.add0_output_name
+    mul1_constant_name = tail.mul1_constant_name
+    mul1_constant_index = tail.mul1_constant_index
+    add1_constant_name = tail.add1_constant_name
+    add1_constant_index = tail.add1_constant_index
+    add0_index = graph_index.operator_index(add0)
+    if add0_index is None:
+        return None
     pre_add_roles = []
     concat_backed_inputs = 0
     for input_index, input_name in enumerate(add0.inputs):

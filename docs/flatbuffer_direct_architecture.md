@@ -5370,6 +5370,42 @@ Session `LayoutState` synchronization replace the legacy unbounded full-map
 loop. The former 641-line lowerer helper is a 17-line dispatcher and its
 production call supplies LayoutState.
 
+The adjacent SiNet pre-ADD fan-out island is owned by
+`passes/sinet_preadd_fanout_layout.py`. It shares the late residual owner's
+strict terminal contract for
+`ADD -> MUL -> ADD -> PReLU -> Transpose -> Conv`, including the later legacy
+NCHW consumers. Its distinct prefix proves one channel-last Concat followed by
+an NHWC-to-NCHW adapter and one direct NCHW source that already has exactly one
+earlier NCHW-to-NHWC sibling adapter. The direct source may have no other
+consumer, so the existing sibling tensor is the unique channel-last value used
+by the lifted ADD.
+
+The rewrite removes only the Concat-side adapter. The ADD consumes the
+canonical Concat output and the retained sibling adapter output, and the
+affine/PReLU tail moves to NHWC. PReLU produces the existing canonical post
+tensor. The terminal post adapter is inverted in place and produces the former
+PReLU NCHW tensor, preserving every later legacy consumer and repeated slot.
+The retained sibling adapter remains available to its original branch.
+
+Rank-four concrete shapes and dynamic signatures must prove the two exact
+layout permutations and all stage tensors; no model name or fixed spatial
+size is used. The Concat axis is explicitly channel-last. Floating dtype,
+quantization, public boundaries, unique producers, exact consumer
+multiplicity, dependency order, fused activation, downstream Conv ownership,
+and the existence and ordering of legacy consumers are validated before any
+mutation. The three affine/PReLU constants must broadcast in NCHW and after
+their explicit NHWC rotation. The inverted terminal permutation participates
+in the same grouped constant transaction, so unrelated uses receive a
+deterministic clone.
+
+Candidate resolution is repeated immediately before apply. Clone collisions,
+all mutation indices, metadata targets, output swaps, and the adapter removal
+are preflighted before the first write. One differential `ModelIRGraphIndex`,
+graph-order candidates, a configurable 32-rewrite ceiling, success-only
+pruning, and Session `LayoutState` synchronization replace the former full-map
+loop. The former 359-line lowerer helper is a 17-line compatibility dispatcher
+and its sole production call supplies LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
