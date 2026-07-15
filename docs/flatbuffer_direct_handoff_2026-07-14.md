@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the Conv1D-shim
-Transpose/Squeeze/unary/BatchMatMul rewrite to
-`passes/conv1d_batchmatmul_layout.py`. One `ModelIRGraphIndex` now proves the
-complete source, permutation, squeeze, unary-chain, left-operand, matrix-shape,
-dtype, quantization, public-boundary, and operator-order contracts. Channel
-squeeze keeps `adjX`; either supported spatial squeeze swaps the retained
-rank-three metadata and toggles `adjX`. The former 223-line lowerer helper is
-now an 11-line compatibility adapter.
+The latest implementation unit moves the decoder
+BatchMatMul/Add/ExpandDims/Transpose/TransposeConv adapter rewrite to
+`passes/decoder_deconv_layout.py`. One `ModelIRGraphIndex` proves both matrix
+operands, adjoints, batch broadcasting, bias broadcast, axis, exact rank-three
+and rank-four layout equations, deconvolution input position, fan-out, public
+boundaries, dtype, quantization, and graph order before mutation. Shared bias
+and axis constants are cloned transactionally. The former 193-line lowerer
+helper is now an 11-line compatibility adapter.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains ninety-four coherent continuations:
+The current `fb-refactor5` work contains ninety-five coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -245,8 +245,10 @@ The current `fb-refactor5` work contains ninety-four coherent continuations:
 - `6be406ec` shares that exact normalization prefix with a
   dedicated indexed tencoder residual-gate owner, makes the complete dual-
   branch rewrite transactional, and keeps compatibility bridges topological;
-- the current checkpoint moves the adjacent Squeeze/unary/BatchMatMul layout
-  rewrite to an indexed owner with explicit axis-to-adjoint semantics.
+- `2202bd0d` moves the adjacent Squeeze/unary/BatchMatMul layout rewrite to an
+  indexed owner with explicit axis-to-adjoint semantics;
+- the current checkpoint moves the decoder deconvolution-input adapter to a
+  complete indexed matrix/layout/constant transaction.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -2416,6 +2418,36 @@ passed together with `569 passed`. TensorFlow-import-blocked direct and
 with `3 passed`. Ruff, syntax compilation, and `git diff --check` passed. No
 Tier corpus conversion was run.
 
+The indexed decoder deconvolution-input checkpoint removes the former
+193-line helper and its repeated producer/consumer-map rebuilds. Its dedicated
+owner validates the complete BatchMatMul, commutative bias ADD, axis-two
+ExpandDims, `[0,2,3,1]` Transpose, and input-two TransposeConv path. Both matrix
+operands, every producer and consumer, public boundaries, concrete and dynamic
+shape/signature equations, dtype, per-tensor quantization, contracted
+dimension, batch broadcasting, bias broadcast, and operator order are proven
+before any mutation.
+
+The rewrite applies `(A·B)^T = B^T·A^T`: it swaps the original BatchMatMul
+inputs, maps `adjX` to `not old_adjY` and `adjY` to `not old_adjX`, changes
+`[N,C,L]` metadata to `[N,L,C]`, reshapes the length bias to `[1,L,1]`, moves
+ExpandDims from axis two to axis one, and connects its retained
+`[N,1,L,C]` output directly to TransposeConv. Unrelated BatchMatMul options and
+provenance remain intact. Private constants update in place; shared bias and
+axis constants are cloned before edges change. Clone failure and every unsafe
+contract are complete no-ops.
+
+Focused coverage includes sixteen exact NumPy equivalence variants across all
+`adjX/adjY` values, both ADD input orders, and public/produced operands; rank-
+two RHS, rank-two/three bias, negative axis, shared bias/axis cloning, one
+dynamic batch signature, twenty-six unsafe transactional no-ops, clone
+failure, preflight/no-index behavior, and semantic ownership with `51 passed`.
+The six indexed Conv1D/decoder suites, architecture, core, pass-efficiency,
+three established Transpose-Unary suites, and eight adjacent direct-builder
+characterizations passed together with `620 passed`. TensorFlow-import-blocked
+direct and `-cotof` plus the sequential quantization/evaluation/coverage smoke
+passed with `3 passed`. Ruff, syntax compilation, and `git diff --check`
+passed. No Tier corpus conversion was run.
+
 The focused indexed and architecture tests pass Ruff normally. The changed
 legacy characterization file passes with its pre-existing `F401` findings
 scoped out, and the lowerer passes with its pre-existing `F401` and `F841`
@@ -2467,10 +2499,10 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent 193-line
-   `_optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input`
-   family next. Separate its BatchMatMul/ADD layout proof, constant handling,
-   and deconvolution-input adapter removal into a bounded indexed plan.
+3. Audit the adjacent 152-line
+   `_optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains` family next.
+   Preserve its two Squeeze axes, Mean reduction axis/keepdims semantics, and
+   terminal output contract in one bounded indexed plan.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

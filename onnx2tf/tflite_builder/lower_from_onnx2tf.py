@@ -201,6 +201,9 @@ from onnx2tf.tflite_builder.passes.conv1d_tencoder_layout import (
 from onnx2tf.tflite_builder.passes.conv1d_batchmatmul_layout import (
     _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains as _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.decoder_deconv_layout import (
+    _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input as _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input_pass,
+)
 from onnx2tf.tflite_builder.passes.dequant_concat_quantize_layout import (
     _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains as _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains_pass,
     run_dequant_concat_quantize_layout_cleanup,
@@ -19939,197 +19942,15 @@ def _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains(
 
 def _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    """
-    Remove decoder-side EXPAND_DIMS->TRANSPOSE adapters before TRANSPOSE_CONV
-    by transposing the preceding BATCH_MATMUL/ADD layout instead.
-
-    Target:
-      mm = BATCH_MATMUL(X, W)                  # [N, C, L]
-      a  = ADD(mm, b[L])
-      e  = EXPAND_DIMS(a, axis=2)              # [N, C, 1, L]
-      t  = TRANSPOSE(e, [0,2,3,1])             # [N, 1, L, C]
-      y  = TRANSPOSE_CONV(..., t)
-
-    Rewrite (equivalent):
-      mm_t = BATCH_MATMUL(W, X, adjX=not old_adjY, adjY=not old_adjX)  # [N, L, C]
-      a_t  = ADD(mm_t, b.reshape([1,L,1]))
-      e_t  = EXPAND_DIMS(a_t, axis=1)                                   # [N,1,L,C]
-      y    = TRANSPOSE_CONV(..., e_t)
-    """
-    rewritten = 0
-    perm_expand_to_deconv = [0, 2, 3, 1]
-    rank3_swap = [0, 2, 1]
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for transpose_idx, transpose_op in enumerate(model_ir.operators):
-            if str(transpose_op.op_type) != "TRANSPOSE" or len(transpose_op.inputs) < 2 or len(transpose_op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, transpose_op) != perm_expand_to_deconv:
-                continue
-
-            expand_out_name = str(transpose_op.inputs[0])
-            transpose_out_name = str(transpose_op.outputs[0])
-            if transpose_out_name in model_outputs:
-                continue
-
-            transpose_users = [int(v) for v in consumers.get(transpose_out_name, [])]
-            if len(transpose_users) != 1:
-                continue
-            deconv_idx = int(transpose_users[0])
-            deconv_op = model_ir.operators[int(deconv_idx)]
-            if (
-                str(deconv_op.op_type) != "TRANSPOSE_CONV"
-                or len(deconv_op.inputs) < 3
-                or str(deconv_op.inputs[2]) != transpose_out_name
-            ):
-                continue
-
-            expand_idx = producers.get(expand_out_name, None)
-            if expand_idx is None:
-                continue
-            expand_op = model_ir.operators[int(expand_idx)]
-            if (
-                str(expand_op.op_type) != "EXPAND_DIMS"
-                or len(expand_op.inputs) < 2
-                or len(expand_op.outputs) != 1
-                or str(expand_op.outputs[0]) != expand_out_name
-            ):
-                continue
-
-            expand_in_name = str(expand_op.inputs[0])
-            add_idx = producers.get(expand_in_name, None)
-            if add_idx is None:
-                continue
-            add_op = model_ir.operators[int(add_idx)]
-            if (
-                str(add_op.op_type) != "ADD"
-                or len(add_op.inputs) != 2
-                or len(add_op.outputs) != 1
-                or str(add_op.outputs[0]) != expand_in_name
-            ):
-                continue
-
-            add_users = [int(v) for v in consumers.get(expand_in_name, [])]
-            if len(add_users) != 1 or int(add_users[0]) != int(expand_idx):
-                continue
-
-            add_input0 = str(add_op.inputs[0])
-            add_input1 = str(add_op.inputs[1])
-            mm_idx = producers.get(add_input0, None)
-            bias_name = add_input1
-            if mm_idx is None or str(model_ir.operators[int(mm_idx)].op_type) != "BATCH_MATMUL":
-                mm_idx = producers.get(add_input1, None)
-                bias_name = add_input0
-            if mm_idx is None:
-                continue
-            mm_op = model_ir.operators[int(mm_idx)]
-            if (
-                str(mm_op.op_type) != "BATCH_MATMUL"
-                or len(mm_op.inputs) != 2
-                or len(mm_op.outputs) != 1
-                or str(mm_op.outputs[0]) not in {add_input0, add_input1}
-            ):
-                continue
-
-            mm_out_name = str(mm_op.outputs[0])
-            mm_users = [int(v) for v in consumers.get(mm_out_name, [])]
-            if len(mm_users) != 1 or int(mm_users[0]) != int(add_idx):
-                continue
-
-            mm_out_tensor = model_ir.tensors.get(mm_out_name, None)
-            add_out_tensor = model_ir.tensors.get(expand_in_name, None)
-            expand_out_tensor = model_ir.tensors.get(expand_out_name, None)
-            transpose_out_tensor = model_ir.tensors.get(transpose_out_name, None)
-            bias_tensor = model_ir.tensors.get(bias_name, None)
-            if (
-                mm_out_tensor is None
-                or add_out_tensor is None
-                or expand_out_tensor is None
-                or transpose_out_tensor is None
-                or bias_tensor is None
-                or bias_tensor.data is None
-            ):
-                continue
-            if len(list(mm_out_tensor.shape)) != 3 or len(list(add_out_tensor.shape)) != 3:
-                continue
-            if len(list(expand_out_tensor.shape)) != 4 or len(list(transpose_out_tensor.shape)) != 4:
-                continue
-
-            old_mm_shape = [int(v) for v in list(mm_out_tensor.shape)]
-            if len(old_mm_shape) != 3:
-                continue
-            length_dim = int(old_mm_shape[2])
-            if length_dim <= 0:
-                continue
-
-            bias_values = np.asarray(bias_tensor.data)
-            if int(bias_values.size) != int(length_dim):
-                continue
-
-            # Update BATCH_MATMUL to emit transposed rank-3 layout directly.
-            mm_options = dict(mm_op.options) if isinstance(mm_op.options, dict) else {}
-            old_adj_x = bool(mm_options.get("adjX", False))
-            old_adj_y = bool(mm_options.get("adjY", False))
-            old_mm_inputs = [str(v) for v in list(mm_op.inputs)]
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=mm_op,
-                new_inputs=[old_mm_inputs[1], old_mm_inputs[0]],
-            )
-            mm_options["adjX"] = bool(not old_adj_y)
-            mm_options["adjY"] = bool(not old_adj_x)
-            mm_op.options = mm_options
-            _permute_tensor_metadata_if_rank_matches(mm_out_tensor, rank3_swap)
-            _permute_tensor_metadata_if_rank_matches(add_out_tensor, rank3_swap)
-
-            # Bias was [L], but after rank-3 transpose it must broadcast on axis=1.
-            reshaped_bias = np.asarray(bias_values).reshape(1, int(length_dim), 1)
-            bias_tensor.data = reshaped_bias.astype(bias_values.dtype, copy=False)
-            bias_tensor.shape = [1, int(length_dim), 1]
-            bias_tensor.shape_signature = [1, int(length_dim), 1]
-
-            # EXPAND_DIMS axis: 2 -> 1 for [N,L,C] -> [N,1,L,C].
-            expand_axis_tensor = model_ir.tensors.get(str(expand_op.inputs[1]), None)
-            if expand_axis_tensor is None:
-                continue
-            if not _write_const_ints_to_tensor(expand_axis_tensor, [1]):
-                continue
-
-            expand_out_tensor.shape = [int(v) for v in list(transpose_out_tensor.shape)]
-            expand_out_tensor.shape_signature = (
-                [int(v) for v in list(transpose_out_tensor.shape_signature)]
-                if transpose_out_tensor.shape_signature is not None
-                else [int(v) for v in list(transpose_out_tensor.shape)]
-            )
-
-            # Bypass transpose into deconv input.
-            _replace_operator_input_at(
-                model_ir=model_ir,
-                op=deconv_op,
-                input_index=2,
-                new_input_name=expand_out_name,
-            )
-
-            del model_ir.operators[int(transpose_idx)]
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if rewritten > 0:
-        _prune_unused_tensors(model_ir)
-    return {
-        "optimized_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input": int(rewritten)
-    }
+    return _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains(
@@ -44318,7 +44139,10 @@ def lower_onnx_to_ir(
     # Decoder linear->deconv tails can keep:
     # BATCH_MATMUL -> ADD -> EXPAND_DIMS -> TRANSPOSE -> TRANSPOSE_CONV.
     # Transpose BATCH_MATMUL/ADD layout so TRANSPOSE before deconv is removed.
-    _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input(model_ir)
+    _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     # Decoder terminal tails can keep:
     # TRANSPOSE -> SQUEEZE -> MEAN -> SQUEEZE.
     # Remap squeeze/mean axes in NHWC and drop the transpose.

@@ -4859,6 +4859,39 @@ mismatches, per-axis quantization, duplicate producers, and backward consumers
 are complete no-ops. The sole production call supplies the Session
 LayoutState.
 
+Decoder BatchMatMul-to-TransposeConv input canonicalization is owned by
+`passes/decoder_deconv_layout.py`. The exact path is a rank-three
+BatchMatMul result, commutative constant-bias ADD, axis-two ExpandDims,
+Transpose `[0,2,3,1]`, and input two of one TransposeConv. All changed
+intermediates are private and single-consumer. Both matrix operands may be
+public, constant, or uniquely produced earlier tensors; rank-two and rank-
+three broadcast operands are supported.
+
+The owner validates the original BatchMatMul output from both operand shapes,
+`adjX`, `adjY`, and batch broadcasting. It separately proves that swapping the
+operands and assigning `new adjX = not old adjY` and
+`new adjY = not old adjX` produces the exact `[N,L,C]` transpose of the old
+`[N,C,L]` result. ADD, ExpandDims, Transpose, and TransposeConv input metadata
+must satisfy every corresponding shape/signature permutation equation. One
+dynamic batch signature is retained.
+
+The bias must be a producer-free floating constant with exactly `L` values and
+an old broadcast shape of `[L]`, `[1,L]`, or `[1,1,L]`; it becomes
+`[1,L,1]`. ExpandDims accepts equivalent axis two or negative axis `-2` and
+moves to axis one. Private constants update in place. Shared bias and axis
+constants receive deterministic clones, including quantization metadata,
+before any operator or tensor changes.
+
+After preflight, the existing BatchMatMul inputs are swapped, only its two
+adjoint options change, rank-three result and ADD metadata swap their last two
+axes, and the retained ExpandDims output adopts the former Transpose output
+contract. TransposeConv input two is redirected and the sole Transpose is
+removed through the maintained `ModelIRGraphIndex`. Fan-out, public changed
+intermediates, produced/floating constants, incompatible bias, matrix or
+layout shapes, per-axis quantization, duplicate producers, backward consumers,
+and clone failures are complete no-ops. The sole production call supplies the
+Session LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
