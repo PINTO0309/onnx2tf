@@ -204,6 +204,9 @@ from onnx2tf.tflite_builder.passes.conv1d_batchmatmul_layout import (
 from onnx2tf.tflite_builder.passes.decoder_deconv_layout import (
     _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input as _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input_pass,
 )
+from onnx2tf.tflite_builder.passes.terminal_squeeze_mean_layout import (
+    _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains as _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.dequant_concat_quantize_layout import (
     _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains as _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains_pass,
     run_dequant_concat_quantize_layout_cleanup,
@@ -19955,156 +19958,15 @@ def _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input(
 
 def _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    """
-    Remove terminal NHWC->NCHW transpose in:
-      x --T(0,3,1,2)--> t --SQUEEZE(axis=2)--> s --MEAN(axis=1,keepDims)--> m --SQUEEZE(axis=1)--> y
-
-    Equivalent NHWC rewrite:
-      x --SQUEEZE(axis=1)--> s' --MEAN(axis=2,keepDims)--> m' --SQUEEZE(axis=2)--> y
-    """
-    rewritten = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    rank3_swap = [0, 2, 1]
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for transpose_idx, transpose_op in enumerate(model_ir.operators):
-            if str(transpose_op.op_type) != "TRANSPOSE" or len(transpose_op.inputs) < 2 or len(transpose_op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, transpose_op) != perm_nhwc_to_nchw:
-                continue
-
-            x_name = str(transpose_op.inputs[0])
-            t_name = str(transpose_op.outputs[0])
-            if t_name in model_outputs:
-                continue
-
-            t_users = [int(v) for v in consumers.get(t_name, [])]
-            if len(t_users) != 1:
-                continue
-            squeeze1_idx = int(t_users[0])
-            squeeze1_op = model_ir.operators[int(squeeze1_idx)]
-            if (
-                str(squeeze1_op.op_type) != "SQUEEZE"
-                or len(squeeze1_op.inputs) != 1
-                or len(squeeze1_op.outputs) != 1
-                or str(squeeze1_op.inputs[0]) != t_name
-            ):
-                continue
-
-            squeeze1_opts = dict(squeeze1_op.options) if isinstance(squeeze1_op.options, dict) else {}
-            squeeze1_axes = _normalize_squeeze_axes_for_rank(
-                _parse_axes_option(squeeze1_opts.get("squeezeDims", [])),
-                4,
-            )
-            if squeeze1_axes is None or [int(v) for v in squeeze1_axes] != [2]:
-                continue
-            s_name = str(squeeze1_op.outputs[0])
-            if s_name in model_outputs:
-                continue
-
-            s_users = [int(v) for v in consumers.get(s_name, [])]
-            if len(s_users) != 1:
-                continue
-            mean_idx = int(s_users[0])
-            mean_op = model_ir.operators[int(mean_idx)]
-            if (
-                str(mean_op.op_type) != "MEAN"
-                or len(mean_op.inputs) < 2
-                or len(mean_op.outputs) != 1
-                or str(mean_op.inputs[0]) != s_name
-                or not bool(mean_op.options.get("keepDims", False))
-            ):
-                continue
-
-            mean_axes_name = str(mean_op.inputs[1])
-            mean_axes_tensor = model_ir.tensors.get(mean_axes_name, None)
-            mean_axes_vals = _read_const_ints_from_tensor(mean_axes_tensor)
-            if mean_axes_vals is None:
-                continue
-            mean_axes_norm = _normalize_squeeze_axes_for_rank(
-                [int(v) for v in mean_axes_vals],
-                3,
-            )
-            if mean_axes_norm is None or [int(v) for v in mean_axes_norm] != [1]:
-                continue
-
-            m_name = str(mean_op.outputs[0])
-            if m_name in model_outputs:
-                continue
-            m_users = [int(v) for v in consumers.get(m_name, [])]
-            if len(m_users) != 1:
-                continue
-            squeeze2_idx = int(m_users[0])
-            squeeze2_op = model_ir.operators[int(squeeze2_idx)]
-            if (
-                str(squeeze2_op.op_type) != "SQUEEZE"
-                or len(squeeze2_op.inputs) != 1
-                or len(squeeze2_op.outputs) != 1
-                or str(squeeze2_op.inputs[0]) != m_name
-            ):
-                continue
-
-            squeeze2_opts = dict(squeeze2_op.options) if isinstance(squeeze2_op.options, dict) else {}
-            squeeze2_axes = _normalize_squeeze_axes_for_rank(
-                _parse_axes_option(squeeze2_opts.get("squeezeDims", [])),
-                3,
-            )
-            if squeeze2_axes is None or [int(v) for v in squeeze2_axes] != [1]:
-                continue
-
-            x_tensor = model_ir.tensors.get(x_name, None)
-            t_tensor = model_ir.tensors.get(t_name, None)
-            s_tensor = model_ir.tensors.get(s_name, None)
-            m_tensor = model_ir.tensors.get(m_name, None)
-            if (
-                x_tensor is None
-                or t_tensor is None
-                or s_tensor is None
-                or m_tensor is None
-                or len(list(x_tensor.shape)) != 4
-                or len(list(t_tensor.shape)) != 4
-                or len(list(s_tensor.shape)) != 3
-                or len(list(m_tensor.shape)) != 3
-            ):
-                continue
-
-            # Rewire chain onto NHWC source and remap axes.
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=squeeze1_op,
-                new_inputs=[x_name],
-            )
-            squeeze1_opts["squeezeDims"] = [1]
-            squeeze1_op.options = squeeze1_opts
-
-            if mean_axes_tensor is None or not _write_const_ints_to_tensor(mean_axes_tensor, [2]):
-                continue
-
-            squeeze2_opts["squeezeDims"] = [2]
-            squeeze2_op.options = squeeze2_opts
-
-            # rank-3 tensors between squeeze1 and mean are [N,C,W] -> [N,W,C]
-            _permute_tensor_metadata_if_rank_matches(s_tensor, rank3_swap)
-            _permute_tensor_metadata_if_rank_matches(m_tensor, rank3_swap)
-
-            del model_ir.operators[int(transpose_idx)]
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if rewritten > 0:
-        _prune_unused_tensors(model_ir)
-    return {
-        "optimized_transpose_squeeze_mean_squeeze_terminal_nhwc_chains": int(rewritten)
-    }
+    return _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_squeeze_unary_reshape_passthrough_chains(
@@ -44146,7 +44008,10 @@ def lower_onnx_to_ir(
     # Decoder terminal tails can keep:
     # TRANSPOSE -> SQUEEZE -> MEAN -> SQUEEZE.
     # Remap squeeze/mean axes in NHWC and drop the transpose.
-    _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains(model_ir)
+    _optimize_transpose_squeeze_mean_squeeze_terminal_nhwc_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     # Very late transpose/layout rewrites can recreate PAD-adjacent NCHW wrappers.
     run_pad_layout_cleanup(
         model_ir,

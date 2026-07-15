@@ -4892,6 +4892,37 @@ layout shapes, per-axis quantization, duplicate producers, backward consumers,
 and clone failures are complete no-ops. The sole production call supplies the
 Session LayoutState.
 
+Terminal decoder Squeeze/Mean canonicalization is owned by
+`passes/terminal_squeeze_mean_layout.py`. The exact path is an NHWC-to-NCHW
+Transpose `[0,3,1,2]`, rank-four Squeeze on axis two, rank-three Mean on axis
+one with `keepDims=True`, and a second Squeeze on axis one. The source may be
+a public input, a constant, or a uniquely produced earlier tensor. The three
+changed intermediates are private and single-consumer, while the final rank-
+two tensor retains its existing name, graph-output position, consumers, dtype,
+shape, signature, and quantization contract.
+
+One `ModelIRGraphIndex` proves the complete operator order and every producer,
+consumer, public boundary, typed constant, shape/signature equation, singleton
+axis, dtype, and per-tensor quantization contract before mutation. Equivalent
+negative Squeeze and Mean axes are accepted. The Mean axis must be a typed,
+producer-free one-element integer constant; a shared axis is cloned with a
+deterministic `*_nhwc_axis` name so unrelated consumers retain the old value.
+Clone allocation and every other changed value are preflighted before an edge
+or metadata mutation.
+
+The rewrite makes the first Squeeze consume the original `[N,1,W,C]` NHWC
+source on axis one, changes its intermediate from `[N,C,W]` to `[N,W,C]`,
+moves the kept-dimension Mean from axis one to axis two, changes its output
+from `[N,1,W]` to `[N,W,1]`, and moves the final Squeeze to axis two. The final
+`[N,W]` values and metadata therefore remain identical while the boundary
+Transpose is removed through the maintained index. Dynamic batch, width, or
+reduced-channel signatures are retained. Fan-out, public changed
+intermediates, floating or produced
+constants, dynamic singleton axes, inconsistent metadata, mixed dtypes or
+quantization grids, per-axis quantization, duplicate producers, backward
+consumers, and clone failures are complete no-ops. The sole production call
+supplies the Session LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
