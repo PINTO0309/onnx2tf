@@ -5532,6 +5532,45 @@ synchronization replace the former full-map fixed-point loop. The former
 production calls supply LayoutState. Matching uses no model name or fixed
 spatial dimension.
 
+The two-Concat SiNet affine tail is owned by
+`passes/sinet_tail_concat_layout.py`. It reuses the indexed adapter and
+Resize-affine branch contracts from `sinet_concat_resize_layout.py`, then
+proves two nested residual stages. The first stage merges an independent
+branch and one Resize/affine branch, adds a same-width residual, and applies
+MUL/ADD/PReLU. The second stage concatenates that result with an independent
+skip adapter and applies a second MUL/ADD/PReLU plus one or more post adapters.
+
+The first residual source is authoritative for the first stage's NHWC
+contract. The first graph-ordered post output is authoritative for the second
+stage's merged NHWC contract. Both original NCHW axis-1 Concats and target
+NHWC axis-3 Concats are derived independently from their branch shapes and
+dynamic signatures. Four input adapters and all equivalent post adapters are
+removed only after both stages satisfy their exact relational contracts.
+
+The rewrite reconnects the Resize-affine data input, both canonical branch
+sources, and both residual/skip sources, changes both Concat axes to 3, and
+makes the final PReLU produce the canonical post tensor. Additional post
+aliases retain all repeated downstream slots. Later consumers of the former
+final NCHW PReLU tensor receive one inverse adapter inserted before their
+first use.
+
+Eight finite FLOAT16/FLOAT32/FLOAT64 constants are validated as broadcasts in
+their original NCHW stage and after explicit NHWC rotation: two Resize-branch
+constants, three first-stage affine/PReLU constants, and three second-stage
+constants. Identity-grouped roles update once and unrelated consumers receive
+deterministic clones. Typed permutations, Resize provenance, unique producers,
+exact fan-out, dependency order, public boundaries, fused activation,
+quantization, rank-four shape/signature, and layout are complete guards.
+
+The plan is resolved again immediately before apply. Clone names, mutation
+and removal indices, alias slots, metadata targets, and the optional legacy
+adapter are preflighted before mutation. One differential graph index,
+graph-order candidates, a configurable 32-rewrite ceiling, success-only
+pruning, and Session LayoutState synchronization replace the former full-map
+fixed-point loop. The former 654-line lowerer helper is a 17-line compatibility
+dispatcher and its sole production call supplies LayoutState. No model name or
+fixed spatial dimension participates in matching.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
