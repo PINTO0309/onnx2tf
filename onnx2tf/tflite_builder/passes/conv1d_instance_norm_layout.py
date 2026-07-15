@@ -57,6 +57,31 @@ class _InstanceNormRewritePlan:
     rank4_signature: Tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class _FlatInstanceNormPrefixPlan:
+    public_inputs: frozenset[str]
+    public_outputs: frozenset[str]
+    ordered_ops: Tuple[OperatorIR, ...]
+    ordered_indices: Tuple[int, ...]
+    pre: OperatorIR
+    squeeze: OperatorIR
+    reshape2: OperatorIR
+    source_name: str
+    reshape2_name: str
+    source_contract: _TensorContract
+    pre_contract: _TensorContract
+    squeeze_contract: _TensorContract
+    reshape2_contract: _TensorContract
+    data_contracts: Tuple[_TensorContract, ...]
+    data_names: Tuple[str, ...]
+    n: int
+    c: int
+    w: int
+    n_signature: int
+    c_signature: int
+    w_signature: int
+
+
 def _produced_contract(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -178,11 +203,11 @@ def _mean_contract(
     return name, contract
 
 
-def _resolve_candidate(
+def _resolve_flattened_instance_norm_prefix(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
     pre_index: int,
-) -> Optional[_InstanceNormRewritePlan]:
+) -> Optional[_FlatInstanceNormPrefixPlan]:
     public_inputs = {str(value) for value in model_ir.inputs}
     public_outputs = {str(value) for value in model_ir.outputs}
     pre = model_ir.operators[int(pre_index)]
@@ -638,6 +663,117 @@ def _resolve_candidate(
     ):
         return None
 
+    ordered_indices = (
+        pre_index,
+        squeeze_index,
+        reshape1_index,
+        mean1_index,
+        sub_index,
+        square_index,
+        mean2_index,
+        add_epsilon_index,
+        sqrt_index,
+        div_index,
+        norm_index,
+        scale_index,
+        bias_index,
+        reshape2_index,
+    )
+    if (
+        list(ordered_indices) != sorted(ordered_indices)
+        or len(set(ordered_indices)) != len(ordered_indices)
+    ):
+        return None
+
+    data_contracts = (
+        source_contract,
+        pre_contract,
+        squeeze_contract,
+        flat_contract,
+        mean1_contract,
+        centered_contract,
+        square_contract,
+        mean2_contract,
+        variance_contract,
+        standard_deviation_contract,
+        inverse_contract,
+        norm_contract,
+        scaled_contract,
+        biased_contract,
+        reshape2_contract,
+    )
+    if (
+        len({str(contract.tensor.dtype) for contract in data_contracts}) != 1
+        or str(source_contract.tensor.dtype) not in {"FLOAT16", "FLOAT32"}
+        or any(contract.tensor.quantization is not None for contract in data_contracts)
+    ):
+        return None
+
+    data_names = (
+        source_name,
+        pre_output_name,
+        squeeze_output_name,
+        flat_name,
+        mean1_name,
+        centered_name,
+        square_name,
+        mean2_name,
+        variance_name,
+        standard_deviation_name,
+        inverse_name,
+        norm_name,
+        scaled_name,
+        biased_name,
+        reshape2_name,
+    )
+    if len(data_names) != len(set(data_names)):
+        return None
+
+    return _FlatInstanceNormPrefixPlan(
+        public_inputs=frozenset(public_inputs),
+        public_outputs=frozenset(public_outputs),
+        ordered_ops=tuple(model_ir.operators[index] for index in ordered_indices),
+        ordered_indices=tuple(int(index) for index in ordered_indices),
+        pre=pre,
+        squeeze=squeeze,
+        reshape2=reshape2,
+        source_name=source_name,
+        reshape2_name=reshape2_name,
+        source_contract=source_contract,
+        pre_contract=pre_contract,
+        squeeze_contract=squeeze_contract,
+        reshape2_contract=reshape2_contract,
+        data_contracts=data_contracts,
+        data_names=data_names,
+        n=int(n),
+        c=int(c),
+        w=int(w),
+        n_signature=int(n_sig),
+        c_signature=int(c_sig),
+        w_signature=int(w_sig),
+    )
+
+
+def _resolve_candidate(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    pre_index: int,
+) -> Optional[_InstanceNormRewritePlan]:
+    prefix = _resolve_flattened_instance_norm_prefix(
+        model_ir,
+        graph_index,
+        pre_index,
+    )
+    if prefix is None:
+        return None
+
+    public_inputs = set(prefix.public_inputs)
+    public_outputs = set(prefix.public_outputs)
+    reshape2_name = prefix.reshape2_name
+    reshape2_contract = prefix.reshape2_contract
+    source_contract = prefix.source_contract
+    pre_contract = prefix.pre_contract
+
     unary_users = graph_index.consumer_indices(reshape2_name)
     if len(unary_users) != 1:
         return None
@@ -743,21 +879,7 @@ def _resolve_candidate(
     ):
         return None
 
-    ordered_indices = (
-        pre_index,
-        squeeze_index,
-        reshape1_index,
-        mean1_index,
-        sub_index,
-        square_index,
-        mean2_index,
-        add_epsilon_index,
-        sqrt_index,
-        div_index,
-        norm_index,
-        scale_index,
-        bias_index,
-        reshape2_index,
+    ordered_indices = prefix.ordered_indices + (
         unary_index,
         expand_index,
         post_index,
@@ -765,29 +887,6 @@ def _resolve_candidate(
     if list(ordered_indices) != sorted(ordered_indices) or len(set(ordered_indices)) != len(ordered_indices):
         return None
 
-    data_contracts = (
-        source_contract,
-        pre_contract,
-        squeeze_contract,
-        flat_contract,
-        mean1_contract,
-        centered_contract,
-        square_contract,
-        mean2_contract,
-        variance_contract,
-        standard_deviation_contract,
-        inverse_contract,
-        norm_contract,
-        scaled_contract,
-        biased_contract,
-        reshape2_contract,
-    )
-    if (
-        len({str(contract.tensor.dtype) for contract in data_contracts}) != 1
-        or str(source_contract.tensor.dtype) not in {"FLOAT16", "FLOAT32"}
-        or any(contract.tensor.quantization is not None for contract in data_contracts)
-    ):
-        return None
     output_group = (unary_contract, expand_contract)
     if (
         len({str(contract.tensor.dtype) for contract in output_group}) != 1
@@ -800,22 +899,7 @@ def _resolve_candidate(
     ):
         return None
 
-    data_names = [
-        source_name,
-        pre_output_name,
-        squeeze_output_name,
-        flat_name,
-        mean1_name,
-        centered_name,
-        square_name,
-        mean2_name,
-        variance_name,
-        standard_deviation_name,
-        inverse_name,
-        norm_name,
-        scaled_name,
-        biased_name,
-        reshape2_name,
+    data_names = list(prefix.data_names) + [
         unary_name,
         expand_name,
         post_name,
@@ -823,12 +907,18 @@ def _resolve_candidate(
     if len(data_names) != len(set(data_names)):
         return None
 
-    rank3_shape = (int(n), int(w), int(c))
-    rank3_signature = (int(n_sig), int(w_sig), int(c_sig))
+    rank3_shape = (prefix.n, prefix.w, prefix.c)
+    rank3_signature = (
+        prefix.n_signature,
+        prefix.w_signature,
+        prefix.c_signature,
+    )
     if rank3_signature.count(-1) > 1:
         return None
     rank4_shape = source_contract.shape
     rank4_signature = source_contract.signature
+    reshape2 = prefix.reshape2
+    squeeze_contract = prefix.squeeze_contract
     reshape2_options = (
         dict(reshape2.options) if isinstance(reshape2.options, dict) else {}
     )
@@ -853,7 +943,7 @@ def _resolve_candidate(
             model_ir,
             graph_index,
             reshape2,
-            reshape2_index,
+            prefix.ordered_indices[-1],
             1,
             reshape2_target,
             "nhwc_shape",
@@ -874,6 +964,7 @@ def _resolve_candidate(
     if expand_axis_update is None:
         return None
 
+    squeeze = prefix.squeeze
     squeeze_options = (
         dict(squeeze.options) if isinstance(squeeze.options, dict) else {}
     )
@@ -891,7 +982,7 @@ def _resolve_candidate(
         expand=expand,
         expand_axis_update=expand_axis_update,
         expand_tensor=expand_contract.tensor,
-        source_name=source_name,
+        source_name=prefix.source_name,
         post_output_name=post_name,
         rank3_shape=rank3_shape,
         rank3_signature=rank3_signature,

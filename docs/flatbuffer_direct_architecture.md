@@ -4795,6 +4795,43 @@ inconsistent metadata formerly matched but are now complete no-ops. One
 supplied or locally constructed `ModelIRGraphIndex` is maintained across all
 matches, and the sole production call supplies the Session LayoutState.
 
+The adjacent tencoder residual-gate family is isolated in
+`passes/conv1d_tencoder_layout.py`. Its right branch reuses
+`_resolve_flattened_instance_norm_prefix`, the side-effect-free prefix plan
+shared with the complete InstanceNormalization/unary family. Consequently,
+the residual pass cannot accept an arbitrary upstream Squeeze/Transpose path:
+it must prove the exact two-Mean normalization topology, scalar contracts,
+producer/consumer multiplicities, dtype, quantization, shape, and boundary
+invariants before considering the gate suffix.
+
+The suffix contract covers two complementary channel Slices from `[N,2C,W]`,
+Logistic gating, elementwise multiplication, one `[C,1]` or `[1,C]` floating
+scale, a simple rank-four Transpose/Squeeze or legacy rank-three Transpose left
+branch, residual ADD, axis-two ExpandDims, NCHW-to-NHWC Transpose, and one or
+more Conv consumers. Every changed intermediate is private and has an exact
+FLOAT16 or FLOAT32 shape/signature contract. One dynamic batch or width
+dimension is carried through the Reshape, Slice, residual, and bridge targets;
+a dynamic split-channel dimension is rejected because the two Slice boundaries
+are compile-time constants. Layout-sensitive fan-out inside either branch is
+rejected instead of being silently reinterpreted.
+
+The plan converts both residual inputs to NWC, updates the second Reshape and
+Slice vectors, transposes the channel scale to `[1,C]`, changes ExpandDims to
+axis one, and repairs Squeeze, Slice, Logistic, gate, residual, and rank-four
+metadata. All integer and floating constant changes are preplanned. Shared
+constants receive distinct deterministic clones, including the case where two
+changed operator inputs originally share one tensor; private constants update
+in place. The three boundary Transposes are removed through one maintained
+`ModelIRGraphIndex` only after the complete plan succeeds.
+
+When residual ADD has side consumers, one `[0,2,1]` NWC-to-NCW compatibility
+Transpose is inserted immediately before the earliest side consumer and only
+those edges are redirected. The Conv path consumes the retained ExpandDims
+output directly. This preserves side values and emits topological operator
+order, unlike the legacy helper's unconditional append. Exact NumPy
+differential tests cover simple and legacy left branches with and without
+fan-out, and the sole production call supplies the Session LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
