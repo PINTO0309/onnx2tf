@@ -24,6 +24,12 @@ change, pass disablement, profile acceptance, or baseline promotion has been
 made in response. The immutable machine-readable pre-fix evidence is
 [`docs/baselines/flatbuffer_direct_quick_tier0_4_2026-07-16_result.json`](baselines/flatbuffer_direct_quick_tier0_4_2026-07-16_result.json).
 
+Follow-up branch attribution and the narrowly guarded fix are now complete.
+Both semantic regressions are resolved, the `hybridnets` timeout was classified
+as one-off runtime variance, and no SWAP exclusion was added. See
+[Follow-up resolution](#follow-up-resolution) and the machine-readable
+[`docs/baselines/flatbuffer_direct_quick_tier0_4_2026-07-16_followup.json`](baselines/flatbuffer_direct_quick_tier0_4_2026-07-16_followup.json).
+
 ## Scope and selection
 
 The selection manifest is
@@ -185,7 +191,7 @@ parallel worker group, or overlapping converter subprocess was used.
 - model-process SWAP detection: zero entries;
 - conversion non-zero exits: zero entries.
 
-## Required next step
+## Pre-fix required next step
 
 The detailed evidence above and the result JSON must be committed before
 focused investigation begins. After that checkpoint, run only the two semantic
@@ -196,3 +202,89 @@ per branch with a longer diagnostic ceiling to distinguish timing variance from
 a repeatable regression. Only after branch attribution should a narrowly
 guarded fix be implemented and verified against the affected models plus a
 small set of already-passing structural neighbors.
+
+## Follow-up resolution
+
+### Branch attribution
+
+Focused runs used the identical retained ONNX files, profile options, uv
+environment, TFLite-only output, and sequential execution on `origin/main` at
+commit `a86401539c57188a49b1ce0481c9e0d978a05aa6`. The baseline reproduced the
+expected behavior:
+
+| Model | `origin/main` | Pre-fix `fb-refactor5` |
+| --- | --- | --- |
+| `text_detection_en_ppocrv3_2023may_int8.onnx` | known `tflite_fail`, max abs `0.7411765307188034` | missing report; invalid CONV input channels |
+| `imageclassifier.onnx` | pass, max abs `6.67572021484375e-06` | missing report; invalid CONV input channels |
+
+A sequential git bisect identified
+`78ba42aed51907f824124cb332814aaff507a1b7` (`Index NCHW concat transpose-conv
+repair`) as the first bad commit for both models.
+
+The indexed implementation had made two valid production patterns stricter
+than the extracted legacy semantics:
+
+- it rejected a corrected NCHW Concat/activation tensor whenever it fed more
+  than one Transpose→Conv branch, even when every sibling used the same
+  `[0,2,3,1]` layout adapter and required the same channel count;
+- it accepted only an embedded ndarray filter and rejected the QLinearConv
+  lowering form where a constant INT8 filter is shape-preservingly CAST to the
+  runtime FLOAT32 Conv filter.
+
+### Narrow fix
+
+The indexed owner remains in
+`onnx2tf/tflite_builder/passes/concat_transpose_conv_layout.py`; no legacy full
+graph producer/consumer scan was restored. The repair now:
+
+- permits fan-out only when every sibling is the same constant layout
+  Transpose contract or a Conv-like consumer with the same required input
+  channel count;
+- accepts only a strict single-input CAST whose source is an embedded constant
+  with an identical filter shape;
+- still rejects public boundary tensors, unrelated side consumers, produced
+  permutation tensors, duplicate producers, incompatible channels, and
+  non-constant filter storage;
+- collects all compatible plans before mutating the shared Concat, ensuring
+  that every sibling branch receives consistent shape metadata.
+
+### Post-fix results
+
+| Model | Post-fix result | Max abs | Artifact comparison |
+| --- | --- | ---: | --- |
+| `text_detection_en_ppocrv3_2023may_int8.onnx` | known `tflite_fail` restored | `0.7411765307188034` | executable TFLite and report restored |
+| `imageclassifier.onnx` | pass restored | `6.67572021484375e-06` | float32 TFLite byte-identical to `origin/main` |
+
+Four already-passing structural neighbors were then run sequentially:
+`face_detection_yunet_2023mar_int8.onnx`, `FastestDet.onnx`,
+`yolox_nano_with_post.onnx`, and
+`human_segmentation_pphumanseg_2021oct_org.onnx`. All four passed, and every
+float32 TFLite SHA-256 remained identical to the pre-fix bulk artifact. No
+model-process SWAP was detected.
+
+### `hybridnets` timing attribution
+
+With a 90-second diagnostic ceiling, `hybridnets_384x640_sim.onnx` passed in
+25.559 seconds on `fb-refactor5` and 25.912 seconds on `origin/main`. Both runs
+reported maximum absolute error `0.0002593994140625`, emitted the same float32
+TFLite SHA-256
+`413855e793ba823ff7a4d24cc05c029435391959715ec6bce94c3652c58b9d7b`,
+and used zero model-process SWAP. The initial 45-second timeout is therefore a
+one-off runtime variation, not a branch-specific regression. The model remains
+eligible for the measured-quick profile.
+
+### Post-fix validation
+
+- indexed Concat→Transpose→Conv repair plus full architecture tests: 232
+  passed;
+- TensorFlow import blocker direct conversion and direct `-cotof`: 2 passed;
+- affected-model sequential conversion: both expected classifications
+  restored, SWAP 0;
+- four already-passing neighboring models: 4 passed, byte-identical artifacts,
+  SWAP 0;
+- `hybridnets` branch timing comparison: both passed, equivalent accuracy and
+  artifact, SWAP 0.
+
+The full 49-model corpus was intentionally not rerun after this narrow fix.
+The complete pre-fix run is retained, while post-fix conversion work was kept
+to the affected models and small structural-neighbor set as requested.

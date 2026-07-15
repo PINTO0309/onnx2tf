@@ -6393,7 +6393,11 @@ def test_concat_transpose_conv_axis_repair_has_indexed_owner() -> None:
     }
     owner_calls = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
-        for owner_node in (owner_function, owner_functions["_candidate_plan"])
+        for owner_node in (
+            owner_function,
+            owner_functions["_candidate_plan"],
+            owner_functions["_chain_fanout_is_compatible"],
+        )
         for node in ast.walk(owner_node)
         if isinstance(node, ast.Call)
         and isinstance(node.func, (ast.Name, ast.Attribute))

@@ -166,6 +166,129 @@ def test_concat_transpose_conv_keeps_supplied_index_and_layout_current() -> None
     assert layout_state.validate_against_model_ir(model_ir) == []
 
 
+def test_concat_transpose_conv_repairs_compatible_shared_transpose_conv_fanout() -> (
+    None
+):
+    model_ir = ModelIR("shared_transpose_conv_fanout")
+    names = _add_branch(model_ir, "branch")
+    second_filter = "branch_second_filter"
+    second_bias = "branch_second_bias"
+    second_output = "branch_second_output"
+    model_ir.tensors[second_filter] = _tensor(
+        second_filter,
+        [6, 1, 1, 5],
+        np.ones([6, 1, 1, 5], dtype=np.float32),
+    )
+    model_ir.tensors[second_bias] = _tensor(
+        second_bias,
+        [6],
+        np.zeros([6], dtype=np.float32),
+    )
+    model_ir.tensors[second_output] = _tensor(second_output, [1, 4, 10, 6])
+    model_ir.operators.append(
+        OperatorIR(
+            "CONV_2D",
+            [names["transposed"], second_filter, second_bias],
+            [second_output],
+            {"padding": "SAME", "strideH": 1, "strideW": 1},
+        )
+    )
+
+    stats = _repair_nchw_concat_transpose_conv_axes(model_ir)
+
+    assert stats == {"repaired_nchw_concat_transpose_conv_axes": 2}
+    assert model_ir.tensors[names["concat"]].shape == [1, 5, 4, 5]
+    assert model_ir.tensors[names["transposed"]].shape == [1, 4, 5, 5]
+    assert model_ir.tensors[names["output"]].shape == [1, 4, 5, 4]
+    assert model_ir.tensors[second_output].shape == [1, 4, 5, 6]
+
+
+def test_concat_transpose_conv_repairs_compatible_shared_pretranspose_fanout() -> None:
+    model_ir = ModelIR("shared_pretranspose_fanout")
+    names = _add_branch(model_ir, "branch", pre_relu=True)
+    second_perm = "branch_second_perm"
+    second_transpose = "branch_second_transposed"
+    second_filter = "branch_second_filter"
+    second_bias = "branch_second_bias"
+    second_output = "branch_second_output"
+    model_ir.tensors[second_perm] = _tensor(
+        second_perm,
+        [4],
+        np.asarray([0, 2, 3, 1], dtype=np.int32),
+    )
+    model_ir.tensors[second_transpose] = _tensor(
+        second_transpose,
+        [1, 4, 10, 2],
+    )
+    model_ir.tensors[second_filter] = _tensor(
+        second_filter,
+        [6, 1, 1, 5],
+        np.ones([6, 1, 1, 5], dtype=np.float32),
+    )
+    model_ir.tensors[second_bias] = _tensor(
+        second_bias,
+        [6],
+        np.zeros([6], dtype=np.float32),
+    )
+    model_ir.tensors[second_output] = _tensor(second_output, [1, 4, 10, 6])
+    model_ir.operators.extend(
+        [
+            OperatorIR(
+                "TRANSPOSE",
+                [names["relu"], second_perm],
+                [second_transpose],
+            ),
+            OperatorIR(
+                "CONV_2D",
+                [second_transpose, second_filter, second_bias],
+                [second_output],
+                {"padding": "SAME", "strideH": 1, "strideW": 1},
+            ),
+        ]
+    )
+
+    stats = _repair_nchw_concat_transpose_conv_axes(model_ir)
+
+    assert stats == {"repaired_nchw_concat_transpose_conv_axes": 2}
+    assert model_ir.tensors[names["concat"]].shape == [1, 5, 4, 5]
+    assert model_ir.tensors[names["relu"]].shape == [1, 5, 4, 5]
+    assert model_ir.tensors[names["transposed"]].shape == [1, 4, 5, 5]
+    assert model_ir.tensors[second_transpose].shape == [1, 4, 5, 5]
+    assert model_ir.tensors[names["output"]].shape == [1, 4, 5, 4]
+    assert model_ir.tensors[second_output].shape == [1, 4, 5, 6]
+
+
+def test_concat_transpose_conv_accepts_constant_cast_filter_storage() -> None:
+    model_ir = ModelIR("constant_cast_filter")
+    names = _add_branch(model_ir, "branch")
+    filter_tensor = model_ir.tensors[names["filter"]]
+    filter_tensor.data = None
+    filter_source = "branch_filter_source"
+    model_ir.tensors[filter_source] = TensorIR(
+        name=filter_source,
+        dtype="INT8",
+        shape=[4, 1, 1, 5],
+        shape_signature=[4, 1, 1, 5],
+        data=np.ones([4, 1, 1, 5], dtype=np.int8),
+        is_variable=False,
+    )
+    model_ir.operators.insert(
+        -1,
+        OperatorIR(
+            "CAST",
+            [filter_source],
+            [names["filter"]],
+            {"inDataType": "INT8", "outDataType": "FLOAT32"},
+        ),
+    )
+
+    stats = _repair_nchw_concat_transpose_conv_axes(model_ir)
+
+    assert stats == {"repaired_nchw_concat_transpose_conv_axes": 1}
+    assert model_ir.tensors[names["concat"]].shape == [1, 5, 4, 5]
+    assert model_ir.tensors[names["transposed"]].shape == [1, 4, 5, 5]
+
+
 @pytest.mark.parametrize(
     "case",
     [
@@ -200,7 +323,7 @@ def test_concat_transpose_conv_rejects_unsafe_contracts_transactionally(
     names = _add_branch(
         model_ir, "branch", pre_relu=case in {"pre_fanout", "pre_public"}
     )
-    concat, transpose, conv = (
+    concat, _transpose, conv = (
         model_ir.operators[0],
         model_ir.operators[-2],
         model_ir.operators[-1],

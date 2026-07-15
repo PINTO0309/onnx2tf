@@ -45,6 +45,104 @@ def _producer(
     return int(producer_index), operator
 
 
+def _filter_storage_is_static(
+    model_ir: ModelIR,
+    index: ModelIRGraphIndex,
+    filter_name: str,
+    filter_tensor: TensorIR,
+    filter_shape: list[int],
+) -> bool:
+    """Accept embedded filters and the strict constant-CAST form used by QLinearConv."""
+
+    if isinstance(filter_tensor.data, np.ndarray):
+        return (
+            list(filter_tensor.data.shape) == filter_shape
+            and filter_name not in index.producers
+            and filter_name not in index.duplicate_producers
+        )
+    producer_match = _producer(model_ir, index, filter_name)
+    if producer_match is None:
+        return False
+    _, producer = producer_match
+    if str(producer.op_type) != "CAST" or len(producer.inputs) != 1:
+        return False
+    source_name = str(producer.inputs[0])
+    source_tensor = model_ir.tensors.get(source_name)
+    if (
+        source_tensor is None
+        or not isinstance(source_tensor.data, np.ndarray)
+        or list(source_tensor.data.shape) != filter_shape
+        or source_name in index.producers
+        or source_name in index.duplicate_producers
+    ):
+        return False
+    return True
+
+
+def _conv_consumer_matches_channels(
+    model_ir: ModelIR,
+    consumer: OperatorIR,
+    tensor_name: str,
+    channels: int,
+) -> bool:
+    conv_type = str(consumer.op_type)
+    minimum_inputs = 3 if conv_type == "TRANSPOSE_CONV" else 2
+    if (
+        conv_type not in {"CONV_2D", "TRANSPOSE_CONV"}
+        or len(consumer.inputs) < minimum_inputs
+        or len(consumer.outputs) != 1
+    ):
+        return False
+    data_index = 2 if conv_type == "TRANSPOSE_CONV" else 0
+    if str(consumer.inputs[data_index]) != str(tensor_name):
+        return False
+    filter_shape = _shape(model_ir.tensors.get(str(consumer.inputs[1])))
+    return bool(
+        filter_shape is not None
+        and len(filter_shape) == 4
+        and int(filter_shape[3]) == int(channels)
+    )
+
+
+def _chain_fanout_is_compatible(
+    model_ir: ModelIR,
+    index: ModelIRGraphIndex,
+    *,
+    tensor_name: str,
+    expected_consumer: int,
+    transpose_output_name: str,
+    channels: int,
+) -> bool:
+    consumer_indices = index.consumer_indices(tensor_name)
+    if int(expected_consumer) not in consumer_indices:
+        return False
+    if len(consumer_indices) == 1:
+        return True
+    consumers = [model_ir.operators[int(value)] for value in consumer_indices]
+    expected = model_ir.operators[int(expected_consumer)]
+    if str(expected.op_type) == "TRANSPOSE":
+        return all(
+            str(consumer.op_type) == "TRANSPOSE"
+            and len(consumer.inputs) >= 2
+            and len(consumer.outputs) == 1
+            and _read_transpose_perm(model_ir, consumer) == [0, 2, 3, 1]
+            and str(consumer.inputs[1]) not in index.producers
+            and str(consumer.inputs[1]) not in index.duplicate_producers
+            for consumer in consumers
+        )
+    if str(tensor_name) == str(transpose_output_name):
+        return all(
+            _conv_consumer_matches_channels(
+                model_ir,
+                consumer,
+                str(tensor_name),
+                int(channels),
+            )
+            for consumer in consumers
+        )
+    return False
+
+
 def _candidate_plan(
     model_ir: ModelIR,
     index: ModelIRGraphIndex,
@@ -118,28 +216,6 @@ def _candidate_plan(
     except (TypeError, ValueError):
         return None
 
-    forward_pre = list(reversed(pre_indices))
-    forward_post = list(reversed(post_indices))
-    ordered = (
-        [concat_index] + forward_pre + [transpose_index] + forward_post + [conv_index]
-    )
-    if ordered != sorted(ordered) or len(ordered) != len(set(ordered)):
-        return None
-    chain_names = (
-        [concat_name]
-        + list(reversed(pre_names))
-        + [str(transpose.outputs[0])]
-        + list(reversed(post_names))
-    )
-    for position, tensor_name in enumerate(chain_names):
-        expected_consumer = ordered[position + 1]
-        if index.consumer_indices(tensor_name) != [
-            int(expected_consumer)
-        ] or tensor_name in {
-            str(value) for value in model_ir.inputs + model_ir.outputs
-        }:
-            return None
-
     input_shapes = [_shape(model_ir.tensors.get(str(name))) for name in concat.inputs]
     filter_tensor = model_ir.tensors.get(filter_name)
     filter_shape = _shape(filter_tensor)
@@ -151,10 +227,13 @@ def _candidate_plan(
         or filter_tensor is None
         or filter_shape is None
         or len(filter_shape) != 4
-        or not isinstance(filter_tensor.data, np.ndarray)
-        or list(filter_tensor.data.shape) != filter_shape
-        or filter_name in index.producers
-        or filter_name in index.duplicate_producers
+        or not _filter_storage_is_static(
+            model_ir,
+            index,
+            filter_name,
+            filter_tensor,
+            filter_shape,
+        )
         or transpose_tensor is None
         or conv_output is None
     ):
@@ -176,6 +255,33 @@ def _candidate_plan(
         or transpose_shape[3] == channels
     ):
         return None
+
+    forward_pre = list(reversed(pre_indices))
+    forward_post = list(reversed(post_indices))
+    ordered = (
+        [concat_index] + forward_pre + [transpose_index] + forward_post + [conv_index]
+    )
+    if ordered != sorted(ordered) or len(ordered) != len(set(ordered)):
+        return None
+    transpose_output_name = str(transpose.outputs[0])
+    chain_names = (
+        [concat_name]
+        + list(reversed(pre_names))
+        + [transpose_output_name]
+        + list(reversed(post_names))
+    )
+    public_names = {str(value) for value in model_ir.inputs + model_ir.outputs}
+    for position, tensor_name in enumerate(chain_names):
+        expected_consumer = ordered[position + 1]
+        if tensor_name in public_names or not _chain_fanout_is_compatible(
+            model_ir,
+            index,
+            tensor_name=tensor_name,
+            expected_consumer=int(expected_consumer),
+            transpose_output_name=transpose_output_name,
+            channels=int(channels),
+        ):
+            return None
 
     concat_shape = tuple(reference[:1] + [channels] + reference[2:])
     nhwc_shape = (concat_shape[0], concat_shape[2], concat_shape[3], concat_shape[1])
@@ -223,14 +329,16 @@ def _repair_nchw_concat_transpose_conv_axes(
         if graph_index is not None and graph_index.model_ir is model_ir
         else ModelIRGraphIndex(model_ir)
     )
-    repaired = 0
+    plans: list[_RepairPlan] = []
     for conv_index in active_index.operator_indices_for_types(
         {"CONV_2D", "TRANSPOSE_CONV"}
     ):
         plan = _candidate_plan(model_ir, active_index, int(conv_index))
         if plan is not None:
-            _apply_plan(plan)
-            repaired += 1
+            plans.append(plan)
+    for plan in plans:
+        _apply_plan(plan)
+    repaired = len(plans)
     if repaired and layout_state is not None:
         layout_state.sync_from_model_ir(model_ir)
     return {stats_key: repaired}
