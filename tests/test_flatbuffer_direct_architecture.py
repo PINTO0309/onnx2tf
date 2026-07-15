@@ -12466,13 +12466,13 @@ def test_indexed_split_conv_concat_bridge_owner_is_bounded_and_transactional() -
         assert layout_keyword.value.attr == "layout_state"
 
 
-def test_indexed_swish_passthrough_owner_is_bounded_and_transactional() -> None:
+def test_indexed_activation_passthrough_owner_is_bounded_and_transactional() -> None:
     owner_path = (
         REPO_ROOT
         / "onnx2tf"
         / "tflite_builder"
         / "passes"
-        / "swish_passthrough_layout.py"
+        / "activation_passthrough_layout.py"
     )
     owner_source = owner_path.read_text(encoding="utf-8")
     lowerer_path = (
@@ -12483,6 +12483,9 @@ def test_indexed_swish_passthrough_owner_is_bounded_and_transactional() -> None:
     assert "def _resolve_candidate(" in owner_source
     assert "def _apply_plan(" in owner_source
     assert "def _plan_signature(" in owner_source
+    assert "def _resolve_gelu_candidate(" in owner_source
+    assert "def _apply_gelu_plan(" in owner_source
+    assert "def _gelu_plan_signature(" in owner_source
     assert "graph_index.remove_operators(" in owner_source
     assert "graph_index.insert_operator(" in owner_source
     assert "max_rewrites" in owner_source
@@ -12492,49 +12495,57 @@ def test_indexed_swish_passthrough_owner_is_bounded_and_transactional() -> None:
     for model_name in ("mobilevit", "yunet", "fastestdet", "humanseg", "osnet", "sinet"):
         assert model_name not in owner_source.lower()
 
-    wrapper_name = "_optimize_swish_transpose_passthrough_chains"
-    dispatch_name = "_optimize_swish_transpose_passthrough_chains_pass"
-    wrapper = next(
-        node
-        for node in lowerer_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
-    )
-    assert len(wrapper.body) == 1
-    dispatch = wrapper.body[0]
-    assert isinstance(dispatch, ast.Return)
-    call = next(node for node in ast.walk(dispatch) if isinstance(node, ast.Call))
-    assert isinstance(call.func, ast.Name)
-    assert call.func.id == dispatch_name
-    assert {keyword.arg for keyword in call.keywords} == {
-        "graph_index",
-        "layout_state",
-        "max_rewrites",
-        "candidate",
-    }
-
     lowerer = next(
         node
         for node in lowerer_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "lower_onnx_to_ir"
     )
-    production_calls = [
-        node
-        for node in ast.walk(lowerer)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == wrapper_name
-    ]
-    assert len(production_calls) == 2
-    for production_call in production_calls:
-        layout_keyword = next(
-            keyword
-            for keyword in production_call.keywords
-            if keyword.arg == "layout_state"
+    wrappers = {
+        "_optimize_swish_transpose_passthrough_chains": (
+            "_optimize_swish_transpose_passthrough_chains_pass",
+            2,
+        ),
+        "_optimize_gelu_tanh_transpose_passthrough_chains": (
+            "_optimize_gelu_tanh_transpose_passthrough_chains_pass",
+            1,
+        ),
+    }
+    for wrapper_name, (dispatch_name, expected_calls) in wrappers.items():
+        wrapper = next(
+            node
+            for node in lowerer_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
         )
-        assert isinstance(layout_keyword.value, ast.Attribute)
-        assert isinstance(layout_keyword.value.value, ast.Name)
-        assert layout_keyword.value.value.id == "session"
-        assert layout_keyword.value.attr == "layout_state"
+        assert len(wrapper.body) == 1
+        dispatch = wrapper.body[0]
+        assert isinstance(dispatch, ast.Return)
+        call = next(node for node in ast.walk(dispatch) if isinstance(node, ast.Call))
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == dispatch_name
+        assert {keyword.arg for keyword in call.keywords} == {
+            "graph_index",
+            "layout_state",
+            "max_rewrites",
+            "candidate",
+        }
+        production_calls = [
+            node
+            for node in ast.walk(lowerer)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == wrapper_name
+        ]
+        assert len(production_calls) == expected_calls
+        for production_call in production_calls:
+            layout_keyword = next(
+                keyword
+                for keyword in production_call.keywords
+                if keyword.arg == "layout_state"
+            )
+            assert isinstance(layout_keyword.value, ast.Attribute)
+            assert isinstance(layout_keyword.value.value, ast.Name)
+            assert layout_keyword.value.value.id == "session"
+            assert layout_keyword.value.attr == "layout_state"
 
 
 def test_indexed_singleton_gate_layout_owner_is_bounded_and_transactional() -> None:

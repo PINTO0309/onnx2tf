@@ -1158,7 +1158,7 @@ transposes before snapshotting; operator rewires and boundary-transpose removal
 update the differential index directly.
 
 Unquantized pseudo-Swish transpose passthrough is independently owned by
-`passes/swish_passthrough_layout.py`. The former 194-line raw helper is a thin
+`passes/activation_passthrough_layout.py`. The former 194-line raw helper is a thin
 dispatcher at its two unchanged production positions: once in the ordered
 activation recovery prefix and once in the no-layout-compatible late recovery.
 Both calls receive Session `LayoutState`. This owner is separate from the
@@ -1201,6 +1201,47 @@ transactional rejection cases. The focused owner, adjacent input and
 quantized-Swish owners, active Swish fixtures, and complete architecture suite
 pass together with `304 passed in 44.59s`. TensorFlow-blocked
 direct/default/`-cotof` checks pass sequentially, and YuNet reproduces all five
+fixed artifact hashes.
+
+The adjacent tanh-expanded GELU transpose passthrough is owned by the same
+activation module under an independent immutable plan. Its production position
+remains immediately after pseudo-Swish and before center/size-offset recovery.
+The compatibility wrapper retains its legacy name and statistic, receives
+Session `LayoutState`, and delegates only to the indexed owner.
+
+The resolver proves the complete nine-operation approximation:
+`x*x`, cubic multiplication, a cubic-scale Mul, residual Add, an outer-scale
+Mul, Tanh, an offset Add, residual multiplication by `x`, and a final-scale
+Mul. It validates all five direct source-consumer slots,
+linear ownership of every other intermediate, unique producers, strict graph
+order, and four immutable singleton constants before accepting the chain.
+Constants retain their declared dtype, data, shape, provenance, and per-tensor
+quantization. Both binary operand orders are supported where multiplication or
+addition is commutative.
+
+Typed rank-two-or-higher INT32/INT64 boundary permutations, exact static or
+dynamic tensor views, dtype, quantization, and known layout transitions follow
+the same contract as pseudo-Swish. All inverse post aliases collapse to one
+source-layout final result. A public post alias can be selected as the
+representative, while an existing consumer or public use of the old transposed
+final tensor is preserved by one local adapter immediately after the last Mul.
+The adapter reuses the proven pre-permutation, and no shared post-permutation
+buffer is modified.
+
+The complete plan is re-resolved before apply. One differential graph index
+rewires exact input slots, changes the final output, inserts the optional local
+adapter, compacts only proven private adapters, and updates LayoutState only
+after acceptance. Candidate enumeration is graph ordered and bounded; the raw
+full-map fixed-point loop and mutation-before-validation path are gone.
+
+Fifty-six focused GELU cases cover static/dynamic rank-three and rank-four
+views, INT32/INT64 permutations, binary operand order, one/multiple post
+aliases, repeated slots, public and legacy boundaries, constant input, shared
+permutation buffers, numerical equivalence, candidate limits, idempotence, and
+thirty transactional rejection variants. The Swish and GELU owners, adjacent
+layout suites, active fixtures, and complete architecture suite pass together
+with `362 passed in 42.95s`. TensorFlow-blocked direct/default/`-cotof` checks
+pass sequentially with `3 passed in 3.95s`, and YuNet again reproduces all five
 fixed artifact hashes.
 
 The terminal hard-activation recovery and its immediately following optional

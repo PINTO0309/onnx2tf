@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves unquantized pseudo-Swish transpose
-passthrough into the TensorFlow-free indexed
-`passes/swish_passthrough_layout.py` owner. Its former 194-line full-map
-fixed-point helper is now a thin dispatcher at both unchanged production
-positions, and each call receives Session LayoutState. The plan proves the
-complete Logistic/residual-Mul topology, every inverse post alias, and an
-optional retained legacy boundary before mutation. Shared post-permutation
-constants are no longer rewritten in place.
+The latest implementation unit moves tanh-expanded GELU transpose passthrough
+beside pseudo-Swish in the TensorFlow-free indexed
+`passes/activation_passthrough_layout.py` owner. Its former 294-line full-map
+fixed-point helper is now a thin dispatcher at its unchanged production
+position and receives Session LayoutState. The plan proves the complete
+nine-operation GELU approximation, all source and post-alias slots, four
+immutable constants, and an optional retained legacy boundary before mutation.
+Shared post-permutation constants are never rewritten in place.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -310,7 +310,7 @@ Temporary outputs were removed. No Tier corpus run was performed.
 ### Unquantized pseudo-Swish passthrough continuation
 
 The raw `_optimize_swish_transpose_passthrough_chains` implementation is now
-owned by `passes/swish_passthrough_layout.py`. Its position after registered
+owned by `passes/activation_passthrough_layout.py`. Its position after registered
 hard-activation cleanup in the ordered recovery prefix and its late
 no-layout-compatible recovery position are unchanged. Both calls supply
 Session LayoutState, and the legacy stats key remains unchanged.
@@ -368,6 +368,64 @@ and `schema_generated.py`
 `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
 Temporary outputs were removed and no Tier corpus was run.
 
+### Tanh-expanded GELU passthrough continuation
+
+The raw `_optimize_gelu_tanh_transpose_passthrough_chains` implementation is
+now an indexed compatibility dispatcher in the common activation-passthrough
+owner. Its sole production position remains immediately after pseudo-Swish and
+before center/size-offset recovery, its stats key is unchanged, and its call
+receives Session LayoutState.
+
+The resolver proves the exact nine-operation topology from square and cubic
+multiplication through cubic-scale, outer-scale, offset, and final-scale
+singleton constant roles. All five uses of the original transposed source, every
+linear intermediate, unique producer, graph order, constant dtype/data/shape/
+provenance, and per-tensor quantization are validated before a plan exists.
+Both valid operand orders are retained for commutative binary operations.
+
+Typed rank-two-or-higher INT32/INT64 permutations, static or independently
+dynamic views, dtype, quantization, layout transitions, source provenance, and
+inverse post aliases are resolved before mutation. Immutable runtime and
+constant sources are supported. Repeated downstream input slots remain exact,
+one public post alias may be the representative, and a public or consumed old
+transposed final tensor receives one local adapter immediately after the final
+Mul. The adapter reuses the proven pre-permutation; shared post constants and
+unrelated consumers remain untouched.
+
+The immutable plan records every input/output slot, tensor and operator
+contract, public list, metadata update, removal, and optional insertion. It is
+fully re-resolved before apply. One differential graph index performs the
+transaction, LayoutState changes only after acceptance, candidate enumeration
+is graph ordered and bounded, and pruning is success-only. This removes the
+raw full-map rebuilds, unbounded fixed-point loop, and partial mutation path.
+
+Pre- and post-extraction characterization ran sequentially on YuNet,
+FastestDet, HumanSeg, OSNet, and SiNet. Each run reached the helper four times;
+all 20 invocations were zero-match and preserved operator and tensor counts.
+
+The dedicated suite passes with `56 passed`. It covers rank-three/rank-four
+static and dynamic views, INT32/INT64 permutations, both operand orders,
+one/multiple and repeated post aliases, public and legacy boundaries,
+immutable constant input, shared permutations, exact numerical equivalence,
+candidate limits, idempotence, GraphIndex, LayoutState, and thirty unsafe
+transactional no-op cases. The Swish and GELU owners, adjacent input and
+quantized-Swish suites, active fixtures, and complete architecture suite pass
+together with `362 passed in 42.95s`.
+
+TensorFlow-import-blocked explicit direct, default direct, and `-cotof`
+conversion pass sequentially with `3 passed in 3.95s`. One sequential YuNet
+conversion reproduced float32
+`43c65782ae622ea5aefc97632f2c69033fb8a314469e4c30703c88f9907cc380`,
+float16
+`13232a21173ef434c7b4986320931a17a28a211109fa894023c6da7672609433`,
+correspondence
+`7e2b57a9b2264ef08db5aaead11922109079274eb15befbfc90bf321de370b4d`,
+`schema.fbs`
+`0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`,
+and `schema_generated.py`
+`b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+Temporary outputs were removed and no Tier corpus was run.
+
 ## Completed work
 
 The merged `fb-refactor4` checkpoints included:
@@ -385,7 +443,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 130 coherent implementation
+The current `fb-refactor5` work contains 131 coherent implementation
 continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
@@ -703,6 +761,10 @@ continuations:
   indexed owner, proves all Logistic/Mul/post-alias slots, preserves an
   optional legacy transposed boundary with the pre-permutation, and eliminates
   mutation of shared post-permutation constants.
+- the latest checkpoint moves tanh-expanded GELU passthrough to the same
+  activation-family owner under an independent immutable plan, proves all nine
+  operations, five source slots, four constants, and every post alias, and
+  preserves public or consumed transposed boundaries with one local adapter.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -721,8 +783,9 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/swish_passthrough_layout.py`;
+- `onnx2tf/tflite_builder/passes/activation_passthrough_layout.py`;
 - `tests/test_flatbuffer_direct_indexed_swish_passthrough_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_gelu_passthrough_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -861,6 +924,14 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   Logistic and Mul to the source view is exact because Swish is elementwise;
   runtime intermediates and adapter endpoints remain fully typed and
   per-tensor quantized.
+- Tanh-GELU uses its own immutable plan within the activation owner. It accepts
+  only the complete nine-operation approximation and proves all five source
+  slots, linear intermediate ownership, unique production, order, and four
+  immutable singleton constants before any layout rewrite.
+- GELU post aliases follow the same exact-slot and public-representative
+  contract as Swish. If the old final transposed tensor remains observable, a
+  local adapter reuses the pre-permutation; neither activation pass mutates a
+  shared post-permutation constant.
 - The exporter remains the ordered orchestration owner; match/guard/rewrite
   decisions move to `pytorch_fast_precanonicalize_policy.py` one coherent
   family at a time.
@@ -4697,6 +4768,28 @@ direct, default direct, and direct `-cotof` conversion:
 One sequential YuNet conversion reproduced all five fixed hashes. Scoped Ruff,
 `py_compile`, and `git diff --check` passed. No Tier corpus was run.
 
+The tanh-expanded GELU checkpoint passed its 56 dedicated cases. The activation
+owner suites, adjacent input/quantized-Swish suites, active Swish and GELU
+fixtures, and the complete architecture suite passed together:
+
+```text
+362 passed in 42.95s
+```
+
+TensorFlow import blocking was exercised sequentially for explicit direct,
+default direct, and direct `-cotof` conversion:
+
+```text
+3 passed in 3.95s
+```
+
+Scoped Ruff and syntax compilation passed before the checkpoint. The lowerer
+uses only its documented inherited F841 exclusion. `git diff --check` passed.
+Pre- and post-extraction characterization produced 20 zero-match invocations
+with unchanged operator/tensor counts, and one sequential YuNet conversion
+reproduced all five fixed hashes. Temporary outputs were removed. No Tier
+corpus was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -4740,9 +4833,9 @@ the generic direct bridge has its own indexed owner and preserves all three
 production positions. The five short representatives remain zero-match for
 the bridge, and YuNet retains byte-identical artifacts.
 
-The unquantized pseudo-Swish passthrough helper is also indexed at both
-production positions. The adjacent raw activation helpers for tanh-GELU,
-center/size offset, LeakyReLU, and PReLU remain independent candidates and
+The unquantized pseudo-Swish and tanh-GELU passthrough helpers are now indexed
+at their unchanged production positions. The adjacent raw activation helpers
+for center/size offset, LeakyReLU, and PReLU remain independent candidates and
 must be characterized separately before extraction.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
@@ -4755,10 +4848,9 @@ verification gates.
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
 2. Characterize the adjacent raw activation recovery helpers in their current
-   order, beginning with
-   `_optimize_gelu_tanh_transpose_passthrough_chains`. Select only one bounded
-   semantic owner after confirming its runtime match set, topology, and
-   interaction with Swish and the center/size-offset helper.
+   order, beginning with the center/size-offset helper that immediately follows
+   indexed GELU. Select only one bounded semantic owner after confirming its
+   runtime match set, topology, and interaction with GELU and LeakyReLU.
 3. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have

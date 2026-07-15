@@ -164,7 +164,8 @@ from onnx2tf.tflite_builder.passes.split_all_outputs_layout import (
 from onnx2tf.tflite_builder.passes.split_conv_concat_bridge_layout import (
     optimize_split_conv_concat_transpose_bridge_to_single_post_nchw as _optimize_split_conv_concat_transpose_bridge_to_single_post_nchw_pass,
 )
-from onnx2tf.tflite_builder.passes.swish_passthrough_layout import (
+from onnx2tf.tflite_builder.passes.activation_passthrough_layout import (
+    optimize_gelu_tanh_transpose_passthrough_chains as _optimize_gelu_tanh_transpose_passthrough_chains_pass,
     optimize_swish_transpose_passthrough_chains as _optimize_swish_transpose_passthrough_chains_pass,
 )
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
@@ -5829,298 +5830,21 @@ def _optimize_swish_transpose_passthrough_chains(
     )
 
 
-def _optimize_gelu_tanh_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold transpose wrappers around tanh-approx GELU expansion chains.
-
-    Target:
-      X --TRANSPOSE(P)--> x_t
-      m2 = MUL(MUL(x_t, x_t), x_t)
-      t0 = MUL(m2, c0)
-      t1 = ADD(x_t, t0)
-      t2 = MUL(t1, c1)
-      t3 = TANH(t2)
-      t4 = ADD(t3, c2)
-      t5 = MUL(x_t, t4)
-      y_t = MUL(t5, c3)
-      y_t --TRANSPOSE(inv(P))--> Y
-
-    Rewrite:
-      Same chain with x_t replaced by X and Y produced directly from final MUL.
-
-    Safety:
-    - Requires exact tanh-GELU topology with scalar-like constants c0..c3.
-    - Final GELU output must be consumed by inverse post-transpose adapters only.
-    """
-    rewritten = 0
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
-                continue
-            pre_input_name = str(pre_op.inputs[0])
-            pre_output_name = str(pre_op.outputs[0])
-            if pre_output_name in model_outputs:
-                continue
-
-            perm_pre = _read_transpose_perm(model_ir, pre_op)
-            if perm_pre is None:
-                continue
-            perm_post_expected = _invert_perm(perm_pre)
-            if perm_post_expected is None:
-                continue
-
-            pre_users = sorted(list(set(int(v) for v in consumers.get(pre_output_name, []))))
-            if len(pre_users) == 0:
-                continue
-
-            gelu_match_found = False
-            for msq_idx in pre_users:
-                msq_op = model_ir.operators[int(msq_idx)]
-                if str(msq_op.op_type) != "MUL" or len(msq_op.inputs) != 2 or len(msq_op.outputs) != 1:
-                    continue
-                if not (str(msq_op.inputs[0]) == pre_output_name and str(msq_op.inputs[1]) == pre_output_name):
-                    continue
-                msq_out_name = str(msq_op.outputs[0])
-                msq_users = [int(v) for v in consumers.get(msq_out_name, [])]
-                if len(msq_users) != 1:
-                    continue
-
-                mcube_idx = int(msq_users[0])
-                mcube_op = model_ir.operators[int(mcube_idx)]
-                if str(mcube_op.op_type) != "MUL" or len(mcube_op.inputs) != 2 or len(mcube_op.outputs) != 1:
-                    continue
-                mcube_inputs = [str(v) for v in mcube_op.inputs]
-                if pre_output_name == mcube_inputs[0] and msq_out_name == mcube_inputs[1]:
-                    pass
-                elif pre_output_name == mcube_inputs[1] and msq_out_name == mcube_inputs[0]:
-                    pass
-                else:
-                    continue
-                mcube_out_name = str(mcube_op.outputs[0])
-
-                m1_users = [int(v) for v in consumers.get(mcube_out_name, [])]
-                if len(m1_users) != 1:
-                    continue
-                m1_idx = int(m1_users[0])
-                m1_op = model_ir.operators[int(m1_idx)]
-                if str(m1_op.op_type) != "MUL" or len(m1_op.inputs) != 2 or len(m1_op.outputs) != 1:
-                    continue
-                m1_inputs = [str(v) for v in m1_op.inputs]
-                if m1_inputs[0] == mcube_out_name:
-                    m1_side_name = m1_inputs[1]
-                elif m1_inputs[1] == mcube_out_name:
-                    m1_side_name = m1_inputs[0]
-                else:
-                    continue
-                if not _is_singleton_constant_tensor(model_ir, m1_side_name):
-                    continue
-                m1_out_name = str(m1_op.outputs[0])
-
-                add1_users = [int(v) for v in consumers.get(m1_out_name, [])]
-                if len(add1_users) != 1:
-                    continue
-                add1_idx = int(add1_users[0])
-                add1_op = model_ir.operators[int(add1_idx)]
-                if str(add1_op.op_type) != "ADD" or len(add1_op.inputs) != 2 or len(add1_op.outputs) != 1:
-                    continue
-                add1_inputs = [str(v) for v in add1_op.inputs]
-                if pre_output_name == add1_inputs[0] and m1_out_name == add1_inputs[1]:
-                    pass
-                elif pre_output_name == add1_inputs[1] and m1_out_name == add1_inputs[0]:
-                    pass
-                else:
-                    continue
-                add1_out_name = str(add1_op.outputs[0])
-
-                m2_users = [int(v) for v in consumers.get(add1_out_name, [])]
-                if len(m2_users) != 1:
-                    continue
-                m2_idx = int(m2_users[0])
-                m2_op = model_ir.operators[int(m2_idx)]
-                if str(m2_op.op_type) != "MUL" or len(m2_op.inputs) != 2 or len(m2_op.outputs) != 1:
-                    continue
-                m2_inputs = [str(v) for v in m2_op.inputs]
-                if m2_inputs[0] == add1_out_name:
-                    m2_side_name = m2_inputs[1]
-                elif m2_inputs[1] == add1_out_name:
-                    m2_side_name = m2_inputs[0]
-                else:
-                    continue
-                if not _is_singleton_constant_tensor(model_ir, m2_side_name):
-                    continue
-                m2_out_name = str(m2_op.outputs[0])
-
-                tanh_users = [int(v) for v in consumers.get(m2_out_name, [])]
-                if len(tanh_users) != 1:
-                    continue
-                tanh_idx = int(tanh_users[0])
-                tanh_op = model_ir.operators[int(tanh_idx)]
-                if (
-                    str(tanh_op.op_type) != "TANH"
-                    or len(tanh_op.inputs) != 1
-                    or len(tanh_op.outputs) != 1
-                    or str(tanh_op.inputs[0]) != m2_out_name
-                ):
-                    continue
-                tanh_out_name = str(tanh_op.outputs[0])
-
-                add2_users = [int(v) for v in consumers.get(tanh_out_name, [])]
-                if len(add2_users) != 1:
-                    continue
-                add2_idx = int(add2_users[0])
-                add2_op = model_ir.operators[int(add2_idx)]
-                if str(add2_op.op_type) != "ADD" or len(add2_op.inputs) != 2 or len(add2_op.outputs) != 1:
-                    continue
-                add2_inputs = [str(v) for v in add2_op.inputs]
-                if add2_inputs[0] == tanh_out_name:
-                    add2_side_name = add2_inputs[1]
-                elif add2_inputs[1] == tanh_out_name:
-                    add2_side_name = add2_inputs[0]
-                else:
-                    continue
-                if not _is_singleton_constant_tensor(model_ir, add2_side_name):
-                    continue
-                add2_out_name = str(add2_op.outputs[0])
-
-                m3_users = [int(v) for v in consumers.get(add2_out_name, [])]
-                if len(m3_users) != 1:
-                    continue
-                m3_idx = int(m3_users[0])
-                m3_op = model_ir.operators[int(m3_idx)]
-                if str(m3_op.op_type) != "MUL" or len(m3_op.inputs) != 2 or len(m3_op.outputs) != 1:
-                    continue
-                m3_inputs = [str(v) for v in m3_op.inputs]
-                if pre_output_name == m3_inputs[0] and add2_out_name == m3_inputs[1]:
-                    pass
-                elif pre_output_name == m3_inputs[1] and add2_out_name == m3_inputs[0]:
-                    pass
-                else:
-                    continue
-                m3_out_name = str(m3_op.outputs[0])
-
-                m4_users = [int(v) for v in consumers.get(m3_out_name, [])]
-                if len(m4_users) != 1:
-                    continue
-                m4_idx = int(m4_users[0])
-                m4_op = model_ir.operators[int(m4_idx)]
-                if str(m4_op.op_type) != "MUL" or len(m4_op.inputs) != 2 or len(m4_op.outputs) != 1:
-                    continue
-                m4_inputs = [str(v) for v in m4_op.inputs]
-                if m4_inputs[0] == m3_out_name:
-                    m4_side_name = m4_inputs[1]
-                elif m4_inputs[1] == m3_out_name:
-                    m4_side_name = m4_inputs[0]
-                else:
-                    continue
-                if not _is_singleton_constant_tensor(model_ir, m4_side_name):
-                    continue
-                gelu_out_name = str(m4_op.outputs[0])
-
-                gelu_users = [int(v) for v in consumers.get(gelu_out_name, []) if int(v) != int(m4_idx)]
-                if len(gelu_users) == 0:
-                    continue
-
-                post_indices: List[int] = []
-                post_output_names: List[str] = []
-                valid_users = True
-                for user_idx in gelu_users:
-                    user_op = model_ir.operators[int(user_idx)]
-                    if (
-                        str(user_op.op_type) != "TRANSPOSE"
-                        or len(user_op.inputs) < 2
-                        or len(user_op.outputs) != 1
-                        or str(user_op.inputs[0]) != gelu_out_name
-                    ):
-                        valid_users = False
-                        break
-                    perm_post = _read_transpose_perm(model_ir, user_op)
-                    if perm_post is None or perm_post != perm_post_expected:
-                        valid_users = False
-                        break
-                    post_output_name = str(user_op.outputs[0])
-                    if post_output_name in model_outputs:
-                        valid_users = False
-                        break
-                    post_indices.append(int(user_idx))
-                    post_output_names.append(post_output_name)
-                if not valid_users or len(post_indices) == 0:
-                    continue
-
-                representative_output_name = str(post_output_names[0])
-                for op_idx in [int(msq_idx), int(mcube_idx), int(add1_idx), int(m3_idx)]:
-                    op = model_ir.operators[int(op_idx)]
-                    updated_inputs = [
-                        pre_input_name if str(v) == pre_output_name else str(v)
-                        for v in list(op.inputs)
-                    ]
-                    _set_operator_inputs(
-                        model_ir=model_ir,
-                        op=op,
-                        new_inputs=updated_inputs,
-                    )
-
-                _set_operator_outputs(
-                    model_ir=model_ir,
-                    op=m4_op,
-                    new_outputs=[representative_output_name],
-                )
-                for alias_name in post_output_names[1:]:
-                    _replace_tensor_inputs(model_ir, alias_name, representative_output_name)
-
-                for tensor_name in [
-                    msq_out_name,
-                    mcube_out_name,
-                    m1_out_name,
-                    add1_out_name,
-                    m2_out_name,
-                    tanh_out_name,
-                    add2_out_name,
-                    m3_out_name,
-                ]:
-                    _permute_tensor_metadata_if_rank_matches(
-                        model_ir.tensors.get(tensor_name, None),
-                        perm_post_expected,
-                    )
-
-                old_gelu_tensor = model_ir.tensors.get(gelu_out_name, None)
-                representative_tensor = model_ir.tensors.get(representative_output_name, None)
-                if old_gelu_tensor is not None and representative_tensor is not None:
-                    representative_tensor.dtype = str(old_gelu_tensor.dtype)
-                    representative_tensor.quantization = _clone_quantization(old_gelu_tensor.quantization)
-                    representative_tensor.shape = [int(v) for v in list(old_gelu_tensor.shape)]
-                    representative_tensor.shape_signature = (
-                        [int(v) for v in list(old_gelu_tensor.shape_signature)]
-                        if old_gelu_tensor.shape_signature is not None
-                        else [int(v) for v in list(old_gelu_tensor.shape)]
-                    )
-                    _permute_tensor_metadata_if_rank_matches(
-                        representative_tensor,
-                        perm_post_expected,
-                    )
-
-                remove_indices = sorted(list({int(pre_idx), *post_indices}), reverse=True)
-                for remove_idx in remove_indices:
-                    del model_ir.operators[int(remove_idx)]
-
-                rewritten += 1
-                changed = True
-                gelu_match_found = True
-                break
-
-            if gelu_match_found:
-                break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"rewritten_gelu_tanh_transpose_passthrough_chains": int(rewritten)}
+def _optimize_gelu_tanh_transpose_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: Optional[int] = None,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    return _optimize_gelu_tanh_transpose_passthrough_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_center_size_offset_terminal_transpose_chains(model_ir: ModelIR) -> Dict[str, int]:
@@ -29196,7 +28920,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _optimize_gelu_tanh_transpose_passthrough_chains(model_ir)
+        _optimize_gelu_tanh_transpose_passthrough_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_center_size_offset_terminal_transpose_chains(model_ir)
         _optimize_leakyrelu_transpose_passthrough_chains(model_ir)
         _optimize_prelu_transpose_passthrough_chains(model_ir)
