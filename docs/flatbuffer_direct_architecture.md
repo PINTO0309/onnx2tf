@@ -6467,6 +6467,63 @@ LayoutState integrity, and twenty-two transactional rejection cases. YuNet
 retains four zero-match invocations and emits five byte-identical artifacts
 against the preceding checkpoint.
 
+Elementwise/Concat/Conv NHWC group recovery is owned by
+`passes/elementwise_concat_layout.py`. The former lowerer implementation built
+complete producer/consumer maps inside an unbounded fixed-point loop and
+mutated a connected group while still discovering its boundaries. The lowerer
+now has one thin dispatcher at each of the two unchanged ordered positions and
+passes the Session `LayoutState` into a graph-indexed semantic owner.
+
+The owner starts from graph-ordered channel-axis Concat candidates whose every
+consumer is a private NCHW-to-NHWC adapter. Reverse traversal classifies one
+connected closure containing the complete historical eleven-unary and six-
+binary families. A boundary must be a direct rank-four graph input, a proven
+NHWC-to-NCHW adapter, or a reusable private NCHW-to-NHWC alias. Additional
+Concat roots that consume the same closure are admitted into the same plan, so
+shared producers cannot be converted under only part of the connected group.
+The traversal is bounded by the current graph input-edge count.
+
+Every static and dynamic rank-four view, dtype, per-tensor quantization,
+producer, consumer slot, graph-order relation, public boundary, typed
+permutation, binary broadcast, constant buffer, and provenance field is fixed
+before a plan exists. Binary operand positions are retained. A rank-four
+constant is transposed only when it is immutable and every actual consumer
+slot is contained in the accepted closure; unrelated use rejects the complete
+candidate. Explicit pre-adapters with fan-out remain for their legacy users.
+Supported external unary/binary users of a converted closure output share one
+deterministic local NHWC-to-NCHW adapter, while unsupported or public fan-out
+rejects the group transactionally.
+
+The immutable plan records all input and output rewrites, Concat axis changes,
+tensor metadata updates, constant transposes, post aliases, legacy adapters,
+removals, and complete tensor/operator contracts. It is resolved again from
+the same seed immediately before apply. One differential
+`ModelIRGraphIndex` maintains rewritten slots, removals, and adapter
+insertions. Candidate-only operation and an explicit rewrite limit use the
+same production entry point. Pruning runs once at owner exit, including on a
+zero-match call, preserving the historical permutation-buffer and
+correspondence-event ordering.
+
+Converted closure, constant, and Concat tensors are explicitly recorded as
+NHWC in both TensorIR and Session `LayoutState`. Sequential comparison with
+the preceding checkpoint shows identical operator topology, names, options,
+shape/signature, dtype, quantization, constants, and provenance at every
+FastestDet and HumanSeg invocation boundary. The only full ModelIR-digest
+difference is this intentional replacement of stale `UNKNOWN` layout
+provenance with the resolved NHWC contract. Float32, float16,
+correspondence, and schema artifacts remain byte-identical.
+
+Fifty-six focused tests cover all unary types, all binary types in both
+operand positions, rank-four constants, INT32/INT64 and negative axes,
+dynamic signatures, connected groups, direct/preexisting boundaries, multiple
+post aliases, legacy adapters, pre-adapter fan-out, numerical equivalence,
+candidate limits, idempotence, GraphIndex/LayoutState integrity, and twenty-
+three transactional rejection cases. Sequential characterization observed
+five calls on each short representative. FastestDet retained two groups and
+HumanSeg one group in the first call; the other twenty-two calls were
+zero-match. YuNet, FastestDet, and HumanSeg reproduce their fifteen fixed
+artifacts. No Tier corpus was run for this checkpoint.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

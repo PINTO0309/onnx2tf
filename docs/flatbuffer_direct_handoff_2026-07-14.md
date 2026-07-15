@@ -8,17 +8,60 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves PReLU transpose passthrough into the
-TensorFlow-free indexed `passes/prelu_passthrough_layout.py` owner. Its former
-roughly 250-line full-map fixed-point helper is a thin dispatcher at all three
-unchanged production positions. The owner proves the boundary views, PReLU,
-alpha remap, aliases, and legacy boundaries before mutation. It preserves the
-historical SiNet result and correspondence lineage without mutating a shared
-post-permutation buffer.
+The latest implementation unit moves elementwise/Concat/Conv NHWC group
+recovery into the TensorFlow-free indexed
+`passes/elementwise_concat_layout.py` owner. Its former 482-line full-map,
+unbounded fixed-point helper is now a thin dispatcher at both unchanged
+production positions. The owner resolves an immutable connected-group plan,
+re-resolves the full contract before apply, and maintains one differential
+`ModelIRGraphIndex` plus the Session `LayoutState` through every rewrite.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
+
+## Continuation snapshot — 2026-07-16
+
+The indexed elementwise/Concat owner preserves the complete historical
+capability set: eleven unary operations, all six binary operations without
+reordering operands, connected Concat groups, rank-four broadcast constants,
+direct graph-input boundaries, explicit NHWC-to-NCHW adapters, reusable
+inverse-adapter aliases, multiple post aliases, safe legacy consumers, and
+pre-adapter fan-out. Typed INT32/INT64 permutations, static and dynamic
+rank-four views, dtype, per-tensor quantization, graph order, public
+boundaries, producer uniqueness, exact consumer slots, constant ownership,
+and broadcast results are proven before a plan is accepted.
+
+The candidate set is fixed in graph order, reverse closure traversal is
+bounded by the current input-edge count, and an optional rewrite limit bounds
+accepted groups. Every input/output rewrite, axis and metadata update,
+constant transpose, adapter insertion/removal, tensor contract, and operator
+contract belongs to immutable plan state. The same seed is fully resolved a
+second time immediately before mutation. Pruning runs once after all groups,
+preserving the legacy zero-match side effect and correspondence-event order.
+
+Sequential pre/post characterization reached the helper five times on each
+of YuNet, FastestDet, HumanSeg, OSNet, and SiNet. FastestDet retained two
+connected groups and HumanSeg retained one group in their first invocation;
+the other 22 invocations were zero-match. The pre/post semantic ModelIR digest
+matched the preceding checkpoint at all ten FastestDet/HumanSeg invocation
+boundaries. The only full-digest difference is intentional: converted tensors
+now carry explicit `NHWC` in both TensorIR and Session `LayoutState` instead of
+leaving stale `UNKNOWN` layout provenance.
+
+The dedicated 56-test suite, adjacent indexed layout owners, both existing
+active fixtures, SPP owner, and complete architecture suite pass together:
+
+```text
+546 passed in 42.49s
+```
+
+TensorFlow-import-blocked explicit direct, default direct, and direct `-cotof`
+conversion pass sequentially with `3 passed in 4.07s`. Sequential YuNet,
+FastestDet, and HumanSeg conversions reproduce all fifteen fixed float32,
+float16, correspondence, and schema artifact hashes. Scoped Ruff, syntax
+compilation, and `git diff --check` pass. Temporary comparison worktrees and
+outputs were removed. No Tier corpus was run.
 
 ## Continuation snapshot — 2026-07-15
 
@@ -634,7 +677,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 134 coherent implementation
+The current `fb-refactor5` work contains 135 coherent implementation
 continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
@@ -968,6 +1011,11 @@ continuations:
   preserves alpha remapping and zero-match pruning, uses copy-on-write for
   shared alpha, retains exact SiNet correspondence lineage, and never mutates
   a shared post-permutation buffer.
+- the latest checkpoint moves connected elementwise/Concat NHWC recovery to a
+  dedicated indexed owner, replaces the unbounded full-map loop with
+  edge-bounded immutable group plans, preserves every unary/binary and legacy
+  boundary form, and records converted layout consistently in TensorIR and
+  Session LayoutState.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -986,8 +1034,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/prelu_passthrough_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_prelu_passthrough_layout.py`;
+- `onnx2tf/tflite_builder/passes/elementwise_concat_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_elementwise_concat_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -1805,6 +1853,27 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   pre-permutation tensor rather than changing a shared inverse constant. All
   modes re-resolve their complete tensor/operator contracts before mutation,
   and pruning/LayoutState synchronization run once after the sequence.
+- Elementwise/Concat layout recovery is grouped by connected Concat closure,
+  not rewritten one node at a time. This prevents a shared elementwise
+  producer from being converted under one Concat while another dependent
+  Concat remains in the old layout.
+- Existing inverse adapters are accepted as NHWC boundary aliases only after
+  their typed permutation, shape/signature, dtype, quantization, graph order,
+  and non-public output are proven. Explicit pre-adapters are removed only
+  when every remaining consumer is handled; otherwise the adapter is retained
+  for its untouched fan-out.
+- Rank-four binary constants are transposed only when the entire consumer-slot
+  set belongs to the accepted closure. A shared or mutable constant rejects
+  the candidate, preventing a layout rewrite from changing unrelated binary
+  behavior. SUB and DIV keep their original operand positions.
+- Closure outputs used by supported legacy unary/binary consumers receive one
+  deterministic local NHWC-to-NCHW adapter. Unsupported fan-out or a public
+  closure intermediate rejects the complete group without mutation.
+- The explicit NHWC layout annotation is an intentional internal contract
+  improvement. Operator/tensor topology, metadata other than layout,
+  constants, and emitted artifacts remain identical to the preceding
+  checkpoint, while TensorIR and Session LayoutState no longer disagree about
+  the converted physical view.
 - Shared parsers preserve the exact old generated syntax when broadening would
   change rule eligibility. Parser ownership tests prevent duplicate exporter
   implementations and unused compatibility imports.
@@ -5083,6 +5152,51 @@ sequential YuNet conversion reproduced all five fixed hashes. SiNet also
 reproduced its fixed float32, float16, correspondence, and schema hashes.
 Temporary worktrees and outputs were removed. No Tier corpus was run.
 
+The elementwise/Concat layout checkpoint passed all 56 dedicated cases. The
+new owner, adjacent PReLU/LeakyReLU/center/GELU/Swish and quantized-Swish
+owners, SPP owner, both active compatibility fixtures, and the complete
+architecture suite passed together:
+
+```text
+546 passed in 42.49s
+```
+
+TensorFlow import blocking was exercised sequentially for explicit direct,
+default direct, and direct `-cotof` conversion:
+
+```text
+3 passed in 4.07s
+```
+
+Pre/post characterization preserved five invocations on each of YuNet,
+FastestDet, HumanSeg, OSNet, and SiNet. FastestDet retained two active groups,
+HumanSeg retained one, and the other 22 invocations remained zero-match.
+Non-layout ModelIR digests match the preceding checkpoint at every active-model
+invocation; full digests differ only through the intentional explicit NHWC
+layout provenance.
+
+Sequential YuNet, FastestDet, and HumanSeg conversions reproduced all fifteen
+fixed artifacts. The fixed float32/float16/correspondence hashes are:
+
+```text
+YuNet:      43c65782ae622ea5aefc97632f2c69033fb8a314469e4c30703c88f9907cc380
+            13232a21173ef434c7b4986320931a17a28a211109fa894023c6da7672609433
+            7e2b57a9b2264ef08db5aaead11922109079274eb15befbfc90bf321de370b4d
+FastestDet: 3bdbec5d7ad81f98cf7890fbf1a98570ebeb1a4a5c19883aca23733b31e1573b
+            a14bad05eba99dc211a09aa820eb38396329b98168a2d4b20e463eb64deab617
+            2bd03e9e775b4dede0310813cf36e2efc3ad9d0635ce0c5797895fe18d7fb074
+HumanSeg:   b69eb57a7628668d73fbf4e06ffa23403d02ebab33b5661f0c60a81395610bb9
+            e79c4081989b5a69b65dc220b6e24ad0cff5633363698feebc23b59efe1139df
+            87fd06dbd120aac7f0229b02484f7929d6e752c60c19555d6795221cb0a21e46
+```
+
+All three conversions also reproduced schema hashes
+`0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`
+and
+`b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+Scoped Ruff, syntax compilation, and `git diff --check` pass. Temporary
+worktrees and outputs were removed. No Tier corpus was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -5127,10 +5241,12 @@ production positions. The five short representatives remain zero-match for
 the bridge, and YuNet retains byte-identical artifacts.
 
 The unquantized pseudo-Swish, tanh-GELU, center/size/offset, pseudo-LeakyReLU,
-and PReLU recovery helpers are now indexed at their unchanged production
-positions. The following raw
-`_optimize_transpose_elementwise_concat_conv_nhwc_groups` helper remains an
-independent candidate and must be characterized before extraction.
+PReLU, and connected elementwise/Concat recovery helpers are now indexed at
+their unchanged production positions. The next standalone raw recovery helper
+in this ordered prefix is
+`_optimize_transpose_stridedslice_pre_concat_nhwc_chains`; it has not yet been
+characterized or changed. The composite pre-Concat dispatcher still retains
+its previously documented legacy-family fallback after the indexed families.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
 optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
@@ -5142,10 +5258,11 @@ verification gates.
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
 2. Characterize
-   `_optimize_transpose_elementwise_concat_conv_nhwc_groups` at its current
-   position immediately after indexed PReLU. Select a bounded semantic owner
-   only after fixing its runtime match set, connected-group boundary, and
-   interaction with the following SPP recovery helper.
+   `_optimize_transpose_stridedslice_pre_concat_nhwc_chains` at its unchanged
+   ordered position after indexed pre-Concat and NDHWC-Concat cleanup. Fix its
+   runtime match set, legacy-boundary behavior, typed Slice-constant ownership,
+   and interaction with the following mixed-Split helper before selecting a
+   bounded semantic owner. Do not modify it during characterization.
 3. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
