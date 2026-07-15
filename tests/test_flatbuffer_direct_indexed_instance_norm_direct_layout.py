@@ -15,6 +15,7 @@ from onnx2tf.tflite_builder.lower_from_onnx2tf import (
 )
 from onnx2tf.tflite_builder.passes.instance_norm_prepost_layout import (
     _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains,
+    _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains,
 )
 
 
@@ -22,6 +23,9 @@ _STATS = (
     "optimized_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains"
 )
 _COMPAT_STATS = "optimized_transpose_instancenorm_prepost_nhwc_chains"
+_SIDE_STATS = (
+    "optimized_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains"
+)
 
 
 def _tensor(
@@ -357,97 +361,120 @@ def _assert_index_current(
 
 
 def _replace_tail(model_ir: ModelIR, names: dict[str, str], mode: str) -> None:
+    prefix = names["source"][: -len("source")]
+
+    def _name(value: str) -> str:
+        return f"{prefix}{value}"
+
+    data_dtype = str(model_ir.tensors[names["inst_output"]].dtype)
     post = _operator(model_ir, names["post_output"])
     post_index = model_ir.operators.index(post)
     if mode == "side_squeeze":
-        model_ir.tensors["side_output"] = _tensor(
-            "side_output",
+        model_ir.tensors[_name("side_output")] = _tensor(
+            _name("side_output"),
             [3, 2, 4],
+            dtype=data_dtype,
         )
         model_ir.operators.append(
             OperatorIR(
                 "SQUEEZE",
                 [names["inst_output"]],
-                ["side_output"],
+                [_name("side_output")],
                 {"squeezeDims": [0]},
             )
         )
-        model_ir.outputs.append("side_output")
+        model_ir.outputs.append(_name("side_output"))
         return
 
     model_ir.operators.remove(post)
-    model_ir.tensors["tail_squeezed"] = _tensor(
-        "tail_squeezed",
+    model_ir.tensors[_name("tail_squeezed")] = _tensor(
+        _name("tail_squeezed"),
         [3, 2, 4],
+        dtype=data_dtype,
     )
     tail_ops = [
         OperatorIR(
             "SQUEEZE",
             [names["inst_output"]],
-            ["tail_squeezed"],
+            [_name("tail_squeezed")],
             {"squeezeDims": [0]},
         )
     ]
-    tail_data_name = "tail_squeezed"
+    tail_data_name = _name("tail_squeezed")
     if mode == "squeeze_unary_reshape":
-        model_ir.tensors["tail_unary"] = _tensor("tail_unary", [3, 2, 4])
+        model_ir.tensors[_name("tail_unary")] = _tensor(
+            _name("tail_unary"),
+            [3, 2, 4],
+            dtype=data_dtype,
+        )
         tail_ops.append(
-            OperatorIR("RELU", ["tail_squeezed"], ["tail_unary"])
+            OperatorIR(
+                "RELU",
+                [_name("tail_squeezed")],
+                [_name("tail_unary")],
+            )
         )
-        tail_data_name = "tail_unary"
+        tail_data_name = _name("tail_unary")
     elif mode == "squeeze_add_reshape":
-        model_ir.inputs.append("residual_source")
-        model_ir.tensors["residual_source"] = _tensor(
-            "residual_source",
+        model_ir.inputs.append(_name("residual_source"))
+        model_ir.tensors[_name("residual_source")] = _tensor(
+            _name("residual_source"),
             [2, 4, 3],
+            dtype=data_dtype,
         )
-        model_ir.tensors["residual_perm"] = _tensor(
-            "residual_perm",
+        model_ir.tensors[_name("residual_perm")] = _tensor(
+            _name("residual_perm"),
             [3],
             dtype="INT32",
             data=np.asarray([2, 0, 1], dtype=np.int32),
         )
-        model_ir.tensors["residual_chw"] = _tensor(
-            "residual_chw",
+        model_ir.tensors[_name("residual_chw")] = _tensor(
+            _name("residual_chw"),
             [3, 2, 4],
+            dtype=data_dtype,
         )
-        model_ir.tensors["tail_add"] = _tensor("tail_add", [3, 2, 4])
+        model_ir.tensors[_name("tail_add")] = _tensor(
+            _name("tail_add"),
+            [3, 2, 4],
+            dtype=data_dtype,
+        )
         tail_ops.extend(
             [
                 OperatorIR(
                     "TRANSPOSE",
-                    ["residual_source", "residual_perm"],
-                    ["residual_chw"],
+                    [_name("residual_source"), _name("residual_perm")],
+                    [_name("residual_chw")],
                 ),
                 OperatorIR(
                     "ADD",
-                    ["tail_squeezed", "residual_chw"],
-                    ["tail_add"],
+                    [_name("tail_squeezed"), _name("residual_chw")],
+                    [_name("tail_add")],
                 ),
             ]
         )
-        tail_data_name = "tail_add"
+        tail_data_name = _name("tail_add")
     else:
         raise AssertionError(f"unsupported legacy tail mode: {mode}")
-    model_ir.tensors["tail_shape"] = _tensor(
-        "tail_shape",
+    model_ir.tensors[_name("tail_shape")] = _tensor(
+        _name("tail_shape"),
         [4],
         dtype="INT64",
         data=np.asarray([1, 3, 2, 4], dtype=np.int64),
     )
-    model_ir.tensors["tail_reshape"] = _tensor(
-        "tail_reshape",
+    model_ir.tensors[_name("tail_reshape")] = _tensor(
+        _name("tail_reshape"),
         [1, 3, 2, 4],
+        dtype=data_dtype,
     )
     tail_ops.append(
         OperatorIR(
             "RESHAPE",
-            [tail_data_name, "tail_shape"],
-            ["tail_reshape"],
+            [tail_data_name, _name("tail_shape")],
+            [_name("tail_reshape")],
             {"newShape": [1, 3, 2, 4]},
         )
     )
-    post.inputs[0] = "tail_reshape"
+    post.inputs[0] = _name("tail_reshape")
     tail_ops.append(post)
     for offset, operator in enumerate(tail_ops):
         model_ir.operators.insert(post_index + offset, operator)
@@ -1010,7 +1037,7 @@ def test_compatibility_wrapper_does_not_fallback_for_unsafe_direct_tail(
 
 @pytest.mark.parametrize(
     "mode",
-    ("side_squeeze", "squeeze_unary_reshape", "squeeze_add_reshape"),
+    ("squeeze_unary_reshape", "squeeze_add_reshape"),
 )
 def test_legacy_instance_norm_tail_modes_remain_numerically_equivalent(
     mode: str,
@@ -1050,6 +1077,372 @@ def test_legacy_instance_norm_tail_modes_remain_numerically_equivalent(
     assert set(actual) == set(expected)
     for name in expected:
         np.testing.assert_allclose(actual[name], expected[name], rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize("side_before_post", (False, True))
+@pytest.mark.parametrize("side_is_public_output", (False, True))
+@pytest.mark.parametrize("produced_source", (False, True))
+@pytest.mark.parametrize("dtype", ("FLOAT16", "FLOAT32"))
+def test_side_squeeze_instance_norm_tail_is_indexed_and_equivalent(
+    side_before_post: bool,
+    side_is_public_output: bool,
+    produced_source: bool,
+    dtype: str,
+) -> None:
+    model_ir, names = _build_model(
+        dtype=dtype,
+        produced_source=produced_source,
+    )
+    _replace_tail(model_ir, names, "side_squeeze")
+    side_squeeze = _operator(model_ir, "side_output")
+    post = _operator(model_ir, names["post_output"])
+    if side_before_post:
+        model_ir.operators.remove(side_squeeze)
+        model_ir.operators.insert(model_ir.operators.index(post), side_squeeze)
+    if not side_is_public_output:
+        model_ir.outputs.remove("side_output")
+        model_ir.tensors["side_final"] = _tensor(
+            "side_final",
+            [3, 2, 4],
+            dtype=dtype,
+        )
+        model_ir.operators.append(
+            OperatorIR("RELU", ["side_output"], ["side_final"])
+        )
+        model_ir.outputs.append("side_final")
+    feed_name = names["upstream"] if produced_source else names["source"]
+    np_dtype = np.float16 if dtype == "FLOAT16" else np.float32
+    feeds = {
+        feed_name: np.random.default_rng(67)
+        .normal(size=model_ir.tensors[feed_name].shape)
+        .astype(np_dtype)
+    }
+    expected = _evaluate(copy.deepcopy(model_ir), feeds)
+    before = repr(model_ir)
+
+    direct_stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains(
+            model_ir
+        )
+    )
+
+    assert direct_stats == {_STATS: 0}
+    assert repr(model_ir) == before
+    graph_index = ModelIRGraphIndex(model_ir)
+    layout_state = LayoutState.from_model_ir(model_ir)
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains(
+            model_ir,
+            graph_index=graph_index,
+            layout_state=layout_state,
+        )
+    )
+
+    assert stats == {_SIDE_STATS: 1}
+    assert validate_model_ir_invariants(model_ir) == []
+    _assert_index_current(model_ir, graph_index)
+    assert layout_state.validate_against_model_ir(model_ir) == []
+    actual = _evaluate(model_ir, feeds)
+    assert set(actual) == set(expected)
+    tolerance = 1e-2 if dtype == "FLOAT16" else 1e-6
+    for name in expected:
+        np.testing.assert_allclose(
+            actual[name],
+            expected[name],
+            rtol=tolerance,
+            atol=tolerance,
+        )
+    side_squeeze = _operator(model_ir, "side_output")
+    adapter = _operator(model_ir, names["inst_output"])
+    assert side_squeeze.inputs == [names["inst_output"]]
+    assert adapter.op_type == "TRANSPOSE"
+    assert adapter.inputs[0] == names["post_output"]
+    assert np.asarray(model_ir.tensors[adapter.inputs[1]].data).tolist() == [
+        0,
+        3,
+        1,
+        2,
+    ]
+    assert model_ir.operators.index(adapter) < model_ir.operators.index(side_squeeze)
+    assert model_ir.tensors[names["inst_output"]].shape == [1, 3, 2, 4]
+    assert names["inst_output"] not in model_ir.metadata[
+        "assume_channel_last_layout_tensor_names"
+    ]
+
+
+@pytest.mark.parametrize("dynamic_axis", ("height", "width", "channel"))
+def test_side_squeeze_instance_norm_preserves_dynamic_signatures(
+    dynamic_axis: str,
+) -> None:
+    model_ir, names = _build_model()
+    _replace_tail(model_ir, names, "side_squeeze")
+    source_axis = {"height": 1, "width": 2, "channel": 3}[dynamic_axis]
+    nchw_axis = {"height": 2, "width": 3, "channel": 1}[dynamic_axis]
+    chw_axis = {"height": 1, "width": 2, "channel": 0}[dynamic_axis]
+    for name in (names["source"], names["post_output"], names["output"]):
+        model_ir.tensors[name].shape_signature[source_axis] = -1
+    model_ir.tensors[names["pre"]].shape_signature[nchw_axis] = -1
+    model_ir.tensors[names["squeezed"]].shape_signature[chw_axis] = -1
+    for name in (
+        names["x"],
+        names["centered"],
+        names["squared"],
+        names["normalized"],
+        names["scaled"],
+        names["inst_output"],
+    ):
+        model_ir.tensors[name].shape_signature[nchw_axis] = -1
+    model_ir.tensors["side_output"].shape_signature[chw_axis] = -1
+    if dynamic_axis == "channel":
+        for name in (
+            names["mean1"],
+            names["mean2"],
+            names["variance_epsilon"],
+            names["std"],
+            names["inverse_std"],
+        ):
+            model_ir.tensors[name].shape_signature[1] = -1
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains(
+            model_ir
+        )
+    )
+
+    assert stats == {_SIDE_STATS: 1}
+    assert model_ir.tensors[names["inst_output"]].shape_signature[nchw_axis] == -1
+    assert model_ir.tensors["side_output"].shape_signature[chw_axis] == -1
+    assert model_ir.tensors[names["centered"]].shape_signature[source_axis] == -1
+
+
+def test_side_squeeze_instance_norm_rewrites_multiple_chains() -> None:
+    first, first_names = _build_model(prefix="a_")
+    _replace_tail(first, first_names, "side_squeeze")
+    second, second_names = _build_model(prefix="b_")
+    _replace_tail(second, second_names, "side_squeeze")
+    first.tensors.update(second.tensors)
+    first.operators.extend(second.operators)
+    first.inputs.extend(second.inputs)
+    first.outputs.extend(second.outputs)
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains(
+            first
+        )
+    )
+
+    assert stats == {_SIDE_STATS: 2}
+    assert validate_model_ir_invariants(first) == []
+    assert np.asarray(
+        first.tensors[direct_module._SIDE_ADAPTER_PERM_NAME].data
+    ).tolist() == [0, 3, 1, 2]
+    assert _operator(first, first_names["inst_output"]).op_type == "TRANSPOSE"
+    assert _operator(first, second_names["inst_output"]).op_type == "TRANSPOSE"
+
+
+@pytest.mark.parametrize(
+    "case",
+    ("wrong_value", "floating", "produced", "public", "quantized"),
+)
+def test_side_squeeze_rejects_invalid_existing_adapter_permutation(
+    case: str,
+) -> None:
+    model_ir, names = _build_model()
+    _replace_tail(model_ir, names, "side_squeeze")
+    perm_name = direct_module._SIDE_ADAPTER_PERM_NAME
+    model_ir.tensors[perm_name] = _tensor(
+        perm_name,
+        [4],
+        dtype="INT32",
+        data=np.asarray([0, 3, 1, 2], dtype=np.int32),
+    )
+    if case == "wrong_value":
+        model_ir.tensors[perm_name].data[1] = 2
+    elif case == "floating":
+        model_ir.tensors[perm_name].dtype = "FLOAT32"
+        model_ir.tensors[perm_name].data = np.asarray(
+            [0, 3, 1, 2], dtype=np.float32
+        )
+    elif case == "produced":
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["pre_perm"]], [perm_name])
+        )
+    elif case == "public":
+        model_ir.outputs.append(perm_name)
+    elif case == "quantized":
+        model_ir.tensors[perm_name].quantization = {
+            "scale": [1.0],
+            "zero_point": [0],
+        }
+    before = repr(model_ir)
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains(
+            model_ir
+        )
+    )
+
+    assert stats == {_SIDE_STATS: 0}
+    assert repr(model_ir) == before
+
+
+def test_side_squeeze_reuses_valid_existing_adapter_permutation() -> None:
+    model_ir, names = _build_model()
+    _replace_tail(model_ir, names, "side_squeeze")
+    perm_name = direct_module._SIDE_ADAPTER_PERM_NAME
+    existing = _tensor(
+        perm_name,
+        [4],
+        dtype="INT64",
+        data=np.asarray([0, 3, 1, 2], dtype=np.int64),
+    )
+    model_ir.tensors[perm_name] = existing
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains(
+            model_ir
+        )
+    )
+
+    assert stats == {_SIDE_STATS: 1}
+    assert model_ir.tensors[perm_name] is existing
+    assert _operator(model_ir, names["inst_output"]).inputs[1] == perm_name
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "side_axis",
+        "side_shape",
+        "side_dtype",
+        "side_public_input",
+        "side_duplicate_producer",
+        "side_backward_consumer",
+        "third_inst_consumer",
+        "side_quantization",
+        "side_before_bias",
+    ),
+)
+def test_side_squeeze_rejects_unsafe_tail_contracts_transactionally(
+    case: str,
+) -> None:
+    model_ir, names = _build_model()
+    _replace_tail(model_ir, names, "side_squeeze")
+    side = _operator(model_ir, "side_output")
+    bias = _operator(model_ir, names["inst_output"])
+    if case == "side_axis":
+        side.options["squeezeDims"] = [1]
+    elif case == "side_shape":
+        model_ir.tensors["side_output"].shape[1] = 3
+    elif case == "side_dtype":
+        model_ir.tensors["side_output"].dtype = "FLOAT16"
+    elif case == "side_public_input":
+        model_ir.inputs.append("side_output")
+    elif case == "side_duplicate_producer":
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["source"]], ["side_output"])
+        )
+    elif case == "side_backward_consumer":
+        model_ir.tensors["side_final"] = _tensor("side_final", [3, 2, 4])
+        model_ir.operators.insert(
+            model_ir.operators.index(side),
+            OperatorIR("IDENTITY", ["side_output"], ["side_final"]),
+        )
+        model_ir.outputs.append("side_final")
+    elif case == "third_inst_consumer":
+        model_ir.tensors["inst_side"] = _tensor("inst_side", [1, 3, 2, 4])
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["inst_output"]], ["inst_side"])
+        )
+        model_ir.outputs.append("inst_side")
+    elif case == "side_quantization":
+        model_ir.tensors["side_output"].quantization = {
+            "scale": [0.25],
+            "zero_point": [0],
+        }
+    elif case == "side_before_bias":
+        model_ir.operators.remove(side)
+        model_ir.operators.insert(model_ir.operators.index(bias), side)
+    before = repr(model_ir)
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains(
+            model_ir
+        )
+    )
+
+    assert stats == {_SIDE_STATS: 0}
+    assert repr(model_ir) == before
+
+
+def test_side_squeeze_adapter_preflight_collision_is_transactional(
+    monkeypatch,
+) -> None:
+    model_ir, names = _build_model()
+    _replace_tail(model_ir, names, "side_squeeze")
+    original_resolve = direct_module._resolve_candidate
+    injected = False
+
+    def resolve_with_collision(*args, **kwargs):
+        nonlocal injected
+        plan = original_resolve(*args, **kwargs)
+        if plan is None or injected:
+            return plan
+        assert plan.side_adapter_permutation is not None
+        perm_name = direct_module._SIDE_ADAPTER_PERM_NAME
+        model_ir.tensors[perm_name] = _tensor(
+            perm_name,
+            [4],
+            dtype="INT32",
+            data=np.asarray([9, 9, 9, 9], dtype=np.int32),
+        )
+        injected = True
+        return plan
+
+    monkeypatch.setattr(direct_module, "_resolve_candidate", resolve_with_collision)
+    before_operators = repr(model_ir.operators)
+
+    stats = (
+        _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains(
+            model_ir
+        )
+    )
+
+    assert stats == {_SIDE_STATS: 0}
+    assert repr(model_ir.operators) == before_operators
+
+
+@pytest.mark.parametrize(
+    "case",
+    ("invalid_adapter", "side_quantization", "negative_epsilon"),
+)
+def test_compatibility_wrapper_does_not_fallback_for_unsafe_side_squeeze(
+    case: str,
+) -> None:
+    model_ir, names = _build_model()
+    _replace_tail(model_ir, names, "side_squeeze")
+    if case == "invalid_adapter":
+        perm_name = direct_module._SIDE_ADAPTER_PERM_NAME
+        model_ir.tensors[perm_name] = _tensor(
+            perm_name,
+            [4],
+            dtype="INT32",
+            data=np.asarray([0, 2, 3, 1], dtype=np.int32),
+        )
+    elif case == "side_quantization":
+        model_ir.tensors["side_output"].quantization = {
+            "scale": [0.25],
+            "zero_point": [0],
+        }
+    elif case == "negative_epsilon":
+        model_ir.tensors[names["epsilon"]].data[0] = -0.01
+    before = repr(model_ir)
+
+    stats = _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir)
+
+    assert stats == {_COMPAT_STATS: 0}
+    assert repr(model_ir) == before
 
 
 def test_compatibility_wrapper_preserves_mixed_tail_order_and_total_limit() -> None:

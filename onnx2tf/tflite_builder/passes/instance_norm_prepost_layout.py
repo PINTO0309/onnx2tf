@@ -32,6 +32,9 @@ from onnx2tf.tflite_builder.passes.conv1d_unary_layout import (
 _STATS_KEY = (
     "optimized_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains"
 )
+_SIDE_STATS_KEY = (
+    "optimized_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains"
+)
 _PERM_NHWC_TO_NCHW = (0, 3, 1, 2)
 _PERM_NCHW_TO_NHWC = (0, 2, 3, 1)
 _PERM_CHW_TO_HWC = (1, 2, 0)
@@ -39,6 +42,7 @@ _FLOAT_DTYPES = {
     "FLOAT16": np.dtype(np.float16),
     "FLOAT32": np.dtype(np.float32),
 }
+_SIDE_ADAPTER_PERM_NAME = "__instancenorm_tail_nhwc_to_nchw_perm_rank4__"
 
 
 @dataclass(frozen=True)
@@ -64,7 +68,7 @@ class _ConstantUpdate:
 
 
 @dataclass(frozen=True)
-class _DirectInstanceNormPlan:
+class _InstanceNormPrepostPlan:
     ordered_ops: Tuple[OperatorIR, ...]
     pre: OperatorIR
     squeeze: OperatorIR
@@ -76,6 +80,9 @@ class _DirectInstanceNormPlan:
     add_bias: OperatorIR
     post: OperatorIR
     post_output_name: str
+    tail_mode: str
+    side_squeeze: Optional[OperatorIR]
+    side_adapter_permutation: Optional[TensorIR]
     constant_updates: Tuple[_ConstantUpdate, ...]
     metadata_updates: Tuple[_TensorMetadataUpdate, ...]
     channel_last_names: Tuple[str, ...]
@@ -300,7 +307,9 @@ def _resolve_candidate(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
     pre_index: int,
-) -> Optional[_DirectInstanceNormPlan]:
+    *,
+    tail_mode: str,
+) -> Optional[_InstanceNormPrepostPlan]:
     public_inputs = {str(value) for value in model_ir.inputs}
     public_outputs = {str(value) for value in model_ir.outputs}
     public_names = public_inputs | public_outputs
@@ -710,10 +719,106 @@ def _resolve_candidate(
     if bias_name == scale_name:
         return None
 
-    post_match = _sole_consumer(graph_index, inst_output_name)
-    if post_match is None:
+    if tail_mode not in {"direct", "side_squeeze"}:
         return None
-    post_index, post = post_match
+    inst_output_users = sorted(
+        set(graph_index.consumer_indices(inst_output_name))
+    )
+    post_matches = []
+    side_matches = []
+    for user_index in inst_output_users:
+        user = model_ir.operators[int(user_index)]
+        if (
+            str(user.op_type) == "TRANSPOSE"
+            and len(user.inputs) == 2
+            and len(user.outputs) == 1
+            and str(user.inputs[0]) == inst_output_name
+            and _constant_vector(
+                model_ir,
+                graph_index,
+                str(user.inputs[1]),
+                4,
+                public_inputs,
+            )
+            == _PERM_NCHW_TO_NHWC
+            and str(user.inputs[1]) not in public_outputs
+        ):
+            post_matches.append((int(user_index), user))
+        if (
+            str(user.op_type) == "SQUEEZE"
+            and len(user.inputs) == 1
+            and len(user.outputs) == 1
+            and str(user.inputs[0]) == inst_output_name
+        ):
+            side_matches.append((int(user_index), user))
+    if len(post_matches) != 1:
+        return None
+    post_index, post = post_matches[0]
+    side_squeeze: Optional[OperatorIR] = None
+    side_contract: Optional[_TensorContract] = None
+    side_adapter_permutation: Optional[TensorIR] = None
+    if tail_mode == "direct":
+        if inst_output_users != [post_index]:
+            return None
+    else:
+        if len(side_matches) != 1:
+            return None
+        side_index, side_squeeze = side_matches[0]
+        if inst_output_users != sorted([post_index, side_index]):
+            return None
+        side_output_name = str(side_squeeze.outputs[0])
+        side_contract = _contract(
+            model_ir,
+            side_output_name,
+            3,
+            inst_output.shape[1:],
+            inst_output.signature[1:],
+        )
+        if (
+            side_contract is None
+            or side_output_name in public_inputs
+            or not _producer_is_valid(
+                graph_index,
+                side_output_name,
+                side_index,
+            )
+            or not _squeeze_axis_zero(
+                side_squeeze,
+                inst_output,
+                side_contract,
+            )
+            or any(
+                int(consumer_index) <= side_index
+                for consumer_index in graph_index.consumer_indices(
+                    side_output_name
+                )
+            )
+        ):
+            return None
+        existing_adapter_perm = model_ir.tensors.get(_SIDE_ADAPTER_PERM_NAME)
+        if existing_adapter_perm is None:
+            side_adapter_permutation = TensorIR(
+                name=_SIDE_ADAPTER_PERM_NAME,
+                dtype="INT32",
+                shape=[4],
+                shape_signature=[4],
+                data=np.asarray(_PERM_NHWC_TO_NCHW, dtype=np.int32),
+                is_variable=False,
+                quantization=None,
+            )
+        elif (
+            _constant_vector(
+                model_ir,
+                graph_index,
+                _SIDE_ADAPTER_PERM_NAME,
+                4,
+                public_inputs,
+            )
+            != _PERM_NHWC_TO_NCHW
+            or _SIDE_ADAPTER_PERM_NAME in public_outputs
+            or existing_adapter_perm.quantization is not None
+        ):
+            return None
     post_output_name = str(post.outputs[0]) if len(post.outputs) == 1 else ""
     post_output = _contract(
         model_ir,
@@ -723,20 +828,7 @@ def _resolve_candidate(
         source.signature,
     )
     if (
-        str(post.op_type) != "TRANSPOSE"
-        or len(post.inputs) != 2
-        or len(post.outputs) != 1
-        or str(post.inputs[0]) != inst_output_name
-        or _constant_vector(
-            model_ir,
-            graph_index,
-            str(post.inputs[1]),
-            4,
-            public_inputs,
-        )
-        != _PERM_NCHW_TO_NHWC
-        or str(post.inputs[1]) in public_outputs
-        or post_output is None
+        post_output is None
         or post_output_name in public_names
         or not _producer_is_valid(graph_index, post_output_name, post_index)
         or any(
@@ -746,7 +838,7 @@ def _resolve_candidate(
     ):
         return None
 
-    ordered_ops = (
+    core_ops = (
         pre,
         squeeze,
         reshape,
@@ -760,7 +852,19 @@ def _resolve_candidate(
         norm,
         scale,
         add_bias,
-        post,
+    )
+    tail_ops = [post]
+    if side_squeeze is not None:
+        tail_ops.append(side_squeeze)
+    ordered_ops = core_ops + tuple(
+        sorted(
+            tail_ops,
+            key=lambda operator: int(
+                graph_index.operator_index(operator)
+                if graph_index.operator_index(operator) is not None
+                else len(model_ir.operators)
+            ),
+        )
     )
     ordered_indices = [
         graph_index.operator_index(operator) for operator in ordered_ops
@@ -789,7 +893,7 @@ def _resolve_candidate(
         scaled,
         inst_output,
         post_output,
-    )
+    ) + ((side_contract,) if side_contract is not None else ())
     dtype = str(source.tensor.dtype)
     if (
         dtype not in _FLOAT_DTYPES
@@ -911,8 +1015,7 @@ def _resolve_candidate(
         squared,
         normalized,
         scaled,
-        inst_output,
-    )
+    ) + ((inst_output,) if tail_mode == "direct" else ())
     reduced_contracts = (
         mean1_contract,
         mean2_contract,
@@ -955,7 +1058,7 @@ def _resolve_candidate(
         dict(reshape.options) if isinstance(reshape.options, dict) else {}
     )
     reshape_options["newShape"] = [int(value) for value in source.shape]
-    return _DirectInstanceNormPlan(
+    return _InstanceNormPrepostPlan(
         ordered_ops=ordered_ops,
         pre=pre,
         squeeze=squeeze,
@@ -967,6 +1070,9 @@ def _resolve_candidate(
         add_bias=add_bias,
         post=post,
         post_output_name=post_output_name,
+        tail_mode=tail_mode,
+        side_squeeze=side_squeeze,
+        side_adapter_permutation=side_adapter_permutation,
         constant_updates=tuple(constant_updates),
         metadata_updates=tuple(metadata_updates),
         channel_last_names=channel_last_names,
@@ -1001,7 +1107,7 @@ def _apply_constant_update(
 def _apply_plan(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
-    plan: _DirectInstanceNormPlan,
+    plan: _InstanceNormPrepostPlan,
 ) -> bool:
     indices = [graph_index.operator_index(operator) for operator in plan.ordered_ops]
     if any(index is None for index in indices):
@@ -1020,6 +1126,14 @@ def _apply_plan(
         or any(
             update.clone_name is not None and update.clone is None
             for update in plan.constant_updates
+        )
+        or (
+            plan.tail_mode == "side_squeeze"
+            and plan.side_squeeze is None
+        )
+        or (
+            plan.side_adapter_permutation is not None
+            and _SIDE_ADAPTER_PERM_NAME in model_ir.tensors
         )
     ):
         return False
@@ -1066,6 +1180,23 @@ def _apply_plan(
     graph_index.remove_operators(
         [int(index) for index in remove_indices if index is not None]
     )
+    if plan.tail_mode == "side_squeeze":
+        assert plan.side_squeeze is not None
+        if plan.side_adapter_permutation is not None:
+            model_ir.tensors[_SIDE_ADAPTER_PERM_NAME] = (
+                plan.side_adapter_permutation
+            )
+        side_index = graph_index.operator_index(plan.side_squeeze)
+        if side_index is None:
+            return False
+        graph_index.insert_operator(
+            int(side_index),
+            OperatorIR(
+                op_type="TRANSPOSE",
+                inputs=[plan.post_output_name, _SIDE_ADAPTER_PERM_NAME],
+                outputs=[str(plan.side_squeeze.inputs[0])],
+            ),
+        )
     hints = {
         str(value)
         for value in model_ir.metadata.get(
@@ -1079,9 +1210,11 @@ def _apply_plan(
     return True
 
 
-def _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains(
+def _run_indexed_instance_norm_prepost_tail(
     model_ir: ModelIR,
     *,
+    tail_mode: str,
+    stats_key: str,
     graph_index: Optional[ModelIRGraphIndex] = None,
     layout_state: Optional[LayoutState] = None,
     max_rewrites: int = 32,
@@ -1091,7 +1224,7 @@ def _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains(
         counts = Counter(str(operator.op_type) for operator in model_ir.operators)
         required = {
             "TRANSPOSE": 2,
-            "SQUEEZE": 1,
+            "SQUEEZE": 2 if tail_mode == "side_squeeze" else 1,
             "RESHAPE": 1,
             "MEAN": 2,
             "SUB": 1,
@@ -1104,7 +1237,7 @@ def _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains(
             counts[op_type] < minimum
             for op_type, minimum in required.items()
         ):
-            return {_STATS_KEY: 0}
+            return {stats_key: 0}
     active_index = (
         graph_index
         if graph_index is not None and graph_index.model_ir is model_ir
@@ -1125,11 +1258,54 @@ def _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains(
         pre_index = active_index.operator_index(pre)
         if pre_index is None:
             continue
-        plan = _resolve_candidate(model_ir, active_index, pre_index)
+        plan = _resolve_candidate(
+            model_ir,
+            active_index,
+            pre_index,
+            tail_mode=tail_mode,
+        )
         if plan is not None and _apply_plan(model_ir, active_index, plan):
             rewritten += 1
     if rewritten:
         _prune_unused_tensors(model_ir, layout_state=layout_state)
         if layout_state is not None:
             layout_state.sync_from_model_ir(model_ir)
-    return {_STATS_KEY: int(rewritten)}
+    return {stats_key: int(rewritten)}
+
+
+def _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    return _run_indexed_instance_norm_prepost_tail(
+        model_ir,
+        tail_mode="direct",
+        stats_key=_STATS_KEY,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
+
+
+def _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    return _run_indexed_instance_norm_prepost_tail(
+        model_ir,
+        tail_mode="side_squeeze",
+        stats_key=_SIDE_STATS_KEY,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )

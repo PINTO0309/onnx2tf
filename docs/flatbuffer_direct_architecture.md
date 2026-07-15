@@ -4923,13 +4923,15 @@ quantization grids, per-axis quantization, duplicate producers, backward
 consumers, and clone failures are complete no-ops. The sole production call
 supplies the Session LayoutState.
 
-The direct-tail subset of decomposed InstanceNormalization pre/post
-canonicalization is owned by `passes/instance_norm_prepost_layout.py`. Its
-exact boundary is NHWC-to-NCHW Transpose, batch-axis Squeeze, Reshape back to
-rank four, the two-Mean `SUB -> square -> variance+epsilon -> SQRT ->
-reciprocal -> normalize -> scale -> bias` decomposition, and one private
-NCHW-to-NHWC post-Transpose. The existing side-Squeeze,
-Squeeze/unary/Reshape, and Squeeze/residual-ADD/Reshape tails remain in the
+The direct and side-Squeeze subsets of decomposed InstanceNormalization
+pre/post canonicalization are owned by
+`passes/instance_norm_prepost_layout.py`. Their common exact boundary is an
+NHWC-to-NCHW Transpose, batch-axis Squeeze, Reshape back to rank four, the
+two-Mean `SUB -> square -> variance+epsilon -> SQRT -> reciprocal -> normalize
+-> scale -> bias` decomposition, and one NCHW-to-NHWC post-Transpose. The
+direct mode requires that post-Transpose to be the sole consumer. The side
+mode requires exactly one additional axis-zero Squeeze consumer. The existing
+Squeeze/unary/Reshape and Squeeze/residual-ADD/Reshape tails remain in the
 ordered compatibility path and are not partially matched or mutated by this
 owner.
 
@@ -4942,13 +4944,16 @@ and reciprocal DIV retain their noncommutative input order. Epsilon is finite
 and nonnegative, the reciprocal numerator is exactly one, and scale and bias
 are finite `[1,C,1,1]` FLOAT16 or FLOAT32 constants.
 
-The rewrite moves the first Squeeze and rank-four normalization computation to
-NHWC, changes the reduction axes to `[1,2]`, transposes every changed tensor
-metadata contract, converts scale and bias to `[1,1,1,C]`, redirects the
-existing bias ADD to the post-Transpose output name, and removes only the two
-boundary Transposes. The final output tensor and all downstream edges are
-unchanged. Dynamic height, width, or channel signatures are carried through
-the full and kept-dimension reduction tensors.
+Both rewrites move the first Squeeze and rank-four normalization computation
+to NHWC, change the reduction axes to `[1,2]`, transpose every changed tensor
+metadata contract, convert scale and bias to `[1,1,1,C]`, redirect the existing
+bias ADD to the post-Transpose output name, and remove only the two boundary
+Transposes. In side mode, a fixed `[0,3,1,2]` adapter is inserted immediately
+before the side Squeeze and reproduces its original `inst_output` tensor name,
+NCHW shape/signature, dtype, and quantization contract. The adapter constant
+is validated and reused when compatible or allocated before mutation when
+absent. Dynamic height, width, or channel signatures are carried through the
+full, kept-dimension, and side-branch tensors.
 
 Changed Reshape, Mean-axis, scale, and bias constants are fully planned before
 mutation. A private constant updates in place; a constant shared with any
@@ -4958,13 +4963,15 @@ public-input, produced-input, FLOAT16, negative-axis, and commuted affine
 fixtures produce exactly the same ModelIR as the committed legacy helper.
 Separate but equivalent Mean-axis constants, which the legacy helper skipped
 because it required one shared tensor, are now handled safely. Unsafe direct-
-tail candidates are not passed back to the legacy mutator. The production
-calls supply the Session LayoutState. A supplied graph index is used by the
-indexed owner, refreshed immediately after a retained legacy rewrite so subsequent
-dispatch remains current, and reconciled once at the compatibility boundary.
-The compatibility loop offers each pre-Transpose to the indexed
-owner at its original graph position, so mixed tail modes retain the legacy
-graph-order priority and one shared 32-rewrite ceiling.
+or side-tail candidates are not passed back to the legacy mutator. Invalid,
+public, produced, floating, or quantized side adapter constants and unsafe
+side tensors are complete no-ops. The production calls supply the Session
+LayoutState. A supplied graph index is used by the indexed owner, refreshed
+immediately after a retained legacy rewrite so subsequent dispatch remains
+current, and reconciled once at the compatibility boundary. The compatibility
+loop offers each pre-Transpose to both indexed modes at its original graph
+position, so mixed tail modes retain the legacy graph-order priority and one
+shared 32-rewrite ceiling.
 
 ## Managed-corpus SWAP exclusion policy
 

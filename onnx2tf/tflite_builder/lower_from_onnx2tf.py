@@ -129,6 +129,7 @@ from onnx2tf.tflite_builder.passes.instance_normalization_layout import (
 )
 from onnx2tf.tflite_builder.passes.instance_norm_prepost_layout import (
     _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains as _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains_pass,
+    _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains as _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains_pass,
 )
 from onnx2tf.tflite_builder.passes.terminal_mean_layout import (
     _optimize_transpose_pre_unary_mean_terminal_nhwc_chains as _optimize_transpose_pre_unary_mean_terminal_nhwc_chains_pass,
@@ -20181,6 +20182,22 @@ def _optimize_transpose_instancenorm_prepost_nhwc_chains(
                 rewritten += 1
                 changed = True
                 break
+            side_stats = (
+                _optimize_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains_pass(
+                    model_ir,
+                    graph_index=active_index,
+                    layout_state=layout_state,
+                    max_rewrites=1,
+                    candidate=pre_op,
+                )
+            )
+            if int(side_stats.get(
+                "optimized_transpose_squeeze_reshape_instancenorm_side_squeeze_nhwc_chains",
+                0,
+            )) > 0:
+                rewritten += 1
+                changed = True
+                break
             pre_in_name = str(pre_op.inputs[0])
             pre_out_name = str(pre_op.outputs[0])
             if pre_in_name in model_outputs or pre_out_name in model_outputs:
@@ -20389,6 +20406,14 @@ def _optimize_transpose_instancenorm_prepost_nhwc_chains(
                         post_idx = int(candidate_post_idx)
                         side_squeeze_idx = int(candidate_side_idx)
                         tail_mode = "direct_post_transpose_side_squeeze"
+            # This dual-consumer tail is exclusively owned by the indexed
+            # side-Squeeze pass. Unsafe candidates must not fall through to
+            # the legacy mutator.
+            if (
+                post_idx is not None
+                and tail_mode == "direct_post_transpose_side_squeeze"
+            ):
+                continue
             if post_idx is None:
                 squeeze2_idx = _single_consumer_index(consumers, inst_out_name)
                 if squeeze2_idx is not None:
@@ -20882,7 +20907,8 @@ def _optimize_transpose_instancenorm_prepost_nhwc_chains(
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten:
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
     if graph_index is not None and graph_index.model_ir is model_ir:
         graph_index.refresh()
     if rewritten and layout_state is not None:
