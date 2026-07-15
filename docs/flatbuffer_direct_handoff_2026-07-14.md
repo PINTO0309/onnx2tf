@@ -8,11 +8,12 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves Split/mixed-Concat NHWC fan-in recovery
+The latest implementation unit moves the general Concat input-adapter recovery
 into the TensorFlow-free indexed
-`passes/split_mixed_concat_layout.py` owner. Its former 432-line full-map,
+`passes/concat_input_adapter_layout.py` owner. Its former 302-line full-map,
 unbounded fixed-point helper is now a thin compatibility dispatcher at all
-three unchanged source positions. The owner resolves an immutable whole-group
+three unchanged direct source positions and at the unchanged conservative
+safe-transpose fallback position. The owner resolves an immutable whole-group
 plan, re-resolves the complete contract before apply, and maintains one
 differential `ModelIRGraphIndex` plus the Session `LayoutState` through every
 rewrite.
@@ -78,6 +79,63 @@ managed quick-profile accuracy values and remain well below `1e-1`. No
 TensorFlow import, new dependency, parallel inference, SWAP, timeout, or Tier
 corpus run was introduced. Temporary characterization and conversion outputs
 were removed.
+
+### General Concat input-adapter continuation — 2026-07-16
+
+The extracted owner starts from graph-ordered rank-four channel-axis Concat
+candidates instead of rebuilding complete producer and consumer maps. Every
+input must be either the private output of a typed NHWC-to-NCHW Transpose or
+one of the historical thirteen unary operations immediately following such a
+Transpose or a singleton-channel memory-equivalent Reshape. Direct and unary
+forms may be mixed. Repeated Concat input slots share one resolved branch and
+one metadata update rather than applying the old mutation twice.
+
+The resolver proves static and dynamic rank-four views, dtype, per-tensor
+quantization, logical and physical layout, producer uniqueness and graph
+order, exact consumer ownership, typed permutation and Reshape-shape
+constants, unary input/output equivalence, the derived NHWC Concat result, and
+terminal consumer order. Public Concat outputs and existing NCHW consumers
+remain on their original tensor name through one post-Concat compatibility
+Transpose. Unsupported fan-out, malformed constants, per-axis quantization,
+duplicate producers, stale plans, and unresolved sources reject the complete
+candidate without mutation.
+
+The immutable plan owns all adapter removals, unary rewires and metadata,
+Concat inputs/axis/output, optional deterministic permutation creation, the
+terminal adapter, complete tensor/operator contracts, and graph boundaries.
+The same Concat is resolved again immediately before apply. Candidate-only
+operation and an explicit rewrite limit use the production entry point;
+removed and inserted operators update one differential graph index. TensorIR
+and Session `LayoutState` both record resolved NHWC and retained NCHW
+boundaries. Pruning runs once at owner exit even when no candidate matches,
+preserving the legacy zero-match side effect and safe-bundle contract.
+
+Pre-extraction characterization observed six invocations on each of `yolov9`
+and `sgscsh`. `yolov9` retained three direct two-input groups in its first
+invocation at spatial sizes 48x84, 24x42, and 12x21. `sgscsh` retained two
+direct three-input groups in its second invocation; every other invocation was
+zero-match. The preceding indexed Split/mixed-Concat owner remained zero-match
+for these groups, confirming the ordered ownership boundary.
+
+Thirty-six dedicated tests plus the two existing active fixtures cover direct,
+dynamic, negative-axis, public-output, repeated-slot, existing-consumer,
+existing/new permutation, all thirteen unary, singleton-Reshape, dispatcher,
+candidate limit, stale-plan, zero-match pruning, safe-bundle, determinism, copy
+isolation, and transactional rejection behavior. The new and adjacent indexed
+owners, boundary-input checks, TensorFlow import blocker, and complete
+architecture suite pass together with `561 passed in 51.11s`. Scoped Ruff,
+format verification, syntax compilation, and `git diff --check` pass.
+
+Baseline/current conversion-only comparisons used identical Python API calls
+from detached source checkpoint `f5505052`. For both `yolov9` and `sgscsh`,
+float32 TFLite, float16 TFLite, tensor correspondence report, `schema.fbs`,
+and `schema_generated.py` are byte-identical. Separate sequential `-cotof`
+checks pass at maximum absolute errors `3.0517578125e-05` and
+`2.5331974029541016e-07`, respectively. An initial apparent `yolov9` report
+difference was traced before any source change to unlike invocation modes:
+the `-cotof` CLI path normalizes leading `/` names to `wa/`, whereas the
+conversion-only Python comparison did not. Matching invocation modes removed
+the difference. No implementation fix was necessary.
 
 ## Continuation snapshot — 2026-07-16
 
@@ -5361,6 +5419,27 @@ and the two fixed schema hashes. Scoped Ruff, syntax compilation, and
 `git diff --check` pass. Temporary comparison worktrees and outputs were
 removed. No Tier corpus was run.
 
+## Latest checkpoint file set
+
+The general Concat input-adapter checkpoint changes only the following tracked
+source, test, and documentation files relative to `f5505052`:
+
+- `onnx2tf/tflite_builder/passes/concat_input_adapter_layout.py`: new indexed
+  semantic owner and immutable transaction plan.
+- `onnx2tf/tflite_builder/lower_from_onnx2tf.py`: thin compatibility wrapper,
+  owner import, and Session `LayoutState` at the three direct call sites.
+- `tests/test_flatbuffer_direct_indexed_concat_input_adapter_layout.py`: new
+  focused capability, rejection, bounded-dispatch, and determinism coverage.
+- `tests/test_flatbuffer_direct_architecture.py`: ownership and unchanged
+  direct/safe-bundle call-boundary contract.
+- `docs/flatbuffer_direct_architecture.md`: indexed owner responsibilities and
+  validation boundary.
+- `docs/flatbuffer_direct_handoff_2026-07-14.md`: checkpoint evidence,
+  remaining work, known issues, and restart instruction.
+
+No generated model artifact, root ONNX model, dependency file, bulk-regression
+profile, or exclusion policy is changed by this checkpoint.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -5405,14 +5484,14 @@ production positions. The five short representatives remain zero-match for
 the bridge, and YuNet retains byte-identical artifacts.
 
 The unquantized pseudo-Swish, tanh-GELU, center/size/offset, pseudo-LeakyReLU,
-PReLU, connected elementwise/Concat, StridedSlice/Concat, and Split/mixed-
-Concat recovery helpers are now indexed at their unchanged production
-positions. The next standalone raw recovery helper in this ordered prefix is
-`_optimize_transpose_input_chains_pre_concat_to_single_post_adapter`; it has
-three direct production positions and is also referenced by the conservative
-safe-transpose fallback bundle. It has not yet been fully characterized or
-changed. The composite pre-Concat dispatcher still retains its previously
-documented legacy-family fallback after the indexed families.
+PReLU, connected elementwise/Concat, StridedSlice/Concat, Split/mixed-Concat,
+and general Concat input-adapter recovery helpers are now indexed at their
+unchanged production positions. The next standalone raw recovery helper in
+this ordered prefix is
+`_optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains`; it has
+two direct production positions and has not yet been characterized or changed.
+The composite pre-Concat dispatcher still retains its previously documented
+legacy-family fallback after the indexed families.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
 optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
@@ -5424,13 +5503,12 @@ verification gates.
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
 2. Characterize
-   `_optimize_transpose_input_chains_pre_concat_to_single_post_adapter` at all
-   three direct production positions and through the conservative safe-
-   transpose fallback bundle. Fix its runtime match set, optional unary and
-   singleton-Reshape input classification, shared adapter ownership, terminal
-   compatibility boundary, and interaction with the preceding indexed
-   Split/mixed-Concat owner before selecting a bounded semantic owner. Do not
-   modify it during characterization.
+   `_optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains` at both
+   direct production positions. Fix its runtime match set, per-branch
+   Transpose/Slice/optional-Logistic/Concat/Reshape ownership, terminal Concat
+   boundary, constant ownership, and interaction with the preceding indexed
+   general input-adapter owner before selecting a bounded semantic owner. Do
+   not modify it during characterization.
 3. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have

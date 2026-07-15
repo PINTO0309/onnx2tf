@@ -6630,6 +6630,52 @@ architecture gate passes 524 tests. Sequential `-cotof` validation preserves
 the managed values for `yolov9` (`3.0517578125e-05`) and `sgscsh`
 (`2.5331974029541016e-07`).
 
+General Concat input-adapter recovery is owned by
+`passes/concat_input_adapter_layout.py`. The former lowerer helper rebuilt full
+producer and consumer maps inside an unbounded fixed-point loop. It is now a
+thin compatibility dispatcher at its three direct production positions and
+its conservative safe-transpose fallback position. Direct production calls
+receive the Session `LayoutState`; the no-keyword fallback entry remains
+compatible.
+
+The indexed root is a rank-four channel-axis Concat. Each input branch must be
+the private output of a typed NHWC-to-NCHW Transpose, or one of the historical
+thirteen unary operations fed by that Transpose or by an exactly equivalent
+singleton-channel NHWC-to-NCHW Reshape. Direct and unary forms may be mixed.
+Repeated input slots reuse one branch plan so shared metadata is changed once.
+The accepted Transpose, Reshape, and unary intermediates cannot be public or
+have unrelated consumers.
+
+Every static and dynamic view, dtype, per-tensor quantization, explicit or
+unknown layout, producer and consumer relation, graph-order relation, typed
+constant, unary view, and derived NHWC Concat output is proven before a plan
+exists. The original NCHW Concat output name, metadata, graph-output role, and
+existing consumers are preserved through one terminal compatibility
+Transpose. If no proven permutation buffer is available, the plan creates one
+deterministic INT32 constant. Per-axis quantization, malformed or produced
+constants, duplicate producers, unresolved sources, unsafe fan-out, and stale
+or backward edges reject the complete candidate before mutation.
+
+The immutable plan contains branch classification, adapter removals, unary
+rewires, metadata/layout updates, Concat changes, permutation ownership,
+terminal insertion, tensor/operator contracts, and graph boundaries. It is
+fully resolved again immediately before apply. A graph-ordered candidate list,
+candidate-only operation, and an explicit rewrite limit replace the raw scan
+and fixed-point loop. One differential `ModelIRGraphIndex` maintains all
+rewrites, removals, and insertions. TensorIR and Session `LayoutState` are
+updated together, and pruning retains the historical zero-match side effect.
+
+Sequential characterization retained three first-invocation direct groups in
+`yolov9` and two second-invocation direct groups in `sgscsh`; the other seven
+invocations were zero-match. The preceding Split/mixed-Concat owner did not
+claim those groups. Thirty-six dedicated cases and two existing active
+fixtures cover direct, unary, singleton-Reshape, dynamic, public-boundary,
+repeated-slot, stale-plan, bounded dispatch, safe-bundle, determinism, and
+transactional rejection behavior. The related owner and architecture gate
+passes 561 tests. Identical conversion-only invocations against checkpoint
+`f5505052` reproduce all ten fixed artifacts across `yolov9` and `sgscsh`;
+separate sequential `-cotof` checks remain below `1e-1`.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

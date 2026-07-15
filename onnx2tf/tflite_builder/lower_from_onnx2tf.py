@@ -186,6 +186,9 @@ from onnx2tf.tflite_builder.passes.stridedslice_concat_layout import (
 from onnx2tf.tflite_builder.passes.split_mixed_concat_layout import (
     optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains as _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.concat_input_adapter_layout import (
+    optimize_transpose_input_chains_pre_concat_to_single_post_adapter as _optimize_transpose_input_chains_pre_concat_to_single_post_adapter_pass,
+)
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
     optimize_sinet_late_residual_pre_add_mul_add_prelu_chains as _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains_pass,
     optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains as _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains_pass,
@@ -8932,306 +8935,21 @@ def _optimize_transpose_stridedslice_pre_concat_nhwc_chains(
     )
 
 
-def _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Collapse per-input NHWC->NCHW adapters before CONCAT into a single post-CONCAT adapter.
-
-    Target:
-      x0_nhwc --TRANSPOSE(0,3,1,2)--> x0_nchw --(optional unary)--> i0_nchw
-      x1_nhwc --TRANSPOSE(0,3,1,2)--> x1_nchw --(optional unary)--> i1_nchw
-      ...
-      CONCAT(axis=1, [i0_nchw, i1_nchw, ...]) -> y_nchw
-      y_nchw -> downstream (e.g. RESHAPE)
-
-    Rewrite:
-      x0_nhwc --(optional unary)--> i0_nhwc
-      x1_nhwc --(optional unary)--> i1_nhwc
-      ...
-      CONCAT(axis=3, [i0_nhwc, i1_nhwc, ...]) -> y_nhwc
-      y_nhwc --TRANSPOSE(0,3,1,2)--> y_nchw
-
-    This keeps downstream NCHW semantics unchanged while reducing redundant pre-concat
-    transpose chains.
-
-    Supported layout adapters:
-      - TRANSPOSE(0,3,1,2)
-      - RESHAPE [N,H,W,1] -> [N,1,H,W] (singleton-channel layout adapter)
-    """
-    optimized = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-    unary_ops = {
-        "LOGISTIC",
-        "RELU",
-        "RELU6",
-        "RELU_0_TO_1",
-        "ELU",
-        "LEAKY_RELU",
-        "TANH",
-        "GELU",
-        "HARD_SWISH",
-        "ABS",
-        "EXP",
-        "NEG",
-        "SQRT",
-    }
-
-    def _unique_tensor_name(base: str) -> str:
-        if base not in model_ir.tensors:
-            return base
-        suffix = 1
-        while True:
-            candidate = f"{base}_{suffix}"
-            if candidate not in model_ir.tensors:
-                return candidate
-            suffix += 1
-
-    def _is_singleton_channel_nhwc_to_nchw_reshape(
-        *,
-        input_name: str,
-        output_name: str,
-    ) -> bool:
-        in_tensor = model_ir.tensors.get(str(input_name), None)
-        out_tensor = model_ir.tensors.get(str(output_name), None)
-        if in_tensor is None or out_tensor is None:
-            return False
-        in_shape = [int(v) for v in list(in_tensor.shape)]
-        out_shape = [int(v) for v in list(out_tensor.shape)]
-        if len(in_shape) != 4 or len(out_shape) != 4:
-            return False
-        return (
-            int(in_shape[0]) == int(out_shape[0])
-            and int(in_shape[1]) == int(out_shape[2])
-            and int(in_shape[2]) == int(out_shape[3])
-            and int(in_shape[3]) == 1
-            and int(out_shape[1]) == 1
-        )
-
-    def _find_or_create_nhwc_to_nchw_perm_tensor() -> str:
-        target = np.asarray(perm_nhwc_to_nchw, dtype=np.int32)
-        for tensor_name, tensor in model_ir.tensors.items():
-            if tensor is None or tensor.data is None:
-                continue
-            data = np.asarray(tensor.data)
-            if data.dtype != np.int32 or data.size != 4:
-                continue
-            if np.array_equal(data.reshape(-1), target):
-                return str(tensor_name)
-        perm_name = _unique_tensor_name("transpose_input_chains_nhwc_to_nchw_perm")
-        model_ir.tensors[perm_name] = TensorIR(
-            name=perm_name,
-            dtype="INT32",
-            shape=[4],
-            shape_signature=[4],
-            data=target,
-            is_variable=False,
-        )
-        return perm_name
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        producers = _build_tensor_producer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for concat_idx, concat_op in enumerate(model_ir.operators):
-            if str(concat_op.op_type) != "CONCATENATION" or len(concat_op.outputs) != 1:
-                continue
-
-            concat_axis_old = int(concat_op.options.get("axis", 1))
-            if concat_axis_old < 0:
-                concat_axis_old += 4
-            if concat_axis_old != 1:
-                continue
-
-            concat_out_name = str(concat_op.outputs[0])
-            concat_out_tensor = model_ir.tensors.get(concat_out_name, None)
-            if concat_out_tensor is None or len(list(concat_out_tensor.shape)) != 4:
-                continue
-
-            new_concat_inputs: List[str] = []
-            pre_remove_indices: List[int] = []
-            unary_input_rewrites: Dict[int, str] = {}
-            unary_output_names_to_permute: List[str] = []
-            adapter_perm_tensor_name: Optional[str] = None
-            rewritable = True
-
-            for input_name in [str(v) for v in list(concat_op.inputs)]:
-                input_producer_idx = producers.get(str(input_name), None)
-                if input_producer_idx is None:
-                    rewritable = False
-                    break
-                input_producer = model_ir.operators[int(input_producer_idx)]
-
-                if (
-                    str(input_producer.op_type) == "TRANSPOSE"
-                    and len(input_producer.inputs) >= 2
-                    and len(input_producer.outputs) == 1
-                    and str(input_producer.outputs[0]) == str(input_name)
-                    and _read_transpose_perm(model_ir, input_producer) == perm_nhwc_to_nchw
-                    and set(int(v) for v in consumers.get(str(input_name), [])) == {int(concat_idx)}
-                    and str(input_name) not in model_outputs
-                ):
-                    new_concat_inputs.append(str(input_producer.inputs[0]))
-                    pre_remove_indices.append(int(input_producer_idx))
-                    if adapter_perm_tensor_name is None:
-                        adapter_perm_tensor_name = str(input_producer.inputs[1])
-                    continue
-
-                if (
-                    str(input_producer.op_type) in unary_ops
-                    and len(input_producer.inputs) == 1
-                    and len(input_producer.outputs) == 1
-                    and str(input_producer.outputs[0]) == str(input_name)
-                    and set(int(v) for v in consumers.get(str(input_name), [])) == {int(concat_idx)}
-                    and str(input_name) not in model_outputs
-                ):
-                    unary_in_name = str(input_producer.inputs[0])
-                    pre_idx = producers.get(unary_in_name, None)
-                    if pre_idx is None:
-                        rewritable = False
-                        break
-                    pre_op = model_ir.operators[int(pre_idx)]
-                    if (
-                        set(int(v) for v in consumers.get(unary_in_name, [])) != {int(input_producer_idx)}
-                        or unary_in_name in model_outputs
-                    ):
-                        rewritable = False
-                        break
-                    if str(pre_op.op_type) == "TRANSPOSE":
-                        if (
-                            len(pre_op.inputs) < 2
-                            or len(pre_op.outputs) != 1
-                            or str(pre_op.outputs[0]) != unary_in_name
-                            or _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw
-                        ):
-                            rewritable = False
-                            break
-                        if adapter_perm_tensor_name is None:
-                            adapter_perm_tensor_name = str(pre_op.inputs[1])
-                    elif str(pre_op.op_type) == "RESHAPE":
-                        if (
-                            len(pre_op.inputs) < 1
-                            or len(pre_op.outputs) != 1
-                            or str(pre_op.outputs[0]) != unary_in_name
-                            or not _is_singleton_channel_nhwc_to_nchw_reshape(
-                                input_name=str(pre_op.inputs[0]),
-                                output_name=unary_in_name,
-                            )
-                        ):
-                            rewritable = False
-                            break
-                    else:
-                        rewritable = False
-                        break
-                    unary_input_rewrites[int(input_producer_idx)] = str(pre_op.inputs[0])
-                    unary_output_names_to_permute.append(str(input_name))
-                    new_concat_inputs.append(str(input_name))
-                    pre_remove_indices.append(int(pre_idx))
-                    continue
-
-                rewritable = False
-                break
-
-            if not rewritable:
-                continue
-            if adapter_perm_tensor_name is None:
-                adapter_perm_tensor_name = _find_or_create_nhwc_to_nchw_perm_tensor()
-
-            unary_outputs_to_permute = {str(v) for v in unary_output_names_to_permute}
-            nhwc_inputs_ok = True
-            nhwc_ref_shape: Optional[List[int]] = None
-            for input_name in new_concat_inputs:
-                input_tensor = model_ir.tensors.get(str(input_name), None)
-                if input_tensor is None or len(list(input_tensor.shape)) != 4:
-                    nhwc_inputs_ok = False
-                    break
-                shape = [int(v) for v in list(input_tensor.shape)]
-                if str(input_name) in unary_outputs_to_permute:
-                    permuted_shape = _permute_shape(shape, perm_nchw_to_nhwc)
-                    if permuted_shape is None:
-                        nhwc_inputs_ok = False
-                        break
-                    shape = [int(v) for v in list(permuted_shape)]
-                if nhwc_ref_shape is None:
-                    nhwc_ref_shape = list(shape)
-                else:
-                    for dim_idx in [0, 1, 2]:
-                        if int(shape[dim_idx]) != int(nhwc_ref_shape[dim_idx]):
-                            nhwc_inputs_ok = False
-                            break
-                if not nhwc_inputs_ok:
-                    break
-            if not nhwc_inputs_ok:
-                continue
-
-            new_concat_shape = _permute_shape(list(concat_out_tensor.shape), perm_nchw_to_nhwc)
-            concat_sig_source = (
-                list(concat_out_tensor.shape_signature)
-                if concat_out_tensor.shape_signature is not None
-                else list(concat_out_tensor.shape)
-            )
-            new_concat_signature = _permute_shape(concat_sig_source, perm_nchw_to_nhwc)
-            if new_concat_shape is None or new_concat_signature is None:
-                continue
-
-            for unary_idx, rewrite_input_name in unary_input_rewrites.items():
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=model_ir.operators[int(unary_idx)],
-                    new_inputs=[str(rewrite_input_name)],
-                )
-            for tensor_name in unary_output_names_to_permute:
-                _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(str(tensor_name), None),
-                    perm_nchw_to_nhwc,
-                )
-
-            new_concat_out_name = _unique_tensor_name(f"{concat_out_name}_nhwc")
-            model_ir.tensors[new_concat_out_name] = TensorIR(
-                name=new_concat_out_name,
-                dtype=str(concat_out_tensor.dtype),
-                shape=[int(v) for v in list(new_concat_shape)],
-                data=None,
-                quantization=_clone_quantization(concat_out_tensor.quantization),
-                shape_signature=[int(v) for v in list(new_concat_signature)],
-            )
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=concat_op,
-                new_inputs=[str(v) for v in new_concat_inputs],
-            )
-            concat_op.options["axis"] = 3
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=concat_op,
-                new_outputs=[str(new_concat_out_name)],
-            )
-
-            adapter_op = OperatorIR(
-                op_type="TRANSPOSE",
-                inputs=[str(new_concat_out_name), str(adapter_perm_tensor_name)],
-                outputs=[str(concat_out_name)],
-                options={},
-            )
-            model_ir.operators.insert(int(concat_idx) + 1, adapter_op)
-
-            remove_indices = sorted(list({int(v) for v in pre_remove_indices}), reverse=True)
-            for remove_idx in remove_indices:
-                if int(remove_idx) == int(concat_idx):
-                    continue
-                del model_ir.operators[int(remove_idx)]
-
-            optimized += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {"optimized_transpose_input_chains_pre_concat_to_single_post_adapter": int(optimized)}
+def _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: Optional[int] = None,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    return _optimize_transpose_input_chains_pre_concat_to_single_post_adapter_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_transpose_split_mixed_pre_concat_to_single_post_adapter_nhwc_chains(
@@ -27009,7 +26727,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
+        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _run_channel_shuffle_gather_layout_pass_cluster()
 
@@ -27474,7 +27195,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
+        _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_transpose_slice_logistic_concat_reshape_tail_nhwc_chains(model_ir)
         _run_channel_shuffle_gather_layout_pass_cluster(
             include_post_gather_cleanup=True,
@@ -27834,7 +27558,10 @@ def lower_onnx_to_ir(
         model_ir,
         layout_state=session.layout_state,
     )
-    _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(model_ir)
+    _optimize_transpose_input_chains_pre_concat_to_single_post_adapter(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     run_concat_unary_conv_layout_cleanup(
         model_ir,
         layout_state=session.layout_state,
