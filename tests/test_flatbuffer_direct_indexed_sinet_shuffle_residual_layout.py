@@ -11,10 +11,13 @@ from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, TensorIR
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
+    _apply_late_plan,
     _apply_plan,
     _apply_postmul_plan,
     _resolve_candidate,
+    _resolve_late_candidate,
     _resolve_postmul_candidate,
+    optimize_sinet_late_residual_pre_add_mul_add_prelu_chains,
     optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains,
     optimize_sinet_shuffle_residual_transpose_chains,
 )
@@ -395,6 +398,8 @@ def _evaluate(
                 axis=int(operator.options["axis"]),
             )
         elif operator.op_type == "IDENTITY":
+            output = np.asarray(operator_inputs[0])
+        elif operator.op_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}:
             output = np.asarray(operator_inputs[0])
         else:
             raise AssertionError(f"unsupported operator: {operator.op_type}")
@@ -1260,4 +1265,662 @@ def test_sinet_shuffle_postmul_preflight_avoids_graph_index(
         model_ir
     ) == {
         "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains": 0
+    }
+
+
+def _add_late_chain(
+    model_ir: ModelIR,
+    *,
+    prefix: str = "late_",
+    dtype: str = "FLOAT32",
+    constant_mode: str = "raw",
+    reversed_inputs: bool = False,
+    downstream_type: str = "CONV_2D",
+    legacy_before_root: bool = False,
+    shared_constants: bool = False,
+    external_constant_use: bool = False,
+    shared_post_perm: bool = False,
+    spatial_width: int = 3,
+) -> dict[str, object]:
+    names = {
+        key: f"{prefix}{key}"
+        for key in (
+            "x0",
+            "x1",
+            "x",
+            "y",
+            "pre_x_perm",
+            "pre_y_perm",
+            "x_nchw",
+            "y_nchw",
+            "add0_out",
+            "mul1_const",
+            "mul1_out",
+            "add1_const",
+            "add1_out",
+            "alpha1",
+            "prelu1_out",
+            "post1_perm",
+            "post1_out",
+            "conv_out",
+            "legacy_out",
+            "constant_side_out",
+            "spare_nchw",
+            "spare_nhwc",
+        )
+    }
+    dtype_np = _NP_DTYPES[dtype]
+    half_shape = (1, 2, int(spatial_width), 2)
+    half_signature = (-1, 2, -1, 2)
+    nhwc_shape = (1, 2, int(spatial_width), 4)
+    nhwc_signature = (-1, 2, -1, 4)
+    nchw_shape = tuple(nhwc_shape[index] for index in _PRE_PERM)
+    nchw_signature = tuple(nhwc_signature[index] for index in _PRE_PERM)
+    model_ir.inputs.extend(
+        [str(names[key]) for key in ("x0", "x1", "y")]
+    )
+    for key, shape, signature in (
+        ("x0", half_shape, half_signature),
+        ("x1", half_shape, half_signature),
+        ("x", nhwc_shape, nhwc_signature),
+        ("y", nhwc_shape, nhwc_signature),
+    ):
+        model_ir.tensors[str(names[key])] = _tensor(
+            str(names[key]),
+            dtype=dtype,
+            shape=shape,
+            signature=signature,
+        )
+    for key in ("pre_x_perm", "pre_y_perm"):
+        model_ir.tensors[str(names[key])] = _tensor(
+            str(names[key]),
+            dtype="INT32",
+            shape=(4,),
+            data=np.asarray(_PRE_PERM, dtype=np.int32),
+        )
+    model_ir.tensors[str(names["post1_perm"])] = _tensor(
+        str(names["post1_perm"]),
+        dtype="INT32",
+        shape=(4,),
+        data=np.asarray(_POST_PERM, dtype=np.int32),
+    )
+    for key in (
+        "x_nchw",
+        "y_nchw",
+        "add0_out",
+        "mul1_out",
+        "add1_out",
+        "prelu1_out",
+        "legacy_out",
+    ):
+        model_ir.tensors[str(names[key])] = _tensor(
+            str(names[key]),
+            dtype=dtype,
+            shape=nchw_shape,
+            signature=nchw_signature,
+        )
+        model_ir.tensors[str(names[key])].logical_layout = "NCHW"
+        model_ir.tensors[str(names[key])].physical_layout = "NCHW"
+    for key in ("post1_out", "conv_out"):
+        model_ir.tensors[str(names[key])] = _tensor(
+            str(names[key]),
+            dtype=dtype,
+            shape=nhwc_shape,
+            signature=nhwc_signature,
+        )
+        model_ir.tensors[str(names[key])].logical_layout = "NHWC"
+        model_ir.tensors[str(names[key])].physical_layout = "NHWC"
+
+    constant_keys = ("mul1_const", "add1_const", "alpha1")
+    if shared_constants:
+        shared_name = str(names["mul1_const"])
+        for key in constant_keys:
+            names[key] = shared_name
+        constant_keys = ("mul1_const",)
+    for index, key in enumerate(constant_keys):
+        data = _constant(
+            channels=4,
+            dtype=dtype,
+            mode=constant_mode,
+            offset=0.0 if shared_constants else float(index) * 0.05,
+        )
+        model_ir.tensors[str(names[key])] = _tensor(
+            str(names[key]),
+            dtype=dtype,
+            shape=tuple(data.shape),
+            data=np.asarray(data, dtype=dtype_np),
+        )
+
+    def binary(data: str, constant: str) -> list[str]:
+        return [constant, data] if reversed_inputs else [data, constant]
+
+    concat = OperatorIR(
+        "CONCATENATION",
+        [str(names["x0"]), str(names["x1"])],
+        [str(names["x"])],
+        options={"axis": 3, "fusedActivationFunction": "NONE"},
+    )
+    pre_x = OperatorIR(
+        "TRANSPOSE",
+        [str(names["x"]), str(names["pre_x_perm"])],
+        [str(names["x_nchw"])],
+    )
+    pre_y = OperatorIR(
+        "TRANSPOSE",
+        [str(names["y"]), str(names["pre_y_perm"])],
+        [str(names["y_nchw"])],
+    )
+    add0_inputs = [str(names["x_nchw"]), str(names["y_nchw"])]
+    if reversed_inputs:
+        add0_inputs.reverse()
+    add0 = OperatorIR(
+        "ADD",
+        add0_inputs,
+        [str(names["add0_out"])],
+        options={"fusedActivationFunction": "NONE"},
+    )
+    mul1 = OperatorIR(
+        "MUL",
+        binary(str(names["add0_out"]), str(names["mul1_const"])),
+        [str(names["mul1_out"])],
+        options={"fusedActivationFunction": "NONE"},
+    )
+    add1 = OperatorIR(
+        "ADD",
+        binary(str(names["mul1_out"]), str(names["add1_const"])),
+        [str(names["add1_out"])],
+        options={"fusedActivationFunction": "NONE"},
+    )
+    prelu1 = OperatorIR(
+        "PRELU",
+        [str(names["add1_out"]), str(names["alpha1"])],
+        [str(names["prelu1_out"])],
+    )
+    root = OperatorIR(
+        "TRANSPOSE",
+        [str(names["prelu1_out"]), str(names["post1_perm"])],
+        [str(names["post1_out"])],
+    )
+    downstream = OperatorIR(
+        str(downstream_type),
+        [str(names["post1_out"])],
+        [str(names["conv_out"])],
+    )
+    legacy = OperatorIR(
+        "IDENTITY",
+        [str(names["prelu1_out"])],
+        [str(names["legacy_out"])],
+    )
+    tail = [root, downstream, legacy]
+    if legacy_before_root:
+        tail = [legacy, root, downstream]
+    operators = [concat, pre_x, pre_y, add0, mul1, add1, prelu1, *tail]
+    model_ir.outputs.extend(
+        [str(names["conv_out"]), str(names["legacy_out"])]
+    )
+
+    constant_side = None
+    if external_constant_use:
+        constant_side_name = str(names["constant_side_out"])
+        constant_tensor = model_ir.tensors[str(names["mul1_const"])]
+        model_ir.tensors[constant_side_name] = _tensor(
+            constant_side_name,
+            dtype=dtype,
+            shape=tuple(int(value) for value in constant_tensor.shape),
+            data=None,
+        )
+        constant_side = OperatorIR(
+            "IDENTITY",
+            [str(names["mul1_const"])],
+            [constant_side_name],
+        )
+        operators.append(constant_side)
+        model_ir.outputs.append(constant_side_name)
+
+    side_transpose = None
+    if shared_post_perm:
+        model_ir.inputs.append(str(names["spare_nchw"]))
+        model_ir.outputs.append(str(names["spare_nhwc"]))
+        model_ir.tensors[str(names["spare_nchw"])] = _tensor(
+            str(names["spare_nchw"]),
+            dtype=dtype,
+            shape=nchw_shape,
+            signature=nchw_signature,
+        )
+        model_ir.tensors[str(names["spare_nhwc"])] = _tensor(
+            str(names["spare_nhwc"]),
+            dtype=dtype,
+            shape=nhwc_shape,
+            signature=nhwc_signature,
+        )
+        side_transpose = OperatorIR(
+            "TRANSPOSE",
+            [str(names["spare_nchw"]), str(names["post1_perm"])],
+            [str(names["spare_nhwc"])],
+        )
+        operators.append(side_transpose)
+
+    model_ir.operators.extend(operators)
+    names.update(
+        {
+            "concat_op": concat,
+            "pre_x_op": pre_x,
+            "pre_y_op": pre_y,
+            "add0_op": add0,
+            "mul1_op": mul1,
+            "add1_op": add1,
+            "prelu1_op": prelu1,
+            "root": root,
+            "downstream_op": downstream,
+            "legacy_op": legacy,
+            "constant_side_op": constant_side,
+            "side_transpose_op": side_transpose,
+        }
+    )
+    return names
+
+
+def _late_model(**kwargs: object) -> tuple[ModelIR, dict[str, object]]:
+    model_ir = ModelIR("indexed_sinet_late_residual_layout")
+    return model_ir, _add_late_chain(model_ir, **kwargs)
+
+
+@pytest.mark.parametrize("dtype", ("FLOAT16", "FLOAT32", "FLOAT64"))
+@pytest.mark.parametrize("constant_mode", ("scalar", "raw", "nhwc"))
+@pytest.mark.parametrize("reversed_inputs", (False, True))
+@pytest.mark.parametrize(
+    "downstream_type", ("CONV_2D", "DEPTHWISE_CONV_2D")
+)
+def test_sinet_late_residual_is_indexed_and_numerically_equivalent(
+    dtype: str,
+    constant_mode: str,
+    reversed_inputs: bool,
+    downstream_type: str,
+) -> None:
+    model_ir, names = _late_model(
+        dtype=dtype,
+        constant_mode=constant_mode,
+        reversed_inputs=reversed_inputs,
+        downstream_type=downstream_type,
+        spatial_width=4 if constant_mode == "nhwc" else 3,
+    )
+    original = copy.deepcopy(model_ir)
+    rng = np.random.default_rng(1207)
+    dtype_np = _NP_DTYPES[dtype]
+    inputs = {
+        str(names["x0"]): rng.normal(
+            size=(1, 2, 4 if constant_mode == "nhwc" else 3, 2)
+        ).astype(dtype_np),
+        str(names["x1"]): rng.normal(
+            size=(1, 2, 4 if constant_mode == "nhwc" else 3, 2)
+        ).astype(dtype_np),
+        str(names["y"]): rng.normal(
+            size=(1, 2, 4 if constant_mode == "nhwc" else 3, 4)
+        ).astype(dtype_np),
+    }
+    expected = _evaluate(original, inputs)
+    graph_index = ModelIRGraphIndex(model_ir)
+    layout_state = LayoutState.from_model_ir(model_ir)
+
+    first = optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+    second = optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+    assert first == {
+        "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains": 1
+    }
+    assert second == {
+        "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains": 0
+    }
+    assert names["pre_x_op"] not in model_ir.operators
+    assert names["pre_y_op"] not in model_ir.operators
+    assert names["add0_op"].inputs == [str(names["x"]), str(names["y"])] or (
+        names["add0_op"].inputs == [str(names["y"]), str(names["x"])]
+    )
+    assert names["prelu1_op"].outputs == [str(names["post1_out"])]
+    assert names["root"].inputs[0] == str(names["post1_out"])
+    assert names["root"].outputs == [str(names["prelu1_out"])]
+    np.testing.assert_array_equal(
+        np.asarray(model_ir.tensors[str(names["root"].inputs[1])].data),
+        np.asarray(_PRE_PERM, dtype=np.int32),
+    )
+    actual = _evaluate(model_ir, inputs)
+    tolerance = 2e-3 if dtype == "FLOAT16" else 1e-6
+    for output_name in model_ir.outputs:
+        np.testing.assert_allclose(
+            actual[str(output_name)],
+            expected[str(output_name)],
+            rtol=tolerance,
+            atol=tolerance,
+        )
+    width = 4 if constant_mode == "nhwc" else 3
+    assert model_ir.tensors[str(names["add0_out"])].shape == [1, 2, width, 4]
+    assert model_ir.tensors[str(names["prelu1_out"])].shape == [1, 4, 2, width]
+    assert model_ir.tensors[str(names["post1_out"])].shape == [1, 2, width, 4]
+    _assert_index_current(model_ir, graph_index)
+    assert layout_state.validate_against_model_ir(model_ir) == []
+
+
+def test_sinet_late_residual_groups_constants_and_clones_external_use() -> None:
+    model_ir, names = _late_model(
+        shared_constants=True,
+        external_constant_use=True,
+    )
+    original_data = np.asarray(
+        model_ir.tensors[str(names["mul1_const"])].data
+    ).copy()
+
+    stats = optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(model_ir)
+
+    assert stats == {
+        "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains": 1
+    }
+    affine_inputs = {
+        str(names["mul1_op"].inputs[0]),
+        str(names["mul1_op"].inputs[1]),
+        str(names["add1_op"].inputs[0]),
+        str(names["add1_op"].inputs[1]),
+        str(names["prelu1_op"].inputs[1]),
+    }
+    clone_names = {
+        name for name in affine_inputs if str(name).endswith("_nhwc")
+    }
+    assert len(clone_names) == 1
+    clone_name = next(iter(clone_names))
+    assert names["constant_side_op"].inputs == [str(names["mul1_const"])]
+    np.testing.assert_array_equal(
+        np.asarray(model_ir.tensors[str(names["mul1_const"])].data),
+        original_data,
+    )
+    assert model_ir.tensors[clone_name].shape == [1, 1, 1, 4]
+
+
+def test_sinet_late_residual_clones_shared_post_permutation() -> None:
+    model_ir, names = _late_model(shared_post_perm=True)
+    original = copy.deepcopy(model_ir)
+    rng = np.random.default_rng(444)
+    inputs = {
+        str(names["x0"]): rng.normal(size=(1, 2, 3, 2)).astype(np.float32),
+        str(names["x1"]): rng.normal(size=(1, 2, 3, 2)).astype(np.float32),
+        str(names["y"]): rng.normal(size=(1, 2, 3, 4)).astype(np.float32),
+        str(names["spare_nchw"]): rng.normal(size=(1, 4, 2, 3)).astype(
+            np.float32
+        ),
+    }
+    expected = _evaluate(original, inputs)
+
+    stats = optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(model_ir)
+
+    assert stats == {
+        "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains": 1
+    }
+    assert names["side_transpose_op"].inputs[1] == str(names["post1_perm"])
+    assert names["root"].inputs[1] != str(names["post1_perm"])
+    np.testing.assert_array_equal(
+        np.asarray(model_ir.tensors[str(names["post1_perm"])].data),
+        np.asarray(_POST_PERM, dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        np.asarray(model_ir.tensors[str(names["root"].inputs[1])].data),
+        np.asarray(_PRE_PERM, dtype=np.int32),
+    )
+    actual = _evaluate(model_ir, inputs)
+    for output_name in model_ir.outputs:
+        np.testing.assert_allclose(
+            actual[str(output_name)],
+            expected[str(output_name)],
+            rtol=1e-6,
+            atol=1e-6,
+        )
+
+
+def test_sinet_late_residual_preserves_public_repeated_legacy_slots() -> None:
+    model_ir, names = _late_model()
+    names["legacy_op"].op_type = "ADD"
+    names["legacy_op"].inputs = [
+        str(names["prelu1_out"]),
+        str(names["prelu1_out"]),
+    ]
+    model_ir.outputs.append(str(names["prelu1_out"]))
+    original = copy.deepcopy(model_ir)
+    rng = np.random.default_rng(811)
+    inputs = {
+        str(names["x0"]): rng.normal(size=(1, 2, 3, 2)).astype(np.float32),
+        str(names["x1"]): rng.normal(size=(1, 2, 3, 2)).astype(np.float32),
+        str(names["y"]): rng.normal(size=(1, 2, 3, 4)).astype(np.float32),
+    }
+    expected = _evaluate(original, inputs)
+
+    stats = optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(model_ir)
+
+    assert stats == {
+        "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains": 1
+    }
+    assert names["legacy_op"].inputs == [
+        str(names["prelu1_out"]),
+        str(names["prelu1_out"]),
+    ]
+    actual = _evaluate(model_ir, inputs)
+    for output_name in model_ir.outputs:
+        np.testing.assert_allclose(
+            actual[str(output_name)],
+            expected[str(output_name)],
+            rtol=1e-6,
+            atol=1e-6,
+        )
+
+
+def test_sinet_late_residual_rejects_nonbroadcasting_oriented_constant() -> None:
+    model_ir, _ = _late_model(constant_mode="nhwc", spatial_width=3)
+    before = _fingerprint(model_ir)
+
+    stats = optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(model_ir)
+
+    assert stats == {
+        "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains": 0
+    }
+    assert _fingerprint(model_ir) == before
+
+
+def test_sinet_late_residual_honors_candidate_and_total_cap() -> None:
+    model_ir = ModelIR("two_late_residuals")
+    first = _add_late_chain(model_ir, prefix="first_")
+    second = _add_late_chain(model_ir, prefix="second_")
+    graph_index = ModelIRGraphIndex(model_ir)
+
+    candidate_stats = optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(
+        model_ir,
+        graph_index=graph_index,
+        candidate=second["root"],
+    )
+    capped_stats = optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(
+        model_ir,
+        graph_index=graph_index,
+        max_rewrites=1,
+    )
+
+    assert candidate_stats == {
+        "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains": 1
+    }
+    assert capped_stats == {
+        "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains": 1
+    }
+    assert first["pre_x_op"] not in model_ir.operators
+    assert second["pre_x_op"] not in model_ir.operators
+    _assert_index_current(model_ir, graph_index)
+
+
+def _append_late_fanout(
+    model_ir: ModelIR,
+    names: dict[str, object],
+    tensor_key: str,
+) -> None:
+    source_name = str(names[tensor_key])
+    source = model_ir.tensors[source_name]
+    output_name = f"{source_name}_fanout"
+    model_ir.tensors[output_name] = _tensor(
+        output_name,
+        dtype=str(source.dtype),
+        shape=tuple(int(value) for value in source.shape),
+        signature=tuple(int(value) for value in source.shape_signature),
+    )
+    model_ir.operators.append(
+        OperatorIR("IDENTITY", [source_name], [output_name])
+    )
+    model_ir.outputs.append(output_name)
+
+
+def _remove_late_legacy(
+    model_ir: ModelIR,
+    names: dict[str, object],
+) -> None:
+    model_ir.operators.remove(names["legacy_op"])
+    model_ir.outputs.remove(str(names["legacy_out"]))
+
+
+def _duplicate_late_add_output(
+    model_ir: ModelIR,
+    names: dict[str, object],
+) -> None:
+    model_ir.operators.append(
+        OperatorIR(
+            "IDENTITY",
+            [str(names["y"])],
+            [str(names["add0_out"])],
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        lambda model, names: model.outputs.append(str(names["post1_out"])),
+        lambda model, names: setattr(
+            model.tensors[str(names["post1_perm"])],
+            "data",
+            np.asarray([0, 1, 3, 2], dtype=np.int32),
+        ),
+        lambda model, names: _append_late_fanout(
+            model, names, "post1_out"
+        ),
+        _remove_late_legacy,
+        lambda model, names: names["concat_op"].options.update({"axis": 1}),
+        lambda model, names: _append_late_fanout(model, names, "x_nchw"),
+        lambda model, names: setattr(
+            model.tensors[str(names["y"])], "shape", [1, 2, 4, 4]
+        ),
+        lambda model, names: names["add1_op"].options.update(
+            {"fusedActivationFunction": "RELU"}
+        ),
+        lambda model, names: setattr(
+            model.tensors[str(names["prelu1_out"])],
+            "quantization",
+            object(),
+        ),
+        lambda model, names: setattr(
+            model.tensors[str(names["mul1_const"])],
+            "data",
+            np.full((1, 4, 1, 1), np.nan, dtype=np.float32),
+        ),
+        lambda model, names: setattr(
+            names["downstream_op"], "op_type", "IDENTITY"
+        ),
+        lambda model, names: model.outputs.append(str(names["add0_out"])),
+        lambda model, names: setattr(
+            model.tensors[str(names["post1_out"])],
+            "shape_signature",
+            [-1, 2, -1, 5],
+        ),
+        _duplicate_late_add_output,
+        lambda model, names: model.operators.insert(
+            model.operators.index(names["root"]),
+            model.operators.pop(model.operators.index(names["downstream_op"])),
+        ),
+    ),
+)
+def test_sinet_late_residual_rejects_unsafe_contracts_transactionally(
+    mutation: _Mutation,
+) -> None:
+    model_ir, names = _late_model()
+    mutation(model_ir, names)
+    before = _fingerprint(model_ir)
+
+    stats = optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(model_ir)
+
+    assert stats == {
+        "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains": 0
+    }
+    assert _fingerprint(model_ir) == before
+
+
+def test_sinet_late_residual_rejects_legacy_consumer_before_adapter() -> None:
+    model_ir, _ = _late_model(legacy_before_root=True)
+    before = _fingerprint(model_ir)
+
+    stats = optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(model_ir)
+
+    assert stats == {
+        "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains": 0
+    }
+    assert _fingerprint(model_ir) == before
+
+
+def test_sinet_late_residual_apply_revalidates_stale_plan() -> None:
+    model_ir, names = _late_model()
+    graph_index = ModelIRGraphIndex(model_ir)
+    plan = _resolve_late_candidate(model_ir, graph_index, names["root"])
+    assert plan is not None
+    model_ir.tensors[str(names["post1_out"])].shape = [1, 2, 3, 5]
+    before = _fingerprint(model_ir)
+
+    assert not _apply_late_plan(model_ir, graph_index, plan)
+    assert _fingerprint(model_ir) == before
+
+
+def test_sinet_late_residual_apply_preflight_rejects_clone_collision() -> None:
+    model_ir, names = _late_model(external_constant_use=True)
+    graph_index = ModelIRGraphIndex(model_ir)
+    plan = _resolve_late_candidate(model_ir, graph_index, names["root"])
+    assert plan is not None
+    clone_name = next(
+        constant.clone_name
+        for constant in plan.constant_plans
+        if constant.clone_name is not None
+    )
+    assert clone_name is not None
+    model_ir.tensors[clone_name] = _tensor(
+        clone_name,
+        dtype="FLOAT32",
+        shape=(),
+        data=np.asarray(0.0, dtype=np.float32),
+    )
+    before = _fingerprint(model_ir)
+
+    assert not _apply_late_plan(model_ir, graph_index, plan)
+    assert _fingerprint(model_ir) == before
+
+
+def test_sinet_late_residual_preflight_avoids_graph_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_ir = ModelIR("no_sinet_late_residual")
+    model_ir.operators = [OperatorIR("TRANSPOSE", ["x", "p"], ["y"])]
+
+    def fail_index(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("index should not be allocated")
+
+    monkeypatch.setattr(shuffle_module, "ModelIRGraphIndex", fail_index)
+
+    assert optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(
+        model_ir
+    ) == {
+        "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains": 0
     }

@@ -5291,6 +5291,43 @@ is a 17-line dispatcher. The primary production call supplies the Session
 LayoutState; the independently inferred fallback IR call passes the explicit
 `None` boundary.
 
+The adjacent late residual fan-out is a third indexed owner in
+`passes/sinet_shuffle_residual_layout.py`. It recognizes the semantic island
+`two NHWC inputs -> two NCHW adapters -> ADD -> MUL -> ADD -> PReLU`, where
+exactly one input comes from a channel-last Concat. The PReLU feeds both a
+conv-side NCHW-to-NHWC adapter and at least one legacy NCHW consumer. Matching
+does not depend on the former fixed 40-by-40 spatial guard: exact rank-four
+shape and dynamic-signature permutations, one floating dtype, unique
+producers, consumer multiplicity, public boundaries, and dependency order are
+the contract.
+
+The ADD/MUL/ADD/PReLU island is lifted to NHWC and the two input adapters are
+removed. PReLU produces the existing canonical NHWC post tensor directly. The
+old post adapter remains as the one inverse NHWC-to-NCHW adapter and produces
+the former PReLU tensor name, preserving every later legacy consumer and
+repeated input slot. The canonical post tensor is not overwritten or
+re-permuted; the three affine intermediates adopt its exact shape, signature,
+logical layout, and physical layout, while the legacy tensor retains its NCHW
+contract.
+
+Affine and PReLU constants must be finite, same-dtype, private constants that
+broadcast in the original NCHW operation. Non-scalars are explicitly rotated
+and must also broadcast in the target NHWC operation. This replaces the old
+size-specific assumption and safely supports raw channel constants as well as
+already-oriented rank-four constants when their actual axes make both graphs
+valid. Constants shared across roles are updated once; unrelated consumers
+receive one deterministic clone. The retained permutation constant is part of
+the same transaction and is cloned when another Transpose still needs its
+original value.
+
+The complete plan is resolved again before apply. Clone names, operator
+indices, metadata targets, output renames, and both removals are preflighted
+before the first mutation. Candidate traversal uses one differential
+`ModelIRGraphIndex`, deterministic graph order, a configurable 32-rewrite
+ceiling, success-only pruning, and optional Session `LayoutState`
+synchronization. The former 331-line raw helper is a 17-line compatibility
+dispatcher and its production call supplies the Session LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

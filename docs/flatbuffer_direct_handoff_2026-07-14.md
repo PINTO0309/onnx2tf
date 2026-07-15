@@ -8,11 +8,12 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit adds the paired post-MUL SiNet Shuffle variant
-to `passes/sinet_shuffle_residual_layout.py`, extracts the common nine-operator
-residual prefix used by both owners, and reduces the second former 470-line raw
-mutator to a 17-line compatibility dispatcher. The variant validates the
-partially restored NHWC ADD/PReLU tail and preserves its canonical tensors.
+The latest implementation unit moves the adjacent late SiNet residual fan-out
+to `passes/sinet_shuffle_residual_layout.py` and reduces the former 331-line
+raw mutator to a 17-line compatibility dispatcher. The owner replaces the
+fixed 40-by-40 guard with exact NCHW/NHWC shape, broadcast, fan-out, and graph-
+order contracts while preserving both the canonical conv branch and every
+legacy NCHW branch.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -35,7 +36,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 108 coherent continuations:
+The current `fb-refactor5` work contains 109 coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -259,6 +260,10 @@ The current `fb-refactor5` work contains 108 coherent continuations:
   moves the paired post-MUL Transpose variant to the same indexed module,
   preserves the already-NHWC ADD/PReLU tail, and removes its second legacy raw
   mutator from the compatibility dispatcher.
+- the latest checkpoint moves the late residual affine/PReLU fan-out to that
+  indexed module, preserves the conv and legacy branches with one inverse
+  adapter, and replaces the spatial-size heuristic with semantic shape and
+  broadcast validation.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -3078,6 +3083,60 @@ default, and `-cotof` conversion passed sequentially with
 `3 passed, 8 deselected in 3.54s`. Scoped Ruff, syntax compilation, and
 `git diff --check` passed. No Tier corpus conversion was run.
 
+The indexed late-residual checkpoint moves
+`_optimize_sinet_late_residual_pre_add_mul_add_prelu_chains` into the same
+SiNet residual owner. The semantic candidate is two private
+NHWC-to-NCHW adapters feeding `ADD -> MUL -> ADD -> PReLU`. Exactly one NHWC
+source has a channel-last Concat producer. The PReLU output feeds one private
+NCHW-to-NHWC adapter for a Conv2D or DepthwiseConv2D branch and one or more
+later legacy NCHW consumers. The old fixed 40-by-40 predicate is gone; rank-
+four concrete shapes and dynamic signatures must prove each permutation and
+all affine intermediates must share one unquantized FLOAT16/FLOAT32/FLOAT64
+contract.
+
+The rewrite removes the two input adapters and lifts the affine/PReLU island
+to NHWC. PReLU produces the existing canonical post tensor directly. The post
+adapter is inverted in place and now produces the former PReLU tensor name, so
+legacy consumers and repeated slots remain unchanged. Legacy consumers must
+be graph ordered after that retained adapter; an earlier independent branch is
+rejected instead of creating a producer-after-consumer edge. The canonical
+post tensor remains authoritative and is never double-permuted. Only the
+ADD/MUL/ADD intermediates adopt its exact shape, signature, and layouts; the
+legacy output tensor retains its original NCHW metadata.
+
+The three floating constants are grouped by tensor identity. Each must be a
+finite, same-dtype, private constant that broadcasts in the original NCHW
+graph; non-scalars are rotated and must also broadcast in the target NHWC
+graph. This safely handles scalar and raw channel constants and retains the
+legacy already-oriented rank-four case only when its actual axes make both
+graphs valid. Unrelated consumers receive one deterministic clone. The
+retained permutation constant participates in the same transaction and is
+cloned when another Transpose still needs the original permutation.
+
+The plan is re-resolved immediately before apply. Constant clones, mutation
+indices, metadata targets, output-name swaps, and both adapter removals are
+preflighted before the first write. One differential index, deterministic
+candidate order, a 32-rewrite ceiling, success-only pruning, and LayoutState
+synchronization replace the legacy full-map `while True` loop. The lowerer now
+contains a 17-line dispatcher and the production call supplies the Session
+LayoutState.
+
+Focused coverage now passes with `207 passed in 0.69s`. It includes thirty-six
+FLOAT16/FLOAT32/FLOAT64 numerical-equivalence combinations across both operand
+orders, both downstream convolution families, scalar/raw constants, and the
+formerly size-specific rank-four constant case on a non-40 spatial contract;
+dynamic signatures; canonical, public, and repeated-slot legacy output
+preservation; shared-role and external-use constant cloning; shared
+permutation cloning; ambiguous oriented-constant rejection; candidate-only and
+capped execution; fifteen transactional unsafe contracts; earlier legacy
+consumer rejection; stale-plan revalidation; clone collision; no-index
+preflight; differential-index validation; and LayoutState validation. The full
+architecture suite passed with `183 passed in 50.11s`; the one sequential real
+SiNet direct-builder characterization passed with `1 passed in 2.62s`; and
+TensorFlow-import-blocked direct, default, and `-cotof` conversion passed with
+`3 passed, 8 deselected in 3.58s`. Scoped Ruff, syntax compilation, and
+`git diff --check` passed. No Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -3120,12 +3179,13 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent 331-line
-   `_optimize_sinet_late_residual_pre_add_mul_add_prelu_chains` helper next.
-   Characterize its residual source selection, pre-ADD adapters, affine/PReLU
-   constants, terminal output contract, fan-out, and graph-order boundaries
-   before extracting a bounded semantic owner. Reuse the new common SiNet
-   residual and constant contracts where the topology agrees.
+3. Audit the adjacent 641-line
+   `_optimize_sinet_deep_skip_concat_resize_affine_tail_chains` helper next.
+   Characterize its deep-skip source ownership, Resize branch, two Concat
+   boundaries, affine constants, terminal fan-out, and graph-order constraints
+   before choosing the smallest complete semantic transaction. Reuse the SiNet
+   constant, metadata, and residual-prefix contracts only where the topology
+   proves they are identical.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

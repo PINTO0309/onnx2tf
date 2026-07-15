@@ -3901,6 +3901,9 @@ def test_indexed_sinet_shuffle_residual_owner_is_bounded_and_transactional() -> 
     assert "def _resolve_prefix(" in owner_source
     assert "def _resolve_postmul_candidate(" in owner_source
     assert "def _apply_postmul_plan(" in owner_source
+    assert "def _resolve_late_candidate(" in owner_source
+    assert "def _apply_late_plan(" in owner_source
+    assert "def _late_constant_replacement(" in owner_source
     assert "def _plan_constants(" in owner_source
     assert "Counter(" in owner_source
     assert "metadata_updates" in owner_source
@@ -3996,6 +3999,48 @@ def test_indexed_sinet_shuffle_residual_owner_is_bounded_and_transactional() -> 
         isinstance(value, ast.Attribute) and value.attr == "layout_state"
         for value in postmul_layout_values
     )
+
+    late_wrapper_name = (
+        "_optimize_sinet_late_residual_pre_add_mul_add_prelu_chains"
+    )
+    late_wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == late_wrapper_name
+    )
+    assert len(late_wrapper.body) == 2
+    late_dispatch = late_wrapper.body[1]
+    assert isinstance(late_dispatch, ast.Return)
+    late_call = next(
+        node for node in ast.walk(late_dispatch) if isinstance(node, ast.Call)
+    )
+    assert isinstance(late_call.func, ast.Name)
+    assert (
+        late_call.func.id
+        == "_optimize_sinet_late_residual_pre_add_mul_add_prelu_chains_pass"
+    )
+    assert {keyword.arg for keyword in late_call.keywords} == {
+        "graph_index",
+        "layout_state",
+        "max_rewrites",
+        "candidate",
+    }
+    late_production_calls = [
+        node
+        for node in ast.walk(lowerer)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == late_wrapper_name
+    ]
+    assert len(late_production_calls) == 1
+    late_layout_keyword = next(
+        keyword
+        for keyword in late_production_calls[0].keywords
+        if keyword.arg == "layout_state"
+    )
+    assert isinstance(late_layout_keyword.value, ast.Attribute)
+    assert late_layout_keyword.value.attr == "layout_state"
 
 
 def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:

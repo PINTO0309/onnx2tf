@@ -30,6 +30,9 @@ _STATS_KEY = "optimized_sinet_shuffle_residual_transpose_chains"
 _POSTMUL_STATS_KEY = (
     "optimized_sinet_shuffle_residual_mul_posttranspose_tail_chains"
 )
+_LATE_STATS_KEY = (
+    "optimized_sinet_late_residual_pre_add_mul_add_prelu_chains"
+)
 
 
 @dataclass(frozen=True)
@@ -122,6 +125,24 @@ class _PostMulTailPlan:
     post2_output_name: str
     add2_output_name: str
     prelu2_output_name: str
+    constant_plans: Tuple[_ConstantPlan, ...]
+    metadata_updates: Tuple[_MetadataUpdate, ...]
+    remove_operators: Tuple[OperatorIR, ...]
+
+
+@dataclass(frozen=True)
+class _LateResidualPlan:
+    root: OperatorIR
+    downstream: OperatorIR
+    pre_x: OperatorIR
+    pre_y: OperatorIR
+    add0: OperatorIR
+    mul1: OperatorIR
+    add1: OperatorIR
+    prelu1: OperatorIR
+    add0_inputs: Tuple[str, str]
+    prelu1_output_name: str
+    post1_output_name: str
     constant_plans: Tuple[_ConstantPlan, ...]
     metadata_updates: Tuple[_MetadataUpdate, ...]
     remove_operators: Tuple[OperatorIR, ...]
@@ -276,6 +297,58 @@ def _constant_replacement(
             copy=False,
         )
     return None
+
+
+def _late_constant_replacement(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    name: str,
+    dtype: str,
+    old_nchw_shape: Tuple[int, ...],
+    target_nhwc_shape: Tuple[int, ...],
+    public_names: set[str],
+) -> Optional[np.ndarray]:
+    validated = _constant_replacement(
+        model_ir,
+        graph_index,
+        name=str(name),
+        dtype=str(dtype),
+        target_shape=target_nhwc_shape,
+        public_names=public_names,
+    )
+    if validated is None:
+        return None
+    tensor = model_ir.tensors[str(name)]
+    data = np.asarray(tensor.data)
+    if int(data.size) == 1:
+        return np.asarray(data)
+    if data.ndim != 4:
+        return None
+    rotated = np.transpose(data, _NCHW_TO_NHWC).astype(
+        _FLOAT_DTYPES[str(dtype)],
+        copy=False,
+    )
+    try:
+        old_broadcast = tuple(
+            int(value)
+            for value in np.broadcast_shapes(data.shape, old_nchw_shape)
+        )
+        new_broadcast = tuple(
+            int(value)
+            for value in np.broadcast_shapes(
+                rotated.shape,
+                target_nhwc_shape,
+            )
+        )
+    except (TypeError, ValueError):
+        return None
+    if (
+        old_broadcast != tuple(int(value) for value in old_nchw_shape)
+        or new_broadcast != tuple(int(value) for value in target_nhwc_shape)
+    ):
+        return None
+    return np.asarray(rotated)
 
 
 def _plan_constants(
@@ -1010,6 +1083,340 @@ def _resolve_candidate(
     )
 
 
+def _resolve_late_candidate(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    root: OperatorIR,
+) -> Optional[_LateResidualPlan]:
+    root_index = graph_index.operator_index(root)
+    public_inputs = {str(name) for name in model_ir.inputs}
+    public_outputs = {str(name) for name in model_ir.outputs}
+    public_names = public_inputs | public_outputs
+    if (
+        root_index is None
+        or str(root.op_type) != "TRANSPOSE"
+        or len(root.inputs) != 2
+        or len(root.outputs) != 1
+        or not _typed_permutation(
+            model_ir,
+            graph_index,
+            root,
+            _NCHW_TO_NHWC,
+            public_names,
+        )
+    ):
+        return None
+
+    prelu1_output_name = str(root.inputs[0])
+    post1_output_name = str(root.outputs[0])
+    if post1_output_name in public_names:
+        return None
+    downstream_indices = graph_index.consumer_indices(post1_output_name)
+    if len(downstream_indices) != 1:
+        return None
+    downstream_index = int(downstream_indices[0])
+    downstream = model_ir.operators[downstream_index]
+    if (
+        downstream_index <= int(root_index)
+        or str(downstream.op_type) not in {"CONV_2D", "DEPTHWISE_CONV_2D"}
+        or not downstream.inputs
+        or str(downstream.inputs[0]) != post1_output_name
+        or [str(name) for name in downstream.inputs].count(post1_output_name)
+        != 1
+    ):
+        return None
+
+    prelu1_match = _producer(
+        model_ir,
+        graph_index,
+        prelu1_output_name,
+        "PRELU",
+    )
+    if prelu1_match is None:
+        return None
+    prelu1_index, prelu1 = prelu1_match
+    prelu1_users = graph_index.consumer_indices(prelu1_output_name)
+    legacy_indices = [
+        int(index)
+        for index in prelu1_users
+        if int(index) != int(root_index)
+    ]
+    if (
+        not _plain_prelu(prelu1)
+        or int(prelu1_index) >= int(root_index)
+        or Counter(prelu1_users).get(int(root_index), 0) != 1
+        or not legacy_indices
+        or any(int(index) <= int(root_index) for index in legacy_indices)
+    ):
+        return None
+
+    add1_output_name = str(prelu1.inputs[0])
+    add1_match = _producer(model_ir, graph_index, add1_output_name, "ADD")
+    if add1_match is None:
+        return None
+    add1_index, add1 = add1_match
+    if (
+        not _plain_binary(add1, "ADD")
+        or int(add1_index) >= int(prelu1_index)
+        or graph_index.consumer_indices(add1_output_name)
+        != [int(prelu1_index)]
+    ):
+        return None
+    add1_constants = [
+        index
+        for index, name in enumerate(add1.inputs)
+        if (tensor := model_ir.tensors.get(str(name))) is not None
+        and tensor.data is not None
+    ]
+    if len(add1_constants) != 1:
+        return None
+    add1_constant_index = int(add1_constants[0])
+    add1_constant_name = str(add1.inputs[add1_constant_index])
+    mul1_output_name = str(add1.inputs[1 - add1_constant_index])
+
+    mul1_match = _producer(model_ir, graph_index, mul1_output_name, "MUL")
+    if mul1_match is None:
+        return None
+    mul1_index, mul1 = mul1_match
+    if (
+        not _plain_binary(mul1, "MUL")
+        or int(mul1_index) >= int(add1_index)
+        or graph_index.consumer_indices(mul1_output_name)
+        != [int(add1_index)]
+    ):
+        return None
+    mul1_constants = [
+        index
+        for index, name in enumerate(mul1.inputs)
+        if (tensor := model_ir.tensors.get(str(name))) is not None
+        and tensor.data is not None
+    ]
+    if len(mul1_constants) != 1:
+        return None
+    mul1_constant_index = int(mul1_constants[0])
+    mul1_constant_name = str(mul1.inputs[mul1_constant_index])
+    add0_output_name = str(mul1.inputs[1 - mul1_constant_index])
+
+    add0_match = _producer(model_ir, graph_index, add0_output_name, "ADD")
+    if add0_match is None:
+        return None
+    add0_index, add0 = add0_match
+    if (
+        not _plain_binary(add0, "ADD")
+        or int(add0_index) >= int(mul1_index)
+        or graph_index.consumer_indices(add0_output_name)
+        != [int(mul1_index)]
+    ):
+        return None
+
+    pre_add_roles = []
+    concat_backed_inputs = 0
+    for input_index, input_name in enumerate(add0.inputs):
+        pre_match = _producer(
+            model_ir,
+            graph_index,
+            str(input_name),
+            "TRANSPOSE",
+        )
+        if pre_match is None:
+            return None
+        pre_index, pre = pre_match
+        if (
+            not _typed_permutation(
+                model_ir,
+                graph_index,
+                pre,
+                _NHWC_TO_NCHW,
+                public_names,
+            )
+            or int(pre_index) >= int(add0_index)
+            or graph_index.consumer_indices(str(input_name))
+            != [int(add0_index)]
+            or not _resolved_source(
+                graph_index,
+                name=str(pre.inputs[0]),
+                adapter_index=int(pre_index),
+                public_inputs=public_inputs,
+                public_outputs=public_outputs,
+            )
+        ):
+            return None
+        source_name = str(pre.inputs[0])
+        source_producer_index = graph_index.producers.get(source_name)
+        if source_producer_index is not None:
+            source_producer = model_ir.operators[int(source_producer_index)]
+            try:
+                concat_axis = int(source_producer.options.get("axis", -1))
+            except (TypeError, ValueError):
+                concat_axis = -1
+            if (
+                str(source_producer.op_type) == "CONCATENATION"
+                and concat_axis == 3
+            ):
+                concat_backed_inputs += 1
+        pre_add_roles.append(
+            (int(input_index), int(pre_index), pre, source_name)
+        )
+    if (
+        len(pre_add_roles) != 2
+        or pre_add_roles[0][2] is pre_add_roles[1][2]
+        or concat_backed_inputs != 1
+    ):
+        return None
+    _, _, pre_x, source_x_name = pre_add_roles[0]
+    _, _, pre_y, source_y_name = pre_add_roles[1]
+
+    operators = (
+        pre_x,
+        pre_y,
+        add0,
+        mul1,
+        add1,
+        prelu1,
+        root,
+        downstream,
+    )
+    operator_indices = [
+        graph_index.operator_index(operator) for operator in operators
+    ]
+    if any(index is None for index in operator_indices) or len(
+        {int(index) for index in operator_indices if index is not None}
+    ) != len(operators):
+        return None
+
+    tensor_names = (
+        source_x_name,
+        source_y_name,
+        str(pre_x.outputs[0]),
+        str(pre_y.outputs[0]),
+        add0_output_name,
+        mul1_output_name,
+        add1_output_name,
+        prelu1_output_name,
+        post1_output_name,
+    )
+    if (
+        len(set(tensor_names)) != len(tensor_names)
+        or any(name in public_names for name in tensor_names[2:7])
+        or any(name in graph_index.duplicate_producers for name in tensor_names)
+    ):
+        return None
+    contracts = {
+        name: _tensor_contract(model_ir, name, 4) for name in tensor_names
+    }
+    if any(contract is None for contract in contracts.values()):
+        return None
+    source_x = contracts[source_x_name]
+    source_y = contracts[source_y_name]
+    assert source_x is not None
+    assert source_y is not None
+    dtype = str(source_x.tensor.dtype)
+    if (
+        dtype not in _FLOAT_DTYPES
+        or any(
+            str(contract.tensor.dtype) != dtype
+            or contract.tensor.data is not None
+            or contract.tensor.quantization is not None
+            for contract in contracts.values()
+            if contract is not None
+        )
+        or source_y.shape != source_x.shape
+        or source_y.signature != source_x.signature
+        or contracts[str(pre_x.outputs[0])].shape
+        != _permute(source_x.shape, _NHWC_TO_NCHW)
+        or contracts[str(pre_y.outputs[0])].shape
+        != _permute(source_y.shape, _NHWC_TO_NCHW)
+        or contracts[str(pre_x.outputs[0])].signature
+        != _permute(source_x.signature, _NHWC_TO_NCHW)
+        or contracts[str(pre_y.outputs[0])].signature
+        != _permute(source_y.signature, _NHWC_TO_NCHW)
+    ):
+        return None
+
+    stage1_nchw_shape = contracts[str(pre_x.outputs[0])].shape
+    stage1_nchw_signature = contracts[str(pre_x.outputs[0])].signature
+    for name in (
+        add0_output_name,
+        mul1_output_name,
+        add1_output_name,
+        prelu1_output_name,
+    ):
+        if (
+            contracts[name].shape != stage1_nchw_shape
+            or contracts[name].signature != stage1_nchw_signature
+        ):
+            return None
+    if (
+        contracts[post1_output_name].shape != source_x.shape
+        or contracts[post1_output_name].signature != source_x.signature
+    ):
+        return None
+
+    constant_roles = []
+    for name, operator, input_index in (
+        (mul1_constant_name, mul1, mul1_constant_index),
+        (add1_constant_name, add1, add1_constant_index),
+        (str(prelu1.inputs[1]), prelu1, 1),
+    ):
+        replacement = _late_constant_replacement(
+            model_ir,
+            graph_index,
+            name=str(name),
+            dtype=dtype,
+            old_nchw_shape=stage1_nchw_shape,
+            target_nhwc_shape=source_x.shape,
+            public_names=public_names,
+        )
+        if replacement is None:
+            return None
+        constant_roles.append(
+            (str(name), replacement, operator, int(input_index))
+        )
+    root_perm_name = str(root.inputs[1])
+    root_perm = model_ir.tensors[root_perm_name]
+    root_perm_dtype = np.asarray(root_perm.data).dtype
+    constant_roles.append(
+        (
+            root_perm_name,
+            np.asarray(_NHWC_TO_NCHW, dtype=root_perm_dtype),
+            root,
+            1,
+        )
+    )
+    constant_plans = _plan_constants(
+        model_ir,
+        graph_index,
+        tuple(constant_roles),
+    )
+    if constant_plans is None:
+        return None
+
+    post1_tensor = contracts[post1_output_name].tensor
+    return _LateResidualPlan(
+        root=root,
+        downstream=downstream,
+        pre_x=pre_x,
+        pre_y=pre_y,
+        add0=add0,
+        mul1=mul1,
+        add1=add1,
+        prelu1=prelu1,
+        add0_inputs=(source_x_name, source_y_name),
+        prelu1_output_name=prelu1_output_name,
+        post1_output_name=post1_output_name,
+        constant_plans=constant_plans,
+        metadata_updates=tuple(
+            _metadata_update(name, post1_tensor)
+            for name in (
+                add0_output_name,
+                mul1_output_name,
+                add1_output_name,
+            )
+        ),
+        remove_operators=(pre_x, pre_y),
+    )
+
+
 def _constant_plans_equal(
     expected: Tuple[_ConstantPlan, ...],
     actual: Tuple[_ConstantPlan, ...],
@@ -1032,6 +1439,129 @@ def _constant_plans_equal(
             or not np.array_equal(lhs.data, rhs.data)
         ):
             return False
+    return True
+
+
+def _late_plans_equal(
+    expected: _LateResidualPlan,
+    actual: _LateResidualPlan,
+) -> bool:
+    operator_fields = (
+        "root",
+        "downstream",
+        "pre_x",
+        "pre_y",
+        "add0",
+        "mul1",
+        "add1",
+        "prelu1",
+    )
+    return bool(
+        all(
+            getattr(expected, field) is getattr(actual, field)
+            for field in operator_fields
+        )
+        and expected.add0_inputs == actual.add0_inputs
+        and expected.prelu1_output_name == actual.prelu1_output_name
+        and expected.post1_output_name == actual.post1_output_name
+        and expected.metadata_updates == actual.metadata_updates
+        and len(expected.remove_operators) == len(actual.remove_operators)
+        and all(
+            left is right
+            for left, right in zip(
+                expected.remove_operators,
+                actual.remove_operators,
+            )
+        )
+        and _constant_plans_equal(
+            expected.constant_plans,
+            actual.constant_plans,
+        )
+    )
+
+
+def _apply_late_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    plan: _LateResidualPlan,
+) -> bool:
+    current = _resolve_late_candidate(model_ir, graph_index, plan.root)
+    if current is None or not _late_plans_equal(plan, current):
+        return False
+    remove_indices = [
+        graph_index.operator_index(operator)
+        for operator in plan.remove_operators
+    ]
+    add0_index = graph_index.operator_index(plan.add0)
+    prelu1_index = graph_index.operator_index(plan.prelu1)
+    root_index = graph_index.operator_index(plan.root)
+    if (
+        any(index is None for index in remove_indices)
+        or len({int(index) for index in remove_indices if index is not None})
+        != len(remove_indices)
+        or any(
+            constant.clone_name is not None
+            and constant.clone_name in model_ir.tensors
+            for constant in plan.constant_plans
+        )
+        or any(
+            update.name not in model_ir.tensors
+            for update in plan.metadata_updates
+        )
+        or any(
+            index is None for index in (add0_index, prelu1_index, root_index)
+        )
+    ):
+        return False
+
+    for constant in plan.constant_plans:
+        target = constant.tensor
+        if constant.clone_name is not None:
+            target = TensorIR(
+                name=str(constant.clone_name),
+                dtype=str(constant.tensor.dtype),
+                shape=[int(value) for value in constant.data.shape],
+                shape_signature=[int(value) for value in constant.data.shape],
+                data=np.asarray(constant.data),
+                is_variable=False,
+                quantization=None,
+                logical_layout=str(constant.tensor.logical_layout),
+                physical_layout=str(constant.tensor.physical_layout),
+                onnx_tensor_name=constant.tensor.onnx_tensor_name,
+            )
+            model_ir.tensors[str(constant.clone_name)] = target
+            for use in constant.uses:
+                _replace_operator_input_at(
+                    model_ir=model_ir,
+                    op=use.operator,
+                    input_index=int(use.input_index),
+                    new_input_name=str(constant.clone_name),
+                    graph_index=graph_index,
+                )
+        target.data = np.asarray(constant.data)
+        target.shape = [int(value) for value in constant.data.shape]
+        target.shape_signature = [int(value) for value in constant.data.shape]
+
+    graph_index.replace_operator_inputs(int(add0_index), plan.add0_inputs)
+    graph_index.replace_operator_outputs(
+        int(root_index),
+        [plan.prelu1_output_name],
+    )
+    graph_index.replace_operator_outputs(
+        int(prelu1_index),
+        [plan.post1_output_name],
+    )
+    graph_index.replace_operator_inputs(
+        int(root_index),
+        [plan.post1_output_name, str(plan.root.inputs[1])],
+    )
+    for update in plan.metadata_updates:
+        tensor = model_ir.tensors[update.name]
+        tensor.shape = [int(value) for value in update.shape]
+        tensor.shape_signature = [int(value) for value in update.signature]
+        tensor.logical_layout = str(update.logical_layout)
+        tensor.physical_layout = str(update.physical_layout)
+    graph_index.remove_operators([int(index) for index in remove_indices])
     return True
 
 
@@ -1704,3 +2234,73 @@ def optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains(
         if layout_state is not None:
             layout_state.sync_from_model_ir(model_ir)
     return {_POSTMUL_STATS_KEY: int(rewritten)}
+
+
+def optimize_sinet_late_residual_pre_add_mul_add_prelu_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: int = 32,
+    candidate: Optional[OperatorIR] = None,
+) -> dict[str, int]:
+    """Lift a strict fan-out residual affine island to NHWC."""
+
+    rewrite_limit = max(0, int(max_rewrites))
+    required_counts = {
+        "TRANSPOSE": 3,
+        "ADD": 2,
+        "MUL": 1,
+        "PRELU": 1,
+        "CONCATENATION": 1,
+    }
+    has_downstream = False
+    for operator in model_ir.operators:
+        op_type = str(operator.op_type)
+        if op_type in required_counts and required_counts[op_type] > 0:
+            required_counts[op_type] -= 1
+        if op_type in {"CONV_2D", "DEPTHWISE_CONV_2D"}:
+            has_downstream = True
+        if has_downstream and all(
+            value == 0 for value in required_counts.values()
+        ):
+            break
+    if (
+        rewrite_limit == 0
+        or not has_downstream
+        or any(value > 0 for value in required_counts.values())
+    ):
+        return {_LATE_STATS_KEY: 0}
+
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
+    candidates = (
+        [candidate]
+        if candidate is not None
+        else [
+            model_ir.operators[index]
+            for index in active_index.operator_indices("TRANSPOSE")
+        ]
+    )
+    rewritten = 0
+    for root in candidates:
+        if rewritten >= rewrite_limit or root is None:
+            break
+        if active_index.operator_index(root) is None:
+            continue
+        plan = _resolve_late_candidate(model_ir, active_index, root)
+        if plan is not None and _apply_late_plan(
+            model_ir,
+            active_index,
+            plan,
+        ):
+            rewritten += 1
+
+    if rewritten > 0:
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        if layout_state is not None:
+            layout_state.sync_from_model_ir(model_ir)
+    return {_LATE_STATS_KEY: int(rewritten)}
