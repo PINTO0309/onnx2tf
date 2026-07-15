@@ -5798,6 +5798,65 @@ the first SiNet invocation was active: legacy-only rewrote `Add_52` and
 matches and emits byte-identical SiNet float32, float16, correspondence, and
 schema artifacts.
 
+The binary/Split channelwise tail is owned by
+`passes/split_channelwise_layout.py`. It recognizes one exact private
+NHWC-to-NCHW Transpose followed by two plain ADD, SUB, MUL, DIV, MAXIMUM, or
+MINIMUM operators and an equal channel Split. The former 218-line lowerer
+helper is a compatibility dispatcher, and both unchanged ordered production
+sequence positions supply Session `LayoutState`.
+
+The resolver proves the typed INT32/INT64 `[0,3,1,2]` permutation, exact
+rank-four source/adapter shape and dynamic-signature relationship, unique
+producers, one-use linear prefix, producer-before-consumer order, same dtype,
+per-tensor quantization, and NHWC broadcast validity for both binary
+operations. Operand slots are retained, so SUB and DIV remain order-sensitive.
+External rank-four values must carry NHWC physical evidence or satisfy the
+source-relative NHWC broadcast contract; explicit NCHW inputs are rejected.
+
+The root Split axis must be a private immutable axis-one INT32/INT64 constant.
+Every Split output must have the exact channel-last metadata implied by its
+former NCHW contract, with equal channels that reconstruct the input. A shared
+axis constant receives a deterministic clone, preserving both the declared and
+NumPy dtype. The same contract applies to downstream Split operators.
+
+Closure discovery uses an edge-bounded consumer `deque`, not repeated graph
+scans. Only the audited layout-preserving unary family, plain binary family,
+channel Concat, and channel Split may enter the closure. Concat axis 1 or -3
+becomes axis 3. Static shapes and dynamic signatures are recomputed for every
+binary and Concat output. Every rewritten tensor must terminate at another
+accepted closure operator or the sole public output; an unsupported consumer,
+dead converted branch, multiple public outputs, or consumer-before-producer
+ordering rejects the complete candidate.
+
+One terminal NHWC-to-NCHW adapter preserves the public output name, original
+NCHW shape, and layout. Its private input receives the converted NHWC metadata,
+and it reuses the proven input permutation constant. This corrects the raw
+helper behavior that permuted the public tensor metadata itself before adding
+the terminal adapter. Removing the input adapter is also conditional on a
+closed closure, so no unsupported consumer can retain an unbound or
+wrong-layout tensor.
+
+All tensor data, metadata, quantization, operator inputs/outputs/options,
+provenance, axis-clone names, public private-name allocation, and graph order
+are captured in an immutable plan. The complete plan is re-resolved before
+apply, every slot and new name is preflighted, and only then are axis clones,
+metadata, the terminal adapter, and input-adapter removal applied through one
+`ModelIRGraphIndex`. Candidate-only execution and a configurable 32-rewrite
+ceiling replace the former unbounded full-map fixed-point loops. LayoutState is
+updated differentially and unused tensors are pruned only after success.
+
+Pre-extraction production characterization observed zero matches in every
+runtime invocation: four each for YuNet, FastestDet, HumanSeg, and OSNet, and
+eight for SiNet. The semantic owner retains the active synthetic compatibility
+path without broadening from those artifacts. Thirty-three focused tests cover
+all six binary operations and both operand orientations, exact numerical
+behavior, dynamic signatures, downstream Split/Concat closure, shared INT64
+axis cloning, public output layout, differential index and LayoutState,
+candidate limits, idempotence, deterministic names, and sixteen transactional
+unsafe no-op contracts. A sequential YuNet comparison against the preceding
+source checkpoint emitted byte-identical float32, float16, correspondence, and
+schema artifacts.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
