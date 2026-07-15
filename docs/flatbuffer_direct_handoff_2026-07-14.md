@@ -8,14 +8,13 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves center/size/offset terminal-head recovery
-into the TensorFlow-free indexed `passes/center_size_offset_layout.py` owner.
-Its former roughly 390-line full-map fixed-point helper is now a thin
-dispatcher at its unchanged position between tanh-GELU and LeakyReLU and
-receives Session LayoutState. The plan proves all three branch topologies,
-Reshape/GatherND shape semantics, coordinate roles, shared constants, and
-public boundaries before mutation; the former sixteen-operator proximity
-heuristic is gone.
+The latest implementation unit moves pseudo-expanded LeakyReLU transpose
+passthrough into the TensorFlow-free indexed
+`passes/leakyrelu_passthrough_layout.py` owner. Its former roughly 240-line
+full-map fixed-point helper is a thin dispatcher at its unchanged position
+between center/size/offset and PReLU. The owner proves both activation branches,
+the ordered Sub join, all aliases and legacy boundaries before mutation, then
+runs the existing pseudo-LeakyReLU fusion on the same maintained graph index.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -492,6 +491,68 @@ and `schema_generated.py`
 `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
 Temporary outputs were removed and no Tier corpus was run.
 
+### Pseudo-expanded LeakyReLU passthrough continuation
+
+The raw `_optimize_leakyrelu_transpose_passthrough_chains` implementation is
+now a thin indexed compatibility dispatcher. Its production position, public
+name, two returned statistics, and historical passthrough-then-fusion order are
+unchanged. The call receives Session LayoutState, and the existing indexed
+pseudo-LeakyReLU fusion reuses the passthrough owner's differential graph
+index instead of rebuilding it.
+
+The resolver accepts only the exact two-branch expansion: `Neg(x)` followed by
+negative Relu and singleton-alpha Mul, direct positive Relu, then ordered
+`Sub(positive, scaled-negative)`. Both source uses, every intermediate, alpha
+dtype/data/shape/provenance, unique producer, graph order, exact consumer slot,
+shape and independently dynamic signature, dtype, per-tensor quantization,
+layout transition, and public boundary are proven before a plan exists. Typed
+rank-three/rank-four INT32 or INT64 permutations, either alpha operand slot,
+and immutable constant sources are supported.
+
+Every inverse post alias folds to one source-layout representative, preferring
+one public alias when present. Downstream rewrites are grouped per operator and
+slot, including repeated aliases. A legacy consumer or public use of the old
+transposed Sub result receives one local adapter immediately after the join.
+It uses the pre-permutation tensor. The raw helper instead rewrote a selected
+post-permutation buffer to an INT32 opposite permutation, potentially changing
+its dtype and every unrelated shared use.
+
+The plan captures all rewrites, metadata, public lists, removals, optional
+insertion, and complete tensor/operator contracts. It is fully re-resolved
+before apply. One differential ModelIRGraphIndex removes the outer adapters,
+changes the join output, and inserts the local boundary; LayoutState changes
+only after acceptance. The existing fusion then converts the retained Sub in
+place to native `LEAKY_RELU` and removes its four private producers using the
+same index. Pruning remains success-aware and occurs at the composite end.
+
+Pre- and post-extraction characterization ran sequentially on YuNet,
+FastestDet, HumanSeg, OSNet, and SiNet. Each model reached the composite helper
+four times; all 20 invocations reported zero passthrough rewrites, zero
+fusions, and unchanged operator/tensor counts.
+
+The dedicated suite passes with `51 passed`. It covers static/dynamic rank
+three and four, INT32/INT64 permutations, both alpha positions, per-tensor
+quantization, immutable constant source, one/multiple/public aliases, repeated
+slots, legacy and public transposed boundaries, shared post constants, exact
+numerical equivalence, candidate limits, idempotence, GraphIndex, LayoutState,
+and twenty-seven unsafe transactional passthrough no-op variants. The new
+owner, indexed fusion owner, adjacent activation/layout suites, active fixtures,
+and complete architecture suite pass together with `467 passed in 42.33s`.
+
+TensorFlow-import-blocked explicit direct, default direct, and `-cotof`
+conversion pass sequentially with `3 passed in 4.01s`. One sequential YuNet
+conversion reproduced float32
+`43c65782ae622ea5aefc97632f2c69033fb8a314469e4c30703c88f9907cc380`,
+float16
+`13232a21173ef434c7b4986320931a17a28a211109fa894023c6da7672609433`,
+correspondence
+`7e2b57a9b2264ef08db5aaead11922109079274eb15befbfc90bf321de370b4d`,
+`schema.fbs`
+`0ea6e458755747b2d98c6b68323e65f0153ded77af908b2c6560db00f9dea28f`,
+and `schema_generated.py`
+`b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
+Temporary outputs were removed and no Tier corpus was run.
+
 ## Completed work
 
 The merged `fb-refactor4` checkpoints included:
@@ -509,7 +570,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 132 coherent implementation
+The current `fb-refactor5` work contains 133 coherent implementation
 continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
@@ -835,6 +896,10 @@ continuations:
   dedicated indexed owner, replaces operator-distance pairing with complete
   branch/shape/coordinate contracts, and updates shared Reshape constants with
   deterministic copy-on-write before removing three layout adapters.
+- the latest checkpoint moves pseudo-expanded LeakyReLU passthrough to a
+  dedicated indexed owner, preserves public and legacy boundaries with the
+  pre-permutation instead of mutating shared post constants, and hands the
+  maintained graph index directly to the existing native-activation fusion.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -853,8 +918,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/center_size_offset_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_center_size_offset_layout.py`;
+- `onnx2tf/tflite_builder/passes/leakyrelu_passthrough_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_leakyrelu_passthrough_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -1013,6 +1078,17 @@ status --short` with local `fb-refactor5` equal to `origin/fb-refactor5`.
   INT32/INT64 constants rotate in place; a constant with any unrelated use is
   cloned once for the planned size/offset Reshapes. Inferred `-1` values and
   option metadata stay symbolic.
+- Pseudo-LeakyReLU layout recovery and native activation fusion remain one
+  ordered composite contract. The passthrough owner exposes a focused
+  transaction entry point for rejection tests, while production always runs
+  the indexed fusion afterward on the same ModelIRGraphIndex.
+- The Sub join is order-sensitive: only
+  `positive_relu - alpha * relu(-x)` is accepted. Every inverse post alias is
+  grouped by exact slot, one public alias may be representative, and observable
+  legacy NCHW use gets a local adapter immediately after the join.
+- The local adapter reuses the typed immutable pre-permutation. No post-
+  permutation constant is reversed or recast, so an INT64 or shared constant
+  retains both its bytes and every unrelated consumer contract.
 - The exporter remains the ordered orchestration owner; match/guard/rewrite
   decisions move to `pytorch_fast_precanonicalize_policy.py` one coherent
   family at a time.
@@ -4893,6 +4969,29 @@ zero-match invocations and unchanged counts. One sequential YuNet conversion
 reproduced all five fixed hashes; temporary outputs were removed. No Tier
 corpus was run.
 
+The pseudo-expanded LeakyReLU checkpoint passed its 51 dedicated cases. The
+new passthrough owner, existing indexed fusion owner, adjacent activation and
+layout owners, active fixtures, and the complete architecture suite passed
+together:
+
+```text
+467 passed in 42.33s
+```
+
+TensorFlow import blocking was exercised sequentially for explicit direct,
+default direct, and direct `-cotof` conversion:
+
+```text
+3 passed in 4.01s
+```
+
+Scoped Ruff and syntax compilation pass for the owner, dedicated test,
+architecture test, and lowerer with its inherited F841 exclusion.
+`git diff --check` passes. Pre/post characterization produced 20
+zero-passthrough/zero-fusion invocations with unchanged counts. One sequential
+YuNet conversion reproduced all five fixed hashes; temporary outputs were
+removed. No Tier corpus was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -4936,9 +5035,9 @@ the generic direct bridge has its own indexed owner and preserves all three
 production positions. The five short representatives remain zero-match for
 the bridge, and YuNet retains byte-identical artifacts.
 
-The unquantized pseudo-Swish, tanh-GELU, and center/size/offset recovery helpers
-are now indexed at their unchanged production positions. The adjacent raw
-activation helpers for LeakyReLU and PReLU remain independent candidates and
+The unquantized pseudo-Swish, tanh-GELU, center/size/offset, and pseudo-
+LeakyReLU recovery helpers are now indexed at their unchanged production
+positions. The adjacent raw PReLU helper remains an independent candidate and
 must be characterized separately before extraction.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
@@ -4951,10 +5050,10 @@ verification gates.
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
 2. Characterize the adjacent raw activation recovery helpers in their current
-   order, beginning with LeakyReLU immediately after the indexed center/size/
-   offset owner. Select only one bounded semantic owner after confirming its
-   runtime match set, topology, and interaction with the terminal-head and
-   PReLU helpers.
+   order, beginning with PReLU immediately after indexed LeakyReLU. Select one
+   bounded semantic owner only after confirming its runtime match set, alpha
+   layout/broadcast variants, and interaction with the following recovery
+   helper.
 3. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have

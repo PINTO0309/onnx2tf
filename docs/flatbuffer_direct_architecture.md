@@ -1295,6 +1295,53 @@ architecture suite pass together with `399 passed in 42.94s`. TensorFlow-
 blocked direct/default/`-cotof` checks pass sequentially with
 `3 passed in 3.99s`, and YuNet reproduces all five fixed artifact hashes.
 
+Pseudo-expanded LeakyReLU transpose passthrough is owned by
+`passes/leakyrelu_passthrough_layout.py`. Its former roughly 240-line raw helper
+is a thin dispatcher at the unchanged position between center/size/offset and
+PReLU. The composite owner preserves the historical second phase: after all
+accepted layout passthroughs, it invokes the existing indexed pseudo-LeakyReLU
+fusion using the same differential graph index and Session LayoutState. Both
+legacy statistic keys and their execution order remain unchanged.
+
+The passthrough resolver proves the exact
+`Neg(x) → Relu → Mul(alpha)` negative branch, the direct `Relu(x)` positive
+branch, and ordered `Sub(positive, scaled-negative)` join. Both source slots,
+every private intermediate, the immutable singleton alpha, unique production,
+exact consumer slots, graph order, shape/dynamic signature, dtype, per-tensor
+quantization, provenance, layout transition, and public boundary are resolved
+before planning. Rank-three and rank-four typed INT32/INT64 permutations,
+either Mul constant position, and immutable constant sources are supported.
+
+All inverse post-Transpose aliases collapse onto one source-layout result. A
+public post alias is preferred as the representative, and repeated downstream
+alias slots are grouped exactly. When the old transposed Sub result remains a
+graph output or has a legacy consumer, one local adapter is inserted
+immediately after the retained join and reuses the immutable pre-permutation.
+The raw helper instead overwrote the selected post-permutation buffer with an
+INT32 copy of the opposite permutation, which could change dtype and corrupt an
+unrelated consumer.
+
+The immutable plan records every input/output slot, metadata update, removal,
+optional adapter, tensor/operator contract, and public list, then performs a
+full second resolution and preflight. One differential graph index rewires the
+two heads, aliases, Sub output, adapter insertion, and pre/post compaction.
+LayoutState updates only on acceptance and pruning is success-only. The
+following fusion converts the retained Sub to native `LEAKY_RELU` and compacts
+the four private producers through that same index.
+
+Fifty-one focused cases cover static/dynamic rank-three and rank-four views,
+INT32/INT64 permutations, both alpha positions, per-tensor quantization,
+constant input, one/multiple/public post aliases, repeated slots, legacy/public
+transposed boundaries, shared post permutations, numerical equivalence,
+candidate limits, idempotence, GraphIndex, LayoutState, and twenty-seven unsafe
+passthrough no-op variants. Pre/post characterization on five short models
+produces twenty zero-rewrite/zero-fusion invocations with unchanged counts.
+The owner, existing fusion owner, adjacent activation/layout suites, active
+fixtures, and complete architecture suite pass together with
+`467 passed in 42.33s`. TensorFlow-blocked direct/default/`-cotof` checks pass
+sequentially with `3 passed in 4.01s`, and YuNet reproduces all five fixed
+artifact hashes.
+
 The terminal hard-activation recovery and its immediately following optional
 generic Transpose cleanup share one lazy `ModelIRPassStateScope`. The hard
 runner keeps its exact late configuration: HardSwish is disabled, both

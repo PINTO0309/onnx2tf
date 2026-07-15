@@ -171,6 +171,9 @@ from onnx2tf.tflite_builder.passes.activation_passthrough_layout import (
 from onnx2tf.tflite_builder.passes.center_size_offset_layout import (
     optimize_center_size_offset_terminal_transpose_chains as _optimize_center_size_offset_terminal_transpose_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.leakyrelu_passthrough_layout import (
+    optimize_leakyrelu_transpose_passthrough_chains as _optimize_leakyrelu_transpose_passthrough_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.sinet_shuffle_residual_layout import (
     optimize_sinet_late_residual_pre_add_mul_add_prelu_chains as _optimize_sinet_late_residual_pre_add_mul_add_prelu_chains_pass,
     optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains as _optimize_sinet_shuffle_residual_mul_posttranspose_tail_chains_pass,
@@ -5867,245 +5870,21 @@ def _optimize_center_size_offset_terminal_transpose_chains(
     )
 
 
-def _optimize_leakyrelu_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
-    """
-    Fold transpose wrappers around pseudo-op-expanded LeakyReLU chains.
-
-    Target:
-      X --TRANSPOSE(P)--> x_t
-      x_t --NEG--> n --RELU--> nr --MUL(alpha)--> m
-      x_t --RELU--> p
-      p --SUB(m)--> y_t
-      y_t --TRANSPOSE(inv(P))--> Y
-
-    Rewrite:
-      X --NEG--> n --RELU--> nr --MUL(alpha)--> m
-      X --RELU--> p
-      p --SUB(m)--> Y
-
-    Safety:
-    - Strict LeakyReLU topology (NEG/RELU fanout + RELU + MUL + SUB).
-    - MUL side input must be singleton constant (alpha scalar-like).
-    - Single-consumer chain on each branch and tail.
-    """
-    rewritten = 0
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE":
-                continue
-            if len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
-                continue
-
-            pre_input_name = str(pre_op.inputs[0])
-            pre_output_name = str(pre_op.outputs[0])
-
-            perm_pre = _read_transpose_perm(model_ir, pre_op)
-            if perm_pre is None:
-                continue
-            perm_post_expected = _invert_perm(perm_pre)
-            if perm_post_expected is None:
-                continue
-
-            pre_users = [int(v) for v in consumers.get(pre_output_name, [])]
-            if len(pre_users) != 2:
-                continue
-
-            neg_idx = None
-            relu_pos_idx = None
-            for user_idx in pre_users:
-                user_op = model_ir.operators[int(user_idx)]
-                user_type = str(user_op.op_type)
-                if (
-                    user_type == "NEG"
-                    and len(user_op.inputs) == 1
-                    and str(user_op.inputs[0]) == pre_output_name
-                    and len(user_op.outputs) == 1
-                ):
-                    neg_idx = int(user_idx)
-                elif (
-                    user_type == "RELU"
-                    and len(user_op.inputs) == 1
-                    and str(user_op.inputs[0]) == pre_output_name
-                    and len(user_op.outputs) == 1
-                ):
-                    relu_pos_idx = int(user_idx)
-            if neg_idx is None or relu_pos_idx is None:
-                continue
-
-            neg_op = model_ir.operators[int(neg_idx)]
-            neg_out_name = str(neg_op.outputs[0])
-            neg_users = [int(v) for v in consumers.get(neg_out_name, [])]
-            if len(neg_users) != 1:
-                continue
-            relu_neg_idx = int(neg_users[0])
-            relu_neg_op = model_ir.operators[int(relu_neg_idx)]
-            if (
-                str(relu_neg_op.op_type) != "RELU"
-                or len(relu_neg_op.inputs) != 1
-                or len(relu_neg_op.outputs) != 1
-                or str(relu_neg_op.inputs[0]) != neg_out_name
-            ):
-                continue
-            relu_neg_out_name = str(relu_neg_op.outputs[0])
-
-            relu_neg_users = [int(v) for v in consumers.get(relu_neg_out_name, [])]
-            if len(relu_neg_users) != 1:
-                continue
-            mul_idx = int(relu_neg_users[0])
-            mul_op = model_ir.operators[int(mul_idx)]
-            if str(mul_op.op_type) != "MUL" or len(mul_op.inputs) != 2 or len(mul_op.outputs) != 1:
-                continue
-            mul_inputs = [str(v) for v in mul_op.inputs]
-            if relu_neg_out_name == mul_inputs[0]:
-                mul_side_input_name = mul_inputs[1]
-            elif relu_neg_out_name == mul_inputs[1]:
-                mul_side_input_name = mul_inputs[0]
-            else:
-                continue
-            if not _is_singleton_constant_tensor(model_ir, mul_side_input_name):
-                continue
-            mul_out_name = str(mul_op.outputs[0])
-
-            relu_pos_op = model_ir.operators[int(relu_pos_idx)]
-            relu_pos_out_name = str(relu_pos_op.outputs[0])
-            relu_pos_users = [int(v) for v in consumers.get(relu_pos_out_name, [])]
-            if len(relu_pos_users) != 1:
-                continue
-
-            mul_users = [int(v) for v in consumers.get(mul_out_name, [])]
-            if len(mul_users) != 1:
-                continue
-            sub_idx = int(mul_users[0])
-            if relu_pos_users[0] != sub_idx:
-                continue
-
-            sub_op = model_ir.operators[int(sub_idx)]
-            if str(sub_op.op_type) != "SUB" or len(sub_op.inputs) != 2 or len(sub_op.outputs) != 1:
-                continue
-            sub_inputs = [str(v) for v in sub_op.inputs]
-            if sub_inputs != [relu_pos_out_name, mul_out_name]:
-                continue
-            sub_out_name = str(sub_op.outputs[0])
-
-            sub_users = [int(v) for v in consumers.get(sub_out_name, []) if int(v) != int(sub_idx)]
-            if len(sub_users) == 0:
-                continue
-            post_indices: List[int] = []
-            post_output_names: List[str] = []
-            legacy_users: List[int] = []
-            valid_users = True
-            for user_idx in sub_users:
-                user_op = model_ir.operators[int(user_idx)]
-                if (
-                    str(user_op.op_type) == "TRANSPOSE"
-                    and len(user_op.inputs) >= 2
-                    and len(user_op.outputs) == 1
-                    and str(user_op.inputs[0]) == sub_out_name
-                ):
-                    perm_post = _read_transpose_perm(model_ir, user_op)
-                    if perm_post is None or perm_post != perm_post_expected:
-                        valid_users = False
-                        break
-                    post_output_name = str(user_op.outputs[0])
-                    if post_output_name in model_outputs:
-                        valid_users = False
-                        break
-                    post_indices.append(int(user_idx))
-                    post_output_names.append(post_output_name)
-                else:
-                    legacy_users.append(int(user_idx))
-            if not valid_users or len(post_indices) == 0:
-                continue
-            post_output_name = str(post_output_names[0])
-
-            # Rewire the pseudo-LeakyReLU chain to consume source layout directly.
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=neg_op,
-                new_inputs=[pre_input_name],
-            )
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=relu_pos_op,
-                new_inputs=[pre_input_name],
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=sub_op,
-                new_outputs=[post_output_name],
-            )
-            for alias_output_name in post_output_names[1:]:
-                _replace_tensor_inputs(model_ir, alias_output_name, post_output_name)
-
-            # Update intermediate metadata from transposed layout to source layout.
-            for intermediate_name in [neg_out_name, relu_pos_out_name, relu_neg_out_name, mul_out_name]:
-                _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(intermediate_name, None),
-                    perm_post_expected,
-                )
-
-            # Keep final tensor metadata stable on the post-transpose name.
-            pre_input_tensor = model_ir.tensors.get(pre_input_name, None)
-            old_sub_tensor = model_ir.tensors.get(sub_out_name, None)
-            post_output_tensor = model_ir.tensors.get(post_output_name, None)
-            if post_output_tensor is not None:
-                if pre_input_tensor is not None:
-                    post_output_tensor.shape = [int(v) for v in list(pre_input_tensor.shape)]
-                    post_output_tensor.shape_signature = (
-                        [int(v) for v in list(pre_input_tensor.shape_signature)]
-                        if pre_input_tensor.shape_signature is not None
-                        else [int(v) for v in list(pre_input_tensor.shape)]
-                    )
-                if old_sub_tensor is not None:
-                    post_output_tensor.dtype = str(old_sub_tensor.dtype)
-                    post_output_tensor.quantization = _clone_quantization(old_sub_tensor.quantization)
-
-            preserve_nchw_adapter = len(legacy_users) > 0 or sub_out_name in model_outputs
-            if preserve_nchw_adapter:
-                keep_post_idx = int(post_indices[0])
-                keep_post_op = model_ir.operators[keep_post_idx]
-                keep_perm_name = str(keep_post_op.inputs[1])
-                keep_perm_tensor = model_ir.tensors.get(keep_perm_name, None)
-                if keep_perm_tensor is not None:
-                    keep_perm_tensor.data = np.asarray(perm_pre, dtype=np.int32)
-                _set_operator_inputs(
-                    model_ir=model_ir,
-                    op=keep_post_op,
-                    new_inputs=[post_output_name, keep_perm_name],
-                )
-                _set_operator_outputs(
-                    model_ir=model_ir,
-                    op=keep_post_op,
-                    new_outputs=[sub_out_name],
-                )
-                post_remove_indices = [int(v) for v in post_indices[1:]]
-            else:
-                post_remove_indices = [int(v) for v in post_indices]
-
-            remove_indices = sorted(list({int(pre_idx), *post_remove_indices}), reverse=True)
-            for remove_idx in remove_indices:
-                del model_ir.operators[int(remove_idx)]
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    fuse_stats = _optimize_fuse_pseudo_leakyrelu_chains(model_ir)
-    _prune_unused_tensors(model_ir)
-    return {
-        "rewritten_leakyrelu_transpose_passthrough_chains": int(rewritten),
-        "fused_pseudo_leakyrelu_chains": int(
-            fuse_stats.get("fused_pseudo_leakyrelu_chains", 0)
-        ),
-    }
+def _optimize_leakyrelu_transpose_passthrough_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+    max_rewrites: Optional[int] = None,
+    candidate: Optional[OperatorIR] = None,
+) -> Dict[str, int]:
+    return _optimize_leakyrelu_transpose_passthrough_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+        max_rewrites=max_rewrites,
+        candidate=candidate,
+    )
 
 
 def _optimize_prelu_transpose_passthrough_chains(model_ir: ModelIR) -> Dict[str, int]:
@@ -28555,7 +28334,10 @@ def lower_onnx_to_ir(
             model_ir,
             layout_state=session.layout_state,
         )
-        _optimize_leakyrelu_transpose_passthrough_chains(model_ir)
+        _optimize_leakyrelu_transpose_passthrough_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         _optimize_prelu_transpose_passthrough_chains(model_ir)
         _optimize_transpose_elementwise_concat_conv_nhwc_groups(model_ir)
         run_spp_layout_cleanup(
