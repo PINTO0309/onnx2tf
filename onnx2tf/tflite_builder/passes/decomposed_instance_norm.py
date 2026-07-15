@@ -329,6 +329,61 @@ def _coefficient_replacement(
     return np.transpose(data, (0, 2, 3, 1))
 
 
+def plan_nhwc_coefficient_updates(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    *,
+    coefficient_uses: Sequence[Tuple[str, OperatorIR, int]],
+    dtype: str,
+    channel_count: int,
+    public_names: AbstractSet[str],
+) -> Optional[Tuple[ConstantUpdate, ...]]:
+    """Plan scalar or channelwise coefficient updates as one transaction."""
+
+    grouped_uses: dict[str, list[ConstantUse]] = {}
+    for coefficient_name, operator, input_index in coefficient_uses:
+        grouped_uses.setdefault(str(coefficient_name), []).append(
+            ConstantUse(operator, int(input_index))
+        )
+    updates = []
+    for coefficient_name, uses in grouped_uses.items():
+        if not constant_is_private_and_unquantized(
+            model_ir,
+            graph_index,
+            coefficient_name,
+            public_names,
+        ):
+            return None
+        replacement = _coefficient_replacement(
+            model_ir,
+            graph_index,
+            name=coefficient_name,
+            dtype=dtype,
+            channel_count=int(channel_count),
+        )
+        if replacement is None:
+            return None
+        current = np.asarray(model_ir.tensors[coefficient_name].data)
+        if current.shape == replacement.shape and np.array_equal(
+            current,
+            replacement,
+        ):
+            continue
+        update = plan_constant_update(
+            model_ir,
+            graph_index,
+            coefficient_name,
+            replacement,
+            tuple(uses),
+            "nhwc_coefficient",
+            public_names,
+        )
+        if update is None:
+            return None
+        updates.append(update)
+    return tuple(updates)
+
+
 def plan_nhwc_instance_norm_constant_updates(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
@@ -377,54 +432,21 @@ def plan_nhwc_instance_norm_constant_updates(
             return None
         updates.append(update)
 
-    coefficient_uses: dict[str, list[ConstantUse]] = {}
-    coefficient_uses.setdefault(core.scale_name, []).append(
-        ConstantUse(core.scale, core.scale_input_index)
+    coefficient_updates = plan_nhwc_coefficient_updates(
+        model_ir,
+        graph_index,
+        coefficient_uses=(
+            (core.scale_name, core.scale, core.scale_input_index),
+            (str(bias_name), bias_operator, int(bias_input_index)),
+            *additional_coefficient_uses,
+        ),
+        dtype=str(core.x.tensor.dtype),
+        channel_count=int(channel_count),
+        public_names=public_names,
     )
-    coefficient_uses.setdefault(str(bias_name), []).append(
-        ConstantUse(bias_operator, int(bias_input_index))
-    )
-    for coefficient_name, operator, input_index in additional_coefficient_uses:
-        coefficient_uses.setdefault(str(coefficient_name), []).append(
-            ConstantUse(operator, int(input_index))
-        )
-    dtype = str(core.x.tensor.dtype)
-    for coefficient_name, uses in coefficient_uses.items():
-        if not constant_is_private_and_unquantized(
-            model_ir,
-            graph_index,
-            coefficient_name,
-            public_names,
-        ):
-            return None
-        replacement = _coefficient_replacement(
-            model_ir,
-            graph_index,
-            name=coefficient_name,
-            dtype=dtype,
-            channel_count=int(channel_count),
-        )
-        if replacement is None:
-            return None
-        current = np.asarray(model_ir.tensors[coefficient_name].data)
-        if current.shape == replacement.shape and np.array_equal(
-            current,
-            replacement,
-        ):
-            continue
-        update = plan_constant_update(
-            model_ir,
-            graph_index,
-            coefficient_name,
-            replacement,
-            tuple(uses),
-            "nhwc_coefficient",
-            public_names,
-        )
-        if update is None:
-            return None
-        updates.append(update)
-    return tuple(updates)
+    if coefficient_updates is None:
+        return None
+    return tuple(updates) + coefficient_updates
 
 
 def match_decomposed_instance_norm_core(

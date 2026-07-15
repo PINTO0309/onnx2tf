@@ -8,14 +8,15 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the
-`InstanceNorm -> residual ADD -> two MULs -> CONCAT` rewrite to
-`passes/instance_norm_residual_mul_concat_layout.py` and reduces its former
-501-line raw mutator to a 19-line compatibility dispatcher. The decomposition
-matcher and complete Mean-axis/scale/bias/tail-coefficient transaction are
-shared with the existing residual-ADD, post-bias, and four pre/post tail modes
-through `passes/decomposed_instance_norm.py`. All seven decomposed-InstanceNorm
-layout paths now use indexed, side-effect-free matching before mutation.
+The latest implementation unit moves the distinct dual-statistics
+normalization and optional residual rewrite to
+`passes/instance_norm_dual_stats_layout.py` and reduces its former 712-line raw
+mutator to a 19-line compatibility dispatcher. Its two statistical paths are
+kept separate from the standard decomposed-InstanceNormalization matcher
+because they use variance factors and direct centered/std DIV. Typed
+coefficient transactions are shared through
+`passes/decomposed_instance_norm.py`. All eight InstanceNorm-related layout
+paths now use indexed, side-effect-free matching before mutation.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 102 coherent continuations:
+The current `fb-refactor5` work contains 103 coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -2770,6 +2771,61 @@ import, direct conversion, and `-cotof` passed sequentially with
 `3 passed in 4.22s`. Scoped Ruff, syntax compilation, and `git diff --check`
 passed. No Tier corpus conversion was run.
 
+The indexed dual-statistics checkpoint moves the next normalization family to
+`passes/instance_norm_dual_stats_layout.py`. Audit proved that neither branch
+is the standard decomposed InstanceNorm core: one reduces spatial axes and one
+reduces all non-batch axes, and both use
+`SUB -> square -> Mean -> variance factor -> epsilon -> SQRT ->
+DIV(centered,std) -> scale`. The owner therefore keeps a dedicated path matcher
+and shares only typed constant, tensor-contract, metadata, and graph-index
+utilities. This prevents a superficially similar topology from being assigned
+the standard reciprocal/MUL normalization semantics.
+
+The two branches feed blend ADD, gamma MUL, and beta ADD. Spatial axes are
+planned together as `[1,2]`; global `[1,2,3]` axes are validated unchanged.
+Branch scales and direct gamma/beta constants use one grouped coefficient
+transaction, so shared constants update once and unrelated consumers receive a
+deterministic clone. Exact `[1,C,1,1]` gamma/beta Reshapes from rank-one or
+rank-two vectors are validated through their producer, shape constant, source,
+consumer, dtype, quantization, and graph order, then bypassed and removed.
+Variance factors and epsilon values must be finite, nonnegative scalar
+FLOAT16/FLOAT32 constants.
+
+Direct mode removes the input/output Transposes and gives beta ADD the former
+NHWC output name. Residual mode additionally validates and removes an
+independent NHWC-to-NCHW residual bridge, lifts the residual ADD to NHWC, and
+uses that ADD as the preserved output producer. Its old NCHW output contract is
+validated and permuted before rename, preventing dynamic-axis contamination.
+The historical function name mentions Resize, but no Resize is required by the
+legacy boundary; later ordered consumers, fan-out, and repeated input slots are
+preserved.
+
+The owner validates complete producer/consumer multiplicity, dependency order,
+public boundaries, shape/signature, dtype, quantization, typed constants,
+coefficient ownership, optional Reshape removal, and output rename before any
+mutation. It uses a graph-order candidate scan, one differential
+`ModelIRGraphIndex`, a 32-rewrite ceiling, success-only pruning, and Session
+`LayoutState` synchronization. The former 712-line lowerer mutator is now a
+19-line dispatcher; all four production calls pass LayoutState and the repeated
+normalization loop shares `residual_graph_index` with the preceding owners.
+
+Focused coverage includes forty-eight FLOAT16/FLOAT32 numerical-equivalence
+variants across direct, residual-input, and produced-residual tails; direct and
+produced main sources; shared/separate positive, negative, and arbitrarily
+permuted axes; commuted operands; scalar/NCHW scales; direct and vector-Reshape
+gamma/beta;
+six dynamic-signature modes; downstream fan-out and repeated slots without
+Resize; already-NHWC coefficients; shared-axis cloning; one coefficient shared
+by all four affine sites; capped multi-chain execution; 143 transactional
+unsafe contracts; clone collision; and preflight/no-index behavior. The new
+owner and all indexed InstanceNorm owner groups passed with
+`792 passed in 2.40s`. The full architecture suite passed with
+`179 passed in 53.94s`; thirteen selected InstanceNorm direct-builder tests
+passed with `13 passed, 742 deselected in 1.51s`; TensorFlow-import-blocked
+import, direct conversion, and `-cotof` passed sequentially with
+`3 passed in 4.45s`. Scoped Ruff, syntax compilation, and `git diff --check`
+passed. No Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -2812,12 +2868,10 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent 712-line
-   `_optimize_transpose_instancenorm_dualstats_residual_add_resize_nhwc_chains`
-   helper next. Determine which of its two statistical branches exactly match
-   the common decomposed-InstanceNormalization core, and keep the dual-stat,
-   residual-ADD, Resize, and output-boundary topology in a separate bounded
-   owner unless characterization proves a narrower shared contract.
+3. Audit the adjacent 219-line `_optimize_fold_mul_add_mul_affine_chains`
+   helper next. Characterize its constant ownership, dtype/quantization,
+   broadcast, producer/consumer, and graph-order requirements before replacing
+   its raw fold with a bounded transactional owner.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

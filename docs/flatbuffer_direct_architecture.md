@@ -5080,6 +5080,48 @@ former 501-line lowerer mutator is now a 19-line dispatcher; all four production
 calls supply LayoutState, and the repeated recovery loop reuses its live
 `residual_graph_index`.
 
+Dual-statistics normalization is intentionally not matched by the standard
+decomposed-InstanceNormalization core. It is owned independently by
+`passes/instance_norm_dual_stats_layout.py`. The input feeds two branches: one
+reduces only NCHW spatial axes `[2,3]`, while the other reduces all non-batch
+axes `[1,2,3]`. Each branch has the distinct
+`Mean -> SUB -> square -> Mean -> variance-factor -> epsilon -> SQRT ->
+DIV(centered,std) -> scale` contract. The standard core instead uses a unit
+reciprocal followed by MUL and has no variance factor, so sharing its matcher
+would silently conflate different mathematics. Only typed constant planning,
+metadata, index, and tensor-contract utilities are shared.
+
+The two scaled branches are added, followed by gamma MUL and beta ADD. Gamma
+and beta may be scalar/NCHW/NHWC constants or exact rank-one/rank-two vectors
+reshaped to `[1,C,1,1]`. Vector reshapes are validated through their producer,
+typed shape constant, dtype, quantization, consumer, source, and graph-order
+contracts; on success the NHWC operator consumes the vector directly and the
+now-dead Reshape is removed. Direct constants and both branch scales use the
+common grouped coefficient transaction. Spatial Mean axes are planned as one
+`[1,2]` transaction, including deterministic clones for unrelated users;
+global axes remain `[1,2,3]` and are validated but not changed. Finite,
+nonnegative scalar variance factors and epsilon values are required.
+
+Two exact output modes are supported. Direct mode removes the input and output
+Transposes and makes beta ADD produce the former NHWC output name. Residual
+mode additionally proves one independent NHWC-to-NCHW residual bridge, moves
+the residual ADD to NHWC, removes all three Transposes, and makes that ADD
+produce the preserved NHWC name. The residual ADD's old output contract is
+validated and permuted before rename so dynamic axes cannot leak from NCHW
+positions into NHWC metadata. The historical helper name contains `resize`,
+but the legacy boundary does not require a Resize: any later graph-ordered
+consumer is preserved, including fan-out and repeated input slots.
+
+One `ModelIRGraphIndex` proves both complete paths, consumer multiplicity,
+producer uniqueness, dependency order, public boundaries, concrete and dynamic
+shape/signature permutations, dtype, quantization, typed permutation and axis
+constants, coefficient ownership, optional Reshape removal, and final output
+rename before mutation. The owner scans graph-order candidates with a
+32-rewrite ceiling, updates the index differentially, prunes only after
+success, and synchronizes Session `LayoutState`. The former 712-line lowerer
+mutator is a 19-line dispatcher. All four production calls supply LayoutState,
+and the repeated normalization loop reuses the live `residual_graph_index`.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter
