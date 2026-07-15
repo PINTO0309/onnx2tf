@@ -4987,6 +4987,37 @@ loop offers each pre-Transpose to all four indexed modes at its original graph
 position, so mixed tail modes retain the legacy graph-order priority and one
 shared 32-rewrite ceiling.
 
+The adjacent decomposed-InstanceNormalization form whose bias ADD is already
+after the NCHW-to-NHWC post-Transpose is owned separately by
+`passes/instance_norm_post_bias_layout.py`. Its strict boundary is
+`NHWC -> Transpose[0,3,1,2] -> two-Mean decomposition through scale ->
+Transpose[0,2,3,1] -> bias ADD`. The common decomposition matcher, exact tensor
+contracts, finite FLOAT16/FLOAT32 constant validation, deterministic constant
+cloning, and constant-update application live in
+`passes/decomposed_instance_norm.py`; both InstanceNorm owners consume this
+same side-effect-free contract instead of maintaining a second rule chain.
+
+One `ModelIRGraphIndex` validates the complete operator order, producer and
+consumer multiplicity, duplicate producers, public boundaries, exact concrete
+shape and dynamic signature permutations, dtype, quantization, typed
+permutation/axis constants, nonnegative epsilon, unit reciprocal numerator,
+and scale/bias broadcast forms before mutation. Equivalent positive, negative,
+or reversed NCHW spatial axes and commuted affine operators are accepted. Scale
+and bias may be scalar, `[1,C,1,1]`, or `[1,1,1,C]`; only coefficients that
+actually change layout are updated, and unrelated consumers receive one
+deterministic clone. A shared scale/bias tensor is planned once for both uses.
+
+The transaction redirects both Mean/SUB source edges to the original NHWC
+tensor, changes the Mean axes to `[1,2]`, permutes every retained full and
+reduced core tensor contract, redirects the bias ADD from the post-Transpose
+output to the scaled tensor, and removes only the two Transposes. Unused bridge
+tensors are pruned only after a successful rewrite; a rejected candidate is an
+exact no-op. The lowerer compatibility function is a 19-line dispatcher. The
+two-pass normalization recovery loop shares one live graph index between the
+four-tail owner and this post-bias owner, while all production calls supply the
+Session `LayoutState`. The owner has a deterministic 32-rewrite ceiling and no
+whole-graph consumer-map rebuild or fixed-point `while` loop.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

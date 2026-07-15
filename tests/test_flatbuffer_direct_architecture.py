@@ -3415,6 +3415,49 @@ def test_lowerer_absolute_final_normalization_attention_pair_reuses_scope() -> N
     )
 
 
+def test_indexed_instance_norm_post_bias_owner_has_one_core_match_contract() -> None:
+    pass_root = REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes"
+    core_source = (pass_root / "decomposed_instance_norm.py").read_text(
+        encoding="utf-8"
+    )
+    prepost_source = (pass_root / "instance_norm_prepost_layout.py").read_text(
+        encoding="utf-8"
+    )
+    post_bias_source = (pass_root / "instance_norm_post_bias_layout.py").read_text(
+        encoding="utf-8"
+    )
+    lowerer_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    lowerer_tree = ast.parse(lowerer_path.read_text(encoding="utf-8"))
+    wrapper = next(
+        node
+        for node in lowerer_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains"
+    )
+
+    assert "def match_decomposed_instance_norm_core(" in core_source
+    assert "match_decomposed_instance_norm_core(" in prepost_source
+    assert "match_decomposed_instance_norm_core(" in post_bias_source
+    assert "_build_tensor_consumer_map" not in post_bias_source
+    assert "while True" not in post_bias_source
+    assert len(wrapper.body) == 2
+    dispatch = wrapper.body[1]
+    assert isinstance(dispatch, ast.Return)
+    call = next(node for node in ast.walk(dispatch) if isinstance(node, ast.Call))
+    assert isinstance(call.func, ast.Name)
+    assert (
+        call.func.id
+        == "_optimize_transpose_instancenorm_posttranspose_bias_add_nhwc_chains_pass"
+    )
+    assert {keyword.arg for keyword in call.keywords} == {
+        "graph_index",
+        "layout_state",
+        "max_rewrites",
+        "candidate",
+    }
+
+
 def test_lowerer_gate_cluster_reuses_one_pass_state_scope() -> None:
     lowering_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
@@ -5739,6 +5782,13 @@ def test_instance_norm_direct_prepost_layout_has_indexed_owner() -> None:
         / "passes"
         / "instance_norm_prepost_layout.py"
     )
+    common_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "decomposed_instance_norm.py"
+    )
     compatibility_name = "_optimize_transpose_instancenorm_prepost_nhwc_chains"
     owner_name = (
         "_optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains"
@@ -5802,6 +5852,7 @@ def test_instance_norm_direct_prepost_layout_has_indexed_owner() -> None:
         if isinstance(node, ast.Name)
     }
     owner_functions = _functions(pass_path)
+    common_functions = _functions(common_path)
     owner = owner_functions[owner_name]
     owner_calls = {
         node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
@@ -5814,8 +5865,10 @@ def test_instance_norm_direct_prepost_layout_has_indexed_owner() -> None:
             owner_functions["_resolve_candidate"],
             owner_functions["_resolve_residual_tail"],
             owner_functions["_resolve_residual_source"],
-            owner_functions["_plan_constant_update"],
             owner_functions["_apply_plan"],
+            common_functions["match_decomposed_instance_norm_core"],
+            common_functions["plan_constant_update"],
+            common_functions["apply_constant_update"],
         )
         for node in ast.walk(owner_node)
         if isinstance(node, ast.Call)

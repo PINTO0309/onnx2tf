@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -27,6 +27,19 @@ from onnx2tf.tflite_builder.passes.conv1d_unary_layout import (
     _tensor_contract,
     _unique_tensor_name,
 )
+from onnx2tf.tflite_builder.passes.decomposed_instance_norm import (
+    FLOAT_DTYPES as _FLOAT_DTYPES,
+    ConstantUpdate as _ConstantUpdate,
+    ConstantUse as _ConstantUse,
+    TensorMetadataUpdate as _TensorMetadataUpdate,
+    apply_constant_update as _apply_constant_update,
+    binary_other_input as _binary_other_input,
+    float_constant as _float_constant,
+    match_decomposed_instance_norm_core,
+    plan_constant_update as _plan_constant_update,
+    sole_consumer as _sole_consumer,
+    tensor_contract_exact as _contract,
+)
 
 
 _STATS_KEY = (
@@ -45,10 +58,6 @@ _PERM_NHWC_TO_NCHW = (0, 3, 1, 2)
 _PERM_NCHW_TO_NHWC = (0, 2, 3, 1)
 _PERM_CHW_TO_HWC = (1, 2, 0)
 _PERM_HWC_TO_CHW = (2, 0, 1)
-_FLOAT_DTYPES = {
-    "FLOAT16": np.dtype(np.float16),
-    "FLOAT32": np.dtype(np.float32),
-}
 _SIDE_ADAPTER_PERM_NAME = "__instancenorm_tail_nhwc_to_nchw_perm_rank4__"
 _RESIDUAL_ADAPTER_PERM_NAME = "__instancenorm_tail_hwc_to_chw_perm_rank3__"
 _TAIL_UNARY_OPS = {
@@ -66,28 +75,6 @@ _TAIL_UNARY_OPS = {
     "CEIL",
     "ROUND",
 }
-
-
-@dataclass(frozen=True)
-class _TensorMetadataUpdate:
-    contract: _TensorContract
-    shape: Tuple[int, ...]
-    signature: Tuple[int, ...]
-
-
-@dataclass(frozen=True)
-class _ConstantUse:
-    operator: OperatorIR
-    input_index: int
-
-
-@dataclass(frozen=True)
-class _ConstantUpdate:
-    tensor: TensorIR
-    data: np.ndarray
-    uses: Tuple[_ConstantUse, ...]
-    clone_name: Optional[str]
-    clone: Optional[TensorIR]
 
 
 @dataclass(frozen=True)
@@ -150,49 +137,6 @@ class _ResidualTailMatch:
     fanout_adapter: Optional[_FanoutAdapterPlan]
 
 
-def _contract(
-    model_ir: ModelIR,
-    name: str,
-    rank: int,
-    shape: Sequence[int],
-    signature: Sequence[int],
-) -> Optional[_TensorContract]:
-    contract = _tensor_contract(model_ir, str(name), int(rank))
-    if (
-        contract is None
-        or contract.shape != tuple(int(value) for value in shape)
-        or contract.signature != tuple(int(value) for value in signature)
-    ):
-        return None
-    return contract
-
-
-def _normalized_axes(
-    model_ir: ModelIR,
-    graph_index: ModelIRGraphIndex,
-    name: str,
-    rank: int,
-    size: int,
-    public_inputs: set[str],
-) -> Optional[Tuple[int, ...]]:
-    values = _constant_vector(
-        model_ir,
-        graph_index,
-        str(name),
-        int(size),
-        public_inputs,
-    )
-    if values is None:
-        return None
-    normalized = _normalize_squeeze_axes_for_rank(
-        [int(value) for value in values],
-        int(rank),
-    )
-    if normalized is None or len(normalized) != int(size):
-        return None
-    return tuple(int(value) for value in normalized)
-
-
 def _squeeze_axis_zero(
     squeeze: OperatorIR,
     source: _TensorContract,
@@ -220,149 +164,6 @@ def _squeeze_axis_zero(
         and output.shape == source.shape[1:]
         and output.signature == source.signature[1:]
     )
-
-
-def _float_constant(
-    model_ir: ModelIR,
-    graph_index: ModelIRGraphIndex,
-    name: str,
-    dtype: str,
-    *,
-    shape: Optional[Tuple[int, ...]] = None,
-    value: Optional[float] = None,
-    nonnegative: bool = False,
-) -> Optional[np.ndarray]:
-    tensor = model_ir.tensors.get(str(name))
-    expected_dtype = _FLOAT_DTYPES.get(str(dtype))
-    if (
-        tensor is None
-        or tensor.data is None
-        or expected_dtype is None
-        or str(tensor.dtype) != str(dtype)
-        or str(name) in graph_index.producers
-        or str(name) in graph_index.duplicate_producers
-        or tensor.quantization is not None
-    ):
-        return None
-    try:
-        data = np.asarray(tensor.data)
-        tensor_shape = tuple(int(item) for item in tensor.shape)
-        signature = (
-            tensor_shape
-            if tensor.shape_signature is None
-            else tuple(int(item) for item in tensor.shape_signature)
-        )
-    except Exception:
-        return None
-    if (
-        data.dtype != expected_dtype
-        or data.shape != tensor_shape
-        or signature != tensor_shape
-        or not np.all(np.isfinite(data))
-        or (shape is not None and tensor_shape != tuple(shape))
-    ):
-        return None
-    if value is not None and (
-        data.size != 1 or float(data.reshape(-1)[0]) != float(value)
-    ):
-        return None
-    if nonnegative and (
-        data.size != 1 or float(data.reshape(-1)[0]) < 0.0
-    ):
-        return None
-    return data
-
-
-def _plan_constant_update(
-    model_ir: ModelIR,
-    graph_index: ModelIRGraphIndex,
-    tensor_name: str,
-    data: np.ndarray,
-    uses: Sequence[_ConstantUse],
-    suffix: str,
-    public_names: set[str],
-) -> Optional[_ConstantUpdate]:
-    name = str(tensor_name)
-    tensor = model_ir.tensors.get(name)
-    if (
-        tensor is None
-        or tensor.data is None
-        or name in public_names
-        or name in graph_index.producers
-        or name in graph_index.duplicate_producers
-        or not uses
-    ):
-        return None
-    resolved_indices = []
-    for use in uses:
-        operator_index = graph_index.operator_index(use.operator)
-        if (
-            operator_index is None
-            or int(use.input_index) < 0
-            or int(use.input_index) >= len(use.operator.inputs)
-            or str(use.operator.inputs[int(use.input_index)]) != name
-        ):
-            return None
-        resolved_indices.append(int(operator_index))
-    try:
-        replacement = np.asarray(data, dtype=np.asarray(tensor.data).dtype)
-    except Exception:
-        return None
-    clone_name: Optional[str] = None
-    clone: Optional[TensorIR] = None
-    if Counter(graph_index.consumer_indices(name)) != Counter(resolved_indices):
-        clone_name = _unique_tensor_name(model_ir, f"{name}_{suffix}")
-        try:
-            quantization = _clone_quantization(tensor.quantization)
-        except Exception:
-            return None
-        clone = TensorIR(
-            name=clone_name,
-            dtype=str(tensor.dtype),
-            shape=[int(value) for value in replacement.shape],
-            shape_signature=[int(value) for value in replacement.shape],
-            data=np.asarray(replacement),
-            is_variable=False,
-            quantization=quantization,
-            logical_layout=str(tensor.logical_layout),
-            physical_layout=str(tensor.physical_layout),
-            onnx_tensor_name=tensor.onnx_tensor_name,
-        )
-    return _ConstantUpdate(
-        tensor=tensor,
-        data=np.asarray(replacement),
-        uses=tuple(uses),
-        clone_name=clone_name,
-        clone=clone,
-    )
-
-
-def _binary_other_input(
-    operator: OperatorIR,
-    data_name: str,
-) -> Optional[Tuple[str, int]]:
-    if len(operator.inputs) != 2:
-        return None
-    matches = [
-        index
-        for index, name in enumerate(operator.inputs)
-        if str(name) == str(data_name)
-    ]
-    if len(matches) != 1:
-        return None
-    data_index = int(matches[0])
-    return str(operator.inputs[1 - data_index]), 1 - data_index
-
-
-def _sole_consumer(
-    graph_index: ModelIRGraphIndex,
-    name: str,
-) -> Optional[Tuple[int, OperatorIR]]:
-    users = graph_index.consumer_indices(str(name))
-    if len(users) != 1:
-        return None
-    index = int(users[0])
-    return index, graph_index.model_ir.operators[index]
 
 
 def _metadata_update_chw_to_hwc(
@@ -957,285 +758,41 @@ def _resolve_candidate(
     ) != x.shape or reshape_shape_name in public_outputs:
         return None
 
-    x_users = sorted(set(graph_index.consumer_indices(x_name)))
-    if len(x_users) != 2:
-        return None
-    mean_matches = [
-        index
-        for index in x_users
-        if str(model_ir.operators[index].op_type) == "MEAN"
-        and len(model_ir.operators[index].inputs) == 2
-        and str(model_ir.operators[index].inputs[0]) == x_name
-    ]
-    sub_matches = [
-        index
-        for index in x_users
-        if str(model_ir.operators[index].op_type) == "SUB"
-        and len(model_ir.operators[index].inputs) == 2
-    ]
-    if len(mean_matches) != 1 or len(sub_matches) != 1:
-        return None
-    mean1_index = int(mean_matches[0])
-    sub_index = int(sub_matches[0])
-    mean1 = model_ir.operators[mean1_index]
-    sub = model_ir.operators[sub_index]
-    mean1_options = dict(mean1.options) if isinstance(mean1.options, dict) else {}
-    mean1_name = str(mean1.outputs[0]) if len(mean1.outputs) == 1 else ""
-    reduced_shape = (
-        pre_output.shape[0],
-        pre_output.shape[1],
-        1,
-        1,
-    )
-    reduced_signature = (
-        pre_output.signature[0],
-        pre_output.signature[1],
-        1,
-        1,
-    )
-    mean1_contract = _contract(
+    core = match_decomposed_instance_norm_core(
         model_ir,
-        mean1_name,
-        4,
-        reduced_shape,
-        reduced_signature,
+        graph_index,
+        x_name=x_name,
+        x=x,
+        public_inputs=public_inputs,
+        public_outputs=public_outputs,
     )
-    mean1_axes_name = str(mean1.inputs[1])
-    if (
-        len(mean1.outputs) != 1
-        or not bool(mean1_options.get("keepDims", False))
-        or _normalized_axes(
-            model_ir,
-            graph_index,
-            mean1_axes_name,
-            4,
-            2,
-            public_inputs,
-        )
-        not in {(2, 3), (3, 2)}
-        or mean1_axes_name in public_outputs
-        or mean1_contract is None
-        or mean1_name in public_names
-        or not _producer_is_valid(graph_index, mean1_name, mean1_index)
-        or graph_index.consumer_indices(mean1_name) != [sub_index]
-        or [str(value) for value in sub.inputs] != [x_name, mean1_name]
-        or len(sub.outputs) != 1
-    ):
+    if core is None:
         return None
-    centered_name = str(sub.outputs[0])
-    centered = _contract(
-        model_ir,
-        centered_name,
-        4,
-        pre_output.shape,
-        pre_output.signature,
-    )
-    if (
-        centered is None
-        or centered_name in public_names
-        or not _producer_is_valid(graph_index, centered_name, sub_index)
-    ):
-        return None
-
-    centered_user_indices = sorted(set(graph_index.consumer_indices(centered_name)))
-    square_matches = [
-        index
-        for index in centered_user_indices
-        if str(model_ir.operators[index].op_type) == "MUL"
-        and [str(value) for value in model_ir.operators[index].inputs]
-        == [centered_name, centered_name]
-        and len(model_ir.operators[index].outputs) == 1
-    ]
-    norm_matches = [
-        index
-        for index in centered_user_indices
-        if str(model_ir.operators[index].op_type) == "MUL"
-        and len(model_ir.operators[index].inputs) == 2
-        and len(model_ir.operators[index].outputs) == 1
-        and Counter(str(value) for value in model_ir.operators[index].inputs)[
-            centered_name
-        ]
-        == 1
-    ]
-    if len(square_matches) != 1 or len(norm_matches) != 1:
-        return None
-    square_index = int(square_matches[0])
-    norm_index = int(norm_matches[0])
-    if Counter(graph_index.consumer_indices(centered_name)) != Counter(
-        [square_index, square_index, norm_index]
-    ):
-        return None
-    square = model_ir.operators[square_index]
-    squared_name = str(square.outputs[0])
-    squared = _contract(
-        model_ir,
-        squared_name,
-        4,
-        pre_output.shape,
-        pre_output.signature,
-    )
-    if (
-        squared is None
-        or squared_name in public_names
-        or not _producer_is_valid(graph_index, squared_name, square_index)
-    ):
-        return None
-
-    mean2_match = _sole_consumer(graph_index, squared_name)
-    if mean2_match is None:
-        return None
-    mean2_index, mean2 = mean2_match
-    mean2_name = str(mean2.outputs[0]) if len(mean2.outputs) == 1 else ""
-    mean2_contract = _contract(
-        model_ir,
-        mean2_name,
-        4,
-        reduced_shape,
-        reduced_signature,
-    )
-    mean2_options = dict(mean2.options) if isinstance(mean2.options, dict) else {}
-    mean2_axes_name = str(mean2.inputs[1]) if len(mean2.inputs) == 2 else ""
-    if (
-        str(mean2.op_type) != "MEAN"
-        or len(mean2.inputs) != 2
-        or len(mean2.outputs) != 1
-        or str(mean2.inputs[0]) != squared_name
-        or not bool(mean2_options.get("keepDims", False))
-        or _normalized_axes(
-            model_ir,
-            graph_index,
-            mean2_axes_name,
-            4,
-            2,
-            public_inputs,
-        )
-        not in {(2, 3), (3, 2)}
-        or mean2_axes_name in public_outputs
-        or mean2_contract is None
-        or mean2_name in public_names
-        or not _producer_is_valid(graph_index, mean2_name, mean2_index)
-    ):
-        return None
-
-    add_epsilon_match = _sole_consumer(graph_index, mean2_name)
-    if add_epsilon_match is None:
-        return None
-    add_epsilon_index, add_epsilon = add_epsilon_match
-    epsilon_match = _binary_other_input(add_epsilon, mean2_name)
-    add_epsilon_name = (
-        str(add_epsilon.outputs[0]) if len(add_epsilon.outputs) == 1 else ""
-    )
-    add_epsilon_contract = _contract(
-        model_ir,
-        add_epsilon_name,
-        4,
-        reduced_shape,
-        reduced_signature,
-    )
-    if (
-        str(add_epsilon.op_type) != "ADD"
-        or epsilon_match is None
-        or len(add_epsilon.outputs) != 1
-        or add_epsilon_contract is None
-        or add_epsilon_name in public_names
-        or not _producer_is_valid(
-            graph_index,
-            add_epsilon_name,
-            add_epsilon_index,
-        )
-    ):
-        return None
-    epsilon_name = epsilon_match[0]
-
-    sqrt_match = _sole_consumer(graph_index, add_epsilon_name)
-    if sqrt_match is None:
-        return None
-    sqrt_index, sqrt = sqrt_match
-    sqrt_name = str(sqrt.outputs[0]) if len(sqrt.outputs) == 1 else ""
-    sqrt_contract = _contract(
-        model_ir,
-        sqrt_name,
-        4,
-        reduced_shape,
-        reduced_signature,
-    )
-    if (
-        str(sqrt.op_type) != "SQRT"
-        or [str(value) for value in sqrt.inputs] != [add_epsilon_name]
-        or len(sqrt.outputs) != 1
-        or sqrt_contract is None
-        or sqrt_name in public_names
-        or not _producer_is_valid(graph_index, sqrt_name, sqrt_index)
-    ):
-        return None
-
-    div_match = _sole_consumer(graph_index, sqrt_name)
-    if div_match is None:
-        return None
-    div_index, div = div_match
-    div_name = str(div.outputs[0]) if len(div.outputs) == 1 else ""
-    div_contract = _contract(
-        model_ir,
-        div_name,
-        4,
-        reduced_shape,
-        reduced_signature,
-    )
-    if (
-        str(div.op_type) != "DIV"
-        or len(div.inputs) != 2
-        or len(div.outputs) != 1
-        or str(div.inputs[1]) != sqrt_name
-        or div_contract is None
-        or div_name in public_names
-        or not _producer_is_valid(graph_index, div_name, div_index)
-    ):
-        return None
-    one_name = str(div.inputs[0])
-
-    norm = model_ir.operators[norm_index]
-    norm_other = _binary_other_input(norm, centered_name)
-    normalized_name = str(norm.outputs[0])
-    normalized = _contract(
-        model_ir,
-        normalized_name,
-        4,
-        pre_output.shape,
-        pre_output.signature,
-    )
-    if (
-        norm_other is None
-        or norm_other[0] != div_name
-        or graph_index.consumer_indices(div_name) != [norm_index]
-        or normalized is None
-        or normalized_name in public_names
-        or not _producer_is_valid(graph_index, normalized_name, norm_index)
-    ):
-        return None
-
-    scale_match = _sole_consumer(graph_index, normalized_name)
-    if scale_match is None:
-        return None
-    scale_index, scale = scale_match
-    scale_constant_match = _binary_other_input(scale, normalized_name)
-    scaled_name = str(scale.outputs[0]) if len(scale.outputs) == 1 else ""
-    scaled = _contract(
-        model_ir,
-        scaled_name,
-        4,
-        pre_output.shape,
-        pre_output.signature,
-    )
-    if (
-        str(scale.op_type) != "MUL"
-        or scale_constant_match is None
-        or len(scale.outputs) != 1
-        or scaled is None
-        or scaled_name in public_names
-        or not _producer_is_valid(graph_index, scaled_name, scale_index)
-    ):
-        return None
-    scale_name, scale_input_index = scale_constant_match
+    mean1 = core.mean1
+    mean1_contract = core.mean1_contract
+    mean1_axes_name = core.mean1_axes_name
+    sub = core.sub
+    centered = core.centered
+    square = core.square
+    squared = core.squared
+    mean2 = core.mean2
+    mean2_contract = core.mean2_contract
+    mean2_axes_name = core.mean2_axes_name
+    add_epsilon = core.add_epsilon
+    add_epsilon_contract = core.add_epsilon_contract
+    epsilon_name = core.epsilon_name
+    sqrt = core.sqrt
+    sqrt_contract = core.sqrt_contract
+    div = core.div
+    div_contract = core.div_contract
+    one_name = core.one_name
+    norm = core.norm
+    normalized = core.normalized
+    scale = core.scale
+    scaled = core.scaled
+    scaled_name = str(scaled.tensor.name)
+    scale_name = core.scale_name
+    scale_input_index = core.scale_input_index
 
     bias_match = _sole_consumer(graph_index, scaled_name)
     if bias_match is None:
@@ -1918,31 +1475,6 @@ def _resolve_candidate(
         metadata_updates=tuple(metadata_updates),
         channel_last_names=channel_last_names,
     )
-
-
-def _apply_constant_update(
-    model_ir: ModelIR,
-    graph_index: ModelIRGraphIndex,
-    update: _ConstantUpdate,
-) -> bool:
-    target = update.tensor
-    if update.clone_name is not None:
-        if update.clone is None or update.clone_name in model_ir.tensors:
-            return False
-        model_ir.tensors[update.clone_name] = update.clone
-        target = update.clone
-        for use in update.uses:
-            _replace_operator_input_at(
-                model_ir=model_ir,
-                op=use.operator,
-                input_index=use.input_index,
-                new_input_name=update.clone_name,
-                graph_index=graph_index,
-            )
-    target.data = np.asarray(update.data)
-    target.shape = [int(value) for value in update.data.shape]
-    target.shape_signature = [int(value) for value in update.data.shape]
-    return True
 
 
 def _apply_plan(
