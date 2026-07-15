@@ -1,0 +1,3593 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-16T01:21:53+09:00",
+  "evidence_state": "recorded_before_any_regression_fix",
+  "branch": "fb-refactor5",
+  "commit": "48f92183574c0d726696d1cf4b6eef8a90ce53e2",
+  "comparison_branch": "fb-refactor4",
+  "comparison_commit": "afb5bb55bedfc89119bc2064113c1720ed9def16",
+  "manifest": "docs/baselines/flatbuffer_direct_quick_tier0_4_2026-07-16.json",
+  "manifest_file_sha256": "c763ae2b11416532b3764956ffe4ed6ace125cb76366e9c7d7ae085b1637fa38",
+  "manifest_profile_content_sha256": "a602ce4930cbdf92dd6e86b35ad38f21357db61ebe246911065fedd6aad74a8b",
+  "previous_result": "docs/baselines/flatbuffer_direct_quick_tier0_4_2026-07-14_result.json",
+  "models_sha256": "8112f34d988a55448ee394d002e45dfc2c32b8bb8b15a4f1978d8be851c708e8",
+  "execution": {
+    "command": "uv run --no-sync python -m onnx2tf.utils.flatbuffer_direct_bulk_runner --root_dir . -o <TEMP> --regression_profile docs/baselines/flatbuffer_direct_quick_tier0_4_2026-07-16.json --tflite_only --timeout_sec 45",
+    "sequential": true,
+    "inference_concurrency": 1,
+    "include_pytorch_artifacts": false,
+    "timeout_sec": 45,
+    "runner_exit_code": 1,
+    "runner_exit_note": "Expected because retained known non-passes, recorded regression candidates, and the quick-ceiling timeout are strict failures.",
+    "swap_policy": "Monitor each converter subprocess tree through Linux VmSwap and terminate on any non-zero model-process SWAP.",
+    "tensorflow_dependency_scope": "TFLite-only flatbuffer_direct -cotof; TensorFlow artifacts were not requested."
+  },
+  "environment": {
+    "python": "3.12.12",
+    "ai_edge_litert": "2.1.2",
+    "numpy": "2.2.6",
+    "onnx": "1.20.1",
+    "onnxruntime": "1.26.0",
+    "onnxsim": "0.6.5"
+  },
+  "summary": {
+    "selected_models": 49,
+    "counts": {
+      "missing_tflite_report": 4,
+      "pass": 41,
+      "tflite_fail": 3,
+      "timeout": 1
+    },
+    "baseline_counts": {
+      "missing_tflite_report": 1,
+      "pass": 44,
+      "tflite_fail": 4
+    },
+    "previous_branch_counts": {
+      "missing_tflite_report": 2,
+      "pass": 43,
+      "tflite_fail": 4
+    },
+    "semantic_regression_candidates_recorded_before_fix": 2,
+    "quick_ceiling_timeout_candidates_recorded_before_fix": 1,
+    "branch_specific_regressions_confirmed": 0,
+    "branch_attribution_status": "pending focused fb-refactor4 comparison; no fix has started",
+    "known_nonpasses_preserved": 4,
+    "previous_managed_mismatch_preserved": 1,
+    "swap_detected_models": 0,
+    "timing": {
+      "total_duration_sec": 362.79625034332275,
+      "median_duration_sec": 4.777201414108276,
+      "max_duration_sec": 45.17418718338013
+    },
+    "max_abs_largest_non_deim_pass": 0.0443115234375,
+    "max_abs_largest_non_deim_pass_model": "pose_estimation_mediapipe_2023mar_int8bq.onnx",
+    "deim_accepted_as_pass": true
+  },
+  "per_tier": {
+    "0": {
+      "models": 12,
+      "counts": {
+        "missing_tflite_report": 2,
+        "pass": 10
+      },
+      "total_duration_sec": 34.892289876937866
+    },
+    "1": {
+      "models": 12,
+      "counts": {
+        "pass": 11,
+        "tflite_fail": 1
+      },
+      "total_duration_sec": 50.27784538269043
+    },
+    "2": {
+      "models": 12,
+      "counts": {
+        "missing_tflite_report": 1,
+        "pass": 10,
+        "tflite_fail": 1
+      },
+      "total_duration_sec": 80.06986737251282
+    },
+    "3": {
+      "models": 9,
+      "counts": {
+        "missing_tflite_report": 1,
+        "pass": 7,
+        "tflite_fail": 1
+      },
+      "total_duration_sec": 114.47077345848083
+    },
+    "4": {
+      "models": 4,
+      "counts": {
+        "pass": 3,
+        "timeout": 1
+      },
+      "total_duration_sec": 83.0854742527008
+    }
+  },
+  "duration_buckets": [
+    {
+      "bucket": "under_5s",
+      "models": [
+        "Acos_11.onnx",
+        "DepthToSpace.onnx",
+        "GridSample_16.onnx",
+        "MatMul_11.onnx",
+        "trilu_14.onnx",
+        "topk_test_model.onnx",
+        "optional.onnx",
+        "gather_nd_normal.onnx",
+        "avgpool1d_dynamic.onnx",
+        "big_slice_11.onnx",
+        "string_normalizer_11.onnx",
+        "GridSample_11.onnx",
+        "face_detection_yunet_2023mar_int8.onnx",
+        "dynamic_roi_align_yolo_1class.onnx",
+        "face_detection_yunet_2023mar.onnx",
+        "version-RFB-320-int8.onnx",
+        "exp28_lstm_binary_final.onnx",
+        "license_plate_detection_lpd_yunet_2023mar_int8.onnx",
+        "handpose_estimation_mediapipe_2023feb_int8.onnx",
+        "squeezenet1.0-12-int8.onnx",
+        "retinaface_onnx_dynamic.onnx",
+        "rfdn_64x64.onnx",
+        "object_tracking_vittrack_2023sep_int8bq.onnx",
+        "sinet_320_op.onnx",
+        "osnet025_Nx3x256x128.onnx",
+        "FastestDet.onnx",
+        "human_segmentation_pphumanseg_2021oct_org.onnx"
+      ],
+      "count": 27
+    },
+    {
+      "bucket": "5_to_under_15s",
+      "models": [
+        "silero_vad.onnx",
+        "shadowformer_istd_160x240_split.onnx",
+        "text_detection_en_ppocrv3_2023may_int8.onnx",
+        "alike_t_opset11_192x320.onnx",
+        "tmp_alike_debug3.onnx",
+        "monodepth_op15.onnx",
+        "object_detection_nanodet_2022nov_int8.onnx",
+        "pose_estimation_mediapipe_2023mar_int8bq.onnx",
+        "yolox_nano_with_post.onnx",
+        "yolov9_n_wholebody_with_wheelchair_post_0100_1x3x384x672.onnx",
+        "sgscsh.onnx",
+        "best.onnx",
+        "htnet_1x17x2_without_norm.onnx",
+        "imageclassifier.onnx",
+        "mobileformer.onnx",
+        "parseq-tiny.onnx"
+      ],
+      "count": 16
+    },
+    {
+      "bucket": "15_to_under_30s",
+      "models": [
+        "iat_llie_180x320.onnx",
+        "deim_hgnetv2_n_wholebody28_1250query_fp16.onnx",
+        "latest.opset17.head2.onnx",
+        "LINEA.onnx",
+        "campp_vin.onnx"
+      ],
+      "count": 5
+    },
+    {
+      "bucket": "30_to_under_45s",
+      "models": [],
+      "count": 0
+    },
+    {
+      "bucket": "45s_or_more",
+      "models": [
+        "hybridnets_384x640_sim.onnx"
+      ],
+      "count": 1
+    }
+  ],
+  "issues": [
+    {
+      "model": "text_detection_en_ppocrv3_2023may_int8.onnx",
+      "tier": 2,
+      "status": "regression_candidate_recorded_before_fix",
+      "previous_classification": "tflite_fail",
+      "previous_max_abs": 0.7411765307188034,
+      "current_classification": "missing_tflite_report",
+      "current_error": "LiteRT CONV_2D node 1324 rejected input/filter channel divisibility: 24 != 0.",
+      "conversion_exit_code": 0,
+      "generated_float32_tflite": {
+        "sha256": "995709a457c6fdddeda675af3b0ae1be91a3f70f0fb720eb7e7c40e2377b83b3",
+        "size_bytes": 945760
+      },
+      "changed_passes": [
+        {
+          "pass_id": "canonicalize.scalar_clamp_relu0to1",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "layout.singleton_channel_transpose_as_reshape",
+          "changed_count": 1
+        }
+      ],
+      "swap_detected": false,
+      "fix_started": false
+    },
+    {
+      "model": "imageclassifier.onnx",
+      "tier": 3,
+      "status": "regression_candidate_recorded_before_fix",
+      "previous_classification": "pass",
+      "previous_max_abs": 6.67572021484375e-06,
+      "current_classification": "missing_tflite_report",
+      "current_error": "LiteRT CONV_2D node 454 rejected input/filter channel divisibility: 192 != 0.",
+      "conversion_exit_code": 0,
+      "generated_float32_tflite": {
+        "sha256": "0ae62a5840325d49ae24410105bc0120e7328e15c87d1ef62a1deb7a65e61004",
+        "size_bytes": 19035924
+      },
+      "changed_passes": [
+        {
+          "pass_id": "canonicalize.constant_input_cast",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "cleanup.consecutive_reshape_passthrough",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "cleanup.duplicate_transpose_fanout",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "layout.concat_unary_conv_nhwc",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "layout.singleton_channel_transpose_as_reshape",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "layout.transpose_chain_cleanup",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "layout.transpose_unary_fanout_bridge",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "layout.transpose_unary_passthrough",
+          "changed_count": 1
+        }
+      ],
+      "swap_detected": false,
+      "fix_started": false
+    },
+    {
+      "model": "hybridnets_384x640_sim.onnx",
+      "tier": 4,
+      "status": "quick_ceiling_timeout_candidate_recorded_before_fix",
+      "previous_classification": "pass",
+      "previous_duration_sec": 29.350958,
+      "current_classification": "timeout",
+      "current_duration_sec": 45.17418718338013,
+      "current_error": "The 45-second quick ceiling expired after float32/float16 TFLite artifacts and tensor correspondence report were generated, before an accuracy report was retained.",
+      "generated_float32_tflite": {
+        "sha256": "413855e793ba823ff7a4d24cc05c029435391959715ec6bce94c3652c58b9d7b",
+        "size_bytes": 55136628
+      },
+      "changed_passes": [
+        {
+          "pass_id": "cleanup.duplicate_transpose_fanout",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "layout.nested_weighted_add_swish_nhwc",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "layout.pad_prepost_nhwc",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "layout.se_conv_gate_nhwc",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "layout.trailing_output_transpose_passthrough",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "layout.transpose_chain_cleanup",
+          "changed_count": 1
+        },
+        {
+          "pass_id": "layout.weighted_add_swish_nhwc",
+          "changed_count": 1
+        }
+      ],
+      "swap_detected": false,
+      "fix_started": false
+    },
+    {
+      "model": "silero_vad.onnx",
+      "tier": 0,
+      "status": "previously_documented_managed_baseline_mismatch_preserved",
+      "previous_classification": "missing_tflite_report",
+      "current_classification": "missing_tflite_report",
+      "current_error": "LiteRT ADD node 27 reports non-broadcastable [1,1,3,129] and [1,1,5,129].",
+      "swap_detected": false,
+      "fix_started": false
+    }
+  ],
+  "models": [
+    {
+      "tier": 0,
+      "model": "Acos_11.onnx",
+      "onnx_sha256": "d7ac62dd9f2118c88abb676299122209a2271a4b0f2524704990a59e7ff4eece",
+      "node_count": 1,
+      "file_size_bytes": 124,
+      "op_types": [
+        "Acos"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 7.972121238708496e-07,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 7.972121238708496e-07,
+      "previous_branch_duration_sec": 2.407429,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 7.972121238708496e-07,
+      "current_duration_sec": 2.871732473373413,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 1,
+          "skipped": 520
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 1040,
+          "snapshot_count": 1,
+          "state_build_count": 2
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.asin_passthrough",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 0,
+      "model": "DepthToSpace.onnx",
+      "onnx_sha256": "83d5f66d77d36cfd0b0a939e4da00645c8674dadd0f115e55a098502501c2682",
+      "node_count": 1,
+      "file_size_bytes": 171,
+      "op_types": [
+        "DepthToSpace"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 0,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0,
+      "previous_branch_duration_sec": 2.358055,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0,
+      "current_duration_sec": 2.7767751216888428,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 1,
+          "skipped": 520
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 554,
+          "snapshot_count": 1,
+          "state_build_count": 4
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.trailing_output_transpose_passthrough",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 0,
+      "model": "GridSample_16.onnx",
+      "onnx_sha256": "b04117e4286a3e7efd9ea1e0023d5344ac92f7a4bd2b8cdd3efb9d8ef8e7fd0b",
+      "node_count": 1,
+      "file_size_bytes": 242,
+      "op_types": [
+        "GridSample"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 8.13603401184082e-06,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 8.13603401184082e-06,
+      "previous_branch_duration_sec": 2.415713,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 8.13603401184082e-06,
+      "current_duration_sec": 2.879310369491577,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 2,
+          "skipped": 505,
+          "unchanged": 14
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 12098,
+          "snapshot_count": 16,
+          "state_build_count": 65
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.maximum_zero_relu",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 0,
+      "model": "MatMul_11.onnx",
+      "onnx_sha256": "7d109c428d9fa215acecd8b3c70611c2bc7ab8cb3b85e3797877b3ac078fd6a6",
+      "node_count": 1,
+      "file_size_bytes": 189,
+      "op_types": [
+        "MatMul"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 5.340576171875e-05,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 5.340576171875e-05,
+      "previous_branch_duration_sec": 2.415637,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 5.340576171875e-05,
+      "current_duration_sec": 2.8824777603149414,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 1,
+          "skipped": 520
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 263,
+          "snapshot_count": 1,
+          "state_build_count": 2
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.boundary_input_batchmatmul",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 0,
+      "model": "trilu_14.onnx",
+      "onnx_sha256": "5dd9b24f22771825a5fa714c43e6d13767ccb8ae54c6af1505ae67928abd86fd",
+      "node_count": 1,
+      "file_size_bytes": 189,
+      "op_types": [
+        "Trilu"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 0,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0,
+      "previous_branch_duration_sec": 2.349026,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0,
+      "current_duration_sec": 2.882141590118408,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 1,
+          "skipped": 520
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 263,
+          "snapshot_count": 1,
+          "state_build_count": 2
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.leading_input_passthrough",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 0,
+      "model": "topk_test_model.onnx",
+      "onnx_sha256": "7293e2a07f6d9ef455216a18f539dfe515cbb8e76bae5290d652f7114f867ef1",
+      "node_count": 1,
+      "file_size_bytes": 213,
+      "op_types": [
+        "TopK"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 0,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0,
+      "previous_branch_duration_sec": 2.325681,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0,
+      "current_duration_sec": 2.7803289890289307,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "skipped": 515,
+          "unchanged": 6
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 1032,
+          "snapshot_count": 6,
+          "state_build_count": 2
+        },
+        "changed_passes": []
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 0,
+      "model": "optional.onnx",
+      "onnx_sha256": "3fb01185326e3fc13d5c8d26fb428329050862f57b5690849b5ad5f8cf3e311f",
+      "node_count": 3,
+      "file_size_bytes": 280,
+      "op_types": [
+        "Not",
+        "OptionalHasElement"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 0,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0,
+      "previous_branch_duration_sec": 1.943183,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0,
+      "current_duration_sec": 2.5528316497802734,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "skipped": 521
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 522,
+          "snapshot_count": 0,
+          "state_build_count": 0
+        },
+        "changed_passes": []
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 0,
+      "model": "gather_nd_normal.onnx",
+      "onnx_sha256": "0d4a9d5614f93132e3adc30dfc3e1fd296560e1412210f34c402c4787b20c34f",
+      "node_count": 2,
+      "file_size_bytes": 309,
+      "op_types": [
+        "GatherND",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 0,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0,
+      "previous_branch_duration_sec": 2.332453,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0,
+      "current_duration_sec": 2.810389757156372,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 1,
+          "skipped": 516,
+          "unchanged": 4
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 517,
+          "snapshot_count": 5,
+          "state_build_count": 3
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 0,
+      "model": "avgpool1d_dynamic.onnx",
+      "onnx_sha256": "2f8a6761c1ef2c986ed6d51dedb707897d6860784212fba777daeb1e916e2d22",
+      "node_count": 1,
+      "file_size_bytes": 434,
+      "op_types": [
+        "AveragePool"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "pass",
+      "baseline_tflite_max_abs": 0,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 1.1920928955078125e-07,
+      "previous_branch_duration_sec": 2.346699,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 1.1920928955078125e-07,
+      "current_duration_sec": 2.80692195892334,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "skipped": 514,
+          "unchanged": 7
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 1421,
+          "snapshot_count": 7,
+          "state_build_count": 32
+        },
+        "changed_passes": []
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 0,
+      "model": "big_slice_11.onnx",
+      "onnx_sha256": "3e47c7b47436b5bd72cd3a51c1391acc4139e9c7b7ef3d07eb1c16716c98f265",
+      "node_count": 1,
+      "file_size_bytes": 344,
+      "op_types": [
+        "Slice"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 0,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0,
+      "previous_branch_duration_sec": 2.953792,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0,
+      "current_duration_sec": 3.297107219696045,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 1,
+          "skipped": 520
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 116215,
+          "snapshot_count": 1,
+          "state_build_count": 4
+        },
+        "changed_passes": [
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 0,
+      "model": "silero_vad.onnx",
+      "onnx_sha256": "7042fc01e3ae6191e025e1b614f1b2c126b6b937cb250388a52553a67a2dc8d2",
+      "node_count": 2,
+      "file_size_bytes": 3372935,
+      "op_types": [
+        "Equal",
+        "If"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 1.375097781419754e-06,
+      "previous_branch_classification": "missing_tflite_report",
+      "previous_branch_tflite_max_abs": null,
+      "previous_branch_duration_sec": 4.593256,
+      "current_classification": "missing_tflite_report",
+      "current_reason": "missing_tflite_report",
+      "current_tflite_max_abs": null,
+      "current_duration_sec": 5.007479667663574,
+      "current_error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: Given shapes, [1,1,3,129] and [1,1,5,129], are not broadcastable.Node number 27 (ADD) failed to prepare.",
+      "current_error_signature_sha256": "6dcbbc3c2da3d5c6fa66c6a42e56b6dbf1df02a2d06c3b9d894720ed0c42b528",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 6,
+          "skipped": 484,
+          "unchanged": 31
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 45997,
+          "snapshot_count": 37,
+          "state_build_count": 90
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.constant_input_cast",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.cast_widening_alias",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 2
+          },
+          {
+            "pass_id": "cleanup.duplicate_reshape_fanout",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "managed_baseline_mismatch_preserved_from_previous_branch"
+    },
+    {
+      "tier": 0,
+      "model": "string_normalizer_11.onnx",
+      "onnx_sha256": "8b9cacaaba38c2d7773c5f70c5828c8da391dffbea19148b6da9035410d51289",
+      "node_count": 1,
+      "file_size_bytes": 250,
+      "op_types": [
+        "StringNormalizer"
+      ],
+      "baseline_classification": "missing_tflite_report",
+      "baseline_reason": "unsupported_stock_tflite_string_normalizer",
+      "baseline_tflite_max_abs": null,
+      "previous_branch_classification": "missing_tflite_report",
+      "previous_branch_tflite_max_abs": null,
+      "previous_branch_duration_sec": 1.242427,
+      "current_classification": "missing_tflite_report",
+      "current_reason": "missing_tflite_report",
+      "current_tflite_max_abs": null,
+      "current_duration_sec": 1.3447933197021484,
+      "current_error_signature": "missing_tflite_report | missing_tflite_report | ONNX/TFLite output check was skipped because generated TFLite includes CUSTOM ops from auto custom-op retry. source=flatbuffer_direct",
+      "current_error_signature_sha256": "603ca474b8eee210cb3bb2df39bb20791becc95c66d60a1ec68e1a8a2744c109",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "skipped": 521
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 261,
+          "snapshot_count": 0,
+          "state_build_count": 0
+        },
+        "changed_passes": []
+      },
+      "assessment": "known_nonpass_preserved"
+    },
+    {
+      "tier": 1,
+      "model": "GridSample_11.onnx",
+      "onnx_sha256": "3cad7663a2241994e59571d0d86f1b1dfe9643836531740f4a426cd8b1dd95cd",
+      "node_count": 74,
+      "file_size_bytes": 8988,
+      "op_types": [
+        "Add",
+        "And",
+        "Cast",
+        "Expand",
+        "Flatten",
+        "Floor",
+        "Gather",
+        "Less",
+        "Mul",
+        "Not",
+        "Reshape",
+        "Split",
+        "Sub",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 0,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0,
+      "previous_branch_duration_sec": 2.733885,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0,
+      "current_duration_sec": 3.0470166206359863,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 3,
+          "skipped": 511,
+          "unchanged": 7
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 17123,
+          "snapshot_count": 10,
+          "state_build_count": 54
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.constant_input_cast",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 1,
+      "model": "face_detection_yunet_2023mar_int8.onnx",
+      "onnx_sha256": "bbb5cd8074e024e95463cfd0458329462f1dc8ffe11456e3866c6c6b112e6925",
+      "node_count": 112,
+      "file_size_bytes": 94154,
+      "op_types": [
+        "DequantizeLinear",
+        "MaxPool",
+        "QLinearAdd",
+        "QLinearConv",
+        "QLinearSigmoid",
+        "QuantizeLinear",
+        "Reshape",
+        "Resize",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 4.76837158203125e-07,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0,
+      "previous_branch_duration_sec": 4.550994,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0,
+      "current_duration_sec": 4.945555210113525,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 518,
+        "status_counts": {
+          "changed": 1,
+          "skipped": 507,
+          "unchanged": 10
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 117602,
+          "snapshot_count": 11,
+          "state_build_count": 68
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 1,
+      "model": "dynamic_roi_align_yolo_1class.onnx",
+      "onnx_sha256": "1f53f90ad37cd1bf6f29a2726d6513bdb143ed1b787172127031df47cbe68211",
+      "node_count": 67,
+      "file_size_bytes": 107950,
+      "op_types": [
+        "Add",
+        "Cast",
+        "Clip",
+        "Concat",
+        "Div",
+        "Expand",
+        "Gather",
+        "GatherElements",
+        "GridSample",
+        "Max",
+        "Min",
+        "Mul",
+        "Reshape",
+        "Slice",
+        "Sub",
+        "TopK",
+        "Unsqueeze"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 4.553794860839844e-05,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 4.553794860839844e-05,
+      "previous_branch_duration_sec": 3.249854,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 4.553794860839844e-05,
+      "current_duration_sec": 3.7807819843292236,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 4,
+          "skipped": 501,
+          "unchanged": 16
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 22734,
+          "snapshot_count": 20,
+          "state_build_count": 79
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.fold_consecutive_mul_constants",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "canonicalize.maximum_zero_relu",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "canonicalize.scalar_clamp_relu0to1",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 1,
+      "model": "shadowformer_istd_160x240_split.onnx",
+      "onnx_sha256": "336f0213931c139ad89640a53415a1cd56b30cd8fbfcf941afacda5ebd934ab6",
+      "node_count": 82,
+      "file_size_bytes": 220425,
+      "op_types": [
+        "Add",
+        "Concat",
+        "Conv",
+        "Div",
+        "Erf",
+        "GlobalAveragePool",
+        "LeakyRelu",
+        "MatMul",
+        "Mul",
+        "PRelu",
+        "Pow",
+        "ReduceMean",
+        "Relu",
+        "Reshape",
+        "Sigmoid",
+        "Sqrt",
+        "Sub",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 4.0531158447265625e-06,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 4.5299530029296875e-06,
+      "previous_branch_duration_sec": 6.387963,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 4.5299530029296875e-06,
+      "current_duration_sec": 6.72362494468689,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 3,
+          "skipped": 517,
+          "unchanged": 1
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 15146,
+          "snapshot_count": 4,
+          "state_build_count": 20
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.transpose_mean_prepost",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_binary_fanout_bridge",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_passthrough",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 1,
+      "model": "face_detection_yunet_2023mar.onnx",
+      "onnx_sha256": "6c22b644d112f8a84af5b7ab55797d62dd8345c8ee2dbb7433afc9aec5df5c3e",
+      "node_count": 106,
+      "file_size_bytes": 232548,
+      "op_types": [
+        "Add",
+        "Conv",
+        "MaxPool",
+        "Relu",
+        "Reshape",
+        "Resize",
+        "Sigmoid",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 4.76837158203125e-06,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 5.245208740234375e-06,
+      "previous_branch_duration_sec": 3.702248,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 5.245208740234375e-06,
+      "current_duration_sec": 4.071185350418091,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 2,
+          "skipped": 515,
+          "unchanged": 4
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 22358,
+          "snapshot_count": 6,
+          "state_build_count": 16
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 1,
+      "model": "version-RFB-320-int8.onnx",
+      "onnx_sha256": "8272aa8a0ef9ab9fcc21c8f8fd95a5a4fa14d9eb88d238049c0657fefbc99c74",
+      "node_count": 91,
+      "file_size_bytes": 410753,
+      "op_types": [
+        "Add",
+        "Concat",
+        "DequantizeLinear",
+        "Div",
+        "Exp",
+        "Mul",
+        "QLinearAdd",
+        "QLinearConcat",
+        "QLinearConv",
+        "QuantizeLinear",
+        "Reshape",
+        "Slice",
+        "Softmax",
+        "Sub",
+        "Transpose"
+      ],
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "onnxruntime_u8s8_saturating_pair_accumulation",
+      "baseline_tflite_max_abs": 0.14972958900034428,
+      "previous_branch_classification": "tflite_fail",
+      "previous_branch_tflite_max_abs": 0.14972957409918308,
+      "previous_branch_duration_sec": 4.335234,
+      "current_classification": "tflite_fail",
+      "current_reason": "tflite_fail",
+      "current_tflite_max_abs": 0.14972957409918308,
+      "current_duration_sec": 4.777201414108276,
+      "current_error_signature": "tflite_fail | tflite_fail | subprocess.CalledProcessError: Command '['onnxsim', '<PATH>/version-RFB-320-int8.onnx', '<PATH>/.version-RFB-320-int8.onnx.onnx2tf_onnxsim_op44cnnx.onnx']' returned non-zero exit status 1.",
+      "current_error_signature_sha256": "8bd786776618c88626116ab2e7d5d522364edb4e2782c153cc7864e4b7638fd9",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 518,
+        "status_counts": {
+          "changed": 3,
+          "skipped": 502,
+          "unchanged": 13
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 98951,
+          "snapshot_count": 16,
+          "state_build_count": 89
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.fold_consecutive_mul_constants",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.nhwc_pre_concat_quantized_dequantize",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "known_nonpass_preserved"
+    },
+    {
+      "tier": 1,
+      "model": "exp28_lstm_binary_final.onnx",
+      "onnx_sha256": "cf47e4bcaca60d6dba8b1ce5601ed7fd70bcbacb18afb6f8cec07cc4d733e3c1",
+      "node_count": 53,
+      "file_size_bytes": 610621,
+      "op_types": [
+        "Add",
+        "Concat",
+        "Cos",
+        "Gather",
+        "Gemm",
+        "LSTM",
+        "MatMul",
+        "Mul",
+        "ReduceSum",
+        "Relu",
+        "Reshape",
+        "Sin",
+        "Slice",
+        "Softmax",
+        "Sub",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 3.5762786865234375e-07,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 5.960464477539062e-07,
+      "previous_branch_duration_sec": 3.109004,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 5.960464477539062e-07,
+      "current_duration_sec": 3.56553316116333,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 519,
+        "status_counts": {
+          "changed": 3,
+          "skipped": 509,
+          "unchanged": 7
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 11878,
+          "snapshot_count": 10,
+          "state_build_count": 79
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.fold_consecutive_mul_constants",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 1,
+      "model": "license_plate_detection_lpd_yunet_2023mar_int8.onnx",
+      "onnx_sha256": "6c577a4ed3aa72760df9e8a9cc0ce4d305517de2a8fc83f411ab17cd8bab3983",
+      "node_count": 79,
+      "file_size_bytes": 1083588,
+      "op_types": [
+        "DequantizeLinear",
+        "MaxPool",
+        "QLinearConcat",
+        "QLinearConv",
+        "QLinearSoftmax",
+        "QuantizeLinear",
+        "Reshape",
+        "Slice",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 9.5367431640625e-07,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0,
+      "previous_branch_duration_sec": 4.263104,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0,
+      "current_duration_sec": 4.275635719299316,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 518,
+        "status_counts": {
+          "changed": 1,
+          "skipped": 507,
+          "unchanged": 10
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 114524,
+          "snapshot_count": 11,
+          "state_build_count": 20
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 1,
+      "model": "handpose_estimation_mediapipe_2023feb_int8.onnx",
+      "onnx_sha256": "dc6b3ecd9d23beb11d55fee96739231e39b9699dc67656737c62fe83492e9685",
+      "node_count": 72,
+      "file_size_bytes": 1147397,
+      "op_types": [
+        "DequantizeLinear",
+        "MaxPool",
+        "QGemm",
+        "QLinearAdd",
+        "QLinearConv",
+        "QLinearGlobalAveragePool",
+        "QLinearSigmoid",
+        "QuantizeLinear",
+        "Squeeze",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 0.0008895993232727051,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0,
+      "previous_branch_duration_sec": 3.595358,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0,
+      "current_duration_sec": 3.7904932498931885,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 518,
+        "status_counts": {
+          "changed": 2,
+          "skipped": 497,
+          "unchanged": 19
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 125813,
+          "snapshot_count": 21,
+          "state_build_count": 61
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 1,
+      "model": "squeezenet1.0-12-int8.onnx",
+      "onnx_sha256": "71c5eff9d424dbebfa3fa105dbca0070d9e90a681850a6f17d8d4feb5f5d06ca",
+      "node_count": 65,
+      "file_size_bytes": 1288328,
+      "op_types": [
+        "Concat",
+        "DequantizeLinear",
+        "MaxPool",
+        "QLinearConv",
+        "QLinearGlobalAveragePool",
+        "QuantizeLinear",
+        "Softmax"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "pass",
+      "baseline_tflite_max_abs": 1.4901161193847656e-08,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 3.725290298461914e-09,
+      "previous_branch_duration_sec": 3.077413,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 3.725290298461914e-09,
+      "current_duration_sec": 3.458303689956665,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 518,
+        "status_counts": {
+          "changed": 2,
+          "skipped": 498,
+          "unchanged": 18
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 70208,
+          "snapshot_count": 20,
+          "state_build_count": 75
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.nhwc_pre_concat_dequantize",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 1,
+      "model": "retinaface_onnx_dynamic.onnx",
+      "onnx_sha256": "bcb2427987b2976cc0c596a3d4ee73743ca01cef1bc4d5f8f35bd4e8af358102",
+      "node_count": 164,
+      "file_size_bytes": 1739500,
+      "op_types": [
+        "Add",
+        "Concat",
+        "Conv",
+        "Gather",
+        "LeakyRelu",
+        "Relu",
+        "Reshape",
+        "Resize",
+        "Shape",
+        "Slice",
+        "Softmax",
+        "Transpose",
+        "Unsqueeze"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 2.5033950805664062e-06,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 4.4405460357666016e-06,
+      "previous_branch_duration_sec": 3.308065,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 4.4405460357666016e-06,
+      "current_duration_sec": 3.608015775680542,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 4,
+          "skipped": 512,
+          "unchanged": 5
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 57561,
+          "snapshot_count": 9,
+          "state_build_count": 73
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.constant_input_cast",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 1,
+      "model": "rfdn_64x64.onnx",
+      "onnx_sha256": "754375842f4222adc41d0e9dd3b500db24c89065ceeecbc672e87ccd55f45c91",
+      "node_count": 140,
+      "file_size_bytes": 1767108,
+      "op_types": [
+        "Add",
+        "Concat",
+        "Conv",
+        "DepthToSpace",
+        "LeakyRelu",
+        "MaxPool",
+        "Mul",
+        "Relu",
+        "Resize",
+        "Sigmoid"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 3.62396240234375e-05,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 3.719329833984375e-05,
+      "previous_branch_duration_sec": 5.541129,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 3.719329833984375e-05,
+      "current_duration_sec": 4.2344982624053955,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 2,
+          "skipped": 517,
+          "unchanged": 2
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 31309,
+          "snapshot_count": 4,
+          "state_build_count": 40
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.trailing_output_transpose_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_binary_fanout_bridge",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 2,
+      "model": "object_tracking_vittrack_2023sep_int8bq.onnx",
+      "onnx_sha256": "5557a3e817694b71128c098ec4a4caad671363fdf3c71a317789f33ff9eeacd8",
+      "node_count": 247,
+      "file_size_bytes": 269276,
+      "op_types": [
+        "Add",
+        "Clip",
+        "Concat",
+        "Conv",
+        "DequantizeLinear",
+        "Div",
+        "Erf",
+        "HardSwish",
+        "MatMul",
+        "Mul",
+        "Pow",
+        "ReduceMean",
+        "Relu",
+        "Reshape",
+        "Sigmoid",
+        "Slice",
+        "Softmax",
+        "Sqrt",
+        "Sub",
+        "Transpose",
+        "Unsqueeze"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 2.5033950805664062e-06,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 1.996755599975586e-06,
+      "previous_branch_duration_sec": 4.370398,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 1.996755599975586e-06,
+      "current_duration_sec": 3.7032830715179443,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 3,
+          "skipped": 509,
+          "unchanged": 9
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 24832,
+          "snapshot_count": 12,
+          "state_build_count": 82
+        },
+        "changed_passes": [
+          {
+            "pass_id": "cleanup.duplicate_transpose_fanout",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.qkv_slice_to_split",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.trailing_output_transpose_passthrough",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 2,
+      "model": "sinet_320_op.onnx",
+      "onnx_sha256": "853eb2d5f097a9912a527fc667e07091ff5eab93f826745229f2ed61c67767d2",
+      "node_count": 202,
+      "file_size_bytes": 350865,
+      "op_types": [
+        "Add",
+        "AveragePool",
+        "BatchNormalization",
+        "Concat",
+        "Conv",
+        "Expand",
+        "Flatten",
+        "Gemm",
+        "Mul",
+        "PRelu",
+        "ReduceMax",
+        "Reshape",
+        "Resize",
+        "Softmax",
+        "Sub",
+        "Transpose",
+        "Unsqueeze"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 2.5675035431049764e-09,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 2.572051016613841e-09,
+      "previous_branch_duration_sec": 6.870101,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 2.572051016613841e-09,
+      "current_duration_sec": 4.89185905456543,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 519,
+        "status_counts": {
+          "changed": 5,
+          "skipped": 508,
+          "unchanged": 6
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 33303,
+          "snapshot_count": 11,
+          "state_build_count": 86
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.nchw_channel_shuffle_gather",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.duplicate_transpose_fanout",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.se_fc_gate_nhwc",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.trailing_output_transpose_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_gather_axis_nhwc",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 2,
+      "model": "iat_llie_180x320.onnx",
+      "onnx_sha256": "f9bb790ae2df192c0e86f965f57752409a7a05850ffdd1e85c0b32fa8eb1225d",
+      "node_count": 291,
+      "file_size_bytes": 411257,
+      "op_types": [
+        "Add",
+        "Clip",
+        "Conv",
+        "Div",
+        "Einsum",
+        "Erf",
+        "Gather",
+        "LeakyRelu",
+        "MatMul",
+        "Mul",
+        "Pow",
+        "ReduceMean",
+        "Relu",
+        "Reshape",
+        "Slice",
+        "Softmax",
+        "Sqrt",
+        "Squeeze",
+        "Sub",
+        "Tanh",
+        "Transpose",
+        "Unsqueeze"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 3.5762786865234375e-07,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 4.470348358154297e-07,
+      "previous_branch_duration_sec": 19.26319,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 4.470348358154297e-07,
+      "current_duration_sec": 15.886276960372925,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 6,
+          "skipped": 492,
+          "unchanged": 23
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 34136,
+          "snapshot_count": 29,
+          "state_build_count": 76
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.scalar_clamp_relu0to1",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.trailing_output_transpose_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_binary_fanout_bridge",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_passthrough",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 2,
+      "model": "text_detection_en_ppocrv3_2023may_int8.onnx",
+      "onnx_sha256": "8264582d9cf715a1a6c4e9db723905426af77205ec44c8c0b2667db068219d1d",
+      "node_count": 234,
+      "file_size_bytes": 687662,
+      "op_types": [
+        "BatchNormalization",
+        "ConvTranspose",
+        "DequantizeLinear",
+        "HardSigmoid",
+        "QLinearAdd",
+        "QLinearConcat",
+        "QLinearConv",
+        "QLinearGlobalAveragePool",
+        "QLinearMul",
+        "QLinearSigmoid",
+        "QuantizeLinear",
+        "Relu",
+        "Resize",
+        "Squeeze"
+      ],
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "int8_requantization_outliers_amplified_by_transpose_conv",
+      "baseline_tflite_max_abs": 0.7411765307188034,
+      "previous_branch_classification": "tflite_fail",
+      "previous_branch_tflite_max_abs": 0.7411765307188034,
+      "previous_branch_duration_sec": 13.002454,
+      "current_classification": "missing_tflite_report",
+      "current_reason": "missing_tflite_report",
+      "current_tflite_max_abs": null,
+      "current_duration_sec": 8.322786331176758,
+      "current_error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/conv.cc:353 input_channel % filter_input_channel != 0 (24 != 0)Node number 1324 (CONV_2D) failed to prepare.",
+      "current_error_signature_sha256": "dc6496d4623edcfd7fd38bc68f7ee7012ab90ed239335cf73e4f045df3449def",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 518,
+        "status_counts": {
+          "changed": 2,
+          "skipped": 501,
+          "unchanged": 15
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 234476,
+          "snapshot_count": 17,
+          "state_build_count": 85
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.scalar_clamp_relu0to1",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "regression_candidate_recorded_before_fix"
+    },
+    {
+      "tier": 2,
+      "model": "alike_t_opset11_192x320.onnx",
+      "onnx_sha256": "c9825d937385f78cfc6c0a7b3fd9cddd5fa66cbb87ba3f0cfaaae3e2b3f5a6f0",
+      "node_count": 203,
+      "file_size_bytes": 701662,
+      "op_types": [
+        "Add",
+        "And",
+        "Cast",
+        "Clip",
+        "Concat",
+        "Conv",
+        "Div",
+        "Equal",
+        "Expand",
+        "Flatten",
+        "Floor",
+        "Gather",
+        "Greater",
+        "Less",
+        "MaxPool",
+        "Mod",
+        "Mul",
+        "NonZero",
+        "Not",
+        "Or",
+        "ReduceL2",
+        "Relu",
+        "Reshape",
+        "Resize",
+        "ScatterND",
+        "Shape",
+        "Sigmoid",
+        "Slice",
+        "Split",
+        "Squeeze",
+        "Sub",
+        "Transpose",
+        "Unsqueeze",
+        "Where"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 2.4020671844482422e-05,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 2.345442771911621e-05,
+      "previous_branch_duration_sec": 6.188436,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 2.345442771911621e-05,
+      "current_duration_sec": 6.044249057769775,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 6,
+          "skipped": 498,
+          "unchanged": 17
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 34651,
+          "snapshot_count": 23,
+          "state_build_count": 91
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.constant_input_cast",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "canonicalize.fold_consecutive_mul_constants",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 2,
+      "model": "tmp_alike_debug3.onnx",
+      "onnx_sha256": "5a49039fdce2949be85d681e2d8f79f14a32b9a1915c934c7da90f56d24e57b2",
+      "node_count": 203,
+      "file_size_bytes": 701662,
+      "op_types": [
+        "Add",
+        "And",
+        "Cast",
+        "Clip",
+        "Concat",
+        "Conv",
+        "Div",
+        "Equal",
+        "Expand",
+        "Flatten",
+        "Floor",
+        "Gather",
+        "Greater",
+        "Less",
+        "MaxPool",
+        "Mod",
+        "Mul",
+        "NonZero",
+        "Not",
+        "Or",
+        "ReduceL2",
+        "Relu",
+        "Reshape",
+        "Resize",
+        "ScatterND",
+        "Shape",
+        "Sigmoid",
+        "Slice",
+        "Split",
+        "Squeeze",
+        "Sub",
+        "Transpose",
+        "Unsqueeze",
+        "Where"
+      ],
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "exact_equality_mask_instability_from_float_accumulation",
+      "baseline_tflite_max_abs": 1,
+      "previous_branch_classification": "tflite_fail",
+      "previous_branch_tflite_max_abs": 1,
+      "previous_branch_duration_sec": 7.000962,
+      "current_classification": "tflite_fail",
+      "current_reason": "tflite_fail",
+      "current_tflite_max_abs": 1,
+      "current_duration_sec": 7.328405141830444,
+      "current_error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/tmp_alike_debug3_accuracy_comparison_report.json)",
+      "current_error_signature_sha256": "224de9b141fb9878c1b1ef289b511c6f87d8844c4eac617b0e897cf0ade38f75",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 6,
+          "skipped": 498,
+          "unchanged": 17
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 34651,
+          "snapshot_count": 23,
+          "state_build_count": 91
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.constant_input_cast",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "canonicalize.fold_consecutive_mul_constants",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "known_nonpass_preserved"
+    },
+    {
+      "tier": 2,
+      "model": "monodepth_op15.onnx",
+      "onnx_sha256": "f65ba5e1b84a4bf335f64ed76e60f0a150b3582385a20505863beb27402ee664",
+      "node_count": 200,
+      "file_size_bytes": 793527,
+      "op_types": [
+        "Concat",
+        "Conv",
+        "Div",
+        "Gather",
+        "Relu",
+        "Reshape",
+        "Resize",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 5.364418029785156e-07,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 1.430511474609375e-06,
+      "previous_branch_duration_sec": 5.376554,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 1.430511474609375e-06,
+      "current_duration_sec": 5.6631364822387695,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 4,
+          "skipped": 505,
+          "unchanged": 12
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 35567,
+          "snapshot_count": 16,
+          "state_build_count": 72
+        },
+        "changed_passes": [
+          {
+            "pass_id": "cleanup.duplicate_transpose_fanout",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.leading_input_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.trailing_output_transpose_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 2,
+      "model": "osnet025_Nx3x256x128.onnx",
+      "onnx_sha256": "bb8788161432d835e1c98b0171852555d13ed2598420a6007fa70095e4f5569a",
+      "node_count": 391,
+      "file_size_bytes": 855564,
+      "op_types": [
+        "Add",
+        "AveragePool",
+        "BatchNormalization",
+        "Conv",
+        "Gemm",
+        "GlobalAveragePool",
+        "MaxPool",
+        "Mul",
+        "Relu",
+        "Reshape",
+        "Sigmoid"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 1.0967254638671875e-05,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 2.193450927734375e-05,
+      "previous_branch_duration_sec": 4.236164,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 2.193450927734375e-05,
+      "current_duration_sec": 4.566892862319946,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 5,
+          "skipped": 506,
+          "unchanged": 10
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 63932,
+          "snapshot_count": 15,
+          "state_build_count": 63
+        },
+        "changed_passes": [
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.multi_branch_gate_add_tree_nhwc",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.terminal_unary_mean_reshape",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 2,
+      "model": "FastestDet.onnx",
+      "onnx_sha256": "32d8d61b1dee0c453a045cc44b9f9f599effeb0791d8aa57e39e7e37d30026bb",
+      "node_count": 210,
+      "file_size_bytes": 995972,
+      "op_types": [
+        "Add",
+        "AveragePool",
+        "Concat",
+        "Conv",
+        "Gather",
+        "MaxPool",
+        "Relu",
+        "Reshape",
+        "Resize",
+        "Sigmoid",
+        "Softmax",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 6.67572021484375e-06,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 1.3113021850585938e-05,
+      "previous_branch_duration_sec": 3.797777,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 1.3113021850585938e-05,
+      "current_duration_sec": 4.147337436676025,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 6,
+          "skipped": 502,
+          "unchanged": 13
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 40280,
+          "snapshot_count": 19,
+          "state_build_count": 66
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.constant_input_pad",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "canonicalize.constant_input_pool",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.duplicate_transpose_fanout",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.trailing_output_transpose_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 2,
+      "model": "object_detection_nanodet_2022nov_int8.onnx",
+      "onnx_sha256": "c80954e9fed45c34bc4871b74c5c34eb453cc1cc4d7eefb242c6c06acb982460",
+      "node_count": 234,
+      "file_size_bytes": 1017631,
+      "op_types": [
+        "DequantizeLinear",
+        "MaxPool",
+        "QLinearAdd",
+        "QLinearConcat",
+        "QLinearConv",
+        "QLinearLeakyRelu",
+        "QLinearSigmoid",
+        "QuantizeLinear",
+        "Reshape",
+        "Resize",
+        "Split",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 4.76837158203125e-07,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0,
+      "previous_branch_duration_sec": 6.94468,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0,
+      "current_duration_sec": 7.076566219329834,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 518,
+        "status_counts": {
+          "changed": 3,
+          "skipped": 503,
+          "unchanged": 12
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 136473,
+          "snapshot_count": 15,
+          "state_build_count": 99
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.nchw_channel_shuffle_gather",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.dequant_prelu_quantize",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_dequant_prelu_quantize",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 2,
+      "model": "pose_estimation_mediapipe_2023mar_int8bq.onnx",
+      "onnx_sha256": "04f14ecabbefb1206dbc96e242c8bfc5fa83097785904ef539ba1c9fa0a81f48",
+      "node_count": 423,
+      "file_size_bytes": 1686651,
+      "op_types": [
+        "Add",
+        "Clip",
+        "Conv",
+        "DequantizeLinear",
+        "MaxPool",
+        "Pad",
+        "Reshape",
+        "Resize",
+        "Sigmoid",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 0.0443115234375,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0.0443115234375,
+      "previous_branch_duration_sec": 5.531181,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0.0443115234375,
+      "current_duration_sec": 6.042562246322632,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 5,
+          "skipped": 505,
+          "unchanged": 11
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 38217,
+          "snapshot_count": 16,
+          "state_build_count": 46
+        },
+        "changed_passes": [
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.consecutive_inverse_singleton_reshapes",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 2,
+      "model": "yolox_nano_with_post.onnx",
+      "onnx_sha256": "e54e99b21458637253c2456c92283d07ebb86e47ca2e7e3c1d875e747704862b",
+      "node_count": 402,
+      "file_size_bytes": 3999817,
+      "op_types": [
+        "Add",
+        "Cast",
+        "Concat",
+        "Conv",
+        "Div",
+        "Exp",
+        "Gather",
+        "GatherND",
+        "MaxPool",
+        "Mul",
+        "NonMaxSuppression",
+        "Reshape",
+        "Resize",
+        "ScatterND",
+        "Sigmoid",
+        "Slice",
+        "Sqrt",
+        "Sub",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 0,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0,
+      "previous_branch_duration_sec": 6.271827,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0,
+      "current_duration_sec": 6.396512508392334,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "skipped": 503,
+          "unchanged": 18
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 105260,
+          "snapshot_count": 18,
+          "state_build_count": 87
+        },
+        "changed_passes": []
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 3,
+      "model": "yolov9_n_wholebody_with_wheelchair_post_0100_1x3x384x672.onnx",
+      "onnx_sha256": "4ab6ee84b5c928ab806aa672df6b68f1e96a1cc522d34ca385e8de702b538cb0",
+      "node_count": 694,
+      "file_size_bytes": 2409154,
+      "op_types": [
+        "Add",
+        "AveragePool",
+        "Cast",
+        "Concat",
+        "Conv",
+        "Div",
+        "Gather",
+        "GatherND",
+        "MaxPool",
+        "Mul",
+        "NonMaxSuppression",
+        "Reshape",
+        "Resize",
+        "Sigmoid",
+        "Slice",
+        "Softmax",
+        "Split",
+        "Sqrt",
+        "Sub",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 3.0517578125e-05,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 3.0517578125e-05,
+      "previous_branch_duration_sec": 7.75117,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 3.0517578125e-05,
+      "current_duration_sec": 7.6915037631988525,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 5,
+          "skipped": 497,
+          "unchanged": 19
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 125848,
+          "snapshot_count": 24,
+          "state_build_count": 87
+        },
+        "changed_passes": [
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.qkv_slice_to_split",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 2
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 3,
+      "model": "sgscsh.onnx",
+      "onnx_sha256": "6d57d4859152abcdfd864896b8e75f61d060bd8d7cb878dea78c12a8ae802ad2",
+      "node_count": 730,
+      "file_size_bytes": 2630976,
+      "op_types": [
+        "Add",
+        "BatchNormalization",
+        "Concat",
+        "Conv",
+        "MaxPool",
+        "Mul",
+        "Relu",
+        "Reshape",
+        "Resize",
+        "Split",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 3.2782554626464844e-07,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 2.5331974029541016e-07,
+      "previous_branch_duration_sec": 14.564153,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 2.5331974029541016e-07,
+      "current_duration_sec": 13.081904172897339,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 4,
+          "skipped": 513,
+          "unchanged": 4
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 127053,
+          "snapshot_count": 8,
+          "state_build_count": 79
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.nchw_channel_shuffle_gather",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.duplicate_transpose_fanout",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.trailing_output_transpose_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 3,
+      "model": "best.onnx",
+      "onnx_sha256": "16be3ee0ce333c6dde58f81d1b60bb373bcc9a93685c89d2114712586d2e0863",
+      "node_count": 516,
+      "file_size_bytes": 3386905,
+      "op_types": [
+        "Add",
+        "Concat",
+        "Conv",
+        "DequantizeLinear",
+        "Div",
+        "MatMul",
+        "MaxPool",
+        "Mul",
+        "QuantizeLinear",
+        "Relu",
+        "Reshape",
+        "Resize",
+        "Sigmoid",
+        "Slice",
+        "Softmax",
+        "Split",
+        "Sub",
+        "Transpose"
+      ],
+      "baseline_classification": "tflite_fail",
+      "baseline_reason": "qdq_rounding_outliers_amplified_by_detector_decode",
+      "baseline_tflite_max_abs": 58.7506103515625,
+      "previous_branch_classification": "tflite_fail",
+      "previous_branch_tflite_max_abs": 58.7506103515625,
+      "previous_branch_duration_sec": 12.473941,
+      "current_classification": "tflite_fail",
+      "current_reason": "tflite_fail",
+      "current_tflite_max_abs": 58.7506103515625,
+      "current_duration_sec": 11.89627480506897,
+      "current_error_signature": "tflite_fail | tflite_fail | Combined accuracy comparison report output complete! (<PATH>/artifacts/best_accuracy_comparison_report.json)",
+      "current_error_signature_sha256": "9990c93cc0bb978faa93f402b92e3799d0a2f720adbbba481346987fc955a277",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 518,
+        "status_counts": {
+          "changed": 1,
+          "skipped": 498,
+          "unchanged": 19
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 190126,
+          "snapshot_count": 20,
+          "state_build_count": 85
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.qkv_slice_to_split",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "known_nonpass_preserved"
+    },
+    {
+      "tier": 3,
+      "model": "human_segmentation_pphumanseg_2021oct_org.onnx",
+      "onnx_sha256": "7e94c1169a2e11e4d8d2c1aeccbe53344cc3dc7f0607fe598f6378502d224c65",
+      "node_count": 800,
+      "file_size_bytes": 6288026,
+      "op_types": [
+        "Add",
+        "BatchNormalization",
+        "Cast",
+        "Concat",
+        "Constant",
+        "Conv",
+        "Identity",
+        "Relu",
+        "Reshape",
+        "Resize",
+        "Shape",
+        "Slice",
+        "Softmax",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 2.384185791015625e-07,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 2.384185791015625e-07,
+      "previous_branch_duration_sec": 4.651638,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 2.384185791015625e-07,
+      "current_duration_sec": 3.7050442695617676,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 2,
+          "skipped": 518,
+          "unchanged": 1
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 41938,
+          "snapshot_count": 3,
+          "state_build_count": 28
+        },
+        "changed_passes": [
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 3,
+      "model": "deim_hgnetv2_n_wholebody28_1250query_fp16.onnx",
+      "onnx_sha256": "cb606619193119054de5837bbfc1f39d65ccb5c4827f5477d625f9d89b6c8cf0",
+      "node_count": 939,
+      "file_size_bytes": 8116189,
+      "op_types": [
+        "Add",
+        "BatchNormalization",
+        "Cast",
+        "Clip",
+        "Concat",
+        "Conv",
+        "Div",
+        "Erf",
+        "Flatten",
+        "GatherElements",
+        "Gemm",
+        "GridSample",
+        "LayerNormalization",
+        "Log",
+        "MatMul",
+        "MaxPool",
+        "Mul",
+        "Pad",
+        "ReduceMax",
+        "ReduceMean",
+        "ReduceSum",
+        "Relu",
+        "Reshape",
+        "Resize",
+        "Sigmoid",
+        "Slice",
+        "Softmax",
+        "Split",
+        "Squeeze",
+        "Sub",
+        "Tile",
+        "TopK",
+        "Transpose",
+        "Unsqueeze"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 27,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 27,
+      "previous_branch_duration_sec": 26.517533,
+      "current_classification": "pass",
+      "current_reason": "profile_acceptance:user_approved_topk_index_instability_from_near_tied_scores",
+      "current_tflite_max_abs": 27,
+      "current_duration_sec": 24.042745351791382,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": true,
+      "profile_acceptance_reason": "user_approved_topk_index_instability_from_near_tied_scores",
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 8,
+          "skipped": 483,
+          "unchanged": 30
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 153404,
+          "snapshot_count": 38,
+          "state_build_count": 90
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.constant_input_cast",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "canonicalize.maximum_zero_relu",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "canonicalize.scalar_clamp_relu0to1",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.duplicate_reshape_fanout",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.leading_input_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.qkv_slice_to_split",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "profile_accepted_pass_preserved"
+    },
+    {
+      "tier": 3,
+      "model": "htnet_1x17x2_without_norm.onnx",
+      "onnx_sha256": "1d35a8b2021edd333c4c4c19fe7c668be04f03a4795e3afd1bf21a73a3dc9adf",
+      "node_count": 620,
+      "file_size_bytes": 12409303,
+      "op_types": [
+        "Add",
+        "Concat",
+        "Conv",
+        "Div",
+        "Erf",
+        "Gather",
+        "MatMul",
+        "Mul",
+        "Pow",
+        "ReduceMean",
+        "Reshape",
+        "ScatterND",
+        "Slice",
+        "Softmax",
+        "Sqrt",
+        "Sub",
+        "Tile",
+        "Transpose",
+        "Unsqueeze"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 2.086162567138672e-07,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 1.4156103134155273e-07,
+      "previous_branch_duration_sec": 5.633286,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 1.4156103134155273e-07,
+      "current_duration_sec": 5.8805992603302,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 3,
+          "skipped": 505,
+          "unchanged": 13
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 70807,
+          "snapshot_count": 16,
+          "state_build_count": 86
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.constant_input_cast",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.qkv_slice_to_split",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 3,
+      "model": "latest.opset17.head2.onnx",
+      "onnx_sha256": "c1a1dd2b17ec9272caf217ab53ba37dc015dbaf1e5c58884098d1a4f92e6d4f2",
+      "node_count": 646,
+      "file_size_bytes": 15085631,
+      "op_types": [
+        "Abs",
+        "Add",
+        "Clip",
+        "Concat",
+        "Conv",
+        "DepthToSpace",
+        "Div",
+        "MatMul",
+        "Mul",
+        "Neg",
+        "Pad",
+        "ReduceMax",
+        "ReduceMin",
+        "Relu",
+        "Reshape",
+        "Resize",
+        "Sigmoid",
+        "Softmax",
+        "Sub",
+        "Transpose",
+        "Unsqueeze"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 0.0005334615707397461,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0.0005331039428710938,
+      "previous_branch_duration_sec": 18.71532,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0.0005331039428710938,
+      "current_duration_sec": 18.543717861175537,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 9,
+          "skipped": 507,
+          "unchanged": 5
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 129143,
+          "snapshot_count": 14,
+          "state_build_count": 86
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.scalar_clamp_relu0to1",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.duplicate_transpose_fanout",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.nhwc_pre_concat_direct",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.pad_prepost_nhwc",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_reshape_concat_nhwc",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_passthrough",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 3,
+      "model": "LINEA.onnx",
+      "onnx_sha256": "ed8577fb1fb7091045a7741a172ee56989a39253a9bc124cd65501285a968e13",
+      "node_count": 906,
+      "file_size_bytes": 16500158,
+      "op_types": [
+        "Abs",
+        "Add",
+        "Cast",
+        "Concat",
+        "Conv",
+        "Cos",
+        "Div",
+        "Gather",
+        "GatherElements",
+        "Gelu",
+        "Gemm",
+        "GridSample",
+        "InstanceNormalization",
+        "LayerNormalization",
+        "MatMul",
+        "MaxPool",
+        "Mul",
+        "ReduceMax",
+        "ReduceMean",
+        "ReduceSum",
+        "Relu",
+        "Reshape",
+        "Resize",
+        "Sigmoid",
+        "Sin",
+        "Slice",
+        "Softmax",
+        "Split",
+        "Sub",
+        "Tile",
+        "TopK",
+        "Transpose",
+        "Unsqueeze",
+        "Where"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 0.002297189086675644,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0.002297189086675644,
+      "previous_branch_duration_sec": 25.755733,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0.002297189086675644,
+      "current_duration_sec": 21.235498189926147,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 6,
+          "skipped": 479,
+          "unchanged": 36
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 117726,
+          "snapshot_count": 42,
+          "state_build_count": 90
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.constant_input_cast",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "canonicalize.maximum_zero_relu",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.duplicate_reshape_fanout",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.qkv_slice_to_split",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 3,
+      "model": "imageclassifier.onnx",
+      "onnx_sha256": "df654d20d286838bb4873c4adaf6b55c1d1e3e243c64fd92ed06019bc3c83858",
+      "node_count": 499,
+      "file_size_bytes": 18910393,
+      "op_types": [
+        "Add",
+        "AveragePool",
+        "BatchNormalization",
+        "Concat",
+        "Conv",
+        "Gather",
+        "Gemm",
+        "MaxPool",
+        "Relu",
+        "Reshape",
+        "Shape",
+        "Slice",
+        "Unsqueeze"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 5.0067901611328125e-06,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 6.67572021484375e-06,
+      "previous_branch_duration_sec": 8.349592,
+      "current_classification": "missing_tflite_report",
+      "current_reason": "missing_tflite_report",
+      "current_tflite_max_abs": null,
+      "current_duration_sec": 8.39348578453064,
+      "current_error_signature": "missing_tflite_report | missing_tflite_report | RuntimeError: tflite/kernels/conv.cc:353 input_channel % filter_input_channel != 0 (192 != 0)Node number 454 (CONV_2D) failed to prepare.",
+      "current_error_signature_sha256": "2a5dabdda7371db1c90df298e9656c38561666a319065302de73df31fdd213ba",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 519,
+        "status_counts": {
+          "changed": 8,
+          "skipped": 506,
+          "unchanged": 5
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 96962,
+          "snapshot_count": 13,
+          "state_build_count": 81
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.constant_input_cast",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.duplicate_transpose_fanout",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.concat_unary_conv_nhwc",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_passthrough",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "regression_candidate_recorded_before_fix"
+    },
+    {
+      "tier": 4,
+      "model": "mobileformer.onnx",
+      "onnx_sha256": "d11f1e9379d0483bfd5df188d6d3ac6e5fb046679e39c95b8d506e8c64b4261b",
+      "node_count": 1087,
+      "file_size_bytes": 13853167,
+      "op_types": [
+        "Add",
+        "BatchNormalization",
+        "Clip",
+        "Concat",
+        "Conv",
+        "Div",
+        "Erf",
+        "Gather",
+        "Gemm",
+        "GlobalAveragePool",
+        "MatMul",
+        "Max",
+        "Mul",
+        "Pow",
+        "ReduceMean",
+        "Relu",
+        "Reshape",
+        "Softmax",
+        "Split",
+        "Sqrt",
+        "Sub",
+        "Transpose",
+        "Unsqueeze"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": null,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0.00011217594146728516,
+      "previous_branch_duration_sec": 9.72913,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 0.00011217594146728516,
+      "current_duration_sec": 8.132811784744263,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 3,
+          "skipped": 506,
+          "unchanged": 12
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 130791,
+          "snapshot_count": 15,
+          "state_build_count": 84
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.fold_consecutive_mul_constants",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 4,
+      "model": "parseq-tiny.onnx",
+      "onnx_sha256": "d5665560b060d1c957a30de731ddffd1855e40e45d861d3c1ba1609d60ceee18",
+      "node_count": 1096,
+      "file_size_bytes": 24232052,
+      "op_types": [
+        "Add",
+        "ArgMax",
+        "Cast",
+        "Concat",
+        "Conv",
+        "CumSum",
+        "Div",
+        "Equal",
+        "Erf",
+        "Expand",
+        "Gather",
+        "Gemm",
+        "Greater",
+        "MatMul",
+        "Mul",
+        "Pow",
+        "ReduceMean",
+        "Reshape",
+        "ScatterND",
+        "Slice",
+        "Softmax",
+        "Split",
+        "Sqrt",
+        "Squeeze",
+        "Sub",
+        "Transpose",
+        "Where"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": null,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 1.52587890625e-05,
+      "previous_branch_duration_sec": 15.038455,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 1.52587890625e-05,
+      "current_duration_sec": 9.814645767211914,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 2,
+          "skipped": 501,
+          "unchanged": 18
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 126670,
+          "snapshot_count": 20,
+          "state_build_count": 86
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.constant_input_cast",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.qkv_slice_to_split",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 4,
+      "model": "campp_vin.onnx",
+      "onnx_sha256": "10e0b6ec5063516640dcfe22e14283282a70524d203a03158bbee1fe2cc292de",
+      "node_count": 1463,
+      "file_size_bytes": 29437940,
+      "op_types": [
+        "Add",
+        "AveragePool",
+        "BatchNormalization",
+        "Cast",
+        "Concat",
+        "Conv",
+        "Div",
+        "Equal",
+        "Expand",
+        "Gather",
+        "Mul",
+        "ReduceMean",
+        "ReduceProd",
+        "Relu",
+        "Reshape",
+        "Shape",
+        "Sigmoid",
+        "Slice",
+        "Sqrt",
+        "Squeeze",
+        "Sub",
+        "Transpose",
+        "Unsqueeze",
+        "Where"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": 3.3020973205566406e-05,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 3.3020973205566406e-05,
+      "previous_branch_duration_sec": 20.075323,
+      "current_classification": "pass",
+      "current_reason": "",
+      "current_tflite_max_abs": 3.3020973205566406e-05,
+      "current_duration_sec": 19.963829517364502,
+      "current_error_signature": "",
+      "current_error_signature_sha256": "",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": {
+        "event_count": 521,
+        "status_counts": {
+          "changed": 6,
+          "skipped": 496,
+          "unchanged": 19
+        },
+        "totals": {
+          "fingerprint_count": 0,
+          "preflight_operators_visited": 207504,
+          "snapshot_count": 25,
+          "state_build_count": 90
+        },
+        "changed_passes": [
+          {
+            "pass_id": "canonicalize.constant_input_cast",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "cleanup.consecutive_reshape_passthrough",
+            "changed_count": 2
+          },
+          {
+            "pass_id": "layout.singleton_channel_transpose_as_reshape",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_chain_cleanup",
+            "changed_count": 1
+          },
+          {
+            "pass_id": "layout.transpose_unary_fanout_bridge",
+            "changed_count": 1
+          }
+        ]
+      },
+      "assessment": "pass_preserved"
+    },
+    {
+      "tier": 4,
+      "model": "hybridnets_384x640_sim.onnx",
+      "onnx_sha256": "ebb58b89cf7804bd2d75f89e74652c9dc1cb3aeedc271eb768dd9c60c4d42714",
+      "node_count": 1118,
+      "file_size_bytes": 54688127,
+      "op_types": [
+        "Add",
+        "Concat",
+        "Conv",
+        "GlobalAveragePool",
+        "MaxPool",
+        "Mul",
+        "Pad",
+        "Reshape",
+        "Resize",
+        "Sigmoid",
+        "Transpose"
+      ],
+      "baseline_classification": "pass",
+      "baseline_reason": "",
+      "baseline_tflite_max_abs": null,
+      "previous_branch_classification": "pass",
+      "previous_branch_tflite_max_abs": 0.0002593994140625,
+      "previous_branch_duration_sec": 29.350958,
+      "current_classification": "timeout",
+      "current_reason": "timeout_after_45s",
+      "current_tflite_max_abs": null,
+      "current_duration_sec": 45.17418718338013,
+      "current_error_signature": "timeout | timeout_after_45s",
+      "current_error_signature_sha256": "962dd000edb9824ce679c0d265b7d459d54bab047c61b36f660ef4854bf1539c",
+      "accepted_by_profile": false,
+      "profile_acceptance_reason": null,
+      "swap_detected": false,
+      "peak_swap_kib": 0,
+      "pass_metrics": null,
+      "assessment": "quick_ceiling_timeout_candidate_recorded_before_fix"
+    }
+  ]
+}
