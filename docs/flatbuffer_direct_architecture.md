@@ -1342,6 +1342,55 @@ fixtures, and complete architecture suite pass together with
 sequentially with `3 passed in 4.01s`, and YuNet reproduces all five fixed
 artifact hashes.
 
+PReLU transpose passthrough is owned by
+`passes/prelu_passthrough_layout.py`. Its former roughly 250-line lowerer
+helper is a thin compatibility dispatcher at all three unchanged production
+positions, each receiving Session LayoutState. The statistic key and the
+historical prune-on-zero-match behavior are unchanged.
+
+The resolver proves a typed rank-three-or-higher source Transpose, one PReLU
+data edge, one or more typed inverse post adapters, exact producer/consumer
+slots and graph order, static shape and independent dynamic signature, dtype,
+per-tensor quantization, provenance, public boundaries, and known logical and
+physical layout transitions. Unrelated users of the pre-Transpose result keep
+that adapter. Post aliases are grouped by exact downstream input slot and one
+public or consumed alias becomes the source-layout representative.
+
+Alpha selection preserves the former priority: inverse-layout remap for an
+equal-rank parameter, the original value, then the special rank-three channel
+form. Every candidate must broadcast to the concrete source shape and its
+dynamic signature. Exclusive parameters change in place; shared parameters
+receive one deterministic `_nhwc` copy with the original declared/NumPy dtype,
+quantization, layout, and ONNX tensor provenance. Scalar, rank-three,
+rank-four, and ambiguous equal-shape forms are supported.
+
+When the old transposed PReLU tensor remains observable, one local adapter is
+retained. An exclusively owned post permutation and its existing adapter are
+reused, preserving historical correspondence lineage. A shared post
+permutation is never changed; the adapter uses the proven pre permutation
+instead. INT32 and INT64 buffers retain their dtype. This closes the former
+path that overwrote a shared post buffer with an INT32 opposite permutation.
+
+The immutable plan captures the alpha update, every input/output rewrite,
+metadata update, removal, tensor/operator contract, and public list, then is
+fully re-resolved before apply. One differential graph index performs all
+rewiring and compaction. LayoutState changes only after acceptance. Bounded
+graph-order candidates and an optional rewrite limit replace the raw
+fixed-point loop.
+
+Twenty-eight focused cases cover typed static/dynamic rank-three and rank-four
+views, alpha remap/reuse/copy-on-write, scalar and ambiguous parameters,
+pre-adapter fan-out, multiple/public/legacy aliases, repeated slots, shared
+post permutations, numerical equivalence, limits, idempotence, GraphIndex,
+LayoutState, and fifteen transactional no-op variants. Five representative
+models reach the helper six times each. YuNet, FastestDet, HumanSeg, and OSNet
+remain zero-match; FastestDet retains its zero-match unused-tensor prune; and
+SiNet retains two 23-rewrite invocations. Its five artifacts are byte-identical
+to the preceding checkpoint. Adjacent owners, active fixtures, and the full
+architecture suite pass with `454 passed in 50.22s`; TensorFlow-blocked
+direct/default/`-cotof` checks pass sequentially with `3 passed in 4.38s`, and
+YuNet reproduces all five fixed artifact hashes.
+
 The terminal hard-activation recovery and its immediately following optional
 generic Transpose cleanup share one lazy `ModelIRPassStateScope`. The hard
 runner keeps its exact late configuration: HardSwish is disabled, both

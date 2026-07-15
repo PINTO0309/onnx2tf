@@ -8,13 +8,13 @@ closed, and no open pull request tracks this branch. This checkpoint is ready
 for the next Goal continuation. Work continues through coherent commits and
 pushes without opening a pull request.
 
-The latest implementation unit moves pseudo-expanded LeakyReLU transpose
-passthrough into the TensorFlow-free indexed
-`passes/leakyrelu_passthrough_layout.py` owner. Its former roughly 240-line
-full-map fixed-point helper is a thin dispatcher at its unchanged position
-between center/size/offset and PReLU. The owner proves both activation branches,
-the ordered Sub join, all aliases and legacy boundaries before mutation, then
-runs the existing pseudo-LeakyReLU fusion on the same maintained graph index.
+The latest implementation unit moves PReLU transpose passthrough into the
+TensorFlow-free indexed `passes/prelu_passthrough_layout.py` owner. Its former
+roughly 250-line full-map fixed-point helper is a thin dispatcher at all three
+unchanged production positions. The owner proves the boundary views, PReLU,
+alpha remap, aliases, and legacy boundaries before mutation. It preserves the
+historical SiNet result and correspondence lineage without mutating a shared
+post-permutation buffer.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -553,6 +553,70 @@ and `schema_generated.py`
 `b3a49ac25835e627fe31b92eb5df2b6d88593a571f1175b366ef7aab8e264ce8`.
 Temporary outputs were removed and no Tier corpus was run.
 
+### PReLU passthrough continuation
+
+The raw `_optimize_prelu_transpose_passthrough_chains` implementation is now a
+thin compatibility dispatcher over
+`passes/prelu_passthrough_layout.py`. Its three ordered production positions,
+public name, statistic key, and zero-match tensor pruning remain unchanged.
+Every call now receives Session LayoutState.
+
+The resolver proves one typed rank-three-or-higher input Transpose, exactly one
+PReLU data consumer, at least one typed inverse post-Transpose, unique
+producers, graph order, exact consumer slots, static shape, independently
+dynamic signature, dtype, per-tensor quantization, provenance, public
+boundaries, and known logical/physical layout transitions. Other consumers of
+the pre-Transpose result are permitted and retain that adapter. All post aliases
+are grouped by exact downstream slot, including repeated inputs, and one public
+alias is preferred as the source-layout representative.
+
+Alpha selection retains the historical priority: rank-equal inverse-layout
+transpose first, original data second, and the rank-three NCHW channel form
+third. Every selected value must broadcast to both the concrete source view
+and its dynamic signature. An exclusively owned alpha changes in place; a
+shared alpha receives one deterministic `_nhwc` copy that preserves declared
+and NumPy dtype, quantization, layout metadata, and ONNX provenance. Scalars,
+rank-three/rank-four channel parameters, and ambiguous equal static shapes are
+covered.
+
+A legacy consumer or public use of the old transposed PReLU result retains one
+local adapter. When its permutation buffer is exclusively owned, that existing
+adapter and buffer are reused so the historical correspondence lineage is
+unchanged. If the post permutation is shared, the adapter instead uses the
+immutable pre-permutation and leaves every unrelated use untouched. INT32 and
+INT64 buffers retain their dtype. The raw helper could overwrite a shared post
+buffer with an INT32 opposite permutation.
+
+The complete immutable plan is resolved a second time before apply. One
+differential ModelIRGraphIndex rewires PReLU and alias slots, compacts only
+proven adapters, and retains any required local boundary. LayoutState changes
+only after acceptance. Graph-ordered Transpose candidates plus an optional
+rewrite limit replace the raw unbounded fixed-point loop.
+
+Pre- and post-extraction characterization ran sequentially on YuNet,
+FastestDet, HumanSeg, OSNet, and SiNet. Each model reached the helper six times.
+The first four models remained zero-match; FastestDet also retained the former
+zero-match 519-to-518 tensor prune. SiNet retained two active invocations of 23
+rewrites each. Its float32, float16, correspondence, and both schema artifacts
+are byte-identical to `5762128f`, including float32
+`40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`
+and correspondence
+`24c423ea51b26b178d3764be027855e797bbf9b5ba1930810d2e1dbe281d8e25`.
+
+The dedicated suite passes with `28 passed`. It covers static/dynamic rank
+three and four, INT32/INT64 permutations, in-place and copy-on-write alpha,
+scalar and ambiguous alpha forms, pre fan-out, multiple/public/legacy post
+boundaries, repeated alias slots, shared post permutations, numerical
+equivalence, candidate limits, idempotence, GraphIndex, LayoutState, and
+fifteen unsafe transactional no-op variants. The PReLU owner, adjacent
+activation/layout owners, active fixtures, and complete architecture suite
+pass together with `454 passed in 50.22s`.
+
+TensorFlow-import-blocked explicit direct, default direct, and `-cotof`
+conversion pass sequentially with `3 passed in 4.38s`. One sequential YuNet
+conversion reproduced all five fixed hashes. Temporary worktrees and outputs
+were removed and no Tier corpus was run.
+
 ## Completed work
 
 The merged `fb-refactor4` checkpoints included:
@@ -570,7 +634,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 133 coherent implementation
+The current `fb-refactor5` work contains 134 coherent implementation
 continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
@@ -900,6 +964,10 @@ continuations:
   dedicated indexed owner, preserves public and legacy boundaries with the
   pre-permutation instead of mutating shared post constants, and hands the
   maintained graph index directly to the existing native-activation fusion.
+- the current checkpoint moves PReLU passthrough to a dedicated indexed owner,
+  preserves alpha remapping and zero-match pruning, uses copy-on-write for
+  shared alpha, retains exact SiNet correspondence lineage, and never mutates
+  a shared post-permutation buffer.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -918,8 +986,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The latest implementation checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/leakyrelu_passthrough_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_leakyrelu_passthrough_layout.py`;
+- `onnx2tf/tflite_builder/passes/prelu_passthrough_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_prelu_passthrough_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -4992,6 +5060,29 @@ zero-passthrough/zero-fusion invocations with unchanged counts. One sequential
 YuNet conversion reproduced all five fixed hashes; temporary outputs were
 removed. No Tier corpus was run.
 
+The PReLU passthrough checkpoint passed its 28 dedicated cases. The new owner,
+adjacent Swish/GELU/center/LeakyReLU owners, quantized-Swish owner, active
+fixtures, and the complete architecture suite passed together:
+
+```text
+454 passed in 50.22s
+```
+
+TensorFlow import blocking was exercised sequentially for explicit direct,
+default direct, and direct `-cotof` conversion:
+
+```text
+3 passed in 4.38s
+```
+
+Scoped Ruff, syntax compilation, and `git diff --check` pass. Sequential
+pre/post characterization preserved six invocations on each of the five short
+representatives: four models remained zero-match and SiNet retained 23+23
+rewrites. FastestDet retained its zero-match 519-to-518 tensor prune. One
+sequential YuNet conversion reproduced all five fixed hashes. SiNet also
+reproduced its fixed float32, float16, correspondence, and schema hashes.
+Temporary worktrees and outputs were removed. No Tier corpus was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -5035,10 +5126,11 @@ the generic direct bridge has its own indexed owner and preserves all three
 production positions. The five short representatives remain zero-match for
 the bridge, and YuNet retains byte-identical artifacts.
 
-The unquantized pseudo-Swish, tanh-GELU, center/size/offset, and pseudo-
-LeakyReLU recovery helpers are now indexed at their unchanged production
-positions. The adjacent raw PReLU helper remains an independent candidate and
-must be characterized separately before extraction.
+The unquantized pseudo-Swish, tanh-GELU, center/size/offset, pseudo-LeakyReLU,
+and PReLU recovery helpers are now indexed at their unchanged production
+positions. The following raw
+`_optimize_transpose_elementwise_concat_conv_nhwc_groups` helper remains an
+independent candidate and must be characterized before extraction.
 
 The broader fixed-pipeline, remaining artifact-plan coverage, artifact-matrix,
 optional TensorFlow, PyTorch/TorchScript/Dynamo/ExportedProgram, and full Tier
@@ -5049,11 +5141,11 @@ verification gates.
 
 1. Confirm `git status --short --branch` is clean and local `fb-refactor5`
    matches `origin/fb-refactor5`.
-2. Characterize the adjacent raw activation recovery helpers in their current
-   order, beginning with PReLU immediately after indexed LeakyReLU. Select one
-   bounded semantic owner only after confirming its runtime match set, alpha
-   layout/broadcast variants, and interaction with the following recovery
-   helper.
+2. Characterize
+   `_optimize_transpose_elementwise_concat_conv_nhwc_groups` at its current
+   position immediately after indexed PReLU. Select a bounded semantic owner
+   only after fixing its runtime match set, connected-group boundary, and
+   interaction with the following SPP recovery helper.
 3. Treat `_optimize_transpose_swish_qdq_nhwc_islands` as a thin 69-line
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
