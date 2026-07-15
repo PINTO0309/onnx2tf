@@ -8,15 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the tencoder residual-gate Conv1D-shim
-rewrite to `passes/conv1d_tencoder_layout.py`. The new owner reuses the exact
-flattened InstanceNormalization prefix contract, resolves both residual
-branches and the Slice/Logistic gate from one `ModelIRGraphIndex`, and plans
-all edge, metadata, option, constant, bridge, and removal changes before
-mutation. Shared integer and floating constants are cloned deterministically;
-multi-consumer NCW compatibility bridges are inserted before their earliest
-consumer instead of being appended out of topological order. The former
-723-line lowerer helper is now an 11-line compatibility adapter.
+The latest implementation unit moves the Conv1D-shim
+Transpose/Squeeze/unary/BatchMatMul rewrite to
+`passes/conv1d_batchmatmul_layout.py`. One `ModelIRGraphIndex` now proves the
+complete source, permutation, squeeze, unary-chain, left-operand, matrix-shape,
+dtype, quantization, public-boundary, and operator-order contracts. Channel
+squeeze keeps `adjX`; either supported spatial squeeze swaps the retained
+rank-three metadata and toggles `adjX`. The former 223-line lowerer helper is
+now an 11-line compatibility adapter.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -38,7 +37,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains ninety-three coherent continuations:
+The current `fb-refactor5` work contains ninety-four coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -243,9 +242,11 @@ The current `fb-refactor5` work contains ninety-three coherent continuations:
 - `54384df0` moves flattened InstanceNormalization Conv1D layout
   canonicalization to a dedicated indexed owner with complete decomposition
   and shared-constant transactions;
-- the current checkpoint shares that exact normalization prefix with a
+- `6be406ec` shares that exact normalization prefix with a
   dedicated indexed tencoder residual-gate owner, makes the complete dual-
-  branch rewrite transactional, and keeps compatibility bridges topological.
+  branch rewrite transactional, and keeps compatibility bridges topological;
+- the current checkpoint moves the adjacent Squeeze/unary/BatchMatMul layout
+  rewrite to an indexed owner with explicit axis-to-adjoint semantics.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -2385,6 +2386,36 @@ passed together with `520 passed`. TensorFlow-import-blocked direct and
 with `3 passed`. Ruff, syntax compilation, and `git diff --check` passed. No
 Tier corpus conversion was run.
 
+The indexed Conv1D BatchMatMul checkpoint removes the former 223-line helper
+and its repeated whole-graph consumer-map rebuild. Its dedicated owner accepts
+only exact typed `[0,3,1,2]` Transpose roots, one explicit singleton Squeeze,
+an optional strict supported-unary chain, and the left input of one
+BatchMatMul. Source and intermediate shapes/signatures, producer order,
+consumer multiplicity, public boundaries, dtype transitions, per-tensor
+quantization, right operand, contracted dimensions, batch broadcasting, and
+output shape are all validated before mutation.
+
+Squeezing the transposed channel axis maps to the original NHWC channel axis
+without changing rank-three order or `adjX`. Squeezing either supported
+spatial axis maps back to the corresponding NHWC spatial axis, swaps the last
+two dimensions of Squeeze and unary metadata, and toggles `adjX`; the effective
+matrix and BatchMatMul output remain identical. The original unary and
+BatchMatMul objects retain all unrelated options, provenance, version, and
+axis semantics, and the single boundary Transpose is removed through the
+maintained index.
+
+Focused coverage includes twelve exact NumPy equivalence variants across all
+three axes, both `adjX` values, and public/produced sources; zero-length unary
+chains, rank-two right operands, `adjY`; all sixteen unary types; one dynamic
+batch signature; fifteen unsafe transactional no-ops; the preflight/no-index
+path; and semantic ownership with `49 passed`. The five
+indexed Conv1D suites, architecture, core, pass-efficiency, three established
+Transpose-Unary suites, and eight adjacent direct-builder characterizations
+passed together with `569 passed`. TensorFlow-import-blocked direct and
+`-cotof` plus the sequential quantization/evaluation/coverage smoke passed
+with `3 passed`. Ruff, syntax compilation, and `git diff --check` passed. No
+Tier corpus conversion was run.
+
 The focused indexed and architecture tests pass Ruff normally. The changed
 legacy characterization file passes with its pre-existing `F401` findings
 scoped out, and the lowerer passes with its pre-existing `F401` and `F841`
@@ -2436,10 +2467,10 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent 223-line
-   `_optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains` family next.
-   Preserve its unary/axis/adjoint semantics while separating matching from
-   its graph and tensor mutations before assigning an indexed owner.
+3. Audit the adjacent 193-line
+   `_optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input`
+   family next. Separate its BatchMatMul/ADD layout proof, constant handling,
+   and deconvolution-input adapter removal into a bounded indexed plan.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

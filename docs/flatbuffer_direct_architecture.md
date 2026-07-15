@@ -4832,6 +4832,33 @@ order, unlike the legacy helper's unconditional append. Exact NumPy
 differential tests cover simple and legacy left branches with and without
 fan-out, and the sole production call supplies the Session LayoutState.
 
+Conv1D-shim Squeeze/unary/BatchMatMul canonicalization is owned by
+`passes/conv1d_batchmatmul_layout.py`. The owner accepts one typed
+NHWC-to-NCHW Transpose, an explicit singleton Squeeze, zero or more strict
+supported unary operators, and a left-hand BatchMatMul tail. Every changed
+intermediate is private and single-consumer; the source may be a public input,
+a constant, or a uniquely produced earlier tensor. The right operand and
+BatchMatMul output are also validated for unique producers, graph order,
+dtype, per-tensor quantization, contracted dimensions, broadcast batch shape,
+and concrete output shape.
+
+The exact axis mapping determines the only permitted rewrite. Removing a
+transposed channel singleton yields the same `[N,H,W]` rank-three order, so
+`adjX` is preserved. Removing either supported spatial singleton changes
+`[N,C,L]` to `[N,L,C]`; all Squeeze and unary shape/signature metadata swaps
+its last two axes and `adjX` is toggled. In both cases the effective left
+matrix, right operand, and BatchMatMul output shape are proved identical before
+mutation. The batch dimension may retain a dynamic signature.
+
+The Squeeze consumes the original NHWC tensor at the mapped source axis, the
+original unary and BatchMatMul objects retain their unrelated options and ONNX
+provenance, and the boundary Transpose is removed through the same
+`ModelIRGraphIndex`. Floating or produced permutation constants, fan-out,
+public changed intermediates, right-operand placement, shape/dtype/grid
+mismatches, per-axis quantization, duplicate producers, and backward consumers
+are complete no-ops. The sole production call supplies the Session
+LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

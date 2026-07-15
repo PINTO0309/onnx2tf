@@ -198,6 +198,9 @@ from onnx2tf.tflite_builder.passes.conv1d_instance_norm_layout import (
 from onnx2tf.tflite_builder.passes.conv1d_tencoder_layout import (
     _optimize_tencoder_add_expand_transpose_conv_nhwc_chains as _optimize_tencoder_add_expand_transpose_conv_nhwc_chains_pass,
 )
+from onnx2tf.tflite_builder.passes.conv1d_batchmatmul_layout import (
+    _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains as _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.dequant_concat_quantize_layout import (
     _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains as _optimize_transpose_pre_dequant_concat_quantize_post_nhwc_chains_pass,
     run_dequant_concat_quantize_layout_cleanup,
@@ -19923,227 +19926,15 @@ def _optimize_tencoder_add_expand_transpose_conv_nhwc_chains(
 
 def _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    """
-    Remove NHWC->NCHW transpose before SQUEEZE->UNARY->BATCH_MATMUL tails.
-
-    Target:
-      x_nhwc --T(0,3,1,2)--> x_nchw --SQUEEZE(axis=s)--> s3 --(UNARY)*--> u3
-      u3 --BATCH_MATMUL(adjX=old_adj_x, adjY=*)--> y
-
-    Rewrite:
-      x_nhwc --SQUEEZE(axis=perm[s])--> s3' --(UNARY)*--> u3'
-      u3' --BATCH_MATMUL(adjX=new_adj_x, adjY=*)--> y
-
-    where `new_adj_x` is chosen so matmul semantics are preserved.
-    """
-    rewritten = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    unary_passthrough_ops = {
-        "RELU",
-        "RELU6",
-        "RELU_0_TO_1",
-        "LEAKY_RELU",
-        "LOGISTIC",
-        "TANH",
-        "ABS",
-        "NEG",
-        "SQRT",
-        "EXP",
-        "CAST",
-        "FLOOR",
-        "CEIL",
-        "ROUND",
-        "HARD_SWISH",
-    }
-
-    def _shape_list(name: str) -> Optional[List[int]]:
-        tensor = model_ir.tensors.get(str(name), None)
-        if tensor is None or tensor.shape is None:
-            return None
-        return [int(v) for v in list(tensor.shape)]
-
-    def _dims_compatible(a: int, b: int) -> bool:
-        if int(a) < 0 or int(b) < 0:
-            return True
-        return int(a) == int(b)
-
-    def _shape_compatible(a: List[int], b: List[int]) -> bool:
-        if len(a) != len(b):
-            return False
-        return all(_dims_compatible(int(x), int(y)) for x, y in zip(a, b))
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-        model_outputs = set(str(v) for v in model_ir.outputs)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
-                continue
-
-            pre_input_name = str(pre_op.inputs[0])
-            pre_output_name = str(pre_op.outputs[0])
-            if pre_output_name in model_outputs:
-                continue
-
-            pre_users = [int(v) for v in consumers.get(pre_output_name, [])]
-            if len(pre_users) != 1:
-                continue
-            squeeze_idx = int(pre_users[0])
-            squeeze_op = model_ir.operators[int(squeeze_idx)]
-            if (
-                str(squeeze_op.op_type) != "SQUEEZE"
-                or len(squeeze_op.inputs) != 1
-                or len(squeeze_op.outputs) != 1
-                or str(squeeze_op.inputs[0]) != pre_output_name
-            ):
-                continue
-
-            squeeze_out_name = str(squeeze_op.outputs[0])
-            if squeeze_out_name in model_outputs:
-                continue
-
-            # Collect optional strict unary chain.
-            chain_indices: List[int] = []
-            chain_output_names: List[str] = []
-            current_name = str(squeeze_out_name)
-            while True:
-                current_users = [int(v) for v in consumers.get(current_name, [])]
-                if len(current_users) != 1:
-                    break
-                unary_idx = int(current_users[0])
-                unary_op = model_ir.operators[int(unary_idx)]
-                if (
-                    str(unary_op.op_type) not in unary_passthrough_ops
-                    or len(unary_op.inputs) != 1
-                    or len(unary_op.outputs) != 1
-                    or str(unary_op.inputs[0]) != current_name
-                ):
-                    break
-                unary_out_name = str(unary_op.outputs[0])
-                if unary_out_name in model_outputs:
-                    break
-                chain_indices.append(int(unary_idx))
-                chain_output_names.append(str(unary_out_name))
-                current_name = str(unary_out_name)
-
-            tail_users = [int(v) for v in consumers.get(current_name, [])]
-            if len(tail_users) != 1:
-                continue
-            matmul_idx = int(tail_users[0])
-            matmul_op = model_ir.operators[int(matmul_idx)]
-            if (
-                str(matmul_op.op_type) != "BATCH_MATMUL"
-                or len(matmul_op.inputs) != 2
-                or len(matmul_op.outputs) != 1
-            ):
-                continue
-            matmul_inputs = [str(v) for v in list(matmul_op.inputs)]
-            if current_name == matmul_inputs[0]:
-                matmul_data_input_index = 0
-            elif current_name == matmul_inputs[1]:
-                matmul_data_input_index = 1
-            else:
-                continue
-            # Keep this rewrite strict to avoid changing rhs transpose semantics.
-            if int(matmul_data_input_index) != 0:
-                continue
-
-            pre_input_shape = _shape_list(pre_input_name)
-            pre_output_shape = _shape_list(pre_output_name)
-            squeeze_shape = _shape_list(squeeze_out_name)
-            if (
-                pre_input_shape is None
-                or pre_output_shape is None
-                or squeeze_shape is None
-                or len(pre_input_shape) != 4
-                or len(pre_output_shape) != 4
-                or len(squeeze_shape) != 3
-            ):
-                continue
-
-            # Determine squeeze axis in transposed domain.
-            squeeze_options = dict(squeeze_op.options) if isinstance(squeeze_op.options, dict) else {}
-            squeeze_axis: Optional[int] = None
-            if "squeezeDims" in squeeze_options:
-                raw_axes = np.asarray(squeeze_options.get("squeezeDims", []), dtype=np.int64).reshape(-1)
-                normalized_axes = _normalize_squeeze_axes_for_rank(
-                    [int(v) for v in raw_axes.tolist()],
-                    4,
-                )
-                if normalized_axes is None or len(normalized_axes) != 1:
-                    continue
-                squeeze_axis = int(normalized_axes[0])
-            else:
-                continue
-
-            # Old order (after transpose+squeeze): [in[perm[j]] for j != squeeze_axis]
-            old_dim_indices = [
-                int(perm_nhwc_to_nchw[j])
-                for j in range(4)
-                if int(j) != int(squeeze_axis)
-            ]
-            src_axis = int(perm_nhwc_to_nchw[int(squeeze_axis)])
-            new_dim_indices = [int(i) for i in range(4) if int(i) != int(src_axis)]
-
-            # Only support identity or last-two swap; BATCH_MATMUL adjX can express this.
-            old_adj_x = bool(dict(matmul_op.options).get("adjX", False)) if isinstance(matmul_op.options, dict) else False
-            if old_dim_indices == new_dim_indices:
-                perm_rank3: Optional[List[int]] = None
-                new_adj_x = bool(old_adj_x)
-            elif old_dim_indices == [int(new_dim_indices[0]), int(new_dim_indices[2]), int(new_dim_indices[1])]:
-                perm_rank3 = [0, 2, 1]
-                new_adj_x = bool(not old_adj_x)
-            else:
-                continue
-
-            expected_old_squeeze_shape = [int(pre_input_shape[idx]) for idx in old_dim_indices]
-            if not _shape_compatible(squeeze_shape, expected_old_squeeze_shape):
-                continue
-            if int(pre_input_shape[src_axis]) >= 0 and int(pre_input_shape[src_axis]) != 1:
-                continue
-
-            # Rewire squeeze to consume NHWC tensor and remove pre-transpose.
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=squeeze_op,
-                new_inputs=[pre_input_name],
-            )
-            squeeze_options["squeezeDims"] = [int(src_axis)]
-            squeeze_op.options = squeeze_options
-
-            # Adjust unary metadata to the new rank-3 axis order.
-            if perm_rank3 is not None:
-                _permute_tensor_metadata_if_rank_matches(
-                    model_ir.tensors.get(squeeze_out_name, None),
-                    perm_rank3,
-                )
-                for chain_out_name in chain_output_names:
-                    _permute_tensor_metadata_if_rank_matches(
-                        model_ir.tensors.get(chain_out_name, None),
-                        perm_rank3,
-                    )
-
-            # Update BATCH_MATMUL adjX to preserve semantics.
-            matmul_options = dict(matmul_op.options) if isinstance(matmul_op.options, dict) else {}
-            matmul_options["adjX"] = bool(new_adj_x)
-            matmul_op.options = matmul_options
-
-            del model_ir.operators[int(pre_idx)]
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    if rewritten > 0:
-        _prune_unused_tensors(model_ir)
-    return {"optimized_transpose_squeeze_unary_batchmatmul_nhwc_chains": int(rewritten)}
+    return _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_decoder_batchmatmul_add_expand_transpose_to_nhwc_deconv_input(
@@ -44520,7 +44311,10 @@ def lower_onnx_to_ir(
     # Conv1D tail patterns may still contain:
     # TRANSPOSE -> SQUEEZE -> UNARY* -> BATCH_MATMUL.
     # Rewire to NHWC + adjX matmul when mathematically equivalent.
-    _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains(model_ir)
+    _optimize_transpose_squeeze_unary_batchmatmul_nhwc_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     # Decoder linear->deconv tails can keep:
     # BATCH_MATMUL -> ADD -> EXPAND_DIMS -> TRANSPOSE -> TRANSPOSE_CONV.
     # Transpose BATCH_MATMUL/ADD layout so TRANSPOSE before deconv is removed.
