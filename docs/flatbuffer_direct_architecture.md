@@ -5406,6 +5406,55 @@ pruning, and Session `LayoutState` synchronization replace the former full-map
 loop. The former 359-line lowerer helper is a 17-line compatibility dispatcher
 and its sole production call supplies LayoutState.
 
+The two SiNet dual-Resize residual variants share one indexed owner in
+`passes/sinet_dual_resize_layout.py`. Both variants prove the complete graph
+of two
+`Resize -> NHWC-to-NCHW Transpose -> MUL -> ADD` branches, a channel-axis
+Concat, residual ADD, terminal MUL/ADD/PReLU, and one or more
+NCHW-to-NHWC post adapters. Their only semantic difference is the residual
+source boundary. The direct variant owns and removes a private
+NHWC-to-NCHW residual adapter. The deep-skip variant reuses an earlier
+NCHW-to-NHWC sibling adapter and leaves it available to its existing Conv
+branch.
+
+Both Resize outputs are the authoritative branch-local NHWC contracts. Their
+MUL and ADD intermediates adopt the exact concrete shape, dynamic signature,
+logical layout, and physical layout of the corresponding Resize output. The
+two branch contracts independently prove both the original NCHW axis-1
+Concat and target NHWC axis-3 Concat. The canonical first post-adapter output
+is the authoritative merged contract for the Concat and terminal
+ADD/MUL/ADD intermediates; it is not overwritten or permuted twice.
+
+The owner accepts both bilinear and nearest-neighbor Resize operators and
+finite FLOAT16/FLOAT32/FLOAT64 scalar or raw NCHW broadcast constants. Four
+branch affine constants and three terminal affine/PReLU constants must
+broadcast before and after explicit channel-axis rotation. Constants are
+grouped across the entire island, so shared roles are updated once and
+unrelated consumers receive one deterministic clone. Typed permutation,
+producer uniqueness, exact fan-out, dependency order, public boundaries,
+rank-four shape/signature relations, dtype, quantization, fused activation,
+and Resize provenance are validated before mutation. No model name or fixed
+spatial dimension participates in matching.
+
+Multiple equivalent post adapters are merged into the first graph-ordered
+canonical output while all downstream repeated input slots are preserved.
+For the direct variant, later consumers of the old NCHW PReLU name receive one
+topologically inserted inverse adapter, preserving local numerical semantics.
+The deep-skip compatibility boundary retains the established pipeline
+contract: later consumers are rewired to the canonical NHWC post tensor for
+the following SiNet layout recovery passes. This behavior is explicit in the
+mode-specific plan instead of being an incidental side effect of separate raw
+loops.
+
+The complete plan is resolved again immediately before apply. Constant clone
+names, every mutation and removal index, repeated-slot rewrites, metadata
+targets, and optional compatibility-adapter insertion are preflighted before
+the first write. One differential `ModelIRGraphIndex`, graph-order candidates,
+a configurable 32-rewrite ceiling, success-only pruning, and Session
+`LayoutState` synchronization replace two independent full-map loops. The
+former 505-line direct helper and 503-line deep-skip helper are both 17-line
+compatibility dispatchers and both production calls supply LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

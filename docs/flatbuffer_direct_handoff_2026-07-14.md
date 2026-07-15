@@ -8,14 +8,14 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the adjacent pre-ADD Concat/PReLU
-fan-out island to `passes/sinet_preadd_fanout_layout.py` and reduces the former
-359-line raw mutator to a 17-line compatibility dispatcher. It removes only
-the Concat-side adapter, reuses the existing direct-branch NHWC sibling, and
-inverts the retained terminal adapter so later legacy NCHW consumers remain
-unchanged. The preceding late-residual and new pre-ADD owner share one strict
-affine/PReLU tail resolver. The pre-existing and indexed implementations
-serialize byte-identical float32 and float16 SiNet artifacts.
+The latest implementation unit unifies the direct-adapter and deep-skip
+dual-Resize residual variants in `passes/sinet_dual_resize_layout.py`. The
+former independent 505-line and 503-line raw mutators are now 17-line
+compatibility dispatchers over one branch/tail matcher and transaction owner.
+The residual boundary is an explicit mode: the direct variant removes its
+private adapter, while the deep-skip variant retains its existing sibling
+adapter. The pre-existing and indexed implementations serialize
+byte-identical float32 and float16 SiNet artifacts.
 
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
@@ -38,7 +38,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains 111 coherent continuations:
+The current `fb-refactor5` work contains 112 coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -273,6 +273,9 @@ The current `fb-refactor5` work contains 111 coherent continuations:
   dedicated indexed owner, shares the terminal affine/PReLU resolver with the
   late-residual owner, removes only the redundant Concat adapter, and retains
   both the direct sibling adapter and legacy NCHW branch.
+- the current checkpoint unifies both dual-Resize residual variants in one
+  indexed owner, makes direct versus sibling residual-adapter ownership
+  explicit, and removes two more independent full-map raw mutators.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -291,9 +294,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/sinet_shuffle_residual_layout.py`;
-- `onnx2tf/tflite_builder/passes/sinet_preadd_fanout_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_sinet_preadd_fanout_layout.py`;
+- `onnx2tf/tflite_builder/passes/sinet_dual_resize_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_sinet_dual_resize_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -3265,6 +3267,76 @@ and `-cotof` conversion passed sequentially with
 `3 passed, 8 deselected in 3.57s`. Scoped Ruff, syntax compilation, and
 `git diff --check` passed. No Tier corpus conversion was run.
 
+The indexed dual-Resize checkpoint moves both
+`_optimize_sinet_dual_resize_affine_transpose_chains` and
+`_optimize_sinet_deep_skip_dual_resize_affine_transpose_chains` to the shared
+`passes/sinet_dual_resize_layout.py` owner. Both former raw mutators prove the
+same two `Resize -> Transpose -> MUL -> ADD` branches, NCHW channel Concat,
+residual ADD, terminal MUL/ADD/PReLU, and post-Transpose tail. Their only
+semantic difference is now an explicit residual mode. The direct mode owns
+and removes one private NHWC-to-NCHW adapter. The sibling mode requires one
+earlier NCHW-to-NHWC adapter with exact residual fan-out and retains it for its
+existing branch.
+
+Each Resize output is the authoritative branch-local NHWC tensor. Its MUL and
+ADD outputs adopt that exact concrete shape, dynamic signature, logical
+layout, and physical layout. The two branches independently derive the
+original axis-1 NCHW Concat and target axis-3 NHWC Concat. The first
+graph-ordered post output is the authoritative merged contract and remains
+unchanged; the Concat and terminal ADD/MUL/ADD intermediates adopt it. This
+replaces the duplicated metadata permutation/copy sequences and removes the
+former fixed 40-by-40 shape guard.
+
+Four branch affine constants and three terminal affine/PReLU constants are
+validated as finite same-dtype broadcasts in both the original NCHW graph and
+the explicitly rotated NHWC graph. Identity-grouped roles are updated once,
+and unrelated consumers receive deterministic clones. Both Resize families,
+FLOAT16/FLOAT32/FLOAT64, scalar/raw constants, operand and Concat order,
+typed permutations, producer uniqueness, exact consumer multiplicity,
+dependency order, public boundaries, quantization, fused activation, and
+dynamic signatures are part of the plan contract.
+
+Equivalent post aliases are merged into the first canonical output while
+downstream repeated slots are retained. Direct-mode legacy NCHW consumers
+receive one topologically inserted inverse adapter and therefore preserve
+local numerical semantics. Sibling mode retains the established ordered
+pipeline boundary and rewires later compatibility consumers to the canonical
+NHWC tensor for following SiNet recovery passes. The complete plan is
+re-resolved before apply; clone names, mutation/removal indices, input slots,
+metadata targets, alias rewrites, and optional adapter insertion are
+preflighted before the first write. One differential index and a bounded
+32-candidate rewrite ceiling replace both full-map `while True` loops. The
+former 505-line and 503-line helpers are now 17-line dispatchers and both
+production calls receive Session LayoutState.
+
+The focused shared-owner suite passed with `102 passed in 0.60s`; combined
+with the preceding indexed SiNet suites it passed with
+`410 passed in 1.24s`. Coverage includes forty-eight numerical-equivalence
+combinations across both residual modes, all three floating dtypes, both
+Resize families, scalar/raw constants, and commuted operands/Concat inputs;
+direct legacy inverse-adapter equivalence; sibling repeated-slot compatibility
+rewiring; post-alias merging; external constant cloning; mode isolation;
+candidate-only and capped execution; thirty-six shared transactional unsafe
+contracts plus sibling fan-out/order guards; earlier legacy rejection;
+stale-plan revalidation; clone collision; no-index preflight; differential
+index validation; and LayoutState validation.
+
+The existing direct dual-Resize characterization and the sequential real
+SiNet integration passed together with `2 passed in 2.59s`. During the real
+conversion, the direct owner retained the established two one-candidate
+applications and the later sibling owner retained its two-candidate
+application. The indexed result is the same 449,824-byte float32 artifact with
+SHA-256
+`40520abec7b36dae10dca3cd5271bf5169d096eea52f726f2023238694afa9bb`
+and the same 253,452-byte float16 artifact with SHA-256
+`180717a7e13963f4c1ab56dcb82288562ecf718e4a3a36738bbabc7fa9c0082c`.
+The byte identity preserves the recorded sequential `-cotof` evidence:
+`max_abs=2.57205e-09`, `rmse=9.15391e-11`, `cosine=1`, and `pass=True`.
+The full architecture suite passed with `186 passed in 50.01s`;
+TensorFlow-import-blocked direct, default, and `-cotof` conversion passed
+sequentially with `3 passed, 8 deselected in 3.61s`. Scoped Ruff, syntax
+compilation, and `git diff --check` passed. No Tier corpus conversion was run.
+
 ## Failing tests and known issues
 
 - No newly failing focused test is known at this checkpoint.
@@ -3307,13 +3379,12 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent 503-line
-   `_optimize_sinet_deep_skip_dual_resize_affine_transpose_chains` helper next.
-   Characterize both Resize branches, affine constants, adapter ownership,
-   output metadata, fan-out, and graph-order constraints before extracting a
-   bounded owner. Reuse the staged deep-skip Resize and shared grouped-
-   constant contracts only where the topology and broadcast semantics are
-   identical.
+3. Audit the adjacent 321-line
+   `_optimize_sinet_shared_post_prelu_transpose_fanout_chains` helper next.
+   Characterize its shared post fan-out, Conv/ADD consumer roles, Concat-backed
+   input selection, affine/PReLU constants, and output metadata before
+   extracting a bounded owner. Reuse the shared late affine tail and grouped-
+   constant contracts only where the fan-out semantics are identical.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.
