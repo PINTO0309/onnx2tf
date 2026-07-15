@@ -4709,6 +4709,49 @@ intermediates are complete no-ops. One supplied or locally constructed
 `ModelIRGraphIndex` is maintained across all matches, and the sole production
 call supplies the Session LayoutState.
 
+Conv1D-shim unary fan-out bypass is the third semantic family in
+`passes/conv1d_unary_layout.py`. It applies only when the rank-three unary
+output has one exact ExpandDims/Transpose branch back to NHWC plus a retained
+NCHW side use. That side use may be a strictly later operator consumer or the
+unary output itself may be a public graph output. A chain without genuine
+fan-out is left to the preceding full-chain owner and is not partially
+rewritten by this pass.
+
+The full-chain and fan-out families share one
+`_resolve_unary_prefix_candidate` for the complete NHWC-to-NCHW Transpose,
+Squeeze, unary, shape/signature, source, boundary, producer, consumer, dtype,
+and quantization-independent prefix contract. The only prefix-policy
+difference is whether a public unary output is permitted. Each family owns
+only its distinct suffix validation and rewrite transaction.
+
+The bypass keeps the original unary object but moves it before the retained
+NHWC-to-NCHW Transpose. The unary now consumes the original NHWC source and
+produces the former post-Transpose output. The retained Transpose consumes that
+output, and the retained Squeeze produces the former unary output for every
+NCHW side consumer. The selected ExpandDims and post-Transpose are removed in
+one indexed compaction, after which the unary is inserted before the retained
+Transpose. This produces a topological operator order instead of the legacy
+helper's backward producer edge.
+
+Shape and signature equations, typed producer-free permutations and axis,
+strict producer/consumer order, private changed intermediates, dtypes, and
+per-tensor quantization are validated before mutation. A public unary output
+is allowed because its NCHW value and name remain unchanged; the pre-Transpose,
+pre-unary Squeeze, and removed ExpandDims outputs are not public. CAST retains
+its dtype transition. In that case the retained Transpose output dtype and
+quantization are repaired from the unary output, correcting metadata that the
+legacy helper left in the input dtype. Both required quantization clones are
+prepared before graph mutation, so clone failure is a complete no-op.
+
+Static public-input, produced-input, quantized, alternate-axis, and non-CAST
+fixtures become byte-for-byte identical to the legacy result after applying a
+topological sort to that legacy result. No-fan-out chains, floating or produced
+constants, inconsistent shape/signature metadata, mixed dtypes or grids,
+duplicate producers, backward consumers, and public removed intermediates are
+complete no-ops. One supplied or locally constructed `ModelIRGraphIndex` is
+maintained across all matches, and the sole production call supplies the
+Session LayoutState.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

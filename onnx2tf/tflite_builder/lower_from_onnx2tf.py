@@ -188,6 +188,7 @@ from onnx2tf.tflite_builder.passes.window_partition_layout import (
     _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains as _optimize_window_reverse_reshape_transpose_to_depth_to_space_chains_pass,
 )
 from onnx2tf.tflite_builder.passes.conv1d_unary_layout import (
+    _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains as _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains_pass,
     _optimize_transpose_unary_transpose_reshape_expanddims_transpose_nhwc_chains as _optimize_transpose_unary_transpose_reshape_expanddims_transpose_nhwc_chains_pass,
     _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains as _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains_pass,
 )
@@ -19877,255 +19878,15 @@ def _optimize_transpose_unary_transpose_reshape_expanddims_transpose_nhwc_chains
 
 def _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
     model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
 ) -> Dict[str, int]:
-    """
-    Bypass Conv1D-shim ExpandDims->Transpose branches under unary fanout.
-
-    Target:
-      x_nhwc --T(0,3,1,2)--> x_nchw --SQUEEZE(axis=k)--> s3 --UNARY--> u3
-      u3 --EXPAND_DIMS(axis=k)--> e4 --T(0,2,3,1)--> y_nhwc --(...)
-      u3 --(other consumers)--> ...
-
-    Rewrite:
-      x_nhwc --UNARY--> y_nhwc --T(0,3,1,2)--> x_nchw --SQUEEZE(axis=k)--> u3
-      y_nhwc --(...)  # former post-transpose users
-      u3 --(other consumers)--> ...
-
-    This keeps the NCHW side branch intact while eliminating only the
-    ExpandDims->Transpose wrapper branch.
-    """
-    rewritten = 0
-    perm_nhwc_to_nchw = [0, 3, 1, 2]
-    perm_nchw_to_nhwc = [0, 2, 3, 1]
-    unary_ops = {
-        "RELU",
-        "RELU6",
-        "RELU_0_TO_1",
-        "LEAKY_RELU",
-        "LOGISTIC",
-        "TANH",
-        "GELU",
-        "ABS",
-        "NEG",
-        "SQRT",
-        "EXP",
-        "CAST",
-        "FLOOR",
-        "CEIL",
-        "ROUND",
-        "HARD_SWISH",
-    }
-
-    def _shape_list(name: str) -> Optional[List[int]]:
-        tensor = model_ir.tensors.get(str(name), None)
-        if tensor is None or tensor.shape is None:
-            return None
-        return [int(v) for v in list(tensor.shape)]
-
-    def _dims_compatible(a: int, b: int) -> bool:
-        if int(a) < 0 or int(b) < 0:
-            return True
-        return int(a) == int(b)
-
-    def _shape_compatible(a: List[int], b: List[int]) -> bool:
-        if len(a) != len(b):
-            return False
-        return all(_dims_compatible(int(x), int(y)) for x, y in zip(a, b))
-
-    while True:
-        changed = False
-        consumers = _build_tensor_consumer_map(model_ir)
-
-        for pre_idx, pre_op in enumerate(model_ir.operators):
-            if str(pre_op.op_type) != "TRANSPOSE" or len(pre_op.inputs) < 2 or len(pre_op.outputs) != 1:
-                continue
-            if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
-                continue
-
-            pre_input_name = str(pre_op.inputs[0])
-            pre_output_name = str(pre_op.outputs[0])
-            pre_users = [int(v) for v in consumers.get(pre_output_name, [])]
-            if len(pre_users) != 1:
-                continue
-            squeeze_idx = int(pre_users[0])
-            squeeze_op = model_ir.operators[int(squeeze_idx)]
-            if (
-                str(squeeze_op.op_type) != "SQUEEZE"
-                or len(squeeze_op.inputs) != 1
-                or len(squeeze_op.outputs) != 1
-                or str(squeeze_op.inputs[0]) != pre_output_name
-            ):
-                continue
-            squeeze_out_name = str(squeeze_op.outputs[0])
-
-            squeeze_users = [int(v) for v in consumers.get(squeeze_out_name, [])]
-            if len(squeeze_users) != 1:
-                continue
-            unary_idx = int(squeeze_users[0])
-            unary_op = model_ir.operators[int(unary_idx)]
-            if (
-                str(unary_op.op_type) not in unary_ops
-                or len(unary_op.inputs) != 1
-                or len(unary_op.outputs) != 1
-                or str(unary_op.inputs[0]) != squeeze_out_name
-            ):
-                continue
-            unary_out_name = str(unary_op.outputs[0])
-
-            pre_input_shape = _shape_list(pre_input_name)
-            pre_output_shape = _shape_list(pre_output_name)
-            squeeze_out_shape = _shape_list(squeeze_out_name)
-            unary_out_shape = _shape_list(unary_out_name)
-            if (
-                pre_input_shape is None
-                or pre_output_shape is None
-                or squeeze_out_shape is None
-                or unary_out_shape is None
-            ):
-                continue
-            if (
-                len(pre_input_shape) != 4
-                or len(pre_output_shape) != 4
-                or len(squeeze_out_shape) != 3
-                or len(unary_out_shape) != 3
-                or not _shape_compatible(squeeze_out_shape, unary_out_shape)
-            ):
-                continue
-
-            squeeze_axis: Optional[int] = None
-            squeeze_options = dict(squeeze_op.options) if isinstance(squeeze_op.options, dict) else {}
-            if "squeezeDims" in squeeze_options:
-                raw_axes = np.asarray(squeeze_options.get("squeezeDims", []), dtype=np.int64).reshape(-1)
-                normalized_axes = _normalize_squeeze_axes_for_rank(
-                    [int(v) for v in raw_axes.tolist()],
-                    4,
-                )
-                if normalized_axes is None or len(normalized_axes) != 1:
-                    continue
-                candidate_axis = int(normalized_axes[0])
-                if int(pre_output_shape[candidate_axis]) != 1:
-                    continue
-                candidate_squeezed = [
-                    int(pre_output_shape[idx])
-                    for idx in range(4)
-                    if int(idx) != int(candidate_axis)
-                ]
-                if not _shape_compatible(candidate_squeezed, squeeze_out_shape):
-                    continue
-                squeeze_axis = int(candidate_axis)
-            else:
-                candidate_axes: List[int] = []
-                for axis in range(4):
-                    if int(pre_output_shape[axis]) != 1:
-                        continue
-                    candidate_squeezed = [
-                        int(pre_output_shape[idx])
-                        for idx in range(4)
-                        if int(idx) != int(axis)
-                    ]
-                    if _shape_compatible(candidate_squeezed, squeeze_out_shape):
-                        candidate_axes.append(int(axis))
-                if len(candidate_axes) != 1:
-                    continue
-                squeeze_axis = int(candidate_axes[0])
-
-            unary_users = [int(v) for v in consumers.get(unary_out_name, [])]
-            candidate_pairs: List[Tuple[int, int, str]] = []
-            for unary_user_idx in unary_users:
-                expand_idx = int(unary_user_idx)
-                expand_op = model_ir.operators[int(expand_idx)]
-                if (
-                    str(expand_op.op_type) != "EXPAND_DIMS"
-                    or len(expand_op.inputs) < 2
-                    or len(expand_op.outputs) != 1
-                    or str(expand_op.inputs[0]) != unary_out_name
-                ):
-                    continue
-                expand_axis_values = _read_const_ints_from_tensor(
-                    model_ir.tensors.get(str(expand_op.inputs[1]), None)
-                )
-                if expand_axis_values is None or len(expand_axis_values) != 1:
-                    continue
-                expand_axis = int(expand_axis_values[0])
-                if expand_axis < 0:
-                    expand_axis += 4
-                if expand_axis < 0 or expand_axis >= 4 or int(expand_axis) != int(squeeze_axis):
-                    continue
-                expand_out_name = str(expand_op.outputs[0])
-                expand_users = [int(v) for v in consumers.get(expand_out_name, [])]
-                if len(expand_users) != 1:
-                    continue
-                post_idx = int(expand_users[0])
-                post_op = model_ir.operators[int(post_idx)]
-                if (
-                    str(post_op.op_type) != "TRANSPOSE"
-                    or len(post_op.inputs) < 2
-                    or len(post_op.outputs) != 1
-                    or str(post_op.inputs[0]) != expand_out_name
-                    or _read_transpose_perm(model_ir, post_op) != perm_nchw_to_nhwc
-                ):
-                    continue
-                post_output_name = str(post_op.outputs[0])
-                post_output_shape = _shape_list(post_output_name)
-                expand_out_shape = _shape_list(expand_out_name)
-                if (
-                    post_output_shape is None
-                    or expand_out_shape is None
-                    or len(post_output_shape) != 4
-                    or len(expand_out_shape) != 4
-                    or not _shape_compatible(pre_input_shape, post_output_shape)
-                    or not _shape_compatible(pre_output_shape, expand_out_shape)
-                ):
-                    continue
-                candidate_pairs.append((int(expand_idx), int(post_idx), str(post_output_name)))
-
-            if not candidate_pairs:
-                continue
-
-            # Pick first eligible branch and bypass it.
-            expand_idx, post_idx, post_output_name = candidate_pairs[0]
-            post_output_tensor = model_ir.tensors.get(post_output_name, None)
-            old_unary_out_tensor = model_ir.tensors.get(unary_out_name, None)
-            if post_output_tensor is not None and old_unary_out_tensor is not None:
-                post_output_tensor.dtype = str(old_unary_out_tensor.dtype)
-                post_output_tensor.quantization = _clone_quantization(old_unary_out_tensor.quantization)
-
-            _set_operator_inputs(
-                model_ir=model_ir,
-                op=unary_op,
-                new_inputs=[pre_input_name],
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=unary_op,
-                new_outputs=[post_output_name],
-            )
-            _replace_operator_input_at(
-                model_ir=model_ir,
-                op=pre_op,
-                input_index=0,
-                new_input_name=str(post_output_name),
-            )
-            _set_operator_outputs(
-                model_ir=model_ir,
-                op=squeeze_op,
-                new_outputs=[unary_out_name],
-            )
-
-            for remove_idx in sorted({int(expand_idx), int(post_idx)}, reverse=True):
-                del model_ir.operators[int(remove_idx)]
-
-            rewritten += 1
-            changed = True
-            break
-
-        if not changed:
-            break
-
-    _prune_unused_tensors(model_ir)
-    return {
-        "optimized_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains": int(rewritten)
-    }
+    return _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains_pass(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
 
 
 def _optimize_transpose_squeeze_instancenorm_unary_expanddims_transpose_nhwc_chains(
@@ -45925,7 +45686,10 @@ def lower_onnx_to_ir(
     )
     # Fanout variant:
     # Keep NCHW side branch and bypass only the NHWC wrapper branch.
-    _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(model_ir)
+    _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+        model_ir,
+        layout_state=session.layout_state,
+    )
     # InstanceNorm(flat) bridge variant:
     # T -> SQUEEZE -> RESHAPE -> IN -> RESHAPE -> UNARY -> EXPAND -> T
     # can be rewritten in NHWC by swapping C/W at reshape boundary.

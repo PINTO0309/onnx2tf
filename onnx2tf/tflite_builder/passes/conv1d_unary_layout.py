@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import AbstractSet, Any, Dict, FrozenSet, Optional, Tuple
 
 import numpy as np
 
@@ -31,6 +31,9 @@ _STATS_KEY = (
 _RANK4_STATS_KEY = (
     "optimized_transpose_unary_transpose_reshape_expanddims_transpose_nhwc_chains"
 )
+_FANOUT_STATS_KEY = (
+    "optimized_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains"
+)
 _PERM_NHCW_FROM_NCHW = (0, 2, 1, 3)
 _PERM_HCW_TO_HWC = (0, 2, 1)
 _UNARY_OPS = {
@@ -58,6 +61,25 @@ class _TensorContract:
     tensor: TensorIR
     shape: Tuple[int, ...]
     signature: Tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class _UnaryPrefixPlan:
+    public_inputs: FrozenSet[str]
+    public_outputs: FrozenSet[str]
+    pre: OperatorIR
+    squeeze: OperatorIR
+    unary: OperatorIR
+    source_name: str
+    pre_output_name: str
+    squeeze_output_name: str
+    unary_output_name: str
+    source_contract: _TensorContract
+    pre_contract: _TensorContract
+    squeeze_contract: _TensorContract
+    unary_contract: _TensorContract
+    squeeze_axis: int
+    unary_index: int
 
 
 @dataclass(frozen=True)
@@ -110,6 +132,23 @@ class _Rank4RewritePlan:
     bridge: Optional[OperatorIR]
 
 
+@dataclass(frozen=True)
+class _FanoutRewritePlan:
+    pre: OperatorIR
+    squeeze: OperatorIR
+    unary: OperatorIR
+    expand: OperatorIR
+    post: OperatorIR
+    source_name: str
+    unary_output_name: str
+    post_output_name: str
+    pre_output_tensor: TensorIR
+    post_output_tensor: TensorIR
+    output_dtype: str
+    pre_output_quantization: Any
+    post_output_quantization: Any
+
+
 def _tensor_contract(
     model_ir: ModelIR,
     tensor_name: str,
@@ -148,7 +187,7 @@ def _constant_vector(
     graph_index: ModelIRGraphIndex,
     tensor_name: str,
     size: int,
-    public_inputs: set[str],
+    public_inputs: AbstractSet[str],
 ) -> Optional[Tuple[int, ...]]:
     name = str(tensor_name)
     tensor = model_ir.tensors.get(name)
@@ -256,16 +295,18 @@ def _squeeze_axis(
     return int(matches[0])
 
 
-def _resolve_candidate(
+def _resolve_unary_prefix_candidate(
     model_ir: ModelIR,
     graph_index: ModelIRGraphIndex,
     pre_index: int,
-) -> Optional[_RewritePlan]:
+    *,
+    allow_public_unary_output: bool,
+) -> Optional[_UnaryPrefixPlan]:
     pre = model_ir.operators[int(pre_index)]
     if len(pre.inputs) != 2 or len(pre.outputs) != 1:
         return None
-    public_inputs = {str(value) for value in model_ir.inputs}
-    public_outputs = {str(value) for value in model_ir.outputs}
+    public_inputs = frozenset(str(value) for value in model_ir.inputs)
+    public_outputs = frozenset(str(value) for value in model_ir.outputs)
     if (
         _constant_vector(
             model_ir,
@@ -357,7 +398,11 @@ def _resolve_candidate(
     unary_output_name = str(unary.outputs[0])
     if (
         not unary_output_name
-        or unary_output_name in public_inputs | public_outputs
+        or unary_output_name in public_inputs
+        or (
+            not allow_public_unary_output
+            and unary_output_name in public_outputs
+        )
         or not _producer_is_valid(graph_index, unary_output_name, unary_index)
     ):
         return None
@@ -369,6 +414,53 @@ def _resolve_candidate(
     ):
         return None
 
+    return _UnaryPrefixPlan(
+        public_inputs=public_inputs,
+        public_outputs=public_outputs,
+        pre=pre,
+        squeeze=squeeze,
+        unary=unary,
+        source_name=source_name,
+        pre_output_name=pre_output_name,
+        squeeze_output_name=squeeze_output_name,
+        unary_output_name=unary_output_name,
+        source_contract=source_contract,
+        pre_contract=pre_contract,
+        squeeze_contract=squeeze_contract,
+        unary_contract=unary_contract,
+        squeeze_axis=int(squeeze_axis),
+        unary_index=unary_index,
+    )
+
+
+def _resolve_candidate(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    pre_index: int,
+) -> Optional[_RewritePlan]:
+    prefix = _resolve_unary_prefix_candidate(
+        model_ir,
+        graph_index,
+        pre_index,
+        allow_public_unary_output=False,
+    )
+    if prefix is None:
+        return None
+    public_inputs = prefix.public_inputs
+    public_outputs = prefix.public_outputs
+    pre = prefix.pre
+    squeeze = prefix.squeeze
+    unary = prefix.unary
+    source_name = prefix.source_name
+    pre_output_name = prefix.pre_output_name
+    squeeze_output_name = prefix.squeeze_output_name
+    unary_output_name = prefix.unary_output_name
+    source_contract = prefix.source_contract
+    pre_contract = prefix.pre_contract
+    squeeze_contract = prefix.squeeze_contract
+    unary_contract = prefix.unary_contract
+    squeeze_axis = prefix.squeeze_axis
+    unary_index = prefix.unary_index
     unary_users = graph_index.consumer_indices(unary_output_name)
     if len(unary_users) != 1:
         return None
@@ -582,6 +674,307 @@ def _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains(
     if rewritten and layout_state is not None:
         layout_state.sync_from_model_ir(model_ir)
     return {_STATS_KEY: int(rewritten)}
+
+
+def _resolve_fanout_candidate(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    pre_index: int,
+) -> Optional[_FanoutRewritePlan]:
+    prefix = _resolve_unary_prefix_candidate(
+        model_ir,
+        graph_index,
+        pre_index,
+        allow_public_unary_output=True,
+    )
+    if prefix is None:
+        return None
+    public_inputs = prefix.public_inputs
+    public_outputs = prefix.public_outputs
+    pre = prefix.pre
+    squeeze = prefix.squeeze
+    unary = prefix.unary
+    source_name = prefix.source_name
+    pre_output_name = prefix.pre_output_name
+    squeeze_output_name = prefix.squeeze_output_name
+    unary_output_name = prefix.unary_output_name
+    source_contract = prefix.source_contract
+    pre_contract = prefix.pre_contract
+    squeeze_contract = prefix.squeeze_contract
+    unary_contract = prefix.unary_contract
+    squeeze_axis = prefix.squeeze_axis
+    unary_index = prefix.unary_index
+    unary_users = list(dict.fromkeys(graph_index.consumer_indices(unary_output_name)))
+    if not unary_users or any(index <= unary_index for index in unary_users):
+        return None
+    selected: Optional[
+        Tuple[int, OperatorIR, _TensorContract, int, OperatorIR, _TensorContract]
+    ] = None
+    for expand_index in unary_users:
+        expand = model_ir.operators[int(expand_index)]
+        if (
+            str(expand.op_type) != "EXPAND_DIMS"
+            or len(expand.inputs) != 2
+            or len(expand.outputs) != 1
+            or str(expand.inputs[0]) != unary_output_name
+        ):
+            continue
+        expand_axis = _constant_vector(
+            model_ir,
+            graph_index,
+            str(expand.inputs[1]),
+            1,
+            public_inputs,
+        )
+        if expand_axis is None:
+            continue
+        normalized_expand_axis = int(expand_axis[0])
+        if normalized_expand_axis < 0:
+            normalized_expand_axis += 4
+        if normalized_expand_axis != int(squeeze_axis):
+            continue
+
+        expand_output_name = str(expand.outputs[0])
+        if (
+            not expand_output_name
+            or expand_output_name in public_inputs | public_outputs
+            or not _producer_is_valid(
+                graph_index,
+                expand_output_name,
+                int(expand_index),
+            )
+        ):
+            continue
+        expand_contract = _tensor_contract(model_ir, expand_output_name, 4)
+        expected_expand_shape = tuple(
+            list(unary_contract.shape[:squeeze_axis])
+            + [1]
+            + list(unary_contract.shape[squeeze_axis:])
+        )
+        expected_expand_signature = tuple(
+            list(unary_contract.signature[:squeeze_axis])
+            + [1]
+            + list(unary_contract.signature[squeeze_axis:])
+        )
+        if (
+            expand_contract is None
+            or expand_contract.shape != expected_expand_shape
+            or expand_contract.signature != expected_expand_signature
+            or expand_contract.shape != pre_contract.shape
+            or expand_contract.signature != pre_contract.signature
+        ):
+            continue
+
+        expand_users = graph_index.consumer_indices(expand_output_name)
+        if len(expand_users) != 1:
+            continue
+        post_index = int(expand_users[0])
+        if post_index <= int(expand_index):
+            continue
+        post = model_ir.operators[post_index]
+        if (
+            str(post.op_type) != "TRANSPOSE"
+            or len(post.inputs) != 2
+            or len(post.outputs) != 1
+            or str(post.inputs[0]) != expand_output_name
+            or _constant_vector(
+                model_ir,
+                graph_index,
+                str(post.inputs[1]),
+                4,
+                public_inputs,
+            )
+            != _PERM_NCHW_TO_NHWC
+        ):
+            continue
+        post_output_name = str(post.outputs[0])
+        if (
+            not post_output_name
+            or post_output_name in public_inputs
+            or not _producer_is_valid(graph_index, post_output_name, post_index)
+        ):
+            continue
+        post_contract = _tensor_contract(model_ir, post_output_name, 4)
+        expected_post_shape = tuple(
+            expand_contract.shape[index] for index in _PERM_NCHW_TO_NHWC
+        )
+        expected_post_signature = tuple(
+            expand_contract.signature[index] for index in _PERM_NCHW_TO_NHWC
+        )
+        if (
+            post_contract is None
+            or post_contract.shape != expected_post_shape
+            or post_contract.signature != expected_post_signature
+            or post_contract.shape != source_contract.shape
+            or post_contract.signature != source_contract.signature
+            or any(
+                int(consumer_index) <= post_index
+                for consumer_index in graph_index.consumer_indices(post_output_name)
+            )
+        ):
+            continue
+        selected = (
+            int(expand_index),
+            expand,
+            expand_contract,
+            post_index,
+            post,
+            post_contract,
+        )
+        break
+    if selected is None:
+        return None
+    expand_index, expand, expand_contract, _, post, post_contract = selected
+    if unary_output_name not in public_outputs and not any(
+        int(index) != int(expand_index) for index in unary_users
+    ):
+        return None
+
+    data_names = (
+        source_name,
+        pre_output_name,
+        squeeze_output_name,
+        unary_output_name,
+        str(expand.outputs[0]),
+        str(post.outputs[0]),
+    )
+    if len(set(data_names)) != len(data_names):
+        return None
+    input_group = (source_contract, pre_contract, squeeze_contract)
+    output_group = (unary_contract, expand_contract)
+    if (
+        len({str(contract.tensor.dtype) for contract in input_group}) != 1
+        or len({str(contract.tensor.dtype) for contract in output_group}) != 1
+        or not _quantization_contract(input_group)
+        or not _quantization_contract(output_group)
+    ):
+        return None
+    if str(unary.op_type) != "CAST" and (
+        str(source_contract.tensor.dtype) != str(unary_contract.tensor.dtype)
+        or not _quantization_contract(input_group + output_group)
+    ):
+        return None
+
+    try:
+        pre_output_quantization = _clone_quantization(
+            unary_contract.tensor.quantization
+        )
+        post_output_quantization = _clone_quantization(
+            unary_contract.tensor.quantization
+        )
+    except Exception:
+        return None
+    return _FanoutRewritePlan(
+        pre=pre,
+        squeeze=squeeze,
+        unary=unary,
+        expand=expand,
+        post=post,
+        source_name=source_name,
+        unary_output_name=unary_output_name,
+        post_output_name=str(post.outputs[0]),
+        pre_output_tensor=pre_contract.tensor,
+        post_output_tensor=post_contract.tensor,
+        output_dtype=str(unary_contract.tensor.dtype),
+        pre_output_quantization=pre_output_quantization,
+        post_output_quantization=post_output_quantization,
+    )
+
+
+def _apply_fanout_plan(
+    model_ir: ModelIR,
+    graph_index: ModelIRGraphIndex,
+    plan: _FanoutRewritePlan,
+) -> bool:
+    ordered_ops = (
+        plan.pre,
+        plan.squeeze,
+        plan.unary,
+        plan.expand,
+        plan.post,
+    )
+    indices = [graph_index.operator_index(operator) for operator in ordered_ops]
+    if any(index is None for index in indices):
+        return False
+    resolved = [int(index) for index in indices if index is not None]
+    if resolved != sorted(resolved) or len(set(resolved)) != len(ordered_ops):
+        return False
+
+    insertion_index = int(resolved[0])
+    graph_index.remove_operators([resolved[index] for index in (2, 3, 4)])
+    _set_operator_inputs(
+        model_ir=model_ir,
+        op=plan.unary,
+        new_inputs=[plan.source_name],
+        graph_index=graph_index,
+    )
+    _set_operator_outputs(
+        model_ir=model_ir,
+        op=plan.unary,
+        new_outputs=[plan.post_output_name],
+        graph_index=graph_index,
+    )
+    _replace_operator_input_at(
+        model_ir=model_ir,
+        op=plan.pre,
+        input_index=0,
+        new_input_name=plan.post_output_name,
+        graph_index=graph_index,
+    )
+    _set_operator_outputs(
+        model_ir=model_ir,
+        op=plan.squeeze,
+        new_outputs=[plan.unary_output_name],
+        graph_index=graph_index,
+    )
+    plan.pre_output_tensor.dtype = str(plan.output_dtype)
+    plan.pre_output_tensor.quantization = plan.pre_output_quantization
+    plan.post_output_tensor.dtype = str(plan.output_dtype)
+    plan.post_output_tensor.quantization = plan.post_output_quantization
+    graph_index.insert_operator(insertion_index, plan.unary)
+    return True
+
+
+def _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
+    required = {"TRANSPOSE": 2, "SQUEEZE": 1, "EXPAND_DIMS": 1}
+    has_unary = False
+    for operator in model_ir.operators:
+        op_type = str(operator.op_type)
+        if op_type in required and required[op_type] > 0:
+            required[op_type] -= 1
+        if op_type in _UNARY_OPS:
+            has_unary = True
+    if not has_unary or any(count > 0 for count in required.values()):
+        _prune_unused_tensors(model_ir, layout_state=layout_state)
+        return {_FANOUT_STATS_KEY: 0}
+
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
+    candidates = [
+        model_ir.operators[index]
+        for index in active_index.operator_indices("TRANSPOSE")
+    ]
+    rewritten = 0
+    for pre in candidates:
+        pre_index = active_index.operator_index(pre)
+        if pre_index is None:
+            continue
+        plan = _resolve_fanout_candidate(model_ir, active_index, pre_index)
+        if plan is not None and _apply_fanout_plan(model_ir, active_index, plan):
+            rewritten += 1
+
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if rewritten and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
+    return {_FANOUT_STATS_KEY: int(rewritten)}
 
 
 def _unique_tensor_name(model_ir: ModelIR, base: str) -> str:

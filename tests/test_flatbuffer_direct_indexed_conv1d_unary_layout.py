@@ -8,13 +8,18 @@ import pytest
 import onnx2tf.tflite_builder.passes.conv1d_unary_layout as unary_module
 from onnx2tf.tflite_builder.core.graph import ModelIRGraphIndex
 from onnx2tf.tflite_builder.core.layout import LayoutState
+from onnx2tf.tflite_builder.core.validation import validate_model_ir_invariants
 from onnx2tf.tflite_builder.ir import ModelIR, OperatorIR, QuantParamIR, TensorIR
 from onnx2tf.tflite_builder.passes.conv1d_unary_layout import (
+    _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains,
     _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains,
 )
 
 
 _STATS = "optimized_transpose_squeeze_unary_expanddims_transpose_nhwc_chains"
+_FANOUT_STATS = (
+    "optimized_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains"
+)
 _UNARY_TYPES = (
     "RELU",
     "RELU6",
@@ -67,6 +72,7 @@ def _add_branch(
     quantized: bool = False,
     squeeze_axis: int = 2,
     explicit_squeeze_axis: bool = True,
+    fanout: bool = False,
 ) -> dict[str, str]:
     names = {
         key: f"{prefix}_{key}"
@@ -81,6 +87,7 @@ def _add_branch(
             "expanded",
             "post_perm",
             "output",
+            "side_output",
         )
     }
     height, width = (1, 5) if int(squeeze_axis) == 2 else (5, 1)
@@ -211,6 +218,21 @@ def _add_branch(
             ),
         ]
     )
+    if fanout:
+        model_ir.tensors[names["side_output"]] = _tensor(
+            names["side_output"],
+            squeezed_shape,
+            dtype=output_dtype,
+            quantization=copy.deepcopy(output_quantization),
+        )
+        model_ir.outputs.append(names["side_output"])
+        model_ir.operators.append(
+            OperatorIR(
+                "IDENTITY",
+                [names["unary_output"]],
+                [names["side_output"]],
+            )
+        )
     return names
 
 
@@ -626,4 +648,454 @@ def test_conv1d_unary_preflight_preserves_pruning_without_index(monkeypatch) -> 
     assert _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_chains(
         model_ir
     ) == {_STATS: 0}
+    assert "unused" not in model_ir.tensors
+
+
+def test_conv1d_unary_fanout_rewrites_multiple_chains_with_one_index(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("indexed_conv1d_unary_fanout")
+    branches = [
+        _add_branch(model_ir, "gelu", fanout=True),
+        _add_branch(
+            model_ir,
+            "produced",
+            unary_type="RELU",
+            produced_source=True,
+            fanout=True,
+        ),
+        _add_branch(
+            model_ir,
+            "quantized",
+            unary_type="LOGISTIC",
+            quantized=True,
+            fanout=True,
+        ),
+        _add_branch(model_ir, "cast", unary_type="CAST", fanout=True),
+        _add_branch(
+            model_ir,
+            "inferred",
+            unary_type="ABS",
+            squeeze_axis=3,
+            explicit_squeeze_axis=False,
+            fanout=True,
+        ),
+    ]
+    original_unaries = [
+        copy.deepcopy(_operators(model_ir, names)[2]) for names in branches
+    ]
+    expected_tensors = [
+        copy.deepcopy(model_ir.tensors[names["unary_output"]])
+        for names in branches
+    ]
+    refreshes = 0
+    original_refresh = ModelIRGraphIndex.refresh
+
+    def counted_refresh(index: ModelIRGraphIndex) -> None:
+        nonlocal refreshes
+        refreshes += 1
+        original_refresh(index)
+
+    monkeypatch.setattr(ModelIRGraphIndex, "refresh", counted_refresh)
+
+    stats = _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+        model_ir
+    )
+
+    assert stats == {_FANOUT_STATS: 5}
+    assert refreshes == 1
+    assert validate_model_ir_invariants(model_ir) == []
+    for names, original, expected_tensor in zip(
+        branches,
+        original_unaries,
+        expected_tensors,
+    ):
+        unary = next(
+            operator
+            for operator in model_ir.operators
+            if operator.outputs == [names["output"]]
+        )
+        pre = next(
+            operator
+            for operator in model_ir.operators
+            if operator.outputs == [names["pre_output"]]
+        )
+        squeeze = next(
+            operator
+            for operator in model_ir.operators
+            if operator.outputs == [names["unary_output"]]
+        )
+        side = next(
+            operator
+            for operator in model_ir.operators
+            if operator.outputs == [names["side_output"]]
+        )
+        assert model_ir.operators.index(unary) < model_ir.operators.index(pre)
+        assert model_ir.operators.index(pre) < model_ir.operators.index(squeeze)
+        assert model_ir.operators.index(squeeze) < model_ir.operators.index(side)
+        assert unary.op_type == original.op_type
+        assert unary.inputs == [names["source"]]
+        assert unary.options == original.options
+        assert unary.axis_semantics == original.axis_semantics
+        assert unary.version == original.version
+        assert unary.onnx_node_name == original.onnx_node_name
+        assert unary.onnx_op_type == original.onnx_op_type
+        assert pre.inputs[0] == names["output"]
+        assert squeeze.outputs == [names["unary_output"]]
+        assert side.inputs == [names["unary_output"]]
+        assert model_ir.tensors[names["output"]].dtype == expected_tensor.dtype
+        assert model_ir.tensors[names["pre_output"]].dtype == expected_tensor.dtype
+        assert (
+            model_ir.tensors[names["pre_output"]].quantization
+            == expected_tensor.quantization
+        )
+        if expected_tensor.quantization is not None:
+            assert (
+                model_ir.tensors[names["pre_output"]].quantization
+                is not expected_tensor.quantization
+            )
+
+
+def test_conv1d_unary_fanout_keeps_supplied_index_and_layout_current() -> None:
+    model_ir = ModelIR("maintained_conv1d_unary_fanout")
+    _add_branch(model_ir, "branch", fanout=True)
+    graph_index = ModelIRGraphIndex(model_ir)
+    layout_state = LayoutState.from_model_ir(model_ir)
+
+    stats = _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+        model_ir,
+        graph_index=graph_index,
+        layout_state=layout_state,
+    )
+
+    assert stats == {_FANOUT_STATS: 1}
+    _assert_index_current(model_ir, graph_index)
+    assert layout_state.validate_against_model_ir(model_ir) == []
+    assert validate_model_ir_invariants(model_ir) == []
+
+
+@pytest.mark.parametrize("unary_type", _UNARY_TYPES)
+def test_conv1d_unary_fanout_preserves_supported_unary_family(
+    unary_type: str,
+) -> None:
+    model_ir = ModelIR(f"conv1d_fanout_{unary_type.lower()}")
+    names = _add_branch(
+        model_ir,
+        "branch",
+        unary_type=unary_type,
+        fanout=True,
+    )
+
+    stats = _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+        model_ir
+    )
+
+    assert stats == {_FANOUT_STATS: 1}
+    assert model_ir.operators[0].op_type == unary_type
+    assert model_ir.operators[0].inputs == [names["source"]]
+    assert model_ir.operators[0].outputs == [names["output"]]
+    assert validate_model_ir_invariants(model_ir) == []
+
+
+@pytest.mark.parametrize(
+    ("source_signature", "pre_signature", "squeezed_signature"),
+    [
+        ([-1, 1, 5, 3], [-1, 3, 1, 5], [-1, 3, 5]),
+        ([1, 1, -1, 3], [1, 3, 1, -1], [1, 3, -1]),
+        ([-1, 1, -1, -1], [-1, -1, 1, -1], [-1, -1, -1]),
+    ],
+)
+def test_conv1d_unary_fanout_preserves_consistent_dynamic_signatures(
+    source_signature: list[int],
+    pre_signature: list[int],
+    squeezed_signature: list[int],
+) -> None:
+    model_ir = ModelIR("dynamic_conv1d_unary_fanout")
+    names = _add_branch(model_ir, "branch", fanout=True)
+    model_ir.tensors[names["source"]].shape_signature = source_signature
+    model_ir.tensors[names["pre_output"]].shape_signature = pre_signature
+    model_ir.tensors[names["squeezed"]].shape_signature = squeezed_signature
+    model_ir.tensors[names["unary_output"]].shape_signature = squeezed_signature
+    model_ir.tensors[names["expanded"]].shape_signature = pre_signature
+    model_ir.tensors[names["output"]].shape_signature = source_signature
+    model_ir.tensors[names["side_output"]].shape_signature = squeezed_signature
+
+    stats = _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+        model_ir
+    )
+
+    assert stats == {_FANOUT_STATS: 1}
+    assert validate_model_ir_invariants(model_ir) == []
+
+
+def test_conv1d_unary_fanout_preserves_public_nchw_output() -> None:
+    model_ir = ModelIR("public_conv1d_unary_fanout")
+    names = _add_branch(model_ir, "branch", fanout=True)
+    side = next(
+        operator
+        for operator in model_ir.operators
+        if operator.outputs == [names["side_output"]]
+    )
+    model_ir.operators.remove(side)
+    model_ir.outputs.remove(names["side_output"])
+    del model_ir.tensors[names["side_output"]]
+    model_ir.outputs.append(names["unary_output"])
+
+    stats = _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+        model_ir
+    )
+
+    assert stats == {_FANOUT_STATS: 1}
+    assert names["unary_output"] in model_ir.outputs
+    assert validate_model_ir_invariants(model_ir) == []
+
+
+def test_conv1d_unary_fanout_bypasses_only_first_eligible_nhwc_branch() -> None:
+    model_ir = ModelIR("multiple_nhwc_conv1d_unary_fanout")
+    names = _add_branch(model_ir, "branch", fanout=True)
+    output_dtype = model_ir.tensors[names["unary_output"]].dtype
+    output_quantization = copy.deepcopy(
+        model_ir.tensors[names["unary_output"]].quantization
+    )
+    model_ir.tensors["expanded2"] = _tensor(
+        "expanded2",
+        list(model_ir.tensors[names["pre_output"]].shape),
+        dtype=output_dtype,
+        quantization=copy.deepcopy(output_quantization),
+    )
+    model_ir.tensors["output2"] = _tensor(
+        "output2",
+        list(model_ir.tensors[names["source"]].shape),
+        dtype=output_dtype,
+        quantization=copy.deepcopy(output_quantization),
+    )
+    model_ir.outputs.append("output2")
+    second_expand = OperatorIR(
+        "EXPAND_DIMS",
+        [names["unary_output"], names["axis"]],
+        ["expanded2"],
+    )
+    second_post = OperatorIR(
+        "TRANSPOSE",
+        ["expanded2", names["post_perm"]],
+        ["output2"],
+    )
+    model_ir.operators.extend([second_expand, second_post])
+
+    stats = _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+        model_ir
+    )
+
+    assert stats == {_FANOUT_STATS: 1}
+    assert second_expand in model_ir.operators
+    assert second_post in model_ir.operators
+    assert second_expand.inputs[0] == names["unary_output"]
+    assert validate_model_ir_invariants(model_ir) == []
+
+
+def test_conv1d_unary_fanout_accepts_equivalent_negative_axes() -> None:
+    model_ir = ModelIR("negative_axis_conv1d_unary_fanout")
+    names = _add_branch(model_ir, "branch", fanout=True)
+    _, squeeze, _, _, _ = _operators(model_ir, names)
+    squeeze.options["squeezeDims"] = [-2]
+    model_ir.tensors[names["axis"]].data = np.asarray([-2], dtype=np.int64)
+
+    stats = _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+        model_ir
+    )
+
+    assert stats == {_FANOUT_STATS: 1}
+    assert validate_model_ir_invariants(model_ir) == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "no_fanout",
+        "pre_arity",
+        "floating_pre_perm",
+        "produced_pre_perm",
+        "source_late_producer",
+        "pre_public",
+        "pre_fanout",
+        "pre_shape",
+        "squeezed_public",
+        "squeezed_shape",
+        "unary_arity",
+        "unary_signature",
+        "backward_side_consumer",
+        "expand_arity",
+        "expand_axis",
+        "produced_axis",
+        "expand_public",
+        "expand_shape",
+        "post_arity",
+        "floating_post_perm",
+        "post_output_input",
+        "post_output_duplicate",
+        "post_output_signature",
+        "post_output_backward_consumer",
+        "input_dtype_mismatch",
+        "output_quantization_mismatch",
+        "per_axis_quantization",
+    ],
+)
+def test_conv1d_unary_fanout_rejects_unsafe_contracts_transactionally(
+    case: str,
+) -> None:
+    model_ir = ModelIR("rejected_conv1d_unary_fanout")
+    names = _add_branch(model_ir, "branch", fanout=True)
+    pre, squeeze, unary, expand, post = _operators(model_ir, names)
+    side = next(
+        operator
+        for operator in model_ir.operators
+        if operator.outputs == [names["side_output"]]
+    )
+
+    def add_fanout(source: str, output: str, shape: list[int]) -> None:
+        model_ir.tensors[output] = _tensor(output, shape)
+        model_ir.outputs.append(output)
+        model_ir.operators.append(OperatorIR("IDENTITY", [source], [output]))
+
+    if case == "no_fanout":
+        model_ir.operators.remove(side)
+        model_ir.outputs.remove(names["side_output"])
+        del model_ir.tensors[names["side_output"]]
+    elif case == "pre_arity":
+        pre.inputs.append(names["axis"])
+    elif case == "floating_pre_perm":
+        model_ir.tensors[names["pre_perm"]].dtype = "FLOAT32"
+        model_ir.tensors[names["pre_perm"]].data = np.asarray(
+            [0, 3, 1, 2], dtype=np.float32
+        )
+    elif case == "produced_pre_perm":
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["axis"]], [names["pre_perm"]])
+        )
+    elif case == "source_late_producer":
+        model_ir.inputs.remove(names["source"])
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["output"]], [names["source"]])
+        )
+    elif case == "pre_public":
+        model_ir.outputs.append(names["pre_output"])
+    elif case == "pre_fanout":
+        add_fanout(names["pre_output"], "extra", [1, 3, 1, 5])
+    elif case == "pre_shape":
+        model_ir.tensors[names["pre_output"]].shape[1] = 4
+        model_ir.tensors[names["pre_output"]].shape_signature[1] = 4
+    elif case == "squeezed_public":
+        model_ir.outputs.append(names["squeezed"])
+    elif case == "squeezed_shape":
+        model_ir.tensors[names["squeezed"]].shape[2] = 4
+        model_ir.tensors[names["squeezed"]].shape_signature[2] = 4
+    elif case == "unary_arity":
+        unary.inputs.append(names["axis"])
+    elif case == "unary_signature":
+        model_ir.tensors[names["unary_output"]].shape_signature[2] = -1
+    elif case == "backward_side_consumer":
+        model_ir.operators.remove(side)
+        model_ir.operators.insert(model_ir.operators.index(unary), side)
+    elif case == "expand_arity":
+        expand.inputs.append(names["pre_perm"])
+    elif case == "expand_axis":
+        model_ir.tensors[names["axis"]].data[0] = 1
+    elif case == "produced_axis":
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["pre_perm"]], [names["axis"]])
+        )
+    elif case == "expand_public":
+        model_ir.outputs.append(names["expanded"])
+    elif case == "expand_shape":
+        model_ir.tensors[names["expanded"]].shape[1] = 4
+        model_ir.tensors[names["expanded"]].shape_signature[1] = 4
+    elif case == "post_arity":
+        post.inputs.append(names["axis"])
+    elif case == "floating_post_perm":
+        model_ir.tensors[names["post_perm"]].dtype = "FLOAT32"
+        model_ir.tensors[names["post_perm"]].data = np.asarray(
+            [0, 2, 3, 1], dtype=np.float32
+        )
+    elif case == "post_output_input":
+        model_ir.inputs.append(names["output"])
+    elif case == "post_output_duplicate":
+        model_ir.operators.append(
+            OperatorIR("IDENTITY", [names["source"]], [names["output"]])
+        )
+    elif case == "post_output_signature":
+        model_ir.tensors[names["output"]].shape_signature[2] = -1
+    elif case == "post_output_backward_consumer":
+        model_ir.tensors["extra"] = _tensor("extra", [1, 1, 5, 3])
+        model_ir.outputs.append("extra")
+        model_ir.operators.insert(
+            model_ir.operators.index(post),
+            OperatorIR("IDENTITY", [names["output"]], ["extra"]),
+        )
+    elif case == "input_dtype_mismatch":
+        model_ir.tensors[names["pre_output"]].dtype = "FLOAT16"
+    elif case == "output_quantization_mismatch":
+        model_ir.tensors[names["unary_output"]].quantization = _quantization()
+        model_ir.tensors[names["expanded"]].quantization = _quantization(0.5, 3)
+    elif case == "per_axis_quantization":
+        for key in (
+            "source",
+            "pre_output",
+            "squeezed",
+            "unary_output",
+            "expanded",
+        ):
+            model_ir.tensors[names[key]].quantization = QuantParamIR(
+                scale=[0.25, 0.5],
+                zero_point=[0, 0],
+                quantized_dimension=1,
+            )
+
+    before = repr(model_ir)
+    stats = _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+        model_ir
+    )
+
+    assert stats == {_FANOUT_STATS: 0}
+    assert repr(model_ir) == before
+
+
+def test_conv1d_unary_fanout_quantization_clone_failure_is_transactional() -> None:
+    class Unclonable:
+        def __deepcopy__(self, memo):
+            raise RuntimeError("cannot clone")
+
+    model_ir = ModelIR("unclonable_conv1d_unary_fanout")
+    names = _add_branch(model_ir, "branch", quantized=True, fanout=True)
+    quantization = {
+        "scale": [0.25],
+        "zero_point": [3],
+        "fault": Unclonable(),
+    }
+    for key in ("source", "pre_output", "squeezed", "unary_output", "expanded"):
+        model_ir.tensors[names[key]].quantization = quantization
+    before = repr(model_ir)
+
+    stats = _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+        model_ir
+    )
+
+    assert stats == {_FANOUT_STATS: 0}
+    assert repr(model_ir) == before
+
+
+def test_conv1d_unary_fanout_preflight_preserves_pruning_without_index(
+    monkeypatch,
+) -> None:
+    model_ir = ModelIR("no_conv1d_unary_fanout")
+    model_ir.tensors["unused"] = _tensor("unused", [1])
+    model_ir.operators = [OperatorIR("IDENTITY", ["x"], ["y"])]
+
+    def unexpected_index(*args, **kwargs):
+        raise AssertionError("unexpected graph index allocation")
+
+    monkeypatch.setattr(unary_module, "ModelIRGraphIndex", unexpected_index)
+
+    assert _optimize_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains(
+        model_ir
+    ) == {_FANOUT_STATS: 0}
     assert "unused" not in model_ir.tensors

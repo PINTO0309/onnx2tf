@@ -34804,11 +34804,11 @@ def test_flatbuffer_direct_transpose_squeeze_gelu_expanddims_transpose_nhwc_fano
     assert stats["optimized_transpose_squeeze_unary_expanddims_transpose_nhwc_fanout_bypass_chains"] == 1
 
     op_types = [str(op.op_type) for op in model_ir.operators]
-    assert op_types == ["TRANSPOSE", "SQUEEZE", "GELU", "ADD", "RELU"]
+    assert op_types == ["GELU", "TRANSPOSE", "SQUEEZE", "ADD", "RELU"]
 
-    pre_op = model_ir.operators[0]
-    squeeze_op = model_ir.operators[1]
-    unary_op = model_ir.operators[2]
+    unary_op = model_ir.operators[0]
+    pre_op = model_ir.operators[1]
+    squeeze_op = model_ir.operators[2]
     add_op = model_ir.operators[3]
     relu_op = model_ir.operators[4]
 
