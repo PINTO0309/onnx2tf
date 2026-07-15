@@ -4923,6 +4923,49 @@ quantization grids, per-axis quantization, duplicate producers, backward
 consumers, and clone failures are complete no-ops. The sole production call
 supplies the Session LayoutState.
 
+The direct-tail subset of decomposed InstanceNormalization pre/post
+canonicalization is owned by `passes/instance_norm_prepost_layout.py`. Its
+exact boundary is NHWC-to-NCHW Transpose, batch-axis Squeeze, Reshape back to
+rank four, the two-Mean `SUB -> square -> variance+epsilon -> SQRT ->
+reciprocal -> normalize -> scale -> bias` decomposition, and one private
+NCHW-to-NHWC post-Transpose. The existing side-Squeeze,
+Squeeze/unary/Reshape, and Squeeze/residual-ADD/Reshape tails remain in the
+ordered compatibility path and are not partially matched or mutated by this
+owner.
+
+One `ModelIRGraphIndex` proves every producer, duplicate producer, consumer
+multiplicity, operator role and order, public boundary, exact concrete shape,
+dynamic signature, dtype, unquantized floating contract, and typed constant
+before mutation. Both Means must keep dimensions and reduce the two NCHW
+spatial axes; equivalent negative or reversed axis vectors are accepted. SUB
+and reciprocal DIV retain their noncommutative input order. Epsilon is finite
+and nonnegative, the reciprocal numerator is exactly one, and scale and bias
+are finite `[1,C,1,1]` FLOAT16 or FLOAT32 constants.
+
+The rewrite moves the first Squeeze and rank-four normalization computation to
+NHWC, changes the reduction axes to `[1,2]`, transposes every changed tensor
+metadata contract, converts scale and bias to `[1,1,1,C]`, redirects the
+existing bias ADD to the post-Transpose output name, and removes only the two
+boundary Transposes. The final output tensor and all downstream edges are
+unchanged. Dynamic height, width, or channel signatures are carried through
+the full and kept-dimension reduction tensors.
+
+Changed Reshape, Mean-axis, scale, and bias constants are fully planned before
+mutation. A private constant updates in place; a constant shared with any
+unrelated consumer receives one deterministic clone, including one shared
+axis vector used by both Means. Clone failure is a complete no-op. Static
+public-input, produced-input, FLOAT16, negative-axis, and commuted affine
+fixtures produce exactly the same ModelIR as the committed legacy helper.
+Separate but equivalent Mean-axis constants, which the legacy helper skipped
+because it required one shared tensor, are now handled safely. Unsafe direct-
+tail candidates are not passed back to the legacy mutator. The production
+calls supply the Session LayoutState. A supplied graph index is used by the
+indexed owner, refreshed immediately after a retained legacy rewrite so subsequent
+dispatch remains current, and reconciled once at the compatibility boundary.
+The compatibility loop offers each pre-Transpose to the indexed
+owner at its original graph position, so mixed tail modes retain the legacy
+graph-order priority and one shared 32-rewrite ceiling.
+
 ## Managed-corpus SWAP exclusion policy
 
 Managed corpus validation remains strictly sequential. While each converter

@@ -5730,6 +5730,80 @@ def test_terminal_squeeze_mean_layout_rewrite_has_indexed_owner() -> None:
     assert layout_keyword.value.attr == "layout_state"
 
 
+def test_instance_norm_direct_prepost_layout_has_indexed_owner() -> None:
+    lowering_path = REPO_ROOT / "onnx2tf" / "tflite_builder" / "lower_from_onnx2tf.py"
+    pass_path = (
+        REPO_ROOT
+        / "onnx2tf"
+        / "tflite_builder"
+        / "passes"
+        / "instance_norm_prepost_layout.py"
+    )
+    compatibility_name = "_optimize_transpose_instancenorm_prepost_nhwc_chains"
+    owner_name = (
+        "_optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains"
+    )
+
+    def _functions(path: Path) -> dict[str, ast.FunctionDef]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+        }
+
+    lowerer_functions = _functions(lowering_path)
+    compatibility = lowerer_functions[compatibility_name]
+    assert f"{owner_name}_pass" in {
+        node.id
+        for node in ast.walk(compatibility)
+        if isinstance(node, ast.Name)
+    }
+    owner_functions = _functions(pass_path)
+    owner = owner_functions[owner_name]
+    owner_calls = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for owner_node in (
+            owner,
+            owner_functions["_resolve_candidate"],
+            owner_functions["_plan_constant_update"],
+            owner_functions["_apply_plan"],
+        )
+        for node in ast.walk(owner_node)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    assert "_build_tensor_consumer_map" not in owner_calls
+    assert "_build_tensor_producer_map" not in owner_calls
+    assert "ModelIRGraphIndex" in owner_calls
+    assert "operator_indices" in owner_calls
+    assert "operator_index" in owner_calls
+    assert "consumer_indices" in owner_calls
+    assert "remove_operators" in owner_calls
+    assert "_set_operator_inputs" in owner_calls
+    assert "_set_operator_outputs" in owner_calls
+    assert "_replace_operator_input_at" in owner_calls
+    assert "_apply_plan" in owner_calls
+    assert "sync_from_model_ir" in owner_calls
+
+    production_calls = [
+        node
+        for node in ast.walk(lowerer_functions["lower_onnx_to_ir"])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == compatibility_name
+    ]
+    assert len(production_calls) == 2
+    for call in production_calls:
+        layout_keyword = next(
+            keyword for keyword in call.keywords if keyword.arg == "layout_state"
+        )
+        assert isinstance(layout_keyword.value, ast.Attribute)
+        assert isinstance(layout_keyword.value.value, ast.Name)
+        assert layout_keyword.value.value.id == "session"
+        assert layout_keyword.value.attr == "layout_state"
+
+
 def test_precision_rewrites_use_differential_graph_index() -> None:
     precision_path = (
         REPO_ROOT / "onnx2tf" / "tflite_builder" / "passes" / "precision.py"

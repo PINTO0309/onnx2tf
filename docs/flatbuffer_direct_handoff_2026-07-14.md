@@ -8,14 +8,16 @@ closed, and no open pull request tracks this branch. The Goal is active again;
 subsequent work uses coherent commits and pushes without opening a pull
 request.
 
-The latest implementation unit moves the terminal decoder
-Transpose/Squeeze/Mean/Squeeze rewrite to
-`passes/terminal_squeeze_mean_layout.py`. One `ModelIRGraphIndex` proves both
-Squeeze axes, the kept-dimension Mean axis, every rank-four/rank-three/rank-two
-shape and dynamic-signature equation, producer order, fan-out, public
-boundaries, dtype, quantization, and the unchanged final-output contract before
-mutation. A shared Mean-axis constant is cloned transactionally. The former
-152-line lowerer helper is now an 11-line compatibility adapter.
+The latest implementation unit moves the single-post-Transpose subset of the
+decomposed InstanceNormalization pre/post rewrite to
+`passes/instance_norm_prepost_layout.py`. One `ModelIRGraphIndex` proves the
+complete two-Mean normalization topology, noncommutative inputs, reduction
+axes, reshape/affine constants, rank-three/rank-four shapes and dynamic
+signatures, graph order, fan-out, public boundaries, dtype, quantization, and
+the unchanged downstream-output contract before mutation. Every changed
+constant is planned and shared constants are cloned transactionally. The three
+more complex tail modes remain behaviorally characterized in the ordered
+compatibility path.
 The audited fast-precanonicalize orchestrator remains 294 lines, down from 482
 lines at Goal resumption, 1,025 lines at the beginning of the previous
 continuation, and 1,608 lines before the broader extraction.
@@ -37,7 +39,7 @@ The merged `fb-refactor4` checkpoints included:
   shape reconciliation and removes the now-unused aligned-rank4 and Softmax
   parser imports from the exporter.
 
-The current `fb-refactor5` work contains ninety-six coherent continuations:
+The current `fb-refactor5` work contains ninety-seven coherent continuations:
 
 - `3ac19b40` centralizes the ordered fallback that repairs aligned binary
   shapes only when general binary repair made no change and the immediate next
@@ -249,8 +251,10 @@ The current `fb-refactor5` work contains ninety-six coherent continuations:
   indexed owner with explicit axis-to-adjoint semantics;
 - `0ef2050c` moves the decoder deconvolution-input adapter to a complete
   indexed matrix/layout/constant transaction;
-- the current checkpoint moves the terminal Squeeze/Mean decoder adapter to a
-  complete indexed axis/layout/output transaction.
+- `481098db` moves the terminal Squeeze/Mean decoder adapter to a complete
+  indexed axis/layout/output transaction;
+- the current checkpoint moves the direct decomposed-InstanceNormalization
+  pre/post adapter to a complete indexed topology/layout/constant transaction.
 
 The extraction preserves the ordered source-rewrite behavior. Layout evidence
 continues to mutate only the per-run CF/NHWC sets; repair context maps remain
@@ -269,8 +273,8 @@ Branch: `fb-refactor5`, tracking `origin/fb-refactor5`.
 The current checkpoint changes:
 
 - `onnx2tf/tflite_builder/lower_from_onnx2tf.py`;
-- `onnx2tf/tflite_builder/passes/terminal_squeeze_mean_layout.py`;
-- `tests/test_flatbuffer_direct_indexed_terminal_squeeze_mean_layout.py`;
+- `onnx2tf/tflite_builder/passes/instance_norm_prepost_layout.py`;
+- `tests/test_flatbuffer_direct_indexed_instance_norm_direct_layout.py`;
 - `tests/test_flatbuffer_direct_architecture.py`;
 - `docs/flatbuffer_direct_architecture.md`;
 - this handoff document.
@@ -2471,13 +2475,58 @@ Focused coverage includes sixteen exact NumPy equivalence variants across
 public/produced sources and all positive/negative axis representations,
 shared-axis cloning, dynamic batch/width/reduced-channel signatures, two-chain
 execution, twenty-seven unsafe transactional no-ops, clone failure,
-apply-preflight collision,
-and preflight/no-index behavior with `51 passed`; the semantic-ownership test
-also passed. The seven indexed Conv1D/decoder/terminal suites, architecture, core,
-pass-efficiency, Mean/terminal-Mean, and three Transpose-Unary suites passed
+apply-preflight collision, and preflight/no-index behavior with `51 passed`;
+the semantic-ownership test also passed. The seven indexed
+Conv1D/decoder/terminal suites, architecture, core, pass-efficiency,
+Mean/terminal-Mean, and three Transpose-Unary suites passed
 together with `677 passed in 56.59s`. TensorFlow-import-blocked direct and
 `-cotof` plus the sequential quantization/evaluation/coverage smoke passed
 with `3 passed in 6.81s`. Ruff, syntax compilation, and `git diff --check`
+passed. No Tier corpus conversion was run.
+
+The indexed direct InstanceNormalization checkpoint makes the single private
+post-Transpose tail the first bounded owner within the former four-mode raw
+helper. It proves the pre-Transpose/Squeeze/Reshape boundary, both kept-
+dimension Means, ordered SUB and reciprocal DIV, square/normalize/affine
+branches, and the sole post-Transpose before changing ModelIR. Exact
+shape/signature equations, all producers and consumers, graph order, public
+boundaries, FLOAT16/FLOAT32 dtype, unquantized tensors, typed reshape/axis
+constants, nonnegative finite epsilon, unit numerator, and finite scale/bias
+are validated in one `ModelIRGraphIndex`.
+
+The rewrite moves the normalization to NHWC axes `[1,2]`, converts rank-three
+CHW and every full/reduced rank-four metadata contract, changes scale and bias
+from `[1,C,1,1]` to `[1,1,1,C]`, reuses the post-Transpose output name on the
+bias ADD, and removes the two boundary Transposes. Reshape, shared Mean-axis,
+scale, and bias constants are planned together; unrelated consumers receive
+deterministic clones. Five representative static legacy variants are exactly
+ModelIR-identical to the committed helper, including lineage-event order.
+Separate equivalent Mean axes are now handled transactionally instead of
+being skipped by the legacy shared-axis guard.
+
+The side-Squeeze, Squeeze/unary/Reshape, and
+Squeeze/residual-ADD/Reshape modes remain in the compatibility path. Each is
+an indexed-owner no-op followed by a numerically equivalent legacy rewrite;
+supplied GraphIndex and LayoutState remain current. Unsafe direct candidates
+such as reversed SUB, wrong axes, negative epsilon, or quantized intermediates
+are explicitly short-circuited and cannot fall through to the legacy mutator.
+Per-candidate dispatch preserves graph order across mixed direct and legacy
+tails; a 33-chain characterization proves the original shared 32-rewrite
+limit selects the same prefix rather than favoring all direct tails first.
+
+Focused coverage includes thirty-two NumPy equivalence variants across
+FLOAT16/FLOAT32, public/produced source, shared/separate axes, positive/negative
+axes, and affine input order; shared cloning for all four changed constant
+roles; dynamic height/width/channel signatures; two-chain execution; forty-
+four unsafe transactional no-ops; clone failure; apply-preflight collision;
+four legacy-fallback blockers; all three retained legacy modes; compatibility
+statistics; mixed-mode order/limit; and preflight/no-index behavior with
+`93 passed`. The related
+InstanceNormalization, Pad, Mean, architecture, core, and pass-efficiency
+suites passed with `495 passed in 54.58s`; twelve selected direct-builder
+characterizations passed in `0.94s`. TensorFlow-import-blocked direct and
+`-cotof` plus the sequential quantization/evaluation/coverage smoke passed
+with `3 passed in 6.70s`. Ruff, syntax compilation, and `git diff --check`
 passed. No Tier corpus conversion was run.
 
 The focused indexed and architecture tests pass Ruff normally. The changed
@@ -2531,11 +2580,11 @@ verification gates.
    compatibility orchestrator unless a bounded phase-contract simplification
    is identified; all of its former raw top-level mutation loops now have
    indexed semantic owners.
-3. Audit the adjacent raw
-   `_optimize_transpose_instancenorm_prepost_nhwc_chains` family next. Split
-   only bounded semantic decisions, preserve all normalization axes,
-   constants, fan-out, public boundaries, and output contracts, and do not
-   treat source line count as a requirement.
+3. Extend `passes/instance_norm_prepost_layout.py` with the bounded
+   `direct_post_transpose_side_squeeze` mode next. Reuse the proven core
+   decomposition contract, preplan the local NHWC-to-NCHW compatibility
+   adapter, and preserve the side Squeeze tensor/output contract. Leave the
+   unary/Reshape and residual-ADD modes untouched until that unit is green.
 4. Keep the terminal direct backend boundary explicit; do not reintroduce
    fallback into the legacy TensorFlow pipeline or broaden optional artifact
    execution.

@@ -127,6 +127,9 @@ from onnx2tf.tflite_builder.passes.layernorm_layout import (
 from onnx2tf.tflite_builder.passes.instance_normalization_layout import (
     _repair_decomposed_instance_normalization_layouts as _repair_decomposed_instance_normalization_layouts_pass,
 )
+from onnx2tf.tflite_builder.passes.instance_norm_prepost_layout import (
+    _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains as _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains_pass,
+)
 from onnx2tf.tflite_builder.passes.terminal_mean_layout import (
     _optimize_transpose_pre_unary_mean_terminal_nhwc_chains as _optimize_transpose_pre_unary_mean_terminal_nhwc_chains_pass,
     run_terminal_mean_layout_cleanup,
@@ -19979,7 +19982,12 @@ def _optimize_squeeze_reshape_identity_chains(
     return _optimize_squeeze_reshape_identity_chains_pass(model_ir)
 
 
-def _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir: ModelIR) -> Dict[str, int]:
+def _optimize_transpose_instancenorm_prepost_nhwc_chains(
+    model_ir: ModelIR,
+    *,
+    graph_index: Optional[ModelIRGraphIndex] = None,
+    layout_state: Optional[LayoutState] = None,
+) -> Dict[str, int]:
     """
     Eliminate NHWC<->NCHW transpose bridges around decomposed InstanceNormalization blocks.
 
@@ -19995,10 +20003,15 @@ def _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir: ModelIR) -> D
       r0_nhwc --(same decomposition rewritten to NHWC axes/broadcast)--> y_nhwc
       y_nhwc --SQUEEZE(axis=0)--> s1_hwc --UNARY--> u1_hwc --RESHAPE(NHWC)--> z_nhwc
     """
-    rewritten = 0
     # Keep this pass conservative for now: broad propagation can degrade
     # intermediate tensor correspondence quality in --report_op_coverage flows.
     max_total_rewrites = 32
+    rewritten = 0
+    active_index = (
+        graph_index
+        if graph_index is not None and graph_index.model_ir is model_ir
+        else ModelIRGraphIndex(model_ir)
+    )
     channel_last_hint_names = {
         str(v)
         for v in model_ir.metadata.get("assume_channel_last_layout_tensor_names", [])
@@ -20152,6 +20165,22 @@ def _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir: ModelIR) -> D
                 continue
             if _read_transpose_perm(model_ir, pre_op) != perm_nhwc_to_nchw:
                 continue
+            direct_stats = (
+                _optimize_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains_pass(
+                    model_ir,
+                    graph_index=active_index,
+                    layout_state=layout_state,
+                    max_rewrites=1,
+                    candidate=pre_op,
+                )
+            )
+            if int(direct_stats.get(
+                "optimized_transpose_squeeze_reshape_instancenorm_direct_post_nhwc_chains",
+                0,
+            )) > 0:
+                rewritten += 1
+                changed = True
+                break
             pre_in_name = str(pre_op.inputs[0])
             pre_out_name = str(pre_op.outputs[0])
             if pre_in_name in model_outputs or pre_out_name in model_outputs:
@@ -20314,6 +20343,11 @@ def _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir: ModelIR) -> D
                     or str(post_op.inputs[0]) != inst_out_name
                 ):
                     post_idx = None
+            # The single direct post-Transpose tail is exclusively owned by
+            # the indexed pass above. If its complete invariant contract did
+            # not match, the legacy multi-tail fallback must remain a no-op.
+            if post_idx is not None:
+                continue
             if post_idx is None:
                 # Variant:
                 #   inst_out_nchw -> {post_transpose_nchw_to_nhwc, squeeze(axis=0) side branch}
@@ -20840,6 +20874,7 @@ def _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir: ModelIR) -> D
                     ),
                 )
 
+            active_index.refresh()
             rewritten += 1
             changed = True
             break
@@ -20847,7 +20882,11 @@ def _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir: ModelIR) -> D
         if not changed:
             break
 
-    _prune_unused_tensors(model_ir)
+    _prune_unused_tensors(model_ir, layout_state=layout_state)
+    if graph_index is not None and graph_index.model_ir is model_ir:
+        graph_index.refresh()
+    if rewritten and layout_state is not None:
+        layout_state.sync_from_model_ir(model_ir)
     return {"optimized_transpose_instancenorm_prepost_nhwc_chains": int(rewritten)}
 
 
@@ -43562,7 +43601,10 @@ def lower_onnx_to_ir(
         _optimize_transpose_dequantize_mean_quantize_bridges(model_ir)
         _run_qlinear_mean_concat_recovery_sequence()
         _run_layout_reshape_attention_recovery_prefix()
-        _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir)
+        _optimize_transpose_instancenorm_prepost_nhwc_chains(
+            model_ir,
+            layout_state=session.layout_state,
+        )
         run_squeeze_reshape_identity_cleanup(
             model_ir,
             include_unary_passthrough=True,
@@ -43650,7 +43692,10 @@ def lower_onnx_to_ir(
         _run_gate_layout_pass_cluster(include_mixed_attention=False)
         for _ in range(2):
             rewritten_instnorm = int(
-                _optimize_transpose_instancenorm_prepost_nhwc_chains(model_ir).get(
+                _optimize_transpose_instancenorm_prepost_nhwc_chains(
+                    model_ir,
+                    layout_state=session.layout_state,
+                ).get(
                     "optimized_transpose_instancenorm_prepost_nhwc_chains", 0
                 )
             )
